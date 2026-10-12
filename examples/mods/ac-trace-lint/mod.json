@@ -1,0 +1,7 @@
+{
+  "name": "ac-trace-lint",
+  "version": "0.1.0",
+  "description": "Finds acceptance criteria no task covers, tasks that cite no AC, and ACs met only by skipped tasks",
+  "main": "./register.js",
+  "permissions": ["specweave:read"]
+}

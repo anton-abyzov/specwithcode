@@ -1,0 +1,6 @@
+{
+  "name": "focus-timer",
+  "version": "0.1.0",
+  "description": "A 25 minute focus timer in the sidebar",
+  "main": "./register.js"
+}

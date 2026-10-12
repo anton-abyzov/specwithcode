@@ -1,0 +1,280 @@
+import { EnvironmentId } from "@specweave-studio/contracts";
+import type { ServerUpdateState } from "@specweave-studio/client-runtime/state/server";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+
+// Pinned so the direction cases below read as fixed versions instead of
+// arithmetic on whatever version this checkout happens to be at.
+const branding = vi.hoisted(() => ({ APP_VERSION: "0.0.34" }));
+vi.mock("./branding", () => branding);
+
+import { APP_VERSION } from "./branding";
+import {
+  appendVersionMismatchHint,
+  buildVersionMismatchDismissalKey,
+  dismissServerUpdateFailure,
+  dismissVersionMismatch,
+  isServerUpdateFailureDismissed,
+  isVersionMismatchDismissed,
+  localBuildCommit,
+  manualServerUpdateSteps,
+  resolveServerConfigVersionMismatch,
+  resolveServerSelfUpdateCapability,
+  resolveVersionMismatch,
+  serverUpdateGuidance,
+  supportsDesktopAppUpdate,
+} from "./versionSkew";
+
+const MISMATCH_HINT =
+  "Version mismatch. Try syncing the client and server to the same SpecWithCode version.";
+const MANUAL_UPDATE_STEPS = [
+  "Update SpecWithCode to 0.0.45 on the machine that runs this server:",
+  "- With the desktop app on that machine: Settings > About > SpecWithCode service, then Check now or Install now.",
+  "- A service installed without the desktop app: its update agent or the guarded updater, described in docs/studio/updates.md.",
+  "- A server built from source: git pull, rebuild, then restart it with your usual options.",
+].join("\n");
+
+describe("versionSkew", () => {
+  it("names the proven npm prefix without offering a registry install", () => {
+    expect(manualServerUpdateSteps("0.0.45", { kind: "npm-global", prefix: "/opt/node" })).toBe(
+      `${MANUAL_UPDATE_STEPS}\nThis server runs from a global npm install under /opt/node. The npm registry has no specweave-studio package, so npm cannot update it.`,
+    );
+    expect(
+      manualServerUpdateSteps("0.0.45", { kind: "npm-global", prefix: "/opt/maria's node" }),
+    ).toBe(
+      `${MANUAL_UPDATE_STEPS}\nThis server runs from a global npm install under /opt/maria's node. The npm registry has no specweave-studio package, so npm cannot update it.`,
+    );
+  });
+
+  it("keeps runner and unknown installs on the supported update paths", () => {
+    expect(manualServerUpdateSteps("0.0.45")).toBe(MANUAL_UPDATE_STEPS);
+    expect(manualServerUpdateSteps("0.0.45", { kind: "npx" })).toBe(
+      `${MANUAL_UPDATE_STEPS}\nThis server was started with npx. The npm registry has no specweave-studio package, so npx cannot fetch a newer one.`,
+    );
+    expect(manualServerUpdateSteps("0.0.45", { kind: "pnpm-dlx" })).toBe(
+      `${MANUAL_UPDATE_STEPS}\nThis server was started with pnpm dlx. The npm registry has no specweave-studio package, so pnpm dlx cannot fetch a newer one.`,
+    );
+    expect(manualServerUpdateSteps("0.0.45", { kind: "bunx" })).toBe(
+      `${MANUAL_UPDATE_STEPS}\nThis server was started with bunx. The npm registry has no specweave-studio package, so bunx cannot fetch a newer one.`,
+    );
+  });
+  beforeEach(() => {
+    branding.APP_VERSION = "0.0.34";
+  });
+
+  it("dismisses only the current failed attempt without clearing its retry state", () => {
+    const failure = {
+      status: "failed",
+      stage: "downloading",
+      fromVersion: "0.0.33",
+      targetVersion: "0.0.34",
+      message: "Download failed.",
+    } as const satisfies ServerUpdateState;
+    const retryFailure = { ...failure };
+    const otherEnvironmentFailure = { ...failure };
+
+    dismissServerUpdateFailure(failure);
+
+    expect(isServerUpdateFailureDismissed(failure)).toBe(true);
+    expect(failure.status).toBe("failed");
+    expect(failure.message).toBe("Download failed.");
+    expect(isServerUpdateFailureDismissed(retryFailure)).toBe(false);
+    expect(isServerUpdateFailureDismissed(otherEnvironmentFailure)).toBe(false);
+  });
+
+  it("does not dismiss an update that is still running", () => {
+    const running = {
+      status: "running",
+      stage: "resuming",
+      fromVersion: "0.0.33",
+      targetVersion: "0.0.34",
+    } as const satisfies ServerUpdateState;
+
+    dismissServerUpdateFailure(running);
+
+    expect(isServerUpdateFailureDismissed(running)).toBe(false);
+  });
+
+  it("does not warn when versions match", () => {
+    expect(resolveVersionMismatch(APP_VERSION)).toBeNull();
+  });
+
+  it("returns a mismatch when the server is behind the client", () => {
+    expect(resolveVersionMismatch("0.0.33")).toEqual({
+      clientVersion: "0.0.34",
+      serverVersion: "0.0.33",
+      hint: MISMATCH_HINT,
+    });
+  });
+
+  it("does not warn when the server is ahead of the client", () => {
+    expect(resolveVersionMismatch("0.0.35")).toBeNull();
+    expect(resolveVersionMismatch("9.9.9")).toBeNull();
+  });
+
+  it("does not warn when a nightly and a stable build share a core version", () => {
+    expect(resolveVersionMismatch("0.0.34-nightly.20260818.1124")).toBeNull();
+
+    branding.APP_VERSION = "0.0.34-nightly.20260818.1124";
+    expect(resolveVersionMismatch("0.0.34")).toBeNull();
+  });
+
+  it.each(["0.0.34-nightly.20260823.1124", "0.0.34-nightly.20260824.1124"])(
+    "warns when nightly server %s is behind a nightly client on the same release",
+    (serverVersion) => {
+      branding.APP_VERSION = "0.0.34-nightly.20260824.1125";
+
+      expect(resolveVersionMismatch(serverVersion)).toEqual({
+        clientVersion: "0.0.34-nightly.20260824.1125",
+        serverVersion,
+        hint: MISMATCH_HINT,
+      });
+    },
+  );
+
+  it("does not warn when a nightly server is ahead on the same release", () => {
+    branding.APP_VERSION = "0.0.34-nightly.20260824.1125";
+
+    expect(resolveVersionMismatch("0.0.34-nightly.20260824.1126")).toBeNull();
+  });
+
+  it("treats a nightly server built past the client as ahead, not skew", () => {
+    expect(resolveVersionMismatch("0.0.35-nightly.20260818.1124")).toBeNull();
+  });
+
+  it("still warns when a nightly client outruns the server by a release", () => {
+    branding.APP_VERSION = "0.0.35-nightly.20260818.1124";
+
+    expect(resolveVersionMismatch("0.0.34")).toEqual({
+      clientVersion: "0.0.35-nightly.20260818.1124",
+      serverVersion: "0.0.34",
+      hint: MISMATCH_HINT,
+    });
+  });
+
+  it("shows no update when the server was bundled from the desktop build's commit", () => {
+    branding.APP_VERSION = "0.2.1-dev.20261010.gfb8ab7f";
+    const commit = "fb8ab7f8a0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5";
+
+    expect(localBuildCommit(APP_VERSION)).toBe("fb8ab7f");
+    expect(resolveVersionMismatch("0.2.0", commit)).toBeNull();
+    expect(
+      resolveVersionMismatch("0.2.0", "0123456789abcdef0123456789abcdef01234567"),
+    ).toMatchObject({ serverVersion: "0.2.0", clientVersion: "0.2.1-dev.20261010.gfb8ab7f" });
+    expect(resolveVersionMismatch("0.2.0")).toMatchObject({ serverVersion: "0.2.0" });
+  });
+
+  it("only reads a commit from local dev builds", () => {
+    expect(localBuildCommit("0.2.0")).toBeNull();
+    expect(localBuildCommit("0.0.35-nightly.20260818.1124")).toBeNull();
+    expect(localBuildCommit("0.2.1-dev.20261010")).toBeNull();
+    expect(localBuildCommit("0.2.1-dev.20261010.gABCDEF0")).toBe("abcdef0");
+  });
+
+  it("falls back to string inequality when a version is not semver", () => {
+    expect(resolveVersionMismatch("dev")).toEqual({
+      clientVersion: "0.0.34",
+      serverVersion: "dev",
+      hint: MISMATCH_HINT,
+    });
+
+    branding.APP_VERSION = "dev";
+    expect(resolveVersionMismatch("dev")).toBeNull();
+    expect(resolveVersionMismatch("0.0.34")).toMatchObject({ serverVersion: "0.0.34" });
+  });
+
+  it("reads the server version from config descriptors", () => {
+    expect(
+      resolveServerConfigVersionMismatch({
+        environment: {
+          environmentId: EnvironmentId.make("environment-1"),
+          label: "Remote",
+          platform: {
+            os: "darwin",
+            arch: "arm64",
+          },
+          serverVersion: "0.0.33",
+          capabilities: {
+            repositoryIdentity: true,
+          },
+        },
+      }),
+    ).toMatchObject({
+      serverVersion: "0.0.33",
+    });
+  });
+
+  it("keys dismissals by environment, client version, and server version", () => {
+    const environmentId = EnvironmentId.make("environment-dismissal");
+    const key = buildVersionMismatchDismissalKey(environmentId, {
+      clientVersion: APP_VERSION,
+      serverVersion: "9.9.9",
+    });
+
+    expect(key).toBe(`${environmentId}:${APP_VERSION}:9.9.9`);
+    expect(isVersionMismatchDismissed(key)).toBe(false);
+
+    dismissVersionMismatch(key);
+
+    expect(isVersionMismatchDismissed(key)).toBe(true);
+    expect(
+      isVersionMismatchDismissed(
+        buildVersionMismatchDismissalKey(environmentId, {
+          clientVersion: APP_VERSION,
+          serverVersion: "9.9.10",
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("appends a hint to connection errors when the server is behind", () => {
+    const mismatch = resolveVersionMismatch("0.0.33");
+
+    expect(appendVersionMismatchHint("Socket closed.", mismatch)).toBe(
+      `Socket closed. Hint: ${MISMATCH_HINT}`,
+    );
+  });
+
+  it("reads desktop-managed update capabilities from config descriptors", () => {
+    expect(
+      resolveServerSelfUpdateCapability({
+        environment: {
+          environmentId: EnvironmentId.make("environment-desktop"),
+          label: "Desktop",
+          platform: { os: "darwin", arch: "arm64" },
+          serverVersion: "9.9.9",
+          capabilities: {
+            repositoryIdentity: true,
+            serverSelfUpdate: "desktop-managed",
+          },
+        },
+      }),
+    ).toBe("desktop-managed");
+    expect(resolveServerSelfUpdateCapability(null)).toBeNull();
+  });
+
+  it("detects remote desktop-app update support from config descriptors", () => {
+    const descriptor = (desktopAppUpdate?: boolean) => ({
+      environment: {
+        environmentId: EnvironmentId.make("environment-desktop"),
+        label: "Desktop",
+        platform: { os: "darwin", arch: "arm64" } as const,
+        serverVersion: "9.9.9",
+        capabilities: {
+          repositoryIdentity: true,
+          serverSelfUpdate: "desktop-managed" as const,
+          ...(desktopAppUpdate === undefined ? {} : { desktopAppUpdate }),
+        },
+      },
+    });
+
+    expect(supportsDesktopAppUpdate(descriptor(true))).toBe(true);
+    expect(supportsDesktopAppUpdate(descriptor(false))).toBe(false);
+    expect(supportsDesktopAppUpdate(descriptor())).toBe(false);
+    expect(supportsDesktopAppUpdate(null)).toBe(false);
+  });
+
+  it("matches version-drift guidance to the advertised update path", () => {
+    expect(serverUpdateGuidance("respawn")).toBe("Update to stay in sync");
+    expect(serverUpdateGuidance("desktop-managed")).toBe("Update the desktop app");
+  });
+});

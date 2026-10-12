@@ -1,0 +1,80 @@
+# Updates
+
+Studio keeps two things current on a Mac: the desktop app and the Studio service that the fleet installer runs under launchd. The desktop app reads releases from the public `anton-abyzov/specwithcode` repository; the service agent reads the repository named in its config (`anton-abyzov/specwithcode` by default). Settings > About controls both.
+
+## Settings
+
+| Setting                         | Default | What it does                                                                                                                                                                                                               |
+| ------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Check for updates automatically | On      | The app checks every hour; the service agent checks every hour as well. Off stops all background checks.                                                                                                                   |
+| Download in the background      | On      | A found release downloads and is verified right away.                                                                                                                                                                      |
+| Install automatically           | On      | The app installs the next time you quit it. The service installs once no session has worked for 10 minutes; a thread that is only waiting on a usage limit does not count as working. Off means you install from Settings. |
+| Update track                    | Stable  | Stable takes plain versions such as `0.2.1`, even when GitHub marks the release as a prerelease. Nightly takes `-nightly` builds.                                                                                          |
+
+The Studio service row shows the installed version, what the agent is doing and a **Check now** or **Install now** button. Install now skips the quiet wait once, but still never installs while a session is running.
+
+Self-update is on by default and reads only Studio's own releases; the app never accepts the original upstream feed. `STUDIO_DISABLE_AUTO_UPDATE=true` forces it off for a machine. While it is off, the switches in Settings > About show off and cannot be turned on (they report what the service's `updates/config.json` holds), the Studio service row says automatic checks are off, and Check now and Install now still work.
+
+## Private releases
+
+Studio stores no GitHub token. Each check uses `STUDIO_UPDATE_TOKEN`, `GH_TOKEN` or `GITHUB_TOKEN` when set, otherwise it asks the `gh` login on the Mac (`gh auth token`). The token stays in memory and goes only to `api.github.com`; asset downloads that redirect to GitHub's storage host get no token. If checks say the releases are private, run `gh auth login` once on that Mac.
+
+## The desktop app
+
+Signed builds (`studioBuild.signed` in the app's `package.json`) use electron-updater and Squirrel.Mac. Unsigned builds, which is every build today, use the bundle swap in `apps/desktop/src/updates/macSwapInstall.ts`: the app downloads the release zip named in `latest-mac.yml`, checks its sha512, unpacks it next to itself, checks the bundle id and version, and swaps the bundles after it quits. A failed swap puts the old app back. The app must run from a folder it can write to, such as Applications, not from the disk image.
+
+Releases before 1.0.0 installed as `SpecWeave Studio (Alpha).app`. The update to 1.0.0 still lands at that path, because an update always installs where the running app is. On its first launch 1.0.0 renames its bundle to `SpecWithCode.app`, updates Launch Services and opens itself again (`apps/desktop/src/updates/macBundleName.ts`); later swaps from an old-named bundle also install under the new name. It skips the rename when the folder is not writable, when `SpecWithCode.app` already exists, or after one failed try for that version. If both apps end up side by side, SpecWithCode.app moves the older same-id copy to the Trash. The download is staged in `userData/pending-update/staged.noindex`, so Spotlight does not list it as another app.
+
+After an unsigned swap macOS may ask again for permissions such as Accessibility or Screen Recording, because an ad-hoc signature changes with every build. Signing removes that.
+
+## The Studio service
+
+The service cannot replace itself, so the desktop installs a small agent beside it: `scripts/studio-fleet/update_agent.py`, copied to `~/.local/share/specweave-studio/updater/` and run by the launchd job `com.specweave.studio.<identity>.updater` every 10 minutes. It reads `<studioHome>/updates/config.json` (written by the desktop) and writes `state.json` (read by Settings). On each pass it:
+
+1. finds the newest release on the chosen track and fetches its `studio-update.json` plan;
+2. refuses the release unless the plan lists the installed source commit, so only reviewed upgrade paths run on their own;
+3. downloads the runtime and helper archives and checks them against `SHA256SUMS` and the helper manifest;
+4. waits until two snapshots 10 minutes apart show no running session and no change; an open Studio terminal also counts as busy;
+5. runs that release's own `update.py` with the plan's arguments.
+
+A failed install is not retried on its own; Install now retries it.
+
+The old service keeps running while `update.py` stages the release, and a thread waiting on a usage limit writes on its own about every five minutes: an event, its command receipt, that thread's projection row and the projection cursor. Each guarded check reads, in the same transaction, which rows were appended after the snapshot it compares with, and accepts them when every earlier event and receipt row is byte-identical at its position, projection rows changed only for threads or projects that have new events, and every other protected table, the set of projects and threads, auth rows, settings file and environment id is unchanged. A new release that saves a project's settings when it starts (for example the coordinator model an older project already names) writes the same shape: a project event, its receipt and that project's projection row, so it carries forward too. Edits or deletes of earlier rows still abort, before the restart or by rolling back after it. The appended rows stay in the database the new release opens; the receipt's `appendedLogRows` counts them.
+
+Prestate auth comparisons retain SQLite cell types and the complete auth schema while allowing the connection timestamp to advance. Snapshots using an older invariant format must be refreshed before an update.
+
+Each pass also removes downloads and helpers for the installed version or older, including ones a failed or manual install left behind. After a verified update, `update.py` deletes old unpacked releases under `~/.local/share/specweave-studio/releases/`. It keeps the new release, the previous one (the rollback target), any release that another identity's `launch.sh` or `installation.json` names, and anything unpacked in the last hour. The removed names are listed in the receipt's `prunedReleases`.
+
+Every `update.py` snapshot also carries `databaseCapture`: the complete schema (every `sqlite_master` object, column and foreign key) and a typed-cell hash of every table, read in the same read-only transaction as the protected rows. It contains hashes, schema text and the `sqlite_sequence` counters, never other cell values. The prestate check compares it, the updater re-reads it just before the restart, and an update without `--allow-project-migrations` must leave the whole database unchanged after the restart (receipt `completeDatabaseContinuity: "verified"`). The capture accepts exactly what the guarded rows accept: rows a waiting thread or a project settings save appended (new event and receipt rows after earlier rows whose values and SQLite types are unchanged, the projection rows of that thread or project, the projection cursor and the forward-moving AUTOINCREMENT counters of those logs), and, in the prestate checks, an `auth_sessions` heartbeat whose invariant hash is unchanged. After the restart an auth change is accepted only with a proven heartbeat. Every other table and the schema must stay identical. This covers tables the protected-row hash skips, such as `checkpoint_diff_blobs`, webhook delivery tables and `effect_sql_migrations`, and TEXT/BLOB or integer/real swaps. A migrating update records the capture but keeps the migration rules below (`completeDatabaseContinuity: "not-compared-migration"`). `database_continuity.verify_update_database` recomputes a saved byte-identical or heartbeat receipt against the live database; `network-transition.py` runs it for M4 locally and for M1 and M3 on their own host over pinned SSH, and records the results in `verifiedDatabasePreservation`. A prestate must come from the same updater version that applies it.
+
+`update.py --allow-project-migrations` accepts a release whose migrations add tables and rebuild projections in one pass. Every project, thread and protected table must survive, and existing event history, provider, schedule, pairing and auth rows must stay byte-identical. New events and command receipts are allowed only with the same measured prefix proof described above. Auth schemas and every typed auth cell are checked independently of projection rebuilding; equal row counts do not prove preservation. Those protected tables are also compared by SQLite type through the snapshots' `databaseCapture` (receipt `migrationProtectedCells: "typed-verified"`), because the protected-row hash writes a BLOB as its hex text: a pairing credential, provider or schedule cell, or an earlier event rewritten as that text fails the update. Their table definitions, column lists and foreign keys must also stay identical: both hashes ignore column names, and a cascading foreign key would let a write to another table rewrite or delete protected rows later. So a migration that adds, renames or retypes a column of one of these tables fails even when the table is empty; new indexes stay allowed. A database without an `auth_sessions` table has no session to protect, so a migration may create that table, but only empty; a migration that drops it fails. The same holds for `auth_pairing_links`, `provider_session_runtime`, `scheduled_tasks` and `scheduled_task_run_receipts`: a migration may create them only empty. A migration may not add a trigger that names any of these tables, whichever table the trigger sits on, because it could write sessions or credentials after the update verified; other triggers, such as ones on projection tables that clean a project table, stay allowed. These checks cover the persisted schema only: a TEMP trigger or any other code the new release runs is trusted release code, like every runtime write. Before the restart it copies `statev2.sqlite` to `~/.specweave-studio/backups/pre-<commit>-<time>/`. If the new release fails its checks after starting, it stops the service, restores that copy and starts the old release, so the old binary never runs on a migrated database. If the restore fails, it keeps the new release with its migrated database instead.
+
+An upgrade plan that permits existing browsers to reconnect during the restart must also pass `--allow-existing-browser-heartbeat`. This permits only the bounded, existing-session `last_connected_at` changes proved by the heartbeat checker; it never permits credential replacement, new or deleted auth sessions, or an auth schema change. A migration with such a reconnect records `rowPreservation: "verified-migration"` and `authHeartbeatWitness`, retaining both actual table hashes. Without a migration, rows the services appended (a project settings save at startup, a usage-limit check) carry forward beside such a reconnect: the guarded rows and the complete database are checked as for appended rows, the heartbeat is proven against the old non-auth rows, and the receipt records `rowPreservation: "verified-appended-activity-and-heartbeat"` with `authHeartbeatWitness`. `network-transition.py` does not accept that receipt, as it does not accept `verified-appended-activity`. Without this explicit opt-in, any auth change fails the update. Auth schema transformations need their own explicit preservation proof.
+
+For offline readback of a migration plus heartbeat receipt, use `verify_migration_heartbeat_witness` in `update.py` with the receipt's actual row snapshots and complete private current auth. The migration witness includes before/after commitments to every auth cell and its SQLite type; the verifier checks those commitments, the heartbeat, and the migration constraints. A migration witness without typed commitments is rejected. If logs were appended, also pass `state=Path(<trusted-userdata-directory>)`: the verifier re-reads public rows, private auth and earlier log prefixes in one read-only transaction, requires that database to match the receipt's after-snapshot, and proves every earlier log row survived. Counts from `appendedLogRows` are not preservation evidence. Without that database read, replay rejects changed log hashes. A database that has changed since the receipt also fails closed. The older network-transition verifier intentionally accepts only byte-identical or heartbeat-only updates; a migration receipt does not authorize a network transition. These database receipts do not attest preservation of external native account directories.
+
+To install the agent by hand on a Mac without the desktop app (M1, M3):
+
+```sh
+/usr/bin/python3 scripts/studio-fleet/update_agent.py --identity m1 --install-launch-agent
+/usr/bin/python3 scripts/studio-fleet/update_agent.py --identity m1 --status
+```
+
+## Publishing a release
+
+1. Build the service archive and helpers with `scripts/studio-fleet/bundle.mjs`, and the desktop app with an explicit version: `node scripts/build-desktop-artifact.ts --platform mac --target dmg --arch arm64 --build-version 0.2.1`. Builds without `--build-version` are stamped `<next patch>-dev.<date>.g<commit>`, so they are offered the next release. The feed defaults to the checkout's github.com origin; `STUDIO_DESKTOP_UPDATE_REPOSITORY` overrides it.
+2. Upload `latest-mac.yml`, the zip and its blockmap, the dmg, the runtime and helper archives, `SHA256SUMS` and `deployment-helpers-manifest.json` to a release tagged `v0.2.1`.
+3. Write the plan, listing each installed source commit that may upgrade on its own, and upload it:
+
+   ```sh
+   python3 scripts/studio-fleet/make_update_plan.py --version 0.2.1 --source-commit <commit> \
+     --sha256sums SHA256SUMS --runtime <runtime.tgz> --helpers <helpers.tar.gz> \
+     --from-source <installed-commit> --arg=--allow-project-migrations \
+     --arg=--allow-existing-browser-heartbeat --upload v0.2.1
+   ```
+
+A release without a plan shows "needs a manual upgrade" in Settings and is never installed on its own.
+
+## Signing, later
+
+Signed and notarized builds need the Apple Developer ID certificate and an App Store Connect API key as build secrets: `CSC_LINK`, `CSC_KEY_PASSWORD`, `APPLE_API_KEY`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`. With them, `--signed` builds switch to Squirrel.Mac and keep macOS permissions across updates.

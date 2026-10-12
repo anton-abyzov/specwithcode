@@ -1,0 +1,68 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--studio-font-sans);
+  --font-mono: var(--studio-font-mono);
+  --color-background: var(--studio-background);
+  --color-foreground: var(--studio-foreground);
+  --color-popover: var(--studio-popover);
+  --color-popover-foreground: var(--studio-popover-foreground);
+  --color-primary: var(--studio-primary);
+  --color-primary-foreground: var(--studio-primary-foreground);
+  --color-muted: var(--studio-muted);
+  --color-muted-foreground: var(--studio-muted-foreground);
+  --color-accent: var(--studio-accent);
+  --color-accent-foreground: var(--studio-accent-foreground);
+  --color-border: var(--studio-border);
+  --color-input: var(--studio-input);
+  --color-ring: var(--studio-ring);
+  --radius-sm: calc(var(--studio-radius) - 4px);
+  --radius-md: calc(var(--studio-radius) - 2px);
+  --radius-lg: var(--studio-radius);
+  --radius-xl: calc(var(--studio-radius) + 4px);
+  --radius-2xl: calc(var(--studio-radius) + 8px);
+}
+
+:host {
+  --studio-font-sans:
+    "DM Sans Variable", "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+    sans-serif;
+  --studio-font-mono:
+    "SF Mono", "SFMono-Regular", "JetBrains Mono", Consolas, "Liberation Mono", Menlo, monospace;
+  --studio-radius: 0.625rem;
+  --studio-background: white;
+  --studio-foreground: oklch(0.269 0 0);
+  --studio-popover: white;
+  --studio-popover-foreground: oklch(0.269 0 0);
+  --studio-primary: oklch(0.488 0.217 264);
+  --studio-primary-foreground: white;
+  --studio-muted: rgb(0 0 0 / 4%);
+  --studio-muted-foreground: oklch(0.556 0 0);
+  --studio-accent: rgb(0 0 0 / 4%);
+  --studio-accent-foreground: oklch(0.269 0 0);
+  --studio-border: rgb(0 0 0 / 8%);
+  --studio-input: rgb(0 0 0 / 10%);
+  --studio-ring: oklch(0.488 0.217 264);
+  color: var(--studio-foreground);
+  font-family: var(--studio-font-sans);
+}
+
+* {
+  box-sizing: border-box;
+  border-color: var(--studio-border);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--studio-ring) 72%, transparent);
+  outline-offset: 1px;
+}

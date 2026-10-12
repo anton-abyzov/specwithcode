@@ -1,0 +1,891 @@
+#!/usr/bin/env python3
+"""Update agent tests: temporary homes, a loopback fake GitHub API and a fake helper only.
+
+Run: cd scripts/studio-fleet && python3 -B test-update-agent.py
+Nothing here touches a real Studio home, launchd, GitHub or gh.
+"""
+import contextlib
+import datetime
+import fcntl
+import hashlib
+import http.server
+import io
+import json
+import os
+import pathlib
+import plistlib
+import re
+import subprocess
+import sys
+import tarfile
+import tempfile
+import threading
+import unittest
+from unittest import mock
+
+HERE = pathlib.Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+import update_agent  # noqa: E402
+import make_update_plan  # noqa: E402
+
+TOKEN = 'test-token-SHOULD-never-LEAK-0123456789abcdef'
+OLD_COMMIT = 'a' * 40
+NEW_COMMIT = 'b' * 40
+OTHER_COMMIT = 'c' * 40
+REPO = 'anton-abyzov/specwithcode'
+ROOT = 'studio-0.2.0-deployment-helpers-b95280f5334e'
+
+FAKE_HELPER = r'''
+import argparse, datetime, json, os, pathlib, sys
+home = pathlib.Path(os.environ['HOME'])
+control_path = home / 'fake-control.json'
+control = json.loads(control_path.read_text()) if control_path.exists() else {}
+with open(str(home / 'fake-calls.jsonl'), 'a') as log:
+    log.write(json.dumps({'argv': sys.argv[1:], 'cwd': os.getcwd(), 'env': sorted(os.environ)}) + '\n')
+parser = argparse.ArgumentParser()
+for flag in ['--identity', '--snapshot', '--prestate', '--archive', '--sha256', '--output']:
+    parser.add_argument(flag)
+parser.add_argument('--allow-project-migrations', action='store_true')
+parser.add_argument('--allow-existing-browser-heartbeat', action='store_true')
+args = parser.parse_args()
+if args.snapshot:
+    if control.get('snapshotFail'):
+        sys.stderr.write(control.get('snapshotError', 'AssertionError: Native work is not idle') + '\n')
+        sys.exit(1)
+    assert not os.path.exists(args.snapshot)
+    value = {'schemaVersion': 1, 'servicePid': control.get('pid', 4242),
+             'rows': {'counts': control.get('counts', {'projection_threads': 3}), 'hashes': {}, 'nativeWorkIdle': True},
+             'observedAt': datetime.datetime.now(datetime.timezone.utc).isoformat()}
+    pathlib.Path(args.snapshot).write_text(json.dumps(value))
+    print(json.dumps({'result': 'snapshotted'}))
+    sys.exit(0)
+prestate = json.loads(pathlib.Path(args.prestate).read_text())
+assert prestate['rows']['nativeWorkIdle'] is True
+assert pathlib.Path(args.archive).is_file() and not os.path.exists(args.output)
+if control.get('applyCrash'):
+    sys.stderr.write('Traceback (most recent call last):\nAssertionError: Protected rows or counts changed\n')
+    sys.exit(1)
+if control.get('applyFail'):
+    pathlib.Path(args.output).write_text(json.dumps({'result': 'update-failed'}))
+    print('helper-private-output-should-not-be-logged')
+    sys.exit(1)
+path = home / '.specweave-studio' / args.identity / 'installation.json'
+receipt = json.loads(path.read_text())
+receipt['version'] = control.get('newVersion', '0.2.0')
+receipt['sourceCommit'] = control.get('newCommit', 'b' * 40)
+path.write_text(json.dumps(receipt))
+pathlib.Path(args.output).write_text(json.dumps({'phase': 'verified', 'cookie': 'helper-private-receipt'}))
+print('helper-private-output-should-not-be-logged')
+'''
+
+
+def sha(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def tar_bytes(entries):
+    """entries: list of (name, bytes|None for dir, kind) where kind in file/dir/symlink."""
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode='w:gz') as tar:
+        for name, data, kind in entries:
+            info = tarfile.TarInfo(name)
+            if kind == 'dir':
+                info.type = tarfile.DIRTYPE
+                info.mode = 0o755
+                tar.addfile(info)
+            elif kind == 'symlink':
+                info.type = tarfile.SYMTYPE
+                info.linkname = data
+                tar.addfile(info)
+            else:
+                info.size = len(data)
+                info.mode = 0o755 if name.endswith('.py') else 0o644
+                tar.addfile(info, io.BytesIO(data))
+    return buffer.getvalue()
+
+
+class FakeGitHub(object):
+    def __init__(self):
+        self.releases = []
+        self.blobs = {}
+        self.requests = []
+        self.list_status = 200
+        self.lock = threading.Lock()
+        self.next_id = 100
+        fake = self
+
+        class Quiet(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def send(self, code, body=b'', headers=()):
+                self.send_response(code)
+                for key, value in headers:
+                    self.send_header(key, value)
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        class Api(Quiet):
+            def do_GET(self):
+                with fake.lock:
+                    fake.requests.append(('api', self.path, self.headers.get('Authorization'),
+                                          self.headers.get('Accept')))
+                if self.path == '/repos/%s/releases?per_page=30' % REPO:
+                    if fake.list_status != 200:
+                        return self.send(fake.list_status, b'{"message":"Not Found"}')
+                    return self.send(200, json.dumps(fake.releases).encode(), [('Content-Type', 'application/json')])
+                match = re.fullmatch(r'/repos/%s/releases/assets/(\d+)' % REPO, self.path)
+                if match and self.headers.get('Accept') == 'application/octet-stream':
+                    return self.send(302, b'', [('Location', fake.cdn_url + '/blob/' + match.group(1))])
+                self.send(404)
+
+        class Cdn(Quiet):
+            def do_GET(self):
+                with fake.lock:
+                    fake.requests.append(('cdn', self.path, self.headers.get('Authorization'), None))
+                match = re.fullmatch(r'/blob/(\d+)', self.path)
+                if match and int(match.group(1)) in fake.blobs:
+                    return self.send(200, fake.blobs[int(match.group(1))])
+                self.send(404)
+
+        self.api = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Api)
+        self.cdn = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Cdn)
+        self.api_url = 'http://127.0.0.1:%d' % self.api.server_address[1]
+        self.cdn_url = 'http://127.0.0.1:%d' % self.cdn.server_address[1]
+        for server in (self.api, self.cdn):
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    def close(self):
+        for server in (self.api, self.cdn):
+            server.shutdown()
+            server.server_close()
+
+    def asset(self, name, data, served=None):
+        self.next_id += 1
+        self.blobs[self.next_id] = data if served is None else served
+        return {'id': self.next_id, 'name': name, 'size': len(data if served is None else served),
+                'url': '%s/repos/%s/releases/assets/%d' % (self.api_url, REPO, self.next_id)}
+
+    def blob_requests(self):
+        return [request for request in self.requests if request[0] == 'cdn']
+
+    def add_release(self, version='0.2.0', tag=None, prerelease=True, draft=False, include_plan=True,
+                    from_sources=(OLD_COMMIT,), args=('--allow-project-migrations', '--allow-existing-browser-heartbeat'),
+                    plan_mutator=None, helper_entries=None, include_manifest=True, corrupt_runtime=False,
+                    manifest_mutator=None):
+        runtime_name = 'specweave-studio-%s-darwin-arm64.tgz' % version
+        helpers_name = ROOT + '.tar.gz'
+        runtime = b'fake runtime archive ' + version.encode()
+        files = {'scripts/studio-fleet/update.py': FAKE_HELPER.encode(),
+                 'scripts/studio-fleet/launcher.py': b'# fake launcher\n'}
+        if helper_entries is None:
+            helper_entries = [(ROOT, None, 'dir')] + [(ROOT + '/' + path, data, 'file') for path, data in files.items()]
+        helpers = tar_bytes(helper_entries)
+        manifest = {'archive': helpers_name, 'archiveSha256': sha(helpers),
+                    'files': [{'path': path, 'sha256': sha(data), 'bytes': len(data),
+                               'mode': 0o755 if path.endswith('update.py') else 0o644}
+                              for path, data in files.items()]}
+        if manifest_mutator:
+            manifest_mutator(manifest)
+        manifest_bytes = json.dumps(manifest).encode()
+        sums_text = ''.join('%s  %s\n' % (sha(data), name) for name, data in
+                            [(runtime_name, runtime), (helpers_name, helpers), (update_agent.MANIFEST_ASSET, manifest_bytes)])
+        sums = update_agent.parse_sums(sums_text.encode())
+        plan = make_update_plan.build_plan(version, NEW_COMMIT, sums, runtime_name, helpers_name, ROOT,
+                                           list(from_sources), list(args))
+        if plan_mutator:
+            plan_mutator(plan)
+        assets = [self.asset(runtime_name, runtime, served=(runtime + b'tampered') if corrupt_runtime else None),
+                  self.asset(helpers_name, helpers),
+                  self.asset(update_agent.SUMS_ASSET, sums_text.encode())]
+        if include_manifest:
+            assets.append(self.asset(update_agent.MANIFEST_ASSET, manifest_bytes))
+        if include_plan:
+            assets.append(self.asset(update_agent.PLAN_ASSET, json.dumps(plan).encode()))
+        release = {'tag_name': tag or 'v' + version, 'draft': draft, 'prerelease': prerelease,
+                   'body': 'Release notes ' + 'x' * 5000, 'published_at': '2026-10-01T00:00:00Z', 'assets': assets}
+        self.releases.append(release)
+        return {'release': release, 'plan': plan, 'runtime': runtime_name, 'runtimeSha': sha(runtime)}
+
+
+class AgentCase(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.home = pathlib.Path(temporary.name).resolve()
+        self.own = self.home / '.specweave-studio' / 'm4'
+        self.own.mkdir(parents=True)
+        self.updates = self.own / 'updates'
+        self.write_installation('0.1.4', OLD_COMMIT)
+        self.fake = FakeGitHub()
+        self.addCleanup(self.fake.close)
+        environment = {key: value for key, value in os.environ.items()
+                       if key not in ('GH_TOKEN', 'GITHUB_TOKEN', 'STUDIO_UPDATE_TOKEN')}
+        environment.update({'STUDIO_UPDATE_API_URL': self.fake.api_url, 'STUDIO_UPDATE_TOKEN': TOKEN,
+                            'STUDIO_UPDATE_HELPER_PYTHON': sys.executable})
+        patcher = mock.patch.dict(os.environ, environment, clear=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.gh = mock.patch.object(update_agent, 'find_gh_token', return_value=None)
+        self.gh_mock = self.gh.start()
+        self.addCleanup(self.gh.stop)
+        self.addCleanup(update_agent._REDACT.clear)
+        self.log = ''
+
+    def write_installation(self, version, commit):
+        receipt = {'schemaVersion': 1, 'identity': 'm4', 'studioHome': str(self.own),
+                   'stateDir': str(self.own / 'userdata'), 'version': version, 'sourceCommit': commit,
+                   'archiveSha256': 'd' * 64, 'release': str(self.home / 'release'), 'node': '/usr/bin/node',
+                   'port': 8319, 'service': {'label': 'com.specweave.studio.m4', 'domain': 'gui/501'}}
+        (self.own / 'installation.json').write_text(json.dumps(receipt))
+
+    def config(self, **values):
+        self.updates.mkdir(mode=0o700, exist_ok=True)
+        config = dict(update_agent.DEFAULT_CONFIG)
+        config.update(values)
+        (self.updates / 'config.json').write_text(json.dumps(config))
+
+    def control(self, **values):
+        (self.home / 'fake-control.json').write_text(json.dumps(values))
+
+    def run_agent(self, *extra):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = update_agent.main(['--identity', 'm4', '--home', str(self.home)] + list(extra))
+        self.log += out.getvalue() + err.getvalue()
+        return code
+
+    def state(self):
+        return json.loads((self.updates / 'state.json').read_text())
+
+    def calls(self):
+        path = self.home / 'fake-calls.jsonl'
+        return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+    def snapshot_calls(self):
+        return [call for call in self.calls() if '--snapshot' in call['argv']]
+
+    def apply_calls(self):
+        return [call for call in self.calls() if '--prestate' in call['argv']]
+
+    def backdate_baseline(self, minutes):
+        path = self.updates / 'snapshots' / 'baseline.json'
+        value = json.loads(path.read_text())
+        moment = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=minutes)
+        value['observedAt'] = moment.isoformat()
+        path.write_text(json.dumps(value))
+        return value['observedAt']
+
+    def assert_no_token_anywhere(self):
+        self.assertNotIn(TOKEN, self.log)
+        for path in self.home.rglob('*'):
+            if path.is_file() and not path.is_symlink():
+                self.assertNotIn(TOKEN.encode(), path.read_bytes(), str(path))
+
+
+class Selection(unittest.TestCase):
+    def releases(self):
+        return [{'tag_name': 'v0.3.0', 'draft': True, 'prerelease': False},
+                {'tag_name': 'v0.2.5', 'draft': False, 'prerelease': True},
+                {'tag_name': 'v0.2.1', 'draft': False, 'prerelease': False},
+                {'tag_name': 'v0.9.0-beta.1', 'draft': False, 'prerelease': False},
+                {'tag_name': 'nightly', 'draft': False, 'prerelease': False},
+                {'tag_name': 'v1.0', 'draft': False, 'prerelease': False},
+                {'tag_name': 'v0.1.3', 'draft': False, 'prerelease': False},
+                'not-a-release']
+
+    def test_plain_versions_count_on_both_tracks_whatever_the_github_flag(self):
+        installed = (0, 1, 4)
+        self.assertEqual(update_agent.select_release(self.releases(), 'preview', installed)['tag_name'], 'v0.2.5')
+        self.assertEqual(update_agent.select_release(self.releases(), 'stable', installed)['tag_name'], 'v0.2.5')
+
+    def test_drafts_nonsemver_and_older_versions_are_ignored(self):
+        self.assertIsNone(update_agent.select_release(self.releases(), 'preview', (0, 2, 5)))
+        self.assertIsNone(update_agent.select_release([{'tag_name': 'v0.1.3'}], 'preview', (0, 1, 4)))
+        self.assertIsNone(update_agent.select_release([{'tag_name': 'v0.1.4'}], 'preview', (0, 1, 4)))
+        self.assertIsNone(update_agent.select_release([{'tag_name': 'v0.3.0', 'draft': True}], 'preview', (0, 1, 4)))
+        self.assertEqual(update_agent.select_release([{'tag_name': 'v0.10.0'}, {'tag_name': 'v0.9.9'}],
+                                                     'stable', (0, 1, 4))['tag_name'], 'v0.10.0')
+
+
+class PlanPolicy(unittest.TestCase):
+    def plan(self, **upgrade):
+        base = {'fromSourceCommits': [OLD_COMMIT], 'entrypoint': update_agent.ENTRYPOINT,
+                'args': ['--allow-project-migrations']}
+        base.update(upgrade)
+        return {'schemaVersion': 1, 'product': 'SpecWeave Studio', 'version': '0.2.0', 'sourceCommit': NEW_COMMIT,
+                'service': {'platform': 'darwin-arm64',
+                            'runtime': {'asset': 'r.tgz', 'sha256': '1' * 64},
+                            'helpers': {'asset': 'h.tar.gz', 'sha256': '2' * 64, 'root': 'h'},
+                            'upgrades': [base]}}
+
+    def test_valid_plan_and_coverage(self):
+        plan = update_agent.validate_plan(self.plan(), '0.2.0')
+        self.assertEqual(update_agent.select_upgrade(plan, OLD_COMMIT), ['--allow-project-migrations'])
+        with self.assertRaises(update_agent.ManualRequired):
+            update_agent.select_upgrade(plan, OTHER_COMMIT)
+
+    def test_disallowed_args_entrypoints_and_versions_are_rejected(self):
+        for plan, version in [(self.plan(args=['--allow-project-migrations', '--force']), '0.2.0'),
+                              (self.plan(args=['--allow-project-migrations; rm -rf ~']), '0.2.0'),
+                              (self.plan(entrypoint='scripts/studio-fleet/install.py'), '0.2.0'),
+                              (self.plan(entrypoint='../update.py'), '0.2.0'),
+                              (self.plan(), '0.2.1')]:
+            with self.subTest(plan=plan['service']['upgrades'][0], version=version):
+                with self.assertRaisesRegex(update_agent.AgentError, 'Update plan was rejected'):
+                    update_agent.validate_plan(plan, version)
+        plan = self.plan()
+        plan['service']['helpers']['root'] = '..'
+        with self.assertRaises(update_agent.AgentError):
+            update_agent.validate_plan(plan, '0.2.0')
+
+
+class PassBehaviour(AgentCase):
+    def test_config_off_is_disabled_without_network_or_gh(self):
+        self.fake.add_release()
+        self.config(checkAutomatically=False)
+        self.assertEqual(self.run_agent(), 0)
+        self.assertEqual(self.state()['status'], 'disabled')
+        self.assertEqual(self.state()['installedVersion'], '0.1.4')
+        self.assertEqual(self.fake.requests, [])
+        self.gh_mock.assert_not_called()
+
+    def test_missing_plan_is_manual_required(self):
+        self.fake.add_release(include_plan=False)
+        self.assertEqual(self.run_agent(), 0)
+        state = self.state()
+        self.assertEqual(state['status'], 'manual-required')
+        self.assertIn('manual upgrade', state['message'])
+        self.assertEqual(state['availableVersion'], '0.2.0')
+        self.assertFalse((self.updates / 'helpers').exists())
+        # Not due again: the next pass reuses the saved result without network.
+        before = len(self.fake.requests)
+        self.run_agent()
+        self.assertEqual(self.state()['status'], 'manual-required')
+        self.assertEqual(len(self.fake.requests), before)
+
+    def test_uncovered_installed_commit_is_manual_required(self):
+        self.fake.add_release(from_sources=(OTHER_COMMIT,))
+        self.run_agent()
+        state = self.state()
+        self.assertEqual(state['status'], 'manual-required')
+        self.assertIn('manual upgrade', state['message'])
+        self.assertEqual(len(self.fake.blob_requests()), 1)  # Only the plan was fetched.
+
+    def test_disallowed_arg_and_entrypoint_are_rejected_before_downloading(self):
+        def bad_arg(plan):
+            plan['service']['upgrades'][0]['args'].append('--skip-verification')
+
+        def bad_entry(plan):
+            plan['service']['upgrades'][0]['entrypoint'] = 'scripts/studio-fleet/install.py'
+
+        for mutator in (bad_arg, bad_entry):
+            with self.subTest(mutator=mutator.__name__):
+                self.fake.releases = []
+                self.fake.requests = []
+                if (self.updates / 'state.json').exists():
+                    (self.updates / 'state.json').unlink()
+                self.fake.add_release(plan_mutator=mutator)
+                self.assertEqual(self.run_agent(), 1)
+                state = self.state()
+                self.assertEqual(state['status'], 'error')
+                self.assertIn('Update plan was rejected', state['message'])
+                self.assertEqual(len(self.fake.blob_requests()), 1)
+                self.assertFalse((self.updates / 'helpers').exists())
+                self.assertEqual(self.calls(), [])
+
+    def test_sha_mismatch_is_rejected_and_nothing_is_extracted(self):
+        self.fake.add_release(corrupt_runtime=True)
+        self.assertEqual(self.run_agent(), 1)
+        state = self.state()
+        self.assertEqual(state['status'], 'error')
+        self.assertIn('checksum', state['message'])
+        self.assertIsNone(state['downloadedVersion'])
+        self.assertFalse((self.updates / 'helpers' / '0.2.0').exists())
+        self.assertFalse((self.updates / 'downloads' / '0.2.0' / 'verified.json').exists())
+        self.assertFalse((self.updates / 'downloads' / '0.2.0' / 'specweave-studio-0.2.0-darwin-arm64.tgz').exists())
+        self.assertEqual(self.calls(), [])
+        # A rejected download is not retried until the next check.
+        blobs = len(self.fake.blob_requests())
+        self.run_agent()
+        self.assertEqual(self.state()['status'], 'error')
+        self.assertEqual(len(self.fake.blob_requests()), blobs)
+
+    def test_tarball_traversal_symlink_and_unindexed_files_are_rejected(self):
+        good = [(ROOT + '/scripts/studio-fleet/update.py', FAKE_HELPER.encode(), 'file'),
+                (ROOT + '/scripts/studio-fleet/launcher.py', b'# fake launcher\n', 'file')]
+        cases = [('traversal', good + [(ROOT + '/../../evil.py', b'owned', 'file')], False),
+                 ('absolute', good + [('/tmp/evil.py', b'owned', 'file')], False),
+                 ('outside-root', good + [('other/evil.py', b'owned', 'file')], False),
+                 ('symlink', good + [(ROOT + '/scripts/link', '../../..', 'symlink')], False),
+                 ('unindexed', good + [(ROOT + '/scripts/extra.py', b'extra', 'file')], True)]
+        for name, entries, with_manifest in cases:
+            with self.subTest(case=name):
+                self.fake.releases = []
+                for path in [self.updates / 'state.json']:
+                    if path.exists():
+                        path.unlink()
+                if (self.updates / 'downloads').exists():
+                    update_agent.remove_path(self.updates / 'downloads', self.home)
+                self.fake.add_release(helper_entries=entries, include_manifest=with_manifest)
+                self.assertEqual(self.run_agent(), 1)
+                state = self.state()
+                self.assertEqual(state['status'], 'error')
+                self.assertIn('Helper archive', state['message'])
+                self.assertFalse((self.updates / 'helpers' / '0.2.0').exists())
+                self.assertEqual([p.name for p in (self.updates / 'helpers').iterdir()], [])
+                self.assertFalse((self.home / 'evil.py').exists())
+                self.assertFalse((self.updates / 'evil.py').exists())
+                self.assertEqual(self.calls(), [])
+
+    def test_manifest_hash_mismatch_is_rejected(self):
+        def tamper(manifest):
+            manifest['files'][0]['sha256'] = '0' * 64
+        self.fake.add_release(manifest_mutator=tamper)
+        self.assertEqual(self.run_agent(), 1)
+        self.assertIn('does not match the manifest', self.state()['message'])
+        self.assertFalse((self.updates / 'helpers' / '0.2.0').exists())
+
+    def test_download_off_reports_available(self):
+        self.fake.add_release()
+        self.config(downloadInBackground=False)
+        self.assertEqual(self.run_agent(), 0)
+        state = self.state()
+        self.assertEqual(state['status'], 'available')
+        self.assertEqual(state['availableVersion'], '0.2.0')
+        self.assertEqual(state['availableTag'], 'v0.2.0')
+        self.assertEqual(len(state['availableNotes']), 4000)
+        self.assertEqual(state['availablePublishedAt'], '2026-10-01T00:00:00Z')
+        self.assertIsNone(state['downloadedVersion'])
+        self.assertEqual(len(self.fake.blob_requests()), 1)  # Plan only.
+
+    def test_stable_channel_takes_a_plain_version_flagged_prerelease(self):
+        self.fake.add_release(prerelease=True)
+        self.config(channel='stable')
+        self.run_agent()
+        self.assertEqual(self.state()['availableVersion'], '0.2.0')
+
+    def test_quiet_logic_baseline_reset_wait_and_apply(self):
+        info = self.fake.add_release()
+        self.config(quietMinutes=10)
+        self.control(counts={'projection_threads': 3})
+        self.assertEqual(self.run_agent(), 0)
+        state = self.state()
+        self.assertEqual(state['status'], 'waiting-for-quiet')
+        self.assertEqual(state['downloadedVersion'], '0.2.0')
+        self.assertIsNotNone(state['quietSince'])
+        self.assertTrue((self.updates / 'snapshots' / 'baseline.json').is_file())
+        self.assertEqual(len(self.snapshot_calls()), 1)
+        call = self.snapshot_calls()[0]
+        self.assertTrue(call['cwd'].endswith(ROOT + '/scripts/studio-fleet'))
+        # Exactly the documented helper environment. The helper's own Python may add LC_CTYPE
+        # (locale coercion) and, for the macOS system Python, __CF_USER_TEXT_ENCODING.
+        self.assertEqual(set(call['env']) - {'LC_CTYPE', '__CF_USER_TEXT_ENCODING'}, {'HOME', 'LANG', 'PATH'})
+        # Changed counts reset the baseline even after the quiet period elapsed.
+        self.backdate_baseline(11)
+        self.control(counts={'projection_threads': 4})
+        self.run_agent()
+        state = self.state()
+        self.assertEqual(state['status'], 'waiting-for-quiet')
+        reset_since = state['quietSince']
+        self.assertEqual(self.apply_calls(), [])
+        self.assertLess(datetime.datetime.now(datetime.timezone.utc) - update_agent.parse_time(reset_since),
+                        datetime.timedelta(minutes=1))
+        # Unchanged but not yet quiet long enough: keep waiting and keep the original baseline.
+        self.run_agent()
+        self.assertEqual(self.state()['status'], 'waiting-for-quiet')
+        self.assertEqual(self.state()['quietSince'], reset_since)
+        self.assertEqual(self.apply_calls(), [])
+        self.assertEqual(len(list((self.updates / 'snapshots').iterdir())), 1)
+        # Unchanged for quietMinutes: apply with the newest snapshot and the plan's args.
+        self.backdate_baseline(11)
+        self.assertEqual(self.run_agent(), 0)
+        applies = self.apply_calls()
+        self.assertEqual(len(applies), 1)
+        argv = applies[0]['argv']
+        self.assertEqual(argv[:2], ['--identity', 'm4'])
+        self.assertTrue(argv[argv.index('--archive') + 1].endswith(info['runtime']))
+        self.assertEqual(argv[argv.index('--sha256') + 1], info['runtimeSha'])
+        self.assertEqual(argv[-2:], ['--allow-project-migrations', '--allow-existing-browser-heartbeat'])
+        prestate = json.loads(pathlib.Path(argv[argv.index('--prestate') + 1]).read_text())
+        self.assertEqual(prestate['rows']['counts'], {'projection_threads': 4})
+        state = self.state()
+        self.assertEqual(state['status'], 'installed')
+        self.assertEqual(state['installedVersion'], '0.2.0')
+        self.assertEqual(state['installedSourceCommit'], NEW_COMMIT)
+        self.assertEqual(state['lastInstall']['result'], 'updated')
+        self.assertEqual(state['lastInstall']['version'], '0.2.0')
+        self.assertTrue(pathlib.Path(state['lastInstall']['receipt']).is_file())
+        self.assertIsNone(state['quietSince'])
+        self.assertFalse((self.updates / 'downloads' / '0.2.0').exists())
+        self.assertFalse((self.updates / 'helpers' / '0.2.0').exists())
+        self.assertNotIn('helper-private', self.log)
+        # The next pass settles to up-to-date.
+        self.run_agent()
+        self.assertEqual(self.state()['status'], 'up-to-date')
+        self.assertEqual(len(self.apply_calls()), 1)
+        self.assert_no_token_anywhere()
+
+    def test_limit_checks_of_a_waiting_thread_do_not_reset_the_quiet_time(self):
+        self.fake.add_release()
+        self.config(quietMinutes=10)
+        counts = {'projection_threads': 3, 'orchestration_v2_projection_messages': 46,
+                  'orchestration_events': 2381, 'orchestration_command_receipts': 1113}
+        self.control(counts=counts)
+        self.run_agent()
+        since = self.state()['quietSince']
+        # A thread waiting on a usage limit is checked every five minutes: two more log rows, no work.
+        self.backdate_baseline(11)
+        backdated = json.loads((self.updates / 'snapshots' / 'baseline.json').read_text())['observedAt']
+        self.assertNotEqual(backdated, since)
+        self.control(counts=dict(counts, orchestration_events=2383, orchestration_command_receipts=1115))
+        self.assertEqual(self.run_agent(), 0)
+        self.assertEqual(len(self.apply_calls()), 1)
+        self.assertEqual(self.state()['status'], 'installed')
+
+    def test_a_new_message_still_resets_the_quiet_time(self):
+        self.fake.add_release()
+        self.config(quietMinutes=10)
+        counts = {'projection_threads': 3, 'orchestration_v2_projection_messages': 46,
+                  'orchestration_events': 2381, 'orchestration_command_receipts': 1113}
+        self.control(counts=counts)
+        self.run_agent()
+        self.backdate_baseline(11)
+        self.control(counts=dict(counts, orchestration_v2_projection_messages=47, orchestration_events=2390))
+        self.run_agent()
+        self.assertEqual(self.state()['status'], 'waiting-for-quiet')
+        self.assertEqual(self.apply_calls(), [])
+
+    def test_service_restart_between_snapshots_resets_the_baseline(self):
+        self.fake.add_release()
+        self.control(pid=1)
+        self.run_agent()
+        self.backdate_baseline(30)
+        self.control(pid=2)
+        self.run_agent()
+        self.assertEqual(self.state()['status'], 'waiting-for-quiet')
+        self.assertEqual(self.apply_calls(), [])
+
+    def test_nonidle_snapshot_failure_waits_and_drops_baseline(self):
+        self.fake.add_release()
+        self.run_agent()
+        self.assertTrue((self.updates / 'snapshots' / 'baseline.json').exists())
+        self.backdate_baseline(30)
+        self.control(snapshotFail=True)
+        self.assertEqual(self.run_agent(), 0)
+        state = self.state()
+        self.assertEqual(state['status'], 'waiting-for-quiet')
+        self.assertEqual(state['message'], 'Waiting for running tasks, queued messages and open questions to finish')
+        self.assertIsNone(state['quietSince'])
+        self.assertEqual(list((self.updates / 'snapshots').iterdir()), [])
+        self.assertEqual(self.apply_calls(), [])
+        self.assertNotIn('Native work is not idle', self.log)
+
+    def test_snapshot_refusal_names_what_is_still_running(self):
+        self.fake.add_release()
+        cases = (('AssertionError: Owned service has unexpected descendants',
+                  'Waiting for open Studio terminals and agent processes to close'),
+                 # A missing supervisor is not something the person can close.
+                 ('AssertionError: Owned service has unexpected or missing descendants',
+                  update_agent.WAITING),
+                 ('Traceback (most recent call last):\nOSError: database is locked', update_agent.WAITING))
+        for error, message in cases:
+            self.control(snapshotFail=True, snapshotError=error)
+            self.assertEqual(self.run_agent(), 0)
+            self.assertEqual(self.state()['status'], 'waiting-for-quiet')
+            self.assertEqual(self.state()['message'], message)
+            # The helper's output is read, never kept or logged.
+            self.assertEqual(list((self.updates / 'snapshots').iterdir()), [])
+            self.assertNotIn('descendants', self.log)
+            self.assertNotIn('database is locked', self.log)
+
+    def test_install_request_skips_wait_once(self):
+        self.fake.add_release()
+        self.config(installAutomatically=False, installRequestedAt='2026-10-10T10:00:00Z', quietMinutes=60)
+        # Non-idle: the request stays pending.
+        self.control(snapshotFail=True)
+        self.run_agent()
+        self.assertEqual(self.state()['status'], 'waiting-for-quiet')
+        self.assertIsNone(self.state()['handledInstallRequestAt'])
+        # Idle but failing apply: one immediate attempt, then the request is honoured.
+        self.control(applyFail=True)
+        self.assertEqual(self.run_agent(), 1)
+        state = self.state()
+        self.assertEqual(state['status'], 'error')
+        self.assertEqual(state['handledInstallRequestAt'], '2026-10-10T10:00:00Z')
+        self.assertEqual(state['lastInstall']['result'], 'failed')
+        self.assertEqual(state['installedVersion'], '0.1.4')
+        self.assertEqual(len(self.apply_calls()), 1)
+        self.assertNotIn('helper-private', self.log)
+        # Same request again: not re-applied.
+        self.run_agent()
+        self.assertEqual(len(self.apply_calls()), 1)
+        self.assertEqual(self.state()['status'], 'downloaded')
+        # A new request installs immediately without a quiet baseline.
+        self.control()
+        self.config(installAutomatically=False, installRequestedAt='2026-10-10T11:00:00Z', quietMinutes=60)
+        self.run_agent()
+        state = self.state()
+        self.assertEqual(state['status'], 'installed')
+        self.assertEqual(state['handledInstallRequestAt'], '2026-10-10T11:00:00Z')
+        self.assertEqual(len(self.apply_calls()), 2)
+
+    def test_failed_automatic_install_is_not_retried_automatically(self):
+        self.fake.add_release()
+        self.config(quietMinutes=0)
+        self.control(applyFail=True)
+        self.run_agent()
+        self.run_agent()
+        self.assertEqual(len(self.apply_calls()), 1)
+        self.assertEqual(self.state()['status'], 'error')
+        self.run_agent()
+        self.assertEqual(len(self.apply_calls()), 1)
+        self.assertIn('Install now', self.state()['message'])
+
+    def test_check_request_is_honoured_once(self):
+        self.fake.add_release()
+        self.config(checkAutomatically=False, downloadInBackground=False, checkRequestedAt='2026-10-10T09:00:00Z')
+        self.run_agent()
+        state = self.state()
+        self.assertEqual(state['status'], 'available')
+        self.assertEqual(state['handledCheckRequestAt'], '2026-10-10T09:00:00Z')
+        lists = [r for r in self.fake.requests if r[1].endswith('per_page=30')]
+        self.assertEqual(len(lists), 1)
+        self.run_agent()
+        self.assertEqual(self.state()['status'], 'disabled')
+        self.assertEqual(len([r for r in self.fake.requests if r[1].endswith('per_page=30')]), 1)
+        # A recent automatic check is not repeated, but a new request is.
+        self.config(checkAutomatically=True, downloadInBackground=False, checkRequestedAt='2026-10-10T09:00:00Z')
+        self.run_agent()
+        self.assertEqual(len([r for r in self.fake.requests if r[1].endswith('per_page=30')]), 1)
+        self.config(checkAutomatically=True, downloadInBackground=False, checkRequestedAt='2026-10-10T09:30:00Z')
+        self.run_agent()
+        self.assertEqual(len([r for r in self.fake.requests if r[1].endswith('per_page=30')]), 2)
+
+    def test_token_is_sent_only_to_api_and_never_leaks(self):
+        self.fake.add_release()
+        self.config(quietMinutes=0)
+        self.run_agent()
+        self.run_agent()
+        self.assertEqual(self.state()['status'], 'installed')
+        api = [r for r in self.fake.requests if r[0] == 'api']
+        self.assertTrue(api and all(r[2] == 'Bearer ' + TOKEN for r in api))
+        self.assertTrue(self.fake.blob_requests())
+        self.assertTrue(all(r[2] is None for r in self.fake.blob_requests()))
+        # A refused request with a token reports access without the token.
+        self.fake.list_status = 401
+        self.config(checkRequestedAt='2026-10-10T12:00:00Z')
+        self.assertEqual(self.run_agent(), 1)
+        self.assertIn('refused access', self.state()['message'])
+        self.assert_no_token_anywhere()
+        agent = update_agent.Agent(self.home, 'm4', True, lambda line: None)
+        agent.config = dict(update_agent.DEFAULT_CONFIG)
+        with self.assertRaises(update_agent.AgentError) as caught:
+            agent.fetch_bytes(self.fake.api_url + '/repos/%s/releases?per_page=30' % REPO, 'application/json', 1000)
+        self.assertNotIn(TOKEN, str(caught.exception))
+        self.assertNotIn(TOKEN, repr(caught.exception.args))
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertNotIn(TOKEN, update_agent.redact('leak ' + TOKEN))
+
+    def test_unexpected_failure_text_is_redacted(self):
+        self.fake.add_release()
+
+        def explode(*args, **kwargs):
+            raise RuntimeError('boom ' + TOKEN)
+        with mock.patch.object(update_agent.Agent, 'check', explode):
+            self.assertEqual(self.run_agent(), 1)
+        self.assertIn('Unexpected updater failure (RuntimeError)', self.state()['message'])
+        self.assert_no_token_anywhere()
+
+    def test_no_token_private_repo_asks_for_gh_login(self):
+        os.environ.pop('STUDIO_UPDATE_TOKEN')
+        self.fake.list_status = 404
+        self.assertEqual(self.run_agent(), 1)
+        state = self.state()
+        self.assertEqual(state['status'], 'error')
+        self.assertEqual(state['message'], update_agent.SIGN_IN)
+        self.gh_mock.assert_called_once()
+        self.assertTrue(all(r[2] is None for r in self.fake.requests))
+
+    def test_lock_prevents_concurrent_passes(self):
+        self.fake.add_release()
+        self.updates.mkdir(mode=0o700)
+        holder = os.open(str(self.updates / 'agent.lock'), os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.assertEqual(self.run_agent(), 0)
+            self.assertEqual(self.log, '')
+            self.assertFalse((self.updates / 'state.json').exists())
+            self.assertEqual(self.fake.requests, [])
+        finally:
+            os.close(holder)
+        self.run_agent()
+        self.assertTrue((self.updates / 'state.json').exists())
+
+    def test_symlinked_updates_folder_is_refused(self):
+        outside = self.home / 'outside'
+        outside.mkdir()
+        self.updates.symlink_to(outside, target_is_directory=True)
+        self.assertEqual(self.run_agent(), 1)
+        self.assertEqual(list(outside.iterdir()), [])
+        self.assertIn('symlink', self.log)
+
+    def test_invalid_config_is_an_error_without_network(self):
+        self.config(installAutomatically='yes')
+        self.assertEqual(self.run_agent(), 1)
+        self.assertEqual(self.state()['status'], 'error')
+        self.assertEqual(self.fake.requests, [])
+
+    def test_helper_crash_before_its_receipt_leaves_a_receipt_with_the_cause(self):
+        self.fake.add_release()
+        self.config(installAutomatically=False, installRequestedAt='2026-10-10T10:00:00Z', quietMinutes=60)
+        self.control(applyCrash=True)
+        self.assertEqual(self.run_agent(), 1)
+        state = self.state()
+        self.assertEqual(state['status'], 'error')
+        self.assertIn('See the update receipt', state['message'])
+        receipt = pathlib.Path(state['lastInstall']['receipt'])
+        self.assertTrue(receipt.is_file())
+        value = json.loads(receipt.read_text())
+        self.assertEqual(value['result'], 'update-failed')
+        self.assertEqual(value['phase'], 'preflight')
+        self.assertIn('Protected rows or counts changed', value['stderrTail'])
+        log = pathlib.Path(value['helperLog'])
+        self.assertEqual(log, receipt.with_name(receipt.stem + '.log'))
+        self.assertEqual(log.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(receipt.stat().st_mode & 0o777, 0o600)
+        self.assertNotIn('Protected rows', self.log)
+
+    def test_helper_output_is_kept_beside_its_own_receipt_not_in_agent_log(self):
+        self.fake.add_release()
+        self.config(installAutomatically=False, installRequestedAt='2026-10-10T10:00:00Z', quietMinutes=60)
+        self.control(applyFail=True)
+        self.run_agent()
+        receipt = pathlib.Path(self.state()['lastInstall']['receipt'])
+        self.assertEqual(json.loads(receipt.read_text()), {'result': 'update-failed'})
+        self.assertIn('helper-private-output', receipt.with_name(receipt.stem + '.log').read_text())
+        self.assertNotIn('helper-private', self.log)
+
+    def test_interrupted_install_is_recorded_not_retried(self):
+        self.fake.add_release()
+        self.config(quietMinutes=0)
+        self.run_agent()
+        state = self.state()
+        state['status'] = 'installing'
+        (self.updates / 'state.json').write_text(json.dumps(state))
+        (self.updates / 'install-in-progress.json').write_text(json.dumps(
+            {'version': '0.2.0', 'receipt': str(self.updates / 'receipts' / 'x.json'), 'at': 'now'}))
+        self.run_agent()
+        self.assertEqual(self.state()['status'], 'error')
+        self.assertEqual(self.state()['lastInstall']['result'], 'failed')
+        self.run_agent()
+        self.assertEqual(self.apply_calls(), [])
+
+    def test_leftovers_of_a_manual_install_are_cleaned_on_the_next_pass(self):
+        # 0.2.0 was installed by hand after the agent's own install failed.
+        self.write_installation('0.2.0', OLD_COMMIT)
+        for parent in ('downloads', 'helpers'):
+            for version in ('0.1.4', '0.2.0', '0.3.0'):
+                folder = self.updates / parent / version
+                folder.mkdir(parents=True)
+                (folder / 'payload').write_text('x')
+        (self.updates / 'downloads' / '.stage-abc').mkdir()
+        self.config(checkAutomatically=False)
+        self.assertEqual(self.run_agent(), 0)
+        self.assertEqual(self.state()['status'], 'disabled')
+        for parent in ('downloads', 'helpers'):
+            self.assertEqual(sorted(p.name for p in (self.updates / parent).iterdir()), ['0.3.0'])
+
+    def test_status_subcommand_prints_state(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            update_agent.main(['--identity', 'm4', '--home', str(self.home), '--status'])
+        synthesized = json.loads(out.getvalue())
+        self.assertEqual(synthesized['installedVersion'], '0.1.4')
+        self.assertEqual(synthesized['status'], 'up-to-date')
+        self.fake.add_release(include_plan=False)
+        self.run_agent()
+        result = subprocess.run([sys.executable, '-B', str(HERE / 'update_agent.py'), '--identity', 'm4',
+                                 '--home', str(self.home), '--status'], capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(json.loads(result.stdout)['status'], 'manual-required')
+
+
+class LaunchAgent(AgentCase):
+    def test_install_is_idempotent_and_uninstall_removes_plist(self):
+        calls = []
+        loaded = {'value': False}
+
+        def fake_launchctl(args):
+            calls.append(list(args))
+            if args[0] == 'print':
+                return 0 if loaded['value'] else 113
+            if args[0] == 'bootstrap':
+                loaded['value'] = True
+            if args[0] == 'bootout':
+                loaded['value'] = False
+            return 0
+
+        with mock.patch.object(update_agent, 'launchctl', fake_launchctl), \
+                mock.patch.object(update_agent, 'current_uid', return_value=501):
+            self.assertEqual(self.run_agent('--install-launch-agent'), 0)
+            label = 'com.specweave.studio.m4.updater'
+            self.assertIn('"result": "installed"', self.log)
+            plist_path = self.home / 'Library' / 'LaunchAgents' / (label + '.plist')
+            content = plistlib.loads(plist_path.read_bytes())
+            script = self.home / '.local/share/specweave-studio/updater/update_agent.py'
+            self.assertEqual(content['ProgramArguments'], ['/usr/bin/python3', str(script), '--identity', 'm4'])
+            self.assertEqual(content['StartInterval'], 600)
+            self.assertTrue(content['RunAtLoad'] and content['LowPriorityIO'])
+            self.assertEqual(content['ProcessType'], 'Background')
+            self.assertEqual(content['StandardOutPath'], str(self.updates / 'agent.log'))
+            self.assertEqual(content['WorkingDirectory'], str(self.updates))
+            self.assertEqual(script.read_bytes(), (HERE / 'update_agent.py').read_bytes())
+            self.assertEqual(oct(script.parent.stat().st_mode & 0o777), '0o700')
+            self.assertIn(['bootstrap', 'gui/501', str(plist_path)], calls)
+            self.log = ''
+            self.assertEqual(self.run_agent('--install-launch-agent'), 0)
+            self.assertIn('"result": "unchanged"', self.log)
+            self.assertEqual(len([c for c in calls if c[0] == 'bootstrap']), 1)
+            self.assertEqual(self.run_agent('--uninstall-launch-agent'), 0)
+            self.assertFalse(plist_path.exists())
+            self.assertIn(['bootout', 'gui/501/' + label], calls)
+
+
+class PlanGenerator(unittest.TestCase):
+    def test_cli_writes_a_valid_plan_and_rejects_bad_input(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            sums = root / 'SHA256SUMS'
+            sums.write_text('%s  specweave-studio-0.2.0-darwin-arm64.tgz\n%s  %s.tar.gz\n' % ('1' * 64, '2' * 64, ROOT))
+            output = root / 'studio-update.json'
+            base = [sys.executable, '-B', str(HERE / 'make_update_plan.py'), '--version', '0.2.0',
+                    '--source-commit', NEW_COMMIT, '--sha256sums', str(sums),
+                    '--runtime', 'specweave-studio-0.2.0-darwin-arm64.tgz', '--helpers', ROOT + '.tar.gz',
+                    '--from-source', OLD_COMMIT, '--from-source', OTHER_COMMIT, '--output', str(output)]
+            result = subprocess.run(base + ['--arg', '--allow-project-migrations',
+                                            '--arg', '--allow-existing-browser-heartbeat'],
+                                    capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            plan = json.loads(output.read_text())
+            update_agent.validate_plan(plan, '0.2.0')
+            self.assertEqual(plan['service']['runtime']['sha256'], '1' * 64)
+            self.assertEqual(plan['service']['helpers'], {'asset': ROOT + '.tar.gz', 'sha256': '2' * 64, 'root': ROOT})
+            self.assertEqual(plan['service']['upgrades'][0]['fromSourceCommits'], [OLD_COMMIT, OTHER_COMMIT])
+            self.assertEqual(plan['service']['upgrades'][0]['args'],
+                             ['--allow-project-migrations', '--allow-existing-browser-heartbeat'])
+            self.assertEqual(update_agent.select_upgrade(plan, OTHER_COMMIT)[0], '--allow-project-migrations')
+            output.unlink()
+            for extra in (['--arg', '--force'], ['--runtime', 'missing.tgz'], ['--version', '0.2.x']):
+                with self.subTest(extra=extra):
+                    result = subprocess.run(base + extra, capture_output=True, text=True, timeout=30)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse(output.exists())
+            result = subprocess.run(base + ['--upload', 'v0.3.0'], capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 2)  # Tag mismatch is refused before any gh call.
+            self.assertIn('Upload tag must be v0.2.0', result.stderr)
+
+
+if __name__ == '__main__':
+    unittest.main()

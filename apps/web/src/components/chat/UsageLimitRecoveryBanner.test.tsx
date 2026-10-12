@@ -1,0 +1,239 @@
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import {
+  CommandId,
+  ProviderInstanceId,
+  RunId,
+  type OrchestrationV2LimitRecovery,
+} from "@specweave-studio/contracts";
+import {
+  formatResetIn,
+  usageApproachingBannerItem,
+  usageLimitRecoveryBannerItem,
+} from "./UsageLimitRecoveryBanner";
+vi.mock("../ui/button", () => ({ Button: "button" }));
+let renderer: ReactTestRenderer | undefined;
+beforeEach(() => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("window", { setTimeout, clearTimeout });
+});
+afterEach(async () => {
+  if (renderer) await act(() => renderer!.unmount());
+  renderer = undefined;
+  vi.unstubAllGlobals();
+});
+const runId = RunId.make("failed");
+const future = "2099-10-15T00:00:00.000Z";
+const props = {
+  canCheck: true,
+  runId,
+  resetAt: future,
+  stoppedAt: "2026-10-08T00:00:00.000Z",
+  snoozedUntil: null,
+  recovery: null,
+};
+const recovery: OrchestrationV2LimitRecovery = {
+  runId,
+  resetAt: future,
+  autoResume: false,
+  requestId: CommandId.make("choice"),
+};
+const button = (text: string) =>
+  renderer!.root.findAllByType("button").find((node) => node.children.join("") === text)!;
+it.each([null, "2026-10-01T00:00:00.000Z", future])(
+  "checks permission even when reset is %s without enabling auto-resume",
+  async (resetAt) => {
+    const change = vi.fn().mockResolvedValue(undefined);
+    const item = usageLimitRecoveryBannerItem({ ...props, resetAt, onChange: change });
+    await act(() => {
+      renderer = create(<>{item.actions}</>);
+    });
+    await act(async () => button("Check now").props.onClick());
+    expect(change).toHaveBeenCalledWith({ runId, resetAt, checkNow: true });
+    expect(button("Resume when available")).toBeDefined();
+  },
+);
+it("arms and cancels explicitly, renders fresh permission without claiming a retry happened", async () => {
+  const change = vi.fn().mockResolvedValue(undefined);
+  const ready = {
+    ...recovery,
+    availability: {
+      checkedAt: "2026-10-08T01:00:00.000Z",
+      retryAt: "2026-10-08T01:05:00.000Z",
+      threadUpdatedAt: "2026-10-08T01:00:00.000Z",
+      status: "allowed" as const,
+      affinity: {
+        instanceId: ProviderInstanceId.make("codex"),
+        continuationKey: "opaque",
+        quotaPoolId: "opaque",
+      },
+    },
+  };
+  await act(() => {
+    renderer = create(
+      <>{usageLimitRecoveryBannerItem({ ...props, recovery: ready, onChange: change }).actions}</>,
+    );
+  });
+  expect(renderer!.root.findByProps({ role: "status" }).children.join("")).toContain(
+    "Choose Resume when available",
+  );
+  await act(async () => button("Resume when available").props.onClick());
+  expect(change).toHaveBeenCalledWith({ runId, resetAt: future, autoResume: true });
+  await act(() =>
+    renderer!.update(
+      <>
+        {
+          usageLimitRecoveryBannerItem({
+            ...props,
+            recovery: { ...ready, autoResume: true },
+            onChange: change,
+          }).actions
+        }
+      </>,
+    ),
+  );
+  await act(async () => button("Cancel auto-resume").props.onClick());
+  expect(change).toHaveBeenLastCalledWith({ runId, resetAt: future, autoResume: false });
+});
+it("shows denial and request errors while disabling duplicate checks", async () => {
+  const change = vi
+    .fn()
+    .mockRejectedValue(new Error("Permission to edit this thread was revoked."));
+  await act(() => {
+    renderer = create(<>{usageLimitRecoveryBannerItem({ ...props, onChange: change }).actions}</>);
+  });
+  await act(async () => button("Check now").props.onClick());
+  expect(renderer!.root.findByProps({ role: "alert" }).children.join("")).toContain("revoked");
+  await act(() =>
+    renderer!.update(
+      <>
+        {
+          usageLimitRecoveryBannerItem({
+            ...props,
+            recovery: { ...recovery, checkNow: true },
+            onChange: change,
+          }).actions
+        }
+      </>,
+    ),
+  );
+  expect(button("Check requested").props.disabled).toBe(true);
+});
+it("preserves reset scheduling for other providers", () => {
+  expect(
+    usageLimitRecoveryBannerItem({
+      ...props,
+      canCheck: false,
+      resetAt: null,
+      onChange: async () => {},
+    }).actions,
+  ).toBeNull();
+});
+it("offers to continue the stopped turn with another ready provider", async () => {
+  const change = vi.fn().mockResolvedValue(undefined);
+  const onContinue = vi.fn().mockResolvedValue(undefined);
+  const item = usageLimitRecoveryBannerItem({
+    ...props,
+    canCheck: false,
+    resetAt: null,
+    onChange: change,
+    fallback: { label: "Codex", model: "GPT-6", automatic: false, onContinue },
+  });
+  await act(() => {
+    renderer = create(<>{item.actions}</>);
+  });
+  // No reset time and no check: the provider switch is the only way forward.
+  expect(button("Resume at reset")).toBeUndefined();
+  await act(async () => button("Continue with Codex").props.onClick());
+  expect(onContinue).toHaveBeenCalledOnce();
+  expect(change).not.toHaveBeenCalled();
+  await act(() =>
+    renderer!.update(
+      <>
+        {
+          usageLimitRecoveryBannerItem({
+            ...props,
+            onChange: change,
+            fallback: { label: "Codex", model: "GPT-6", automatic: true, onContinue },
+          }).description
+        }
+      </>,
+    ),
+  );
+  expect(text()).toContain("Continuing with Codex by project rule");
+});
+const text = () => (renderer!.toJSON() as unknown as string[] | string).toString();
+it("counts down to a close reset and says the thread waits instead of switching", async () => {
+  vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+  vi.setSystemTime(Date.parse("2026-10-10T12:00:00.000Z"));
+  vi.stubGlobal("window", { setTimeout, clearTimeout });
+  const resetAt = "2026-10-10T12:20:00.000Z";
+  const onContinue = vi.fn().mockResolvedValue(undefined);
+  const item = usageLimitRecoveryBannerItem({
+    ...props,
+    resetAt,
+    canCheck: false,
+    waiting: true,
+    onChange: async () => {},
+    fallback: { label: "Codex", model: "GPT-6", automatic: true, onContinue },
+  });
+  await act(() => {
+    renderer = create(<>{item.description}</>);
+  });
+  expect(text()).toContain("Resets in 20 min");
+  expect(text()).toContain("waits and resumes here instead of switching");
+  expect(text()).not.toContain("Continuing with Codex");
+  for (let step = 0; step < 10; step += 1) {
+    await act(async () => {
+      vi.advanceTimersByTime(30_000);
+    });
+  }
+  expect(text()).toContain("Resets in 15 min");
+  vi.useRealTimers();
+});
+it("offers a new thread on another device", async () => {
+  const onContinue = vi.fn().mockResolvedValue(undefined);
+  const item = usageLimitRecoveryBannerItem({
+    ...props,
+    canCheck: false,
+    resetAt: null,
+    onChange: async () => {},
+    device: { label: "MacBook M3", model: "Opus", onContinue },
+  });
+  await act(() => {
+    renderer = create(<>{item.actions}</>);
+  });
+  await act(async () => button("Continue on MacBook M3").props.onClick());
+  expect(onContinue).toHaveBeenCalledOnce();
+});
+it("formats how far off a reset is", () => {
+  const now = Date.parse("2026-10-10T12:00:00.000Z");
+  expect(formatResetIn(now + 30_000, now)).toBe("1 min");
+  expect(formatResetIn(now + 25 * 60_000, now)).toBe("25 min");
+  expect(formatResetIn(now + 120 * 60_000, now)).toBe("2 h");
+  expect(formatResetIn(now + 130 * 60_000, now)).toBe("2 h 10 min");
+  expect(formatResetIn(now + 4 * 24 * 60 * 60_000, now)).toBe("4 days");
+});
+it("suggests switching before the limit under the offer rule", async () => {
+  const onSwitch = vi.fn();
+  const item = usageApproachingBannerItem({
+    id: "approaching",
+    providerLabel: "Claude",
+    usedPercent: 96.4,
+    resetAt: "2099-10-15T00:00:00.000Z",
+    fallbackLabel: "Codex",
+    onSwitch,
+    onDismiss: () => {},
+  });
+  expect(item.title).toBe("Claude is at 96% of its usage limit");
+  await act(() => {
+    renderer = create(<>{item.actions}</>);
+  });
+  await act(async () => button("Switch to Codex").props.onClick());
+  expect(onSwitch).toHaveBeenCalledOnce();
+});
+it("lays its buttons out below the title instead of in a column beside it", () => {
+  const item = usageLimitRecoveryBannerItem({ ...props, onChange: vi.fn() });
+  expect(item.title).toBe("Usage limit reached");
+  expect(item.actionsLayout).toBe("wrap-below");
+});

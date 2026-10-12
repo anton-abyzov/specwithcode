@@ -1,0 +1,11 @@
+# Local capacity boundary
+
+Studio capacity is an optional authenticated bridge to the fixed same-machine Switch listener at `http://127.0.0.1:8318`. GET observes cached state. Explicit refresh can spend up to 40 seconds obtaining supported native metadata; it performs no model inference. Policy and selection mutate only the companion's preferences for new work. Automatic clears a previous pin; selection never rewrites or moves an existing native session.
+
+The versioned DTO excludes credentials, emails, source labels, process environment and run output. It reports eligible native profiles rather than a sum of independent subscriptions. A Codex quota pool hash comes only from the top-level supported `account/rateLimits/read.accountId`; its separate 15-minute timestamp expires even when quota notifications continue. Missing supported identity remains unknown.
+
+Only exact canonical homes can bind to the seven managed slots. Native provider auth must be fresh, ready, installed and available; manual quota does not replace auth. Legacy Claude `oauth_token`, unsupported isolation, known exhaustion and stale or malformed observations block managed starts. With Switch absent, deliberately selected native defaults remain usable only with supported native auth. Automatic quota routing is unavailable. Explicit API/managed instances retain their separate configuration; unrelated provider drivers and generic environments retain ordinary inheritance.
+
+Codex consumer launches neutralize inherited API/endpoint overrides even with subprocess environment extension. Admission reads supported effective `config/read` for the actual session cwd, checking native provider/login method and absence of custom OpenAI endpoint/auth overrides. The route observation has its own age; quota notifications never renew it. No config is exposed or rewritten. The native thread's actual modelProvider still belongs in real-turn acceptance evidence.
+
+Read requires `orchestration:read`; mutations require `orchestration:operate`, existing environment authentication and an exact trusted Origin or scoped non-browser credential. Exact configured desktop/private origins are allowed; untrusted cross-site origins and forwarded-host spoofing are denied. Bodies contain only whitelisted structured fields, and errors do not forward upstream details.

@@ -1,0 +1,12 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["StudioNativeControlsModule", "StudioKeyboardCommandsModule"]
+  },
+  "android": {
+    "modules": [
+      "expo.modules.studionativecontrols.StudioNativeControlsModule",
+      "expo.modules.studionativecontrols.StudioKeyboardCommandsModule"
+    ]
+  }
+}

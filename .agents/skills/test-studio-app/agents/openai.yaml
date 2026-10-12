@@ -1,0 +1,4 @@
+interface:
+  display_name: "Studio App Testing"
+  short_description: "Test web and desktop in Studio's Browser panel"
+  default_prompt: "Use $test-studio-app to verify the affected web or desktop flow through Studio's Browser panel."

@@ -1,0 +1,124 @@
+import { describe, expect, it } from "vite-plus/test";
+
+import { coordinatorProgress, formatProgressElapsed, latestWorkStep } from "./coordinatorProgress";
+
+const requestedAt = "2026-10-11T16:11:44.994Z";
+const run = (status: string, ordinal = 1, id = `run-${ordinal}`) => ({
+  id,
+  ordinal,
+  status,
+  requestedAt,
+});
+const item = (ordinal: number, type: string, toolName?: string, runId = "run-1") => ({
+  runId,
+  ordinal,
+  type,
+  status: "completed",
+  ...(toolName === undefined ? {} : { toolName }),
+});
+
+describe("coordinatorProgress", () => {
+  it("says nothing while the coordinator is idle", () => {
+    expect(coordinatorProgress({ runs: [] })).toBeNull();
+    expect(coordinatorProgress({ runs: [run("completed")] })).toBeNull();
+    expect(coordinatorProgress({})).toBeNull();
+  });
+
+  it("answers a send at once, before the provider has written anything", () => {
+    expect(coordinatorProgress({ runs: [run("queued")] })).toEqual({
+      label: "Starting the coordinator",
+      since: requestedAt,
+      waiting: false,
+    });
+    expect(coordinatorProgress({ runs: [run("starting")] })?.label).toBe(
+      "Starting the coordinator",
+    );
+    expect(
+      coordinatorProgress({ runs: [run("running")], turnItems: [item(1, "user_message")] })?.label,
+    ).toBe("Reading the new message");
+  });
+
+  it("says when the turn is blocked on an answer, and hides a count it cannot know", () => {
+    expect(
+      coordinatorProgress({ runs: [run("waiting")], turnItems: [item(2, "reasoning")] }),
+    ).toEqual({
+      label: "Waiting for an answer",
+      since: requestedAt,
+      waiting: true,
+    });
+    expect(
+      coordinatorProgress({
+        runs: [{ id: "run-1", ordinal: 1, status: "running", requestedAt: null }],
+      })?.since,
+    ).toBeNull();
+  });
+
+  it("names what the latest step of the running turn is doing", () => {
+    const at = (...items: ReturnType<typeof item>[]) =>
+      coordinatorProgress({ runs: [run("running")], turnItems: items })?.label;
+    expect(at(item(1, "user_message"), item(2, "reasoning"))).toBe("Thinking");
+    expect(at(item(2, "dynamic_tool", "ToolSearch"))).toBe("Loading its tools");
+    expect(at(item(3, "dynamic_tool", "mcp__studio-code__studio_thread_list"))).toBe(
+      "Checking the project's threads",
+    );
+    expect(at(item(4, "dynamic_tool", "mcp__studio-code__delegate_task"))).toBe(
+      "Starting a worker",
+    );
+    expect(at(item(4, "dynamic_tool", "mcp__studio-code__task_status"))).toBe(
+      "Checking the project's threads",
+    );
+    expect(at(item(5, "dynamic_tool", "mcp__studio-code__studio_thread_send"))).toBe(
+      "Passing your message to a worker",
+    );
+    expect(at(item(6, "dynamic_tool", "mcp__studio-code__studio_project_memory_write"))).toBe(
+      "Saving to project memory",
+    );
+    expect(at(item(7, "dynamic_tool", "Bash"))).toBe("Running a command");
+    expect(at(item(7, "dynamic_tool", "SomethingNew"))).toBe("Working");
+    expect(at(item(8, "assistant_message"))).toBe("Replying");
+    // The latest step wins, whatever order the items arrived in.
+    expect(at(item(9, "assistant_message"), item(3, "reasoning"))).toBe("Replying");
+  });
+
+  it("follows the turn that is executing, not one queued behind it or an earlier turn", () => {
+    const progress = coordinatorProgress({
+      runs: [run("completed", 1), run("running", 2), run("queued", 3)],
+      turnItems: [
+        item(1, "assistant_message", undefined, "run-1"),
+        item(2, "reasoning", undefined, "run-2"),
+      ],
+    });
+    expect(progress?.label).toBe("Thinking");
+    expect(coordinatorProgress({ runs: [run("queued", 3), run("queued", 2, "run-2")] })).toEqual({
+      label: "Starting the coordinator",
+      since: requestedAt,
+      waiting: false,
+    });
+  });
+});
+
+describe("latestWorkStep", () => {
+  it("names a subagent's latest step and skips items that say nothing", () => {
+    const step = (ordinal: number, type: string, toolName?: string) =>
+      item(ordinal, type, toolName, null as unknown as string);
+    expect(latestWorkStep([])).toBeNull();
+    expect(latestWorkStep([step(1, "user_message")])).toBeNull();
+    expect(latestWorkStep([step(1, "command_execution"), step(2, "system_notice")])).toBe(
+      "Running a command",
+    );
+    expect(latestWorkStep([step(3, "dynamic_tool", "Grep"), step(2, "file_change")])).toBe(
+      "Reading files",
+    );
+    expect(latestWorkStep([step(4, "dynamic_tool", "WebFetch")])).toBe("Searching the web");
+    expect(latestWorkStep([step(5, "dynamic_tool", "Edit")])).toBe("Editing files");
+  });
+});
+
+describe("formatProgressElapsed", () => {
+  it("counts seconds, then minutes", () => {
+    const start = Date.parse(requestedAt);
+    expect(formatProgressElapsed(requestedAt, start + 8_400)).toBe("8s");
+    expect(formatProgressElapsed(requestedAt, start + 65_000)).toBe("1m 05s");
+    expect(formatProgressElapsed("not a date", start)).toBe("0s");
+  });
+});

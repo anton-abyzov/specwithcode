@@ -1,0 +1,114 @@
+import {
+  combineTerminalSessionState,
+  EMPTY_TERMINAL_BUFFER_STATE,
+  EMPTY_TERMINAL_SESSION_STATE,
+  terminalOutputText,
+  type KnownTerminalSession,
+  type TerminalSessionState,
+} from "@specweave-studio/client-runtime/state/terminal";
+import {
+  AuthTerminalReadScope,
+  AuthTerminalOperateScope,
+  ThreadId,
+  type EnvironmentId,
+  type TerminalAttachInput,
+} from "@specweave-studio/contracts";
+import { useMemo } from "react";
+
+import { useEnvironmentQuery } from "./query";
+import { terminalEnvironment } from "./terminal";
+import { useEnvironmentScope } from "./session";
+
+type LegacyTerminalSessionState = TerminalSessionState & { readonly buffer: string };
+const EMPTY_LEGACY_TERMINAL_SESSION_STATE: LegacyTerminalSessionState = {
+  ...EMPTY_TERMINAL_SESSION_STATE,
+  buffer: "",
+};
+
+export function useAttachedTerminalSession(input: {
+  readonly environmentId: EnvironmentId | null;
+  readonly terminal: TerminalAttachInput | null;
+}): LegacyTerminalSessionState {
+  const canRead = useEnvironmentScope(input.environmentId, AuthTerminalReadScope);
+  const canOperate = useEnvironmentScope(input.environmentId, AuthTerminalOperateScope);
+  const attach = useEnvironmentQuery(
+    input.environmentId !== null && input.terminal !== null
+      ? canOperate
+        ? terminalEnvironment.attach({
+            environmentId: input.environmentId,
+            input: input.terminal,
+          })
+        : canRead
+          ? terminalEnvironment.observe({
+              environmentId: input.environmentId,
+              input: { threadId: input.terminal.threadId, terminalId: input.terminal.terminalId },
+            })
+          : null
+      : null,
+  );
+  const metadata = useEnvironmentQuery(
+    input.environmentId === null || !canRead
+      ? null
+      : terminalEnvironment.metadata({
+          environmentId: input.environmentId,
+          input: null,
+        }),
+  );
+  const output = attach.data?.output ?? EMPTY_TERMINAL_BUFFER_STATE.output;
+  // Installed native binaries still accept initialBuffer. Keep materialization
+  // at this mobile boundary until the native streaming API is released.
+  const buffer = useMemo(() => terminalOutputText(output), [output]);
+
+  return useMemo(() => {
+    if (input.environmentId === null || input.terminal === null) {
+      return EMPTY_LEGACY_TERMINAL_SESSION_STATE;
+    }
+    const summary =
+      metadata.data?.find(
+        (terminal) =>
+          terminal.threadId === input.terminal?.threadId &&
+          terminal.terminalId === input.terminal?.terminalId,
+      ) ?? null;
+    const state = {
+      ...combineTerminalSessionState(summary, attach.data ?? EMPTY_TERMINAL_BUFFER_STATE),
+      buffer,
+    };
+    return attach.error === null ? state : { ...state, error: attach.error, status: "error" };
+  }, [attach.data, attach.error, buffer, input.environmentId, input.terminal, metadata.data]);
+}
+
+export function useKnownTerminalSessions(input: {
+  readonly environmentId: EnvironmentId | null;
+  readonly threadId: ThreadId | null;
+}) {
+  const canRead = useEnvironmentScope(input.environmentId, AuthTerminalReadScope);
+  const metadata = useEnvironmentQuery(
+    input.environmentId === null || !canRead
+      ? null
+      : terminalEnvironment.metadata({
+          environmentId: input.environmentId,
+          input: null,
+        }),
+  );
+  const sessions = useMemo((): ReadonlyArray<KnownTerminalSession> | null => {
+    if (input.environmentId === null || metadata.data === null || metadata.error !== null) {
+      return null;
+    }
+    return metadata.data
+      .filter((summary) => input.threadId === null || summary.threadId === input.threadId)
+      .map((summary) => ({
+        target: {
+          environmentId: input.environmentId!,
+          threadId: ThreadId.make(summary.threadId),
+          terminalId: summary.terminalId,
+        },
+        state: combineTerminalSessionState(summary, EMPTY_TERMINAL_BUFFER_STATE),
+      }))
+      .sort((left, right) =>
+        left.target.terminalId.localeCompare(right.target.terminalId, undefined, {
+          numeric: true,
+        }),
+      );
+  }, [input.environmentId, input.threadId, metadata.data, metadata.error]);
+  return { sessions, isPending: metadata.isPending, error: metadata.error };
+}

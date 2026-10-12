@@ -1,0 +1,82 @@
+import { useAtomValue } from "@effect/atom-react";
+import {
+  createManagedRelayQueryManager,
+  deregisterManagedRelayEnvironment,
+  managedRelaySessionAtom,
+  readManagedRelaySnapshotState,
+} from "@specweave-studio/client-runtime/relay";
+import {
+  createAtomCommandScheduler,
+  createRuntimeCommand,
+} from "@specweave-studio/client-runtime/state/runtime";
+import type { EnvironmentId } from "@specweave-studio/contracts";
+import type { RelayClientEnvironmentRecord } from "@specweave-studio/contracts/relay";
+import { AsyncResult, Atom } from "effect/reactivity";
+import { useCallback, useEffect } from "react";
+
+import * as Runtime from "../../lib/runtime";
+import { appAtomRegistry } from "../../state/atom-registry";
+import { cloudDebugLog } from "./cloudDebugLog";
+
+const managedRelayAtomRuntime = Atom.runtime(Runtime.layer);
+
+export const managedRelayQueryManager = createManagedRelayQueryManager(managedRelayAtomRuntime, {
+  onQueryEvent: (event) =>
+    cloudDebugLog(`query:${event.operation}:${event.stage}:${event.phase}`, { ...event }),
+});
+
+const managedRelayMutationScheduler = createAtomCommandScheduler();
+
+export const deregisterManagedRelayEnvironmentCommand = createRuntimeCommand(
+  managedRelayAtomRuntime,
+  {
+    label: "mobile:managed-relay:deregister-environment",
+    scheduler: managedRelayMutationScheduler,
+    concurrency: {
+      mode: "serial",
+      key: (input: { readonly accountId: string; readonly environmentId: EnvironmentId }) =>
+        input.accountId,
+    },
+    execute: (input, registry) => deregisterManagedRelayEnvironment(registry, input),
+  },
+);
+
+const EMPTY_ENVIRONMENTS_ATOM = Atom.make(
+  AsyncResult.success<ReadonlyArray<RelayClientEnvironmentRecord>>([]),
+).pipe(Atom.keepAlive, Atom.withLabel("managed-relay:mobile:environments:null"));
+
+export function useManagedRelayEnvironments() {
+  const session = useAtomValue(managedRelaySessionAtom);
+  const accountId = session?.accountId ?? null;
+  const atom = accountId
+    ? managedRelayQueryManager.environmentsAtom(accountId)
+    : EMPTY_ENVIRONMENTS_ATOM;
+  const result = useAtomValue(atom);
+  const snapshot = readManagedRelaySnapshotState(result);
+  useEffect(() => {
+    if (snapshot.error) {
+      console.error("[studio-cloud] Relay environment listing failed", {
+        message: snapshot.error,
+        traceId: snapshot.errorTraceId,
+      });
+    }
+  }, [snapshot.error, snapshot.errorTraceId]);
+  const refresh = useCallback(() => {
+    if (accountId) {
+      managedRelayQueryManager.refreshEnvironments(appAtomRegistry, accountId);
+    }
+  }, [accountId]);
+
+  return {
+    ...snapshot,
+    accountId,
+    refresh,
+  };
+}
+
+export function refreshManagedRelayEnvironments(): void {
+  const session = appAtomRegistry.get(managedRelaySessionAtom);
+  if (session) {
+    managedRelayQueryManager.refreshEnvironments(appAtomRegistry, session.accountId);
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "@specweave-studio/mobile-terminal-native",
+  "version": "0.0.0",
+  "private": true,
+  "expo-module": {
+    "ios": {
+      "modules": [
+        "StudioTerminalModule"
+      ]
+    },
+    "android": {
+      "modules": [
+        "expo.modules.studioterminal.StudioTerminalModule"
+      ]
+    }
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "name": "increment-standup",
+  "version": "0.1.0",
+  "description": "A standup from the SpecWeave ledger: what got done, what is in progress, blocked or stale",
+  "main": "./register.js",
+  "permissions": ["specweave:read"]
+}

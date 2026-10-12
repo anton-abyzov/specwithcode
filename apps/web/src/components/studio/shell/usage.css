@@ -1,0 +1,187 @@
+/* The subscription usage indicator. */
+
+.sws-usage-chip:focus-visible,
+.sws-usage-link:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
+/* The chip under the composer: one ring per provider. */
+.sws-usage-chip {
+  flex: none;
+  height: 24px;
+  padding: 0 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  border-radius: 7px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.sws-usage-chip:hover,
+.sws-usage-chip[data-popup-open] {
+  background: var(--accent);
+  color: var(--foreground);
+}
+.sws-usage-chip-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.sws-usage-chip-value {
+  font-variant-numeric: tabular-nums;
+}
+.sws-usage-chip-item[data-tone="warn"] .sws-usage-chip-value {
+  color: var(--warning-foreground);
+}
+.sws-usage-chip-item[data-tone="full"] .sws-usage-chip-value {
+  color: var(--destructive);
+}
+.sws-usage-ring {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+.sws-usage-ring circle {
+  fill: none;
+  stroke-width: 2;
+}
+.sws-usage-ring-track {
+  stroke: color-mix(in srgb, currentColor 22%, transparent);
+}
+.sws-usage-ring-value {
+  stroke: currentColor;
+  stroke-linecap: round;
+}
+.sws-usage-ring[data-tone="warn"] .sws-usage-ring-value {
+  stroke: var(--warning);
+}
+.sws-usage-ring[data-tone="full"] .sws-usage-ring-value {
+  stroke: var(--destructive);
+}
+/* The popover: every window of every provider. */
+.sws-usage-popover {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 12px;
+}
+.sws-usage-provider {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.sws-usage-provider > header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+}
+.sws-usage-plan {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.sws-usage-banked {
+  margin-left: auto;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--foreground);
+  font-variant-numeric: tabular-nums;
+}
+.sws-usage-banked svg {
+  width: 12px;
+  height: 12px;
+}
+.sws-usage-window {
+  display: grid;
+  grid-template-columns: minmax(0, 7.5rem) minmax(3rem, 1fr) 4.5rem 7rem;
+  align-items: center;
+  gap: 10px;
+}
+.sws-usage-window-label,
+.sws-usage-window-reset {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted-foreground);
+}
+.sws-usage-window-value,
+.sws-usage-window-reset {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.sws-usage-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--foreground) 12%, transparent);
+  overflow: hidden;
+}
+.sws-usage-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--foreground);
+}
+.sws-usage-bar[data-tone="warn"] > span {
+  background: var(--warning);
+}
+.sws-usage-bar[data-tone="full"] > span {
+  background: var(--destructive);
+}
+.sws-usage-account {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.sws-usage-account > span:first-child {
+  color: var(--foreground);
+}
+.sws-usage-popover > footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.sws-usage-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 5px;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.sws-usage-link:hover {
+  color: var(--foreground);
+}
+.sws-usage-link svg {
+  width: 12px;
+  height: 12px;
+}
+@media (max-width: 520px) {
+  .sws-usage-window {
+    grid-template-columns: minmax(0, 6rem) minmax(2rem, 1fr) 4.5rem;
+  }
+  .sws-usage-window-reset {
+    grid-column: 1 / -1;
+    text-align: left;
+  }
+}
+.sws-usage-summary > .sws-usage-provider:first-child {
+  padding-top: 0;
+  border-top: 0;
+}

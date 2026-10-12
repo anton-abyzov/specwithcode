@@ -1,0 +1,57 @@
+{
+  "name": "@specweave-studio/mobile-markdown-text",
+  "version": "0.0.0",
+  "private": true,
+  "source": "./index.ts",
+  "files": [
+    "android",
+    "assets",
+    "expo-module.config.json",
+    "ios",
+    "src",
+    "index.ts",
+    "LICENSE",
+    "UPSTREAM.md",
+    "StudioMarkdownText.podspec",
+    "react-native.config.js"
+  ],
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "react-native": "./index.ts",
+  "exports": {
+    ".": "./index.ts",
+    "./file-icons": "./src/markdownFileIcons.ts",
+    "./link-icons": "./src/markdownLinkIcons.ts",
+    "./links": "./src/markdownLinks.ts",
+    "./markdown": "./src/nativeMarkdownText.ts",
+    "./primitive": "./src/MarkdownTextPrimitive.tsx",
+    "./renderer": "./src/SelectableMarkdownText.tsx",
+    "./types": "./src/SelectableMarkdownText.types.ts"
+  },
+  "peerDependencies": {
+    "@specweave-studio/client-runtime": "*",
+    "@specweave-studio/shared": "*",
+    "expo": "*",
+    "expo-asset": "*",
+    "expo-clipboard": "*",
+    "expo-haptics": "*",
+    "expo-symbols": "*",
+    "react": "*",
+    "react-native": "*",
+    "react-native-nitro-markdown": "*"
+  },
+  "codegenConfig": {
+    "name": "StudioMarkdownTextSpec",
+    "type": "all",
+    "jsSrcsDir": "src",
+    "ios": {
+      "componentProvider": {
+        "StudioMarkdownText": "StudioMarkdownText",
+        "StudioMarkdownTextRun": "StudioMarkdownTextRun"
+      }
+    },
+    "outputDir": {
+      "ios": "ios/generated"
+    }
+  }
+}
