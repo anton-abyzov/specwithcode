@@ -1,0 +1,43 @@
+# Project workspace headless fixture
+
+This harness renders the production project workspace/settings/memory/usage/routines components, plus compiled production CSS. Host queries, provider operations, model pickers, asset loading/previews, Markdown parsing, and the native ChatView are explicit in-memory fixtures. It verifies frontend routing payloads and UI behavior; it does **not** prove real coordinator dispatch, provider resume, persistence, or backend isolation.
+
+Build `apps/web` first. From `apps/web`, run with Node 22.20:
+
+```sh
+PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never node tests/project-workspace/serve.mjs
+```
+
+In another terminal, run `check.mjs`. Install/use a Playwright runtime compatible with an available browser, or specify `PLAYWRIGHT_MODULE` (absolute path to its `index.mjs`) and `PLAYWRIGHT_EXECUTABLE_PATH`. It always launches headless and never opens the HTML reporter. The port is 5788 unless `PROJECT_UI_PORT` names another; the fixture fails if the port is occupied, and `timeline-detail-check.mjs` follows the same variable. Stop only the PID you started.
+
+```sh
+PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never node tests/project-workspace/check.mjs
+```
+
+`PROJECT_UI_OUTPUT` selects the evidence folder (default `/tmp/studio-project-ui`). Checks cover desktop and 390px mobile, light/dark, a scoped worker link, exact `sourceThreadId`, memory draft preservation, incomplete usage, project-specific routines, exact deletion confirmation, and viewport bounds. Generated screenshots and JSON remain outside the repository. Native server/provider integration is a separate required release check.
+
+`environment-check.mjs` additionally checks Personal project settings, simultaneous folders/repositories, revision-bound save and preparation payloads, explicit MCP configuration/check/tool grants/revocation, and desktop/tablet/phone layouts. Set `UI_EVIDENCE_DIR` to a new directory and optionally `PLAYWRIGHT_MODULE` / `PLAYWRIGHT_EXECUTABLE`. Host operations and tool discovery in this harness are synthetic; they are not native Git, MCP, sign-in or provider proof.
+
+`machine-check.mjs` opens the fixture with the project on two machines (`?machines`). It checks that this computer runs the coordinator when nothing is saved, that the machine name under the composer opens the coordinator machine choice, and that a chosen machine survives a reload. A one-machine project shows the name with nothing to choose.
+
+`starter-check.mjs` opens the same fixture as a project with no threads (`?fresh`, and `?fresh=empty` for an empty folder). It checks the greeting and its three chips at the top of the coordinator, the first tasks in the Threads pane, that choosing one sends its request to the coordinator once, keyboard use, dark theme and the phone layout. `?fresh&failed` adds a coordinator turn the host could not start: the project pane must say so with the host's reason, offer "Open the coordinator thread" (the coordinator's own full page, never the right pane), and keep the first tasks on offer. The suggestions come from the real builder with synthetic repository signals; the host's own reading of a folder is covered by `apps/server/src/project/ProjectStarterSuggestions.test.ts`.
+
+`thread-cards-check.mjs` checks how the coordinator's answer names threads: every thread the sentence names is a blue chip with a status dot, and the thread it started that turn also gets a bordered card under the message with its quick actions ("View thread" always; "Create PR" or "View PR" when the thread's checkout and pull request call for it). It checks light and dark, and that "View thread" and a chip each open their thread in the right pane.
+
+`legacy-check.mjs` opens a project from before projects had settings (`?legacy`): no saved coordinator model, no coordinator thread, no project default. Once the host's providers arrive the composer must name the host default (Claude Opus 5.5 here) and never ask for a model; while they load (`?legacy=loading`), and while they are in but Claude still awaits its first check (`?legacy=checking`), it must say "Loading models" and the starter note must say models are still loading. The server side, saving at startup the model an existing project already names (its coordinator thread's or its defaults'), is covered by `apps/server/src/project/ProjectSettingsNormalizer.test.ts`.
+
+`pane-check.mjs` checks the thread's right panel (the "Open a surface" launcher and its tabs) under `?routed`, where the open thread lives in the URL as `?thread=<id>` like the real route. Arriving at a thread never shows that panel: a URL load, a Threads list row, a coordinator chip, a "View thread" card, reload, Back and Forward, and reopening after closing the thread pane all land with it closed, including panels an earlier version saved open (they are migrated once, and current-version data is closed on every load). The toggle brings a thread's remembered tab back, and a browser whose session ends closes its now-empty panel. The native ChatView is a stand-in here; the panel state is the real `rightPanelStore` and `useHideRightPanelOnLeave`.
+
+`enter-send-check.mjs` types into the coordinator composer the way a person does. Enter sends the message and Shift+Enter breaks the line. An Enter dispatched during an input method's composition (after `compositionstart`, with `isComposing` or `keyCode` 229) does not send, and the Enter after it does. Cmd/Ctrl+Enter also sends. A 600 px desktop window still sends on Enter and keeps focus in the composer, while a 390 px touch phone keeps Return as a new line and sends from the Send button, and so does an 844 px landscape touch phone. Set `UI_EVIDENCE_DIR` to a new directory and `PROJECT_UI_PORT` when the fixture runs on another port.
+
+`timeline-detail-check.mjs` opens the coordinator with runs and work items attached to its turns (`?activity`). It checks each level at 1440 px and 390 px, in light and dark.
+
+In every level the commentary that starts "Consolidate the skills" and carries `triage-notes.md` shows that thread's card and the file once; Concise moves both to the turn's answer.
+
+- **Normal** shows the conversation as before, with no activity blocks.
+- **Verbose** puts an open `<details>` under the finished turn's answer. The summary reads "Started 2 workers, checked threads, ran 1 command and read 1 file". Below it are its six steps, worded in the past tense and showing what each worked on. A second block for the running turn sits above the progress line, and that turn's current step is worded in the present tense. Each block collapses and reopens.
+- **Concise** hides the commentary before the answer and keeps the person's messages and each turn's last reply.
+
+The project header's trigger carries `sws-icon-button-on` while the level is anything but Normal. Set `UI_EVIDENCE_DIR` to a new directory.
+
+`report-check.mjs` opens the coordinator with a worker that reported back a long review of increment 0973 and a coordinator relay of it (`?report`). At 1440 px and 390 px, light and dark, it checks that the worker's report is a card (title, word count, the `0973-budget-vs-actuals` increment chip, opening lines, never the whole report), that "Open report" shows the whole report in a reader that fits the viewport and names the folder saving uses, that "Save to increment" saves once and turns both surfaces to "Saved", and that the coordinator's relay folds behind "Show full message" and, opened, draws its rule, keeps "Show less" on screen from the middle of the block, and folds back with its top in view. Saving is synthetic here; writing the file beside the increment is covered by `apps/server/src/project/ThreadReports.test.ts`. Set `UI_EVIDENCE_DIR` to a new directory.

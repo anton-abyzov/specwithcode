@@ -1,0 +1,81 @@
+// @effect-diagnostics nodeBuiltinImport:off - Probes the host compiler that the native regressions run with.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
+const probes = {
+  clang: {
+    file: "probe.m",
+    source:
+      "#import <Foundation/Foundation.h>\nint main(void) { @autoreleasepool { [NSObject new]; } }\n",
+    args: ["-fobjc-arc", "-fsanitize=thread", "-framework", "Foundation"],
+  },
+  swiftc: {
+    file: "probe.swift",
+    source: "import Foundation\n_ = NSObject()\n",
+    args: ["-swift-version", "5", "-sanitize=thread"],
+  },
+};
+
+const describeFailure = (error: unknown) => {
+  const failure = error as NodeJS.ErrnoException & { signal?: string | null; stderr?: string };
+  if (failure.code === "ENOENT") return "it is not installed";
+  if (failure.signal) return `the program was killed by ${failure.signal}`;
+  const line = failure.stderr
+    ?.split("\n")
+    .map((text) => text.trim())
+    .find((text) => text.length > 0);
+  return line ?? failure.message;
+};
+
+const developerDirectory = () => {
+  try {
+    return NodeChildProcess.execFileSync("xcode-select", ["--print-path"], {
+      encoding: "utf8",
+      stdio: "pipe",
+    }).trim();
+  } catch {
+    return "the selected developer directory";
+  }
+};
+
+/**
+ * Builds and runs an empty ThreadSanitizer program with the compiler that a native regression
+ * uses, and returns why the regression can't run on this host, or `undefined` when it can.
+ *
+ * A toolchain older than the running macOS fails before any code under test runs: its linker
+ * can't read the newer SDK, or its ThreadSanitizer runtime crashes while it starts.
+ */
+export const threadSanitizerUnavailable = (compiler: keyof typeof probes): string | undefined => {
+  const probe = probes[compiler];
+  const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-toolchain-probe-"));
+  try {
+    const source = NodePath.join(directory, probe.file);
+    const executable = NodePath.join(directory, "probe");
+    NodeFS.writeFileSync(source, probe.source);
+    try {
+      NodeChildProcess.execFileSync(compiler, [...probe.args, source, "-o", executable], {
+        encoding: "utf8",
+        stdio: "pipe",
+        timeout: 30_000,
+      });
+      NodeChildProcess.execFileSync(executable, {
+        encoding: "utf8",
+        stdio: "pipe",
+        timeout: 15_000,
+      });
+      return undefined;
+    } catch (error) {
+      // A slow host is no verdict on the toolchain, so the regression runs and decides.
+      if ((error as NodeJS.ErrnoException).code === "ETIMEDOUT") return undefined;
+      return (
+        `${compiler} from ${developerDirectory()} can't build and run a ` +
+        `ThreadSanitizer program on this Mac (${describeFailure(error)}). Select a toolchain that ` +
+        "supports this macOS release with xcode-select or DEVELOPER_DIR."
+      );
+    }
+  } finally {
+    NodeFS.rmSync(directory, { recursive: true, force: true });
+  }
+};

@@ -1,0 +1,204 @@
+import { describe, expect, it } from "vite-plus/test";
+import { ThreadId } from "@specweave-studio/contracts";
+import {
+  projectCoordinatorMessageDisplay,
+  projectMessageAuthor,
+  projectReportMessageIds,
+  projectSystemNotice,
+  routedRepliesForThread,
+} from "./projectCoordinatorMessageDisplay";
+
+const project = { id: "project", environmentId: "host" };
+const worker = {
+  id: ThreadId.make("worker"),
+  title: "Calendar work",
+  projectId: "project",
+  environmentId: "host",
+  deletedAt: null,
+};
+const prefix =
+  "User follow-up from selected worker worker. Review that thread and decide whether to reuse it or route elsewhere.\n\n";
+const original = "  Keep **all** formatting.\n\n";
+const message = {
+  id: "coordinator-send:project:command",
+  role: "user",
+  createdBy: "user",
+  senderThreadId: "worker",
+  text: prefix + original,
+};
+
+describe("coordinator follow-up presentation", () => {
+  it("removes one verified server prefix without mutating the stored message", () => {
+    const stored = Object.freeze({ ...message, text: prefix + prefix + original });
+    expect(projectCoordinatorMessageDisplay(stored, project, [worker])).toEqual({
+      text: prefix + original,
+      sourceThread: worker,
+    });
+    expect(stored.text).toBe(prefix + prefix + original);
+  });
+  it("accepts attachment-bound receipt IDs and preserves whitespace", () => {
+    expect(
+      projectCoordinatorMessageDisplay({ ...message, id: message.id + ":fingerprint" }, project, [
+        worker,
+      ]),
+    ).toEqual({ text: original, sourceThread: worker });
+  });
+  it.each([
+    ["ordinary typed text", { id: "ordinary-message" }],
+    ["another project's receipt", { id: "coordinator-send:project-other:command" }],
+    ["missing command identity", { id: "coordinator-send:project:" }],
+    ["blank command identity", { id: "coordinator-send:project:  " }],
+    ["agent origin", { createdBy: "agent" }],
+    ["assistant role", { role: "assistant" }],
+    ["missing sender", { senderThreadId: undefined }],
+    ["unknown sender", { senderThreadId: "unknown" }],
+    [
+      "mismatched prefix sender",
+      { text: prefix.replace("worker worker.", "worker another.") + original },
+    ],
+    ["edited server preamble", { text: prefix.replace("Review", "Please review") + original }],
+    ["prefix inside user prose", { text: "Quote:\n" + prefix + original }],
+    ["ordinary follow-up", { text: original }],
+  ])("keeps %s verbatim", (_name, overrides) => {
+    const input = { ...message, ...overrides };
+    expect(projectCoordinatorMessageDisplay(input, project, [worker])).toEqual({
+      text: input.text,
+      sourceThread: null,
+    });
+  });
+  it.each([
+    ["foreign project", { projectId: "other" }],
+    ["foreign host", { environmentId: "other" }],
+    ["deleted worker", { deletedAt: "2026-10-09T00:00:00Z" }],
+  ])("does not trust a %s with the same ID", (_name, overrides) => {
+    expect(
+      projectCoordinatorMessageDisplay(message, project, [{ ...worker, ...overrides }]),
+    ).toEqual({ text: message.text, sourceThread: null });
+  });
+});
+
+describe("coordinator message author", () => {
+  it("labels the coordinator's own replies as the coordinator, not a worker", () => {
+    expect(projectMessageAuthor({ role: "assistant", createdBy: "agent" })).toBe("Coordinator");
+    expect(projectMessageAuthor({ role: "user", createdBy: "agent" })).toBe(
+      "Message from a worker",
+    );
+    expect(projectMessageAuthor({ role: "user", createdBy: "user" })).toBe("You");
+  });
+});
+
+describe("coordinator system notices", () => {
+  const tip = {
+    id: ThreadId.make("thread:delegated-task:command%3Amcp-1"),
+    title: "Write tip.py CLI",
+  };
+  it("names the worker that reported back instead of showing task_status instructions", () => {
+    expect(
+      projectSystemNotice(
+        { delegatedCompletion: { taskIds: ["node:delegated-task:command%3Amcp-1"] } },
+        [tip],
+      ),
+    ).toBe(`[Write tip.py CLI](studio://thread/${encodeURIComponent(tip.id)}) reported back.`);
+    expect(
+      projectSystemNotice({ delegatedCompletion: { taskIds: ["node:delegated-task:gone"] } }, [
+        tip,
+      ]),
+    ).toBe("A worker reported back.");
+    expect(
+      projectSystemNotice({ notification: { summary: "Background activity updated" } }, []),
+    ).toBe("Background activity updated");
+    expect(projectSystemNotice({}, [tip])).toBeNull();
+  });
+});
+
+describe("a thread's record of what was typed in it", () => {
+  const other = { ...worker, id: ThreadId.make("other"), title: "Other work" };
+  const fromOther = {
+    ...message,
+    id: "coordinator-send:project:other",
+    senderThreadId: "other",
+    text: prefix.replace("worker worker.", "worker other.") + "Elsewhere",
+  };
+  const answer = {
+    id: "a1",
+    role: "assistant",
+    createdBy: "agent",
+    text: "**Sent** to\n[Calendar work](studio://thread/worker), `as asked`.",
+  };
+  it("lists only this thread's messages, in order, each with the coordinator's next answer", () => {
+    const second = { ...message, id: "coordinator-send:project:second", text: prefix + "Again" };
+    expect(
+      routedRepliesForThread(
+        [
+          { ...message, createdAt: "2026-10-10T10:00:00.000Z" },
+          { id: "s", role: "assistant", createdBy: "agent", text: "typing", streaming: true },
+          answer,
+          fromOther,
+          { id: "a2", role: "assistant", createdBy: "agent", text: "Sent to Other work." },
+          second,
+        ],
+        project,
+        worker,
+      ),
+    ).toEqual([
+      {
+        id: message.id,
+        text: original,
+        createdAt: "2026-10-10T10:00:00.000Z",
+        answer: "Sent to Calendar work, as asked.",
+      },
+      { id: second.id, text: "Again", createdAt: null, answer: null },
+    ]);
+  });
+  it("does not borrow an answer given to a later message", () => {
+    expect(
+      routedRepliesForThread(
+        [message, { id: "u", role: "user", createdBy: "user", text: "Unrelated" }, answer],
+        project,
+        worker,
+      )[0]?.answer,
+    ).toBeNull();
+  });
+  it("keeps a long answer to one short line", () => {
+    const long = { ...answer, text: "x".repeat(400) };
+    const shown = routedRepliesForThread([message, long], project, worker)[0]?.answer;
+    expect(shown).toHaveLength(240);
+    expect(shown?.endsWith("…")).toBe(true);
+  });
+  it("ignores coordinator messages that were not typed in a thread", () => {
+    expect(
+      routedRepliesForThread(
+        [{ id: "plain", role: "user", createdBy: "user", text: "Start a thread" }, answer],
+        project,
+        worker,
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe("coordinator messages that carry a worker's report", () => {
+  const completion = { taskIds: ["node:delegated-task:a"] };
+  it("marks a worker's message and the coordinator's relay after a completion", () => {
+    const ids = projectReportMessageIds([
+      { id: "ask", role: "user", createdBy: "user" },
+      { id: "plan", role: "assistant", createdBy: "agent" },
+      { id: "wake", role: "user", createdBy: "system", delegatedCompletion: completion },
+      { id: "relay", role: "assistant", createdBy: "agent" },
+      { id: "relay-more", role: "assistant", createdBy: "agent" },
+      { id: "follow-up", role: "user", createdBy: "user" },
+      { id: "answer", role: "assistant", createdBy: "agent" },
+      { id: "worker", role: "user", createdBy: "agent" },
+      { id: "relay-worker", role: "assistant", createdBy: "agent" },
+    ]);
+    expect([...ids]).toEqual(["relay", "relay-more", "worker", "relay-worker"]);
+  });
+
+  it("leaves a conversation with no reports alone", () => {
+    expect(
+      projectReportMessageIds([
+        { id: "ask", role: "user", createdBy: "user" },
+        { id: "answer", role: "assistant", createdBy: "agent" },
+      ]).size,
+    ).toBe(0);
+  });
+});

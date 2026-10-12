@@ -1,0 +1,2078 @@
+/* The three-pane shell: projects and chats, the coordinator, the project's threads.
+   Unlayered on purpose, so these rules settle the look where a feature utility
+   and a shell class meet on one element. Colors come from the app's semantic
+   tokens only; the default palette below is what gives them their warmth. */
+
+/* Default palette. A chosen theme sets data-theme-id and keeps its own colors. */
+html:not([data-theme-id]),
+html[data-theme-id=""] {
+  --background: #fcfcfb;
+  --foreground: #1f1f1f;
+  --card: #ffffff;
+  --card-foreground: #1f1f1f;
+  --popover: #ffffff;
+  --popover-foreground: #1f1f1f;
+  --primary: #b5532f;
+  --primary-foreground: #ffffff;
+  --secondary: #f3f3f3;
+  --secondary-foreground: #1f1f1f;
+  --muted: #f3f3f3;
+  --muted-foreground: #5c5b58;
+  --accent: #f0f0ef;
+  --accent-foreground: #1f1f1f;
+  --border: #e3e3e2;
+  --input: #d9d9d7;
+  --sidebar: #fbfbf9;
+  --sidebar-foreground: #1f1f1f;
+  --sidebar-muted-foreground: #5c5b58;
+  --sidebar-control-surface: #f0f0ef;
+  --sidebar-row-hover: #f0f0ef;
+  --sidebar-row-active: #e4e4e3;
+  --sidebar-row-selected: #edece9;
+  --sidebar-border: #e3e3e2;
+  --shell-serif: "Iowan Old Style", "Palatino Linotype", Palatino, ui-serif, Georgia, serif;
+  --shell-waiting: #9a4f08;
+  --shell-working: #2563a8;
+  --shell-done: #35704a;
+  --shell-failed: #b42318;
+  --shell-link: #2563a8;
+}
+html:not([data-theme-id]) [data-app-sidebar],
+html[data-theme-id=""] [data-app-sidebar] {
+  --background: #fbfbf9;
+  --foreground: #1f1f1f;
+  --card: #ffffff;
+  --card-foreground: #1f1f1f;
+  --accent: #f0f0ef;
+  --accent-foreground: #1f1f1f;
+  --muted: #f0f0ef;
+  --muted-foreground: #5c5b58;
+  --border: #e3e3e2;
+  --input: #d9d9d7;
+  --sidebar: #fbfbf9;
+  --sidebar-foreground: #1f1f1f;
+  --sidebar-muted-foreground: #5c5b58;
+  --sidebar-control-surface: #f0f0ef;
+  --sidebar-row-hover: #f0f0ef;
+  --sidebar-row-active: #e4e4e3;
+  --sidebar-row-selected: #edece9;
+  --sidebar-border: #e3e3e2;
+}
+html.dark:not([data-theme-id]),
+html.dark[data-theme-id=""] {
+  --background: #262624;
+  --foreground: #f5f4ee;
+  --card: #30302e;
+  --card-foreground: #f5f4ee;
+  --popover: #30302e;
+  --popover-foreground: #f5f4ee;
+  --surface-raised: #30302e;
+  --primary: #d97757;
+  --primary-foreground: #1f1e1d;
+  --secondary: rgb(250 249 245 / 6%);
+  --secondary-foreground: #f5f4ee;
+  --muted: rgb(250 249 245 / 6%);
+  --muted-foreground: #b0aea5;
+  --accent: rgb(250 249 245 / 8%);
+  --accent-foreground: #f5f4ee;
+  --border: rgb(222 220 209 / 14%);
+  --input: rgb(222 220 209 / 24%);
+  --sidebar: #1f1e1d;
+  --sidebar-foreground: #f5f4ee;
+  --sidebar-muted-foreground: #b0aea5;
+  --sidebar-control-surface: rgb(250 249 245 / 6%);
+  --sidebar-row-hover: rgb(250 249 245 / 6%);
+  --sidebar-row-active: rgb(250 249 245 / 11%);
+  --sidebar-row-selected: rgb(250 249 245 / 9%);
+  --sidebar-border: rgb(222 220 209 / 14%);
+  --sidebar-stage-fade: #1f1e1d;
+  --shell-waiting: #e8a85c;
+  --shell-working: #7fb2ea;
+  --shell-done: #86c394;
+  --shell-failed: #ff8a80;
+  --shell-link: #7fb2ea;
+}
+html.dark:not([data-theme-id]) [data-app-sidebar],
+html.dark[data-theme-id=""] [data-app-sidebar] {
+  --background: #1f1e1d;
+  --foreground: #f5f4ee;
+  --card: #30302e;
+  --card-foreground: #f5f4ee;
+  --accent: rgb(250 249 245 / 8%);
+  --accent-foreground: #f5f4ee;
+  --muted: rgb(250 249 245 / 6%);
+  --muted-foreground: #b0aea5;
+  --border: rgb(222 220 209 / 14%);
+  --input: rgb(222 220 209 / 24%);
+  --sidebar: #1f1e1d;
+  --sidebar-foreground: #f5f4ee;
+  --sidebar-muted-foreground: #b0aea5;
+  --sidebar-control-surface: rgb(250 249 245 / 6%);
+  --sidebar-row-hover: rgb(250 249 245 / 6%);
+  --sidebar-row-active: rgb(250 249 245 / 11%);
+  --sidebar-row-selected: rgb(250 249 245 / 9%);
+  --sidebar-border: rgb(222 220 209 / 14%);
+  --sidebar-stage-fade: #1f1e1d;
+}
+/* A chosen theme has no status colors of its own; borrow its semantic ones. */
+:root {
+  --shell-serif: "Iowan Old Style", "Palatino Linotype", Palatino, ui-serif, Georgia, serif;
+  --shell-waiting: var(--warning-foreground);
+  --shell-working: var(--info-foreground);
+  --shell-done: var(--success-foreground);
+  --shell-failed: var(--destructive-foreground);
+  --shell-link: var(--info-foreground);
+}
+
+/* Shared pieces ---------------------------------------------------------- */
+
+.sws-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted-foreground) 45%, transparent);
+}
+.sws-dot[data-tone="waiting"] {
+  background: var(--shell-waiting);
+}
+.sws-dot[data-tone="working"] {
+  background: var(--shell-working);
+}
+.sws-dot[data-tone="failed"] {
+  background: var(--destructive);
+}
+.sws-dot[data-tone="resolved"] {
+  background: var(--shell-done);
+}
+
+.sws-kbd {
+  flex: none;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--muted-foreground);
+  letter-spacing: 0.02em;
+}
+
+.sws-count {
+  flex: none;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  background: var(--accent);
+  color: var(--foreground);
+}
+.sws-count-waiting {
+  background: color-mix(in srgb, var(--shell-waiting) 20%, transparent);
+  color: var(--foreground);
+}
+
+.sws-icon-button {
+  position: relative;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.sws-icon-button svg {
+  width: 16px;
+  height: 16px;
+}
+.sws-icon-button:hover,
+.sws-icon-button[data-popup-open] {
+  background: var(--accent);
+  color: var(--foreground);
+}
+.sws-icon-button-on {
+  color: var(--primary);
+}
+.sws-icon-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+:is(
+  .sws-icon-button,
+  .sws-side-row,
+  .sws-side-more,
+  .sws-side-subheading button,
+  .sws-thread-open,
+  .sws-thread-action,
+  .sws-show-more,
+  .sws-top-button,
+  .sws-state,
+  .sws-send,
+  .sws-group-bar,
+  .sws-side-heading h3 button,
+  .sws-model-pick .sws-model-trigger,
+  .sws-model-pick-empty
+):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
+/* Who runs it and on which model. */
+.sws-model {
+  min-width: 0;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+.sws-model-mark {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.sws-model-provider {
+  /* Gives way only after the model name beside it has gone. */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.sws-model-name {
+  flex: 0 9999 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted-foreground);
+}
+.sws-model-chip {
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+}
+
+.sws-empty {
+  padding: 4px 10px 8px;
+  font-size: 12.5px;
+  color: var(--muted-foreground);
+}
+
+/* Left: projects and chats ------------------------------------------------ */
+
+.sws-sidebar {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  padding: 2px 8px 12px;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--sidebar-foreground);
+}
+.sws-side-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.sws-side-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.sws-side-row {
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 7px;
+  text-align: left;
+  color: var(--sidebar-foreground);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.sws-side-row > svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0 1px;
+  color: var(--sidebar-muted-foreground);
+}
+.sws-side-row > .sws-model-mark {
+  width: 18px;
+}
+.sws-side-row:hover {
+  background: var(--sidebar-row-hover);
+}
+.sws-side-row[aria-current="page"] {
+  background: var(--sidebar-row-selected);
+}
+.sws-side-row-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* An offer, not a project yet: quieter than the rows above it. */
+.sws-side-row-quiet {
+  color: var(--sidebar-muted-foreground);
+  cursor: pointer;
+}
+.sws-side-row-quiet:is(:hover, :focus-visible) {
+  color: var(--sidebar-foreground);
+}
+.sws-side-row-hint {
+  flex: none;
+  font-size: 11px;
+  color: var(--sidebar-muted-foreground);
+}
+.sws-side-actions .sws-kbd {
+  opacity: 0;
+}
+.sws-side-actions .sws-side-row:is(:hover, :focus-visible) .sws-kbd {
+  opacity: 1;
+}
+.sws-side-section {
+  margin-top: 14px;
+}
+.sws-side-heading {
+  height: 28px;
+  padding: 0 2px 0 8px;
+  margin-bottom: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.sws-side-heading :is(h2, h3) {
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 400;
+  color: var(--sidebar-muted-foreground);
+}
+/* Section titles (Projects, Chats) sit a clear step above the date headings inside Chats. */
+.sws-side-heading h2 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--sidebar-foreground);
+}
+/* Chats are not part of any project: a rule and a gap keep the two lists apart. */
+.sws-side-chats {
+  margin-top: 18px;
+  padding-top: 12px;
+  border-top: 1px solid var(--sidebar-border);
+}
+.sws-side-subheading-row {
+  height: 24px;
+  margin-bottom: 1px;
+}
+.sws-side-subheading-row .sws-side-subheading {
+  font-size: 11.5px;
+}
+.sws-side-group + .sws-side-group {
+  margin-top: 8px;
+}
+.sws-filter-flag {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--primary);
+}
+.sws-side-heading .sws-icon-button {
+  width: 24px;
+  height: 24px;
+}
+.sws-side-subheading button {
+  height: 24px;
+  margin-left: -6px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 6px;
+  font: inherit;
+  color: var(--sidebar-muted-foreground);
+  cursor: pointer;
+}
+.sws-side-subheading button:hover {
+  color: var(--sidebar-foreground);
+}
+.sws-side-subheading svg {
+  width: 12px;
+  height: 12px;
+  opacity: 0;
+}
+.sws-side-subheading button:is(:hover, :focus-visible, [aria-expanded="false"]) svg {
+  opacity: 1;
+}
+.sws-side-subheading svg[data-open="true"] {
+  transform: rotate(90deg);
+}
+.sws-side-more {
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 7px;
+  font-size: 12px;
+  color: var(--sidebar-muted-foreground);
+  cursor: pointer;
+}
+.sws-side-more:hover {
+  color: var(--sidebar-foreground);
+  background: var(--sidebar-row-hover);
+}
+.sws-side-empty {
+  padding: 4px 8px 6px;
+  font-size: 12.5px;
+  color: var(--sidebar-muted-foreground);
+}
+.sws-chat-row,
+.sws-project-row {
+  position: relative;
+}
+:is(.sws-chat-row, .sws-project-row) .sws-chat-menu {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 24px;
+  height: 24px;
+  opacity: 0;
+  background: var(--sidebar-row-active);
+}
+.sws-chat-row:hover .sws-chat-menu,
+.sws-project-row:hover .sws-chat-menu,
+:is(.sws-chat-row, .sws-project-row) .sws-chat-menu:is(:focus-visible, [data-popup-open]) {
+  opacity: 1;
+}
+:is(.sws-chat-row, .sws-project-row):is(
+    :hover,
+    :has(.sws-chat-menu:is(:focus-visible, [data-popup-open]))
+  )
+  .sws-side-row {
+  padding-right: 30px;
+}
+/* Archived projects keep their rows, quieter than the projects in use. */
+.sws-project-row[data-archived] .sws-side-row-label {
+  color: var(--sidebar-muted-foreground);
+}
+@media (hover: none) {
+  .sws-side-row {
+    height: 36px;
+  }
+  :is(.sws-chat-row, .sws-project-row) .sws-chat-menu {
+    top: 6px;
+    opacity: 1;
+    background: transparent;
+  }
+  :is(.sws-chat-row, .sws-project-row) .sws-side-row {
+    padding-right: 30px;
+  }
+}
+
+/* Top bar ------------------------------------------------------------------ */
+
+.sws-project {
+  font-size: 13.5px;
+}
+.sws-topbar {
+  gap: 8px;
+  border-bottom: 0;
+}
+.sws-project-id {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.project-icon-button {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  margin: -3px;
+  padding: 3px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.project-icon-button:hover {
+  background: var(--accent);
+}
+.project-icon-button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+.project-icon-button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.sws-project-id h1 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+.sws-tag {
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.sws-top-actions {
+  gap: 2px;
+  -webkit-app-region: no-drag;
+}
+.sws-top-actions .sws-icon-button {
+  width: 28px;
+  height: 28px;
+}
+.sws-top-button {
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.sws-top-button svg {
+  width: 15px;
+  height: 15px;
+}
+.sws-top-button:hover {
+  background: var(--muted);
+  color: var(--foreground);
+}
+.sws-top-button[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--foreground);
+}
+@media (max-width: 760px) {
+  .sws-top-actions .sws-overview-toggle > span:not(.sws-count) {
+    display: none;
+  }
+}
+
+/* Coordinator model and effort, under the composer. */
+.sws-model-pick {
+  flex: 0 1 auto;
+  min-width: 0;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  padding-left: 6px;
+  border-radius: 8px;
+}
+.sws-model-pick[data-saving="true"] {
+  opacity: 0.7;
+}
+.sws-model-pick .sws-model-trigger {
+  height: 28px;
+  max-width: 220px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  box-shadow: none;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--foreground);
+}
+.sws-model-pick .sws-model-trigger:is(:hover, [data-popup-open]) {
+  background: var(--accent);
+}
+.sws-model-pick .sws-effort-trigger {
+  font-weight: 400;
+  color: var(--muted-foreground);
+}
+.sws-model-pick .sws-effort-trigger svg[data-composer-control-icon] {
+  display: none;
+}
+/* In a narrow column the effort gives way first and trims, so the model stays readable. */
+.sws-model-pick .sws-effort-trigger {
+  min-width: 0;
+  flex-shrink: 3;
+}
+.sws-model-pick .sws-effort-trigger > [data-composer-control-label] {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sws-model-pick-static {
+  padding: 0;
+}
+.sws-model-pick-unset {
+  flex: none;
+  padding-left: 0;
+}
+.sws-model-pick-unset .sws-model-trigger {
+  font-weight: 550;
+  color: var(--primary);
+}
+.sws-model-pick-unset .sws-model-trigger:is(:hover, [data-popup-open]) {
+  color: var(--foreground);
+}
+.sws-model-pick-loading {
+  flex: none;
+  white-space: nowrap;
+  padding: 0 10px;
+  font-size: 13px;
+  color: var(--muted-foreground);
+}
+.sws-model-pick-empty {
+  flex: none;
+  white-space: nowrap;
+  padding: 0 10px;
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--primary);
+  cursor: pointer;
+}
+@media (max-width: 520px) {
+  .sws-model-pick .sws-model-trigger {
+    max-width: 130px;
+  }
+}
+
+/* Centre: the coordinator -------------------------------------------------- */
+
+.sws-columns {
+  grid-template-columns: minmax(0, 1fr) clamp(340px, 33vw, 460px);
+}
+.sws-columns[data-overview="closed"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+.sws-columns.project-worker-open {
+  grid-template-columns: minmax(0, 1fr) minmax(420px, 1.05fr);
+}
+.sws-columns[data-overview="closed"] .sws-coordinator {
+  border-right: 0;
+}
+@media (max-width: 1100px) {
+  .sws-columns {
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 0.8fr);
+  }
+  /* Beside a sidebar the coordinator keeps a readable width; the thread narrows first. */
+  .sws-columns.project-worker-open {
+    grid-template-columns: minmax(min(300px, 50%), 0.8fr) minmax(min(280px, 50%), 1fr);
+  }
+}
+/* A phone shows one pane at a time: the coordinator, or the overview over it. */
+@media (max-width: 760px) {
+  .sws-columns[data-overview="open"] {
+    overflow: hidden;
+  }
+  .sws-columns[data-overview="open"] .sws-coordinator {
+    display: none;
+  }
+  .sws-columns[data-overview="open"] .sws-threads {
+    flex: 1;
+    height: 100%;
+    min-height: 0;
+  }
+  .sws-columns[data-overview="closed"] .sws-coordinator {
+    flex: 1;
+    min-height: 0;
+    border-bottom: 0;
+  }
+  .sws-columns[data-overview="closed"] .sws-coordinator .project-conversation {
+    max-height: none;
+    min-height: 0;
+  }
+}
+.sws-pane-notice {
+  margin: 12px 22px 0;
+}
+.sws-coordinator .project-conversation {
+  padding: 16px 24px 12px;
+}
+.sws-coordinator .project-conversation > * {
+  width: 100%;
+  max-width: 740px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.sws-coordinator .project-message {
+  margin-bottom: 26px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.sws-coordinator .project-message > h3 {
+  margin-bottom: 6px;
+  font-size: 11.5px;
+  font-weight: 550;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--muted-foreground);
+}
+.sws-coordinator .project-message-user {
+  width: fit-content;
+  max-width: min(640px, 86%);
+  margin-right: max(0px, calc((100% - 740px) / 2));
+  margin-left: auto;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: var(--accent);
+}
+.sws-coordinator .project-message-user > h3 {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+/* Threads named in chat, on the project page and full page alike. One that
+   already existed is a blue chip: thread icon, status dot, live title; one the
+   coordinator just started also gets a bordered card under the message. */
+.sws-thread-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  margin: 0 1px;
+  padding: 1px 7px 1px 6px;
+  border: 1px solid color-mix(in srgb, var(--shell-link) 22%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--shell-link) 12%, transparent);
+  color: var(--shell-link);
+  font: inherit;
+  font-weight: 550;
+  line-height: 1.45;
+  text-decoration: none;
+  vertical-align: bottom;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    transform 120ms ease;
+}
+.sws-thread-link:hover {
+  background: color-mix(in srgb, var(--shell-link) 20%, transparent);
+  border-color: color-mix(in srgb, var(--shell-link) 40%, transparent);
+  transform: translateY(-1px);
+}
+.sws-thread-link:active {
+  transform: none;
+}
+.sws-thread-link:focus-visible,
+.sws-thread-card-action:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.sws-thread-link-icon {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  opacity: 0.8;
+}
+.sws-thread-link-title {
+  min-width: 0;
+  max-width: 32ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A link to a thread that is gone or not on this machine: muted, dashed, inert. */
+.sws-thread-link[aria-disabled="true"] {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--muted-foreground) 45%, transparent);
+  background: color-mix(in srgb, var(--muted-foreground) 8%, transparent);
+  color: var(--muted-foreground);
+  font-weight: 500;
+  cursor: default;
+}
+.sws-thread-link[aria-disabled="true"]:hover {
+  transform: none;
+  background: color-mix(in srgb, var(--muted-foreground) 8%, transparent);
+}
+.sws-thread-link[data-thread-link-dead="deleted"] .sws-thread-link-title {
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--muted-foreground) 55%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .sws-thread-link,
+  .sws-thread-link:hover {
+    transition: none;
+    transform: none;
+  }
+}
+.sws-thread-mention {
+  font-weight: 550;
+}
+.sws-thread-link .sws-dot {
+  display: inline-block;
+}
+.sws-thread-cards {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: start;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.sws-thread-cards > li {
+  min-width: 0;
+  max-width: 100%;
+}
+/* The card's head and quick actions are laid out in threadCards.css. */
+.sws-thread-card {
+  max-width: 100%;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 8px 8px 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--card-foreground);
+  font: inherit;
+  text-align: left;
+}
+/* A thread that is not doing anything yet reads as an empty circle, as in the chat. */
+.sws-thread-card .sws-dot[data-tone="idle"],
+.sws-thread-link .sws-dot[data-tone="idle"] {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--muted-foreground) 70%, transparent);
+}
+/* A long title keeps the room it needs before the status word does. */
+.sws-thread-card-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sws-thread-card-status {
+  flex: 0 100 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--muted-foreground);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The coordinator's live line under the conversation while its turn runs. */
+.sws-coordinator-working {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 2px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--muted-foreground);
+}
+.sws-coordinator-working .sws-dot[data-tone="working"] {
+  animation: sws-working-pulse 1.4s ease-in-out infinite;
+}
+.sws-coordinator-working-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sws-coordinator-working-time {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+@keyframes sws-working-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sws-coordinator-working .sws-dot {
+    animation: none;
+  }
+}
+
+/* Verbose timeline detail: one turn's steps under its answer. */
+.sws-run-activity {
+  margin: 8px 0 2px;
+  border-left: 2px solid var(--border);
+  padding: 2px 0 2px 12px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--muted-foreground);
+}
+.sws-run-activity > summary {
+  cursor: pointer;
+  width: fit-content;
+  border-radius: 4px;
+  color: var(--foreground);
+}
+.sws-run-activity > summary:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.sws-run-activity ol {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 3px;
+}
+.sws-run-activity li {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+.sws-run-activity-label {
+  flex: none;
+}
+.sws-run-activity-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+}
+.sws-run-activity-detail[data-prose] {
+  font-family: inherit;
+  font-size: inherit;
+  font-style: italic;
+}
+.sws-run-activity li[data-failed] .sws-run-activity-label {
+  color: var(--destructive);
+}
+.sws-run-activity-note {
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+.sws-run-activity-note button {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.sws-coordinator-empty {
+  flex: 0 0 auto;
+  width: 100%;
+  max-width: 788px;
+  margin: auto auto 0;
+  padding: 24px 24px 20px;
+}
+.sws-coordinator .project-conversation:has(> .sws-coordinator-empty) {
+  display: flex;
+  flex-direction: column;
+}
+.sws-coordinator .project-conversation > .sws-coordinator-empty {
+  max-width: 740px;
+  padding: 8px 0 20px;
+  overflow: visible;
+}
+.sws-coordinator-empty h2 {
+  margin: 0;
+  font-family: var(--shell-serif);
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+.sws-coordinator-empty > p {
+  max-width: 56ch;
+  margin-top: 8px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--muted-foreground);
+}
+.sws-coordinator-empty > blockquote {
+  margin-top: 14px;
+  padding-left: 12px;
+  border-left: 2px solid var(--border);
+  font-size: 13.5px;
+  color: var(--foreground);
+}
+.sws-coordinator-empty > button {
+  margin-top: 16px;
+}
+.sws-composer {
+  width: 100%;
+  max-width: 788px;
+  margin: 0 auto;
+  padding: 8px 24px 18px;
+  border-top: 0;
+  background: transparent;
+}
+.sws-composer > .sws-composer-card {
+  margin-top: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: flex-start;
+  gap: 6px;
+  padding: 6px 7px 6px 0;
+}
+.sws-composer-card {
+  border: 1px solid var(--input);
+  border-radius: 14px;
+  background: var(--card);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 4%);
+}
+.sws-composer-card:focus-within {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 22%, transparent);
+}
+.sws-composer .sws-composer-card textarea {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+  min-height: 32px;
+  max-height: 220px;
+  field-sizing: content;
+  padding: 5px 4px 5px 16px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 14.5px;
+  line-height: 22px;
+  resize: none;
+  outline: none;
+}
+.sws-composer .sws-composer-card textarea::placeholder {
+  color: var(--muted-foreground);
+}
+/* Images waiting to go out with the message. */
+.sws-attachments {
+  flex: 0 0 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 6px 0 2px 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  list-style: none;
+}
+.sws-attachment {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--muted);
+}
+.sws-attachment img {
+  width: 100%;
+  height: 100%;
+  border-radius: 9px;
+  object-fit: cover;
+}
+.sws-attachment[data-state="failed"] {
+  border-color: var(--shell-failed);
+}
+.sws-attachment-state {
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: 1px 0;
+  border-radius: 0 0 9px 9px;
+  background: color-mix(in srgb, var(--background) 82%, transparent);
+  font-size: 11px;
+  font-weight: 500;
+  text-align: center;
+  color: var(--foreground);
+}
+.sws-attachment[data-state="failed"] .sws-attachment-state {
+  /* Opaque, so the word reads whatever the picture under it. */
+  background: var(--card);
+  color: var(--shell-failed);
+}
+.sws-attachment-remove:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.sws-attachment-remove {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--foreground);
+  cursor: pointer;
+}
+.sws-attachment-remove::after {
+  /* A 20px mark with a comfortable target around it. */
+  content: "";
+  position: absolute;
+  inset: -6px;
+}
+.sws-attachment-remove svg {
+  width: 12px;
+  height: 12px;
+}
+.sws-attachment-remove:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+/* The tile itself opens the preview; the remove mark sits above it. */
+.sws-attachment-open {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  color: var(--foreground);
+  cursor: zoom-in;
+}
+.sws-attachment-open:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+.sws-attachment-state {
+  pointer-events: none;
+}
+.sws-attachment[data-kind="file"] {
+  width: auto;
+  max-width: 220px;
+}
+.sws-attachment[data-kind="file"] .sws-attachment-open {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-content: center;
+  column-gap: 8px;
+  padding: 0 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.sws-attachment[data-kind="file"] .sws-attachment-open svg {
+  grid-row: span 2;
+  align-self: center;
+  width: 18px;
+  height: 18px;
+  color: var(--muted-foreground);
+}
+.sws-attachment-name {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sws-attachment-size {
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+}
+.sws-attachment[data-state="preparing"] .sws-attachment-state {
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+}
+.sws-attachment-count {
+  align-self: flex-end;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.sws-composer .sws-attachment-notice {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 0;
+}
+.sws-attachment-notice p {
+  margin: 0;
+}
+.sws-attachment-notice-dismiss {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+.sws-attachment-notice-dismiss svg {
+  width: 14px;
+  height: 14px;
+}
+.sws-attachment-notice-dismiss:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+.sws-composer-foot .sws-attach {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  margin-left: -6px;
+}
+/* One row while it fits; the model and effort drop to their own row when it does not. */
+.sws-composer .sws-composer-foot {
+  margin: 0;
+  padding: 6px 2px 0 8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px 10px;
+}
+.sws-composer-meta {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.sws-composer-foot .sws-model-pick {
+  max-width: 100%;
+}
+/* The host name takes only the room left over, so it never pushes the model off the row. */
+.sws-host {
+  flex: 1 1 0;
+  width: 0;
+  min-width: 0;
+  max-width: fit-content;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.sws-host .sws-dot {
+  flex: none;
+}
+.sws-host-name {
+  min-width: 0;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sws-host-pick {
+  height: 24px;
+  padding: 0 6px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.sws-host-pick svg {
+  flex: none;
+  width: 13px;
+  height: 13px;
+}
+.sws-host-pick:hover,
+.sws-host-pick[data-popup-open] {
+  background: var(--accent);
+  color: var(--foreground);
+}
+.sws-state {
+  flex: none;
+  height: 24px;
+  white-space: nowrap;
+  padding: 0 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 7px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.sws-state svg {
+  width: 13px;
+  height: 13px;
+}
+.sws-state:hover {
+  background: var(--accent);
+  color: var(--foreground);
+}
+.sws-send {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  cursor: pointer;
+}
+.sws-send svg {
+  width: 17px;
+  height: 17px;
+}
+.sws-send:disabled {
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: not-allowed;
+}
+@media (max-width: 900px) {
+  .sws-host {
+    display: none;
+  }
+  .sws-composer-meta {
+    flex: none;
+  }
+}
+
+/* Right: threads ----------------------------------------------------------- */
+
+.sws-threads {
+  background: var(--card);
+}
+/* The panel's one header row: its tabs, or an open thread's breadcrumb. The
+   panel runs the full window height, so this row sits in the title row beside
+   the coordinator's top bar, at the same height. */
+.sws-pane-head {
+  flex: none;
+  height: var(--workspace-topbar-height);
+  min-height: var(--workspace-topbar-height);
+  padding: 0 8px 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+/* Windows draws its window buttons over the right end of the title row. */
+.wco .sws-pane-head {
+  padding-right: var(--workspace-native-controls-inset);
+}
+/* Leftmost in the window (widened, or a phone's only pane), it clears the
+   window controls the way the coordinator's top bar does. */
+[data-sidebar-state="collapsed"] .sws-columns[data-expanded="true"] .sws-pane-head {
+  padding-left: var(--workspace-titlebar-content-left);
+}
+/* Below md the sidebar is a sheet and its toggle always sits in the title row. */
+@media (width < 48rem) {
+  .sws-columns[data-expanded="true"] .sws-pane-head {
+    padding-left: var(--workspace-titlebar-content-left, 10px);
+  }
+}
+@media (max-width: 760px) {
+  .sws-columns[data-overview="open"] .sws-pane-head {
+    padding-left: var(--workspace-titlebar-content-left, 10px);
+  }
+}
+.sws-pane-head .sws-icon-button {
+  width: 28px;
+  height: 28px;
+}
+.sws-pane-head .sws-icon-button svg {
+  width: 15px;
+  height: 15px;
+}
+.sws-threads-bar {
+  container-type: inline-size;
+}
+/* Too narrow for every tool: keep New thread; the top bar's More menu has the rest. */
+@container (max-width: 380px) {
+  .sws-threads-actions > .sws-icon-button:not(:last-child) {
+    display: none;
+  }
+}
+.sws-group-bar[aria-disabled="true"] {
+  cursor: default;
+}
+.sws-threads-actions {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.sws-threads-tab {
+  height: 30px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border-radius: 8px;
+  background: var(--accent);
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--foreground);
+}
+.sws-threads-tab svg {
+  width: 15px;
+  height: 15px;
+  color: var(--muted-foreground);
+}
+.sws-threads-head {
+  padding: 6px 8px 14px;
+}
+.sws-threads-head h2 {
+  font-family: var(--shell-serif);
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+}
+.sws-threads-head p {
+  margin-top: 7px;
+  font-size: 14px;
+  color: var(--muted-foreground);
+}
+.sws-threads-tools {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.sws-threads-body {
+  flex: 1;
+  min-height: 0;
+  padding: 0 12px 20px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.sws-threads-body .project-notice {
+  margin: 0 8px 12px;
+}
+.sws-find {
+  height: 34px;
+  margin: 0 0 10px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--card);
+  color: var(--muted-foreground);
+}
+.sws-find:focus-within {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 22%, transparent);
+}
+.sws-find svg {
+  flex: none;
+  width: 15px;
+  height: 15px;
+}
+.sws-project .sws-find input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 13px;
+  outline: none;
+}
+.sws-find input::placeholder {
+  color: var(--muted-foreground);
+}
+.sws-find input::-webkit-search-cancel-button {
+  display: none;
+}
+.sws-thread-group {
+  margin-top: 6px;
+}
+.sws-thread-group > h3 {
+  margin: 0 0 4px;
+}
+.sws-group-bar {
+  width: 100%;
+  min-height: 34px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-radius: 9px;
+  background: var(--muted);
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--foreground);
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.sws-group-bar:hover {
+  background: var(--accent);
+}
+.sws-group-bar svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--muted-foreground);
+}
+.sws-group-count {
+  margin-left: -3px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+.sws-thread-group .sws-empty {
+  padding: 6px 12px 8px 36px;
+}
+.sws-dot[data-tone="none"] {
+  visibility: hidden;
+}
+.sws-thread-status {
+  flex: none;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--shell-waiting);
+}
+.sws-thread-status[data-tone="working"] {
+  color: var(--shell-working);
+}
+.sws-thread-status[data-tone="failed"] {
+  color: var(--shell-failed);
+}
+.sws-thread-status::after {
+  content: "·";
+  margin-left: 6px;
+  font-weight: 400;
+  color: var(--muted-foreground);
+}
+.sws-thread-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.sws-thread-row {
+  position: relative;
+  margin: 0;
+  display: flex;
+  align-items: stretch;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  overflow: visible;
+}
+.sws-thread-row:hover,
+.sws-thread-row:focus-within {
+  background: var(--accent);
+}
+.sws-thread-open {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-radius: 10px;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.sws-thread-pr {
+  flex: none;
+  height: 24px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+.sws-thread-pr svg {
+  width: 13px;
+  height: 13px;
+}
+.sws-thread-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.sws-thread-text strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+.sws-thread-meta {
+  min-width: 0;
+  /* One line: an error with no room to say anything wraps out of sight. */
+  max-height: 18px;
+  overflow: clip;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.sws-thread-lead {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.sws-thread-lead .sws-model {
+  flex: 0 1 auto;
+}
+.sws-thread-error {
+  flex: 1 1 96px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  color: var(--muted-foreground);
+}
+.sws-thread-age {
+  flex: none;
+  min-width: 26px;
+  text-align: right;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+.sws-thread-action {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  translate: 0 -50%;
+  height: 26px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--card);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--foreground);
+  cursor: pointer;
+  opacity: 0;
+}
+.sws-thread-action svg {
+  width: 13px;
+  height: 13px;
+}
+.sws-thread-row:hover .sws-thread-action,
+.sws-thread-action:focus-visible {
+  opacity: 1;
+}
+.sws-thread-action:hover {
+  border-color: var(--input);
+}
+.sws-thread-action:disabled {
+  cursor: not-allowed;
+  color: var(--muted-foreground);
+}
+.sws-thread-row:hover :is(.sws-thread-age, .sws-thread-pr),
+.sws-thread-row:has(.sws-thread-action:focus-visible) :is(.sws-thread-age, .sws-thread-pr) {
+  visibility: hidden;
+}
+@media (hover: none) {
+  .sws-thread-action {
+    position: static;
+    translate: none;
+    align-self: center;
+    margin-right: 6px;
+    opacity: 1;
+  }
+  .sws-thread-action span {
+    display: none;
+  }
+  .sws-thread-row :is(.sws-thread-age, .sws-thread-pr) {
+    visibility: visible !important;
+  }
+}
+.sws-show-more {
+  height: 30px;
+  margin: 2px auto 4px;
+  padding: 0 12px;
+  display: block;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.sws-show-more:hover {
+  background: var(--accent);
+  color: var(--foreground);
+}
+.sws-thread-head {
+  container-type: inline-size;
+}
+.sws-thread-crumb {
+  flex: none;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: 7px;
+  font-size: 13px;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.sws-thread-crumb:hover {
+  background: var(--accent);
+  color: var(--foreground);
+}
+.sws-thread-crumb:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+.sws-thread-crumb-sep {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  margin: 0 -2px;
+  color: var(--muted-foreground);
+}
+.sws-thread-head-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 4px;
+}
+.sws-thread-head-tools {
+  display: flex;
+  flex: none;
+  align-items: center;
+  align-self: stretch;
+  -webkit-app-region: no-drag;
+}
+.sws-thread-head-tools:empty {
+  display: none;
+}
+.sws-thread-head-text h2 {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+  /* Double-click renames; in a draggable title row it would zoom the window. */
+  -webkit-app-region: no-drag;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .sws-side-subheading svg {
+    transition: transform 120ms ease-out;
+  }
+}
+@media (forced-colors: active) {
+  .sws-dot,
+  .sws-filter-flag {
+    border: 1px solid CanvasText;
+  }
+  .sws-composer-card:focus-within,
+  .sws-find:focus-within {
+    outline: 2px solid Highlight;
+  }
+  .sws-side-row[aria-current="page"],
+  .sws-top-button[aria-pressed="true"] {
+    outline: 1px solid Highlight;
+  }
+}
+
+.sws-threads .project-route-note {
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--muted);
+  font-size: 11.5px;
+}
+
+.studio-session-main .sws-model {
+  vertical-align: -2px;
+}
+
+/* Starter tasks: what an empty project offers before its first thread ------- */
+
+.sws-starters {
+  margin-top: 22px;
+}
+.sws-starters > h3 {
+  margin: 0 0 9px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+.sws-starter-grid {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.sws-starter-grid > li {
+  display: flex;
+  min-width: 0;
+}
+.sws-starter {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 92px;
+  padding: 12px 34px 11px 12px;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  grid-template-rows: 1fr auto;
+  column-gap: 10px;
+  row-gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--foreground);
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.sws-starter:hover:enabled {
+  border-color: var(--input);
+  background: var(--accent);
+}
+.sws-starter:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+.sws-starter:disabled {
+  cursor: default;
+}
+.sws-starter:disabled:not([data-started]) {
+  opacity: 0.6;
+}
+.sws-starter-icon {
+  grid-row: 1 / span 2;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+.sws-starter-icon svg {
+  width: 15px;
+  height: 15px;
+}
+.sws-starter:is([data-origin="repository"], [data-origin="specweave"], [data-origin="goal"])
+  .sws-starter-icon {
+  background: color-mix(in srgb, var(--primary) 11%, transparent);
+  color: var(--primary);
+}
+.sws-starter[data-started] .sws-starter-icon {
+  background: color-mix(in srgb, var(--shell-done) 14%, transparent);
+  color: var(--shell-done);
+}
+.sws-starter-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.sws-starter-text > strong {
+  font-size: 13.5px;
+  font-weight: 550;
+  line-height: 1.3;
+  letter-spacing: -0.005em;
+}
+.sws-starter-text > span {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--muted-foreground);
+}
+.sws-starter-origin {
+  grid-column: 2;
+  font-size: 11px;
+  letter-spacing: 0.01em;
+  color: var(--muted-foreground);
+}
+.sws-starter-go {
+  position: absolute;
+  top: 12px;
+  right: 11px;
+  width: 14px;
+  height: 14px;
+  color: var(--muted-foreground);
+  opacity: 0;
+}
+.sws-starter:is(:hover, :focus-visible):enabled .sws-starter-go {
+  opacity: 1;
+}
+.sws-starter-pending {
+  cursor: default;
+  border-style: dashed;
+  background: transparent;
+}
+.sws-starter-note {
+  margin-top: 9px;
+  font-size: 12.5px;
+  color: var(--muted-foreground);
+}
+
+/* The Threads pane is a column of rows, so the same ideas read as a list there. */
+.sws-starters[data-layout="list"] {
+  margin-top: 0;
+  padding: 0 0 8px;
+}
+.sws-starters[data-layout="list"] > h3 {
+  padding: 0 8px;
+}
+.sws-starters[data-layout="list"] .sws-starter-grid {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+}
+.sws-starters[data-layout="list"] .sws-starter {
+  min-height: 0;
+  padding: 9px 34px 9px 10px;
+  grid-template-rows: auto;
+  row-gap: 0;
+  align-items: center;
+  border-color: transparent;
+  border-radius: 10px;
+  background: transparent;
+}
+.sws-starters[data-layout="list"] .sws-starter:hover:enabled {
+  background: var(--accent);
+}
+.sws-starters[data-layout="list"] .sws-starter-icon {
+  grid-row: 1;
+}
+.sws-starters[data-layout="list"] .sws-starter-text > span {
+  -webkit-line-clamp: 1;
+}
+.sws-starters[data-layout="list"] .sws-starter-origin {
+  display: none;
+}
+.sws-starters[data-layout="list"] .sws-starter-go {
+  top: 50%;
+  transform: translateY(-50%);
+}
+.sws-starters[data-layout="list"] .sws-starter-pending {
+  min-height: 46px;
+  border-color: var(--border);
+}
+
+@media (max-width: 620px) {
+  .sws-starter-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .sws-starter {
+    min-height: 0;
+  }
+}
+@media (hover: none) {
+  .sws-starter-go {
+    opacity: 0.7;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .sws-starter,
+  .sws-starter-go {
+    transition:
+      background-color 120ms ease-out,
+      border-color 120ms ease-out,
+      opacity 120ms ease-out;
+  }
+}
+@media (forced-colors: active) {
+  .sws-starter:focus-visible {
+    outline: 2px solid Highlight;
+  }
+}
+/* Claude's project home: a greeting and three ways in, at the top of an empty conversation. */
+.sws-coordinator .sws-coordinator-empty.sws-coordinator-greeting {
+  margin: 0 auto auto;
+  padding-top: 28px;
+}
+.sws-coordinator-greeting > .sws-greeting {
+  max-width: none;
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.6;
+  color: var(--foreground);
+}
+.sws-quick-starts {
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.sws-quick-start {
+  height: 34px;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  font-size: 14px;
+  color: var(--foreground);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 4%);
+  cursor: pointer;
+}
+.sws-quick-start svg {
+  width: 15px;
+  height: 15px;
+  color: var(--muted-foreground);
+}
+.sws-quick-start:hover:not(:disabled) {
+  background: var(--accent);
+}
+.sws-quick-start:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.sws-quick-start:disabled {
+  cursor: default;
+  opacity: 0.55;
+}

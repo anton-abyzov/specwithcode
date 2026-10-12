@@ -1,0 +1,7 @@
+{
+  "name": "ready-to-close",
+  "version": "0.1.0",
+  "description": "Increments whose tasks are done but cannot close yet, with the exact next command",
+  "main": "./register.js",
+  "permissions": ["specweave:read"]
+}

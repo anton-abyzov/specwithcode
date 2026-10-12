@@ -1,0 +1,832 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { assert, describe, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+
+import * as DesktopConfig from "../app/DesktopConfig.ts";
+import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopAppSettings from "./DesktopAppSettings.ts";
+
+const DesktopSettingsPatch = Schema.Struct({
+  linuxPasswordStore: Schema.optionalKey(
+    Schema.Literals(["auto", "gnome-libsecret", "kwallet", "kwallet5", "kwallet6"]),
+  ),
+  mainWindowBounds: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Struct({
+        x: Schema.Number,
+        y: Schema.Number,
+        width: Schema.Number,
+        height: Schema.Number,
+      }),
+    ),
+  ),
+  mainWindowMaximized: Schema.optionalKey(Schema.Boolean),
+  // Loose on purpose so tests can write damaged entries and read back exactly
+  // what was persisted.
+  projectWindowBounds: Schema.optionalKey(Schema.Unknown),
+  serverExposureMode: Schema.optionalKey(Schema.Literals(["local-only", "network-accessible"])),
+  tailscaleServeEnabled: Schema.optionalKey(Schema.Boolean),
+  tailscaleServePort: Schema.optionalKey(Schema.Number),
+  updateChannel: Schema.optionalKey(Schema.Literals(["latest", "nightly"])),
+  updateChannelConfiguredByUser: Schema.optionalKey(Schema.Boolean),
+  wslBackendEnabled: Schema.optionalKey(Schema.Boolean),
+  wslMode: Schema.optionalKey(Schema.Literals(["local", "wsl"])),
+  wslDistro: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  wslOnly: Schema.optionalKey(Schema.Boolean),
+});
+
+const decodeDesktopSettingsPatch = Schema.decodeEffect(Schema.fromJsonString(DesktopSettingsPatch));
+const encodeDesktopSettingsPatch = Schema.encodeEffect(Schema.fromJsonString(DesktopSettingsPatch));
+
+function layerEnvironment(baseDir: string, appVersion = "0.0.17") {
+  return DesktopEnvironment.layer({
+    dirname: "/repo/apps/desktop/src",
+    homeDirectory: baseDir,
+    platform: "darwin",
+    processArch: "x64",
+    appVersion,
+    appPath: "/repo",
+    isPackaged: true,
+    resourcesPath: "/missing/resources",
+    runningUnderArm64Translation: false,
+  }).pipe(
+    Layer.provide(
+      Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ STUDIO_HOME: baseDir })),
+    ),
+  );
+}
+
+const withSettings = <A, E, R>(
+  effect: Effect.Effect<
+    A,
+    E,
+    R | DesktopAppSettings.DesktopAppSettings | DesktopEnvironment.DesktopEnvironment
+  >,
+  options?: { readonly appVersion?: string },
+) =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "studio-desktop-settings-test-",
+    });
+    return yield* effect.pipe(
+      Effect.provide(
+        DesktopAppSettings.layer.pipe(
+          Layer.provideMerge(layerEnvironment(baseDir, options?.appVersion)),
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
+
+function writeSettingsPatch(patch: typeof DesktopSettingsPatch.Type) {
+  return Effect.gen(function* () {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const encoded = yield* encodeDesktopSettingsPatch(patch);
+    yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+    yield* fileSystem.writeFileString(environment.desktopSettingsPath, `${encoded}\n`);
+  });
+}
+
+describe("DesktopSettings", () => {
+  it.effect(
+    "persists disabling and re-enabling local execution without clearing backend settings",
+    () =>
+      withSettings(
+        Effect.gen(function* () {
+          const settings = yield* DesktopAppSettings.DesktopAppSettings;
+          yield* settings.setWslBackendEnabled(true);
+          yield* settings.setWslDistro("Ubuntu");
+          yield* settings.setServerExposureMode("network-accessible");
+          const before = yield* settings.get;
+          assert.isTrue((yield* settings.setLocalEnvironmentEnabled(false)).changed);
+          assert.deepEqual(yield* settings.load, { ...before, localEnvironmentEnabled: false });
+          assert.isFalse((yield* settings.setLocalEnvironmentEnabled(false)).changed);
+          yield* settings.setLocalEnvironmentEnabled(true);
+          assert.deepEqual(yield* settings.load, before);
+        }),
+      ),
+  );
+  it.effect("loads defaults when no settings file exists", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        assert.deepEqual(yield* settings.load, DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS);
+        assert.deepEqual(yield* settings.get, DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS);
+      }),
+    ),
+  );
+
+  it("turns individual update preferences off and treats repeats as no change", () => {
+    const base = DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
+    const off = DesktopAppSettings.setUpdatePreferences(base, { installAutomatically: false });
+    assert.deepEqual(off.updatePreferences, {
+      checkAutomatically: true,
+      downloadAutomatically: true,
+      installAutomatically: false,
+    });
+    assert.strictEqual(
+      DesktopAppSettings.setUpdatePreferences(off, { installAutomatically: false }),
+      off,
+    );
+  });
+
+  it("defaults packaged nightly builds to the nightly update channel", () => {
+    assert.deepEqual(
+      DesktopAppSettings.resolveDefaultDesktopSettings("0.0.17-nightly.20260415.1"),
+      {
+        linuxPasswordStore: "auto",
+        localEnvironmentEnabled: true,
+        mainWindowBounds: null,
+        mainWindowMaximized: false,
+        projectWindowBounds: [],
+        serverExposureMode: "local-only",
+        tailscaleServeEnabled: false,
+        tailscaleServePort: 443,
+        updateChannel: "nightly",
+        updateChannelConfiguredByUser: false,
+        updatePreferences: DesktopAppSettings.DEFAULT_UPDATE_PREFERENCES,
+        wslBackendEnabled: false,
+        wslOnly: false,
+        wslDistro: null,
+      } satisfies DesktopAppSettings.DesktopSettings,
+    );
+  });
+
+  it.effect("loads persisted settings and applies semantic updates", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* writeSettingsPatch({
+          linuxPasswordStore: "gnome-libsecret",
+          serverExposureMode: "network-accessible",
+          tailscaleServeEnabled: true,
+          tailscaleServePort: 8443,
+          updateChannel: "latest",
+          updateChannelConfiguredByUser: true,
+        });
+
+        assert.deepEqual(yield* settings.load, {
+          linuxPasswordStore: "gnome-libsecret",
+          localEnvironmentEnabled: true,
+          mainWindowBounds: null,
+          mainWindowMaximized: false,
+          projectWindowBounds: [],
+          serverExposureMode: "network-accessible",
+          tailscaleServeEnabled: true,
+          tailscaleServePort: 8443,
+          updateChannel: "latest",
+          updateChannelConfiguredByUser: true,
+          updatePreferences: DesktopAppSettings.DEFAULT_UPDATE_PREFERENCES,
+          wslBackendEnabled: false,
+          wslOnly: false,
+          wslDistro: null,
+        } satisfies DesktopAppSettings.DesktopSettings);
+
+        const exposure = yield* settings.setServerExposureMode("local-only");
+        assert.isTrue(exposure.changed);
+        assert.equal(exposure.settings.serverExposureMode, "local-only");
+
+        const tailscale = yield* settings.setTailscaleServe({
+          enabled: true,
+          port: Option.some(9443),
+        });
+        assert.isTrue(tailscale.changed);
+        assert.equal(tailscale.settings.tailscaleServePort, 9443);
+
+        const updateChannel = yield* settings.setUpdateChannel("nightly");
+        assert.isTrue(updateChannel.changed);
+        assert.equal(updateChannel.settings.updateChannel, "nightly");
+        assert.equal(updateChannel.settings.updateChannelConfiguredByUser, true);
+      }),
+    ),
+  );
+
+  it.effect("reports the failed desktop settings write operation and path", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* fileSystem.makeDirectory(environment.desktopSettingsPath, { recursive: true });
+
+        const error = yield* settings.setServerExposureMode("network-accessible").pipe(Effect.flip);
+        assert.instanceOf(error, DesktopAppSettings.DesktopSettingsWriteError);
+        assert.equal(error.operation, "replace-settings-file");
+        assert.equal(error.path, environment.desktopSettingsPath);
+        assert.exists(error.cause);
+        assert.equal(
+          error.message,
+          `Desktop settings write failed during replace-settings-file at ${environment.desktopSettingsPath}.`,
+        );
+      }),
+    ),
+  );
+
+  it.effect("does not persist no-op semantic updates", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+
+        const exposure = yield* settings.setServerExposureMode("local-only");
+        assert.isFalse(exposure.changed);
+
+        const tailscale = yield* settings.setTailscaleServe({
+          enabled: false,
+          port: Option.none(),
+        });
+        assert.isFalse(tailscale.changed);
+
+        const updateChannel = yield* settings.setUpdateChannel("latest");
+        assert.isFalse(updateChannel.changed);
+        assert.equal(updateChannel.settings.updateChannelConfiguredByUser, false);
+      }),
+    ),
+  );
+
+  it.effect("falls back to defaults when the settings file is malformed", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(environment.desktopSettingsPath, "{not-json");
+
+        assert.deepEqual(yield* settings.load, DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS);
+      }),
+    ),
+  );
+
+  it.effect("loads lenient persisted desktop settings JSON", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          environment.desktopSettingsPath,
+          `{
+            // JSONC-style comments and trailing commas match server settings parsing.
+            "serverExposureMode": "network-accessible",
+            "tailscaleServeEnabled": true,
+            "tailscaleServePort": 8443,
+            "mainWindowBounds": { "x": 120, "y": 80, "width": 1280, "height": 900 },
+          }\n`,
+        );
+
+        assert.deepEqual(yield* settings.load, {
+          linuxPasswordStore: "auto",
+          localEnvironmentEnabled: true,
+          mainWindowBounds: { x: 120, y: 80, width: 1280, height: 900 },
+          mainWindowMaximized: false,
+          projectWindowBounds: [],
+          serverExposureMode: "network-accessible",
+          tailscaleServeEnabled: true,
+          tailscaleServePort: 8443,
+          updateChannel: "latest",
+          updateChannelConfiguredByUser: false,
+          updatePreferences: DesktopAppSettings.DEFAULT_UPDATE_PREFERENCES,
+          wslBackendEnabled: false,
+          wslOnly: false,
+          wslDistro: null,
+        } satisfies DesktopAppSettings.DesktopSettings);
+      }),
+    ),
+  );
+
+  it.effect("rejects window bounds that do not satisfy the domain schema", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* writeSettingsPatch({
+          mainWindowBounds: { x: 10.5, y: 20, width: 839, height: 620 },
+          mainWindowMaximized: true,
+          serverExposureMode: "network-accessible",
+        });
+
+        const loaded = yield* settings.load;
+        assert.isNull(loaded.mainWindowBounds);
+        assert.isFalse(loaded.mainWindowMaximized);
+        assert.equal(loaded.serverExposureMode, "network-accessible");
+      }),
+    ),
+  );
+
+  it.effect(
+    "normalizes unsupported linux password-store values without dropping other settings",
+    () =>
+      withSettings(
+        Effect.gen(function* () {
+          const environment = yield* DesktopEnvironment.DesktopEnvironment;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const settings = yield* DesktopAppSettings.DesktopAppSettings;
+          yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+          yield* fileSystem.writeFileString(
+            environment.desktopSettingsPath,
+            `{
+            "linuxPasswordStore": "unsupported-store",
+            "serverExposureMode": "network-accessible",
+            "tailscaleServeEnabled": true,
+            "tailscaleServePort": 8443,
+            "updateChannel": "nightly",
+            "updateChannelConfiguredByUser": true
+          }\n`,
+          );
+
+          assert.deepEqual(yield* settings.load, {
+            linuxPasswordStore: "auto",
+            localEnvironmentEnabled: true,
+            mainWindowBounds: null,
+            mainWindowMaximized: false,
+            projectWindowBounds: [],
+            serverExposureMode: "network-accessible",
+            tailscaleServeEnabled: true,
+            tailscaleServePort: 8443,
+            updateChannel: "nightly",
+            updateChannelConfiguredByUser: true,
+            updatePreferences: DesktopAppSettings.DEFAULT_UPDATE_PREFERENCES,
+            wslBackendEnabled: false,
+            wslOnly: false,
+            wslDistro: null,
+          } satisfies DesktopAppSettings.DesktopSettings);
+        }),
+      ),
+  );
+
+  it.effect("persists sparse desktop settings documents", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+
+        yield* settings.setMainWindowBounds({ x: -1200, y: 40, width: 1440, height: 960 }, true);
+        yield* settings.setServerExposureMode("network-accessible");
+
+        const persisted = yield* decodeDesktopSettingsPatch(
+          yield* fileSystem.readFileString(environment.desktopSettingsPath),
+        );
+        assert.deepEqual(persisted, {
+          mainWindowBounds: { x: -1200, y: 40, width: 1440, height: 960 },
+          mainWindowMaximized: true,
+          serverExposureMode: "network-accessible",
+        } satisfies typeof DesktopSettingsPatch.Type);
+      }),
+    ),
+  );
+
+  it.effect("saves through a symlinked settings file without replacing the link", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        const dotfiles = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "studio-desktop-settings-dotfiles-",
+        });
+        const linkedSettingsPath = `${dotfiles}/desktop-settings.json`;
+        yield* fileSystem.writeFileString(linkedSettingsPath, "{}\n");
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.symlink(linkedSettingsPath, environment.desktopSettingsPath);
+
+        yield* settings.setServerExposureMode("network-accessible");
+
+        assert.equal(
+          yield* fileSystem.readLink(environment.desktopSettingsPath),
+          linkedSettingsPath,
+        );
+        const persisted = yield* decodeDesktopSettingsPatch(
+          yield* fileSystem.readFileString(linkedSettingsPath),
+        );
+        assert.equal(persisted.serverExposureMode, "network-accessible");
+      }),
+    ),
+  );
+
+  it.effect("migrates legacy implicit update channels to the runtime default", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* writeSettingsPatch({
+          serverExposureMode: "local-only",
+          updateChannel: "latest",
+        });
+
+        assert.deepEqual(yield* settings.load, {
+          linuxPasswordStore: "auto",
+          localEnvironmentEnabled: true,
+          mainWindowBounds: null,
+          mainWindowMaximized: false,
+          projectWindowBounds: [],
+          serverExposureMode: "local-only",
+          tailscaleServeEnabled: false,
+          tailscaleServePort: 443,
+          updateChannel: "nightly",
+          updateChannelConfiguredByUser: false,
+          updatePreferences: DesktopAppSettings.DEFAULT_UPDATE_PREFERENCES,
+          wslBackendEnabled: false,
+          wslOnly: false,
+          wslDistro: null,
+        } satisfies DesktopAppSettings.DesktopSettings);
+      }),
+      { appVersion: "0.0.17-nightly.20260415.1" },
+    ),
+  );
+
+  it.effect("preserves explicit stable update channel on nightly builds", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* writeSettingsPatch({
+          serverExposureMode: "local-only",
+          updateChannel: "latest",
+          updateChannelConfiguredByUser: true,
+        });
+
+        assert.deepEqual(yield* settings.load, {
+          linuxPasswordStore: "auto",
+          localEnvironmentEnabled: true,
+          mainWindowBounds: null,
+          mainWindowMaximized: false,
+          projectWindowBounds: [],
+          serverExposureMode: "local-only",
+          tailscaleServeEnabled: false,
+          tailscaleServePort: 443,
+          updateChannel: "latest",
+          updateChannelConfiguredByUser: true,
+          updatePreferences: DesktopAppSettings.DEFAULT_UPDATE_PREFERENCES,
+          wslBackendEnabled: false,
+          wslOnly: false,
+          wslDistro: null,
+        } satisfies DesktopAppSettings.DesktopSettings);
+      }),
+      { appVersion: "0.0.17-nightly.20260415.1" },
+    ),
+  );
+
+  it.effect("normalizes invalid persisted Tailscale Serve ports", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* writeSettingsPatch({
+          tailscaleServeEnabled: true,
+          tailscaleServePort: 0,
+        });
+
+        assert.deepEqual(yield* settings.load, {
+          linuxPasswordStore: "auto",
+          localEnvironmentEnabled: true,
+          mainWindowBounds: null,
+          mainWindowMaximized: false,
+          projectWindowBounds: [],
+          serverExposureMode: "local-only",
+          tailscaleServeEnabled: true,
+          tailscaleServePort: 443,
+          updateChannel: "latest",
+          updateChannelConfiguredByUser: false,
+          updatePreferences: DesktopAppSettings.DEFAULT_UPDATE_PREFERENCES,
+          wslBackendEnabled: false,
+          wslOnly: false,
+          wslDistro: null,
+        } satisfies DesktopAppSettings.DesktopSettings);
+      }),
+    ),
+  );
+
+  it.effect("persists wsl backend toggle and normalizes invalid distro names", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        const enable = yield* settings.setWslBackendEnabled(true);
+        assert.isTrue(enable.changed);
+        assert.equal(enable.settings.wslBackendEnabled, true);
+
+        const distro = yield* settings.setWslDistro("Ubuntu-22.04");
+        assert.isTrue(distro.changed);
+        assert.equal(distro.settings.wslDistro, "Ubuntu-22.04");
+
+        const reloaded = yield* settings.load;
+        assert.equal(reloaded.wslBackendEnabled, true);
+        assert.equal(reloaded.wslDistro, "Ubuntu-22.04");
+
+        const reject = yield* settings.setWslDistro("bad name!");
+        assert.equal(reject.settings.wslDistro, null);
+
+        const noop = yield* settings.setWslDistro(null);
+        assert.isFalse(noop.changed);
+      }),
+    ),
+  );
+
+  it.effect("applies WSL Windows fallback with persisted and volatile updates", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* settings.setWslBackendEnabled(true);
+        yield* settings.setWslOnly(true);
+
+        const persistedFallback = yield* settings.applyWslWindowsFallback;
+        assert.isTrue(persistedFallback.changed);
+        assert.equal(persistedFallback.settings.wslBackendEnabled, false);
+        assert.equal(persistedFallback.settings.wslOnly, false);
+
+        const persistedReload = yield* settings.load;
+        assert.equal(persistedReload.wslBackendEnabled, false);
+        assert.equal(persistedReload.wslOnly, false);
+
+        yield* settings.setWslBackendEnabled(true);
+        yield* settings.setWslOnly(true);
+
+        const volatileFallback = yield* settings.applyWslWindowsFallbackInMemory;
+        assert.isTrue(volatileFallback.changed);
+        assert.equal(volatileFallback.settings.wslBackendEnabled, false);
+        assert.equal(volatileFallback.settings.wslOnly, false);
+
+        const current = yield* settings.get;
+        assert.equal(current.wslBackendEnabled, false);
+        assert.equal(current.wslOnly, false);
+
+        const diskReload = yield* settings.load;
+        assert.equal(diskReload.wslBackendEnabled, true);
+        assert.equal(diskReload.wslOnly, true);
+      }),
+    ),
+  );
+
+  it.effect("migrates legacy wslMode=wsl to wslBackendEnabled on load", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* writeSettingsPatch({
+          wslMode: "wsl",
+          wslDistro: "Ubuntu-22.04",
+        });
+        const loaded = yield* settings.load;
+        assert.equal(loaded.wslBackendEnabled, true);
+        assert.equal(loaded.wslDistro, "Ubuntu-22.04");
+      }),
+    ),
+  );
+
+  it.effect("drops invalid persisted wsl distro values on load", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* writeSettingsPatch({
+          wslBackendEnabled: true,
+          wslDistro: "bad/name",
+        });
+        const loaded = yield* settings.load;
+        assert.equal(loaded.wslBackendEnabled, true);
+        assert.equal(loaded.wslDistro, null);
+      }),
+    ),
+  );
+
+  it.effect("remembers a project window's bounds without touching the main window bounds", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        const mainBounds = { x: 20, y: 30, width: 1200, height: 800 };
+        const projectBounds = { x: -900, y: 60, width: 1000, height: 700 };
+        yield* settings.setMainWindowBounds(mainBounds, false);
+
+        const change = yield* settings.setProjectWindowBounds("/work/alpha", projectBounds, true);
+        assert.isTrue(change.changed);
+
+        const reloaded = yield* settings.load;
+        assert.deepEqual(reloaded.mainWindowBounds, mainBounds);
+        assert.isFalse(reloaded.mainWindowMaximized);
+        assert.deepEqual(reloaded.projectWindowBounds, [
+          { projectKey: "/work/alpha", bounds: projectBounds, maximized: true },
+        ]);
+        assert.deepEqual(DesktopAppSettings.findProjectWindowState(reloaded, "/work/alpha"), {
+          projectKey: "/work/alpha",
+          bounds: projectBounds,
+          maximized: true,
+        });
+        assert.isNull(DesktopAppSettings.findProjectWindowState(reloaded, "/work/beta"));
+      }),
+    ),
+  );
+
+  it.effect("does not persist an unchanged project window that is already the newest", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        const bounds = { x: 10, y: 20, width: 1000, height: 700 };
+        const first = yield* settings.setProjectWindowBounds("/work/alpha", bounds, false);
+        assert.isTrue(first.changed);
+
+        // With the file gone, any write would bring it back.
+        yield* fileSystem.remove(environment.desktopSettingsPath);
+        const repeat = yield* settings.setProjectWindowBounds("/work/alpha", { ...bounds }, false);
+        assert.isFalse(repeat.changed);
+        assert.strictEqual(repeat.settings, first.settings);
+        assert.isFalse(yield* fileSystem.exists(environment.desktopSettingsPath));
+
+        const maximized = yield* settings.setProjectWindowBounds("/work/alpha", bounds, true);
+        assert.isTrue(maximized.changed);
+        assert.isTrue(yield* fileSystem.exists(environment.desktopSettingsPath));
+      }),
+    ),
+  );
+
+  it.effect("moves a re-saved project window to the end of the list", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        const bounds = { x: 10, y: 20, width: 1000, height: 700 };
+        // Number-like keys would be re-sorted if these were stored as an object.
+        yield* settings.setProjectWindowBounds("2", bounds, false);
+        yield* settings.setProjectWindowBounds("10", bounds, false);
+
+        const resaved = yield* settings.setProjectWindowBounds("2", bounds, false);
+        assert.isTrue(resaved.changed);
+        assert.deepEqual(
+          resaved.settings.projectWindowBounds.map((entry) => entry.projectKey),
+          ["10", "2"],
+        );
+
+        const reloaded = yield* settings.load;
+        assert.deepEqual(
+          reloaded.projectWindowBounds.map((entry) => entry.projectKey),
+          ["10", "2"],
+        );
+      }),
+    ),
+  );
+
+  it.effect("forgets the oldest project window once the cap is reached", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        const cap = DesktopAppSettings.MAX_PROJECT_WINDOW_BOUNDS_ENTRIES;
+        const bounds = { x: 10, y: 20, width: 1000, height: 700 };
+        const keys = Array.from({ length: cap + 1 }, (_, index) => `/work/project-${index}`);
+        yield* Effect.forEach(keys, (key) => settings.setProjectWindowBounds(key, bounds, false), {
+          discard: true,
+        });
+
+        const saved = yield* settings.load;
+        assert.deepEqual(
+          saved.projectWindowBounds.map((entry) => entry.projectKey),
+          keys.slice(1),
+        );
+        assert.isNull(DesktopAppSettings.findProjectWindowState(saved, "/work/project-0"));
+
+        // A document that already holds too many entries is trimmed the same way.
+        yield* writeSettingsPatch({
+          projectWindowBounds: [...keys, "/work/extra"].map((projectKey) => ({
+            projectKey,
+            bounds,
+            maximized: false,
+          })),
+        });
+        const loaded = yield* settings.load;
+        assert.deepEqual(
+          loaded.projectWindowBounds.map((entry) => entry.projectKey),
+          [...keys.slice(2), "/work/extra"],
+        );
+      }),
+    ),
+  );
+
+  it.effect("drops one damaged project window entry and keeps everything else", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        const bounds = { x: 10, y: 20, width: 1000, height: 700 };
+        yield* writeSettingsPatch({
+          projectWindowBounds: [
+            { projectKey: "/work/alpha", bounds, maximized: true },
+            { projectKey: "/work/too-small", bounds: { ...bounds, width: 839 }, maximized: false },
+            { projectKey: "/work/beta", bounds, maximized: "yes", extra: 1 },
+            "not-an-entry",
+            null,
+            { bounds, maximized: false },
+          ],
+          serverExposureMode: "network-accessible",
+          tailscaleServePort: 8443,
+        });
+
+        const loaded = yield* settings.load;
+        assert.deepEqual(loaded.projectWindowBounds, [
+          { projectKey: "/work/alpha", bounds, maximized: true },
+          { projectKey: "/work/beta", bounds, maximized: false },
+        ]);
+        assert.equal(loaded.serverExposureMode, "network-accessible");
+        assert.equal(loaded.tailscaleServePort, 8443);
+      }),
+    ),
+  );
+
+  it.effect("keeps the last entry when a persisted project key repeats", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        const older = { x: 10, y: 20, width: 1000, height: 700 };
+        const newer = { x: 50, y: 60, width: 1100, height: 750 };
+        yield* writeSettingsPatch({
+          projectWindowBounds: [
+            { projectKey: "/work/alpha", bounds: older, maximized: true },
+            { projectKey: "/work/beta", bounds: older, maximized: false },
+            { projectKey: "/work/alpha", bounds: newer, maximized: false },
+          ],
+        });
+
+        assert.deepEqual((yield* settings.load).projectWindowBounds, [
+          { projectKey: "/work/beta", bounds: older, maximized: false },
+          { projectKey: "/work/alpha", bounds: newer, maximized: false },
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("loads a non-list project window value as empty without resetting settings", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* writeSettingsPatch({
+          mainWindowBounds: { x: 120, y: 80, width: 1280, height: 900 },
+          projectWindowBounds: {
+            "/work/alpha": { x: 10, y: 20, width: 1000, height: 700 },
+          },
+          serverExposureMode: "network-accessible",
+        });
+
+        const loaded = yield* settings.load;
+        assert.deepEqual(loaded.projectWindowBounds, []);
+        assert.deepEqual(loaded.mainWindowBounds, { x: 120, y: 80, width: 1280, height: 900 });
+        assert.equal(loaded.serverExposureMode, "network-accessible");
+      }),
+    ),
+  );
+
+  it.effect("rejects empty and over-long project window keys", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        const bounds = { x: 10, y: 20, width: 1000, height: 700 };
+        const longestKey = "k".repeat(1024);
+        const overLongKey = "k".repeat(1025);
+
+        const empty = yield* settings.setProjectWindowBounds("", bounds, false);
+        assert.isFalse(empty.changed);
+        const overLong = yield* settings.setProjectWindowBounds(overLongKey, bounds, false);
+        assert.isFalse(overLong.changed);
+        assert.deepEqual(overLong.settings.projectWindowBounds, []);
+
+        const longest = yield* settings.setProjectWindowBounds(longestKey, bounds, false);
+        assert.isTrue(longest.changed);
+
+        yield* writeSettingsPatch({
+          projectWindowBounds: [
+            { projectKey: "", bounds, maximized: false },
+            { projectKey: overLongKey, bounds, maximized: false },
+            { projectKey: longestKey, bounds, maximized: false },
+          ],
+        });
+        assert.deepEqual((yield* settings.load).projectWindowBounds, [
+          { projectKey: longestKey, bounds, maximized: false },
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("leaves project window bounds out of the document until one is saved", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        const bounds = { x: 10, y: 20, width: 1000, height: 700 };
+
+        yield* settings.setServerExposureMode("network-accessible");
+        const withoutWindows = yield* fileSystem.readFileString(environment.desktopSettingsPath);
+        assert.notInclude(withoutWindows, "projectWindowBounds");
+        assert.notProperty(
+          yield* decodeDesktopSettingsPatch(withoutWindows),
+          "projectWindowBounds",
+        );
+
+        yield* settings.setProjectWindowBounds("/work/alpha", bounds, false);
+        const persisted = yield* decodeDesktopSettingsPatch(
+          yield* fileSystem.readFileString(environment.desktopSettingsPath),
+        );
+        assert.deepEqual(persisted.projectWindowBounds, [
+          { projectKey: "/work/alpha", bounds, maximized: false },
+        ]);
+      }),
+    ),
+  );
+});

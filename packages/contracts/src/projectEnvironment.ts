@@ -1,0 +1,146 @@
+import * as Schema from "effect/Schema";
+import { CommandId, NonNegativeInt, ProjectId } from "./baseSchemas.ts";
+
+export const ProjectKind = Schema.Literals(["code", "personal"]);
+export type ProjectKind = typeof ProjectKind.Type;
+export const ProjectRepositoryId = Schema.String.check(
+  Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/),
+);
+const SafePath = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(4096),
+  Schema.isPattern(/^[^\x00-\x1f\x7f]+$/),
+);
+
+/** Only credential-free Git transports. Local paths are separate, explicitly approved fields. */
+export function projectRepositoryIdentity(value: string): string | null {
+  if (value.length > 2048 || /[\s\x00-\x1f\x7f]/.test(value)) return null;
+  const scp = /^git@([a-zA-Z0-9.-]+):([^?#]+)$/.exec(value);
+  let url: URL;
+  try {
+    url = new URL(scp ? `ssh://git@${scp[1]}/${scp[2]}` : value);
+  } catch {
+    return null;
+  }
+  if (
+    !["https:", "ssh:"].includes(url.protocol) ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    /[%\\]/.test(url.pathname) ||
+    value.includes("\\") ||
+    (url.protocol === "https:" && url.username) ||
+    (url.protocol === "ssh:" && url.username !== "git") ||
+    !/^[a-zA-Z0-9.-]+$/.test(url.hostname)
+  )
+    return null;
+  let pathname: string;
+  try {
+    pathname = decodeURIComponent(url.pathname);
+  } catch {
+    return null;
+  }
+  const segments = pathname.replace(/^\//, "").replace(/\/$/, "").split("/");
+  if (
+    segments.length < 2 ||
+    segments.some(
+      (s) => !s || s === "." || s === ".." || !/^[a-zA-Z0-9_.-]+$/.test(s) || s.startsWith("-"),
+    )
+  )
+    return null;
+  // URL parsing normalizes dot segments, so also reject them in the supplied spelling.
+  if (/(?:\/|:)(?:\.|%2e){1,2}(?:\/|$)/i.test(value)) return null;
+  const port =
+    url.port &&
+    !(
+      (url.protocol === "ssh:" && url.port === "22") ||
+      (url.protocol === "https:" && url.port === "443")
+    )
+      ? `:${url.port}`
+      : "";
+  return `${url.hostname.toLowerCase()}${port}/${segments.join("/").replace(/\.git$/, "")}`;
+}
+export const ProjectRepositoryUrl = Schema.String.check(
+  Schema.isMaxLength(2048),
+  Schema.makeFilter((value) => projectRepositoryIdentity(value) !== null),
+);
+export const ProjectRepository = Schema.Struct({
+  id: ProjectRepositoryId,
+  url: ProjectRepositoryUrl,
+  localPath: Schema.NullOr(SafePath),
+});
+export type ProjectRepository = typeof ProjectRepository.Type;
+export const ProjectEnvironmentSettings = Schema.Struct({
+  additionalFolders: Schema.Array(SafePath).check(Schema.isMaxLength(16)),
+  repositories: Schema.Array(ProjectRepository).check(Schema.isMaxLength(32)),
+}).check(
+  Schema.makeFilter(
+    (value) =>
+      new Set(value.additionalFolders).size === value.additionalFolders.length &&
+      new Set(value.repositories.map((r) => r.id)).size === value.repositories.length &&
+      new Set(value.repositories.map((r) => projectRepositoryIdentity(r.url))).size ===
+        value.repositories.length,
+  ),
+);
+export type ProjectEnvironmentSettings = typeof ProjectEnvironmentSettings.Type;
+export const DEFAULT_PROJECT_ENVIRONMENT: ProjectEnvironmentSettings = {
+  additionalFolders: [],
+  repositories: [],
+};
+export const ProjectEnvironmentReadInput = Schema.Struct({ projectId: ProjectId });
+export const ProjectEnvironmentReadResult = Schema.Struct({
+  revision: NonNegativeInt,
+  workspaceRoot: SafePath,
+  additionalFolders: Schema.Array(SafePath),
+  repositories: Schema.Array(
+    Schema.Struct({
+      ...ProjectRepository.fields,
+      status: Schema.Literals(["unprepared", "ready", "missing", "mismatch"]),
+    }),
+  ),
+});
+export type ProjectEnvironmentReadResult = typeof ProjectEnvironmentReadResult.Type;
+export const ProjectEnvironmentPrepareInput = Schema.Struct({
+  projectId: ProjectId,
+  repositoryId: ProjectRepositoryId,
+  expectedRevision: NonNegativeInt,
+  commandId: CommandId,
+  mode: Schema.Literals(["clone", "match"]),
+});
+export type ProjectEnvironmentPrepareInput = typeof ProjectEnvironmentPrepareInput.Type;
+export class ProjectEnvironmentError extends Schema.TaggedError<ProjectEnvironmentError>()(
+  "ProjectEnvironmentError",
+  {
+    projectId: ProjectId,
+    code: Schema.Literals([
+      "not_found",
+      "inactive",
+      "conflict",
+      "invalid",
+      "path_not_approved",
+      "destination_exists",
+      "repository_mismatch",
+      "outcome_unknown",
+      "preparation_failed",
+      "unsupported_provider",
+    ]),
+  },
+) {
+  override get message(): string {
+    return {
+      not_found: "The project or repository is no longer available.",
+      inactive: "Resume or restore this project before preparing a repository.",
+      conflict: "Project settings changed. Reload before preparing a repository.",
+      invalid: "Use a credential-free HTTPS or SSH Git URL and valid approved folders.",
+      path_not_approved: "The repository path must stay inside an approved project folder.",
+      destination_exists:
+        "The destination already exists. Match its repository or choose an unused path.",
+      repository_mismatch: "The existing checkout does not match this repository URL.",
+      outcome_unknown:
+        "This preparation was already started. Inspect the destination before a new action.",
+      preparation_failed:
+        "Repository preparation failed. Check this host's Git access and inspect the destination.",
+      unsupported_provider: "This provider cannot enforce additional project folder access.",
+    }[this.code];
+  }
+}

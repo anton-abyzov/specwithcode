@@ -1,0 +1,10 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["StudioTerminalModule"],
+    "podspecPath": "StudioTerminalNative.podspec"
+  },
+  "android": {
+    "modules": ["expo.modules.studioterminal.StudioTerminalModule"]
+  }
+}

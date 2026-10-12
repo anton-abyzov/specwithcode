@@ -1,0 +1,496 @@
+/* The project panel's tabs (Threads, Library, PRs, Scheduled), its Library,
+   PRs and Scheduled panes and an opened thread's header, laid out as the
+   Claude desktop app's project panel. Colors come from the shell palette. */
+
+/* Tab bar ------------------------------------------------------------------ */
+
+.sws-pane-bar {
+  gap: 4px;
+}
+.sws-pane-tabs {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow: hidden;
+}
+.sws-pane-bar > .sws-threads-tools {
+  margin-left: auto;
+}
+.sws-pane-tab {
+  flex: none;
+  height: 28px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sws-pane-tab svg {
+  width: 15px;
+  height: 15px;
+}
+.sws-pane-tab:hover {
+  background: var(--accent);
+  color: var(--foreground);
+}
+.sws-pane-tab[aria-selected="true"] {
+  background: var(--accent);
+  color: var(--foreground);
+}
+.sws-pane-tab:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+/* A narrow panel keeps the selected tab's name and shows the others as icons. */
+@container (max-width: 470px) {
+  .sws-pane-tab[aria-selected="false"] .sws-pane-tab-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .sws-pane-tab[aria-selected="false"] {
+    padding: 0 7px;
+  }
+}
+
+/* Expand: the panel takes the width the coordinator had. */
+.sws-columns[data-expanded="true"],
+.sws-columns.project-worker-open[data-expanded="true"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+.sws-columns[data-expanded="true"] > .sws-coordinator {
+  display: none;
+}
+
+.sws-pane-group-heading {
+  height: 32px;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.sws-pane-empty {
+  padding: 18px 8px;
+}
+
+/* Library ------------------------------------------------------------------ */
+
+.sws-library {
+  padding-top: 4px;
+}
+.sws-library-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  min-height: 40px;
+  margin: 0 -4px 6px;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--card);
+}
+.sws-library-spacer {
+  flex: 1;
+}
+.sws-library-filter {
+  height: 30px;
+  padding: 0 8px 0 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--foreground);
+  cursor: pointer;
+}
+.sws-library-filter svg {
+  width: 14px;
+  height: 14px;
+  color: var(--muted-foreground);
+}
+.sws-library-filter:hover,
+.sws-library-filter[data-popup-open] {
+  background: var(--accent);
+}
+.sws-library-views {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 9px;
+  background: var(--muted);
+}
+.sws-library-views .sws-icon-button {
+  width: 26px;
+  height: 26px;
+}
+.sws-library-views .sws-icon-button[aria-pressed="true"] {
+  background: var(--card);
+  color: var(--foreground);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--foreground) 12%, transparent);
+}
+.sws-library-add {
+  height: 30px;
+  padding: 0 11px 0 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 8px;
+  background: var(--foreground);
+  color: var(--background);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.sws-library-add svg {
+  width: 15px;
+  height: 15px;
+}
+.sws-library-add:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.sws-library-table {
+  font-size: 13px;
+}
+.sws-library-head,
+.sws-library-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 118px 70px 92px;
+  align-items: center;
+  column-gap: 8px;
+}
+.sws-library-head {
+  height: 30px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+.sws-library-row {
+  min-height: 32px;
+  padding: 0 8px;
+  border-radius: 7px;
+  color: var(--muted-foreground);
+}
+.sws-library-row:hover {
+  background: var(--accent);
+}
+.sws-library-row > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sws-library-row[data-missing] .sws-library-label {
+  text-decoration: line-through;
+  color: var(--muted-foreground);
+}
+.sws-library-name button {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--foreground);
+  text-align: left;
+  cursor: pointer;
+}
+.sws-library-name button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+  border-radius: 6px;
+}
+.sws-library-name svg {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  color: var(--muted-foreground);
+}
+.sws-library-row[data-kind="directory"] .sws-library-name svg:not(.sws-library-chevron) {
+  color: var(--shell-working);
+}
+.sws-library-chevron {
+  flex: none;
+  width: 14px !important;
+  height: 14px !important;
+}
+.sws-library-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sws-library-external {
+  width: 12px !important;
+  height: 12px !important;
+}
+/* Narrow panels drop the columns a file manager drops first. */
+@container (max-width: 460px) {
+  .sws-library-head,
+  .sws-library-row {
+    grid-template-columns: minmax(0, 1fr) 70px;
+  }
+  .sws-library-head > :nth-child(2),
+  .sws-library-head > :nth-child(4),
+  .sws-library-row > :nth-child(2),
+  .sws-library-row > :nth-child(4) {
+    display: none;
+  }
+}
+.sws-library {
+  container-type: inline-size;
+}
+
+.sws-library-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  gap: 8px;
+  list-style: none;
+}
+.sws-library-tile {
+  width: 100%;
+  min-height: 112px;
+  padding: 12px 8px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  text-align: center;
+  cursor: pointer;
+}
+.sws-library-tile:hover {
+  background: var(--accent);
+}
+.sws-library-tile-icon svg {
+  width: 30px;
+  height: 30px;
+  color: var(--muted-foreground);
+}
+.sws-library-tile[data-kind="directory"] .sws-library-tile-icon svg {
+  color: var(--shell-working);
+}
+.sws-library-tile-name {
+  max-width: 100%;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  font-size: 12.5px;
+  font-weight: 500;
+  word-break: break-word;
+}
+.sws-library-tile-meta {
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+}
+
+.sws-library-form {
+  margin: 0 0 10px;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--muted);
+  font-size: 13px;
+}
+.sws-library-form label {
+  display: grid;
+  gap: 4px;
+}
+.sws-library-form label > span:first-child {
+  font-weight: 500;
+}
+.sws-library-form input {
+  height: 32px;
+  padding: 0 9px;
+  border: 1px solid var(--input);
+  border-radius: 7px;
+  background: var(--card);
+  color: var(--foreground);
+}
+.sws-library-form [role="alert"] {
+  color: var(--shell-failed);
+}
+.sws-library-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.sws-library-preview-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0 -12px 10px;
+  padding: 6px 12px 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+}
+.sws-library-preview-head > div {
+  min-width: 0;
+}
+.sws-library-preview-head h2 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.sws-library-preview-head p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+}
+.sws-library-markdown {
+  padding: 0 4px;
+  font-size: 13.5px;
+}
+.sws-library-text {
+  padding: 10px;
+  overflow-x: auto;
+  border-radius: 8px;
+  background: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* PRs ---------------------------------------------------------------------- */
+
+.sws-pr-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 9px;
+}
+.sws-pr-row:hover {
+  background: var(--accent);
+}
+.sws-pr-open {
+  flex: 1;
+  min-width: 0;
+  min-height: 52px;
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+.sws-pr-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+.sws-pr-thread {
+  flex: none;
+  max-width: 38%;
+  margin-right: 6px;
+  padding: 3px 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.sws-pr-thread:hover {
+  background: var(--card);
+  color: var(--foreground);
+}
+
+/* Scheduled ---------------------------------------------------------------- */
+
+.sws-scheduled .project-settings-section {
+  padding: 8px 4px;
+}
+
+/* An opened thread's header ------------------------------------------------ */
+
+/* The chips follow the title in the one header row and give way before it. */
+.sws-thread-head-chips {
+  flex: 0 9999 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+}
+/* A narrow panel keeps the title and drops the model name first. */
+@container (max-width: 420px) {
+  .sws-thread-head-chips .sws-model {
+    display: none;
+  }
+}
+.sws-chip {
+  flex: none;
+  height: 20px;
+  padding: 0 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+.sws-chip svg {
+  width: 12px;
+  height: 12px;
+}
+button.sws-chip {
+  cursor: pointer;
+}
+button.sws-chip:hover {
+  background: var(--accent);
+  color: var(--foreground);
+}
+.sws-thread-resolve[data-state="open"] {
+  color: var(--shell-done);
+}
+.sws-pane-head .sws-thread-resolve svg {
+  width: 17px;
+  height: 17px;
+}
+.sws-thread-rename {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--ring);
+  border-radius: 6px;
+  background: var(--card);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
+  outline: none;
+}

@@ -1,0 +1,460 @@
+import { assert, describe, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { HostProcessEnvironment, HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import { vi } from "vite-plus/test";
+
+import type * as Electron from "electron";
+
+const { focusedWebContents, ownerWindow } = vi.hoisted(() => ({
+  focusedWebContents: vi.fn(),
+  ownerWindow: vi.fn(),
+}));
+vi.mock("electron", () => ({
+  webContents: { getFocusedWebContents: focusedWebContents },
+  BrowserWindow: { fromWebContents: ownerWindow },
+}));
+
+import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfiguration.ts";
+import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
+import * as DesktopLocalService from "../../backend/DesktopLocalService.ts";
+import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
+import * as ElectronDialog from "../../electron/ElectronDialog.ts";
+import * as ElectronWindow from "../../electron/ElectronWindow.ts";
+import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
+import {
+  getLocalEnvironmentBootstraps,
+  getWindowFullscreenState,
+  pasteAsText,
+  pickProjectFavicon,
+  probeRemoteEditors,
+} from "./window.ts";
+
+const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
+  executablePath: "wsl.exe",
+  args: ["-d", "Ubuntu", "--", "node", "/app/bin.mjs"],
+  entryPath: "/app/bin.mjs",
+  cwd: "/app",
+  env: {},
+  extendEnv: false,
+  bootstrap: {
+    mode: "desktop",
+    noBrowser: true,
+    port: 3774,
+    host: "0.0.0.0",
+    desktopBootstrapToken: "bootstrap-token",
+    tailscaleServeEnabled: false,
+    tailscaleServePort: 443,
+  },
+  bootstrapDelivery: "stdin",
+  httpBaseUrl: new URL("http://127.0.0.1:3774"),
+  captureOutput: true,
+  preflightFailure: Option.none(),
+  runningDistro: "Ubuntu",
+};
+
+const defaultWslInstance: DesktopBackendManager.DesktopBackendInstance = {
+  id: DesktopBackendManager.BackendInstanceId("wsl:default"),
+  label: Effect.succeed("WSL (default distro)"),
+  start: Effect.void,
+  stop: () => Effect.void,
+  currentConfig: Effect.succeedSome(readyWslConfig),
+  snapshot: Effect.succeed({
+    desiredRunning: true,
+    ready: true,
+    activePid: Option.some(123),
+    restartAttempt: 0,
+    restartScheduled: false,
+  }),
+  waitForReady: () => Effect.succeed(true),
+};
+
+const backendConfigurationLayer = Layer.succeed(
+  DesktopBackendConfiguration.DesktopBackendConfiguration,
+  {
+    resolvePrimary: Effect.die("unexpected resolvePrimary"),
+    resolvePrimaryLabel: Effect.succeed("Windows"),
+    resolveWsl: () => Effect.die("unexpected resolveWsl"),
+    currentBootstrapToken: Effect.succeed("current-window-token"),
+  } satisfies DesktopBackendConfiguration.DesktopBackendConfiguration["Service"],
+);
+
+const bootstrapsLayer = (instances: ReadonlyArray<DesktopBackendManager.DesktopBackendInstance>) =>
+  Layer.mergeAll(
+    DesktopBackendPool.layerTest([...instances]),
+    backendConfigurationLayer,
+    DesktopLocalService.layerTest(),
+  );
+
+describe("getLocalEnvironmentBootstraps", () => {
+  it.effect("publishes only the installed service, without a token, when attached to it", () =>
+    Effect.gen(function* () {
+      const result = yield* getLocalEnvironmentBootstraps.handler();
+
+      assert.deepEqual(result, [
+        {
+          id: "primary",
+          label: "Anton's Mac",
+          runningDistro: null,
+          httpBaseUrl: "http://127.0.0.1:8319/",
+          wsBaseUrl: "ws://127.0.0.1:8319/",
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          DesktopBackendPool.layerTest([defaultWslInstance]),
+          backendConfigurationLayer,
+          DesktopLocalService.layerTest({
+            attached: {
+              baseDir: "/Users/a/.specweave-studio/m4",
+              runtime: {
+                pid: 4242,
+                port: 8319,
+                origin: "http://127.0.0.1:8319",
+                serviceManaged: true,
+              },
+              descriptor: {
+                environmentId: "env-mac" as never,
+                label: "Anton's Mac",
+                platform: { os: "darwin", arch: "arm64" } as never,
+                serverVersion: "0.1.4",
+                capabilities: {} as never,
+              },
+              httpBaseUrl: new URL("http://127.0.0.1:8319"),
+            },
+          }),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("publishes the concrete running distro without replacing the stable instance id", () =>
+    Effect.gen(function* () {
+      const result = yield* getLocalEnvironmentBootstraps.handler();
+
+      assert.deepEqual(result, [
+        {
+          id: "wsl:default",
+          label: "WSL (Ubuntu)",
+          runningDistro: "Ubuntu",
+          httpBaseUrl: "http://127.0.0.1:3774/",
+          wsBaseUrl: "ws://127.0.0.1:3774/",
+          bootstrapToken: "bootstrap-token",
+        },
+      ]);
+    }).pipe(Effect.provide(bootstrapsLayer([defaultWslInstance]))),
+  );
+
+  it.effect("hands out the current window's token to a backend launched with the secret", () =>
+    Effect.gen(function* () {
+      const result = yield* getLocalEnvironmentBootstraps.handler();
+
+      assert.deepEqual(result, [
+        {
+          id: "wsl:default",
+          label: "WSL (Ubuntu)",
+          runningDistro: "Ubuntu",
+          httpBaseUrl: "http://127.0.0.1:3774/",
+          wsBaseUrl: "ws://127.0.0.1:3774/",
+          bootstrapToken: "current-window-token",
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        bootstrapsLayer([
+          {
+            ...defaultWslInstance,
+            currentConfig: Effect.succeedSome({
+              ...readyWslConfig,
+              bootstrap: {
+                ...readyWslConfig.bootstrap,
+                desktopBootstrapSecret: "desktop-secret",
+              },
+            }),
+          },
+        ]),
+      ),
+    ),
+  );
+
+  it.effect("publishes a pending bootstrap only while a transient retry is scheduled", () => {
+    const retryingConfig: DesktopBackendManager.DesktopBackendStartConfig = {
+      ...readyWslConfig,
+      preflightFailure: Option.some({
+        reason: "WSL probe timed out",
+        fatal: false,
+        retryLimit: 12,
+      }),
+    };
+    const retryingInstance: DesktopBackendManager.DesktopBackendInstance = {
+      ...defaultWslInstance,
+      currentConfig: Effect.succeedSome(retryingConfig),
+      snapshot: Effect.succeed({
+        desiredRunning: true,
+        ready: false,
+        activePid: Option.none(),
+        restartAttempt: 2,
+        restartScheduled: true,
+      }),
+    };
+
+    return Effect.gen(function* () {
+      const result = yield* getLocalEnvironmentBootstraps.handler();
+      assert.deepEqual(result, [
+        {
+          id: "wsl:default",
+          label: "WSL (default distro)",
+          runningDistro: null,
+          httpBaseUrl: null,
+          wsBaseUrl: null,
+        },
+      ]);
+    }).pipe(Effect.provide(bootstrapsLayer([retryingInstance])));
+  });
+
+  it.effect("omits a bounded transient bootstrap after retries stop", () => {
+    const stoppedInstance: DesktopBackendManager.DesktopBackendInstance = {
+      ...defaultWslInstance,
+      currentConfig: Effect.succeedSome({
+        ...readyWslConfig,
+        preflightFailure: Option.some({
+          reason: "WSL probe timed out",
+          fatal: false,
+          retryLimit: 12,
+        }),
+      }),
+      snapshot: Effect.succeed({
+        desiredRunning: false,
+        ready: false,
+        activePid: Option.none(),
+        restartAttempt: 12,
+        restartScheduled: false,
+      }),
+    };
+
+    return Effect.gen(function* () {
+      const result = yield* getLocalEnvironmentBootstraps.handler();
+      assert.deepEqual(result, []);
+    }).pipe(Effect.provide(bootstrapsLayer([stoppedInstance])));
+  });
+});
+
+describe("getWindowFullscreenState", () => {
+  it.effect("reads the current native window state", () => {
+    const window = { isFullScreen: () => true } as Electron.BrowserWindow;
+
+    return Effect.gen(function* () {
+      assert.isTrue(yield* getWindowFullscreenState.handler());
+    }).pipe(
+      Effect.provide(
+        Layer.mock(ElectronWindow.ElectronWindow)({
+          currentMainOrFirst: Effect.succeedSome(window),
+        }),
+      ),
+    );
+  });
+
+  it.effect("answers each app window about itself, not about the main window", () => {
+    const mainWindow = { isFullScreen: () => false } as Electron.BrowserWindow;
+    const projectWindow = { isFullScreen: () => true } as Electron.BrowserWindow;
+
+    return Effect.gen(function* () {
+      assert.isTrue(yield* getWindowFullscreenState.handler({ sender: { id: 7 } }));
+      assert.isFalse(yield* getWindowFullscreenState.handler({ sender: { id: 1 } }));
+      // A sender that is not an app window falls back to the main window.
+      assert.isFalse(yield* getWindowFullscreenState.handler({ sender: { id: 99 } }));
+    }).pipe(
+      Effect.provide(
+        Layer.mock(ElectronWindow.ElectronWindow)({
+          currentMainOrFirst: Effect.succeedSome(mainWindow),
+          appWindowForWebContents: (webContentsId) =>
+            Effect.succeed(
+              webContentsId === 7
+                ? Option.some(projectWindow)
+                : webContentsId === 1
+                  ? Option.some(mainWindow)
+                  : Option.none(),
+            ),
+        }),
+      ),
+    );
+  });
+});
+
+describe("pasteAsText", () => {
+  it.effect(
+    "pastes into the focused guest only after the owning renderer acknowledges the menu action",
+    () => {
+      const paste = vi.fn();
+      const mainPaste = vi.fn();
+      const window = {
+        webContents: { id: 42, paste: mainPaste },
+        isDestroyed: () => false,
+      } as unknown as Electron.BrowserWindow;
+      focusedWebContents.mockReturnValue({ paste, isDestroyed: () => false });
+      ownerWindow.mockReturnValue(window);
+
+      return Effect.gen(function* () {
+        yield* pasteAsText.handler(undefined, { sender: { id: 42 } });
+        assert.equal(paste.mock.calls.length, 1);
+        assert.equal(mainPaste.mock.calls.length, 0);
+
+        yield* pasteAsText.handler(undefined, { sender: { id: 99 } });
+        assert.equal(paste.mock.calls.length, 1);
+        ownerWindow.mockReturnValue({}); // A focused PiP/other BrowserWindow.
+        yield* pasteAsText.handler(undefined, { sender: { id: 42 } });
+        assert.equal(paste.mock.calls.length, 1);
+        ownerWindow.mockReturnValue(null); // Detached contents.
+        yield* pasteAsText.handler(undefined, { sender: { id: 42 } });
+        assert.equal(paste.mock.calls.length, 1);
+        ownerWindow.mockReturnValue(window);
+        focusedWebContents.mockReturnValue({ paste, isDestroyed: () => true });
+        yield* pasteAsText.handler(undefined, { sender: { id: 42 } });
+        assert.equal(paste.mock.calls.length, 1);
+        focusedWebContents.mockReturnValue(null);
+        yield* pasteAsText.handler(undefined, { sender: { id: 42 } });
+        assert.equal(paste.mock.calls.length, 1);
+      }).pipe(
+        Effect.provide(
+          Layer.mock(ElectronWindow.ElectronWindow)({
+            appWindowForWebContents: (webContentsId) =>
+              Effect.succeed(webContentsId === 42 ? Option.some(window) : Option.none()),
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect("lets a project window paste into itself but not into another app window", () => {
+    const paste = vi.fn();
+    const mainWindow = {
+      webContents: { id: 42 },
+      isDestroyed: () => false,
+    } as unknown as Electron.BrowserWindow;
+    const projectWindow = {
+      webContents: { id: 77 },
+      isDestroyed: () => false,
+    } as unknown as Electron.BrowserWindow;
+    focusedWebContents.mockReturnValue({ paste, isDestroyed: () => false });
+
+    return Effect.gen(function* () {
+      ownerWindow.mockReturnValue(projectWindow);
+      yield* pasteAsText.handler(undefined, { sender: { id: 77 } });
+      assert.equal(paste.mock.calls.length, 1);
+
+      // The main window asks while the project window holds focus.
+      yield* pasteAsText.handler(undefined, { sender: { id: 42 } });
+      assert.equal(paste.mock.calls.length, 1);
+
+      ownerWindow.mockReturnValue(mainWindow);
+      yield* pasteAsText.handler(undefined, { sender: { id: 77 } });
+      assert.equal(paste.mock.calls.length, 1);
+    }).pipe(
+      Effect.provide(
+        Layer.mock(ElectronWindow.ElectronWindow)({
+          appWindowForWebContents: (webContentsId) =>
+            Effect.succeed(
+              webContentsId === 42
+                ? Option.some(mainWindow)
+                : webContentsId === 77
+                  ? Option.some(projectWindow)
+                  : Option.none(),
+            ),
+        }),
+      ),
+    );
+  });
+});
+
+describe("pickProjectFavicon", () => {
+  const pickerLayer = (
+    pickFiles: () => Effect.Effect<Array<string>>,
+    settings?: DesktopAppSettings.DesktopSettings,
+  ) =>
+    Layer.mergeAll(
+      Layer.mock(ElectronDialog.ElectronDialog)({ pickFiles }),
+      Layer.mock(ElectronWindow.ElectronWindow)({
+        focusedMainOrFirst: Effect.succeedNone,
+      }),
+      DesktopAppSettings.layerTest(settings),
+    );
+
+  it.effect("opens a single-image picker from the project directory", () =>
+    Effect.gen(function* () {
+      const pickFiles = vi.fn(() => Effect.succeed(["/pictures/icon.png"]));
+      const result = yield* pickProjectFavicon
+        .handler("/project")
+        .pipe(Effect.provide(pickerLayer(pickFiles)));
+
+      assert.strictEqual(result, "/pictures/icon.png");
+      assert.deepEqual(pickFiles.mock.calls, [
+        [
+          {
+            owner: Option.none(),
+            defaultPath: Option.some("/project"),
+            multiple: false,
+            filters: [
+              {
+                name: "Images",
+                extensions: ["avif", "gif", "ico", "jpeg", "jpg", "png", "svg", "webp"],
+              },
+            ],
+          },
+        ],
+      ]);
+    }),
+  );
+
+  it.effect("does not open a picker while the local environment is off", () =>
+    Effect.gen(function* () {
+      const pickFiles = vi.fn(() => Effect.succeed(["/pictures/icon.png"]));
+      const result = yield* pickProjectFavicon.handler("/project").pipe(
+        Effect.provide(
+          pickerLayer(pickFiles, {
+            ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+            localEnvironmentEnabled: false,
+          }),
+        ),
+      );
+
+      assert.strictEqual(result, null);
+      assert.strictEqual(pickFiles.mock.calls.length, 0);
+    }),
+  );
+});
+
+it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+  "finds remote editors installed without PATH launchers",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "studio-remote-editors-" });
+      for (const app of ["Cursor", "Visual Studio Code", "WebStorm"]) {
+        const executable = path.join(
+          home,
+          "Applications",
+          `${app}.app`,
+          app === "WebStorm" ? "Contents/MacOS/webstorm" : "Contents/Resources/app/bin/code",
+        );
+        yield* fs.makeDirectory(path.dirname(executable), { recursive: true });
+        yield* fs.writeFileString(executable, "#!/bin/sh\n");
+        yield* fs.chmod(executable, 0o755);
+      }
+      const editors = yield* probeRemoteEditors.handler(undefined).pipe(
+        Effect.provideService(HostProcessEnvironment, {
+          HOME: home,
+          PATH: path.join(home, "empty"),
+        }),
+        Effect.provideService(HostProcessPlatform, "darwin"),
+      );
+      assert.include(editors, "cursor");
+      assert.include(editors, "vscode");
+      assert.notInclude(editors, "webstorm");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Test Studio Mobile"
+  short_description: "Test iOS and Android in Studio's Device panel"
+  default_prompt: "Use $test-studio-mobile to verify the affected native mobile flow through Studio's Device panel and AgentDevice."

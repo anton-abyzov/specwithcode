@@ -1,0 +1,501 @@
+import * as NodeFS from "node:fs";
+import * as NodeHttp from "node:http";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
+import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { assert, beforeEach, describe, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as TestClock from "effect/testing/TestClock";
+
+import * as DesktopConfig from "../app/DesktopConfig.ts";
+import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
+import * as DesktopLocalService from "./DesktopLocalService.ts";
+import { DESKTOP_SERVICE_CREDENTIAL_FILE } from "./desktopServiceCredential.ts";
+import serverPackageJson from "../../../server/package.json" with { type: "json" };
+
+const { execFileMock, execFileSyncMock } = vi.hoisted(() => ({
+  execFileMock: vi.fn(),
+  execFileSyncMock: vi.fn(),
+}));
+vi.mock("node:child_process", () => ({
+  execFile: execFileMock,
+  execFileSync: execFileSyncMock,
+}));
+vi.mock("electron", () => ({ safeStorage: {} }));
+
+const DESCRIPTOR = {
+  environmentId: "eb4f852f-8bef-4c24-9dc6-19b38ce1e31e",
+  label: "Anton's Mac",
+  platform: { os: "darwin", arch: "arm64" },
+  serverVersion: "0.1.4",
+  orchestrationProtocolVersion: 2,
+  capabilities: { repositoryIdentity: true },
+};
+
+// A stand-in for the installed service: answers the environment descriptor.
+const withDescriptorServer = <A, E, R>(use: (origin: string) => Effect.Effect<A, E, R>) =>
+  Effect.acquireUseRelease(
+    Effect.promise(
+      () =>
+        new Promise<NodeHttp.Server>((resolve) => {
+          const server = NodeHttp.createServer((request, response) => {
+            if (request.url === "/.well-known/studio/environment") {
+              response.setHeader("content-type", "application/json");
+              response.end(JSON.stringify(DESCRIPTOR));
+              return;
+            }
+            response.statusCode = 404;
+            response.end();
+          });
+          server.listen(0, "127.0.0.1", () => resolve(server));
+        }),
+    ),
+    (server) => {
+      const address = server.address();
+      const port = typeof address === "object" && address !== null ? address.port : 0;
+      return use(`http://127.0.0.1:${port}`);
+    },
+    (server) => Effect.promise(() => new Promise<void>((resolve) => server.close(() => resolve()))),
+  );
+
+const writeJson = (path: string, value: unknown) => {
+  NodeFS.mkdirSync(NodePath.dirname(path), { recursive: true });
+  NodeFS.writeFileSync(path, JSON.stringify(value));
+};
+
+/** A home with the fleet installer's `m4` service, which owns its own Studio home. */
+const makeHomeWithInstalledService = (origin: string) => {
+  const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-local-service-"));
+  const studioHome = NodePath.join(home, ".specweave-studio", "m4");
+  writeJson(NodePath.join(studioHome, "installation.json"), {
+    schemaVersion: 1,
+    identity: "m4",
+    studioHome,
+    stateDir: NodePath.join(studioHome, "userdata"),
+    service: { installed: true, label: "com.specweave.studio.m4" },
+  });
+  writeJson(NodePath.join(studioHome, "userdata", "server-runtime.json"), {
+    version: 1,
+    // A live process other than this one.
+    pid: process.ppid,
+    port: Number(new URL(origin).port),
+    origin,
+    startedAt: "2026-10-09T18:00:00.000Z",
+  });
+  return { home, studioHome };
+};
+
+const layerFor = (
+  home: string,
+  env: Readonly<Record<string, string>> = {},
+  overrides?: {
+    readonly httpClient: HttpClient.HttpClient;
+    readonly crypto: ElectronSafeStorage.ElectronSafeStorage["Service"];
+  },
+) =>
+  DesktopLocalService.layer.pipe(
+    Layer.provide(
+      DesktopEnvironment.layer({
+        dirname: "/repo/apps/desktop/src",
+        homeDirectory: home,
+        platform: "darwin",
+        processArch: "arm64",
+        appVersion: "0.1.4",
+        appPath: "/repo",
+        isPackaged: true,
+        resourcesPath: "/missing/resources",
+        runningUnderArm64Translation: false,
+      }).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest(env)))),
+    ),
+    Layer.provide(
+      overrides
+        ? Layer.succeed(HttpClient.HttpClient, overrides.httpClient)
+        : NodeHttpClient.layerUndici,
+    ),
+    Layer.provide(
+      Layer.succeed(
+        ElectronSafeStorage.ElectronSafeStorage,
+        overrides?.crypto ?? {
+          isEncryptionAvailable: Effect.succeed(false),
+          encryptString: () => Effect.die("discovery never stores a bearer"),
+          decryptString: () => Effect.die("discovery never reads a bearer"),
+          selectedStorageBackend: Effect.succeedNone,
+        },
+      ),
+    ),
+  );
+
+describe("DesktopLocalService.bearerToken", () => {
+  beforeEach(() => {
+    execFileSyncMock.mockReset().mockReturnValue("");
+    execFileMock
+      .mockReset()
+      .mockImplementation(
+        (
+          _command: string,
+          _args: ReadonlyArray<string>,
+          _options: unknown,
+          callback: (error: Error | null, stdout: string) => void,
+        ) => callback(null, "Token: synthetic-pairing-token"),
+      );
+  });
+
+  const crypto: ElectronSafeStorage.ElectronSafeStorage["Service"] = {
+    isEncryptionAvailable: Effect.succeed(true),
+    encryptString: (token) => Effect.succeed(Buffer.from(`encrypted:${token}`)),
+    decryptString: (encrypted) =>
+      Effect.succeed(Buffer.from(encrypted).toString().slice("encrypted:".length)),
+    selectedStorageBackend: Effect.succeedNone,
+  };
+
+  const validSession = {
+    authenticated: true,
+    auth: {
+      policy: "remote-reachable",
+      bootstrapMethods: ["one-time-token"],
+      sessionMethods: ["bearer-access-token"],
+      sessionCookieName: "studio_session",
+    },
+    sessionMethod: "bearer-access-token",
+  };
+  const newerAuth = { ...validSession.auth, policy: "a-policy-from-a-newer-service" };
+  const malformedSessions = [
+    { failure: "empty-object", body: {} },
+    { failure: "null-body", body: null },
+    { failure: "array-body", body: [] },
+    { failure: "error-envelope", body: { error: "service still starting" } },
+    { failure: "missing-auth", body: { authenticated: true } },
+    { failure: "wrong-authenticated", body: { ...validSession, authenticated: "true" } },
+    { failure: "wrong-auth", body: { ...validSession, auth: [] } },
+    {
+      failure: "missing-auth-methods",
+      body: {
+        ...validSession,
+        auth: { policy: "remote-reachable", sessionCookieName: "studio_session" },
+      },
+    },
+    {
+      failure: "wrong-bootstrap-methods",
+      body: { ...validSession, auth: { ...validSession.auth, bootstrapMethods: "one-time-token" } },
+    },
+    { failure: "wrong-session-method", body: { ...validSession, sessionMethod: 1 } },
+    { failure: "invalid-expiry", body: { ...validSession, expiresAt: "not-a-date" } },
+    {
+      failure: "newer-policy-with-wrong-authenticated",
+      body: { ...validSession, authenticated: "true", auth: newerAuth },
+    },
+    {
+      failure: "newer-policy-with-invalid-expiry",
+      body: { ...validSession, auth: newerAuth, expiresAt: "not-a-date" },
+    },
+    {
+      failure: "newer-policy-with-wrong-method-entry",
+      body: { ...validSession, auth: { ...newerAuth, sessionMethods: [42] } },
+    },
+    {
+      failure: "newer-policy-with-missing-cookie-name",
+      body: {
+        ...validSession,
+        auth: { policy: newerAuth.policy, bootstrapMethods: [], sessionMethods: [] },
+      },
+    },
+    {
+      failure: "newer-policy-with-wrong-scopes",
+      body: { ...validSession, auth: newerAuth, scopes: "orchestration:read" },
+    },
+    {
+      failure: "empty-policy",
+      body: { ...validSession, auth: { ...validSession.auth, policy: " " } },
+    },
+    {
+      failure: "newer-policy-with-empty-method",
+      body: { ...validSession, auth: newerAuth, sessionMethod: "" },
+    },
+    {
+      failure: "newer-policy-with-wrong-permission-entry",
+      body: { ...validSession, auth: newerAuth, permissions: [42] },
+    },
+  ] as const;
+
+  it.effect.each([
+    { failure: "fetch", recovery: "reuse" },
+    { failure: "fetch", recovery: "replace" },
+    { failure: "timeout", recovery: "reuse" },
+    { failure: "timeout", recovery: "replace" },
+    { failure: "503", recovery: "reuse" },
+    { failure: "503", recovery: "replace" },
+    { failure: "invalid-json", recovery: "reuse" },
+    { failure: "invalid-json", recovery: "replace" },
+    { failure: "undeclared-401", recovery: "reuse" },
+    ...malformedSessions.map((testCase) => ({ ...testCase, recovery: "reuse" as const })),
+    // An HTTP 200 with no session state (an empty object, or an error envelope from
+    // a service still starting) must not pair; a later authoritative "not
+    // authenticated" reply on the same instance is what replaces the login.
+    ...malformedSessions
+      .filter(({ failure }) => failure === "empty-object" || failure === "error-envelope")
+      .map((testCase) => ({ ...testCase, recovery: "replace" as const })),
+  ] as const)(
+    "handles $failure before $recovery without caching an unverified bearer",
+    (testCase) => {
+      const { failure, recovery } = testCase;
+      const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-bearer-retry-"));
+      const filePath = NodePath.join(
+        home,
+        ".specweave-studio",
+        "userdata",
+        DESKTOP_SERVICE_CREDENTIAL_FILE,
+      );
+      writeJson(filePath, {
+        [DESCRIPTOR.environmentId]: {
+          encryptedBearerToken: Buffer.from("encrypted:stored-bearer").toString("base64"),
+        },
+      });
+      const before = NodeFS.readFileSync(filePath);
+      const encryptString = vi.fn(crypto.encryptString);
+      let sessionChecks = 0;
+      let exchanges = 0;
+      const httpClient = HttpClient.make((request) => {
+        const path = new URL(request.url).pathname;
+        if (path === "/api/auth/session") {
+          sessionChecks += 1;
+          assert.strictEqual(request.headers.authorization, "Bearer stored-bearer");
+          if (sessionChecks === 1) {
+            if ("body" in testCase) {
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(request, Response.json(testCase.body)),
+              );
+            }
+            if (failure === "503" || failure === "invalid-json" || failure === "undeclared-401") {
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  failure === "invalid-json"
+                    ? new Response("{not json", {
+                        headers: { "content-type": "application/json" },
+                      })
+                    : new Response("unavailable", { status: failure === "503" ? 503 : 401 }),
+                ),
+              );
+            }
+            return failure === "timeout"
+              ? Effect.never
+              : Effect.fail(
+                  new HttpClientError.HttpClientError({
+                    reason: new HttpClientError.TransportError({
+                      request,
+                      cause: "synthetic connection reset",
+                    }),
+                  }),
+                );
+          }
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json({
+                authenticated: recovery === "reuse",
+                auth: {
+                  policy: "remote-reachable",
+                  bootstrapMethods: ["one-time-token"],
+                  sessionMethods: ["bearer-access-token"],
+                  sessionCookieName: "studio_session",
+                },
+                sessionMethod: "bearer-access-token",
+              }),
+            ),
+          );
+        }
+        assert.strictEqual(path, "/oauth/token");
+        exchanges += 1;
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json({
+              access_token: "replacement-bearer",
+              issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+              token_type: "Bearer",
+              expires_in: 3600,
+              scope: "orchestration:read",
+            }),
+          ),
+        );
+      });
+
+      return Effect.gen(function* () {
+        const service = yield* DesktopLocalService.DesktopLocalService;
+        yield* service.attach({
+          baseDir: NodePath.join(home, ".specweave-studio", "m4"),
+          runtime: { pid: 123, port: 8319, origin: "http://service.test", serviceManaged: true },
+          descriptor: {
+            ...DESCRIPTOR,
+            serverVersion: serverPackageJson.version,
+          } as DesktopLocalService.AttachedLocalService["descriptor"],
+          httpBaseUrl: new URL("http://service.test"),
+        });
+        const first = yield* service.bearerToken.pipe(Effect.result, Effect.forkChild);
+        if (failure === "timeout") yield* TestClock.adjust("10 seconds");
+        const result = yield* Fiber.join(first);
+        assert.isTrue(Result.isFailure(result));
+        if (Result.isFailure(result))
+          assert.strictEqual(result.failure._tag, "DesktopLocalServicePairingError");
+        assert.deepStrictEqual(NodeFS.readFileSync(filePath), before);
+        assert.lengthOf(execFileMock.mock.calls, 0);
+        assert.lengthOf(execFileSyncMock.mock.calls, 0);
+        assert.strictEqual(exchanges, 0);
+        assert.strictEqual(sessionChecks, 1);
+        assert.lengthOf(encryptString.mock.calls, 0);
+
+        const expected = recovery === "reuse" ? "stored-bearer" : "replacement-bearer";
+        assert.strictEqual(yield* service.bearerToken, expected);
+        assert.strictEqual(yield* service.bearerToken, expected);
+        assert.strictEqual(sessionChecks, 2);
+        assert.strictEqual(exchanges, recovery === "reuse" ? 0 : 1);
+        assert.lengthOf(execFileMock.mock.calls, exchanges);
+        assert.lengthOf(encryptString.mock.calls, exchanges);
+        if (recovery === "reuse") assert.deepStrictEqual(NodeFS.readFileSync(filePath), before);
+        else
+          assert.strictEqual(
+            JSON.parse(NodeFS.readFileSync(filePath, "utf8"))[DESCRIPTOR.environmentId]
+              .encryptedBearerToken,
+            Buffer.from("encrypted:replacement-bearer").toString("base64"),
+          );
+      }).pipe(
+        Effect.provide(layerFor(home, {}, { httpClient, crypto: { ...crypto, encryptString } })),
+        Effect.provide(TestClock.layer()),
+        Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
+      );
+    },
+  );
+  it.effect.each([
+    { field: "policy", body: { ...validSession, auth: newerAuth } },
+    {
+      field: "bootstrap method",
+      body: {
+        ...validSession,
+        auth: { ...validSession.auth, bootstrapMethods: ["new-bootstrap"] },
+      },
+    },
+    {
+      field: "supported session method",
+      body: { ...validSession, auth: { ...validSession.auth, sessionMethods: ["new-session"] } },
+    },
+    { field: "session method", body: { ...validSession, sessionMethod: "new-session" } },
+    { field: "scope", body: { ...validSession, scopes: ["new-scope"] } },
+    {
+      field: "update scope",
+      body: {
+        ...validSession,
+        auth: { ...validSession.auth, serverUpdateScope: "new-update-scope" },
+      },
+    },
+  ])("pairs again for a complete session with an unknown $field", ({ body }) => {
+    // Preserve the intentional newer-service compatibility path, but require
+    // a complete session response rather than accepting any JSON schema error.
+    const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-bearer-schema-"));
+    const filePath = NodePath.join(
+      home,
+      ".specweave-studio",
+      "userdata",
+      DESKTOP_SERVICE_CREDENTIAL_FILE,
+    );
+    writeJson(filePath, {
+      [DESCRIPTOR.environmentId]: {
+        encryptedBearerToken: Buffer.from("encrypted:stored-bearer").toString("base64"),
+      },
+    });
+    const encryptString = vi.fn(crypto.encryptString);
+    let sessionChecks = 0;
+    let exchanges = 0;
+    const httpClient = HttpClient.make((request) => {
+      const path = new URL(request.url).pathname;
+      if (path === "/api/auth/session") {
+        sessionChecks += 1;
+        return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(body)));
+      }
+      assert.strictEqual(path, "/oauth/token");
+      exchanges += 1;
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          Response.json({
+            access_token: "replacement-bearer",
+            issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+            token_type: "Bearer",
+            expires_in: 3600,
+            scope: "orchestration:read",
+          }),
+        ),
+      );
+    });
+
+    return Effect.gen(function* () {
+      const service = yield* DesktopLocalService.DesktopLocalService;
+      yield* service.attach({
+        baseDir: NodePath.join(home, ".specweave-studio", "m4"),
+        runtime: { pid: 123, port: 8319, origin: "http://service.test", serviceManaged: true },
+        descriptor: {
+          ...DESCRIPTOR,
+          serverVersion: serverPackageJson.version,
+        } as DesktopLocalService.AttachedLocalService["descriptor"],
+        httpBaseUrl: new URL("http://service.test"),
+      });
+      assert.strictEqual(yield* service.bearerToken, "replacement-bearer");
+      assert.strictEqual(yield* service.bearerToken, "replacement-bearer");
+      assert.strictEqual(sessionChecks, 1);
+      assert.strictEqual(exchanges, 1);
+      assert.lengthOf(execFileMock.mock.calls, 1);
+      assert.lengthOf(encryptString.mock.calls, 1);
+      assert.strictEqual(
+        JSON.parse(NodeFS.readFileSync(filePath, "utf8"))[DESCRIPTOR.environmentId]
+          .encryptedBearerToken,
+        Buffer.from("encrypted:replacement-bearer").toString("base64"),
+      );
+    }).pipe(
+      Effect.provide(layerFor(home, {}, { httpClient, crypto: { ...crypto, encryptString } })),
+      Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
+    );
+  });
+});
+
+describe("DesktopLocalService.discover", () => {
+  it.effect("finds the installed service in its own home beside the default one", () =>
+    withDescriptorServer((origin) => {
+      const { home, studioHome } = makeHomeWithInstalledService(origin);
+      return Effect.gen(function* () {
+        const service = yield* DesktopLocalService.DesktopLocalService;
+        const discovery = yield* service.discover;
+        assert.equal(discovery._tag, "running");
+        if (discovery._tag !== "running") return;
+        assert.equal(discovery.service.baseDir, studioHome);
+        assert.equal(discovery.service.httpBaseUrl.origin, origin);
+        assert.equal(discovery.service.descriptor.serverVersion, "0.1.4");
+      }).pipe(
+        Effect.provide(layerFor(home)),
+        Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
+      );
+    }),
+  );
+
+  it.effect("keeps an explicit STUDIO_HOME to itself", () =>
+    withDescriptorServer((origin) => {
+      const { home } = makeHomeWithInstalledService(origin);
+      const own = NodePath.join(home, "elsewhere");
+      return Effect.gen(function* () {
+        const service = yield* DesktopLocalService.DesktopLocalService;
+        assert.equal((yield* service.discover)._tag, "none");
+      }).pipe(
+        Effect.provide(layerFor(home, { STUDIO_HOME: own })),
+        Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
+      );
+    }),
+  );
+});

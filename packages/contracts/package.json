@@ -1,0 +1,46 @@
+{
+  "name": "@specweave-studio/contracts",
+  "version": "1.0.5",
+  "private": true,
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    "./studioFleet": {
+      "types": "./src/studioFleet.ts",
+      "import": "./src/studioFleet.ts"
+    },
+    "./deviceSignIn": {
+      "types": "./src/deviceSignIn.ts",
+      "import": "./src/deviceSignIn.ts"
+    },
+    "./studio": {
+      "types": "./src/studio.ts",
+      "import": "./src/studio.ts"
+    },
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./settings": {
+      "types": "./src/settings.ts",
+      "import": "./src/settings.ts"
+    },
+    "./relay": {
+      "types": "./src/relay.ts",
+      "import": "./src/relay.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
+  },
+  "dependencies": {
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}
