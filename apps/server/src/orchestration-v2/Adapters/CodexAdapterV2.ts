@@ -1,3 +1,9 @@
+import {
+  codexFileChangeApprovalPrompt,
+  legacyCodexFileChanges,
+  projectCodexFileChanges,
+} from "./codexFileChanges.ts";
+import { makeCodexFileChangeApprovalGuard } from "./codexFileChangeApprovalGuard.ts";
 import { residentCreditPermission } from "./codexManualCredits.ts";
 import * as Clock from "effect/Clock";
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
@@ -169,27 +175,7 @@ const CODEX_PROVIDER = ProviderDriverKind.make("codex");
 export const CODEX_DRIVER_KIND = CODEX_PROVIDER;
 export const CODEX_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CODEX_DRIVER_KIND);
 
-/** Describe approval scope even when Codex omits or blanks the optional reason. */
-export function codexFileChangeApprovalPrompt(input: {
-  readonly reason?: string | null;
-  readonly grantRoot?: string | null;
-  readonly fileChanges?: CodexSchema.ServerRequest__ApplyPatchApprovalParams["fileChanges"];
-}): string | undefined {
-  const reason = input.reason?.trim();
-  if (reason) return reason;
-  const entries = Object.entries(input.fileChanges ?? {}).toSorted(([left], [right]) =>
-    left.localeCompare(right),
-  );
-  if (entries.length > 0) {
-    const described = entries.slice(0, 20).map(([path, change]) => {
-      const movePath = change.type === "update" ? change.move_path : undefined;
-      return movePath ? `${change.type} ${path} -> ${movePath}` : `${change.type} ${path}`;
-    });
-    const remaining = entries.length - described.length;
-    return remaining > 0 ? `${described.join("\n")}\n+${remaining} more` : described.join("\n");
-  }
-  return input.grantRoot?.trim() || undefined;
-}
+export { codexFileChangeApprovalPrompt } from "./codexFileChanges.ts";
 
 // Reasoning effort changes future generation, not the existing context's tokenizer
 // or model window. All other option changes remain untrusted until new telemetry.
@@ -3444,16 +3430,21 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             return { node, turnItem };
           });
 
+        const fileChangeApprovalGuard = makeCodexFileChangeApprovalGuard();
+        if (client.handleInvalidServerNotification) {
+          yield* client.handleInvalidServerNotification((method, params) =>
+            Effect.sync(() => fileChangeApprovalGuard.rejectNotification(method, params)),
+          );
+        }
+
         const buildFileChangeArtifacts = (
           context: ActiveCodexTurnContext,
-          item: Extract<
-            CodexSchema.V2ItemCompletedNotification__ThreadItem,
-            { type: "fileChange" }
-          >,
+          item: Extract<CodexSchema.V2ItemCompletedNotification__ThreadItem, { type: "fileChange" }>,
         ) =>
           Effect.gen(function* () {
-            const firstChange = item.changes[0];
-            if (firstChange === undefined) {
+            fileChangeApprovalGuard.record(context.nativeTurnId, item.id, false);
+            const changes = projectCodexFileChanges(item.changes);
+            if (changes === null) {
               return null;
             }
 
@@ -3502,10 +3493,29 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               completedAt,
               updatedAt,
               type: "file_change",
-              fileName: firstChange.path,
-              diffStr: firstChange.diff,
+              ...changes,
             };
             return { node, turnItem };
+          });
+
+        const emitFileChangeArtifacts = (
+          context: ActiveCodexTurnContext,
+          item: Extract<CodexSchema.V2ItemCompletedNotification__ThreadItem, { type: "fileChange" }>,
+        ) =>
+          Effect.gen(function* () {
+            const artifacts = yield* buildFileChangeArtifacts(context, item);
+            if (artifacts === null) return;
+            yield* emitProviderEvent({
+              type: "node.updated",
+              driver: CODEX_PROVIDER,
+              node: artifacts.node,
+            });
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver: CODEX_PROVIDER,
+              turnItem: artifacts.turnItem,
+            });
+            fileChangeApprovalGuard.record(context.nativeTurnId, item.id, true);
           });
 
         const buildWebSearchArtifacts = (input: {
@@ -3774,6 +3784,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           readonly nativeRequestId: string;
           readonly requestKind: ProviderRequestKind;
           readonly prompt?: string | null;
+          readonly grantRoot?: string | null;
           readonly appName?: string;
           readonly options?: ReadonlyArray<ProviderApprovalOption>;
         }) =>
@@ -3861,6 +3872,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 ? {}
                 : { prompt: input.prompt }),
               ...(input.appName === undefined ? {} : { appName: input.appName }),
+              ...(input.grantRoot === undefined ? {} : { grantRoot: input.grantRoot }),
               ...(input.options === undefined ? {} : { options: input.options }),
             };
             return { node, request, turnItem };
@@ -4372,6 +4384,19 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           });
         });
 
+        yield* client.handleServerNotification("item/fileChange/patchUpdated", (payload) =>
+          Effect.gen(function* () {
+            const context = yield* awaitActiveTurn(payload.turnId);
+            if (context === undefined) return;
+            yield* emitFileChangeArtifacts(context, {
+              type: "fileChange",
+              id: payload.itemId,
+              status: "inProgress",
+              changes: payload.changes,
+            });
+          }).pipe(Effect.orDie, turnTerminalizationPermit.withPermits(1)),
+        );
+
         yield* client.handleServerNotification("item/started", (payload) =>
           Effect.gen(function* () {
             const context = yield* awaitActiveTurn(payload.turnId);
@@ -4473,6 +4498,11 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 driver: CODEX_PROVIDER,
                 turnItem: artifacts.turnItem,
               });
+              return;
+            }
+
+            if (payload.item.type === "fileChange") {
+              yield* emitFileChangeArtifacts(context, payload.item);
               return;
             }
 
@@ -4628,20 +4658,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             }
 
             if (payload.item.type === "fileChange") {
-              const artifacts = yield* buildFileChangeArtifacts(context, payload.item);
-              if (artifacts === null) {
-                return;
-              }
-              yield* emitProviderEvent({
-                type: "node.updated",
-                driver: CODEX_PROVIDER,
-                node: artifacts.node,
-              });
-              yield* emitProviderEvent({
-                type: "turn_item.updated",
-                driver: CODEX_PROVIDER,
-                turnItem: artifacts.turnItem,
-              });
+              yield* emitFileChangeArtifacts(context, payload.item);
               return;
             }
 
@@ -4883,12 +4900,18 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               );
             }
 
+            const fileChangeRevision = fileChangeApprovalGuard.revision(payload);
+            if (fileChangeRevision === null) {
+              return { decision: "decline" } satisfies CodexSchema.FileChangeRequestApprovalResponse;
+            }
+
             const artifacts = yield* buildApprovalRequestArtifacts({
               context,
               nativeItemId: payload.itemId,
               nativeRequestId: payload.itemId,
               requestKind: "file-change",
               prompt: codexFileChangeApprovalPrompt(payload) ?? null,
+              ...(payload.grantRoot === undefined ? {} : { grantRoot: payload.grantRoot }),
             });
             const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
             yield* Ref.update(pendingRuntimeRequests, (current) => {
@@ -4928,7 +4951,12 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               ),
             );
             return {
-              decision: resolved === "acceptAlways" ? "acceptForSession" : resolved,
+              decision:
+                fileChangeApprovalGuard.revision(payload) !== fileChangeRevision
+                  ? "decline"
+                  : resolved === "acceptAlways"
+                    ? "acceptForSession"
+                    : resolved,
             } satisfies CodexSchema.FileChangeRequestApprovalResponse;
           }).pipe(Effect.orDie),
         );
@@ -5148,12 +5176,30 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               );
             }
 
+            yield* emitFileChangeArtifacts(context, {
+              type: "fileChange",
+              id: payload.callId,
+              status: "inProgress",
+              changes: legacyCodexFileChanges(payload.fileChanges),
+            });
+            const fileChangeScope = {
+              threadId: payload.conversationId,
+              turnId: context.nativeTurnId,
+              itemId: payload.callId,
+            };
+            const fileChangeRevision = fileChangeApprovalGuard.revision(fileChangeScope);
+            if (fileChangeRevision === null) {
+              return {
+                decision: approvalDecisionToLegacyReviewDecision("decline"),
+              } satisfies CodexSchema.ApplyPatchApprovalResponse;
+            }
             const artifacts = yield* buildApprovalRequestArtifacts({
               context,
               nativeItemId: payload.callId,
               nativeRequestId: payload.callId,
               requestKind: "file-change",
               prompt: codexFileChangeApprovalPrompt(payload) ?? null,
+              ...(payload.grantRoot === undefined ? {} : { grantRoot: payload.grantRoot }),
             });
             const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
             yield* Ref.update(pendingRuntimeRequests, (current) => {
@@ -5193,7 +5239,11 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               ),
             );
             return {
-              decision: approvalDecisionToLegacyReviewDecision(resolved),
+              decision: approvalDecisionToLegacyReviewDecision(
+                fileChangeApprovalGuard.revision(fileChangeScope) !== fileChangeRevision
+                  ? "decline"
+                  : resolved,
+              ),
             } satisfies CodexSchema.ApplyPatchApprovalResponse;
           }).pipe(Effect.orDie),
         );

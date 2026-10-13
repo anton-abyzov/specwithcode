@@ -3,6 +3,7 @@ import { useCoordinatorModelSave } from "../../studio/coordinatorModelSave";
 import { useProjectCoordinatorDraft } from "../../studio/projectCoordinatorDraft";
 import { useProjectCoordinatorComposer } from "../../studio/projectCoordinatorComposer";
 import { ProjectCoordinatorDetails } from "./ProjectCoordinatorDetails";
+import { ProjectMachineHandoff } from "./ProjectMachineHandoff";
 import { ProjectPlan } from "./ProjectPlan";
 import { TimelineDetailMenu } from "../chat/TimelineDetailMenu";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -1242,6 +1243,11 @@ export function ProjectWorkspaceSurface({
                       savedMachineMissing={savedMachineMissing}
                       onChoose={onCheckout}
                     />
+                    <ProjectMachineHandoff
+                      key={`${project.environmentId}:${project.id}`}
+                      project={project}
+                      coordinatorId={mainCoordinatorId}
+                    />
                     <ProjectUsageIndicator
                       onOpenProjectUsage={() => setTab("usage")}
                       projectEnvironmentId={project.environmentId}
@@ -1250,13 +1256,13 @@ export function ProjectWorkspaceSurface({
                   </span>
                   {coordinatorModelControls}
                   {coordinatorFallback ? (
-                    <span
-                      className="sws-model-fallback"
-                      role="status"
-                      title={`Saved model: ${coordinatorFallback.saved.full}. The coordinator goes back to it once its usage has room.`}
+                    <Tip
+                      label={`Saved model: ${coordinatorFallback.saved.full}. The coordinator goes back to it once its usage has room.`}
                     >
-                      On {coordinatorFallback.now.full}
-                    </span>
+                      <span className="sws-model-fallback" role="status">
+                        On {coordinatorFallback.now.full}
+                      </span>
+                    </Tip>
                   ) : null}
                 </div>
               </form>

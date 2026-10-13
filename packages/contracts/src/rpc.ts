@@ -1,3 +1,4 @@
+import { MACHINE_HANDOFF_RPC_METHODS, machineHandoffRpcs } from "./machineHandoffRpc.ts";
 import { PROJECT_CONNECTION_RPC_METHODS, projectConnectionRpcs } from "./projectConnectionRpc.ts";
 import { PROJECT_WORKSPACE_RPC_METHODS, projectWorkspaceRpcs } from "./projectWorkspaceRpc.ts";
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
@@ -374,6 +375,7 @@ import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
 
 export const WS_METHODS = {
   ...PROJECT_WORKSPACE_RPC_METHODS,
+  ...MACHINE_HANDOFF_RPC_METHODS,
   ...PROJECT_CONNECTION_RPC_METHODS,
   // Project registry methods
   projectsList: "projects.list",
@@ -2037,6 +2039,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsWriteFileRpc,
   WsProjectsMutateRpc,
   ...projectWorkspaceRpcs,
+  ...machineHandoffRpcs,
   ...projectConnectionRpcs,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
