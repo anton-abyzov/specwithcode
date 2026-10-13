@@ -3,7 +3,9 @@ import { ProviderInstanceId, ProviderDriverKind } from "@specweave-studio/contra
 import { HostProcessEnvironment } from "@specweave-studio/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as Clock from "effect/Clock";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 import * as Settings from "../serverSettings.ts";
 import * as Providers from "../provider/ProviderRegistry.ts";
 import * as NativeRoute from "./NativeRoute.ts";
@@ -156,6 +158,22 @@ describe("native session admission", () => {
     const stale = { ...provider(), checkedAt: new Date(Date.now() - 16 * 60000).toISOString() };
     await expect(run(start(), raw, [stale], settings, false, true, [provider()], attempts)).rejects.toThrow(/no remaining permitted usage.*Next observed reset/);
     expect(attempts).toEqual(["codex"]);
+  });
+  it.each([["admits", "20 seconds"], ["still bounds", "61 seconds"]] as const)("%s a slow native status refresh on a loaded host (%s)", async (outcome, delay) => {
+    const now = Date.now(), stale = { ...provider(), checkedAt: new Date(now - 16 * 60000).toISOString() };
+    const slowStart = Effect.gen(function* () {
+      yield* TestClock.setTime(now);
+      const fiber = yield* Effect.forkChild(start());
+      yield* TestClock.adjust(delay);
+      return yield* Fiber.join(fiber);
+    }).pipe(Effect.provide(Capacity.layer), Effect.provide(Layer.mergeAll(
+      Layer.succeed(NativeRoute.NativeRoute, { verify: () => Effect.succeed(true) }),
+      Layer.mock(Settings.ServerSettingsService)({ getSettings: Effect.succeed(settings) }),
+      Layer.mock(Providers.ProviderRegistry)({ getProviders: Effect.succeed([stale]), refreshInstance: () => Effect.sleep(delay).pipe(Effect.as([{ ...provider(), checkedAt: new Date(now).toISOString() }])) }),
+    )), Effect.provideService(HostProcessEnvironment, {}), Effect.provideService(SwitchFetch, (async () => Response.json(rawSnapshot(now))) as unknown as typeof fetch), Effect.provide(TestClock.layer()));
+    const result = expect(Effect.runPromise(slowStart));
+    if (outcome === "admits") await result.resolves.toBeUndefined();
+    else await result.rejects.toThrow(/status check timed out/);
   });
   it("never authorizes a refresh that remains stale", async () => {
     const old = [{ ...provider(), checkedAt: new Date(Date.now() - 16 * 60000).toISOString() }];

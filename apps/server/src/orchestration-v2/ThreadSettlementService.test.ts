@@ -40,6 +40,10 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ThreadSettlementService from "./ThreadSettlementService.ts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Duration from "effect/Duration";
+import * as Hold from "../serviceUpdate/ServiceUpdateHold.ts";
+import { awaitGateOpen, makeGatedHold } from "../serviceUpdate/UpdateInstallGate.testkit.ts";
 
 const NOW_MS = Date.parse("2026-06-10T12:00:00.000Z");
 const DAY_MS = 24 * 60 * 60 * 1_000;
@@ -729,6 +733,75 @@ describe("ThreadSettlementServiceV2 worker", () => {
             thread.id,
           ]);
         }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("runs no sweep, git lookup or settlement while an install's gate is live", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        // A one-second poll keeps the two test minutes below to a few file reads.
+        const pollMs = 1_000;
+        const gated = yield* makeGatedHold({ pollMs }).pipe(Effect.provide(NodeServices.layer));
+        const branchThread = makeThread("gated-branch", { branch: "feature" });
+        const thread = makeThread("gated-merged-link", {
+          pullRequests: [
+            {
+              host: "example.test",
+              repository: "owner/repository",
+              number: 42,
+              url: "https://example.test/owner/repository/pull/42",
+              source: "manual",
+              linkedAt: "2026-08-20T00:00:00.000Z",
+              snapshot: {
+                state: "merged",
+                title: "Pull request",
+                headBranch: "feature",
+                baseBranch: "main",
+                isDraft: false,
+                updatedAt: NOW,
+                syncedAt: NOW,
+                mergedAt: NOW,
+                checksState: "passing",
+                reviewDecision: "approved",
+              },
+              stack: null,
+            },
+          ],
+        });
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([thread, branchThread]),
+          settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleAfterDays: null },
+          branchPullRequest: () => Effect.succeed(makeBranchPullRequest("merged")),
+        });
+
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* service.start();
+          yield* Deferred.succeed(fixture.activation, undefined);
+          // The activation sweep, two minute sweeps and a merge notification all wait.
+          yield* fixture.publishMerge;
+          yield* TestClock.adjust("2 minutes");
+          yield* TestClock.withLive(Effect.sleep(Duration.millis(20)));
+          assert.equal(yield* Ref.get(fixture.snapshotReadCount), 0);
+          assert.deepStrictEqual(yield* Ref.get(fixture.branchCalls), []);
+          assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+
+          yield* gated.clear.pipe(Effect.provide(NodeServices.layer));
+          assert.isTrue(yield* awaitGateOpen(gated.hold, pollMs));
+          yield* TestClock.adjust(Duration.millis(pollMs));
+          yield* Queue.take(fixture.snapshotReads);
+          yield* service.drain;
+          assert.isAbove((yield* Ref.get(fixture.branchCalls)).length, 0);
+          // The queued sweep and the merge notification's both ran once the gate opened.
+          const settled = (yield* Ref.get(fixture.commands)).map((command) => command.threadId);
+          assert.isAbove(settled.length, 0);
+          assert.deepStrictEqual([...new Set(settled)], [thread.id]);
+        }).pipe(
+          Effect.provide(fixture.layer),
+          Effect.provideService(Hold.ServiceUpdateHold, gated.hold),
+        );
       }),
     ),
   );

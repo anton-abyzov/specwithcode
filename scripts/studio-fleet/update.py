@@ -10,14 +10,17 @@ import json
 import os
 import pathlib
 import plistlib
+import posixpath
 import re
 import shlex
 import shutil
 import socket
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import time
+import traceback
 import urllib.error
 import urllib.request
 import uuid
@@ -27,7 +30,8 @@ from release_policy import validate_manifest, validate_package, validate_upgrade
 from auth_heartbeat import (bind_auth, encoded, prove_restart_heartbeat,
                             read_auth_sessions_in_transaction, restore_witness,
                             verify_restart_witness)
-from quiescence import capture_quiescence, assert_quiescence, quiescence_core
+from quiescence import (VANISHED_READS, capture_quiescence, assert_quiescence, quiescence_core, read_processes,
+                        reap_descendants)
 from release_retention import prune_releases
 import database_continuity as continuity
 
@@ -42,7 +46,8 @@ def digest(value):
     return hashlib.sha256(value).hexdigest()
 
 def safe_path(path, home):
-    assert path.is_relative_to(home) if hasattr(path, 'is_relative_to') else home in path.parents
+    assert path.is_relative_to(home) if hasattr(path, 'is_relative_to') else home in path.parents, \
+        'An owned path is outside the home folder'
     ancestor = home
     for part in path.relative_to(home).parts:
         ancestor = ancestor / part
@@ -383,11 +388,13 @@ def listeners(port):
             if attempt == LSOF_ATTEMPTS:
                 raise
             continue
-        assert result.returncode in {0, 1}
+        assert result.returncode in {0, 1}, 'Listening ports could not be read'
         return sorted(set(int(value) for value in result.stdout.split()))
 
-def _snapshot(identity, include_auth, since=None):
-    assert identity in IDENTITIES and os.getuid() == 501
+def _service(identity):
+    """The verified installation and its running service: receipt, LaunchAgent, launcher,
+    runtime record, port owner and executable. Reads no database."""
+    assert identity in IDENTITIES and os.getuid() == 501, 'Updates run only as the installing user'
     home = pathlib.Path.home().resolve()
     own = safe_path(home / '.specweave-studio' / identity, home)
     installation = own / 'installation.json'
@@ -396,53 +403,75 @@ def _snapshot(identity, include_auth, since=None):
     plist = safe_path(home / 'Library/LaunchAgents' / (label + '.plist'), home)
     wrapper = safe_path(home / '.local/bin/specweave-studio', home)
     launcher = own / 'launch.sh'
-    assert receipt['identity'] == identity and receipt['studioHome'] == str(own)
-    assert receipt['stateDir'] == str(own / 'userdata') and receipt['cliWrapper'] == str(wrapper)
-    assert receipt['service']['label'] == label and receipt['service']['domain'] == 'gui/501'
-    assert receipt['port'] == 8319 and receipt['host'] == '127.0.0.1'
+    assert receipt['identity'] == identity and receipt['studioHome'] == str(own), \
+        'The installation receipt describes another Studio'
+    assert receipt['stateDir'] == str(own / 'userdata') and receipt['cliWrapper'] == str(wrapper), \
+        'The installation receipt names other state or launcher paths'
+    assert receipt['service']['label'] == label and receipt['service']['domain'] == 'gui/501', \
+        'The installation receipt names another service'
+    assert receipt['port'] == 8319 and receipt['host'] == '127.0.0.1', 'The installation receipt names another address'
     node = pathlib.Path(receipt['node'])
-    assert node.is_absolute() and node.is_file() and run([str(node), '--version']).strip() == b'v22.20.0'
+    assert node.is_absolute() and node.is_file() and run([str(node), '--version']).strip() == b'v22.20.0', \
+        'The Node.js runtime is missing or is not v22.20.0'
     release = safe_path(pathlib.Path(receipt['release']), home)
-    assert release == home / '.local/share/specweave-studio/releases' / receipt['archiveSha256'][:20]
+    assert release == home / '.local/share/specweave-studio/releases' / receipt['archiveSha256'][:20], \
+        'The installed release is outside the owned releases folder'
     manifest = release_verified(release)
-    assert manifest['sourceCommit'] == receipt['sourceCommit'] and manifest['product'] == 'SpecWeave Studio'
+    assert manifest['sourceCommit'] == receipt['sourceCommit'] and manifest['product'] == 'SpecWeave Studio', \
+        'The installed release does not match its receipt'
     content = plistlib.loads(plist.read_bytes())
-    assert content['Label'] == label and content['ProgramArguments'] == ['/usr/bin/caffeinate', '-s', str(launcher)]
-    assert content['WorkingDirectory'] == str(own) and content['StandardOutPath'] == str(own / 'stdout.log') and content['StandardErrorPath'] == str(own / 'stderr.log')
+    assert content['Label'] == label and content['ProgramArguments'] == ['/usr/bin/caffeinate', '-s', str(launcher)], \
+        'The service LaunchAgent does not match the installation'
+    assert content['WorkingDirectory'] == str(own) and content['StandardOutPath'] == str(own / 'stdout.log') and content['StandardErrorPath'] == str(own / 'stderr.log'), \
+        'The service LaunchAgent does not match the installation'
     lines = launcher.read_text().splitlines()
-    assert lines[:4] == ['#!/bin/sh', 'set -eu', 'umask 077', 'cd ' + shlex.quote(str(own))] and len(lines) == 5
+    assert lines[:4] == ['#!/bin/sh', 'set -eu', 'umask 077', 'cd ' + shlex.quote(str(own))] and len(lines) == 5, \
+        'The service launcher does not match the installation'
     tokens = shlex.split(lines[4])
-    assert tokens[:4] == ['exec', '/usr/bin/env', '-i', 'HOME=' + str(home)]
+    assert tokens[:4] == ['exec', '/usr/bin/env', '-i', 'HOME=' + str(home)], 'The service launcher does not match the installation'
     index = tokens.index(str(node))
     environment = dict(token.split('=', 1) for token in tokens[3:index])
-    assert len(environment) == index - 3 and set(environment).issubset(ENV_KEYS)
-    assert environment['STUDIO_HOME'] == str(own) and environment['STUDIO_PORT'] == '8319'
-    assert environment['STUDIO_HOST'] == '127.0.0.1' and environment['STUDIO_MODE'] == 'web'
-    assert environment['STUDIO_NO_BROWSER'] == 'true' and environment['STUDIO_ENABLE_HOSTED_SERVICES'] == 'false'
-    assert tokens[index:] == [str(node), str(release / 'bin.mjs'), 'start', '--no-browser', '--host', '127.0.0.1', '--port', '8319', '--base-dir', str(own), '--mode', 'web']
+    assert len(environment) == index - 3 and set(environment).issubset(ENV_KEYS), 'The service launcher sets unexpected variables'
+    assert environment['STUDIO_HOME'] == str(own) and environment['STUDIO_PORT'] == '8319', 'The service launcher does not match the installation'
+    assert environment['STUDIO_HOST'] == '127.0.0.1' and environment['STUDIO_MODE'] == 'web', 'The service launcher does not match the installation'
+    assert environment['STUDIO_NO_BROWSER'] == 'true' and environment['STUDIO_ENABLE_HOSTED_SERVICES'] == 'false', \
+        'The service launcher does not match the installation'
+    assert tokens[index:] == [str(node), str(release / 'bin.mjs'), 'start', '--no-browser', '--host', '127.0.0.1', '--port', '8319', '--base-dir', str(own), '--mode', 'web'], \
+        'The service launcher does not match the installation'
     prefix = tokens[1:index + 2]
     migrate_runtime_path(prefix, home, node)  # Reject missing/custom paths even for a read-only prestate.
     # Any wrapper format a Studio release wrote; an update rewrites it in the current one.
-    assert wrapper.read_text() in {render_legacy_cli(prefix), render_unnamed_cli(prefix), render_cli(prefix)}
+    assert wrapper.read_text() in {render_legacy_cli(prefix), render_unnamed_cli(prefix), render_cli(prefix)}, \
+        'The specweave-studio command does not match the installation'
     live = run(['/bin/launchctl', 'print', 'gui/501/' + label], text=True)
     pid = re.search(r'^\s*pid = (\d+)\s*$', live, re.M)
-    assert pid and re.search(r'^\s*state = running\s*$', live, re.M) and 'path = ' + str(plist) in live
+    assert pid and re.search(r'^\s*state = running\s*$', live, re.M) and 'path = ' + str(plist) in live, \
+        'The Studio service is not running'
     runtime = json.loads((own / 'userdata/server-runtime.json').read_text())
-    assert runtime['pid'] == int(pid.group(1)) and runtime['host'] == '127.0.0.1' and runtime['port'] == 8319
+    assert runtime['pid'] == int(pid.group(1)) and runtime['host'] == '127.0.0.1' and runtime['port'] == 8319, \
+        'The running service does not match its runtime record'
     assert listeners(8319) == [runtime['pid']], 'Port belongs to another process'
     command = run(['/bin/ps', '-p', str(runtime['pid']), '-o', 'command='], text=True)
     assert str(node) in command and str(release / 'bin.mjs') in command, 'Running executable does not match the owned release'
+    return {'home': home, 'own': own, 'installation': installation, 'receipt': receipt, 'label': label, 'plist': plist,
+            'wrapper': wrapper, 'launcher': launcher, 'content': content, 'node': node, 'runtime': runtime}
+
+SERVICE_KEYS = ('home', 'own', 'installation', 'receipt', 'label', 'plist', 'wrapper', 'launcher', 'content', 'node', 'runtime')
+
+def _snapshot(identity, include_auth, since=None):
+    service = _service(identity)
+    home, own, installation, receipt, label, plist, wrapper, launcher, content, node, runtime = (service[key] for key in SERVICE_KEYS)
     protected = {'launcher': launcher, 'plist': plist, 'wrapper': wrapper, 'installation': installation,
                  'settings': own / 'userdata/settings.json', 'environment': own / 'userdata/environment-id'}
     for path in protected.values():
         safe_path(path, home)
-        assert path.is_file() and not path.is_symlink()
+        assert path.is_file() and not path.is_symlink(), 'A protected Studio file is missing or is a link'
     file_hashes = {name: digest(path.read_bytes()) for name, path in protected.items()}
     rows, auth, carried, database = _read_state(own / 'userdata', include_auth, since, True)
     proof = {'schemaVersion': 1, 'identity': identity, 'uid': 501, 'serviceLabel': label, 'servicePid': runtime['pid'],
             'archiveSha256': receipt['archiveSha256'], 'artifactSourceCommit': receipt['sourceCommit'],
             'fileHashes': file_hashes,
-            'rows': rows, 'databaseCapture': database, 'otherListeners': {str(port): listeners(port) for port in [8317,8318,3773,3774,18319,28319]},
+            'rows': rows, 'databaseCapture': database, 'otherListeners': {str(port): listeners(port) for port in [8317,8318,18319,28319]},
             'cookieName': receipt['cookieName'],
             'processQuiescence': capture_quiescence(runtime['pid'], 501, str(node), content['ProgramArguments']),
             'observedAt': datetime.datetime.now(datetime.timezone.utc).isoformat()}
@@ -450,6 +479,58 @@ def _snapshot(identity, include_auth, since=None):
 
 def snapshot(identity):
     return _snapshot(identity, False)[0]
+
+HOLD_REFUSAL = 'The service is not held for this update request'
+
+def _utc(value):
+    """An ISO time with its zone (`Z` included), or None."""
+    if not isinstance(value, str) or not 0 < len(value) <= 64:
+        return None
+    try:
+        parsed = datetime.datetime.fromisoformat(value[:-1] + '+00:00' if value.endswith('Z') else value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
+
+def assert_held(service, request, now=None):
+    """The running service holds itself for this very forced request: its `updates/hold.json`
+    (written by ServiceUpdateHold while held, removed when the hold ends) names the running
+    pid, began after this process started and has not ended; and `updates/config.json` still
+    asks to force-install `request`, made during this hold and not cancelled. A service that
+    restarted, a hold that ended or a request that changed refuses the reap."""
+    updates = service['own'] / 'updates'
+    values = {}
+    for name in ('hold.json', 'config.json'):
+        path = safe_path(updates / name, service['home'])
+        assert path.is_file() and not path.is_symlink() and path.stat().st_size <= 64 << 10, HOLD_REFUSAL
+        values[name] = json.loads(path.read_text())
+        assert isinstance(values[name], dict), HOLD_REFUSAL
+    hold, config, runtime = values['hold.json'], values['config.json'], service['runtime']
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    began, ends, launched = _utc(hold.get('startedAt')), _utc(hold.get('expiresAt')), _utc(runtime.get('startedAt'))
+    requested, cancelled = _utc(request), config.get('installCancelledAt')
+    assert hold.get('schemaVersion') == 1 and type(hold.get('pid')) is int and hold['pid'] == runtime['pid'], HOLD_REFUSAL
+    assert None not in (began, ends, launched, requested) and launched <= began <= requested <= now < ends, HOLD_REFUSAL
+    assert config.get('installMode') == 'force' and config.get('installRequestedAt') == request, HOLD_REFUSAL
+    assert cancelled is None or (_utc(cancelled) is not None and _utc(cancelled) <= requested), HOLD_REFUSAL
+
+def reap(identity, request, report=None):
+    """Update now's fallback when a held service never quiets: stop the processes left beneath
+    the verified service (quiescence.reap_descendants), by pid and only after proving each
+    one's identity, and only while that service is held for `request` (assert_held, checked
+    first and again before every signal). The service, its supervisor and its server browser
+    keep running, so its update hold stays in place. Reads no database and changes no file.
+    `report` (optional) holds the record as it is built, for a failed reap's record."""
+    report = {} if report is None else report
+    report.update(schemaVersion=1, identity=identity, result='refused')
+    service = _service(identity)
+    pid = service['runtime']['pid']
+    report['servicePid'] = pid
+    assert_held(service, request)
+    reap_descendants(pid, 501, str(service['node']), service['content']['ProgramArguments'], report=report,
+                     guard=lambda: assert_held(service, request))
+    report.update(result='reaped', observedAt=datetime.datetime.now(datetime.timezone.utc).isoformat())
+    return dict(report)
 
 def snapshot_with_auth(identity):
     """Return the unchanged public snapshot plus private auth; never serialize the pair."""
@@ -677,13 +758,30 @@ def assert_prestate(expected, actual, carried=None):
                                expected['rows'], actual['rows'], carried)
     assert actual['rows']['nativeWorkIdle'] is True
 
-# Bound on waiting for the restarted service (see apply). With staging (up to 120 s) and a
-# full rollback (bootout, stop wait, restore, bootstrap) it stays under the update agent's
-# 900 s APPLY_TIMEOUT.
+# Bound on waiting for the restarted service (see apply). With a full rollback (bootout,
+# stop wait, restore, bootstrap) it stays under the update agent's APPLY_TIMEOUT.
 READINESS_DEADLINE_SECONDS = 300
-# The same wait also ends this long after apply() started, so slow readings before the
-# restart (staging, prestate checks) leave the rollback its share of the agent's 900 s.
-READY_BY_SECONDS_FROM_START = 480
+# How long the agent lets this helper run before it kills it. Agents that predate the
+# variable allow 900 s; newer ones pass a longer budget so a loaded Mac still gets the full
+# readiness wait after a slow staging step.
+_APPLY_BUDGET = os.environ.get('STUDIO_UPDATE_APPLY_BUDGET', '')
+APPLY_BUDGET_SECONDS = min(3600, max(900, int(_APPLY_BUDGET))) if _APPLY_BUDGET.isdigit() else 900
+# The readiness wait also ends this long after apply() started, so slow readings before the
+# restart (staging, prestate checks) leave the rollback its 420 s share of the budget.
+READY_BY_SECONDS_FROM_START = APPLY_BUDGET_SECONDS - 420
+# Staging unpacks and verifies the release in a private home. On a loaded Mac 120 s was not
+# enough and refused a real update, so it gets a liveness bound rather than a tight one; it
+# is also cut to what is left of the pre-restart budget below.
+STAGE_TIMEOUT_SECONDS = 600
+# A restart needs at least this long to prove the new service ready. When the work before it
+# ran so long that less is left, the update stops before writing anything: nothing changed,
+# and the updater may try again, rather than restarting into a rollback it cannot avoid.
+# Everything before the restart thus ends within READY_BY_SECONDS_FROM_START - this (420 s
+# with the old 900 s budget)
+# plus one reading in flight, which keeps the helper under the agent's 900 s.
+# With a budget beyond the old 900 s the restart always keeps the full readiness wait.
+MIN_READINESS_SECONDS = min(READINESS_DEADLINE_SECONDS, max(60, READY_BY_SECONDS_FROM_START - 420))
+TOO_SLOW_TO_RESTART = 'Preparing the update took too long to leave time for the restart; nothing was changed'
 
 def atomic(path, content, mode):
     temporary = path.with_name(path.name + '.owned-update-' + str(uuid.uuid4()))
@@ -693,6 +791,30 @@ def atomic(path, content, mode):
         os.replace(temporary, path)
     finally:
         if temporary.exists(): temporary.unlink()
+
+# The install gate (apps/server/src/serviceUpdate/UpdateInstallGate.ts). Written just before
+# the restart and removed once the release is verified or rolled back: while it is live the
+# service starts nothing on its own and refuses new messages, so the readiness and rollback
+# snapshots find it idle. The service ignores it once this helper exits, and in any case
+# INSTALL_GATE_MAX_SECONDS after it was written: the longest APPLY_BUDGET_SECONDS allows.
+INSTALL_GATE_FILE = 'install-gate.json'
+INSTALL_GATE_MAX_SECONDS = 3600
+
+def install_gate_path(own, home):
+    return safe_path(own / 'updates' / INSTALL_GATE_FILE, home)
+
+def write_install_gate(own, home):
+    path = install_gate_path(own, home)
+    path.parent.mkdir(mode=0o700, exist_ok=True)
+    value = {'helperPid': os.getpid(), 'at': datetime.datetime.now(datetime.timezone.utc).isoformat()}
+    atomic(path, (json.dumps(value) + '\n').encode(), 0o600)
+
+def clear_install_gate(own, home):
+    """Never raises: a gate left behind ends when this helper exits."""
+    try:
+        install_gate_path(own, home).unlink()
+    except (AssertionError, OSError):
+        pass
 
 def restore_cli_alias(alias, original, written, report=None):
     """Undo this update's alias write, only while the alias still holds `written` (or
@@ -738,6 +860,10 @@ def apply(identity, expected, archive, archive_sha, output, *, allow_existing_br
           allow_project_migrations=False):
     assert not allow_existing_browser_heartbeat or identity in {'m4', 'm1', 'm3'}, 'Restart heartbeat exception requires M4 cookie or paired-worker relay WEB session'
     started = time.monotonic()
+    def budget_left():
+        left = READY_BY_SECONDS_FROM_START - MIN_READINESS_SECONDS - (time.monotonic() - started)
+        assert left > 0, TOO_SLOW_TO_RESTART
+        return left
     capture_auth = allow_existing_browser_heartbeat or allow_project_migrations
     # Measure appended rows and private auth in the same transaction as the proof.
     before, original_auth, carried = snapshot_since(identity, expected['rows'], capture_auth)
@@ -764,13 +890,18 @@ def apply(identity, expected, archive, archive_sha, output, *, allow_existing_br
         stage_home = pathlib.Path(temporary)
         with socket.socket() as probe:
             probe.bind(('127.0.0.1', 0)); stage_port = probe.getsockname()[1]
-        value = run(['/usr/bin/python3', str(pathlib.Path(__file__).with_name('install.py')), '--archive', str(archive), '--sha256', archive_sha,
-                     '--node', receipt['node'], '--identity', 'stage', '--port', str(stage_port)], timeout=120,
-                    env={'HOME': str(stage_home), 'PATH': '/usr/bin:/bin', 'LANG': 'en_US.UTF-8'}, text=True)
+        try:  # Staging past the pre-restart budget can only end in TOO_SLOW_TO_RESTART.
+            value = run(['/usr/bin/python3', str(pathlib.Path(__file__).with_name('install.py')), '--archive', str(archive), '--sha256', archive_sha,
+                         '--node', receipt['node'], '--identity', 'stage', '--port', str(stage_port)],
+                        timeout=min(STAGE_TIMEOUT_SECONDS, budget_left()),
+                        env={'HOME': str(stage_home), 'PATH': '/usr/bin:/bin', 'LANG': 'en_US.UTF-8'}, text=True)
+        except subprocess.TimeoutExpired:
+            raise AssertionError(TOO_SLOW_TO_RESTART) from None
         staged = json.loads(value)
         staged_release = pathlib.Path(staged['release'])
         manifest = release_verified(staged_release)
         validate_upgrade(release_verified(pathlib.Path(old_release))['version'], manifest['version'])
+        budget_left()
         current, _, current_carried = snapshot_since(identity, expected['rows'])
         assert_prestate(expected, current, current_carried)
         manifest = publish_release(staged_release, new_release)
@@ -794,8 +925,10 @@ def apply(identity, expected, archive, archive_sha, output, *, allow_existing_br
         return ('\n'.join(lines[:4]) + '\nexec ' + ' '.join(shlex.quote(part) for part in prefix + old_tokens[node_index + 2:]) + '\n').encode()
     receipt.update({'version': manifest['version'], 'sourceCommit': manifest['sourceCommit'], 'archiveSha256': archive_sha, 'release': str(new_release),
                     'startup': {'autoBootstrapProjectFromCwd': False, 'presentation': 'overview'}})
+    budget_left()
     current, _, current_carried = snapshot_since(identity, expected['rows'])
     assert_prestate(expected, current, current_carried)
+    budget_left()
     new_launcher = replaced(old_bytes['launch.sh'])
     cli_prefix[-1] = str(new_release / 'bin.mjs')
     new_bytes = {'launch.sh': new_launcher, 'wrapper': render_cli(cli_prefix).encode(),
@@ -813,7 +946,7 @@ def apply(identity, expected, archive, archive_sha, output, *, allow_existing_br
     manage_alias = False  # True once this update has written the launcher.
     old_alias = None
     progress = {'identity': identity, 'phase': 'prepared', 'before': before, 'backup': str(backup),
-                'newRelease': str(new_release), 'newArchiveSha256': archive_sha,
+                'newRelease': str(new_release), 'newArchiveSha256': archive_sha, 'helperPid': os.getpid(),
                 'cliAlias': 'not-written-yet' if alias_planned else 'foreign-left-untouched',
                 'readinessDeadlineSeconds': READINESS_DEADLINE_SECONDS,
                 'readyBySecondsFromStart': READY_BY_SECONDS_FROM_START,
@@ -876,6 +1009,9 @@ def apply(identity, expected, archive, archive_sha, output, *, allow_existing_br
         state_backup = backup_state(own, before['artifactSourceCommit'])
         progress['stateBackup'] = str(state_backup)
         output.write_text(json.dumps(progress, indent=2) + '\n')
+        # Kept until the finally below: the new release (or the old one a rollback starts
+        # again) stays idle for the readiness and rollback snapshots.
+        write_install_gate(own, home)
         restart_requested = True
         run(['/bin/launchctl', 'kickstart', '-k', 'gui/501/' + before['serviceLabel']])
         # One reading can take a minute when the process inventory times out and retries, so
@@ -1110,6 +1246,8 @@ def apply(identity, expected, archive, archive_sha, output, *, allow_existing_br
             except OSError:
                 pass
         raise
+    finally:
+        clear_install_gate(own, home)
 
 def describe_error(error):
     """Type and message of a failed proof, bounded; messages here never carry row content."""
@@ -1134,11 +1272,86 @@ def write_preflight_failure(output, identity, error):
     except OSError:
         pass  # The original error is what the caller needs; it is re-raised.
 
+# Refusals the next snapshot may not repeat: processes or the database moved while being read,
+# or a process listed by ps exited before the kernel read of it.
+BUSY_REFUSALS = {'Owned process identities changed during inventory', 'Owned service process identity changed'} | VANISHED_READS
+
+def native_work_counts(state):
+    """The per-check counts behind 'Native work is not idle', read again (read-only) for the
+    refusal line. The same predicates as _read_state, which alone decides."""
+    db = sqlite3.connect('file:' + str(state / 'statev2.sqlite') + '?mode=ro', uri=True)
+    try:
+        def count(query):
+            return db.execute(query).fetchone()[0]
+        runs = sum(1 for row in db.execute('SELECT status FROM orchestration_v2_projection_runs') if row[0] not in TERMINAL_RUNS)
+        return {'runs': runs,
+                'requests': count("SELECT count(*) FROM orchestration_v2_projection_runtime_requests WHERE status='pending'"),
+                'effects': count("SELECT count(*) FROM orchestration_v2_effect_outbox WHERE status IS NULL OR status NOT IN ('succeeded','failed','cancelled')"),
+                'sessions': count("SELECT count(*) FROM orchestration_v2_projection_provider_sessions WHERE status IN ('running','working','connecting','starting')")}
+    finally:
+        db.close()
+
+def _name(value):
+    return re.sub(r'[^A-Za-z0-9._+-]', '_', posixpath.basename(str(value)))[:40] or '_'
+
+def descendant_names(pid, processes):
+    """Executable basenames beneath the service, with counts; the one supervisor is left out.
+    Only `ps comm` is read, never argv, so no argument or secret can appear."""
+    names, pending, seen, supervisor = {}, [pid], {pid}, False
+    while pending:
+        parent = pending.pop()
+        for child in sorted(processes.values(), key=lambda item: item['pid']):
+            if child['parent'] != parent or child['pid'] in seen:
+                continue
+            seen.add(child['pid'])
+            pending.append(child['pid'])
+            if not supervisor and parent == pid and child['executable'] == '/usr/bin/caffeinate':
+                supervisor = True
+                continue
+            name = _name(child['executable'])
+            names[name] = names.get(name, 0) + 1
+    return ' '.join('%s=%d' % item for item in sorted(names.items())[:8]) or ('none' if supervisor else 'no-supervisor')
+
+def _refusal_detail(code, own):
+    """Counts or names for a refusal, read again after the failed check; '' when unreadable."""
+    try:
+        if code == 'native-work':
+            counts = native_work_counts(own / 'userdata')
+            return ' '.join('%s=%d' % (key, counts[key]) for key in ('runs', 'requests', 'effects', 'sessions'))
+        pid = json.loads((own / 'userdata/server-runtime.json').read_text())['pid']
+        return descendant_names(int(pid), read_processes())
+    except Exception:
+        return ''
+
+def refusal_line(identity, error):
+    """`REFUSAL <code> <detail>` for a refused snapshot, read by the update agent. Codes:
+    native-work, descendants, timeout, busy and environment. Details are counts, executable
+    basenames or this helper's own fixed messages: never argv, paths, rows or secrets."""
+    message = str(error) if isinstance(error, AssertionError) else ''
+    if isinstance(error, subprocess.TimeoutExpired):
+        command = error.cmd if isinstance(error.cmd, (list, tuple)) else [error.cmd]
+        return 'REFUSAL timeout ' + _name(command[0] if command else 'check')
+    if message == 'Native work is not idle' or 'descendants' in message:
+        code = 'native-work' if message == 'Native work is not idle' else 'descendants'
+        own = pathlib.Path.home().resolve() / '.specweave-studio' / identity
+        return ('REFUSAL %s %s' % (code, _refusal_detail(code, own))).rstrip()
+    if isinstance(error, sqlite3.OperationalError) or message in BUSY_REFUSALS:
+        return 'REFUSAL busy ' + type(error).__name__
+    if isinstance(error, AssertionError):
+        detail = message if re.fullmatch(r"[A-Za-z0-9 .,;:'()_-]{1,200}", message) else 'A Studio installation check failed'
+    elif isinstance(error, (OSError, ValueError, KeyError, TypeError)):
+        detail = 'A Studio installation file is missing or malformed (%s)' % type(error).__name__
+    else:
+        detail = 'Unexpected snapshot failure (%s)' % type(error).__name__
+    return 'REFUSAL environment ' + detail
+
 def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser()
     parser.add_argument('--identity', choices=sorted(IDENTITIES), required=True)
     parser.add_argument('--snapshot', type=pathlib.Path)
+    parser.add_argument('--reap', type=pathlib.Path, help='Stop the processes left beneath the service; write the record here')
+    parser.add_argument('--request', help='With --reap: the forced install request (installRequestedAt) it serves')
     parser.add_argument('--prestate', type=pathlib.Path)
     parser.add_argument('--archive', type=pathlib.Path)
     parser.add_argument('--sha256')
@@ -1148,9 +1361,27 @@ def main():
     parser.add_argument('--allow-existing-browser-heartbeat', action='store_true',
                         help='Prove one existing M4 WEB-cookie or paired-worker WEB-relay-bearer reconnect during the owned restart')
     args = parser.parse_args()
-    if args.snapshot:
+    if args.reap:
+        assert not args.snapshot and not args.prestate and args.request and not os.path.lexists(str(args.reap))
+        record = {}
+        try:
+            reap(args.identity, args.request, record)
+        except Exception as error:
+            record.update(result='failed', error=refusal_line(args.identity, error)[len('REFUSAL '):])
+            raise
+        finally:  # Whatever was signalled is recorded, even when the reap stopped part way.
+            record.setdefault('observedAt', datetime.datetime.now(datetime.timezone.utc).isoformat())
+            args.reap.write_text(json.dumps(record, indent=2) + '\n')
+        print(json.dumps({'identity': args.identity, 'result': 'reaped', 'signals': len(record['signals']),
+                          'survivors': len(record['survivors'])}))
+    elif args.snapshot:
         assert not args.snapshot.exists()
-        value = snapshot(args.identity)
+        try:
+            value = snapshot(args.identity)
+        except Exception as error:
+            traceback.print_exc()
+            print(refusal_line(args.identity, error), file=sys.stderr, flush=True)
+            sys.exit(1)
         args.snapshot.write_text(json.dumps(value, indent=2) + '\n')
         print(json.dumps({'identity': args.identity, 'result': 'snapshotted', 'report': str(args.snapshot), 'servicePid': value['servicePid']}))
     else:

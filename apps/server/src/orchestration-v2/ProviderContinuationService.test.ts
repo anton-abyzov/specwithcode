@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
   MessageId,
@@ -18,6 +19,8 @@ import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
+import { awaitGateOpen, makeGatedHold } from "../serviceUpdate/UpdateInstallGate.testkit.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProviderContinuationRequests from "./ProviderContinuationRequests.ts";
 import * as ProviderContinuationService from "./ProviderContinuationService.ts";
@@ -105,6 +108,41 @@ function layerTest(input: {
 }
 
 describe("ProviderContinuationService", () => {
+  it.effect("holds a delegated completion wake until an update install's gate is cleared", () =>
+    Effect.gen(function* () {
+      const gated = yield* makeGatedHold();
+      const dispatched = yield* Queue.unbounded<unknown>();
+      yield* Effect.gen(function* () {
+        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+        yield* requests.offer({
+          threadId,
+          providerThreadId,
+          driver,
+          detail: null,
+          delivery: "message_text",
+          delegatedCompletion: { parentRunId, generation: 1, messageId: delegatedMessageId },
+        });
+        yield* TestClock.adjust("1 minute");
+        yield* TestClock.withLive(Effect.sleep("20 millis"));
+        assert.equal(yield* Queue.size(dispatched), 0);
+
+        yield* gated.clear;
+        assert.isTrue(yield* awaitGateOpen(gated.hold));
+        yield* TestClock.adjust("1 second");
+        const command = (yield* Queue.take(dispatched)) as { readonly messageId: MessageId };
+        assert.equal(command.messageId, delegatedMessageId);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            dispatched,
+            getThreadRecords: () => Effect.succeed(delegatedProjection()),
+          }).pipe(Layer.provide(Layer.succeed(ServiceUpdateHold.ServiceUpdateHold, gated.hold))),
+        ),
+        Effect.scoped,
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("recovers an unaccepted persisted steer using the same delivery identity", () =>
     Effect.gen(function* () {
       const dispatched = yield* Queue.unbounded<unknown>();

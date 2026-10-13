@@ -288,6 +288,32 @@ class ServerBrowserQuiescence(unittest.TestCase):
             quiescence.capture_quiescence(100, 501, NODE, ARGS, process_reader=lambda: next(values),
                                           argv_reader=self.argv(), executable_reader=lambda pid: CHS)
 
+    def test_a_process_that_exits_before_its_kernel_read_is_inventory_churn(self):
+        for reader in ('argv', 'executable'):
+            with self.subTest(reader=reader):
+                tables = iter([with_browser(), fixture()])
+                def vanished(pid):
+                    assert pid == 101, 'Supervisor arguments unavailable' if reader == 'argv' else 'Process executable unavailable'
+                    return ARGS
+                argv = vanished if reader == 'argv' else self.argv()
+                executable = vanished if reader == 'executable' else (lambda pid: CHS)
+                with self.assertRaisesRegex(AssertionError, '^Owned process identities changed during inventory$'):
+                    quiescence.capture_quiescence(100, 501, NODE, ARGS, process_reader=lambda: next(tables),
+                                                  argv_reader=argv, executable_reader=executable)
+
+    def test_a_kernel_read_failure_on_an_unchanged_tree_keeps_its_own_message(self):
+        # Still listed (exiting or awaiting reaping): the read's own message, which update.py
+        # retries for VANISHED_READS only; a malformed vector stays a fault.
+        for message, vanished in (('Process executable unavailable', True), ('Invalid supervisor argument count', False)):
+            with self.subTest(message=message):
+                def executable(pid):
+                    assert pid != 301, message
+                    return with_browser()[pid]['executable']
+                with self.assertRaisesRegex(AssertionError, '^' + message + '$'):
+                    quiescence.capture_quiescence(100, 501, NODE, ARGS, process_reader=with_browser,
+                                                  argv_reader=self.argv(), executable_reader=executable)
+                self.assertEqual(message in quiescence.VANISHED_READS, vanished)
+
     def guard(self, table, expected=None, report=None):
         expected = expected if expected is not None else self.capture(with_browser())
         return quiescence.assert_quiescence(expected, NODE, ARGS, process_reader=table.read, argv_reader=self.argv(),

@@ -1,23 +1,26 @@
 import type { ConfirmDialogOptions, ConfirmDialogVariant } from "@specweave-studio/contracts";
 
-export type ConfirmDialogState =
-  | { readonly status: "idle" }
-  | {
-      readonly status: "confirming";
-      readonly message: string;
-      readonly variant: ConfirmDialogVariant;
-    }
-  | {
-      readonly status: "closing";
-      readonly message: string;
-      readonly variant: ConfirmDialogVariant;
-    };
-
-type PendingConfirmation = {
+type ConfirmDialogRequest = {
   readonly message: string;
   readonly variant: ConfirmDialogVariant;
+  /** Button labels; absent means "Confirm" and "Cancel". */
+  readonly confirmLabel?: string;
+  readonly cancelLabel?: string;
+};
+
+export type ConfirmDialogState =
+  | { readonly status: "idle" }
+  | ({ readonly status: "confirming" } & ConfirmDialogRequest)
+  | ({ readonly status: "closing" } & ConfirmDialogRequest);
+
+type PendingConfirmation = ConfirmDialogRequest & {
   readonly resolve: (confirmed: boolean) => void;
 };
+
+function requestOf(pending: PendingConfirmation): ConfirmDialogRequest {
+  const { resolve: _resolve, ...request } = pending;
+  return request;
+}
 
 const idleState: ConfirmDialogState = { status: "idle" };
 let state: ConfirmDialogState = idleState;
@@ -84,18 +87,20 @@ export function requestConfirmDialog(
   if (registeredHostCount === 0) return undefined;
 
   const confirmation = new Promise<boolean>((resolve) => {
-    const pending = {
+    const pending: PendingConfirmation = {
       message,
       variant: options?.variant ?? "default",
+      ...(options?.confirmLabel ? { confirmLabel: options.confirmLabel } : {}),
+      ...(options?.cancelLabel ? { cancelLabel: options.cancelLabel } : {}),
       resolve,
-    } satisfies PendingConfirmation;
+    };
     if (activeConfirmation || state.status === "closing") {
       queuedConfirmations.push(pending);
       return;
     }
 
     activeConfirmation = pending;
-    publish({ status: "confirming", message, variant: pending.variant });
+    publish({ status: "confirming", ...requestOf(pending) });
   });
 
   return confirmation;
@@ -107,7 +112,8 @@ export function respondToConfirmDialog(confirmed: boolean): void {
   const confirmation = activeConfirmation;
   activeConfirmation = null;
   confirmation.resolve(confirmed);
-  publish({ status: "closing", message: state.message, variant: state.variant });
+  const { status: _status, ...request } = state;
+  publish({ status: "closing", ...request });
 }
 
 export function completeConfirmDialogClose(): void {
@@ -120,7 +126,7 @@ export function completeConfirmDialogClose(): void {
   }
 
   activeConfirmation = next;
-  publish({ status: "confirming", message: next.message, variant: next.variant });
+  publish({ status: "confirming", ...requestOf(next) });
 }
 
 export function resetConfirmDialogForTests(): void {

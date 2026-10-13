@@ -7,17 +7,22 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
 } from "@specweave-studio/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
+import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
+import { awaitGateOpen, makeGatedHold } from "../serviceUpdate/UpdateInstallGate.testkit.ts";
 import * as TelegramBotApi from "./TelegramBotApi.ts";
 import * as TelegramChannel from "./TelegramChannel.ts";
 
@@ -54,6 +59,7 @@ const makeHarness = Effect.gen(function* () {
   }> = [];
   const secrets = new Map<string, Uint8Array>();
   const messages: Array<OrchestrationV2ConversationMessage> = [];
+  const polls = { count: 0 };
 
   const layer = TelegramChannel.layer.pipe(
     Layer.provide(
@@ -62,7 +68,8 @@ const makeHarness = Effect.gen(function* () {
           TelegramBotApi.TelegramBotApi.of({
             getMe: () =>
               Effect.succeed({ id: 99, username: "studio_test_bot", first_name: "Studio" }),
-            getUpdates: () => Queue.take(updates),
+            getUpdates: () =>
+              Effect.sync(() => void (polls.count += 1)).pipe(Effect.andThen(Queue.take(updates))),
             sendMessage: ({ chatId, text }) =>
               Queue.offer(sent, { chatId, text }).pipe(Effect.asVoid),
             sendTyping: () => Effect.void,
@@ -119,7 +126,7 @@ const makeHarness = Effect.gen(function* () {
       ),
     ),
   );
-  return { layer, updates, sent, events, dispatched, secrets, messages };
+  return { layer, updates, sent, events, dispatched, secrets, messages, polls };
 });
 
 const update = (updateId: number, text: string, chatId = 42) => ({
@@ -248,4 +255,34 @@ it.effect("pairs the chat that sends the code, then forwards and answers", () =>
       assert.strictEqual(harness.secrets.size, 0);
     }).pipe(Effect.provide(harness.layer));
   }),
+);
+
+it.effect("does not ask Telegram for messages until an update install's gate is cleared", () =>
+  Effect.gen(function* () {
+    const gated = yield* makeGatedHold();
+    const harness = yield* makeHarness;
+    yield* Effect.gen(function* () {
+      const channel = yield* TelegramChannel.TelegramChannel;
+      yield* channel.configure({ botToken: TOKEN, projectId: PROJECT_ID, enabled: true });
+      yield* channel.start();
+      const settle = TestClock.withLive(Effect.sleep(Duration.millis(20)));
+      yield* settle;
+      yield* TestClock.adjust("20 seconds");
+      yield* settle;
+      assert.strictEqual(harness.polls.count, 0);
+
+      yield* gated.clear;
+      assert.isTrue(yield* awaitGateOpen(gated.hold));
+      yield* TestClock.adjust("5 seconds");
+      yield* settle;
+      assert.isAtLeast(harness.polls.count, 1);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        harness.layer.pipe(
+          Layer.provide(Layer.succeed(ServiceUpdateHold.ServiceUpdateHold, gated.hold)),
+        ),
+      ),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

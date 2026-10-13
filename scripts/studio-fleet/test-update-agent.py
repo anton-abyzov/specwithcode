@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import threading
 import unittest
 from unittest import mock
@@ -48,8 +49,15 @@ for flag in ['--identity', '--snapshot', '--prestate', '--archive', '--sha256', 
 parser.add_argument('--allow-project-migrations', action='store_true')
 parser.add_argument('--allow-existing-browser-heartbeat', action='store_true')
 args = parser.parse_args()
+calls = [json.loads(line)['argv'] for line in (home / 'fake-calls.jsonl').read_text().splitlines()]
+snapshots = len([argv for argv in calls if '--snapshot' in argv])
+applies = len([argv for argv in calls if '--prestate' in argv])
 if args.snapshot:
-    if control.get('snapshotFail'):
+    if control.get('snapshotSleep'):
+        import time
+        time.sleep(control['snapshotSleep'])
+    if control.get('snapshotFail') or snapshots <= control.get('snapshotFailures', 0) \
+            or (control.get('snapshotFailAfterApply') and applies):
         sys.stderr.write(control.get('snapshotError', 'AssertionError: Native work is not idle') + '\n')
         sys.exit(1)
     assert not os.path.exists(args.snapshot)
@@ -62,6 +70,16 @@ if args.snapshot:
 prestate = json.loads(pathlib.Path(args.prestate).read_text())
 assert prestate['rows']['nativeWorkIdle'] is True
 assert pathlib.Path(args.archive).is_file() and not os.path.exists(args.output)
+if control.get('applySleep'):
+    import time
+    time.sleep(control['applySleep'])
+if applies <= control.get('applyRefusals', 0) or control.get('applyFailAfterRestart'):
+    receipt = {'phase': 'prepared', 'result': 'update-failed', 'pointers': 'previous-release',
+               'error': 'AssertionError: Guarded prestate changed: rows'}
+    if control.get('applyFailAfterRestart'):
+        receipt.update(phase='restart-requested', restartStartedAt='2026-10-12T20:00:00+00:00', pointers='new-release')
+    pathlib.Path(args.output).write_text(json.dumps(receipt))
+    sys.exit(1)
 if control.get('applyCrash'):
     sys.stderr.write('Traceback (most recent call last):\nAssertionError: Protected rows or counts changed\n')
     sys.exit(1)
@@ -74,6 +92,9 @@ receipt = json.loads(path.read_text())
 receipt['version'] = control.get('newVersion', '0.2.0')
 receipt['sourceCommit'] = control.get('newCommit', 'b' * 40)
 path.write_text(json.dumps(receipt))
+if control.get('applyFailAfterSwitch'):
+    pathlib.Path(args.output).write_text(json.dumps({'result': 'update-failed', 'rollback': 'held-for-safe-review'}))
+    sys.exit(1)
 pathlib.Path(args.output).write_text(json.dumps({'phase': 'verified', 'cookie': 'helper-private-receipt'}))
 print('helper-private-output-should-not-be-logged')
 '''
@@ -232,6 +253,20 @@ class AgentCase(unittest.TestCase):
         self.addCleanup(self.gh.stop)
         self.addCleanup(update_agent._REDACT.clear)
         self.log = ''
+        # A fake clock: retry sleeps advance it at once, so retry windows end without waiting.
+        self.offset, self.sleeps, self.on_sleep = datetime.timedelta(0), [], None
+        real_now = update_agent.utcnow
+
+        def fake_sleep(seconds):
+            self.sleeps.append(seconds)
+            self.offset += datetime.timedelta(seconds=seconds)
+            if self.on_sleep:
+                self.on_sleep()
+        for name, value in (('utcnow', lambda: real_now() + self.offset),
+                            ('time', mock.Mock(sleep=mock.Mock(side_effect=fake_sleep)))):
+            patcher = mock.patch.object(update_agent, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def write_installation(self, version, commit):
         receipt = {'schemaVersion': 1, 'identity': 'm4', 'studioHome': str(self.own),
@@ -341,6 +376,133 @@ class PlanPolicy(unittest.TestCase):
             update_agent.validate_plan(plan, '0.2.0')
 
 
+class DownloadCache(AgentCase):
+    def setUp(self):
+        super().setUp()
+        self.config()
+        self.agent = update_agent.Agent(self.home, 'm4', True, lambda line: None)
+        self.destination = self.updates / 'payload.tgz'
+        self.record = self.updates / '.payload.tgz.asset.json'
+
+    def download(self, asset, limit=1024):
+        return self.agent.download_asset('payload.tgz', asset, self.destination, limit)
+
+    def test_legacy_and_malformed_cache_records_require_a_download(self):
+        asset = self.fake.asset('payload.tgz', b'new bytes')
+        for record in (None, b'not JSON', b'{}', b'x' * 4097):
+            with self.subTest(record=record and record[:8]):
+                self.destination.write_bytes(b'old bytes')
+                if self.record.exists():
+                    self.record.unlink()
+                if record is not None:
+                    self.record.write_bytes(record)
+                before = len(self.fake.blob_requests())
+                self.download(asset)
+                self.assertEqual(self.destination.read_bytes(), b'new bytes')
+                self.assertEqual(len(self.fake.blob_requests()), before + 1)
+                # A completed download resumes without another request.
+                self.download(asset)
+                self.assertEqual(len(self.fake.blob_requests()), before + 1)
+
+    def test_cache_is_bound_to_api_repository_and_size(self):
+        asset = self.fake.asset('payload.tgz', b'first')
+        self.download(asset)
+        other = FakeGitHub()
+        self.addCleanup(other.close)
+        same_id = other.asset('payload.tgz', b'other')
+        self.assertEqual(asset['id'], same_id['id'])
+        with mock.patch.dict(os.environ, {'STUDIO_UPDATE_API_URL': other.api_url}):
+            self.download(same_id)
+            self.assertEqual(self.destination.read_bytes(), b'other')
+            self.agent.config['repository'] = 'another/repository'
+            with self.assertRaisesRegex(update_agent.AgentError, 'HTTP 404'):
+                self.download(same_id)
+            self.assertTrue(any('/repos/another/repository/' in request[1] for request in other.requests))
+        self.agent.config['repository'] = REPO
+        self.download(asset)
+        # Even matching IDs cannot reuse bytes of a different advertised size.
+        asset['size'] = len(b'extended')
+        self.fake.blobs[asset['id']] = b'extended'
+        self.download(asset)
+        self.assertEqual(self.destination.read_bytes(), b'extended')
+
+    def test_crash_after_payload_replace_never_leaves_the_old_binding(self):
+        first = self.fake.asset('payload.tgz', b'first')
+        second = self.fake.asset('payload.tgz', b'other')
+        self.download(first)
+        with mock.patch.object(update_agent, 'write_json', side_effect=RuntimeError('simulated crash')):
+            with self.assertRaisesRegex(RuntimeError, 'simulated crash'):
+                self.download(second)
+        self.assertEqual(self.destination.read_bytes(), b'other')
+        self.assertFalse(self.record.exists())
+        before = len(self.fake.blob_requests())
+        self.download(first)
+        self.assertEqual(self.destination.read_bytes(), b'first')
+        self.assertEqual(len(self.fake.blob_requests()), before + 1)
+
+    def test_incomplete_replacement_keeps_old_bytes_unbound_and_retries(self):
+        first = self.fake.asset('payload.tgz', b'first')
+        second = self.fake.asset('payload.tgz', b'other')
+        self.download(first)
+        self.fake.blobs[second['id']] = b'cut'
+        with self.assertRaisesRegex(update_agent.AgentError, 'incomplete'):
+            self.download(second)
+        self.assertEqual(self.destination.read_bytes(), b'first')
+        self.assertFalse(self.record.exists())
+        self.assertFalse(self.destination.with_name('payload.tgz.part').exists())
+        self.fake.blobs[second['id']] = b'other'
+        self.download(second)
+        self.assertEqual(self.destination.read_bytes(), b'other')
+
+    def test_cached_payload_does_not_bypass_the_current_size_limit(self):
+        asset = self.fake.asset('payload.tgz', b'first')
+        self.download(asset)
+        with self.assertRaisesRegex(update_agent.AgentError, 'size limit'):
+            self.download(asset, limit=4)
+        self.assertFalse(self.record.exists())
+
+    def test_symlinked_cache_paths_are_replaced_without_following_targets(self):
+        asset = self.fake.asset('payload.tgz', b'first')
+        target = self.home / 'must-not-change'
+        target.write_bytes(b'keep me')
+        for path in (self.record, self.destination, self.destination.with_name('payload.tgz.part')):
+            with self.subTest(path=path.name):
+                for leftover in (self.record, self.destination):
+                    if os.path.lexists(str(leftover)):
+                        leftover.unlink()
+                path.symlink_to(target)
+                self.download(asset)
+                self.assertEqual(target.read_bytes(), b'keep me')
+                self.assertFalse(path.is_symlink())
+                self.assertEqual(self.destination.read_bytes(), b'first')
+                self.assertTrue(self.record.is_file() and not self.record.is_symlink())
+                self.assertFalse(os.path.lexists(str(self.destination.with_name('payload.tgz.part'))))
+
+    def test_directories_in_cache_paths_are_cleared(self):
+        asset = self.fake.asset('payload.tgz', b'first')
+        for path in (self.record, self.destination, self.destination.with_name('payload.tgz.part')):
+            with self.subTest(path=path.name):
+                for leftover in (self.record, self.destination):
+                    if leftover.is_file():
+                        leftover.unlink()
+                (path / 'nested').mkdir(parents=True)
+                self.download(asset)
+                self.assertEqual(self.destination.read_bytes(), b'first')
+                self.assertTrue(self.record.is_file())
+                self.assertFalse(os.path.lexists(str(self.destination.with_name('payload.tgz.part'))))
+
+    def test_cache_directory_with_a_symlink_ancestor_is_refused(self):
+        asset = self.fake.asset('payload.tgz', b'first')
+        real = self.home / 'elsewhere'
+        real.mkdir()
+        link = self.updates / 'linked'
+        link.symlink_to(real)
+        with self.assertRaisesRegex(update_agent.AgentError, 'symlink'):
+            self.agent.download_asset('payload.tgz', asset, link / 'payload.tgz', 1024)
+        self.assertEqual(list(real.iterdir()), [])
+        self.assertEqual(self.fake.requests, [])
+
+
 class PassBehaviour(AgentCase):
     def test_config_off_is_disabled_without_network_or_gh(self):
         self.fake.add_release()
@@ -447,6 +609,97 @@ class PassBehaviour(AgentCase):
         self.assertIn('does not match the manifest', self.state()['message'])
         self.assertFalse((self.updates / 'helpers' / '0.2.0').exists())
 
+    def test_same_size_replacement_assets_download_on_the_first_fresh_check(self):
+        info = self.fake.add_release()
+        self.config(installAutomatically=False)
+        self.assertEqual(self.run_agent(), 0)
+        self.assertEqual(self.state()['status'], 'downloaded')
+        assets = info['release']['assets']
+        previous = {asset['name']: asset for asset in assets}
+        runtime = self.fake.blobs[previous[info['runtime']]['id']]
+        replacement = runtime.replace(b'fake', b'good')
+        self.assertEqual(len(replacement), len(runtime))
+        info['plan']['service']['runtime']['sha256'] = sha(replacement)
+        sums = self.fake.blobs[previous[update_agent.SUMS_ASSET]['id']]
+        sums = sums.replace(info['runtimeSha'].encode(), sha(replacement).encode())
+        replacements = {info['runtime']: replacement, update_agent.SUMS_ASSET: sums,
+                        update_agent.PLAN_ASSET: json.dumps(info['plan']).encode()}
+        assets[:] = [self.fake.asset(asset['name'], replacements[asset['name']])
+                     if asset['name'] in replacements else asset for asset in assets]
+        for asset in assets:
+            self.assertEqual(asset['size'], previous[asset['name']]['size'])
+        before = len(self.fake.blob_requests())
+        self.config(installAutomatically=False, checkRequestedAt='2026-10-12T10:00:00Z')
+        self.assertEqual(self.run_agent(), 0, self.log)
+        self.assertEqual(self.state()['status'], 'downloaded')
+        downloaded = self.updates / 'downloads' / '0.2.0' / info['runtime']
+        self.assertEqual(downloaded.read_bytes(), replacement)
+        # The unchanged helper archive and manifest remain resumable.
+        fetched = {request[1] for request in self.fake.blob_requests()[before:]}
+        self.assertEqual(fetched, {'/blob/%d' % asset['id'] for asset in assets
+                                  if asset['name'] in replacements})
+        self.assertEqual(self.calls(), [])
+
+    def test_asset_binding_does_not_bypass_checksum_verification(self):
+        info = self.fake.add_release()
+        self.config(installAutomatically=False)
+        self.assertEqual(self.run_agent(), 0)
+        directory = self.updates / 'downloads' / '0.2.0'
+        runtime = directory / info['runtime']
+        runtime.write_bytes(runtime.read_bytes().replace(b'fake', b'evil'))
+        (directory / 'verified.json').unlink()
+        before = len(self.fake.blob_requests())
+        self.assertEqual(self.run_agent(), 1)
+        self.assertIn('checksum', self.state()['message'])
+        self.assertEqual(len(self.fake.blob_requests()), before)
+        self.assertFalse(runtime.exists())
+        self.assertFalse(list(directory.glob('.*.asset.json')))
+        self.assertEqual(self.calls(), [])
+
+    def test_symlinked_or_directory_cache_entries_do_not_block_a_pass(self):
+        info = self.fake.add_release()
+        self.config(installAutomatically=False)
+        self.assertEqual(self.run_agent(), 0)
+        directory = self.updates / 'downloads' / '0.2.0'
+        runtime, record = directory / info['runtime'], directory / ('.%s.asset.json' % info['runtime'])
+        good, target = runtime.read_bytes(), self.home / 'must-not-change'
+        target.write_bytes(b'keep me')
+        for corrupt in ('runtime-symlink', 'record-symlink', 'record-directory'):
+            with self.subTest(corrupt=corrupt):
+                (directory / 'verified.json').unlink()
+                path = runtime if corrupt == 'runtime-symlink' else record
+                path.unlink()
+                if corrupt.endswith('symlink'):
+                    path.symlink_to(target)
+                else:
+                    path.mkdir()
+                self.assertEqual(self.run_agent(), 0, self.log)
+                self.assertEqual(self.state()['status'], 'downloaded')
+                self.assertEqual(runtime.read_bytes(), good)
+                self.assertFalse(runtime.is_symlink() or record.is_symlink())
+                self.assertTrue(record.is_file())
+                self.assertEqual(target.read_bytes(), b'keep me')
+
+    def test_runtime_changed_on_disk_before_install_is_downloaded_again(self):
+        info = self.fake.add_release()
+        self.config(installAutomatically=False)
+        self.assertEqual(self.run_agent(), 0)
+        directory = self.updates / 'downloads' / '0.2.0'
+        runtime = directory / info['runtime']
+        good = runtime.read_bytes()
+        runtime.write_bytes(good.replace(b'fake', b'evil'))
+        self.config(installAutomatically=False, installRequestedAt='2026-10-10T10:00:00Z')
+        self.assertEqual(self.run_agent(), 1)
+        self.assertIn('downloaded again', self.state()['message'])
+        self.assertFalse(os.path.lexists(str(runtime)))
+        self.assertFalse(list(directory.glob('.%s*' % info['runtime'])))
+        self.assertEqual(self.apply_calls(), [])
+        before = len(self.fake.blob_requests())
+        self.assertEqual(self.run_agent(), 0, self.log)
+        self.assertEqual(len(self.fake.blob_requests()), before + 1)
+        self.assertEqual(self.state()['status'], 'installed')
+        self.assertEqual(len(self.apply_calls()), 1)
+
     def test_download_off_reports_available(self):
         self.fake.add_release()
         self.config(downloadInBackground=False)
@@ -481,7 +734,7 @@ class PassBehaviour(AgentCase):
         self.assertTrue(call['cwd'].endswith(ROOT + '/scripts/studio-fleet'))
         # Exactly the documented helper environment. The helper's own Python may add LC_CTYPE
         # (locale coercion) and, for the macOS system Python, __CF_USER_TEXT_ENCODING.
-        self.assertEqual(set(call['env']) - {'LC_CTYPE', '__CF_USER_TEXT_ENCODING'}, {'HOME', 'LANG', 'PATH'})
+        self.assertEqual(set(call['env']) - {'LC_CTYPE', '__CF_USER_TEXT_ENCODING'}, {'HOME', 'LANG', 'PATH', 'STUDIO_UPDATE_APPLY_BUDGET'})
         # Changed counts reset the baseline even after the quiet period elapsed.
         self.backdate_baseline(11)
         self.control(counts={'projection_threads': 4})
@@ -586,9 +839,8 @@ class PassBehaviour(AgentCase):
         self.fake.add_release()
         cases = (('AssertionError: Owned service has unexpected descendants',
                   'Waiting for open Studio terminals and agent processes to close'),
-                 # A missing supervisor is not something the person can close.
                  ('AssertionError: Owned service has unexpected or missing descendants',
-                  update_agent.WAITING),
+                  'Waiting for open Studio terminals and agent processes to close'),
                  ('Traceback (most recent call last):\nOSError: database is locked', update_agent.WAITING))
         for error, message in cases:
             self.control(snapshotFail=True, snapshotError=error)
@@ -642,6 +894,107 @@ class PassBehaviour(AgentCase):
         self.run_agent()
         self.assertEqual(len(self.apply_calls()), 1)
         self.assertIn('Install now', self.state()['message'])
+
+    def test_failed_current_version_stays_error_after_repeated_checks(self):
+        self.fake.add_release()
+        self.config(installRequestedAt='2026-10-10T10:00:00Z')
+        self.control(applyFailAfterSwitch=True)
+        self.assertEqual(self.run_agent(), 1)
+        failed = self.state()['lastInstall']
+        self.assertEqual(failed['result'], 'failed')
+        self.assertEqual(self.state()['installedVersion'], '0.2.0')
+        receipt = pathlib.Path(failed['receipt'])
+        receipt_bytes = receipt.read_bytes()
+        helper_calls = self.calls()
+        # Recover the diagnostic even if an older agent already cleared it.
+        state = self.state()
+        state.update(status='up-to-date', message=None)
+        (self.updates / 'state.json').write_text(json.dumps(state))
+        for requests in ({}, {'checkRequestedAt': '2026-10-10T11:00:00Z'},
+                         {'installRequestedAt': '2026-10-10T12:00:00Z'}):
+            with self.subTest(requests=requests):
+                self.config(**requests)
+                self.assertEqual(self.run_agent(), 1)
+                state = self.state()
+                self.assertEqual(state['status'], 'error')
+                self.assertIn('See the update receipt', state['message'])
+                self.assertEqual(state['lastInstall'], failed)
+                self.assertEqual(receipt.read_bytes(), receipt_bytes)
+                self.assertEqual(self.calls(), helper_calls)
+                self.assertIsNone(state['availableVersion'])
+                self.assertIsNone(state['downloadedVersion'])
+                for key, value in requests.items():
+                    handled = {'checkRequestedAt': 'handledCheckRequestAt',
+                               'installRequestedAt': 'handledInstallRequestAt'}[key]
+                    self.assertEqual(state[handled], value)
+
+    def test_install_that_outlives_the_timeout_and_verifies_is_not_reported_failed(self):
+        self.fake.add_release()
+        self.config(installRequestedAt='2026-10-10T10:00:00Z')
+        real = update_agent.run_helper_process
+
+        def slow(command, *args, **kwargs):
+            outcome = real(command, *args, **kwargs)
+            return 'timeout' if '--prestate' in [str(part) for part in command] and outcome == 'ok' else outcome
+        with mock.patch.object(update_agent, 'run_helper_process', slow):
+            self.assertEqual(self.run_agent(), 1)
+        self.assertEqual(self.state()['lastInstall']['result'], 'failed')
+        self.assertEqual(self.state()['installedVersion'], '0.2.0')
+        # The timed-out helper left its marker; the next pass settles it as the install it was.
+        self.assertEqual(self.run_agent(), 0)
+        self.assertEqual((self.state()['status'], self.state()['lastInstall']['result']), ('installed', 'updated'))
+        for requests in ({}, {'checkRequestedAt': '2026-10-10T11:00:00Z'}):
+            with self.subTest(requests=requests):
+                self.config(**requests)
+                self.assertEqual(self.run_agent(), 0)
+                self.assertEqual(self.state()['status'], 'up-to-date')
+                self.assertIsNone(self.state()['message'])
+
+    def test_reinstalling_the_failed_version_by_hand_clears_the_error(self):
+        self.fake.add_release()
+        self.config(installRequestedAt='2026-10-10T10:00:00Z')
+        self.control(applyFailAfterSwitch=True)
+        self.assertEqual(self.run_agent(), 1)
+        self.assertEqual(self.run_agent(), 1)
+        receipt = pathlib.Path(self.state()['lastInstall']['receipt'])
+        self.write_installation('0.2.0', NEW_COMMIT)
+        later = receipt.stat().st_mtime + 5
+        os.utime(str(self.own / 'installation.json'), (later, later))
+        for requests in ({}, {'checkRequestedAt': '2026-10-10T11:00:00Z'}):
+            with self.subTest(requests=requests):
+                self.config(**requests)
+                self.assertEqual(self.run_agent(), 0)
+                self.assertEqual(self.state()['status'], 'up-to-date')
+                self.assertIsNone(self.state()['message'])
+
+    def test_older_failed_install_does_not_mark_newer_install_as_failed(self):
+        self.fake.add_release()
+        self.config(installRequestedAt='2026-10-10T10:00:00Z')
+        self.control(applyFailAfterSwitch=True)
+        self.assertEqual(self.run_agent(), 1)
+        failed = self.state()['lastInstall']
+        self.write_installation('0.3.0', OTHER_COMMIT)
+        helper_calls = self.calls()
+        self.assertEqual(self.run_agent(), 0)
+        self.assertEqual(self.state()['status'], 'up-to-date')
+        self.assertIsNone(self.state()['message'])
+        self.assertEqual(self.state()['lastInstall'], failed)
+        self.assertEqual(self.calls(), helper_calls)
+
+    def test_failed_current_version_does_not_hide_newer_available_release(self):
+        self.fake.add_release()
+        self.config(installRequestedAt='2026-10-10T10:00:00Z')
+        self.control(applyFailAfterSwitch=True)
+        self.assertEqual(self.run_agent(), 1)
+        failed = self.state()['lastInstall']
+        self.fake.add_release(version='0.3.0', from_sources=(NEW_COMMIT,))
+        self.config(downloadInBackground=False, checkRequestedAt='2026-10-10T11:00:00Z')
+        helper_calls = self.calls()
+        self.assertEqual(self.run_agent(), 0)
+        self.assertEqual(self.state()['status'], 'available')
+        self.assertEqual(self.state()['availableVersion'], '0.3.0')
+        self.assertEqual(self.state()['lastInstall'], failed)
+        self.assertEqual(self.calls(), helper_calls)
 
     def test_check_request_is_honoured_once(self):
         self.fake.add_release()
@@ -782,6 +1135,31 @@ class PassBehaviour(AgentCase):
         self.run_agent()
         self.assertEqual(self.apply_calls(), [])
 
+    def test_a_timed_out_install_keeps_its_marker_until_the_helper_exits(self):
+        # The agent stops waiting at APPLY_TIMEOUT but never stops the helper, which may
+        # still be restarting or rolling back the service: the desktop must keep off 8319.
+        self.fake.add_release()
+        self.config(quietMinutes=0)
+        self.control(applySleep=3)
+        marker = self.updates / 'install-in-progress.json'
+        self.run_agent()  # Takes the quiet baseline.
+        with mock.patch.object(update_agent, 'APPLY_TIMEOUT', 0.5):
+            self.assertEqual(self.run_agent(), 1)
+        self.assertEqual(len(self.apply_calls()), 1)
+        self.assertIn('taking longer than 15 minutes', self.state()['message'])
+        self.assertEqual(self.state()['status'], 'error')
+        self.assertTrue(marker.exists())
+        self.assertEqual(self.run_agent(), 0)  # The helper still holds the pass lock.
+        self.assertTrue(marker.exists())
+        deadline = time.monotonic() + 30
+        while marker.exists() and time.monotonic() < deadline:
+            time.sleep(0.2)
+            self.run_agent()
+        self.assertFalse(marker.exists())
+        state = self.state()
+        self.assertEqual((state['status'], state['lastInstall']['result']), ('installed', 'updated'))
+        self.assertEqual(len(self.apply_calls()), 1)
+
     def test_leftovers_of_a_manual_install_are_cleaned_on_the_next_pass(self):
         # 0.2.0 was installed by hand after the agent's own install failed.
         self.write_installation('0.2.0', OLD_COMMIT)
@@ -838,10 +1216,11 @@ class LaunchAgent(AgentCase):
             self.assertEqual(content['ProgramArguments'], ['/usr/bin/python3', str(script), '--identity', 'm4'])
             self.assertEqual(content['StartInterval'], 600)
             self.assertTrue(content['RunAtLoad'] and content['LowPriorityIO'])
-            self.assertEqual(content['ProcessType'], 'Background')
+            self.assertEqual(content['ProcessType'], 'Standard')
             self.assertEqual(content['StandardOutPath'], str(self.updates / 'agent.log'))
             self.assertEqual(content['WorkingDirectory'], str(self.updates))
             self.assertEqual(script.read_bytes(), (HERE / 'update_agent.py').read_bytes())
+            self.assertEqual(script.with_name('update_request.py').read_bytes(), (HERE / 'update_request.py').read_bytes())
             self.assertEqual(oct(script.parent.stat().st_mode & 0o777), '0o700')
             self.assertIn(['bootstrap', 'gui/501', str(plist_path)], calls)
             self.log = ''
@@ -851,6 +1230,108 @@ class LaunchAgent(AgentCase):
             self.assertEqual(self.run_agent('--uninstall-launch-agent'), 0)
             self.assertFalse(plist_path.exists())
             self.assertIn(['bootout', 'gui/501/' + label], calls)
+
+    def fake_launchctl(self, calls):
+        def launchctl(args):
+            calls.append(list(args))
+            return 0
+        return mock.patch.object(update_agent, 'launchctl', launchctl)
+
+    def test_a_new_script_alone_is_written_without_reloading_the_agent(self):
+        calls = []
+        script = self.home / '.local/share/specweave-studio/updater/update_agent.py'
+        with self.fake_launchctl(calls), mock.patch.object(update_agent, 'current_uid', return_value=501):
+            self.run_agent('--install-launch-agent')
+            script.write_bytes(b'# an older agent\n')
+            del calls[:]
+            self.log = ''
+            self.assertEqual(self.run_agent('--install-launch-agent'), 0)
+        self.assertIn('"result": "installed"', self.log)
+        self.assertEqual(script.read_bytes(), (HERE / 'update_agent.py').read_bytes())
+        self.assertEqual([call[0] for call in calls], ['print'])
+
+    def run_installed(self, script):
+        return subprocess.run([sys.executable, '-B', str(script), '--identity', 'm4', '--home', str(self.home),
+                               '--status'], cwd=str(self.home), capture_output=True, text=True, timeout=60)
+
+    def test_the_installed_agent_imports_its_modules_from_where_it_was_installed(self):
+        script = self.home / '.local/share/specweave-studio/updater/update_agent.py'
+        with self.fake_launchctl([]), mock.patch.object(update_agent, 'current_uid', return_value=501):
+            self.assertEqual(self.run_agent('--install-launch-agent'), 0)
+        result = self.run_installed(script)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['installedVersion'], '0.1.4')
+        # A copy without its module cannot start: this is what the install guards against.
+        alone = self.home / 'alone' / 'update_agent.py'
+        alone.parent.mkdir()
+        alone.write_bytes(script.read_bytes())
+        result = self.run_installed(alone)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("No module named 'update_", result.stderr)
+
+    def test_a_changed_module_alone_is_written(self):
+        module = self.home / '.local/share/specweave-studio/updater/update_request.py'
+        with self.fake_launchctl([]), mock.patch.object(update_agent, 'current_uid', return_value=501):
+            self.run_agent('--install-launch-agent')
+            module.write_bytes(b'# an older module\n')
+            self.log = ''
+            self.assertEqual(self.run_agent('--install-launch-agent'), 0)
+        self.assertIn('"result": "installed"', self.log)
+        self.assertEqual(module.read_bytes(), (HERE / 'update_request.py').read_bytes())
+
+    def test_the_desktop_build_ships_every_module_the_agent_imports(self):
+        local = sorted(path.stem for path in HERE.glob('*.py'))
+        source = (HERE / 'update_agent.py').read_text()
+        imported = sorted(set(re.findall(r'^import ([a-z_]+)', source, re.M)) & set(local))
+        build = (HERE.parent / 'build-desktop-artifact.ts').read_text()
+        shipped = re.search(r'MAC_SERVICE_UPDATER_FILES = \[([^\]]*)\]', build).group(1)
+        self.assertEqual(sorted(re.findall(r'"([a-z_]+)\.py"', shipped)), sorted(['update_agent'] + imported))
+        self.assertEqual(imported, ['update_agent_cache', 'update_agent_reap', 'update_request'])
+
+    def hold_lock_and_install(self):
+        holder = os.open(str(self.updates / 'agent.lock'), os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return self.run_agent('--install-launch-agent')
+        finally:
+            os.close(holder)
+
+    def test_a_running_pass_gets_the_new_files_but_its_job_is_not_reloaded(self):
+        # "Update now" kicks the agent, which takes the lock: the new agent and its modules must
+        # still land, or the old agent handles the request and every later one.
+        calls = []
+        script = self.home / '.local/share/specweave-studio/updater/update_agent.py'
+        plist = self.home / 'Library/LaunchAgents/com.specweave.studio.m4.updater.plist'
+        with self.fake_launchctl(calls), mock.patch.object(update_agent, 'current_uid', return_value=501):
+            self.run_agent('--install-launch-agent')
+            script.write_bytes(b'# an older agent\n')
+            for name in ('update_request.py', 'update_agent_reap.py'):
+                script.with_name(name).write_bytes(b'# an older module\n')
+            plist.write_bytes(b'stale')
+            del calls[:]
+            self.log = ''
+            self.assertEqual(self.hold_lock_and_install(), 0)
+        self.assertEqual(json.loads(self.log.strip().splitlines()[-1]),
+                         {'result': 'busy', 'written': True, 'label': 'com.specweave.studio.m4.updater'})
+        self.assertEqual(calls, [])  # No bootout: it would stop the pass mid-snapshot or mid-install.
+        self.assertEqual(plist.read_bytes(), b'stale')
+        for name in ('update_agent.py', 'update_request.py', 'update_agent_reap.py'):
+            self.assertEqual(script.with_name(name).read_bytes(), (HERE / name).read_bytes(), name)
+
+    def test_a_running_pass_with_current_files_reports_nothing_written(self):
+        calls = []
+        with self.fake_launchctl(calls), mock.patch.object(update_agent, 'current_uid', return_value=501):
+            self.run_agent('--install-launch-agent')
+            del calls[:]
+            self.log = ''
+            self.assertEqual(self.hold_lock_and_install(), 0)
+        self.assertIn('"result": "busy", "written": false', self.log)
+        self.assertEqual(calls, [])
+
+
+def later(minutes=0, seconds=0):
+    moment = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=minutes, seconds=seconds)
+    return moment.isoformat()
 
 
 class PlanGenerator(unittest.TestCase):
@@ -886,6 +1367,36 @@ class PlanGenerator(unittest.TestCase):
             self.assertEqual(result.returncode, 2)  # Tag mismatch is refused before any gh call.
             self.assertIn('Upload tag must be v0.2.0', result.stderr)
 
+
+
+@unittest.skipUnless(sys.platform == 'darwin', 'darwin background is a macOS policy')
+class BackgroundPriorityTests(unittest.TestCase):
+    """launchd starts the agent as a Background process; its helpers must not inherit that."""
+
+    def test_helpers_and_gh_run_outside_darwin_background(self):
+        probe = 'import os,sys;sys.stdout.write(str(os.getpriority(4, 0)))'
+        script = ('import os,subprocess,sys;sys.path.insert(0,%r);os.setpriority(4,0,0x1000);import update_agent;'
+                  'assert os.getpriority(4,0)==1;'
+                  'r=subprocess.run([sys.executable,"-c",%r],capture_output=True,text=True,preexec_fn=update_agent.leave_background);'
+                  'sys.stdout.write(r.stdout)') % (str(pathlib.Path(update_agent.__file__).parent), probe)
+        result = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, '0')
+
+    def test_every_child_the_agent_starts_leaves_background(self):
+        calls = []
+        def record(*args, **kwargs):
+            calls.append(kwargs.get('preexec_fn'))
+            raise OSError('stop')
+        with mock.patch.object(update_agent.subprocess, 'run', side_effect=record), \
+                mock.patch.object(update_agent.subprocess, 'Popen', side_effect=record), \
+                mock.patch.object(update_agent.os.path, 'isfile', return_value=True), \
+                mock.patch.object(update_agent.os, 'access', return_value=True):
+            update_agent.find_gh_token(pathlib.Path('/nonexistent'))
+            update_agent.run_helper_process(['/usr/bin/true'], '/', {}, 5)
+            update_agent.run_helper_process(['/usr/bin/true'], '/', {}, 5, wait_detached=True)
+        self.assertTrue(calls)
+        self.assertTrue(all(fn is update_agent.leave_background for fn in calls))
 
 if __name__ == '__main__':
     unittest.main()

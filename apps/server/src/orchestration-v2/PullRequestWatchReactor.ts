@@ -32,6 +32,7 @@ import {
 } from "../pullRequest/PullRequestProvider.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { forkParked } from "../serverActivation.ts";
+import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { evaluatePullRequestWatch, pullRequestWatchMessage } from "./pullRequestWatch.ts";
@@ -236,6 +237,8 @@ export const make = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const pullRequests = yield* PullRequestService.PullRequestService;
   const crypto = yield* Crypto.Crypto;
+  // A watch can wake its thread with a new turn; it waits out a service update.
+  const updateHold = yield* ServiceUpdateHold.optional;
   const bootedAt = yield* Clock.currentTimeMillis;
   const lives = new Map<string, WatchLife>();
 
@@ -335,7 +338,13 @@ export const make = Effect.gen(function* () {
       },
     }).pipe(
       Effect.tap(() => woke(target)),
-      Effect.catch(() => record(target, null)),
+      // A service update refused the wake: keep the watch, and give up with its
+      // message on the next failed read after the update.
+      Effect.catch((error) =>
+        Effect.flatMap(updateHold.isHeld, (held) =>
+          held ? Effect.fail(error) : record(target, null),
+        ),
+      ),
       Effect.tap(() => ended(target, "unreadable")),
     );
 
@@ -643,7 +652,11 @@ export const make = Effect.gen(function* () {
 
   const start: PullRequestWatchReactor["Service"]["start"] = () =>
     forkParked(
-      sweep.pipe(Effect.repeat(Schedule.spaced(`${SWEEP_MINUTES} minutes`)), Effect.asVoid),
+      sweep.pipe(
+        ServiceUpdateHold.skipWhileHeld(updateHold),
+        Effect.repeat(Schedule.spaced(`${SWEEP_MINUTES} minutes`)),
+        Effect.asVoid,
+      ),
     );
 
   return { start, sweep } satisfies PullRequestWatchReactor["Service"];

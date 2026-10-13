@@ -11,6 +11,7 @@ import { withRelayClientTracing } from "@specweave-studio/shared/relayTracing";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as Metrics from "../observability/Metrics.ts";
+import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import * as RelayDeliveryProof from "./RelayDeliveryProof.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 
@@ -29,6 +30,7 @@ export const layer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
     const relayDeliveryProof = yield* RelayDeliveryProof.RelayDeliveryProof;
+    const updateHold = yield* ServiceUpdateHold.optional;
     /**
      * Handles `/api/hooks/:hookId/:token` for every accepted method. The endpoint
      * is raw so the signature is checked over the exact body bytes; the service
@@ -44,6 +46,17 @@ export const layer = HttpApiBuilder.group(
       readonly request: HttpServerRequest.HttpServerRequest;
     }) =>
       Effect.gen(function* () {
+        // Held before the restart, or gated while the helper verifies the release: the
+        // sender retries later. Nothing is accepted that a rollback could lose.
+        if (yield* updateHold.isHeld) {
+          return HttpServerResponse.jsonUnsafe(
+            { error: "service_updating" },
+            {
+              status: 503,
+              headers: { [WEBHOOK_OUTCOME_HEADER]: "service_updating", "retry-after": "60" },
+            },
+          );
+        }
         const contentLength = Number(request.headers["content-length"] ?? "0");
         if (!Number.isFinite(contentLength) || contentLength > WEBHOOK_MAX_BODY_BYTES) {
           return json(413, { error: "body_too_large" }, "body_too_large");

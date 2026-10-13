@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.0.6 — Update now, coordinator stays on its fallback at a usage limit, steadier turns under load
+
+Changes since 1.0.5:
+
+- Update now installs a service update without waiting for running work (#151). The update toast and Settings offer Update now with a confirmation that lists what will stop. Studio refuses new messages while it updates, interrupts running turns (they end as interrupted and can be resumed), cancels queued messages, closes open questions and terminals, then installs and relaunches. Cancel update withdraws the request before the install starts. If a hung provider or a stray process keeps the service from going quiet, the updater stops those processes under the held service and installs. The request is tied to the version you saw and lapses after 10 minutes, and the desktop shows a splash instead of taking the service port while the update runs.
+- The desktop app starts faster: a login-shell probe that ignored SIGTERM no longer holds startup until it times out (#151).
+- A provider failure now says why the turn failed, and a turn start that failed for a passing reason is retried (#149).
+- A failed install of the current version stays visible after Check for updates, and clears once a verified install of that version succeeds (#150).
+- A release asset replaced on GitHub is downloaded again instead of reusing the cached copy (#133).
+- A coordinator whose saved model is at its usage limit now stays on the fallback instead of switching back every message (#143). It returns to the saved model once that has room, picks the cheapest fallback first, and never auto-picks a per-token instance.
+- A coordinator turn no longer fails with "Provider turn failed" on a busy Mac (#146). The native provider status check now waits up to 60 seconds instead of 15.
+- A project opened from the sidebar before git reports its repository no longer sticks on "Project unavailable" (#145).
+- Leftover names from the original workbench are gone from fixtures, tests, docs and fleet scripts (#141).
+- The updater retries its port check on a busy Mac (#140) and runs its helpers outside darwin background priority (#144).
+
+No database migration was added since 1.0.5.
+
 ## 1.0.5 — call the coordinator by voice
 
 Changes since 1.0.4:

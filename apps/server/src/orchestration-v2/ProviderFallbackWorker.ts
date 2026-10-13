@@ -97,7 +97,8 @@ export function limitStopIsCurrent(thread: FallbackThread, nowMs: number): boole
 }
 
 /** The stop came from `STUDIO_SIMULATE_USAGE_LIMIT`, whether or not it is still set. */
-const simulatedStop = (thread: FallbackThread): boolean => thread.lastError === SIMULATED_USAGE_LIMIT_MESSAGE;
+const simulatedStop = (thread: FallbackThread): boolean =>
+  thread.lastError === SIMULATED_USAGE_LIMIT_MESSAGE;
 
 /** The process environment the sweep reads `STUDIO_SIMULATE_USAGE_LIMIT` from. */
 export const ProviderFallbackEnv = Context.Reference<Readonly<Record<string, string | undefined>>>(
@@ -119,7 +120,10 @@ function usageWindowKey(provider: ServerProvider | undefined, nowMs: number): st
  * that has since reset), so anything that costs the account checks this on a
  * fresh read, never the thread's error class.
  */
-export function reachedLimitWindow(provider: ServerProvider | undefined, nowMs: number): string | null {
+export function reachedLimitWindow(
+  provider: ServerProvider | undefined,
+  nowMs: number,
+): string | null {
   const limits = provider?.usageLimits;
   if (limits === undefined || limits.unavailable !== undefined) return null;
   const live = limits.windows.filter((window) => {
@@ -128,7 +132,9 @@ export function reachedLimitWindow(provider: ServerProvider | undefined, nowMs: 
   });
   const full = live.filter((window) => window.usedPercent >= 100);
   if (full.length > 0) {
-    const resets = full.map((window) => window.resetsAt).filter((at): at is string => at !== undefined);
+    const resets = full
+      .map((window) => window.resetsAt)
+      .filter((at): at is string => at !== undefined);
     return resets.length === 0 ? "open" : resets.sort()[0]!;
   }
   if (limits.ordinaryUsageAllowed === false) return usageWindowKey(provider, nowMs);
@@ -156,6 +162,7 @@ export function providerFallbackCommand(
     const target = resolveProviderFallback({
       providers,
       currentInstanceId: thread.providerInstanceId,
+      currentModel: thread.modelSelection.model,
       rule,
       nowMs,
       belowPercent: rule.providerLimitSwitchAtPercent ?? 100,
@@ -181,6 +188,7 @@ export function providerFallbackCommand(
   const target = resolveProviderFallback({
     providers,
     currentInstanceId: thread.providerInstanceId,
+    currentModel: thread.modelSelection.model,
     rule,
     nowMs,
     belowPercent: rule.providerLimitSwitchAtPercent,
@@ -210,7 +218,9 @@ function waitsForReset(thread: FallbackThread, rule: ProviderFallbackRule, nowMs
 }
 
 /** A turn that stopped on the limit, with nothing else going on in the thread. */
-function stoppedOnLimit(thread: FallbackThread): thread is FallbackThread & { latestRunId: string } {
+function stoppedOnLimit(
+  thread: FallbackThread,
+): thread is FallbackThread & { latestRunId: string } {
   return (
     thread.status === "failed" &&
     thread.lastErrorClass === "usage_limit" &&
@@ -293,9 +303,17 @@ export function providerLimitStep(
     readonly simulated?: boolean;
   },
 ):
-  | { readonly type: "redeem-reset"; readonly instanceId: ProviderInstanceId; readonly continuation: OrchestrationV2ServerCommand }
+  | {
+      readonly type: "redeem-reset";
+      readonly instanceId: ProviderInstanceId;
+      readonly continuation: OrchestrationV2ServerCommand;
+    }
   | { readonly type: "spend-credits"; readonly command: OrchestrationV2ServerCommand }
-  | { readonly type: "api-credits"; readonly instanceId: ProviderInstanceId; readonly command: OrchestrationV2ServerCommand }
+  | {
+      readonly type: "api-credits";
+      readonly instanceId: ProviderInstanceId;
+      readonly command: OrchestrationV2ServerCommand;
+    }
   | { readonly type: "switch"; readonly command: OrchestrationV2ServerCommand }
   | null {
   if (rule.providerLimitAction === "wait" || !stoppedOnLimit(thread)) return null;
@@ -386,7 +404,10 @@ export interface ApiCreditOrigin {
 export function apiCreditOrigin(
   thread: Pick<FallbackThread, "id" | "providerInstanceId">,
   runs: ReadonlyArray<
-    Pick<OrchestrationV2Run, "id" | "ordinal" | "providerInstanceId" | "modelSelection" | "userMessageId">
+    Pick<
+      OrchestrationV2Run,
+      "id" | "ordinal" | "providerInstanceId" | "modelSelection" | "userMessageId"
+    >
   >,
 ): ApiCreditOrigin | null {
   const prefix = `${API_CREDIT_MESSAGE_PREFIX}${thread.id}:`;
@@ -427,7 +448,8 @@ export function limitResetAt(
 ): string | null {
   let latest: string | null = null;
   for (const item of turnItems) {
-    if (item.type !== "error" || item.runId !== runId || item.failure.class !== "usage_limit") continue;
+    if (item.type !== "error" || item.runId !== runId || item.failure.class !== "usage_limit")
+      continue;
     const resetAt = item.failure.resetAt ?? null;
     if (resetAt === null || !Number.isFinite(Date.parse(resetAt))) continue;
     if (latest === null || Date.parse(resetAt) > Date.parse(latest)) latest = resetAt;
@@ -437,7 +459,9 @@ export function limitResetAt(
 
 /** Background work the provider session hosts; a pull request watch is Studio's own. */
 const hostsBackgroundWork = (thread: FallbackThread): boolean =>
-  (thread.pendingBackgroundTasks ?? []).some((task) => !task.taskId.startsWith("pull-request-watch:"));
+  (thread.pendingBackgroundTasks ?? []).some(
+    (task) => !task.taskId.startsWith("pull-request-watch:"),
+  );
 
 /**
  * The way back from API credits: an idle thread the rule moved to an API-key
@@ -461,9 +485,15 @@ export function apiCreditReturnCommand(
   if (thread.activeRunId !== null || thread.pendingRuntimeRequest !== null) return null;
   if (thread.settledOverride === "settled") return null;
   if (thread.activityRunStatus != null || hostsBackgroundWork(thread)) return null;
-  if (!isClaudeApiKeyProvider(providers.find((provider) => provider.instanceId === thread.providerInstanceId)))
+  if (
+    !isClaudeApiKeyProvider(
+      providers.find((provider) => provider.instanceId === thread.providerInstanceId),
+    )
+  )
     return null;
-  const subscription = providers.find((provider) => provider.instanceId === origin.modelSelection.instanceId);
+  const subscription = providers.find(
+    (provider) => provider.instanceId === origin.modelSelection.instanceId,
+  );
   // A stale denial of ordinary usage must not strand the thread, so this
   // does not ask `canTakeTurn`; a turn that still hits the limit stops there.
   if (
@@ -548,9 +578,10 @@ export const makeSweep = Effect.gen(function* () {
       const probed = own === undefined ? undefined : yield* own;
       if (own === undefined) yield* instance?.invalidateCaches ?? Effect.void;
       // The driver's own read is not published again: one account read per sweep is enough.
-      const published = (own === undefined
-        ? yield* registry.refreshInstance(instanceId)
-        : yield* registry.getProviders
+      const published = (
+        own === undefined
+          ? yield* registry.refreshInstance(instanceId)
+          : yield* registry.getProviders
       ).find((provider) => provider.instanceId === instanceId);
       const limits = own === undefined ? published?.usageLimits : probed;
       return published !== undefined &&
@@ -574,17 +605,21 @@ export const makeSweep = Effect.gen(function* () {
     reads: Reads,
   ) {
     const fresh = yield* freshRead(instanceId, nowMs, reads);
-    if (fresh === undefined) return yield* skipReset(thread, instanceId, "unread").pipe(Effect.as("unread" as const));
+    if (fresh === undefined)
+      return yield* skipReset(thread, instanceId, "unread").pipe(Effect.as("unread" as const));
     const window = reachedLimitWindow(fresh, nowMs);
     if (window === null) return yield* skipReset(thread, instanceId, "not-limited");
     // The step is only taken for an account that showed a banked reset, so a
     // read without the count is one whose reset lookup failed, not an answer.
     const banked = fresh.usageLimits?.resetCredits;
     if (banked === undefined)
-      return yield* skipReset(thread, instanceId, "resets-unread").pipe(Effect.as("unread" as const));
+      return yield* skipReset(thread, instanceId, "resets-unread").pipe(
+        Effect.as("unread" as const),
+      );
     if (banked.availableCount < 1) return yield* skipReset(thread, instanceId, "no-banked-reset");
     const windowKey = `limit-reset-window:${instanceId}:${window}`;
-    if ((yield* Ref.get(sent)).has(windowKey)) return yield* skipReset(thread, instanceId, "window-claimed");
+    if ((yield* Ref.get(sent)).has(windowKey))
+      return yield* skipReset(thread, instanceId, "window-claimed");
     const instance = yield* instances.getInstance(instanceId);
     if (instance?.consumeResetCredit === undefined || !instance.enabled)
       return yield* skipReset(thread, instanceId, "no-reset-support");
@@ -618,7 +653,11 @@ export const makeSweep = Effect.gen(function* () {
   ) {
     const fresh = yield* freshRead(instanceId, nowMs, reads);
     const outcome =
-      fresh === undefined ? "unread" : reachedLimitWindow(fresh, nowMs) !== null ? "limited" : "not-limited";
+      fresh === undefined
+        ? "unread"
+        : reachedLimitWindow(fresh, nowMs) !== null
+          ? "limited"
+          : "not-limited";
     if (outcome !== "limited")
       yield* Effect.logInfo("orchestration-v2.provider-fallback.api-credits-skipped", {
         threadId: thread.id,
@@ -629,9 +668,9 @@ export const makeSweep = Effect.gen(function* () {
   });
   const readAttempts = yield* Ref.make(new Map<string, number>());
   const unreadAgain = (key: string) =>
-    Ref.updateAndGet(readAttempts, (current) => new Map(current).set(key, (current.get(key) ?? 0) + 1)).pipe(
-      Effect.map((attempts) => attempts.get(key) ?? 0),
-    );
+    Ref.updateAndGet(readAttempts, (current) =>
+      new Map(current).set(key, (current.get(key) ?? 0) + 1),
+    ).pipe(Effect.map((attempts) => attempts.get(key) ?? 0));
   // The sweep works from one snapshot and a usage read takes seconds, so a
   // step that costs something is checked against the thread as it is now:
   // snoozed, settled, moved or resumed since, and it no longer applies.
@@ -640,10 +679,17 @@ export const makeSweep = Effect.gen(function* () {
     step: NonNullable<ReturnType<typeof providerLimitStep>>,
     again: (current: FallbackThread) => ReturnType<typeof providerLimitStep>,
   ) {
-    const current = yield* projections.getThreadShell(thread.id).pipe(Effect.orElseSucceed(() => null));
+    const current = yield* projections
+      .getThreadShell(thread.id)
+      .pipe(Effect.orElseSucceed(() => null));
     const next = current === null ? null : again(current);
-    const command = (of: NonNullable<typeof next>) => (of.type === "redeem-reset" ? of.continuation : of.command);
-    if (next !== null && next.type === step.type && JSON.stringify(command(next)) === JSON.stringify(command(step)))
+    const command = (of: NonNullable<typeof next>) =>
+      of.type === "redeem-reset" ? of.continuation : of.command;
+    if (
+      next !== null &&
+      next.type === step.type &&
+      JSON.stringify(command(next)) === JSON.stringify(command(step))
+    )
       return true;
     yield* Effect.logInfo("orchestration-v2.provider-fallback.step-outdated", {
       threadId: thread.id,
@@ -654,7 +700,10 @@ export const makeSweep = Effect.gen(function* () {
   // Runs are read once per thread, latest run and instance; the rest repeats each sweep.
   const origins = yield* Ref.make(new Map<string, ApiCreditOrigin | null>());
   const returnTries = yield* Ref.make(
-    new Map<string, { readonly next: number; readonly failures: number; readonly lastFailureAt: number }>(),
+    new Map<
+      string,
+      { readonly next: number; readonly failures: number; readonly lastFailureAt: number }
+    >(),
   );
   const apiCreditReturn = Effect.fn("ProviderFallbackWorker.apiCreditReturn")(function* (
     thread: FallbackThread,
@@ -663,7 +712,11 @@ export const makeSweep = Effect.gen(function* () {
     ruleOn: boolean,
   ) {
     if (thread.latestRunId === null) return null;
-    if (!isClaudeApiKeyProvider(providers.find((provider) => provider.instanceId === thread.providerInstanceId)))
+    if (
+      !isClaudeApiKeyProvider(
+        providers.find((provider) => provider.instanceId === thread.providerInstanceId),
+      )
+    )
       return null;
     const key = `${thread.id}:${thread.latestRunId}:${thread.providerInstanceId}`;
     let origin = (yield* Ref.get(origins)).get(key);
@@ -687,21 +740,31 @@ export const makeSweep = Effect.gen(function* () {
     if (origin === null) return null;
     const attemptKey = `${thread.id}:${origin.continuedByRunId}`;
     if ((yield* Ref.get(sent)).has(`limit-api-returned:${attemptKey}`)) return null;
-    const tries = (yield* Ref.get(returnTries)).get(attemptKey) ?? { next: 0, failures: 0, lastFailureAt: 0 };
+    const tries = (yield* Ref.get(returnTries)).get(attemptKey) ?? {
+      next: 0,
+      failures: 0,
+      lastFailureAt: 0,
+    };
     if (
       tries.failures >= API_CREDIT_RETURN_ATTEMPTS &&
       nowMs - tries.lastFailureAt < API_CREDIT_RETURN_COOLDOWN_MS
     )
       return null;
-    const command = apiCreditReturnCommand(thread, origin, providers, nowMs, { ruleOn, attempt: tries.next });
+    const command = apiCreditReturnCommand(thread, origin, providers, nowMs, {
+      ruleOn,
+      attempt: tries.next,
+    });
     if (command === null) return null;
     // Checked against the thread as it is now: a turn may have started since the snapshot.
-    const current = yield* projections.getThreadShell(thread.id).pipe(Effect.orElseSucceed(() => null));
+    const current = yield* projections
+      .getThreadShell(thread.id)
+      .pipe(Effect.orElseSucceed(() => null));
     if (
       current === null ||
       current.latestRunId !== thread.latestRunId ||
       current.providerInstanceId !== thread.providerInstanceId ||
-      apiCreditReturnCommand(current, origin, providers, nowMs, { ruleOn, attempt: tries.next }) === null
+      apiCreditReturnCommand(current, origin, providers, nowMs, { ruleOn, attempt: tries.next }) ===
+        null
     )
       return null;
     // A queued message keeps the instance it was queued on and would pull the
@@ -719,7 +782,12 @@ export const makeSweep = Effect.gen(function* () {
   });
   // A replayed id the orchestrator already rejected says nothing new, so it
   // only moves on to the next id; anything else counts toward the rest.
-  const returnFailed = (attemptKey: string, tries: { next: number; failures: number; lastFailureAt: number }, cause: Cause.Cause<unknown>, nowMs: number) => {
+  const returnFailed = (
+    attemptKey: string,
+    tries: { next: number; failures: number; lastFailureAt: number },
+    cause: Cause.Cause<unknown>,
+    nowMs: number,
+  ) => {
     const error = Cause.squash(cause);
     const replay =
       typeof error === "object" &&
@@ -732,7 +800,11 @@ export const makeSweep = Effect.gen(function* () {
         attemptKey,
         replay
           ? { ...tries, next: tries.next + 1 }
-          : { next: tries.next + 1, failures: (rested ? 0 : tries.failures) + 1, lastFailureAt: nowMs },
+          : {
+              next: tries.next + 1,
+              failures: (rested ? 0 : tries.failures) + 1,
+              lastFailureAt: nowMs,
+            },
       ),
     );
   };
@@ -758,13 +830,19 @@ export const makeSweep = Effect.gen(function* () {
         apiCreditsAttempted: simulated || (yield* Ref.get(sent)).has(apiAttemptKey),
         simulated,
       };
-      const stepFor = (current: FallbackThread) => providerLimitStep(current, providers, resolved, now, options);
+      const stepFor = (current: FallbackThread) =>
+        providerLimitStep(current, providers, resolved, now, options);
       const step = stepFor(thread);
       if (step === null) {
         // Nothing to continue: a thread the rule moved to API credits goes back
         // to its subscription. Sent once: after that, where the thread runs is
         // the person's choice again.
-        const back = yield* apiCreditReturn(thread, providers, now, resolved.providerLimitUseApiCredits === true);
+        const back = yield* apiCreditReturn(
+          thread,
+          providers,
+          now,
+          resolved.providerLimitUseApiCredits === true,
+        );
         if (back === null) continue;
         yield* threads.dispatch(back.command).pipe(
           Effect.tap(() => markSent(`limit-api-returned:${back.attemptKey}`)),
@@ -793,7 +871,8 @@ export const makeSweep = Effect.gen(function* () {
         const redeemed = yield* redeemReset(thread, step.instanceId, now, reads);
         // A usage read that failed is tried again next sweep, a few times,
         // before the stop moves on to a step that costs more.
-        if (redeemed !== "unread" || (yield* unreadAgain(resetKey)) >= LIMIT_READ_ATTEMPTS) yield* markSent(resetKey);
+        if (redeemed !== "unread" || (yield* unreadAgain(resetKey)) >= LIMIT_READ_ATTEMPTS)
+          yield* markSent(resetKey);
         if (redeemed !== true) continue;
       }
       if (step.type === "spend-credits" && !(yield* stillApplies(thread, step, stepFor))) continue;
@@ -815,7 +894,8 @@ export const makeSweep = Effect.gen(function* () {
         }
         const read = yield* confirmLimit(thread, step.instanceId, now, reads);
         if (read === "unread") {
-          if ((yield* unreadAgain(apiAttemptKey)) >= LIMIT_READ_ATTEMPTS) yield* markSent(apiAttemptKey);
+          if ((yield* unreadAgain(apiAttemptKey)) >= LIMIT_READ_ATTEMPTS)
+            yield* markSent(apiAttemptKey);
           continue;
         }
         yield* markSent(apiAttemptKey);
@@ -841,7 +921,8 @@ export const makeSweep = Effect.gen(function* () {
                 providerThreads: records.providerThreads,
                 turnItems: records.turnItems,
               });
-        if (restart !== null) command = { ...command, text: restart.text, attachments: restart.attachments };
+        if (restart !== null)
+          command = { ...command, text: restart.text, attachments: restart.attachments };
       }
       yield* markSent(command.commandId);
       yield* threads.dispatch(command).pipe(

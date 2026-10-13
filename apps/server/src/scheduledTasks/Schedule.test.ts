@@ -68,6 +68,16 @@ describe("scheduled task schedule calculation", () => {
     );
   });
 
+  it("does not count time held for an update as missed", () => {
+    const fixedTime = { type: "fixed_time", timeOfDay: "09:00" } as const;
+    const dueAt = DateTime.makeUnsafe("2026-07-01T09:00:00.000Z");
+    // The slot fell inside a 30 minute update hold that ended a minute ago: it runs once.
+    const afterHold = DateTime.makeUnsafe("2026-07-01T09:25:00.000Z");
+    expect(isMissedFixedTimeRun(fixedTime, dueAt, afterHold, 24 * 60_000)).toBe(false);
+    // Lateness beyond the hold still counts.
+    expect(isMissedFixedTimeRun(fixedTime, dueAt, afterHold, 10 * 60_000)).toBe(true);
+  });
+
   it("compares schedules structurally", () => {
     expect(
       isSameSchedule({ type: "interval", everyMs: 60_000 }, { type: "interval", everyMs: 60_000 }),

@@ -145,7 +145,7 @@ describe("filesystem browse model", () => {
     const entries = [
       { name: ".config", fullPath: "/Users/test/.config" },
       { name: "Code", fullPath: "/Users/test/Code" },
-      { name: "studio", fullPath: "/Users/test/studio" },
+      { name: "codebase", fullPath: "/Users/test/codebase" },
     ];
 
     expect(filterFilesystemBrowseEntries(entries, "co")).toEqual({

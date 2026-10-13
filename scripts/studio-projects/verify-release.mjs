@@ -171,6 +171,19 @@ try {
   ]);
   await run("installer-regressions", "python3", ["-B", "scripts/studio-fleet/test-install.py"]);
   await run("updater-regressions", "python3", ["-B", "scripts/studio-fleet/test-update.py"]);
+  await run("update-agent-regressions", "python3", [
+    "-B",
+    "scripts/studio-fleet/test-update-agent.py",
+  ]);
+  await run("update-agent-install-regressions", "python3", [
+    "-B",
+    "scripts/studio-fleet/test-update-agent-install.py",
+  ]);
+  await run("update-refusal-regressions", "python3", [
+    "-B",
+    "scripts/studio-fleet/test-update-refusal.py",
+  ]);
+  await run("update-reap-regressions", "python3", ["-B", "scripts/studio-fleet/test-reap.py"]);
   await run("desktop-backup-regressions", "python3", [
     "-B",
     "scripts/studio-fleet/test-desktop-backup.py",

@@ -1394,7 +1394,7 @@ export function assertNoAcpClientFileOrTerminalRequests(transcript: ProviderRepl
   assert.deepInclude(
     frames.find((frame) => frame.method === "initialize")?.params?.clientCapabilities ?? {},
     { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
-    "SpecWithCode must not advertise client fs or terminals",
+    "Studio must not advertise client fs or terminals",
   );
   assert.deepEqual(
     frames.flatMap((frame) =>

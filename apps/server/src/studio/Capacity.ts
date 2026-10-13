@@ -17,6 +17,10 @@ import * as SwitchClient from "./SwitchClient.ts";
 import { companionCreditFailureCleared, nativeCreditContinuationAllowed } from "./nativeCreditContinuation.ts";
 import { capacitySnapshot, freshObservation, nativeCapacityBinding, nativeConfigForInstance, nativeQuotaDenied, nativeSnapshotAuthorized, unavailableCapacity } from "./capacitySnapshot.ts";
 
+// Native CLI status probes spawn a login shell; on a host under heavy load
+// they took longer than 15 seconds and failed coordinator turns.
+export const NATIVE_STATUS_CHECK_TIMEOUT = "60 seconds";
+
 export interface NativeCreditStartOptions {
   readonly allowCredits: true;
   readonly expectedQuotaPoolId: string;
@@ -81,7 +85,7 @@ const make = Effect.gen(function* () {
     const checkCredits = entry.driver === "codex" && options?.allowCredits === true;
     const creditCheckStartedAt = now;
     if (!nativeSnapshotAuthorized(native, now) || checkCredits) {
-      const observed = yield* providers.refreshInstance(id).pipe(Effect.timeoutOption("15 seconds"));
+      const observed = yield* providers.refreshInstance(id).pipe(Effect.timeoutOption(NATIVE_STATUS_CHECK_TIMEOUT));
       if (Option.isNone(observed)) return yield* deny("The native provider status check timed out. Refresh Providers on this machine and try again.");
       observedProviders = observed.value;
       native = observedProviders.find((provider) => provider.instanceId === id && provider.driver === entry.driver);

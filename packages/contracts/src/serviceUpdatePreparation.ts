@@ -39,6 +39,15 @@ export const ServerPrepareServiceUpdateInput = Schema.Struct({
    * reports what is still running.
    */
   stopWork: Schema.Boolean,
+  /**
+   * With `stopWork`, also hold the service for the update: new turns, queued
+   * messages, scheduled tasks and terminals are refused until the update
+   * installs, fails or is cancelled, so the drained service stays quiet while
+   * the update helper snapshots it. Older services ignore it.
+   */
+  hold: Schema.optional(Schema.Boolean),
+  /** Cancels the update hold and lets work start again. Ignores `stopWork`. */
+  releaseHold: Schema.optional(Schema.Boolean),
 });
 export type ServerPrepareServiceUpdateInput = typeof ServerPrepareServiceUpdateInput.Type;
 
@@ -48,6 +57,17 @@ export const ServerPrepareServiceUpdateResult = Schema.Struct({
   /** Threads this call asked to stop. */
   stoppedThreads: NonNegativeInt,
   blockers: Schema.Array(ServiceUpdateBlocker),
+  /** True while the service refuses new work for the update. */
+  held: Schema.optional(Schema.Boolean),
+  /**
+   * While held: when the hold ends unless the update agent is still installing
+   * the request (ISO time). A forced install request can retry until then.
+   */
+  holdUntil: Schema.optional(Schema.String),
+  /** Turns this call interrupted; the person can continue each by hand after the update. */
+  interruptedRuns: Schema.optional(NonNegativeInt),
+  /** Terminals that are open now, or that this call closed when it stops work. */
+  openTerminals: Schema.optional(NonNegativeInt),
 });
 export type ServerPrepareServiceUpdateResult = typeof ServerPrepareServiceUpdateResult.Type;
 

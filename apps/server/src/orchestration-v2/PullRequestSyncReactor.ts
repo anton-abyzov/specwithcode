@@ -31,6 +31,7 @@ import * as Stream from "effect/Stream";
 import { PullRequestProviderError } from "../pullRequest/PullRequestProvider.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { forkParked } from "../serverActivation.ts";
+import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { isTerminalRunStatus } from "./ThreadManagementService.ts";
@@ -156,6 +157,8 @@ export const make = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const pullRequests = yield* PullRequestService.PullRequestService;
   const crypto = yield* Crypto.Crypto;
+  // Sync writes thread rows; it waits out a service update.
+  const updateHold = yield* ServiceUpdateHold.optional;
 
   const lastSyncedAt = new Map<string, number>();
   const requested = new Map<string, number>();
@@ -457,7 +460,11 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* worker.enqueue("all");
         yield* worker.drain;
-      }).pipe(Effect.repeat(Schedule.spaced("1 minute")), Effect.asVoid),
+      }).pipe(
+        ServiceUpdateHold.skipWhileHeld(updateHold),
+        Effect.repeat(Schedule.spaced("1 minute")),
+        Effect.asVoid,
+      ),
     );
   });
 

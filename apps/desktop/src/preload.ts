@@ -386,7 +386,9 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.invoke(IpcChannels.UPDATE_SET_PREFERENCES_CHANNEL, patch),
   getServiceUpdateState: () => ipcRenderer.invoke(IpcChannels.SERVICE_UPDATE_GET_STATE_CHANNEL),
   checkServiceUpdate: () => ipcRenderer.invoke(IpcChannels.SERVICE_UPDATE_CHECK_CHANNEL),
-  installServiceUpdate: () => ipcRenderer.invoke(IpcChannels.SERVICE_UPDATE_INSTALL_CHANNEL),
+  installServiceUpdate: (options) =>
+    ipcRenderer.invoke(IpcChannels.SERVICE_UPDATE_INSTALL_CHANNEL, options),
+  cancelServiceUpdate: () => ipcRenderer.invoke(IpcChannels.SERVICE_UPDATE_CANCEL_CHANNEL),
   onServiceUpdateState: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, state: unknown) => {
       if (typeof state !== "object" || state === null) return;

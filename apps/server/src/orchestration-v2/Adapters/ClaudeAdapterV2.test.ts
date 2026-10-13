@@ -4312,6 +4312,30 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("explains a running turn whose Claude process exits", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions();
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-process-ended"),
+            text: "Summarize the open pull requests.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.shutdown(harness.sdkMessages);
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "terminal after exit");
+        const terminal = harness.terminalEvents()[0]!;
+        assert.equal(terminal.status, "failed");
+        assert.equal(terminal.failure?.message, ClaudeAdapterV2.CLAUDE_PROCESS_ENDED_MESSAGE);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
   it.effect("a settled Stop leaves a turn that replaced the closing process alone", () =>
     Effect.scoped(
       Effect.gen(function* () {

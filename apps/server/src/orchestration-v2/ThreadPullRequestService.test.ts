@@ -27,6 +27,11 @@ import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerActivation from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadPullRequestService from "./ThreadPullRequestService.ts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Duration from "effect/Duration";
+import * as Ref from "effect/Ref";
+import * as Hold from "../serviceUpdate/ServiceUpdateHold.ts";
+import { awaitGateOpen, makeGatedHold } from "../serviceUpdate/UpdateInstallGate.testkit.ts";
 
 describe("ThreadPullRequestServiceV2 project guard", () => {
   it.effect("discovers a repository from a project shell without enrichment", () =>
@@ -316,6 +321,71 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           expect(yield* Queue.take(reads)).toEqual({ location: "active", unsettledOnly: true });
           yield* service.drain;
         }).pipe(Effect.provide(layerDependencies));
+      }),
+    ),
+  );
+
+  it.effect("runs no backfill or sweep while an install's gate is live", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        // A one-second poll keeps the test minutes below to a few file reads.
+        const pollMs = 1_000;
+        const gated = yield* makeGatedHold({ pollMs }).pipe(Effect.provide(NodeServices.layer));
+        const activation = yield* Deferred.make<void>();
+        const readCount = yield* Ref.make(0);
+        const reads = yield* Queue.unbounded<{
+          readonly location?: string;
+          readonly unsettledOnly?: boolean;
+        }>();
+        const layerDependencies = Layer.mergeAll(
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            streamDomainEvents: Stream.never,
+            getShellSnapshot: (options) =>
+              Ref.update(readCount, (count) => count + 1).pipe(
+                Effect.andThen(Queue.offer(reads, options ?? {})),
+                Effect.as({
+                  schemaVersion: 2,
+                  snapshotSequence: 1,
+                  threads: [],
+                  archivedThreads: [],
+                }),
+              ),
+          }),
+          Layer.mock(ProjectStore.ProjectStoreV2)({
+            listShells: () => Effect.succeed([]),
+          }),
+          Layer.mock(GitManager.GitManager)({}),
+          Layer.mock(PullRequestService.PullRequestService)({}),
+          Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({}),
+          Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
+          Layer.succeed(
+            Crypto.Crypto,
+            Crypto.make({
+              randomBytes: (size) => new Uint8Array(size).fill(1),
+              digest: (_algorithm, data) => Effect.succeed(data),
+            }),
+          ),
+          FileSystem.layerNoop({}),
+        );
+
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadPullRequestService.make;
+          yield* service.start();
+          yield* Deferred.succeed(activation, undefined);
+          yield* TestClock.adjust("3 minutes");
+          yield* TestClock.withLive(Effect.sleep(Duration.millis(20)));
+          expect(yield* Ref.get(readCount)).toBe(0);
+
+          yield* gated.clear.pipe(Effect.provide(NodeServices.layer));
+          expect(yield* awaitGateOpen(gated.hold, pollMs)).toBe(true);
+          yield* TestClock.adjust(Duration.millis(pollMs));
+          // The activation backfill runs first, once the gate is gone.
+          expect(yield* Queue.take(reads)).toEqual({ location: "active", unsettledOnly: false });
+          yield* service.drain;
+        }).pipe(
+          Effect.provide(layerDependencies),
+          Effect.provideService(Hold.ServiceUpdateHold, gated.hold),
+        );
       }),
     ),
   );

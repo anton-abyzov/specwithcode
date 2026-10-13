@@ -136,14 +136,7 @@ const readDelegatedTaskStatusTranscript = Effect.fn("readDelegatedTaskStatusTran
     const text = yield* fs.readFileString(
       decodeURIComponent(delegatedTaskStatusTranscriptFile.pathname),
     );
-    // The recorded transcript is preserved byte for byte, so the client identity
-    // it was captured under is brought up to the current product name in memory.
-    return yield* decodeProviderReplayNdjson(
-      text.replaceAll(
-        '"clientInfo":{"name":"SpecWithCode","title":"SpecWithCode"',
-        '"clientInfo":{"name":"SpecWeave Studio","title":"SpecWeave Studio"',
-      ),
-    );
+    return yield* decodeProviderReplayNdjson(text);
   },
   Effect.provide(NodeServices.layer),
 );

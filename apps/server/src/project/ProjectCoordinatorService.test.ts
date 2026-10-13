@@ -16,6 +16,7 @@ import {
   ThreadId,
   ProjectWorkspaceError,
   type Project,
+  type OrchestrationV2Run,
   type OrchestrationV2ThreadShell,
   type ServerProvider,
 } from "@specweave-studio/contracts";
@@ -32,6 +33,7 @@ import * as Launch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as Threads from "../orchestration-v2/ThreadManagementService.ts";
 import * as Settings from "../serverSettings.ts";
 import * as Providers from "../provider/ProviderRegistry.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
 
 const id = ProjectId.make("project:coordinator");
@@ -59,6 +61,7 @@ const fixture = (afterCoordinatorLaunch: Effect.Effect<void> = Effect.void) => {
   const launches: Launch.ThreadLaunchInput[] = [];
   const sends: Parameters<Threads.ThreadManagementService["Service"]["sendToThread"]>[0][] = [];
   const receipts = new Set<string>();
+  const runs: OrchestrationV2Run[] = [];
   const updates: Projects.ProjectUpdateInput[] = [];
   const dependencies = Layer.mergeAll(
     Layer.mock(EventSink.EventSinkV2)({ readByCommandId: () => Stream.empty }),
@@ -138,6 +141,9 @@ const fixture = (afterCoordinatorLaunch: Effect.Effect<void> = Effect.void) => {
     Layer.mock(Providers.ProviderRegistry)({
       getProviders: Effect.sync(() => providers),
     }),
+    Layer.mock(ProjectionStore.ProjectionStoreV2)({
+      getThreadRecords: (() => Effect.sync(() => ({ runs }))) as never,
+    }),
   ).pipe(
     Layer.provideMerge(
       ServerConfig.layerTest(process.cwd(), { prefix: "project-coordinator-test-" }),
@@ -150,6 +156,7 @@ const fixture = (afterCoordinatorLaunch: Effect.Effect<void> = Effect.void) => {
     launches,
     sends,
     shells,
+    runs,
     get project() {
       return project;
     },
@@ -435,4 +442,87 @@ it.effect.each(["deleted", "foreign"] as const)(
         expect(NodeFS.readFileSync(stagedPath, "utf8")).toBe("abc");
       }).pipe(Effect.provide(Coordinator.layer), Effect.provide(f.dependencies));
     }).pipe(Effect.scoped),
+);
+it.effect("keeps a coordinator on its fallback while the saved model's provider is full", () =>
+  Effect.gen(function* () {
+    const f = fixture();
+    const usage = (usedPercent: number) => ({
+      checkedAt: "2026-10-10T00:00:00Z",
+      windows: [
+        {
+          id: "five_hour",
+          kind: "session" as const,
+          label: "Session",
+          usedPercent,
+          resetsAt: "2099-01-01T00:00:00Z",
+        },
+      ],
+    });
+    const ready = (instance: string, driver: string, usedPercent: number): ServerProvider => ({
+      instanceId: ProviderInstanceId.make(instance),
+      driver: ProviderDriverKind.make(driver),
+      enabled: true,
+      installed: true,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-10-10T00:00:00Z",
+      version: null,
+      models: [
+        {
+          slug: `${driver}-model`,
+          name: "Model",
+          isCustom: false,
+          isDefault: true,
+          capabilities: null,
+        },
+      ],
+      slashCommands: [],
+      skills: [],
+      usageLimits: usage(usedPercent),
+    });
+    const fallback = { instanceId: ProviderInstanceId.make("codex"), model: "codex-model" };
+    f.setProject({
+      workspaceSettings: {
+        ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+        coordinatorModelSelection: model,
+      },
+    });
+    yield* Effect.gen(function* () {
+      const service = yield* Coordinator.ProjectCoordinatorService;
+      const { threadId } = yield* service.start({ projectId: id, commandId });
+      // The limit rule moved the coordinator to Codex.
+      f.shells.set(threadId, { ...f.shells.get(threadId)!, modelSelection: fallback });
+      f.setProviders([ready("claude", "claudeAgent", 100), ready("codex", "codex", 20)]);
+      yield* service.send({
+        projectId: id,
+        commandId: CommandId.make("request:full"),
+        prompt: "Next",
+      });
+      expect(f.sends.at(-1)?.modelSelection).toEqual(fallback);
+      // Claude's last run failed after its last usage read: a stale read that
+      // shows room does not pull the coordinator back.
+      f.runs.push({
+        providerInstanceId: model.instanceId,
+        ordinal: 1,
+        status: "failed",
+        completedAt: DateTime.makeUnsafe("2098-12-31T00:00:00Z"),
+      } as OrchestrationV2Run);
+      f.setProviders([ready("claude", "claudeAgent", 10), ready("codex", "codex", 20)]);
+      yield* service.send({
+        projectId: id,
+        commandId: CommandId.make("request:stale"),
+        prompt: "Next",
+      });
+      expect(f.sends.at(-1)?.modelSelection).toEqual(fallback);
+      f.runs.length = 0;
+      // Claude has room again: the next message goes back to the saved model.
+      f.setProviders([ready("claude", "claudeAgent", 10), ready("codex", "codex", 20)]);
+      yield* service.send({
+        projectId: id,
+        commandId: CommandId.make("request:room"),
+        prompt: "Next",
+      });
+      expect(f.sends.at(-1)?.modelSelection).toEqual(model);
+    }).pipe(Effect.provide(Coordinator.layer), Effect.provide(f.dependencies));
+  }),
 );

@@ -31,6 +31,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as EventSink from "./EventSink.ts";
 
 import { resolutionMergeAt, type ResolutionPullRequest } from "./ThreadResolutionPolicy.ts";
+import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 
 export type SettlementPullRequest = ResolutionPullRequest;
 
@@ -227,6 +228,7 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
   const terminals = yield* TerminalManager.TerminalManager;
+  const updateHold = yield* ServiceUpdateHold.optional;
 
   const sweep = Effect.fn("ThreadSettlementServiceV2.sweep")(function* (
     mergedPullRequest: PullRequestService.PullRequestMergeEvent | null,
@@ -486,7 +488,10 @@ export const make = Effect.gen(function* () {
     mergedPullRequest: PullRequestService.PullRequestMergeEvent | null,
     threadId?: ThreadId,
   ) =>
-    sweep(mergedPullRequest, threadId).pipe(
+    // A sweep runs git as child processes and dispatches settlements: it waits while an
+    // update is held or its install gate is live, so the helper finds the service idle.
+    updateHold.awaitReleased.pipe(
+      Effect.andThen(sweep(mergedPullRequest, threadId)),
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)
           ? Effect.failCause(cause)

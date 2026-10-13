@@ -83,6 +83,20 @@ export function isDirectClaudeApiKeyProvider(provider: ServerProvider | undefine
   return provider?.driver === "claudeAgent" && provider.auth.apiKeyBilling === true;
 }
 
+/**
+ * Any instance whose turns are billed per token: a Claude API-key, proxy or
+ * Bedrock instance, or another driver signed in with an API key (Codex on
+ * an OpenAI key). Nothing picks one by itself.
+ */
+export function isPerTokenProvider(provider: ServerProvider | undefined): boolean {
+  return (
+    isClaudeApiKeyProvider(provider) ||
+    provider?.auth.type === "apiKey" ||
+    provider?.auth.type === "bedrock" ||
+    provider?.auth.apiKeyBilling === true
+  );
+}
+
 function defaultModel(provider: ServerProvider): string | undefined {
   return (
     provider.models.find((model) => model.isDefault && !model.isCustom)?.slug ??
@@ -103,7 +117,9 @@ export function resolveApiCreditSelection(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly current: ModelSelection;
 }): ModelSelection | null {
-  const current = input.providers.find((provider) => provider.instanceId === input.current.instanceId);
+  const current = input.providers.find(
+    (provider) => provider.instanceId === input.current.instanceId,
+  );
   if (current?.driver !== "claudeAgent" || isClaudeApiKeyProvider(current)) return null;
   for (const provider of input.providers) {
     if (provider.instanceId === current.instanceId) continue;
@@ -117,25 +133,37 @@ export function resolveApiCreditSelection(input: {
 /**
  * The model to continue on instead of `currentInstanceId`: the project's
  * fallback, else its default model (so a thread already on the fallback can
- * go back), else, with `anyReady`, the first other provider that can take a
- * turn, on its default model. A candidate at or past `belowPercent` is
- * skipped so two full providers never trade a thread back and forth.
- * `anyReady` never picks a Claude instance billed per token, since its turns
- * cost money: one is used only when the rule or the project's default model
- * names it, or through `resolveApiCreditSelection` when the rule allows API
- * credits.
+ * go back), else, with `anyReady`, the cheapest other provider that can take
+ * a turn. A candidate at or past `belowPercent` is skipped so two full
+ * providers never trade a thread back and forth.
+ *
+ * `anyReady` prefers, in order: another instance of the same driver that
+ * lists `currentModel` (another account on the same model, where a Claude
+ * transcript is copied across instead of summarised), then any instance of
+ * the same driver, then the one with the most headroom left (an unknown
+ * read last), then list order. It never picks an instance billed per token
+ * (`isPerTokenProvider`), since its turns cost money: one is used only when
+ * the rule or the project's default model names it, or through
+ * `resolveApiCreditSelection` when the rule allows API credits.
  */
 export function resolveProviderFallback(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly currentInstanceId: ProviderInstanceId;
-  readonly rule: Pick<ProviderFallbackRule, "providerLimitFallbackModelSelection" | "defaultModelSelection">;
+  /** The model the thread runs on, kept when another account of its driver lists it. */
+  readonly currentModel?: string | undefined;
+  readonly rule: Pick<
+    ProviderFallbackRule,
+    "providerLimitFallbackModelSelection" | "defaultModelSelection"
+  >;
   readonly nowMs: number;
   readonly belowPercent?: number | null;
   readonly anyReady?: boolean;
+  /** Instances known to be limited whatever their usage read says (a current limit stop). */
+  readonly limitedInstanceIds?: ReadonlySet<string>;
 }): ModelSelection | null {
   const usable = (provider: ServerProvider | undefined): provider is ServerProvider => {
     if (provider === undefined || provider.instanceId === input.currentInstanceId) return false;
-    if (!canTakeTurn(provider)) return false;
+    if (input.limitedInstanceIds?.has(provider.instanceId) || !canTakeTurn(provider)) return false;
     const used = providerUsedPercent(provider, input.nowMs);
     return input.belowPercent == null || used === null || used < input.belowPercent;
   };
@@ -148,10 +176,25 @@ export function resolveProviderFallback(input: {
       return selection;
   }
   if (!input.anyReady) return null;
-  for (const provider of input.providers) {
-    if (!usable(provider)) continue;
-    if (isClaudeApiKeyProvider(provider)) continue;
-    const model = defaultModel(provider);
+  const driver = input.providers.find(
+    (provider) => provider.instanceId === input.currentInstanceId,
+  )?.driver;
+  const sameModel = (provider: ServerProvider) =>
+    provider.driver === driver &&
+    input.currentModel !== undefined &&
+    provider.models.some((model) => model.slug === input.currentModel);
+  // Lower is cheaper: the same model elsewhere, the same driver, then headroom.
+  // An unknown read ranks after every known one.
+  const rank = (provider: ServerProvider): [number, number] => [
+    sameModel(provider) ? 0 : provider.driver === driver ? 1 : 2,
+    providerUsedPercent(provider, input.nowMs) ?? 101,
+  ];
+  const candidates = input.providers
+    .filter((provider) => usable(provider) && !isPerTokenProvider(provider))
+    .map((provider, order) => ({ provider, order, rank: rank(provider) }))
+    .sort((a, b) => a.rank[0] - b.rank[0] || a.rank[1] - b.rank[1] || a.order - b.order);
+  for (const { provider } of candidates) {
+    const model = sameModel(provider) ? input.currentModel : defaultModel(provider);
     if (model !== undefined) return { instanceId: provider.instanceId, model };
   }
   return null;
@@ -242,7 +285,10 @@ export function shouldSwitchBeforeTurn(input: {
  */
 export function usageAtThreshold(input: {
   readonly provider: ServerProvider | undefined;
-  readonly rule: Pick<ProviderFallbackRule, "providerLimitSwitchAtPercent" | "providerLimitWaitUnderMinutes">;
+  readonly rule: Pick<
+    ProviderFallbackRule,
+    "providerLimitSwitchAtPercent" | "providerLimitWaitUnderMinutes"
+  >;
   readonly nowMs: number;
 }): boolean {
   const threshold = input.rule.providerLimitSwitchAtPercent;
@@ -293,4 +339,117 @@ export function limitRestartRequest(input: {
   return request === null || request.text.trim().length === 0
     ? null
     : { text: request.text, attachments: request.attachments };
+}
+
+export type CoordinatorTurnSelectionReason =
+  | "saved"
+  | "saved-resets-soon"
+  | "staying-on-fallback"
+  | "fallback"
+  | "rule-steps-first"
+  | "no-fallback";
+
+/** How long a failed run on the saved model keeps a coordinator off it without a newer usage read. */
+export const COORDINATOR_LIMIT_STOP_MAX_AGE_MS = 5 * 60 * 60_000;
+
+/**
+ * The model a project coordinator's next turn runs on. Each message to the
+ * coordinator names the project's saved model, which would pull a coordinator
+ * the limit rule moved off a full provider straight back to it: the turn
+ * stops on the limit, the rule moves it again, and every message pays for a
+ * new handoff and an uncached first turn on both sides.
+ *
+ * So the saved model wins only while its provider has room (below the
+ * project's threshold, ordinary usage allowed, no current limit stop, and no
+ * failed run there since its last usage read) or resets within the project's
+ * wait. Otherwise a coordinator already running elsewhere stays there, under
+ * any rule, since a person or the rule moved it, unless that costs money per
+ * token without the rule's consent. Under `switch` one still on the full
+ * provider moves to the cheapest fallback with headroom, after the rule's
+ * redeem and credit steps. Once the saved provider has room again the next
+ * message goes back to it: one handoff back, not one per message.
+ */
+export function resolveCoordinatorTurnSelection(input: {
+  readonly saved: ModelSelection;
+  readonly thread: ModelSelection | null;
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly rule: ProviderFallbackRule;
+  readonly nowMs: number;
+  /** Instances a current limit stop or the usage simulation marks as limited. */
+  readonly limitedInstanceIds?: ReadonlySet<string>;
+  /**
+   * When the coordinator's last run on the saved instance failed, if it now
+   * runs elsewhere. The saved provider counts as full until a usage read
+   * taken after that shows its windows, so a stale or failed read never
+   * pulls the coordinator back into the limit.
+   */
+  readonly savedStoppedAtMs?: number | null;
+}): { readonly selection: ModelSelection; readonly reason: CoordinatorTurnSelectionReason } {
+  const threshold = input.rule.providerLimitSwitchAtPercent ?? 100;
+  const limited = input.limitedInstanceIds ?? new Set<string>();
+  const full = (provider: ServerProvider | undefined): boolean => {
+    if (provider === undefined) return false;
+    if (limited.has(provider.instanceId)) return true;
+    if (provider.usageLimits?.ordinaryUsageAllowed === false) return true;
+    const used = providerUsedPercent(provider, input.nowMs);
+    return used !== null && used >= threshold;
+  };
+  const savedProvider = input.providers.find(
+    (provider) => provider.instanceId === input.saved.instanceId,
+  );
+  const stoppedAt = input.savedStoppedAtMs ?? null;
+  const readAt = Date.parse(savedProvider?.usageLimits?.checkedAt ?? "");
+  const readSinceStop =
+    savedProvider !== undefined &&
+    Number.isFinite(readAt) &&
+    stoppedAt !== null &&
+    readAt > stoppedAt &&
+    savedProvider.usageLimits?.unavailable === undefined &&
+    providerUsedPercent(savedProvider, input.nowMs) !== null;
+  const stoppedRecently =
+    stoppedAt !== null &&
+    input.nowMs - stoppedAt < COORDINATOR_LIMIT_STOP_MAX_AGE_MS &&
+    !readSinceStop;
+  if (!stoppedRecently && !full(savedProvider)) return { selection: input.saved, reason: "saved" };
+  if (
+    !stoppedRecently &&
+    !limited.has(input.saved.instanceId) &&
+    usageResetsSoon({
+      provider: savedProvider,
+      threshold,
+      waitUnderMinutes: input.rule.providerLimitWaitUnderMinutes,
+      nowMs: input.nowMs,
+    })
+  )
+    return { selection: input.saved, reason: "saved-resets-soon" };
+  const thread = input.thread;
+  if (thread !== null && thread.instanceId !== input.saved.instanceId) {
+    const current = input.providers.find((provider) => provider.instanceId === thread.instanceId);
+    // Never keeps paying per token unless the rule allows API credits.
+    const paid = isPerTokenProvider(current) && input.rule.providerLimitUseApiCredits !== true;
+    if (current !== undefined && !paid && canTakeTurn(current) && !full(current))
+      return { selection: thread, reason: "staying-on-fallback" };
+  }
+  if (input.rule.providerLimitAction !== "switch")
+    return { selection: input.saved, reason: "no-fallback" };
+  // Redeeming a banked reset or spending credits keeps the saved model: the
+  // limit sweep runs those steps on the stop before it switches.
+  if (
+    input.rule.providerLimitRedeemResets === true ||
+    input.rule.providerLimitSpendCredits === true
+  )
+    return { selection: input.saved, reason: "rule-steps-first" };
+  const target = resolveProviderFallback({
+    providers: input.providers,
+    currentInstanceId: input.saved.instanceId,
+    currentModel: input.saved.model,
+    rule: input.rule,
+    nowMs: input.nowMs,
+    belowPercent: threshold,
+    anyReady: true,
+    limitedInstanceIds: limited,
+  });
+  return target === null
+    ? { selection: input.saved, reason: "no-fallback" }
+    : { selection: target, reason: "fallback" };
 }

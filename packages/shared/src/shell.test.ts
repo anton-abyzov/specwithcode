@@ -1,3 +1,7 @@
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import { HostProcessEnvironment, HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
@@ -68,8 +72,26 @@ describe("readPathFromLoginShell", () => {
     expect(args?.[1]).toContain("printenv PATH || true");
     expect(args?.[1]).toContain("__STUDIO_ENV_PATH_START__");
     expect(args?.[1]).toContain("__STUDIO_ENV_PATH_END__");
-    expect(options).toEqual({ encoding: "utf8", timeout: 5000 });
+    expect(options).toEqual({ encoding: "utf8", timeout: 5000, killSignal: "SIGKILL" });
   });
+
+  it.skipIf(process.platform === "win32")(
+    "gives up on a login shell whose rc files ignore SIGTERM",
+    () => {
+      // An interactive zsh ignores SIGTERM while a slow .zshrc (a conda hook) runs.
+      const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-shell-"));
+      const shell = NodePath.join(directory, "slow-shell");
+      NodeFS.writeFileSync(shell, "#!/bin/sh\ntrap '' TERM\nsleep 30\n", { mode: 0o755 });
+      const started = performance.now();
+      try {
+        expect(() => readPathFromLoginShell(shell)).toThrow();
+        expect(performance.now() - started).toBeLessThan(15_000);
+      } finally {
+        NodeFS.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+    20_000,
+  );
 });
 
 describe("readPathFromLaunchctl", () => {

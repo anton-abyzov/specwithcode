@@ -1,6 +1,11 @@
 import * as ProjectAdmission from "../project/ProjectAdmission.ts";
 import { guardProjectCreation } from "../project/ProjectCommandAdmission.ts";
-import { applyLimitObservation, hasFreshLimitPermission, recoverySnoozeBlocks, updateLimitRecovery } from "./usageLimitRecovery.ts";
+import {
+  applyLimitObservation,
+  hasFreshLimitPermission,
+  recoverySnoozeBlocks,
+  updateLimitRecovery,
+} from "./usageLimitRecovery.ts";
 import type { ServerSettingsService } from "../serverSettings.ts";
 import { makeAutomaticResolutionGuard } from "./ThreadAutomaticResolutionGuard.ts";
 import { runTerminalRunReactor } from "./TerminalRunReactor.ts";
@@ -130,6 +135,7 @@ import {
   ThreadForkServiceV2,
 } from "./ThreadForkService.ts";
 import { planThreadDeletion } from "./ThreadDeletion.ts";
+import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 
 export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDispatchError>()(
   "OrchestratorDispatchError",
@@ -788,6 +794,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const commandReceipts = yield* CommandReceiptStoreV2;
   const idAllocator = yield* IdAllocatorV2;
   const admission = yield* ProjectAdmission.ProjectAdmission;
+  // While the service is held for an update, nothing may start new work.
+  const updateHold = yield* ServiceUpdateHold.optional;
   const projects = yield* ProjectStore.ProjectStoreV2;
   const projectionStore = yield* ProjectionStoreV2;
   const effectOutbox = yield* EffectOutbox.EffectOutboxV2;
@@ -1252,6 +1260,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const startNextQueuedRun = (threadId: ThreadId, options?: { readonly failedRunId?: RunId }) =>
     Effect.gen(function* () {
+      // An update hold keeps the queue where it is; the drain cancels it.
+      if (yield* updateHold.isHeld) return;
       // Every terminal run checks the queue. Only a deliverable queued run
       // needs the transcript for provider handoff and legacy import context.
       if (!(yield* projectionStore.canStartQueuedRun(threadId))) return;
@@ -2305,6 +2315,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
       effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
     ) {
+      // A wake queues a turn, which a service update hold refuses like any message.
+      // Nothing is recorded, so the first sweep after the update wakes the thread again.
+      if (command.wake !== undefined) {
+        yield* updateHold.refuse(command.type).pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestratorDispatchError({
+                commandId: command.commandId,
+                commandType: command.type,
+                cause,
+              }),
+          ),
+        );
+      }
       const thread = yield* projectionStore
         .getThread(command.threadId)
         .pipe(
@@ -2680,12 +2704,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
     const now = yield* DateTime.now;
     if (command.type === "thread.metadata.update" && command.limitAvailability) {
-      const projection = yield* loadProjectionForCommand(command, ["runs", "runtimeRequests", "turnItems"], { turnItemTypes: ["error"] });
+      const projection = yield* loadProjectionForCommand(
+        command,
+        ["runs", "runtimeRequests", "turnItems"],
+        { turnItemTypes: ["error"] },
+      );
       const blocked = usageLimitBlockedRun(projection.runs, projection.turnItems, null);
-      const observed = blocked?.id === command.limitAvailability.runId && !projection.runtimeRequests.some((request) => request.status === "pending")
-        ? applyLimitObservation(thread, command, now) : null;
-      yield* emit(events, command)({ type: "thread.metadata-updated", threadId: thread.id,
-        occurredAt: now, payload: observed ? { ...observed, updatedAt: now } : thread });
+      const observed =
+        blocked?.id === command.limitAvailability.runId &&
+        !projection.runtimeRequests.some((request) => request.status === "pending")
+          ? applyLimitObservation(thread, command, now)
+          : null;
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.metadata-updated",
+        threadId: thread.id,
+        occurredAt: now,
+        payload: observed ? { ...observed, updatedAt: now } : thread,
+      });
       return;
     }
     if (command.type === "thread.metadata.update" && command.limitRecovery != null) {
@@ -2697,7 +2735,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const run = usageLimitBlockedRun(projection.runs, projection.turnItems, null);
       const failure = latestRootProviderFailure(run, projection.turnItems);
       const resetMs = Date.parse(command.limitRecovery.resetAt ?? "");
-      if (command.limitRecovery.snooze === true && (!Number.isFinite(resetMs) || resetMs <= DateTime.toEpochMillis(now))) {
+      if (
+        command.limitRecovery.snooze === true &&
+        (!Number.isFinite(resetMs) || resetMs <= DateTime.toEpochMillis(now))
+      ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
@@ -2893,7 +2934,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         case "thread.mark-unread":
           return { ...thread, lastVisitedAt: markUnreadVisitedAt };
         case "thread.metadata.update": {
-          const limitRecovery = updateLimitRecovery(thread.limitRecovery, command.limitRecovery, command.commandId, command.limitRecoveryPolicyArm, command.limitRecoveryAffinity);
+          const limitRecovery = updateLimitRecovery(
+            thread.limitRecovery,
+            command.limitRecovery,
+            command.commandId,
+            command.limitRecoveryPolicyArm,
+            command.limitRecoveryAffinity,
+          );
           return {
             ...thread,
             ...(command.title === undefined ? {} : { title: command.title }),
@@ -3729,7 +3776,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     readonly messageId: OrchestrationV2ConversationMessage["id"];
     readonly text: string;
     readonly attachments: ReadonlyArray<ChatAttachment>;
-    readonly context?: import("@specweave-studio/contracts").OrchestrationMessageContext | undefined;
+    readonly context?:
+      | import("@specweave-studio/contracts").OrchestrationMessageContext
+      | undefined;
     readonly createdBy: OrchestrationV2ConversationMessage["createdBy"];
     readonly creationSource: OrchestrationV2ConversationMessage["creationSource"];
     readonly scheduledTaskId?: OrchestrationV2ConversationMessage["scheduledTaskId"];
@@ -4472,7 +4521,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const shell = threadShellFromProjection(projection);
         const permitted = hasFreshLimitPermission(shell, DateTime.toEpochMillis(now));
         if (
-          command.dispatchMode.type !== "start_immediately" || command.modelSelection !== undefined ||
+          command.dispatchMode.type !== "start_immediately" ||
+          command.modelSelection !== undefined ||
           run?.id !== command.usageLimitContinuationOfRunId ||
           failure?.class !== "usage_limit" ||
           threadShellFromProjection(projection).lastErrorClass !== "usage_limit" ||
@@ -4480,7 +4530,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           recovery.requestId !== command.usageLimitRecoveryRequestId ||
           recovery.runId !== run.id ||
           recovery.resetAt !== (failure.resetAt ?? null) ||
-          (!permitted && (!recovery.resetAt || Date.parse(recovery.resetAt) > DateTime.toEpochMillis(now))) ||
+          (!permitted &&
+            (!recovery.resetAt || Date.parse(recovery.resetAt) > DateTime.toEpochMillis(now))) ||
           (recovery.availability !== undefined && !permitted) ||
           projection.thread.archivedAt !== null ||
           projection.thread.deletedAt !== null ||
@@ -10635,11 +10686,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     } satisfies OrchestratorV2DispatchResult;
   });
 
-  const admitCreation = guardProjectCreation({ admission, projects, projections: projectionStore,
-    reject: (command, cause) => new OrchestratorDispatchError({ commandId: command.commandId, commandType: command.type, cause }),
+  const admitCreation = guardProjectCreation({
+    admission,
+    projects,
+    projections: projectionStore,
+    reject: (command, cause) =>
+      new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause,
+      }),
   });
+  const refuseWhileUpdateHeld = (command: OrchestrationV2ServerCommand) =>
+    ServiceUpdateHold.isHeldCommand(command)
+      ? updateHold.refuse(command.type).pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestratorDispatchError({
+                commandId: command.commandId,
+                commandType: command.type,
+                cause,
+              }),
+          ),
+        )
+      : Effect.void;
   const dispatchWithReceipt = (command: OrchestrationV2ServerCommand) =>
-    admitCreation(command, threadDispatch.withLock(commandThreadId(command), dispatchWithReceiptEffect(command)));
+    refuseWhileUpdateHeld(command).pipe(
+      Effect.andThen(
+        admitCreation(
+          command,
+          threadDispatch.withLock(commandThreadId(command), dispatchWithReceiptEffect(command)),
+        ),
+      ),
+    );
 
   const handleTerminalRun = (stored: OrchestrationV2StoredEvent) =>
     Effect.gen(function* () {

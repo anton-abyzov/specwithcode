@@ -82,6 +82,7 @@ const layerDesktopWindow = (selectedAction: Deferred.Deferred<string>) =>
     createMainIfBackendReady: Effect.void,
     openProjectWindow: () => Effect.die("unexpected project window"),
     showConnectingSplash: Effect.void,
+    showServiceUpdateSplash: Effect.void,
     handleBackendReady: () => Effect.void,
     handleBackendNotReady: Effect.void,
     flushMainWindowBounds: Effect.void,

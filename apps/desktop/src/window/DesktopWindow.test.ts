@@ -1480,6 +1480,28 @@ describe("DesktopWindow", () => {
       }),
   );
 
+  it.effect("shows the service update splash and re-reveals it on activate", () =>
+    Effect.gen(function* () {
+      const splash = makeFakeBrowserWindow();
+      const scenario = yield* makeSplashScenario([splash.window]);
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+
+        yield* desktopWindow.showServiceUpdateSplash;
+        assert.equal(yield* Ref.get(scenario.createCalls), 1);
+        const [url] = splash.loadURL.mock.calls[0] as unknown as [string];
+        assert.include(decodeURIComponent(url), "Waiting for the Studio service update…");
+        assert.notInclude(decodeURIComponent(url), "Connecting to WSL");
+
+        // A Dock click while the app waits brings the splash back, not nothing.
+        yield* desktopWindow.activate;
+        assert.equal(yield* Ref.get(scenario.createCalls), 1);
+        assert.deepEqual(yield* Ref.get(scenario.revealedWindows), [splash.window]);
+      }).pipe(Effect.provide(scenario.layer));
+    }),
+  );
+
   it.effect("does not dispatch menu actions to the splash before the backend is ready", () =>
     Effect.gen(function* () {
       const splash = makeFakeBrowserWindow();

@@ -218,7 +218,10 @@ const bootstrap = Effect.gen(function* () {
   // of starting a second backend on the same database.
   if (!environment.isDevelopment) {
     const localService = yield* DesktopLocalService.DesktopLocalService;
-    const discovery = yield* localService.discover;
+    // Waiting for a service update can take minutes: show that, not nothing.
+    const discovery = yield* localService.discover({
+      onInstallWait: desktopWindow.showServiceUpdateSplash,
+    });
     if (discovery._tag === "unresponsive") {
       return yield* new DesktopLocalServiceUnresponsiveError({
         pid: discovery.runtime.pid,

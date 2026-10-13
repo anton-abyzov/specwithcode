@@ -6,6 +6,7 @@ import * as Ref from "effect/Ref";
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProviderContinuationRequests from "./ProviderContinuationRequests.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
 
 const CONTINUATION_MESSAGE_TEXT = "Background task completed.";
@@ -62,6 +63,9 @@ export const layer = Layer.effectDiscard(
     const ids = yield* IdAllocator.IdAllocatorV2;
     const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
     const threads = yield* ThreadManagementService.ThreadManagementService;
+    // A wake that arrives while the service is held for an update waits for the
+    // hold to end; a restart drops it, and recovery offers delegated results again.
+    const updateHold = yield* ServiceUpdateHold.optional;
     const retryAttempts = yield* Ref.make(new Map<string, number>());
 
     const clearRetryAttempt = (key: string) =>
@@ -182,7 +186,7 @@ export const layer = Layer.effectDiscard(
 
     yield* requests.take.pipe(
       Effect.flatMap((request) =>
-        dispatchContinuation(request).pipe(
+        updateHold.awaitReleased.pipe(Effect.andThen(dispatchContinuation(request))).pipe(
           Effect.catchCause((cause) =>
             Effect.gen(function* () {
               yield* Effect.logWarning("orchestration-v2.provider-continuation.dispatch-failed", {

@@ -356,12 +356,23 @@ class ApplyRecovery(unittest.TestCase):
   self.quiescence_checks=[]
   self.auth_snapshot_phases=[]
   self.backups=[];self.restores=[];self.stops=[];self.launchd=[]
-  self.real_db=False;self.on_stage=None
+  self.real_db=False;self.on_stage=None;self.stage_timeouts=[]
   self.capture_database=False  # Real snapshots also carry the complete typed capture.
   self.clock=[1000.0]  # Fake monotonic time: sleeps advance it, so time-bounded waits end at once.
+  self.gated_service=False  # The restarted service starts work on its own unless the install gate is live.
+  self.gate_readings=[]
  def tearDown(self):self.temp.cleanup()
+ def install_gate_live(self):
+  gate=self.own/'updates'/update.INSTALL_GATE_FILE
+  try:value=json.loads(gate.read_text())
+  except (OSError,ValueError):return False
+  return value.get('helperPid')==os.getpid() and isinstance(value.get('at'),str)
  def snapshot(self,identity):
   if not self.restart_calls:return copy.deepcopy(self.before)
+  if self.gated_service:
+   live=self.install_gate_live();self.gate_readings.append(live)
+   # A restarted service with nothing holding it back starts limit recovery, sweeps and wakes.
+   if not live:raise AssertionError('Native work is not idle')
   if self.scenario in {'postrestart-active','restart-failed'}:raise AssertionError('Exact snapshot rejects active or mismatched runtime')
   after=copy.deepcopy(self.before);after['servicePid']=101;after['archiveSha256']=self.sha;after['artifactSourceCommit']=self.incoming_source
   after['processQuiescence']={'root':{'pid':101,'uid':501},'treeSha256':'new-tree'}
@@ -395,7 +406,7 @@ class ApplyRecovery(unittest.TestCase):
   return self.rows_snapshot(state),None
  def transport(self,command,**kwargs):
   if command[0]=='/usr/bin/python3':
-   stage=pathlib.Path(kwargs['env']['HOME'])/'.local/share/specweave-studio/releases'/self.sha[:20];stage.mkdir(parents=True)
+   self.stage_timeouts.append(kwargs['timeout']);stage=pathlib.Path(kwargs['env']['HOME'])/'.local/share/specweave-studio/releases'/self.sha[:20];stage.mkdir(parents=True)
    (stage/'bin.mjs').write_bytes(b'new-owned-code')
    manifest={'product':'SpecWeave Studio','version':self.incoming_version,'sourceCommit':self.incoming_source,'files':[{'path':'bin.mjs','type':'file','sha256':update.digest(b'new-owned-code')}]}
    if self.incoming_version != '0.1.0':
@@ -546,6 +557,7 @@ class ApplyRecovery(unittest.TestCase):
   with self.assertRaises(AssertionError):self.execute()
   result=json.loads(self.output.read_text());self.assertEqual(result['phase'],'restart-requested');self.assertEqual(result['rollback'],'held-for-safe-review');self.assertEqual(len(self.restart_calls),1)
   self.assertEqual(json.loads((self.own/'installation.json').read_text())['archiveSha256'],self.sha);self.assertTrue(pathlib.Path(result['backup']).is_dir());self.assertIn('expectedNewHashes',result)
+  self.assertEqual(result['helperPid'],os.getpid())  # The desktop waits while this process lives.
  def test_rejected_restart_with_exact_old_process_restores_pointers_without_second_restart(self):
   self.scenario='restart-failed'
   with self.assertRaises(AssertionError):self.execute()
@@ -757,6 +769,12 @@ class ApplyRecovery(unittest.TestCase):
   with self.assertRaisesRegex(AssertionError,'did not become ready within 80 s'):self.execute()
   self.assertLessEqual(clock[0]-1000,update.READY_BY_SECONDS_FROM_START+30)
   self.assertEqual(json.loads(self.output.read_text())['readyBySecondsFromStart'],update.READY_BY_SECONDS_FROM_START)
+ def test_preparation_too_slow_to_leave_time_for_the_restart_changes_nothing(self):
+  import subprocess;budget=update.READY_BY_SECONDS_FROM_START-update.MIN_READINESS_SECONDS;since=self.snapshot_since;self.assertLessEqual(budget,update.STAGE_TIMEOUT_SECONDS)
+  def outlast():self.clock[0]+=self.stage_timeouts[-1];raise subprocess.TimeoutExpired(['/usr/bin/python3'],self.stage_timeouts[-1])  # Staging gets only the budget left.
+  for spent,stage,given in ((0,lambda:self.clock.__setitem__(0,self.clock[0]+budget+1),[budget]),(100,outlast,[budget-100]),(budget,None,[])):
+   self.stage_timeouts,self.clock[0],self.on_stage=[],1000.0,stage;self.snapshot_since=lambda i,r,a=False,s=spent:(self.clock.__setitem__(0,self.clock[0]+s),since(i,r,a))[1]
+   self.assertRaisesRegex(AssertionError,'^'+update.TOO_SLOW_TO_RESTART+'$',self.execute);self.assertEqual(self.stage_timeouts,given);self.assertEqual((self.restart_calls,self.backups),([],[]));self.assertEqual({p:p.read_bytes() for p in self.original},self.original)
  def test_a_service_that_binds_after_45_seconds_is_still_ready_in_time(self):
   # Quick readings must not run out of attempts before the deadline: the wait is time-bound.
   restarted={};real=self.snapshot_since;readings=[]
@@ -866,6 +884,38 @@ class ApplyRecovery(unittest.TestCase):
  def test_postrestart_launcher_must_match_written_pointer(self):self.reject_wrong_target('launcher')
  def test_postrestart_wrapper_must_match_written_pointer(self):self.reject_wrong_target('wrapper')
  def test_postrestart_installation_must_match_written_pointer(self):self.reject_wrong_target('installation')
+ def test_readiness_passes_while_the_install_gate_keeps_the_new_service_quiet(self):
+  self.gated_service=True
+  self.execute();result=json.loads(self.output.read_text())
+  self.assertEqual(result['phase'],'verified');self.assertEqual(len(self.restart_calls),1)
+  self.assertTrue(self.gate_readings and all(self.gate_readings))
+  # Cleared once the release is verified, so the service may start work again.
+  self.assertFalse((self.own/'updates'/update.INSTALL_GATE_FILE).exists())
+ def test_without_the_install_gate_the_same_service_never_becomes_ready_nor_rolls_back(self):
+  self.gated_service=True
+  with patch.object(update,'write_install_gate'),self.assertRaisesRegex(AssertionError,'did not become ready'):self.execute()
+  result=json.loads(self.output.read_text())
+  self.assertEqual(result['result'],'update-failed');self.assertIn('rollbackError',result)
+  self.assertFalse(any(self.gate_readings))
+ def test_a_rollback_finds_the_gated_new_release_idle_and_clears_the_gate(self):
+  self.gated_service=True;self.after_mutation=lambda after:after.update(archiveSha256='another-owned-release')
+  with self.assertRaisesRegex(AssertionError,'intended artifact'):self.execute()
+  result=json.loads(self.output.read_text())
+  self.assertEqual(result['rollback'],'restored-runtime-pointers-and-state');self.assertNotIn('rollbackError',result)
+  self.assertEqual(self.stops,[101]);self.assertTrue(all(self.gate_readings))
+  self.assertFalse((self.own/'updates'/update.INSTALL_GATE_FILE).exists())
+ def test_the_install_gate_is_written_only_once_the_restart_is_next(self):
+  self.scenario='pre-restart-child'
+  with self.assertRaises(AssertionError):self.execute()
+  self.assertEqual(self.restart_calls,[]);self.assertFalse((self.own/'updates'/update.INSTALL_GATE_FILE).exists())
+ def test_the_install_gate_names_this_helper_and_when_it_was_written(self):
+  seen=[]
+  def at_restart():seen.append(json.loads((self.own/'updates'/update.INSTALL_GATE_FILE).read_text()))
+  self.on_restart=at_restart;self.execute()
+  self.assertEqual(seen[0]['helperPid'],os.getpid())
+  written=datetime.datetime.fromisoformat(seen[0]['at'])
+  self.assertLess(abs((datetime.datetime.now(datetime.timezone.utc)-written).total_seconds()),60)
+  self.assertEqual(oct((self.own/'updates').stat().st_mode&0o777),'0o700')
  def prepare_heartbeat(self):
   state=self.own/'userdata';db=sqlite3.connect(state/'statev2.sqlite')
   db.execute('CREATE TABLE auth_sessions(session_id TEXT PRIMARY KEY,method TEXT,client_surface TEXT,issued_at TEXT,expires_at TEXT,last_connected_at TEXT,revoked_at TEXT,credential BLOB)')

@@ -2,6 +2,8 @@ import { assert, it } from "@effect/vitest";
 import {
   NodeId,
   ProviderDriverKind,
+  ProviderInstanceId,
+  ProviderSetupError,
   ProviderThreadId,
   ProviderTurnId,
   RunId,
@@ -99,6 +101,24 @@ it("preserves actionable handoff errors wrapped by turn startup", () => {
   assert.equal(
     makeProviderFailure({ cause: Cause.fail(cause) }).message,
     new ContextHandoffBudgetError().message,
+  );
+});
+
+it("names the setup reason when turn startup fails a native status check", () => {
+  const cause = new ProviderAdapterTurnStartError({
+    driver: ProviderDriverKind.make("claudeAgent"),
+    threadId: ThreadId.make("thread:status-check"),
+    providerThreadId: ProviderThreadId.make("provider-thread:status-check"),
+    runId: RunId.make("run:status-check"),
+    cause: new ProviderSetupError({
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      operation: "session",
+      detail: "The native provider status check timed out. Refresh Providers on this machine and try again.",
+    }),
+  });
+  assert.equal(
+    makeProviderFailure({ cause: Cause.fail(cause) }).message,
+    "The native provider status check timed out. Refresh Providers on this machine and try again.",
   );
 });
 

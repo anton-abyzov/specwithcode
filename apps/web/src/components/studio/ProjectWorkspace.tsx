@@ -50,6 +50,7 @@ import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state
 import { resolveCoordinatorModelSelection } from "@specweave-studio/shared/coordinatorDefault";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import { useSettingsProjectGroups } from "../settings/useSettingsProjectGroups";
+import { derivePhysicalProjectKey } from "../../logicalProject";
 import {
   useAllEnvironmentShellsBootstrapped,
   useProjects,
@@ -96,7 +97,7 @@ import {
   projectAdmissionReason,
   projectThreads,
 } from "../../studio/projectWorkspaceModel";
-import { THREAD_TONE_LABELS, threadTone, waitingCount } from "../../studio/shellModel";
+import { modelLabel, THREAD_TONE_LABELS, threadTone, waitingCount } from "../../studio/shellModel";
 import {
   PULL_REQUEST_REQUEST_EXPIRED_REASON,
   PULL_REQUEST_REQUEST_TTL_MS,
@@ -203,15 +204,35 @@ const SENT_WITH_CONTEXT_NOTICE = "Sent to the coordinator with this thread as co
 /** Receipts for a send; the live working line replaces them while the coordinator runs. */
 const SEND_NOTICES: ReadonlySet<string> = new Set([QUEUED_NOTICE, SENT_WITH_CONTEXT_NOTICE]);
 
+/**
+ * The group a project route names. Before a checkout's repository is known its
+ * group is keyed by machine and path, and the key moves to the repository once
+ * git answers; a link opened early still names the old key.
+ */
+export function findProjectGroup<
+  G extends {
+    projectKey: string;
+    memberProjects: ReadonlyArray<Parameters<typeof derivePhysicalProjectKey>[0]>;
+  },
+>(groups: ReadonlyArray<G>, projectKey: string): G | undefined {
+  return (
+    groups.find((g) => g.projectKey === projectKey) ??
+    groups.find((g) => g.memberProjects.some((m) => derivePhysicalProjectKey(m) === projectKey))
+  );
+}
+
 export function ProjectWorkspace({
-  projectKey,
+  projectKey: requestedKey,
   selectedThreadId = null,
   onSelectThread,
+  onProjectKeyMoved,
 }: {
   projectKey: string;
   /** The thread open in the right panel; the route keeps it in the URL. */
   selectedThreadId?: ThreadId | null;
   onSelectThread?: SelectProjectThread;
+  /** The project's group key changed since the link was made; the route replaces the URL. */
+  onProjectKeyMoved?: (projectKey: string) => void;
 }) {
   // Without a route to hold it (tests, embedding), the open thread is plain state.
   const [localSelected, setLocalSelected] = useState<ThreadId | null>(null);
@@ -219,7 +240,12 @@ export function ProjectWorkspace({
   const setSelected: SelectProjectThread = onSelectThread ?? setLocalSelected;
   const groups = useSettingsProjectGroups();
   const projects = useProjects();
-  const group = groups.find((g) => g.projectKey === projectKey);
+  const group = findProjectGroup(groups, requestedKey);
+  // Saved choices and threads are keyed by the group's current key.
+  const projectKey = group?.projectKey ?? requestedKey;
+  useEffect(() => {
+    if (projectKey !== requestedKey) onProjectKeyMoved?.(projectKey);
+  }, [projectKey, requestedKey, onProjectKeyMoved]);
   const members = group?.memberProjects ?? [];
   const shellsBootstrapped = useAllEnvironmentShellsBootstrapped();
   const { isReady: environmentCatalogReady } = useEnvironments();
@@ -518,6 +544,25 @@ function ProjectWorkspaceSurface({
   });
   const actions = useThreadActions();
   const providerEntries = useProviderEntries(project.environmentId);
+  // The limit rule moved the coordinator off its saved model; it returns once that has room.
+  const savedCoordinatorModel = liveSettings?.coordinatorModelSelection ?? null;
+  const coordinatorFallback =
+    coordinator && savedCoordinatorModel
+      ? coordinator.modelSelection.instanceId !== savedCoordinatorModel.instanceId
+        ? {
+            now: modelLabel(
+              providerEntries.get(coordinator.modelSelection.instanceId) ?? null,
+              coordinator.modelSelection.instanceId,
+              coordinator.modelSelection.model,
+            ),
+            saved: modelLabel(
+              providerEntries.get(savedCoordinatorModel.instanceId) ?? null,
+              savedCoordinatorModel.instanceId,
+              savedCoordinatorModel.model,
+            ),
+          }
+        : null
+      : null;
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
   const revision = liveSettings?.revision ?? snapshot?.settings.revision ?? null;
@@ -1330,6 +1375,15 @@ function ProjectWorkspaceSurface({
                   onChange={(selection) => void saveCoordinatorModel(selection)}
                   onOpenSettings={() => setTab("general")}
                 />
+                {coordinatorFallback ? (
+                  <span
+                    className="sws-model-fallback"
+                    role="status"
+                    title={`Saved model: ${coordinatorFallback.saved.full}. The coordinator goes back to it once its usage has room.`}
+                  >
+                    On {coordinatorFallback.now.full}
+                  </span>
+                ) : null}
               </div>
             </form>
           </section>

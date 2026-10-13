@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - Tests use Node's glob matcher to verify electron-builder exclusions.
 import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -66,6 +67,7 @@ import {
   parseGitHubRemoteRepository,
   resolveReleaseFeedRepository,
   MAC_SERVICE_UPDATER_EXTRA_RESOURCES,
+  MAC_SERVICE_UPDATER_FILES,
   resolveLocalBuildVersion,
   resolveMockUpdateServerPort,
   resolveMockUpdateServerUrl,
@@ -364,6 +366,19 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     );
     assert.equal(resolveReleaseFeedRepository("acme/studio"), "acme/studio");
     assert.equal(resolveReleaseFeedRepository(undefined), undefined);
+  });
+
+  it("ships every sibling module the service update agent imports", () => {
+    const fleet = NodePath.join(import.meta.dirname, "studio-fleet");
+    const agent = NodeFS.readFileSync(NodePath.join(fleet, "update_agent.py"), "utf8");
+    const siblings = [...agent.matchAll(/^import (update_(?:agent_\w+|request)\b)/gm)].map(
+      (match) => `${match[1]}.py`,
+    );
+    assert.include(siblings, "update_agent_cache.py");
+    assert.deepStrictEqual([...MAC_SERVICE_UPDATER_FILES], ["update_agent.py", ...siblings]);
+    for (const file of MAC_SERVICE_UPDATER_FILES) {
+      assert.isTrue(NodeFS.statSync(NodePath.join(fleet, file)).isFile(), file);
+    }
   });
 
   it.effect("falls back to the origin repository and ships the service updater on macOS", () =>

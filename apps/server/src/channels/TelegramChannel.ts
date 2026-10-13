@@ -50,6 +50,7 @@ import {
   ThreadManagementService,
 } from "../orchestration-v2/ThreadManagementService.ts";
 import { forkParked } from "../serverActivation.ts";
+import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import * as TelegramBotApi from "./TelegramBotApi.ts";
 import {
   chunkTelegramText,
@@ -108,6 +109,8 @@ const make = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const crypto = yield* Crypto.Crypto;
   const api = yield* TelegramBotApi.TelegramBotApi;
+  // Telegram keeps unread updates, so a held service reads them after the update.
+  const updateHold = yield* ServiceUpdateHold.optional;
   const projects = yield* ProjectStore.ProjectStoreV2;
   const threads = yield* ThreadManagementService;
   const writes = yield* Semaphore.make(1);
@@ -434,6 +437,7 @@ const make = Effect.gen(function* () {
 
   let failures = 0;
   const pollOnce = Effect.gen(function* () {
+    if (yield* updateHold.isHeld) return yield* waitForChange("5 seconds");
     const state = yield* Ref.get(stateRef);
     const token = yield* Ref.get(tokenRef);
     if (!state.enabled || Option.isNone(token) || state.projectId === null) {

@@ -1,6 +1,7 @@
 import type {
   DesktopUpdateActionResult,
   DesktopUpdateState,
+  ServerPrepareServiceUpdateResult,
   ServiceUpdateBlocker,
   StudioServiceUpdateState,
 } from "@specweave-studio/contracts";
@@ -44,6 +45,10 @@ function serviceUpdateVersion(state: StudioServiceUpdateState): string | null {
   return state.downloadedVersion ?? state.availableVersion;
 }
 
+/** What "Update now" does, shown wherever it is offered. */
+export const SERVICE_UPDATE_NOW_DESCRIPTION =
+  "Stops running work, closes terminals and restarts SpecWithCode. You can continue interrupted tasks afterwards.";
+
 /**
  * Updates download in the background; once one is on disk the sidebar shows a
  * single "Restart to update" button. Returns null while nothing is ready.
@@ -70,25 +75,27 @@ export function getRestartToUpdateView(
   const installFailed = app && appState.errorContext === "install";
   const failure = installFailed ? appState.message?.trim() : undefined;
 
-  const parts = [
-    failure ? `The last install failed: ${failure}` : null,
-    `SpecWithCode ${version ?? "update"} is downloaded.`,
-    app
-      ? service
-        ? "Restarts the app and the SpecWithCode service to install it."
-        : "Restarts the app to install it."
-      : "Restarts the SpecWithCode service to install it.",
-    service
-      ? "Running tasks are stopped and queued messages cancelled first."
-      : "Any running task is interrupted.",
-    app && options.installOnQuit ? "Or keep working: it installs the next time you quit." : null,
-  ];
+  const parts = service
+    ? [
+        failure ? `The last install failed: ${failure}` : null,
+        `SpecWithCode ${version ?? "update"} is downloaded.`,
+        SERVICE_UPDATE_NOW_DESCRIPTION,
+        app ? "The app restarts too." : null,
+      ]
+    : [
+        failure ? `The last install failed: ${failure}` : null,
+        `SpecWithCode ${version ?? "update"} is downloaded.`,
+        "Restarts the app to install it.",
+        "Any running task is interrupted.",
+        options.installOnQuit ? "Or keep working: it installs the next time you quit." : null,
+      ];
 
   return {
     app,
     appVersion,
     service,
-    label: installFailed ? "Retry update" : "Restart to update",
+    // A waiting service update installs now, without waiting for work to finish.
+    label: service ? "Update now" : installFailed ? "Retry update" : "Restart to update",
     description: parts.filter(Boolean).join(" "),
   };
 }
@@ -150,24 +157,34 @@ export interface ServiceUpdateProgress {
    * is not this attempt's answer.
    */
   readonly staleFailure?: string | null;
-  /** When this attempt was requested (ms), to stop ignoring an old failure eventually. */
+  /**
+   * When this attempt was requested (ms). An agent state written before it is
+   * an answer to an earlier request, and an old failure is ignored for a while.
+   */
   readonly requestedAt?: number;
   /** When the agent first reported installing (ms). */
   readonly installingSince?: number;
 }
 
-/** How long an attempt ignores the failure the agent reported before it was requested. */
+/**
+ * How long an attempt ignores the failure the agent reported before it was
+ * requested, when the agent's write time is unknown (older desktops).
+ */
 export const STALE_FAILURE_MS = 90_000;
 /** An install that has not finished in this long is reported, so it can be retried. */
 export const INSTALL_TIMEOUT_MS = 10 * 60_000;
 
-/** Identifies a failed (or other-version) agent state, so an old one is not taken as new. */
+/**
+ * Identifies an agent state that answers a request (waiting, failed or another
+ * version), so an old one is not taken as the answer to a new request.
+ */
 export function serviceFailureKey(state: StudioServiceUpdateState | null): string | null {
   if (state === null) return null;
   if (
     state.status !== "error" &&
     state.status !== "manual-required" &&
-    state.status !== "installed"
+    state.status !== "installed" &&
+    state.status !== "waiting-for-quiet"
   ) {
     return null;
   }
@@ -179,6 +196,39 @@ export function serviceFailureKey(state: StudioServiceUpdateState | null): strin
   ]);
 }
 
+function updatedAtMs(state: StudioServiceUpdateState): number | null {
+  if (typeof state.updatedAt !== "string") return null;
+  const at = Date.parse(state.updatedAt);
+  return Number.isFinite(at) ? at : null;
+}
+
+/**
+ * The agent rewrites its state only when it runs, and the state read straight
+ * after a request is usually the one it wrote for an earlier request. With the
+ * agent's write time that is exact: a waiting or failed state written before
+ * this request is not its answer, however long the agent takes (its first
+ * snapshot can outlast any fixed wait). Without it (older desktops) the state
+ * is compared with the one seen before the request, and believed after
+ * STALE_FAILURE_MS, since the agent may simply have answered the same again.
+ */
+export function isStaleServiceAnswer(
+  progress: ServiceUpdateProgress,
+  state: StudioServiceUpdateState,
+  now?: number,
+): boolean {
+  const key = serviceFailureKey(state);
+  if (key === null || progress.requestedAt === undefined) return false;
+  const written = updatedAtMs(state);
+  const stale =
+    written !== null ? written < progress.requestedAt : key === (progress.staleFailure ?? null);
+  if (!stale) return false;
+  // A state known to be old (waiting or failed) never ends the attempt: the
+  // agent has not run for this request yet, so it stays ignored.
+  if (written !== null) return true;
+  const waited = now === undefined ? 0 : now - progress.requestedAt;
+  return waited < STALE_FAILURE_MS;
+}
+
 export function startServiceUpdateProgress(
   serviceState: StudioServiceUpdateState | null,
 ): ServiceUpdateProgress {
@@ -187,6 +237,27 @@ export function startServiceUpdateProgress(
     targetVersion: serviceState ? serviceUpdateVersion(serviceState) : null,
     blockers: [],
     message: null,
+  };
+}
+
+/**
+ * Where "Update now" again starts from. An install request is tied to the
+ * version it names, so after a failure the retry asks for the version the agent
+ * offers now: a newer release found meanwhile fails the request for the older
+ * one, and its message tells the user to choose Update now again.
+ */
+export function retryServiceUpdateProgress(
+  progress: ServiceUpdateProgress,
+  agent: StudioServiceUpdateState | null,
+): ServiceUpdateProgress {
+  const offered =
+    progress.phase === "failed" && agent !== null ? serviceUpdateVersion(agent) : null;
+  return {
+    ...progress,
+    phase: "stopping",
+    message: null,
+    blockers: [],
+    targetVersion: offered ?? progress.targetVersion,
   };
 }
 
@@ -204,13 +275,8 @@ export function advanceServiceUpdateProgress(
   if (installed && (state.status === "installed" || state.status === "up-to-date")) {
     return { ...progress, phase: "restarting", message: null };
   }
-  const failure = serviceFailureKey(state);
-  if (failure !== null && failure === (progress.staleFailure ?? null)) {
-    // Still the previous attempt's answer: the agent has not run for this one yet.
-    const waited =
-      now !== undefined && progress.requestedAt !== undefined ? now - progress.requestedAt : 0;
-    if (waited < STALE_FAILURE_MS) return progress;
-  }
+  // Still the previous attempt's answer: the agent has not run for this one yet.
+  if (isStaleServiceAnswer(progress, state, now)) return progress;
   switch (state.status) {
     case "installing": {
       const since = progress.installingSince ?? now;
@@ -263,9 +329,14 @@ export function advanceServiceUpdateProgress(
   }
 }
 
-/** The button can be clicked again: to stop what still runs, or to retry. */
+/**
+ * The button can be clicked again: "Update now" stops what still runs and asks
+ * again while the agent is asked or waits, and a failed attempt can be retried.
+ */
 export function canRetryServiceUpdate(progress: ServiceUpdateProgress): boolean {
-  return progress.phase === "waiting" || progress.phase === "failed";
+  return (
+    progress.phase === "requesting" || progress.phase === "waiting" || progress.phase === "failed"
+  );
 }
 
 export function serviceUpdateButtonLabel(progress: ServiceUpdateProgress): string {
@@ -273,9 +344,8 @@ export function serviceUpdateButtonLabel(progress: ServiceUpdateProgress): strin
     case "stopping":
       return "Stopping tasks…";
     case "requesting":
-      return "Starting update…";
     case "waiting":
-      return progress.blockers.length > 0 ? "Stop and update" : "Waiting to update…";
+      return "Update now";
     case "installing":
       return "Installing…";
     case "restarting":
@@ -314,18 +384,61 @@ export function describeServiceUpdateBlockers(
   return `Still running: ${shown.join("; ")}${rest > 0 ? `; and ${rest} more` : ""}.`;
 }
 
+function plural(count: number, one: string, many: string): string {
+  return `${count} ${count === 1 ? one : many}`;
+}
+
+function blockerCount(
+  blockers: ReadonlyArray<ServiceUpdateBlocker>,
+  kinds: ReadonlyArray<ServiceUpdateBlocker["kind"]>,
+): number {
+  return blockers.reduce(
+    (total, blocker) => (kinds.includes(blocker.kind) ? total + blocker.count : total),
+    0,
+  );
+}
+
+/**
+ * The question asked before "Update now" stops work, one line per kind of
+ * work it ends. Null when nothing runs, so the update starts without asking.
+ */
+export function describeServiceUpdateStop(
+  check: Pick<ServerPrepareServiceUpdateResult, "blockers" | "openTerminals">,
+): string | null {
+  const tasks = blockerCount(check.blockers, ["run"]);
+  const queued = blockerCount(check.blockers, ["queued"]);
+  const questions = blockerCount(check.blockers, ["request"]);
+  const steps = blockerCount(check.blockers, ["effect", "session"]);
+  const terminals = check.openTerminals ?? 0;
+  const lines = [
+    tasks > 0
+      ? `${plural(tasks, "task", "tasks")} will be interrupted. You can continue ${tasks === 1 ? "it" : "them"} after the update.`
+      : null,
+    queued > 0 ? `${plural(queued, "queued message", "queued messages")} will be cancelled.` : null,
+    questions > 0
+      ? `${plural(questions, "open question or approval", "open questions or approvals")} will be closed.`
+      : null,
+    terminals > 0 ? `${plural(terminals, "terminal", "terminals")} will close.` : null,
+    steps > 0 ? `${plural(steps, "agent step", "agent steps")} will be stopped.` : null,
+  ].filter((line): line is string => line !== null);
+  if (lines.length === 0) return null;
+  return ["Stop running work and update now?", ...lines].join("\n");
+}
+
 export interface ServiceUpdateToastView {
   readonly type: "loading" | "warning" | "success" | "error";
   readonly title: string;
   readonly description: string;
-  /** Offer to stop what still runs (waiting) or to try again (failed). */
-  readonly action: "stop" | "retry" | null;
+  /** Stop what still runs and install now (asked or waiting), or try again (failed). */
+  readonly action: "update-now" | "retry" | null;
+  /** Offer to withdraw the install request and let work start again. */
+  readonly cancel: boolean;
 }
 
 /**
- * The persistent toast for a service update. `waitedLong` is true once the
- * wait has outlasted the time a stop normally takes, so the toast names what
- * is left instead of a spinner that never ends.
+ * The persistent toast for a service update. While the agent is asked or
+ * waits it always offers "Update now" and "Cancel update"; `waitedLong` (the
+ * wait outlasted a normal stop) only turns it into a warning.
  */
 export function serviceUpdateToast(
   progress: ServiceUpdateProgress,
@@ -339,32 +452,21 @@ export function serviceUpdateToast(
         title: `Preparing to install ${version}`,
         description: "Stopping running tasks and cancelling queued messages…",
         action: null,
+        cancel: false,
       };
     case "requesting":
-      return {
-        type: "loading",
-        title: `Preparing to install ${version}`,
-        description: "Asking the update agent to install it…",
-        action: null,
-      };
     case "waiting": {
       const blockers = describeServiceUpdateBlockers(progress.blockers);
-      if (!waitedLong) {
-        return {
-          type: "loading",
-          title: `Preparing to install ${version}`,
-          description: blockers || "Waiting for the last work to finish…",
-          action: null,
-        };
-      }
+      const fallback =
+        progress.phase === "requesting"
+          ? "Asking the update agent to install it…"
+          : "Waiting for the last work to finish…";
       return {
-        type: "warning",
-        title: `Waiting to install ${version}`,
-        description:
-          blockers ||
-          progress.message ||
-          "Something on this computer is still working. It installs as soon as that ends.",
-        action: blockers ? "stop" : "retry",
+        type: waitedLong ? "warning" : "loading",
+        title: waitedLong ? `Waiting to install ${version}` : `Preparing to install ${version}`,
+        description: blockers || progress.message || fallback,
+        action: "update-now",
+        cancel: true,
       };
     }
     case "installing":
@@ -373,6 +475,7 @@ export function serviceUpdateToast(
         title: `Installing ${version}`,
         description: "The service restarts on its own; this window reconnects when it is back.",
         action: null,
+        cancel: false,
       };
     case "restarting":
       return {
@@ -380,6 +483,7 @@ export function serviceUpdateToast(
         title: `Updated to ${version}`,
         description: "Reloading this window…",
         action: null,
+        cancel: false,
       };
     case "failed":
       return {
@@ -387,6 +491,7 @@ export function serviceUpdateToast(
         title: `Could not install ${version}`,
         description: progress.message ?? "See Settings > About for the update receipt.",
         action: "retry",
+        cancel: false,
       };
   }
 }

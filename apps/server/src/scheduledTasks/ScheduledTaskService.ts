@@ -44,6 +44,7 @@ import * as Metrics from "../observability/Metrics.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
+import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import { isMissedFixedTimeRun, isSameSchedule } from "./Schedule.ts";
 import { redactHeaders, redactQuery, renderWebhookPrompt } from "./webhookTemplate.ts";
 import { constantTimeEquals, verifyWebhookSignature } from "./webhookVerification.ts";
@@ -150,6 +151,7 @@ export const layer = Layer.effect(
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
     const secretRequests = yield* SecretRequests.SecretRequests;
     const scheduler = yield* Scheduler.Scheduler;
+    const updateHold = yield* ServiceUpdateHold.optional;
     const projects = yield* ProjectStore.ProjectStoreV2;
     const admission = yield* ProjectAdmission.ProjectAdmission;
     const readWebhookOrigin = yield* ScheduledTaskWebhookOrigin;
@@ -472,12 +474,20 @@ export const layer = Layer.effect(
         ),
       );
 
+    /** Refused, with the reason shown as is, while the service is held or gated for an update. */
+    const refuseWhileUpdating = (taskId: ScheduledTaskId) =>
+      updateHold
+        .refuse("scheduled-task.run")
+        .pipe(Effect.catch((refused) => Effect.fail(taskError(refused.message, { taskId }))));
+
     const runTask = Effect.fn("ScheduledTaskService.runTask")(function* (
       task: ScheduledTask,
       trigger: "scheduled" | "manual" | "webhook",
       webhook?: { readonly deliveryId: string; readonly prompt: string },
       manualCommandId?: CommandId,
     ) {
+      // A run records its receipt first, which an update in progress must not see.
+      yield* refuseWhileUpdating(task.id);
       const reserved = yield* Ref.modify(activeRuns, (active) => {
         if (active.has(task.id)) return [false, active] as const;
         const next = new Set(active);
@@ -697,14 +707,16 @@ export const layer = Layer.effect(
       const due = tasks.flatMap((task) =>
         task.nextRunAt === null ? [] : [{ task, dueAt: DateTime.makeUnsafe(task.nextRunAt) }],
       );
+      const heldMsBetween = scheduler.heldMsBetween ?? (() => Effect.succeed(0));
       yield* Effect.forEach(
         due,
         ({ task, dueAt }) =>
-          Effect.suspend(() =>
-            isMissedFixedTimeRun(task.schedule, dueAt, now)
-              ? rescheduleMissedRun(task, now)
-              : runTask(task, "scheduled"),
-          ).pipe(
+          heldMsBetween(DateTime.toEpochMillis(dueAt), DateTime.toEpochMillis(now)).pipe(
+            Effect.flatMap((heldMs) =>
+              isMissedFixedTimeRun(task.schedule, dueAt, now, heldMs)
+                ? rescheduleMissedRun(task, now)
+                : runTask(task, "scheduled"),
+            ),
             Effect.catch((cause) =>
               Effect.logWarning("Scheduled task run failed", { taskId: task.id, cause }),
             ),
@@ -713,13 +725,11 @@ export const layer = Layer.effect(
       );
     });
 
-    // Recover from a crash or hard shutdown mid-run: rows stuck in 'running'
-    // would otherwise be skipped by the due-task filter forever. The dispatch
-    // may already have gone out before the crash, so next_run_at must advance
-    // and run_count must count the attempt — otherwise the first poll after
-    // every restart re-fires the interrupted task (same rationale as
-    // releaseStuckRun). Schedules are JSON, so this is per-row Effect work
-    // rather than a single UPDATE.
+    // Recover from a crash or hard shutdown mid-run: rows stuck in 'running' would otherwise be
+    // skipped by the due-task filter forever. The dispatch may already have gone out before the
+    // crash, so next_run_at must advance and run_count must count the attempt — otherwise the
+    // first poll after every restart re-fires the interrupted task (same rationale as
+    // releaseStuckRun). Schedules are JSON, so this is per-row Effect work, not one UPDATE.
     yield* Effect.gen(function* () {
       const rows = yield* selectAllRows();
       const stuck = rows.filter((row) => row.last_run_status === "running");
@@ -742,9 +752,8 @@ export const layer = Layer.effect(
               `;
               return;
             }
-            // The schedule cannot be decoded, so the next occurrence cannot
-            // be computed — still release the row so it is not stuck in
-            // 'running' (the lenient poller skips it, so it cannot re-fire).
+            // The schedule cannot be decoded, so the next occurrence cannot be computed — still
+            // release the row from 'running' (the lenient poller skips it, so it cannot re-fire).
             yield* Effect.logWarning(
               "Recovering undecodable schedule task row without rescheduling",
               { taskId: row.task_id, cause: decoded.failure },
@@ -959,6 +968,8 @@ export const layer = Layer.effect(
           Effect.provideService(ProjectStore.ProjectStoreV2, projects),
           Effect.provideService(SqlClient.SqlClient, sql),
         );
+        // Before the receipt below: nothing is written while an update is in progress.
+        yield* refuseWhileUpdating(task.id);
         if (input.commandId !== undefined) {
           const replay = yield* reserveRun(input.commandId, task, iso(yield* localNow)).pipe(
             Effect.provideService(SqlClient.SqlClient, sql),

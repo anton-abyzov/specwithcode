@@ -27,6 +27,8 @@ import {
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { CLOUD_MINT_PUBLIC_KEY, RELAY_ISSUER_SECRET } from "../cloud/config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
+import { makeGatedHold } from "../serviceUpdate/UpdateInstallGate.testkit.ts";
 import * as RelayDeliveryProof from "./RelayDeliveryProof.ts";
 import { WEBHOOK_MAX_BODY_BYTES } from "./webhookRoute.ts";
 import * as WebhookRoute from "./webhookRoute.ts";
@@ -76,10 +78,17 @@ const handlerFor = (
     request: WebhookTriggerRequest,
   ) => Effect.Effect<WebhookTriggerResult, ScheduledTaskError>,
   secrets: ReadonlyMap<string, string> = linkedSecrets,
+  updateHold?: ServiceUpdateHold.ServiceUpdateHoldShape,
 ) =>
   HttpRouter.toWebHandler(
     HttpApiBuilder.layer(WebhookTestApi).pipe(
-      Layer.provide(WebhookRoute.layer),
+      Layer.provide(
+        updateHold === undefined
+          ? WebhookRoute.layer
+          : WebhookRoute.layer.pipe(
+              Layer.provide(Layer.succeed(ServiceUpdateHold.ServiceUpdateHold, updateHold)),
+            ),
+      ),
       Layer.provide(RelayDeliveryProof.layer),
       Layer.provide(Layer.mock(ScheduledTaskService)({ triggerWebhook: trigger })),
       Layer.provide(
@@ -115,6 +124,55 @@ const post = (
 ) => new Request(`http://env.local${path}`, { method: "POST", body, headers });
 
 describe("webhook route", () => {
+  // Live clock: the handler runs on its own runtime, which reads the gate's time for real.
+  it.live(
+    "answers 503 with Retry-After while an install's gate is live or the service is held",
+    () =>
+      Effect.gen(function* () {
+        const gated = yield* makeGatedHold();
+        let triggered = 0;
+        const { handler, dispose } = handlerFor(
+          () => {
+            triggered += 1;
+            return Effect.succeed({
+              _tag: "accepted",
+              deliveryId: ScheduledTaskWebhookDeliveryId.make("delivery:held"),
+              outcome: "accepted",
+            });
+          },
+          linkedSecrets,
+          gated.hold,
+        );
+        const send = Effect.promise(() =>
+          handler(post("/api/hooks/scheduled-task%3Ahook/tok", "{}")),
+        );
+        const expectUpdating = (response: Response) => {
+          expect(response.status).toBe(503);
+          expect(response.headers.get("x-studio-hook-outcome")).toBe("service_updating");
+          expect(response.headers.get("retry-after")).toBe("60");
+        };
+        yield* Effect.gen(function* () {
+          // The helper still verifies the release and may roll it back: nothing is kept in
+          // memory that the rollback would lose, so the sender retries.
+          expectUpdating(yield* send);
+
+          // "Update now"'s own hold: this process is about to be replaced.
+          yield* gated.hold.acquire();
+          yield* gated.clear;
+          while (yield* gated.hold.installGated) yield* Effect.sleep("10 millis");
+          expectUpdating(yield* send);
+          yield* Effect.sleep("50 millis");
+          expect(triggered).toBe(0);
+
+          yield* gated.hold.release("test");
+          const after = yield* send;
+          expect(after.status).toBe(202);
+          expect(after.headers.get("x-studio-hook-outcome")).toBe("accepted");
+          expect(triggered).toBe(1);
+        }).pipe(Effect.ensuring(Effect.promise(() => dispose())));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it("passes the raw request to the service and answers 202 with the delivery id", async () => {
     let received: WebhookTriggerRequest | undefined;
     const { handler, dispose } = handlerFor((request) => {

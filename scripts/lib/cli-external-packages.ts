@@ -93,9 +93,14 @@ export function shouldBundleCliDependency(id: string): boolean {
 
 /** Workspace code must be inlined; an unresolved first-party import is a broken artifact. */
 export function isUnresolvedFirstPartyCliImport(id: string): boolean {
-  return id === "effect-acp" || id.startsWith("effect-acp/") ||
-    id === "effect-codex-app-server" || id.startsWith("effect-codex-app-server/") ||
-    id.startsWith("@specweave-studio/") || id.startsWith("@studio/") || id.startsWith("@specweave-studio/");
+  return (
+    id === "effect-acp" ||
+    id.startsWith("effect-acp/") ||
+    id === "effect-codex-app-server" ||
+    id.startsWith("effect-codex-app-server/") ||
+    id.startsWith("@studio/") ||
+    id.startsWith("@specweave-studio/")
+  );
 }
 
 /** Select direct dependency roots whose runtime closure belongs in the sidecar. */
