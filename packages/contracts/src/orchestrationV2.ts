@@ -1251,6 +1251,8 @@ export const OrchestrationV2FileChangeDetail = Schema.Struct({
   operation: TrimmedNonEmptyString,
   path: TrimmedNonEmptyString,
   oldPath: Schema.optional(TrimmedNonEmptyString),
+  /** Exact provider patch for this operation, independent of the item's combined diff. */
+  diffStr: Schema.optional(Schema.String),
   fileType: Schema.optional(TrimmedNonEmptyString),
   mimeType: Schema.optional(TrimmedNonEmptyString),
 });
@@ -1460,6 +1462,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     requestId: RuntimeRequestId,
     requestKind: ProviderRequestKind,
     prompt: Schema.optional(Schema.String),
+    /** Provider file-write grant: null means explicitly absent; omitted means unknown. */
+    grantRoot: Schema.optional(Schema.NullOr(Schema.String)),
     /** App requesting access, for mcp-elicitation approvals (#8058). */
     appName: Schema.optional(Schema.String),
     /** Approval choices advertised by the provider (#8058). */
@@ -2238,6 +2242,8 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     requestId: RuntimeRequestId,
     requestKind: ProviderRequestKind,
     prompt: Schema.optional(Schema.String),
+    /** Provider file-write grant: null means explicitly absent; omitted means unknown. */
+    grantRoot: Schema.optional(Schema.NullOr(Schema.String)),
     /** App requesting access, for mcp-elicitation approvals (#8058). */
     appName: Schema.optional(Schema.String),
     /** Approval choices advertised by the provider (#8058). */
