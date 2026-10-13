@@ -104,6 +104,22 @@ it("preserves actionable handoff errors wrapped by turn startup", () => {
   );
 });
 
+it("keeps native quota admission typed when an existing session starts its turn", () => {
+  const resetAt = "2026-10-18T03:58:37.000Z";
+  const cause = new ProviderAdapterTurnStartError({
+    driver: ProviderDriverKind.make("codex"), threadId: ThreadId.make("thread:quota"),
+    providerThreadId: ProviderThreadId.make("provider-thread:quota"), runId: RunId.make("run:quota"),
+    cause: new ProviderSetupError({ instanceId: ProviderInstanceId.make("codex"), operation: "session", detail: "Permission denied", usageLimit: { resetAt } }),
+  });
+  for (const wrapped of [cause, Cause.fail(cause)]) {
+    const failure = makeProviderFailure({ cause: wrapped, class: "provider_error" });
+    assert.equal(failure.class, "usage_limit");
+    assert.equal(failure.resetAt, resetAt);
+    assert.equal(failure.message, "Permission denied");
+  }
+  assert.equal(makeProviderFailure({ cause: new Error("usage limit denied"), class: "provider_error" }).class, "provider_error");
+});
+
 it("names the setup reason when turn startup fails a native status check", () => {
   const cause = new ProviderAdapterTurnStartError({
     driver: ProviderDriverKind.make("claudeAgent"),

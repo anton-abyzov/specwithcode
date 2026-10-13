@@ -1,7 +1,8 @@
-import { GoogleService, OrchestratorMcpFailure } from "@specweave-studio/contracts";
+import { OrchestratorMcpFailure } from "@specweave-studio/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 import * as Google from "../../../integrations/google/GoogleAccountService.ts";
+import { GoogleProjectStatus } from "../../../integrations/google/googleAccountHealth.ts";
 import * as Threads from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as Invocation from "../../McpInvocationContext.ts";
 
@@ -22,12 +23,11 @@ export const GoogleToolkit = Toolkit.make(
   Tool.make("studio_google_status", {
     ...shared,
     description:
-      "Which Google services (gmail, calendar, drive) the user turned on for this project, and the signed-in account when at least one is on. Studio's Google access is read-only.",
-    parameters: Tool.EmptyParams,
-    success: Schema.Struct({
-      email: Schema.NullOr(Schema.String),
-      services: Schema.Array(GoogleService),
+      "Check this project's native Google setup before Calendar, Gmail or Drive work. Distinguishes missing sign-in, project permission, consent and API failures. The default reads saved configuration only. Set checkConnection:true to verify only services this project may read using content-free API probes. Connections in other apps and studio_project_connections_list are separate. Never infer working Google access from a saved sign-in or from provider model availability.",
+    parameters: Schema.Struct({
+      checkConnection: Schema.optional(Schema.Boolean),
     }),
+    success: GoogleProjectStatus,
   })
     .annotate(Tool.Readonly, true)
     .annotate(Tool.Destructive, false),

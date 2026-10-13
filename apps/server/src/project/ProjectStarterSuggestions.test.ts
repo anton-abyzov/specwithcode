@@ -335,6 +335,97 @@ it.layer(layer)("ProjectStarterSuggestionsService", (it) => {
     }),
   );
 
+  it.effect("finds open increments far older than the newest closed ones", () =>
+    Effect.gen(function* () {
+      const fixture = yield* project();
+      yield* fixture.write("README.md", "# Fixture\n");
+      // Like specweave-umb: hundreds of closed increments after a few left open.
+      for (let number = 1; number <= 300; number++) {
+        const id = `${String(number).padStart(4, "0")}-closed-${number}`;
+        yield* fixture.write(
+          `.specweave/increments/${id}/metadata.json`,
+          JSON.stringify({ status: "completed", title: `Closed ${number}` }),
+        );
+      }
+      yield* fixture.write(
+        ".specweave/increments/0010-early-open/metadata.json",
+        JSON.stringify({ status: "active", title: "Early open" }),
+      );
+      yield* fixture.write(
+        ".specweave/increments/0020-later-open/metadata.json",
+        JSON.stringify({ status: "in-progress", title: "Later open" }),
+      );
+      const result = yield* fixture.read;
+      const increment = result.suggestions.find((entry) => entry.id === "increment");
+      assert.equal(increment?.title, "Continue increment 0020");
+      assert.equal(increment?.detail, "Later open. 1 other increment is open too.");
+    }),
+  );
+
+  it.effect("counts every open increment and sees a handoff on an older one", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.now());
+      const fixture = yield* project();
+      yield* fixture.write("README.md", "# Fixture\n");
+      // Seven open increments; the oldest one carries the pending handoff.
+      for (let number = 1; number <= 7; number++) {
+        const id = `${String(number).padStart(4, "0")}-open-${number}`;
+        yield* fixture.write(
+          `.specweave/increments/${id}/metadata.json`,
+          JSON.stringify({ status: "active", title: `Open ${number}` }),
+        );
+      }
+      yield* fixture.write(".specweave/increments/0001-open-1/handoff.md", "# Handoff\n");
+      const result = yield* fixture.read;
+      const byId = new Map(result.suggestions.map((entry) => [entry.id, entry]));
+      assert.equal(byId.get("handoff")?.title, "Pick up the handoff for 0001");
+      assert.equal(byId.get("increment")?.title, "Continue increment 0007");
+      assert.equal(byId.get("increment")?.detail, "Open 7. 6 other increments are open too.");
+    }),
+  );
+
+  it.effect("reads an open increment whose metadata has grown past 64 KB", () =>
+    Effect.gen(function* () {
+      const fixture = yield* project();
+      yield* fixture.write("README.md", "# Fixture\n");
+      // SpecWeave appends sync events to an active increment's metadata.
+      yield* fixture.write(
+        ".specweave/increments/0042-long-running/metadata.json",
+        JSON.stringify({
+          status: "active",
+          title: "Long running",
+          acSyncEvents: Array.from({ length: 1_500 }, (_, index) => ({
+            at: "2026-10-10T00:00:00.000Z",
+            note: `sync event ${index} with some detail`,
+          })),
+        }),
+      );
+      const result = yield* fixture.read;
+      const increment = result.suggestions.find((entry) => entry.id === "increment");
+      assert.equal(increment?.title, "Continue increment 0042");
+    }),
+  );
+
+  it.effect("orders increments by number past 9999", () =>
+    Effect.gen(function* () {
+      const fixture = yield* project();
+      yield* fixture.write("README.md", "# Fixture\n");
+      for (const [id, title] of [
+        ["9999-four-digits", "Four digits"],
+        ["10000-five-digits", "Five digits"],
+      ] as const) {
+        yield* fixture.write(
+          `.specweave/increments/${id}/metadata.json`,
+          JSON.stringify({ status: "active", title }),
+        );
+      }
+      const result = yield* fixture.read;
+      const increment = result.suggestions.find((entry) => entry.id === "increment");
+      assert.equal(increment?.title, "Continue increment 10000");
+      assert.equal(increment?.detail, "Five digits. 1 other increment is open too.");
+    }),
+  );
+
   it.effect("offers the files that change most, and the project's own checks", () =>
     Effect.gen(function* () {
       const fixture = yield* project();

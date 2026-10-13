@@ -122,6 +122,49 @@ describe("resolveReportIncrement from report text", () => {
   });
 });
 
+describe("resolveReportIncrement past 9999", () => {
+  it("matches five-digit increment numbers and folders", async () => {
+    const root = await project(["1000-other", "9999-last", "10001-export"]);
+    const home = await temp("studio-home-");
+    const source = { threadId: "t", branch: null, home };
+    expect(await resolveReportIncrement(root, { ...source, title: "Review 10001" })).toBe(
+      "10001-export",
+    );
+    expect(
+      await resolveReportIncrement(root, {
+        ...source,
+        title: "Review",
+        branch: "inc/10001-export-fix",
+      }),
+    ).toBe("10001-export");
+    expect(await resolveReportIncrement(root, { ...source, title: "Ship 9999" })).toBe("9999-last");
+  });
+
+  it("never maps a five-digit folder onto a four-digit one sharing its first digits", async () => {
+    const root = await project(["1000-other"]);
+    const home = await temp("studio-home-");
+    expect(
+      await resolveReportIncrement(root, {
+        threadId: "t",
+        title: "Review",
+        branch: "inc/10001-missing",
+        home,
+      }),
+    ).toBeNull();
+  });
+
+  it("uses a five-digit increment number SpecWeave recorded for the thread", async () => {
+    const root = await project(["10001-export", "10002-import"]);
+    const home = await temp("studio-home-");
+    const pointer = specweaveStudioCheckpointPath("thread-5", home);
+    await NodeFSP.mkdir(NodePath.dirname(pointer), { recursive: true });
+    await NodeFSP.writeFile(pointer, JSON.stringify({ version: 1, incrementId: "10002" }));
+    expect(
+      await resolveReportIncrement(root, { threadId: "thread-5", title: "x", branch: null, home }),
+    ).toBe("10002-import");
+  });
+});
+
 describe("saveThreadReport", () => {
   it("saves into the increment's reports folder once, with front matter", async () => {
     const root = await project(["0973-budget-vs-actuals"]);
@@ -236,5 +279,26 @@ describe("saveThreadReport", () => {
       (await NodeFSP.readFile(path, "utf8")).replace('thread: "a"', 'thread: "someone-else"'),
     );
     expect((await readThreadReports(root, a)).reports).toEqual([]);
+  });
+
+  it("finds a report saved in a five-digit increment among many others", async () => {
+    const folders = Array.from({ length: 60 }, (_, index) => `${9970 + index}-work-${index}`);
+    const root = await project(folders);
+    const home = await temp("studio-home-");
+    // Another thread's report in an old increment is never returned.
+    await saveThreadReport(
+      root,
+      { threadId: "other", title: "Fix 9971", branch: null, home },
+      REPORT,
+    );
+    const source = { threadId: "five", title: "Fix 10025", branch: null, home };
+    const saved = await saveThreadReport(root, source, REPORT);
+    expect(saved.increment?.id).toBe("10025-work-55");
+    const read = await readThreadReports(root, { ...source, title: "Renamed" });
+    expect(read.increment?.id).toBe("10025-work-55");
+    expect(read.reports.map((report) => report.key)).toEqual([reportKey("five", REPORT)]);
+    expect(read.reports[0]!.path.startsWith(".specweave/increments/10025-work-55/reports/")).toBe(
+      true,
+    );
   });
 });

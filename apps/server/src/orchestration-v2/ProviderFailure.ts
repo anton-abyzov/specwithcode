@@ -15,6 +15,7 @@ import * as Cause from "effect/Cause";
 
 import type { IdAllocatorV2Shape } from "./IdAllocator.ts";
 import { ContextHandoffBudgetError } from "./ContextHandoffDelivery.ts";
+import { providerSetupFailure } from "./ProviderAdapter.ts";
 
 export const MAX_PROVIDER_FAILURE_MESSAGE_LENGTH = 4_096;
 export const MAX_PROVIDER_FAILURE_CODE_LENGTH = 128;
@@ -146,6 +147,9 @@ export function makeProviderFailure(input: {
   readonly retryable?: boolean | null;
   readonly resetAt?: string | null;
 }): OrchestrationV2ProviderFailure {
+  const setup = providerSetupFailure(input.cause);
+  const failureClass = setup?.usageLimit ? "usage_limit" : input.class ?? "unknown";
+  const resetAt = setup?.usageLimit?.resetAt ?? input.resetAt;
   const rawMessage = input.message ?? causeMessage(input.cause) ?? DEFAULT_PROVIDER_FAILURE_MESSAGE;
   const message = boundedText(rawMessage, MAX_PROVIDER_FAILURE_MESSAGE_LENGTH);
   const rawCode = input.code ?? stringField(input.cause, "code") ?? null;
@@ -153,14 +157,14 @@ export function makeProviderFailure(input: {
     rawCode === null ? null : boundedText(rawCode, MAX_PROVIDER_FAILURE_CODE_LENGTH) || null;
 
   return {
-    class: input.class ?? "unknown",
+    class: failureClass,
     message: message || DEFAULT_PROVIDER_FAILURE_MESSAGE,
     code,
     retryable: input.retryable ?? null,
-    ...(input.class === "usage_limit" &&
-    input.resetAt != null &&
-    Number.isFinite(Date.parse(input.resetAt))
-      ? { resetAt: DateTime.formatIso(DateTime.makeUnsafe(input.resetAt)) }
+    ...(failureClass === "usage_limit" &&
+    resetAt != null &&
+    Number.isFinite(Date.parse(resetAt))
+      ? { resetAt: DateTime.formatIso(DateTime.makeUnsafe(resetAt)) }
       : {}),
   };
 }

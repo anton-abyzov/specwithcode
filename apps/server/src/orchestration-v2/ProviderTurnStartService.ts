@@ -44,6 +44,7 @@ import {
 import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
 import {
   ProviderAdapterTurnStartError,
+  providerSetupFailure,
   providerSetupFailureDetail,
   type ProviderAdapterV2Error,
   type ProviderAdapterV2HistoricalContext,
@@ -638,7 +639,10 @@ export const layer: Layer.Layer<
           });
         });
       if (sessionResult._tag === "Failure") {
-        if (input.willRetry === true) return yield* sessionResult.failure;
+        // Admission already refreshed once. A real quota denial cannot be
+        // repaired by immediately reopening the same native session five times.
+        if (input.willRetry === true && !providerSetupFailure(sessionResult.failure)?.usageLimit)
+          return yield* sessionResult.failure;
         yield* settleStartFailure({
           signal: "provider-session-open-failure",
           title: "Provider session failed to open",

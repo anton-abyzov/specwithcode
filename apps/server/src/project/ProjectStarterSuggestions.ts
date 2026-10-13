@@ -14,6 +14,7 @@ import {
   isPlainSourcePath,
   type ProjectStarterSignals,
 } from "@specweave-studio/shared/projectStarterSuggestions";
+import { compareIncrementFoldersNewestFirst } from "@specweave-studio/shared/specweaveIncrement";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -40,9 +41,18 @@ const METADATA_ENTRIES = new Set([".git", ".DS_Store", "Thumbs.db", ".specweave-
 const README = /^readme(?:\.[a-z0-9]+)?$/i;
 const INCREMENT_DIRECTORY = /^\d{3,5}[A-Z]?-[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const OPEN_INCREMENT_STATUSES = new Set(["active", "in-progress"]);
-/** Newest increments only: an old project keeps hundreds of closed ones. */
-const INCREMENTS_READ = 60;
-const OPEN_INCREMENTS_KEPT = 5;
+/**
+ * Every increment's small metadata file is read to find the open ones, since
+ * an increment left open stays open however many closed ones follow it. This
+ * only bounds a runaway folder.
+ */
+const INCREMENTS_SCANNED = 5_000;
+const INCREMENT_METADATA_CONCURRENCY = 16;
+/**
+ * Open increments whose ledger and handoff note are read, newest first. All of
+ * them are counted and any of them may hold the pending handoff.
+ */
+const OPEN_INCREMENTS_READ = 60;
 const MANIFEST_BYTES = 524_288;
 const HANDOFF_FRESH_MS = 3 * 24 * 60 * 60 * 1000;
 /** Dated handoff notes pile up in `.specweave/handoffs/`; the newest few are enough. */
@@ -242,10 +252,10 @@ const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
   /** A file's text when it is there and small enough to be a manifest. */
-  const smallFile = (file: string) =>
+  const smallFile = (file: string, maximum = MANIFEST_BYTES) =>
     Effect.gen(function* () {
       const info = yield* fs.stat(file);
-      if (info.type !== "File" || Number(info.size) > MANIFEST_BYTES) return null;
+      if (info.type !== "File" || Number(info.size) > maximum) return null;
       return yield* fs.readFileString(file);
     }).pipe(Effect.orElseSucceed(() => null));
 
@@ -345,10 +355,11 @@ const make = Effect.gen(function* () {
       const names = yield* fs
         .readDirectory(path.join(home, "increments"))
         .pipe(Effect.orElseSucceed((): string[] => []));
-      const newest = names
+      // Newest first by number, so `10000-x` comes before `9999-x`.
+      const folders = names
         .filter((name) => INCREMENT_DIRECTORY.test(name))
-        .toSorted((a, b) => b.localeCompare(a))
-        .slice(0, INCREMENTS_READ);
+        .toSorted(compareIncrementFoldersNewestFirst)
+        .slice(0, INCREMENTS_SCANNED);
       const modifiedAt = (file: string) =>
         fs.stat(file).pipe(
           Effect.map((info) =>
@@ -356,14 +367,27 @@ const make = Effect.gen(function* () {
           ),
           Effect.orElseSucceed(() => null),
         );
-      const read = yield* Effect.forEach(
-        newest,
+      // Only metadata first: an increment opened long ago is as open as a new one.
+      const statuses = yield* Effect.forEach(
+        folders,
         (id) =>
+          // An active increment's metadata grows with sync events; read it at manifest size.
+          smallFile(path.join(home, "increments", id, "metadata.json")).pipe(
+            Effect.map((metadata) => ({
+              id,
+              title: metadata === null ? null : openIncrementTitle(metadata),
+            })),
+          ),
+        { concurrency: INCREMENT_METADATA_CONCURRENCY },
+      );
+      const newestOpen = statuses
+        .filter((entry): entry is { id: string; title: string } => entry.title !== null)
+        .slice(0, OPEN_INCREMENTS_READ);
+      const open = yield* Effect.forEach(
+        newestOpen,
+        ({ id, title }) =>
           Effect.gen(function* () {
             const folder = path.join(home, "increments", id);
-            const metadata = yield* smallFile(path.join(folder, "metadata.json"));
-            const title = metadata === null ? null : openIncrementTitle(metadata);
-            if (title === null) return null;
             // Newer increments keep their title in spec.md's heading, not in metadata.
             const spec = title === "" ? yield* smallFile(path.join(folder, "spec.md")) : null;
             // The ledger says whether a handoff was picked up; a note with no
@@ -381,7 +405,6 @@ const make = Effect.gen(function* () {
           }),
         { concurrency: 8 },
       );
-      const open = read.filter((entry) => entry !== null);
       // The project-wide notes: index.json, and dated notes such as 2026-10-10-INDEX.md.
       const notes = yield* fs
         .readDirectory(path.join(home, "handoffs"))
@@ -406,9 +429,7 @@ const make = Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
       const hasRecentHandoff = now - handedOffAt < HANDOFF_FRESH_MS;
       return {
-        openIncrements: open
-          .map((entry) => ({ id: entry.id, title: entry.title }))
-          .slice(0, OPEN_INCREMENTS_KEPT),
+        openIncrements: open.map((entry) => ({ id: entry.id, title: entry.title })),
         hasRecentHandoff,
         // A project-wide note newer than any increment's speaks for all of them.
         handoffIncrement:

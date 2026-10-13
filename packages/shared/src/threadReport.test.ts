@@ -65,6 +65,20 @@ describe("thread report helpers", () => {
     ]);
   });
 
+  it("finds increment numbers and folders past 9999", () => {
+    expect(
+      reportIncrementCandidates({
+        title: "Review 10001",
+        branch: "inc/10002-export",
+        text: "Saved in .specweave/increments/10003-csv.",
+      }),
+    ).toEqual([
+      { kind: "number", value: "10001" },
+      { kind: "folder", value: "10002-export" },
+      { kind: "folder", value: "10003-csv", fromText: true },
+    ]);
+  });
+
   it("names files by day, title and key, and reads the key back", () => {
     const name = reportFileName({
       savedAt: "2026-10-12T07:30:00.000Z",

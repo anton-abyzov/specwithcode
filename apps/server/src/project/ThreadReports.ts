@@ -24,13 +24,18 @@ import {
   reportTitle,
   type ReportIncrementCandidate,
 } from "@specweave-studio/shared/threadReport";
+import { compareIncrementFolders } from "@specweave-studio/shared/specweaveIncrement";
 
 import { specweaveStudioCheckpointPath } from "../orchestration-v2/SpecweaveCheckpoint.ts";
 import { ProjectLibraryProblem } from "./ProjectLibrary.ts";
 
 export const INCREMENTS_DIR = ".specweave/increments";
 export const THREAD_REPORTS_DIR = ".specweave/reports/threads";
-const INCREMENT_FOLDER = /^\d{4}-[a-z0-9]+(?:-[a-z0-9]+)*$/i;
+/** `0973-budget`, and past 9999 `10001-export`. */
+const INCREMENT_FOLDER = /^\d{4,}-[a-z0-9]+(?:-[a-z0-9]+)*$/i;
+const INCREMENT_NUMBER = /^\d{4,}$/;
+/** Increment `reports/` folders listed at once while looking for a thread's reports. */
+const REPORT_FOLDER_CONCURRENCY = 16;
 
 export interface ThreadReportSource {
   readonly threadId: string;
@@ -67,14 +72,40 @@ async function specweaveFolder(root: string): Promise<boolean> {
   return stat !== null && stat.isDirectory() && !stat.isSymbolicLink();
 }
 
-async function incrementFolders(root: string): Promise<string[]> {
+/** The increments folder (resolved, inside the project) and its increment folders, oldest first. */
+async function incrementListing(root: string): Promise<{ dir: string | null; folders: string[] }> {
   const dir = await directoryWithin(root, INCREMENTS_DIR);
-  if (dir === null) return [];
+  if (dir === null) return { dir, folders: [] };
   const entries = await NodeFSP.readdir(dir, { withFileTypes: true }).catch(() => []);
-  return entries
-    .filter((entry) => entry.isDirectory() && INCREMENT_FOLDER.test(entry.name))
-    .map((entry) => entry.name)
-    .toSorted();
+  return {
+    dir,
+    folders: entries
+      .filter((entry) => entry.isDirectory() && INCREMENT_FOLDER.test(entry.name))
+      .map((entry) => entry.name)
+      .toSorted(compareIncrementFolders),
+  };
+}
+
+async function incrementFolders(root: string): Promise<string[]> {
+  return (await incrementListing(root)).folders;
+}
+
+/** Maps `items` with at most `limit` calls in flight, keeping their order. */
+async function mapLimited<T, R>(
+  items: ReadonlyArray<T>,
+  limit: number,
+  run: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = Array.from({ length: items.length });
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await run(items[index]!);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
 }
 
 /** The increment SpecWeave's own hooks recorded for this Studio thread, if any. */
@@ -112,7 +143,8 @@ function matchIncrement(
       .toSorted((left, right) => right.length - left.length)[0];
     if (extended !== undefined) return extended;
     if (candidate.fromText) continue;
-    const numbered = byNumber(value.slice(0, 4));
+    const leading = /^\d{4,}/.exec(value)?.[0];
+    const numbered = leading === undefined ? null : byNumber(leading);
     if (numbered !== null) return numbered;
   }
   return null;
@@ -137,7 +169,7 @@ export async function resolveReportIncrement(
   if (recorded !== null) {
     // A recorded folder must exist here; another repo's `0042-foo` never maps onto a local `0042-*`.
     candidates.push(
-      /^\d{4}$/.test(recorded)
+      INCREMENT_NUMBER.test(recorded)
         ? { kind: "number", value: recorded }
         : { kind: "folder", value: recorded.toLowerCase(), fromText: true },
     );
@@ -165,6 +197,11 @@ async function savedThreadId(file: string): Promise<string | null> {
   } finally {
     await handle.close();
   }
+}
+
+/** Whether a file name is a saved report of the thread with this key. */
+function isThreadReportName(name: string, threadKey: string): boolean {
+  return reportKeyFromFileName(name)?.startsWith(`${threadKey}-`) === true;
 }
 
 async function reportsIn(root: string, relativeDir: string, threadKey: string, threadId: string) {
@@ -219,10 +256,23 @@ export async function readThreadReports(
   const root = NodePath.resolve(workspaceRoot);
   if (!(await specweaveFolder(root))) return snapshot(root, false, null, []);
   const threadKey = reportThreadKey(source.threadId);
-  const folders = await incrementFolders(root);
+  const { dir: increments, folders } = await incrementListing(root);
+  // One cheap listing per increment, a few at a time; only a `reports/` folder
+  // that holds this thread's file names gets the symlink checks and file reads.
+  const holding =
+    increments === null
+      ? []
+      : (
+          await mapLimited(folders, REPORT_FOLDER_CONCURRENCY, async (folder) => {
+            const names = await NodeFSP.readdir(NodePath.join(increments, folder, "reports")).catch(
+              (): string[] => [],
+            );
+            return names.some((name) => isThreadReportName(name, threadKey)) ? [folder] : [];
+          })
+        ).flat();
   const found = (
     await Promise.all([
-      ...folders.map((folder) =>
+      ...holding.map((folder) =>
         reportsIn(root, `${INCREMENTS_DIR}/${folder}/reports`, threadKey, source.threadId),
       ),
       reportsIn(root, THREAD_REPORTS_DIR, threadKey, source.threadId),

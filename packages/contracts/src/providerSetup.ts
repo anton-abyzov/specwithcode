@@ -193,6 +193,8 @@ export class ProviderSetupError extends Schema.TaggedError<ProviderSetupError>()
     instanceId: ProviderInstanceId,
     operation: Schema.String,
     detail: Schema.String,
+    /** Native admission denied work; structured so recovery never parses prose. */
+    usageLimit: Schema.optional(Schema.Struct({ resetAt: Schema.optional(IsoDateTime) })),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
