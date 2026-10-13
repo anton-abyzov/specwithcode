@@ -391,6 +391,23 @@ def listeners(port):
         assert result.returncode in {0, 1}, 'Listening ports could not be read'
         return sorted(set(int(value) for value in result.stdout.split()))
 
+# Ports of other local services: the model proxy (8317), Switch (8318) and the worker tunnels
+# (18319, 28319). Their own launchd jobs restart them, and a tunnel reconnects after any
+# network blip, so a listener there changing is not this update's doing and never refuses it.
+# What an update must not do is take one of them: that is the guarded fact.
+OTHER_SERVICE_PORTS = [8317, 8318, 18319, 28319]
+
+
+def service_owns_listener(other_listeners, root_pid, processes):
+    """True when a listener on another service's port is the Studio service or its descendant."""
+    tree, grew = {root_pid}, True
+    while grew:
+        found = {pid for pid, process in processes.items() if process['parent'] in tree} - tree
+        grew = bool(found)
+        tree |= found
+    return any(pid in tree for pids in other_listeners.values() for pid in pids)
+
+
 def _service(identity):
     """The verified installation and its running service: receipt, LaunchAgent, launcher,
     runtime record, port owner and executable. Reads no database."""
@@ -468,10 +485,11 @@ def _snapshot(identity, include_auth, since=None):
         assert path.is_file() and not path.is_symlink(), 'A protected Studio file is missing or is a link'
     file_hashes = {name: digest(path.read_bytes()) for name, path in protected.items()}
     rows, auth, carried, database = _read_state(own / 'userdata', include_auth, since, True)
+    other = {str(port): listeners(port) for port in OTHER_SERVICE_PORTS}
     proof = {'schemaVersion': 1, 'identity': identity, 'uid': 501, 'serviceLabel': label, 'servicePid': runtime['pid'],
             'archiveSha256': receipt['archiveSha256'], 'artifactSourceCommit': receipt['sourceCommit'],
             'fileHashes': file_hashes,
-            'rows': rows, 'databaseCapture': database, 'otherListeners': {str(port): listeners(port) for port in [8317,8318,18319,28319]},
+            'rows': rows, 'databaseCapture': database, 'otherListeners': other, 'otherListenersOwned': service_owns_listener(other, runtime['pid'], read_processes()),
             'cookieName': receipt['cookieName'],
             'processQuiescence': capture_quiescence(runtime['pid'], 501, str(node), content['ProgramArguments']),
             'observedAt': datetime.datetime.now(datetime.timezone.utc).isoformat()}
@@ -741,13 +759,20 @@ def wait_for_stopped(pid, timeout=30):
     raise AssertionError('Owned service did not stop for the state restore')
 
 def assert_prestate(expected, actual, carried=None):
-    for key in ['identity', 'uid', 'serviceLabel', 'servicePid', 'archiveSha256', 'artifactSourceCommit', 'fileHashes', 'rows', 'otherListeners', 'cookieName', 'processQuiescence']:
+    for key in ['identity', 'uid', 'serviceLabel', 'servicePid', 'archiveSha256', 'artifactSourceCommit', 'fileHashes', 'rows', 'otherListenersOwned', 'cookieName', 'processQuiescence']:
         if key == 'rows':
             same = same_guarded_rows(expected[key], actual[key], carried)
         elif key == 'processQuiescence':
             # Studio's own server browser may start or exit meanwhile; every capture
             # re-verifies it, and it is stopped right before the restart.
             same = quiescence_core(expected[key]) == quiescence_core(actual[key])
+        elif key == 'otherListenersOwned':
+            # Recorded pids may differ (see OTHER_SERVICE_PORTS); Studio may own none of them.
+            # A snapshot without the ownership fact (older helpers) keeps the exact comparison.
+            if key in expected and key in actual:
+                same = expected[key] is False and actual[key] is False
+            else:
+                same = expected['otherListeners'] == actual['otherListeners']
         else:
             same = expected[key] == actual[key]
         assert same, 'Guarded prestate changed: ' + key
@@ -1092,7 +1117,11 @@ def apply(identity, expected, archive, archive_sha, output, *, allow_existing_br
                 assert_capture_carried(before['databaseCapture'], after['databaseCapture'], before['rows'], after['rows'],
                                        after_carried, auth_heartbeat=False, message='Complete preexisting database changed')
             database_continuity = 'verified'
-        assert after['otherListeners'] == before['otherListeners'] and after['cookieName'] == before['cookieName']
+        if 'otherListenersOwned' in before:
+            assert after.get('otherListenersOwned') is False, 'Updated service took another service\'s port'
+        else:
+            assert after['otherListeners'] == before['otherListeners']
+        assert after['cookieName'] == before['cookieName']
         assert after['fileHashes']['settings'] == before['fileHashes']['settings'] and after['fileHashes']['environment'] == before['fileHashes']['environment'] and after['fileHashes']['plist'] == before['fileHashes']['plist']
         result = {'phase': 'verified', 'before': before, 'after': after, 'backup': str(backup), 'cliAlias': progress['cliAlias'], 'preservedRowsAuthAndIdentity': True, 'originalServicesPreserved': True,
                   'onlyKnownOwnedServiceRestarted': True, 'startupBootstrap': False, 'inferenceExecuted': False,

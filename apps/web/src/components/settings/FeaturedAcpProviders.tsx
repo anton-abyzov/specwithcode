@@ -3,6 +3,7 @@ import {
   type AcpRegistrySearchAgent,
   type EnvironmentId,
   type ProviderInstanceConfig,
+  ProviderInstanceId,
 } from "@specweave-studio/contracts";
 
 import { serverEnvironment } from "../../state/server";
@@ -11,7 +12,7 @@ import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { Button } from "../ui/button";
 import { isConfiguredAcpRegistryAgent } from "./AddProviderInstanceDialog.logic";
 
-export const FEATURED_ACP_AGENT_IDS = ["github-copilot-cli", "grok-build"] as const;
+export const FEATURED_ACP_AGENT_IDS = ["github-copilot-cli", "grok-build", "gemini"] as const;
 
 interface FeaturedAcpProvidersProps {
   readonly environmentId: EnvironmentId;
@@ -19,6 +20,7 @@ interface FeaturedAcpProvidersProps {
   readonly canManageProviders: boolean;
   readonly preparingId: string | null;
   readonly onPrepare: (agent: AcpRegistrySearchAgent) => void;
+  readonly onManage?: (instanceId: ProviderInstanceId) => void;
 }
 
 type CatalogQuery = Pick<
@@ -47,7 +49,13 @@ export function FeaturedAcpProviders(props: FeaturedAcpProvidersProps) {
       input: { query: "grok-build" },
     }),
   );
-  return <FeaturedAcpProviderCards {...props} copilot={copilot} grok={grok} />;
+  const gemini = useEnvironmentQuery(
+    serverEnvironment.searchAcpRegistry({
+      environmentId: props.environmentId,
+      input: { query: "gemini" },
+    }),
+  );
+  return <FeaturedAcpProviderCards {...props} copilot={copilot} grok={grok} gemini={gemini} />;
 }
 
 /** Presentation is also used by the isolated responsive browser fixture. */
@@ -56,11 +64,14 @@ export function FeaturedAcpProviderCards({
   canManageProviders,
   preparingId,
   onPrepare,
+  onManage,
   copilot,
   grok,
+  gemini,
 }: Omit<FeaturedAcpProvidersProps, "environmentId"> & {
   readonly copilot: CatalogQuery;
   readonly grok: CatalogQuery;
+  readonly gemini: CatalogQuery;
 }) {
   const providers: ReadonlyArray<FeaturedProvider> = [
     {
@@ -75,17 +86,27 @@ export function FeaturedAcpProviderCards({
       description: "Install here, or choose Grok above for an existing CLI.",
       catalog: grok,
     },
+    {
+      id: "gemini",
+      label: "Gemini CLI",
+      description: "Connect with the sign-in options offered by Gemini CLI.",
+      catalog: gemini,
+    },
   ];
   return (
     <section className="grid gap-2" aria-label="Featured ACP providers">
       <p className="text-xs text-muted-foreground">
-        SpecWithCode-managed installs from the official ACP Registry. Sign in after setup.
+        Add an agent, complete its sign-in, then choose its models in chat. Usage reporting alone
+        does not connect an agent.
       </p>
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
         {providers.map(({ id, label, description, catalog }) => {
           // Search is fuzzy; only the exact registry identity is trusted.
           const agent = catalog.data?.agents.find((candidate) => candidate.id === id);
           const added = isConfiguredAcpRegistryAgent(providerInstances, id);
+          const configuredId = Object.entries(providerInstances).find(([instanceId, instance]) =>
+            isConfiguredAcpRegistryAgent({ [instanceId]: instance }, id),
+          )?.[0];
           const preparing = preparingId === id;
           const unavailable = !catalog.isPending && (catalog.error !== null || !agent);
           const blocked =
@@ -113,15 +134,29 @@ export function FeaturedAcpProviderCards({
               </div>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="min-w-0 text-xs text-muted-foreground" role="status">
-                  {catalog.isPending
-                    ? "Checking registry…"
-                    : catalog.error
-                      ? "Registry unavailable"
-                      : !agent
-                        ? "Unavailable on this environment"
-                        : `v${agent.version} · ${agent.distribution}`}
+                  {added
+                    ? "Added · check setup"
+                    : catalog.isPending
+                      ? "Checking registry…"
+                      : catalog.error
+                        ? "Registry unavailable"
+                        : !agent
+                          ? "Unavailable on this environment"
+                          : `v${agent.version} · ${agent.distribution}`}
                 </p>
-                {unavailable ? (
+                {added && onManage && configuredId ? (
+                  <Button
+                    aria-label={`Manage ${label}`}
+                    disabled={preparingId !== null}
+                    onClick={() => {
+                      if (preparingId === null) onManage(ProviderInstanceId.make(configuredId));
+                    }}
+                    size="xs"
+                    variant="outline"
+                  >
+                    Manage
+                  </Button>
+                ) : unavailable && !added ? (
                   <Button
                     aria-label={`Retry ${label} registry lookup`}
                     disabled={preparingId !== null}
@@ -149,6 +184,11 @@ export function FeaturedAcpProviderCards({
           );
         })}
       </div>
+      <p className="text-xs leading-relaxed text-muted-foreground">
+        Installs come from the official ACP Registry on the selected machine. These agents can work
+        in the project folder; projects with additional approved folders currently require Codex or
+        Claude.
+      </p>
     </section>
   );
 }

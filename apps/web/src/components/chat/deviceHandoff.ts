@@ -89,12 +89,12 @@ export function deviceHandoffText(input: {
   const first = messages[0];
   let recent = messages.slice(1).slice(-RECENT_MESSAGES);
   const header = [
-    `This thread continues work started on ${input.sourceLabel}, where the provider reached its usage limit. Pick up where it stopped.`,
+    `Continue work started on ${input.sourceLabel}, where the provider reached its usage limit. Pick up where it stopped.`,
     "",
     `Thread: ${input.title}`,
     input.branch
-      ? `Branch: ${input.branch}. This device started from the branch as pushed; anything ${input.sourceLabel} had not pushed is not here, so check what is missing before redoing it.`
-      : `Workspace: the project's own checkout on this device. Changes ${input.sourceLabel} had not pushed are not here.`,
+      ? `Branch: ${input.branch}. Requested workspace: a worktree based on this branch as pushed. Verify the destination checkout before continuing; changes ${input.sourceLabel} had not pushed may be missing.`
+      : `Requested workspace: the project's own checkout on the destination device. Verify it before continuing; changes ${input.sourceLabel} had not pushed may be missing.`,
   ];
   const body = () => [
     "",

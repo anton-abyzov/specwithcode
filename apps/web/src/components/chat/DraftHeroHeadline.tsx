@@ -16,7 +16,8 @@ import { shortcutLabelForCommand } from "~/keybindings";
 import { projectIconColorClassName } from "~/projectIconColors";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { useScratchProject } from "~/hooks/useScratchProject";
-import { useClientSettings } from "~/hooks/useSettings";
+import { useClientSettings, useLegacySidebarEnabled } from "~/hooks/useSettings";
+import { useProjectCoordinatorHandoff } from "~/hooks/useProjectCoordinatorHandoff";
 import { hasExplicitComposerModelSelection } from "~/lib/chatThreadActions";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -47,6 +48,10 @@ import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings
 import { readEnvironmentScope } from "~/state/session";
 import { toastManager } from "../ui/toast";
 import {
+  isArchivedMember,
+  projectDestinationUnavailableReason,
+} from "~/studio/projectListVisibility";
+import {
   draftHasMachineBoundContent,
   draftMachineUnavailableReason,
   MACHINE_ATTACHMENT_BLOCK_REASON,
@@ -71,6 +76,8 @@ export function DraftHeroHeadline({
   sendInFlightRef,
 }: DraftHeroHeadlineProps) {
   const projects = useProjects();
+  const legacy = useLegacySidebarEnabled();
+  const coordinatorHandoff = useProjectCoordinatorHandoff();
   const threads = useThreadShells();
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -138,7 +145,10 @@ export function DraftHeroHeadline({
   const projectPickerEntries = useMemo(
     () =>
       buildSidebarProjectPickerEntries({
-        groups: projectGroups,
+        groups: projectGroups.map((group) => ({
+          ...group,
+          memberProjects: group.memberProjects.filter((project) => !isArchivedMember(project)),
+        })),
         preferredProjectRef: activeProjectRef,
       }),
     [activeProjectRef, projectGroups],
@@ -187,6 +197,8 @@ export function DraftHeroHeadline({
   useEffect(() => {
     latestTargetRef.current = { draftId, activeProjectKey, scratchTargetEnvironmentId };
   }, [activeProjectKey, scratchTargetEnvironmentId, draftId]);
+  const latestProjects = useRef(projects);
+  latestProjects.current = projects;
   // Project selection changes the target of the open draft in place. The
   // prompt stays in the same composer session, so the sidebar only gets a
   // draft row if the user later navigates away.
@@ -196,12 +208,25 @@ export function DraftHeroHeadline({
       return false;
     }
     const environment = environments.find((entry) => entry.environmentId === project.environmentId);
-    const reason = environment
-      ? draftMachineUnavailableReason(
-          environment.connection.phase,
-          readEnvironmentScope(project.environmentId, AuthOrchestrationOperateScope),
-        )
-      : "This machine is no longer saved. Connect it again.";
+    const reason =
+      projectDestinationUnavailableReason(
+        { environmentId: project.environmentId, projectId: project.id },
+        latestProjects.current,
+      ) ??
+      (environment
+        ? draftMachineUnavailableReason(
+            environment.connection.phase,
+            readEnvironmentScope(project.environmentId, AuthOrchestrationOperateScope),
+          )
+        : "This machine is no longer saved. Connect it again.");
+    if (
+      !reason &&
+      !legacy &&
+      !isScratchProject(project, scratchWorkspaceRootFor(project.environmentId))
+    ) {
+      void coordinatorHandoff(scopeProjectRef(project.environmentId, project.id));
+      return false;
+    }
     const attachmentBlock =
       session.environmentId !== project.environmentId &&
       draftHasMachineBoundContent(getComposerDraft(draftId));
@@ -318,7 +343,11 @@ export function DraftHeroHeadline({
               return;
             }
             const entry = projectEntryByKey.get(value as string);
-            if (!entry || value === activeProjectKey) {
+            if (
+              !entry ||
+              (entry.targetProject.environmentId === activeProjectRef?.environmentId &&
+                entry.targetProject.id === activeProjectRef.projectId)
+            ) {
               return;
             }
             selectProject(entry.targetProject, entry.group.projectKey);

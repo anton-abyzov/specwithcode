@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+## 1.0.8 — Coordinator recovery and project navigation
+
+- Project entry, worker links, new-chat shortcuts and checkout changes keep the coordinator in the main pane and open workers beside it. Coordinator and worker model choices remain independent.
+- Project usage reports the selected machine and provider profile. Automatic fallback rejects native spend/workspace denials, and a reset estimate accounts for every exhausted usage window. Unknown recovery times remain unknown.
+- Native Codex route checks allow up to 60 seconds on busy machines. Verification failures give retry guidance instead of incorrectly blaming custom endpoints; unverified and custom routes remain blocked.
+- An unavailable coordinator model still offers **Check again**, another model and provider setup on the correct machine. Rechecking does not resend a message. Unsent text and attachments survive settings navigation within the same window.
+- Loading a thread retains only that thread's own cached transcript. A different thread's conversation is never used as its loading placeholder.
+- Automatic project-model initialization preserves a model chosen while initialization is still running.
+- A failed service update remains visible until its receipt verifies installation and preservation. Rewritten timestamps or missing receipts cannot clear the error.
+- Model pickers open provider setup on the selected machine, including when a saved provider is unavailable. Copilot, Grok and Gemini have named setup cards; provider settings distinguish installation, sign-in and model discovery. Usage reporting links to chat setup and explains that quota telemetry does not connect an agent.
+- Gemini installation requires an explicit setup action. Repairing a managed agent no longer mistakes a different executable on PATH for its missing managed executable. Additional-folder projects still require Codex or Claude.
+
+Use **Settings → Agents → Response style → Concise** for short agent replies. This existing setting controls generated answers; timeline detail controls their display. Native account limits and required sign-in still apply.
+
 ## 1.0.7 — Google sign-in and assistant connection diagnostics
 
 Changes since 1.0.6:

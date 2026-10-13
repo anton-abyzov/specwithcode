@@ -1,3 +1,9 @@
+import { isScratchProject } from "@specweave-studio/client-runtime/state/projects";
+import {
+  enqueueProjectCoordinatorDraft,
+  projectWorkspaceIntentText,
+} from "../studio/projectCoordinatorDraft";
+import { projectWorkspaceSearch } from "../studio/projectPaneThreads";
 import { readNewThreadWorkspaceDefault } from "../lib/newThreadWorkspaceDefault";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -38,7 +44,7 @@ import { readStudioProjectFile } from "../lib/studioProjectFileDefaults";
 import { environmentServerConfigsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
-import { useClientSettings } from "./useSettings";
+import { useClientSettings, useLegacySidebarEnabled } from "./useSettings";
 
 interface NewThreadWorkspaceOptions {
   branch?: string | null;
@@ -69,6 +75,7 @@ function pickExplicitWorkspaceOptions(options: NewThreadWorkspaceOptions | undef
 }
 
 export function useNewThreadHandler() {
+  const legacySidebarEnabled = useLegacySidebarEnabled();
   const environmentServerConfigs = useAtomValue(environmentServerConfigsAtom);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const router = useRouter();
@@ -143,6 +150,41 @@ export function useNewThreadHandler() {
           candidate.id === projectRef.projectId &&
           candidate.environmentId === projectRef.environmentId,
       );
+      if (
+        !legacySidebarEnabled &&
+        project &&
+        !environmentServerConfigs.get(projectRef.environmentId)?.scratchWorkspaceRoot
+      )
+        return Promise.resolve(null);
+      // Project work belongs to its retained coordinator. Independent chats start
+      // in Scratch; existing drafts and the legacy workflow remain recoverable.
+      if (
+        !legacySidebarEnabled &&
+        project &&
+        !isScratchProject(
+          project,
+          environmentServerConfigs.get(projectRef.environmentId)?.scratchWorkspaceRoot,
+        )
+      ) {
+        if (options?.branch || options?.worktreePath)
+          enqueueProjectCoordinatorDraft({
+            ...projectRef,
+            text: projectWorkspaceIntentText({
+              branch: options.branch,
+              worktreePath: options.worktreePath,
+            }),
+          });
+        return router
+          .navigate({
+            to: "/projects/$projectKey",
+            params: {
+              projectKey: deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings),
+            },
+            search: projectWorkspaceSearch(null, `${project.environmentId}:${project.id}`),
+            replace: options?.replace ?? false,
+          })
+          .then(() => null);
+      }
       // The resolver applies project overrides and, until the server has
       // folded them, the aggregate's own legacy fields.
       const projectSettings = resolveProjectSettings(
@@ -448,7 +490,13 @@ export function useNewThreadHandler() {
         return { draftId, threadId };
       })();
     },
-    [environmentServerConfigs, getCurrentRouteTarget, projectGroupingSettings, router],
+    [
+      environmentServerConfigs,
+      getCurrentRouteTarget,
+      projectGroupingSettings,
+      router,
+      legacySidebarEnabled,
+    ],
   );
 }
 

@@ -1,3 +1,8 @@
+import { useProjectDraftSendGuard } from "./chat/ProjectDraftSendGuard";
+import { useProjectCoordinatorHandoff } from "~/hooks/useProjectCoordinatorHandoff";
+import { coordinatorForkHandoff } from "./chat/coordinatorForkHandoff";
+import { coordinatorDeviceHandoff } from "./chat/coordinatorDeviceHandoff";
+import { openBackgroundChatComposer, useNewChatDestination } from "~/hooks/useNewChatDestination";
 import {
   chatControlAnchor,
   chatUsesPanelSheet,
@@ -8,6 +13,11 @@ import {
   useProjectMessageRouting,
   sendProjectComposerDraft,
 } from "../studio/projectMessageRouting";
+import {
+  assertCoordinatorQueueModel,
+  continueWithProjectModel,
+  resumeQueueWithProjectModel,
+} from "../studio/coordinatorContinuation";
 import { latestWorkStep } from "../studio/coordinatorProgress";
 import { useOpenThread } from "../hooks/useOpenThread";
 import { runThreadLifecycleShortcut } from "../lib/threadLifecycleShortcut";
@@ -101,7 +111,6 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProviderInteractionMode,
   ProviderDriverKind,
-  resolveEnvironmentMachineKind,
   RuntimeMode,
   TerminalOpenInput,
   type WorktreeSetupSnapshot,
@@ -447,7 +456,7 @@ import {
   serverEnvironment,
 } from "../state/server";
 import { terminalEnvironment } from "../state/terminal";
-import { threadEnvironment } from "../state/threads";
+import { environmentThreadDetails, threadEnvironment } from "../state/threads";
 import { workspacePreparationRetryRunIds } from "@specweave-studio/client-runtime/state/turn-item-presentation";
 import { resolveProviderSkillsForCwd } from "@specweave-studio/client-runtime/providerSkills";
 import { vcsEnvironment } from "../state/vcs";
@@ -474,6 +483,7 @@ import { createPageScrollController, type PageScrollKey } from "./chat/pageScrol
 import { isTimelineScrollTarget } from "./chat/timelineScrollTarget";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { DraftMachinePicker } from "./chat/DraftMachinePicker";
+import { buildLogicalProjectEnvironments } from "./chat/logicalProjectEnvironments";
 import { useDraftMachineRouting } from "./chat/useDraftMachineRouting";
 import { explicitCreditSendStillMatches, type CreditSendContext } from "./chat/explicitCreditSend";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
@@ -501,7 +511,6 @@ import { expandedImageKey, type ExpandedImagePreview } from "./chat/ExpandedImag
 import { ThreadDetailsPanel, type ThreadDetailsPanelProps } from "./chat/ThreadDetailsPanel";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import {
-  type EnvironmentOption,
   resolveEffectiveEnvMode,
   resolveLocalCheckoutBranchMismatch,
   shouldShowComposerContextStrip,
@@ -1637,6 +1646,8 @@ export default function ChatView(props: ChatViewProps) {
   const canReadTerminal = useEnvironmentScope(environmentId, AuthTerminalReadScope);
   const draftId = routeKind === "draft" ? props.draftId : null;
   const handleNewThread = useNewThreadHandler();
+  const openNewChatDestination = useNewChatDestination();
+  const openCoordinatorHandoff = useProjectCoordinatorHandoff();
   const { settleThread, pinThread, confirmAndUnpinThread } = useThreadActions();
   const routeThreadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
@@ -2862,67 +2873,39 @@ export default function ChatView(props: ChatViewProps) {
       activeProject,
       environmentById.get(activeProject.environmentId)?.serverConfig?.scratchWorkspaceRoot ?? null,
     );
-  const logicalProjectEnvironments = useMemo(() => {
-    if (!activeProject) return [];
-    const envs: EnvironmentOption[] = [];
-    const pushEnvironment = (environmentId: EnvironmentId, projectId: ProjectId | null) => {
-      const environment = environmentById.get(environmentId) ?? null;
-      envs.push({
-        environmentId,
-        projectId,
-        label: environment?.label ?? environmentId,
-        isPrimary: environmentId === primaryEnvironmentId,
-        machine: resolveEnvironmentMachineKind(environment?.serverConfig ?? null),
-      });
-    };
-    if (activeProjectIsScratch && draftId) {
-      // Each machine keeps its own "No project" folder at its own path, so they
-      // never group as one logical project. Offer every machine that has one.
-      for (const environment of environments) {
-        const scratchRoot = scratchWorkspaceRootFor(environment.environmentId);
-        // Keep the current machine visible so an offline source can still switch away.
-        if (scratchRoot === null && environment.environmentId !== activeProject.environmentId)
-          continue;
-        const scratchProject =
-          environment.environmentId === activeProject.environmentId
-            ? activeProject
-            : allProjects.find(
-                (p) =>
-                  p.environmentId === environment.environmentId && isScratchProject(p, scratchRoot),
-              );
-        pushEnvironment(environment.environmentId, scratchProject?.id ?? null);
-      }
-    } else {
-      const logicalKey = deriveLogicalProjectKeyFromSettings(
-        activeProject,
-        projectGroupingSettings,
-      );
-      const seen = new Set<string>();
-      for (const p of allProjects) {
-        if (seen.has(p.environmentId)) continue;
-        if (deriveLogicalProjectKeyFromSettings(p, projectGroupingSettings) !== logicalKey)
-          continue;
-        seen.add(p.environmentId);
-        pushEnvironment(p.environmentId, p.id);
-      }
-    }
-    // Sort: primary first, then alphabetical
-    envs.sort((a, b) => {
-      if (a.isPrimary !== b.isPrimary) return a.isPrimary ? -1 : 1;
-      return a.label.localeCompare(b.label);
-    });
-    return envs;
-  }, [
+  const projectDraftSendGuard = useProjectDraftSendGuard(
+    isLocalDraftThread && projectRouting === null,
     activeProject,
-    activeProjectIsScratch,
-    allProjects,
-    draftId,
-    environments,
-    projectGroupingSettings,
-    primaryEnvironmentId,
-    environmentById,
-    scratchWorkspaceRootFor,
-  ]);
+    activeProject
+      ? environmentById.get(activeProject.environmentId)?.serverConfig?.scratchWorkspaceRoot
+      : null,
+    openCoordinatorHandoff,
+  );
+  const logicalProjectEnvironments = useMemo(
+    () =>
+      buildLogicalProjectEnvironments({
+        activeProject,
+        activeProjectIsScratch,
+        draftId,
+        allProjects,
+        environments,
+        environmentById,
+        primaryEnvironmentId,
+        projectGroupingSettings,
+        scratchWorkspaceRootFor,
+      }),
+    [
+      activeProject,
+      activeProjectIsScratch,
+      allProjects,
+      draftId,
+      environments,
+      projectGroupingSettings,
+      primaryEnvironmentId,
+      environmentById,
+      scratchWorkspaceRootFor,
+    ],
+  );
   const hasMultipleEnvironments = logicalProjectEnvironments.length > 1;
   // Auto balance retargets to an existing project; a machine's "No project"
   // folder may not exist until it is picked.
@@ -7421,7 +7404,7 @@ export default function ChatView(props: ChatViewProps) {
     async (text: string, failureMessage: string) => {
       if (!activeThread || !clientSettingsHydrated || sendInFlightRef.current) return;
       const context = composerRef.current?.getSendContext();
-      if (!context?.providerAvailable) return;
+      if (!context || (!context.providerAvailable && !projectRouting?.continueCoordinator)) return;
 
       const threadId = activeThread.id;
       const messageId = newMessageId();
@@ -7452,20 +7435,27 @@ export default function ChatView(props: ChatViewProps) {
           runtimeMode,
           interactionMode: context.interactionMode,
         });
-        const result =
+        const dispatched = await settlePromise<AtomCommandResult<unknown, unknown>>(() =>
           settingsResult._tag === "Failure"
-            ? settingsResult
-            : await startThreadTurn({
-                environmentId,
-                input: {
-                  threadId,
-                  message: { messageId, role: "user", text, attachments: [] },
-                  modelSelection: context.selectedModelSelection,
-                  runtimeMode,
-                  interactionMode: context.interactionMode,
-                  createdAt,
-                },
-              });
+            ? Promise.resolve(settingsResult)
+            : continueWithProjectModel(
+                projectRouting,
+                context.selectedModelSelection,
+                (selection) =>
+                  startThreadTurn({
+                    environmentId,
+                    input: {
+                      threadId,
+                      message: { messageId, role: "user", text, attachments: [] },
+                      modelSelection: selection ?? context.selectedModelSelection,
+                      runtimeMode,
+                      interactionMode: context.interactionMode,
+                      createdAt,
+                    },
+                  }),
+              ),
+        );
+        const result = dispatched._tag === "Failure" ? dispatched : dispatched.value;
         if (result._tag === "Failure") {
           setOptimisticUserMessages((messages) =>
             messages.filter((message) => message.id !== messageId),
@@ -7484,6 +7474,7 @@ export default function ChatView(props: ChatViewProps) {
     },
     [
       activeThread,
+      projectRouting,
       beginLocalDispatch,
       clientSettingsHydrated,
       composerRef,
@@ -7870,6 +7861,8 @@ export default function ChatView(props: ChatViewProps) {
       branch: activeThreadBranch,
       turnItems: serverProjection?.turnItems ?? [],
     });
+    if (await coordinatorDeviceHandoff(openCoordinatorHandoff, target, text, activeThreadBranch))
+      return;
     const result = await startThreadTurn({
       environmentId: target.environmentId,
       input: {
@@ -7890,8 +7883,6 @@ export default function ChatView(props: ChatViewProps) {
             worktreePath: null,
             createdAt,
           },
-          // A worktree from the pushed branch, so the other device's own
-          // checkout is never switched under it.
           ...(activeThreadBranch && targetProject
             ? {
                 prepareWorktree: {
@@ -7934,13 +7925,16 @@ export default function ChatView(props: ChatViewProps) {
                   automatic: activeProjectSettings.settings.providerLimitAction === "switch",
                   onContinue: async () => {
                     // The composer follows the thread to the provider it now runs on.
-                    onProviderModelSelect(
-                      limitFallbackSelection.instanceId,
-                      limitFallbackSelection.model,
-                      {
-                        focusComposer: false,
-                      },
-                    );
+                    if (projectRouting?.saveCoordinatorModel)
+                      await projectRouting.saveCoordinatorModel(limitFallbackSelection);
+                    else
+                      onProviderModelSelect(
+                        limitFallbackSelection.instanceId,
+                        limitFallbackSelection.model,
+                        {
+                          focusComposer: false,
+                        },
+                      );
                     await onResume(limitFallbackSelection, limitRestart ?? undefined);
                   },
                 }
@@ -8016,9 +8010,12 @@ export default function ChatView(props: ChatViewProps) {
           resetAt: approachingResetMs === null ? null : new Date(approachingResetMs).toISOString(),
           fallbackLabel: resolveProviderInstanceDisplayName(approachingFallbackProvider),
           onSwitch: () => {
-            onProviderModelSelect(approachingSelection.instanceId, approachingSelection.model, {
-              focusComposer: false,
-            });
+            if (projectRouting?.saveCoordinatorModel)
+              void projectRouting.saveCoordinatorModel(approachingSelection);
+            else
+              onProviderModelSelect(approachingSelection.instanceId, approachingSelection.model, {
+                focusComposer: false,
+              });
             setDismissedUsageApproaching((current) => new Set(current).add(approachingKey));
           },
           onDismiss: () =>
@@ -8820,6 +8817,7 @@ export default function ChatView(props: ChatViewProps) {
   const onForkFromRun = useCallback(
     async (input: { readonly sourceThreadId: ThreadId; readonly runId: RunId }) => {
       if (!activeThread || activeEnvironmentUnavailable) return;
+      if (await coordinatorForkHandoff(openCoordinatorHandoff, environmentId, input)) return;
       const targetThreadId = newThreadId();
       const targetThreadRef = scopeThreadRef(environmentId, targetThreadId);
       const result = await forkThreadFromRun({
@@ -8856,6 +8854,7 @@ export default function ChatView(props: ChatViewProps) {
       activeThread,
       environmentId,
       forkThreadFromRun,
+      openCoordinatorHandoff,
       openThreadRoute,
       setThreadError,
     ],
@@ -8887,13 +8886,21 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
     const threadId = activeThread.id;
+    const readCurrentRuns = () =>
+      appAtomRegistry.get(
+        environmentThreadDetails.threadAtom(scopeThreadRef(environmentId, threadId)),
+      )?.projection.runs ?? null;
     sendInFlightRef.current = true;
     setResumingThreadKeys((current) => new Set(current).add(routeThreadKey));
     setThreadError(threadId, null);
     try {
-      const resume = async () => {
+      const resume = async (selectedModel: ModelSelection | undefined) => {
+        if (projectRouting?.continueCoordinator && selectedModel)
+          assertCoordinatorQueueModel(selectedModel, readCurrentRuns());
         if (resumableRunId === null) {
-          return resumeThreadQueue({ environmentId, input: { threadId } });
+          return resumeQueueWithProjectModel(projectRouting, selectedModel, readCurrentRuns, () =>
+            resumeThreadQueue({ environmentId, input: { threadId } }),
+          );
         }
         const createdAt = new Date().toISOString();
         const settingsResult = await persistThreadSettingsForNextTurn({
@@ -8906,28 +8913,38 @@ export default function ChatView(props: ChatViewProps) {
           interactionMode,
         });
         if (settingsResult._tag === "Failure") return settingsResult;
-        const turnResult = await startThreadTurn({
-          environmentId,
-          input: {
-            threadId,
-            manualContinuationOfRunId: resumableRunId,
-            ...(modelSelection === undefined ? {} : { modelSelection }),
-            message: {
-              messageId: newMessageId(),
-              role: "user",
-              text: restart?.text ?? "Continue where you left off.",
-              attachments: restart?.attachments ?? [],
-            },
-            runtimeMode,
-            interactionMode,
-            dispatchMode: "start",
+        const turnResult = await continueWithProjectModel(
+          projectRouting,
+          selectedModel,
+          (currentModel) => {
+            if (projectRouting?.continueCoordinator && currentModel)
+              assertCoordinatorQueueModel(currentModel, readCurrentRuns());
+            return startThreadTurn({
+              environmentId,
+              input: {
+                threadId,
+                manualContinuationOfRunId: resumableRunId,
+                ...(currentModel === undefined ? {} : { modelSelection: currentModel }),
+                message: {
+                  messageId: newMessageId(),
+                  role: "user",
+                  text: restart?.text ?? "Continue where you left off.",
+                  attachments: restart?.attachments ?? [],
+                },
+                runtimeMode,
+                interactionMode,
+                dispatchMode: "start",
+              },
+            });
           },
-        });
+        );
         if (turnResult._tag === "Failure" || !hasHeldQueuedRuns) return turnResult;
         clearUsageLimitsFor(routeThreadKey);
-        return resumeThreadQueue({ environmentId, input: { threadId } });
+        return resumeQueueWithProjectModel(projectRouting, selectedModel, readCurrentRuns, () =>
+          resumeThreadQueue({ environmentId, input: { threadId } }),
+        );
       };
-      const result = await resume();
+      const result = await continueWithProjectModel(projectRouting, modelSelection, resume);
       if (result._tag === "Failure") {
         if (!isAtomCommandInterrupted(result)) {
           const error = squashAtomCommandFailure(result);
@@ -8940,6 +8957,11 @@ export default function ChatView(props: ChatViewProps) {
         clearUsageLimitsFor(routeThreadKey);
         if (currentRouteThreadKeyRef.current === routeThreadKey) scrollToEnd();
       }
+    } catch (error) {
+      setThreadError(
+        threadId,
+        error instanceof Error ? error.message : "Could not resume coordinator.",
+      );
     } finally {
       sendInFlightRef.current = false;
       setResumingThreadKeys((current) => {
@@ -8988,6 +9010,7 @@ export default function ChatView(props: ChatViewProps) {
     manualCodexCreditIntent?: ManualCodexCreditIntent,
   ) => {
     e?.preventDefault();
+    if (projectDraftSendGuard.preventSend()) return;
     // Typed out in full rather than picked from the menu. Attachments or contexts
     // mean the user is sending a prompt, so those go through as usual.
     if (
@@ -9026,6 +9049,37 @@ export default function ChatView(props: ChatViewProps) {
       showPlanFollowUpPrompt &&
       Boolean(activeProposedPlan) &&
       !composerHasNonPromptContent;
+    if (
+      projectRouting?.continueCoordinator &&
+      !activePendingProgress &&
+      answersWorkerPlan &&
+      activeProposedPlan
+    ) {
+      const capturedPrompt = promptRef.current;
+      const followUp = resolvePlanFollowUpSubmission({
+        draftText: capturedPrompt,
+        planMarkdown: activeProposedPlan.planMarkdown,
+      });
+      const sent = await onSubmitPlanFollowUp({
+        text: followUp.text,
+        interactionMode: followUp.interactionMode,
+      });
+      const currentDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+      const changedContent =
+        currentDraft &&
+        (currentDraft.images.length ||
+          currentDraft.files.length ||
+          currentDraft.terminalContexts.length ||
+          currentDraft.previewAnnotations.length ||
+          currentDraft.reviewComments.length ||
+          currentDraft.threadContexts.length);
+      if (sent && promptRef.current === capturedPrompt && !changedContent) {
+        promptRef.current = "";
+        clearComposerDraftContent(composerDraftTarget);
+        composerRef.current?.resetCursorState();
+      }
+      return;
+    }
     if (projectRouting && !activePendingProgress && !answersWorkerPlan) {
       if (sendInFlightRef.current) return;
       sendInFlightRef.current = true;
@@ -10293,15 +10347,14 @@ export default function ChatView(props: ChatViewProps) {
       if (backgroundThreadRef) {
         markPromotedDraftThreadByRef(backgroundThreadRef);
         try {
-          backgroundDraftOpened = Boolean(
-            await handleNewThread(
-              scopeProjectRef(activeProject.environmentId, activeProject.id),
-              resolveBackgroundDraftWorkspaceOptions({
-                envMode: sendEnvMode,
-                branch: activeThreadBranch,
-                startFromOrigin,
-              }),
-            ),
+          backgroundDraftOpened = await openBackgroundChatComposer(
+            openNewChatDestination,
+            scopeProjectRef(activeProject.environmentId, activeProject.id),
+            resolveBackgroundDraftWorkspaceOptions({
+              envMode: sendEnvMode,
+              branch: activeThreadBranch,
+              startFromOrigin,
+            }),
           );
         } catch (error) {
           clearBackgroundDraftSubmissionByRef(backgroundThreadRef);
@@ -10728,7 +10781,11 @@ export default function ChatView(props: ChatViewProps) {
     }
 
     const sendCtx = composerRef.current?.getSendContext();
-    if (!sendCtx?.providerAvailable || !sendCtx.interactionModeEnabled) {
+    if (
+      !sendCtx ||
+      (!projectRouting?.continueCoordinator &&
+        (!sendCtx.providerAvailable || !sendCtx.interactionModeEnabled))
+    ) {
       return false;
     }
     const {
@@ -10742,13 +10799,15 @@ export default function ChatView(props: ChatViewProps) {
     const threadIdForSend = activeThread.id;
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
-    const outgoingMessageText = formatOutgoingPrompt({
-      provider: ctxSelectedProvider,
-      model: ctxSelectedModel,
-      models: ctxSelectedProviderModels,
-      effort: ctxSelectedPromptEffort,
-      text: trimmed,
-    });
+    const outgoingMessageText = projectRouting?.continueCoordinator
+      ? trimmed
+      : formatOutgoingPrompt({
+          provider: ctxSelectedProvider,
+          model: ctxSelectedModel,
+          models: ctxSelectedProviderModels,
+          effort: ctxSelectedPromptEffort,
+          text: trimmed,
+        });
 
     sendInFlightRef.current = true;
     beginLocalDispatch({ preparingWorktree: false });
@@ -10782,53 +10841,67 @@ export default function ChatView(props: ChatViewProps) {
       },
     ]);
 
-    const settingsResult = await persistThreadSettingsForNextTurn({
-      threadId: threadIdForSend,
-      createdAt: messageCreatedAt,
-      ...(localCheckoutBranchMismatch ? { branch: localCheckoutBranchMismatch.currentBranch } : {}),
-      runtimeMode,
-      interactionMode: nextInteractionMode,
-    });
-    let failure: AtomCommandResult<unknown, unknown> | null =
-      settingsResult._tag === "Failure" ? settingsResult : null;
-
-    if (failure === null) {
-      // Keep the mode toggle and plan-follow-up banner in sync immediately
-      // while the same-thread implementation turn is starting.
-      setComposerDraftInteractionMode(
-        scopeThreadRef(activeThread.environmentId, threadIdForSend),
-        nextInteractionMode,
-      );
-
-      const startResult = await startThreadTurn({
-        environmentId,
-        input: {
-          threadId: threadIdForSend,
-          message: {
-            messageId: messageIdForSend,
-            role: "user",
-            text: outgoingMessageText,
-            ...(context ? { context } : {}),
-            attachments: [],
-          },
-          modelSelection: ctxSelectedModelSelection,
-          titleSeed: activeThread.title,
-          runtimeMode,
-          interactionMode: nextInteractionMode,
-          ...(nextInteractionMode === "default" && activeProposedPlan
-            ? {
-                sourceProposedPlan: {
-                  threadId: activeThread.id,
-                  planId: activeProposedPlan.id,
-                },
-              }
-            : {}),
-          createdAt: messageCreatedAt,
-        },
+    const dispatch = async (selectedModel: ModelSelection | undefined) => {
+      const settingsResult = await persistThreadSettingsForNextTurn({
+        threadId: threadIdForSend,
+        createdAt: messageCreatedAt,
+        ...(localCheckoutBranchMismatch
+          ? { branch: localCheckoutBranchMismatch.currentBranch }
+          : {}),
+        runtimeMode,
+        interactionMode: nextInteractionMode,
       });
-      failure = startResult._tag === "Failure" ? startResult : null;
-    }
+      let failure: AtomCommandResult<unknown, unknown> | null =
+        settingsResult._tag === "Failure" ? settingsResult : null;
 
+      if (failure === null) {
+        // Keep the mode toggle and plan-follow-up banner in sync immediately
+        // while the same-thread implementation turn is starting.
+        setComposerDraftInteractionMode(
+          scopeThreadRef(activeThread.environmentId, threadIdForSend),
+          nextInteractionMode,
+        );
+
+        const startResult = await continueWithProjectModel(
+          projectRouting,
+          selectedModel,
+          (currentModel) =>
+            startThreadTurn({
+              environmentId,
+              input: {
+                threadId: threadIdForSend,
+                message: {
+                  messageId: messageIdForSend,
+                  role: "user",
+                  text: outgoingMessageText,
+                  ...(context ? { context } : {}),
+                  attachments: [],
+                },
+                modelSelection: currentModel ?? ctxSelectedModelSelection,
+                titleSeed: activeThread.title,
+                runtimeMode,
+                interactionMode: nextInteractionMode,
+                ...(nextInteractionMode === "default" && activeProposedPlan
+                  ? {
+                      sourceProposedPlan: {
+                        threadId: activeThread.id,
+                        planId: activeProposedPlan.id,
+                      },
+                    }
+                  : {}),
+                createdAt: messageCreatedAt,
+              },
+            }),
+        );
+        failure = startResult._tag === "Failure" ? startResult : null;
+      }
+
+      return failure;
+    };
+    const dispatched = await settlePromise(() =>
+      continueWithProjectModel(projectRouting, ctxSelectedModelSelection, dispatch),
+    );
+    const failure = dispatched._tag === "Failure" ? dispatched : dispatched.value;
     if (failure === null) {
       sendInFlightRef.current = false;
       resetLocalDispatch();
@@ -10862,6 +10935,24 @@ export default function ChatView(props: ChatViewProps) {
       activeEnvironmentUnavailable ||
       sendInFlightRef.current
     ) {
+      return;
+    }
+
+    if (projectRouting) {
+      sendInFlightRef.current = true;
+      try {
+        await projectRouting.send(buildPlanImplementationPrompt(activeProposedPlan.planMarkdown));
+        projectRouting.openCoordinator();
+      } catch (error) {
+        setThreadError(
+          activeThread.id,
+          error instanceof Error
+            ? error.message
+            : "Could not ask the coordinator to implement the plan.",
+        );
+      } finally {
+        sendInFlightRef.current = false;
+      }
       return;
     }
 
@@ -10983,6 +11074,8 @@ export default function ChatView(props: ChatViewProps) {
     }
     finish();
   }, [
+    projectRouting,
+    setThreadError,
     activeProject,
     activeProposedPlan,
     activeThreadBranch,
@@ -11023,6 +11116,11 @@ export default function ChatView(props: ChatViewProps) {
   const onProviderModelSelect = useCallback(
     (instanceId: ProviderInstanceId, model: string, options?: { focusComposer?: boolean }) => {
       if (!activeThread) return;
+      if (projectRouting?.saveCoordinatorModel) {
+        void projectRouting.saveCoordinatorModel({ instanceId, model });
+        if (options?.focusComposer !== false) scheduleComposerFocus();
+        return;
+      }
       // Look up the configured instance so model normalization and custom
       // model lookup stay scoped to that exact instance. Unknown instance ids
       // are rejected by returning early; the server remains authoritative too.
@@ -11102,6 +11200,7 @@ export default function ChatView(props: ChatViewProps) {
       if (options?.focusComposer !== false) scheduleComposerFocus();
     },
     [
+      projectRouting,
       activeThread,
       activeRuntime,
       lockedProvider,
@@ -11919,6 +12018,7 @@ export default function ChatView(props: ChatViewProps) {
                       </div>
                     </div>
                   ) : null}
+                  {projectDraftSendGuard.notice}
                   <div
                     ref={draftHeroTransition.composerAnchorRef}
                     className="relative z-10"

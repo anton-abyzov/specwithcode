@@ -2,6 +2,7 @@ import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/st
 import { threadRuntimeIsActive } from "@specweave-studio/client-runtime/state/shell";
 import type { ProjectId, ThreadId } from "@specweave-studio/contracts";
 import { resolveSidebarThreadStatus } from "../components/Sidebar.logic";
+import { isAgentOwnedProjectThread } from "./projectPaneThreads";
 import { isProjectCoordinatorThread } from "./projectCoordinatorThreads";
 import {
   formatStudioThreadHref,
@@ -57,12 +58,16 @@ export function projectThreads(
   projectId: ProjectId,
   coordinatorId: ThreadId | null,
 ) {
+  const byId = new Map(
+    threads.filter((t) => t.environmentId === environmentId).map((t) => [t.id as string, t]),
+  );
   return threads
     .filter(
       (t) =>
         t.environmentId === environmentId &&
         t.projectId === projectId &&
         t.deletedAt === null &&
+        isAgentOwnedProjectThread(t, coordinatorId, (id) => byId.get(id)) &&
         // The coordinator is the main conversation, and a previous one is history:
         // neither is one of the project's threads.
         !isProjectCoordinatorThread(t.id, { projectId, coordinatorThreadId: coordinatorId }),

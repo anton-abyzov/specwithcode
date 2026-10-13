@@ -1470,7 +1470,7 @@ export const ServerSettings = Schema.Struct({
   snoozeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   autoResumeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   providerLimitAction: ProviderLimitAction.pipe(
-    Schema.withDecodingDefault(Effect.succeed("ask" as const)),
+    Schema.withDecodingDefault(Effect.succeed("switch" as const)),
   ),
   /** The model a limited thread continues on; `null` offers any other ready provider. */
   providerLimitFallbackModelSelection: Schema.NullOr(ModelSelection).pipe(

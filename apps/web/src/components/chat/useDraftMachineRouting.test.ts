@@ -1,6 +1,11 @@
 // @vitest-environment jsdom
 import { scopeProjectRef, scopeThreadRef } from "@specweave-studio/client-runtime/environment";
-import { EnvironmentId, ProjectId, ThreadId } from "@specweave-studio/contracts";
+import {
+  DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+  EnvironmentId,
+  ProjectId,
+  ThreadId,
+} from "@specweave-studio/contracts";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
@@ -349,6 +354,7 @@ it.each([
   "permission-revoked",
   "offline",
   "removed-project",
+  "archived-project",
 ])("delayed Auto completion rejects %s", async (kind) => {
   const logicalProjectEnvironments = input.logicalProjectEnvironments.map((item) =>
     item.environmentId === m1 ? { ...item, projectId: p1 } : item,
@@ -380,6 +386,15 @@ it.each([
     };
   if (kind === "removed-project")
     input = { ...input, allProjects: input.allProjects.filter((item) => item.id !== p1) };
+  if (kind === "archived-project")
+    input = {
+      ...input,
+      allProjects: input.allProjects.map((project) =>
+        project.id === p1
+          ? { ...project, workspaceSettings: { ...project.workspaceSettings, archived: true } }
+          : project,
+      ),
+    } as Input;
   const before = store.getDraftSession(draftId);
   await render({
     draftThread: before,
@@ -403,3 +418,89 @@ it("delayed Auto completion admits a connected permitted destination project", a
     loadBalancedEnvironmentId: m1,
   });
 });
+
+it("Auto excludes archived destinations even with a stale machine list", async () => {
+  await render({
+    allProjects: input.allProjects.map((project) =>
+      project.id === p1
+        ? {
+            ...project,
+            workspaceSettings: {
+              ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+              ...project.workspaceSettings,
+              archived: true,
+            },
+          }
+        : project,
+    ) as Input["allProjects"],
+    logicalProjectEnvironments: input.logicalProjectEnvironments
+      .filter((option) => option.environmentId === m1)
+      .map((option) => ({ ...option, projectId: p1 })),
+  });
+  const before = useComposerDraftStore.getState().getDraftSession(draftId);
+  await act(async () => routing.onAutoEnvironment());
+  expect(refresh).not.toHaveBeenCalled();
+  expect(useComposerDraftStore.getState().getDraftSession(draftId)).toBe(before);
+});
+
+it("keyboard routing rejects an archived project even with a stale machine list", async () => {
+  await render({
+    allProjects: input.allProjects.map((project) =>
+      project.id === p1
+        ? {
+            ...project,
+            workspaceSettings: {
+              ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+              ...project.workspaceSettings,
+              archived: true,
+            },
+          }
+        : project,
+    ) as Input["allProjects"],
+    logicalProjectEnvironments: input.logicalProjectEnvironments
+      .filter((option) => option.environmentId === m1)
+      .map((option) => ({ ...option, projectId: p1 })),
+  });
+  await act(async () => routing.onEnvironmentChange(m1));
+  expect(useComposerDraftStore.getState().getDraftSession(draftId)?.environmentId).toBe(m4);
+  expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.prompt).toBe(
+    "Keep the prompt",
+  );
+  expect(runtime.toast).toHaveBeenCalledWith(
+    expect.objectContaining({ description: expect.stringMatching(/archived/i) }),
+  );
+});
+
+it.each(["resolved", "catalog"])(
+  "keyboard routing rejects archived Scratch from the %s after resolution",
+  async (source) => {
+    await render();
+    await act(async () => routing.onEnvironmentChange(m1));
+    if (source === "catalog")
+      await render({
+        allProjects: input.allProjects.map((project) =>
+          project.id === p1
+            ? {
+                ...project,
+                workspaceSettings: {
+                  ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+                  ...project.workspaceSettings,
+                  archived: true,
+                },
+              }
+            : project,
+        ),
+      });
+    await resolveScratch({
+      ...destination,
+      workspaceSettings: { archived: source === "resolved" },
+    } as typeof destination);
+    expect(useComposerDraftStore.getState().getDraftSession(draftId)?.environmentId).toBe(m4);
+    expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.prompt).toBe(
+      "Keep the prompt",
+    );
+    expect(runtime.toast).toHaveBeenCalledWith(
+      expect.objectContaining({ description: expect.stringMatching(/archived/i) }),
+    );
+  },
+);

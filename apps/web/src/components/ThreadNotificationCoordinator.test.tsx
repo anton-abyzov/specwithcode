@@ -22,6 +22,7 @@ const state = vi.hoisted(() => ({
   turnError: false,
   limited: false,
   subagent: false,
+  createdBy: "user" as "user" | "agent",
   background: [] as Array<{ taskId: string; kind: "command" | "monitor" }>,
   add: vi.fn(
     (_toast: { title: string; description: string; actionProps: { onClick: () => void } }) =>
@@ -57,7 +58,7 @@ function mockThreadShell() {
       relationshipToParent: state.subagent ? "subagent" : null,
     },
     forkedFrom: null,
-    createdBy: "user",
+    createdBy: state.createdBy,
     creationSource: "web",
     latestRunId: "run-1",
     activeRunId: null,
@@ -106,7 +107,12 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("./settings/useSettingsProjectGroups", () => ({
   useSettingsProjectGroups: () => state.groups,
 }));
-vi.mock("../state/entities", () => ({ readThreadShell: () => null }));
+vi.mock("../state/entities", () => ({
+  readThreadShell: ({ environmentId, threadId }: { environmentId: string; threadId: string }) =>
+    environmentId === "env-1" && threadId === "thread-1"
+      ? { ...mockThreadShell(), environmentId }
+      : null,
+}));
 vi.mock("../hooks/useSettings", () => ({
   useClientSettings: (
     select: (
@@ -175,6 +181,7 @@ beforeEach(() => {
     turnError: false,
     limited: false,
     subagent: false,
+    createdBy: "user",
     background: [],
   });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -227,33 +234,44 @@ describe("thread notifications", () => {
     expect(state.notification).not.toHaveBeenCalled();
   });
 
-  it("opens a project workspace's thread in that project's right panel", async () => {
-    state.groups = [
-      {
-        projectKey: "atlas",
-        memberProjects: [
-          {
-            environmentId: "env-1",
-            id: "project-1",
-            workspaceSettings: { coordinatorThreadId: "project-coordinator:project-1" },
-          },
-        ],
-      },
-    ];
-    try {
-      await render();
-      await complete();
-      await render();
-      state.add.mock.calls[0]?.[0]?.actionProps.onClick();
-      expect(state.navigate).toHaveBeenCalledWith({
-        to: "/projects/$projectKey",
-        params: { projectKey: "atlas" },
-        search: { thread: "thread-1" },
-      });
-    } finally {
-      state.groups = [];
-    }
-  });
+  it.each(["agent", "user"] as const)(
+    "opens a completed %s thread in its owned surface",
+    async (createdBy) => {
+      state.createdBy = createdBy;
+      state.groups = [
+        {
+          projectKey: "atlas",
+          memberProjects: [
+            {
+              environmentId: "env-1",
+              id: "project-1",
+              workspaceSettings: { coordinatorThreadId: "project-coordinator:project-1" },
+            },
+          ],
+        },
+      ];
+      try {
+        await render();
+        await complete();
+        await render();
+        state.add.mock.calls[0]?.[0]?.actionProps.onClick();
+        expect(state.navigate).toHaveBeenCalledWith(
+          createdBy === "agent"
+            ? {
+                to: "/projects/$projectKey",
+                params: { projectKey: "atlas" },
+                search: { thread: "thread-1", checkout: "env-1:project-1" },
+              }
+            : {
+                to: "/$environmentId/$threadId",
+                params: { environmentId: "env-1", threadId: "thread-1" },
+              },
+        );
+      } finally {
+        state.groups = [];
+      }
+    },
+  );
 
   it("stays quiet in the app about the thread open in a project's right panel", async () => {
     state.paneThread = "thread-1";

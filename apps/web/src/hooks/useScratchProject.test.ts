@@ -69,6 +69,7 @@ vi.mock("../uiStateStore", () => ({
   useUiStateStore: () => [],
 }));
 vi.mock("./useSettings", () => ({
+  useLegacySidebarEnabled: () => true,
   useClientSettings: () => ({
     sidebarProjectGroupingMode: "separate",
     sidebarProjectGroupingOverrides: {},
@@ -155,13 +156,14 @@ afterEach(resetStore);
 
 describe("No project drafts with a global worktree default", () => {
   it("creates a local, unsubmitted draft for the exact scratch project on the requested host", async () => {
-    await useScratchProject().startScratchThread(requestedHost);
+    const opened = await useScratchProject().startScratchThread(requestedHost);
 
     expect(fixture.openScratch).toHaveBeenCalledExactlyOnceWith({
       environmentId: requestedHost,
       input: {},
     });
     const draftId = fixture.router.state.matches[0]!.params.draftId!;
+    expect(opened).toMatchObject({ draftId });
     const store = useComposerDraftStore.getState();
     expect(store.draftThreadsByThreadKey[draftId]).toMatchObject({
       environmentId: requestedHost,

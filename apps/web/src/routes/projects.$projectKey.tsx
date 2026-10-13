@@ -18,7 +18,7 @@ export const Route = createFileRoute("/projects/$projectKey")({
 });
 function ProjectWorkspaceRoute() {
   const { projectKey } = Route.useParams();
-  const { thread } = Route.useSearch();
+  const { thread, checkout } = Route.useSearch();
   const navigate = Route.useNavigate();
   const selectThread = useCallback<SelectProjectThread>(
     (next, options) => {
@@ -27,7 +27,7 @@ function ProjectWorkspaceRoute() {
       void navigate({
         to: "/projects/$projectKey",
         params: { projectKey },
-        search: projectWorkspaceSearch(next),
+        search: projectWorkspaceSearch(next, checkout),
         ...(options?.replace ? { replace: true } : {}),
         // A quoted passage to land on in the opened thread.
         ...(options?.hash === undefined
@@ -35,7 +35,7 @@ function ProjectWorkspaceRoute() {
           : { hash: options.hash, state: { ...options.state }, resetScroll: false }),
       });
     },
-    [navigate, projectKey, thread],
+    [navigate, projectKey, thread, checkout],
   );
   // A link made before the repository was known names the machine and path.
   const moveProjectKey = useCallback(
@@ -43,14 +43,26 @@ function ProjectWorkspaceRoute() {
       void navigate({
         to: "/projects/$projectKey",
         params: { projectKey: next },
-        search: projectWorkspaceSearch(thread ?? null),
+        search: projectWorkspaceSearch(thread ?? null, checkout),
         replace: true,
       }),
-    [navigate, thread],
+    [navigate, thread, checkout],
+  );
+  const selectCheckout = useCallback(
+    (key: string) => {
+      void navigate({
+        to: "/projects/$projectKey",
+        params: { projectKey },
+        search: projectWorkspaceSearch(null, key),
+      });
+    },
+    [navigate, projectKey],
   );
   return (
     <ProjectWorkspace
       projectKey={projectKey}
+      checkoutKey={checkout ?? null}
+      onSelectCheckout={selectCheckout}
       selectedThreadId={thread ?? null}
       onSelectThread={selectThread}
       onProjectKeyMoved={moveProjectKey}

@@ -1,4 +1,8 @@
 // @vitest-environment jsdom
+vi.mock("~/hooks/useProjectCoordinatorHandoff", () => ({
+  useProjectCoordinatorHandoff: () => runtime.coordinator,
+}));
+// @vitest-environment jsdom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
@@ -7,6 +11,8 @@ import { scopeProjectRef } from "@specweave-studio/client-runtime/environment";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 
 const runtime = vi.hoisted(() => ({
+  legacy: true,
+  coordinator: vi.fn(),
   environments: [] as any[],
   projects: [] as any[],
   permitted: new Set<string>(),
@@ -21,6 +27,7 @@ vi.mock("~/state/session", () => ({
   readEnvironmentScope: (id: string) => runtime.permitted.has(id),
 }));
 vi.mock("~/hooks/useSettings", () => ({
+  useLegacySidebarEnabled: () => runtime.legacy,
   useClientSettings: () => ({ mode: "directory", overrides: {} }),
 }));
 vi.mock("~/logicalProject", () => ({
@@ -80,6 +87,8 @@ async function open() {
   await click("MachineM4");
 }
 beforeEach(() => {
+  runtime.legacy = true;
+  runtime.coordinator.mockReset().mockResolvedValue(true);
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
   useComposerDraftStore.setState(useComposerDraftStore.getInitialState(), true);
   useComposerDraftStore
@@ -306,4 +315,125 @@ it("cancels a delayed Scratch retarget when the picker unmounts", async () => {
   });
   expect(useComposerDraftStore.getState().getDraftSession(draftId)?.environmentId).toBe(m4);
   expect(onPendingChange).toHaveBeenLastCalledWith(false);
+});
+
+it("hides archived destination projects and explains the missing project checkout", async () => {
+  runtime.projects.push(
+    {
+      id: ProjectId.make("archived-m1"),
+      environmentId: m1,
+      title: "Archived fixture",
+      workspaceRoot: "/m1/fixture",
+      workspaceSettings: { archived: true },
+    },
+    {
+      id: ProjectId.make("active-m1"),
+      environmentId: m1,
+      title: "Active project",
+      workspaceRoot: "/m1/active",
+    },
+  );
+  await render();
+  await open();
+  await click("M1Connected");
+  expect(document.body.textContent).not.toContain("Archived fixture");
+  expect(document.body.textContent).toContain("Active project");
+  expect(document.body.textContent).toContain("No active checkout of m4 is saved on M1");
+  expect(useComposerDraftStore.getState().getDraftSession(draftId)?.environmentId).toBe(m4);
+});
+
+it("skips an archived logical match and selects its active sibling", async () => {
+  runtime.projects.push(
+    {
+      id: ProjectId.make("archived-match"),
+      environmentId: m1,
+      title: "Archived match",
+      workspaceRoot: "/m4/data",
+      workspaceSettings: { archived: true },
+    },
+    {
+      id: ProjectId.make("active-match"),
+      environmentId: m1,
+      title: "Active match",
+      workspaceRoot: "/m4/data",
+    },
+  );
+  await render();
+  await open();
+  await click("M1Connected");
+  expect(useComposerDraftStore.getState().getDraftSession(draftId)?.projectId).toBe("active-match");
+});
+
+it("refuses a project archived after selection starts and preserves the prompt", async () => {
+  const project = {
+    id: ProjectId.make("archive-during-select"),
+    environmentId: m1,
+    title: "Destination",
+    workspaceRoot: "/m1/destination",
+    workspaceSettings: { archived: false },
+  };
+  runtime.projects.push(project);
+  await render();
+  await open();
+  await click("M1Connected");
+  await act(async () => {
+    button("Destination").click();
+    project.workspaceSettings.archived = true;
+  });
+  expect(useComposerDraftStore.getState().getDraftSession(draftId)?.environmentId).toBe(m4);
+  expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.prompt).toBe(
+    "Do not lose this draft",
+  );
+  expect(document.querySelector('[role="alert"]')?.textContent).toMatch(/archived/i);
+});
+
+it.each(["resolved", "catalog"])(
+  "rejects archived Scratch from the %s after resolution",
+  async (source) => {
+    let finish!: (project: any) => void;
+    runtime.scratch.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await render();
+    await open();
+    await click("M1Connected");
+    await click("No project");
+    const scratch = {
+      id: ProjectId.make("scratch-m1"),
+      environmentId: m1,
+      workspaceRoot: "/scratch/m1",
+      workspaceSettings: { archived: source === "resolved" },
+    };
+    if (source === "catalog")
+      runtime.projects.push({ ...scratch, workspaceSettings: { archived: true } });
+    await act(async () => finish(scratch));
+    expect(useComposerDraftStore.getState().getDraftSession(draftId)?.environmentId).toBe(m4);
+    expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.prompt).toBe(
+      "Do not lose this draft",
+    );
+    expect(document.querySelector('[role="alert"]')?.textContent).toMatch(/archived/i);
+  },
+);
+
+it("opens the coordinator for a modern named project and preserves the independent draft", async () => {
+  runtime.legacy = false;
+  runtime.projects.push({
+    id: ProjectId.make("named-m1"),
+    environmentId: m1,
+    title: "Named project",
+    workspaceRoot: "/named",
+  });
+  const before = useComposerDraftStore.getState().getDraftSession(draftId);
+  await render();
+  await open();
+  await click("M1Connected");
+  await click("Named project");
+  expect(runtime.coordinator).toHaveBeenCalledWith(scopeProjectRef(m1, ProjectId.make("named-m1")));
+  expect(useComposerDraftStore.getState().getDraftSession(draftId)).toBe(before);
+  expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.prompt).toBe(
+    "Do not lose this draft",
+  );
 });

@@ -52,6 +52,9 @@ const testState = vi.hoisted(() => {
   };
 
   return {
+    coordinatorDraft: vi.fn(),
+    legacy: true,
+    scratchRoot: undefined as string | undefined,
     setExplicitModelPick(value: boolean) {
       explicitModelPick = value;
     },
@@ -124,13 +127,20 @@ vi.mock("@effect/atom-react", () => ({
               },
             },
           ],
-          ["environment-ssh", { settings: testState.targetSettings }],
+          [
+            "environment-ssh",
+            { settings: testState.targetSettings, scratchWorkspaceRoot: testState.scratchRoot },
+          ],
         ]),
 }));
 vi.mock("@specweave-studio/client-runtime/environment", () => ({
   scopedProjectKey: () => "remote-project",
   scopeProjectRef: (environmentId: string, projectId: string) => ({ environmentId, projectId }),
   scopeThreadRef: (environmentId: string, threadId: string) => ({ environmentId, threadId }),
+}));
+vi.mock("@specweave-studio/client-runtime/state/projects", () => ({
+  isScratchProject: (project: { workspaceRoot: string }, root: string | undefined) =>
+    root !== undefined && project.workspaceRoot === root,
 }));
 vi.mock("@specweave-studio/contracts", () => ({
   DEFAULT_RUNTIME_MODE: "default",
@@ -225,7 +235,10 @@ vi.mock("../uiStateStore", () => ({
   legacyProjectCwdPreferenceKey: () => "remote-project",
   useUiStateStore: () => [],
 }));
-vi.mock("./useSettings", () => ({ useClientSettings: () => ({}) }));
+vi.mock("./useSettings", () => ({
+  useClientSettings: () => ({}),
+  useLegacySidebarEnabled: () => testState.legacy,
+}));
 
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { readNewThreadWorkspaceDefault } from "../lib/newThreadWorkspaceDefault";
@@ -670,4 +683,91 @@ describe("reused draft workspace races", () => {
       expect.objectContaining(selected),
     );
   });
+});
+
+vi.mock("../studio/projectCoordinatorDraft", async (original) => ({
+  ...(await original<typeof import("../studio/projectCoordinatorDraft")>()),
+  enqueueProjectCoordinatorDraft: testState.coordinatorDraft,
+}));
+describe("modern project creation", () => {
+  it("opens the chosen checkout coordinator without creating or replacing a draft", async () => {
+    testState.reset(null);
+    testState.legacy = false;
+    testState.scratchRoot = "/scratch";
+    try {
+      expect(
+        await useNewThreadHandler()({
+          environmentId: "environment-ssh",
+          projectId: "project-remote",
+        } as any),
+      ).toBeNull();
+      expect(testState.router.navigate).toHaveBeenCalledWith({
+        to: "/projects/$projectKey",
+        params: { projectKey: "remote-project" },
+        search: { checkout: "environment-ssh:project-remote" },
+        replace: false,
+      });
+      expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
+      expect(testState.draftStore.setDraftThreadContext).not.toHaveBeenCalled();
+    } finally {
+      testState.legacy = true;
+      testState.scratchRoot = undefined;
+    }
+  });
+  it("still creates an independent Scratch chat", async () => {
+    testState.reset(null);
+    testState.legacy = false;
+    testState.scratchRoot = "/remote/project";
+    try {
+      const result = await useNewThreadHandler()(
+        { environmentId: "environment-ssh", projectId: "project-remote" } as any,
+        { envMode: "local" },
+      );
+      expect(result?.draftId).toBe("draft-delayed");
+      expect(testState.router.navigate).toHaveBeenCalledWith(
+        expect.objectContaining({ to: "/draft/$draftId" }),
+      );
+    } finally {
+      testState.legacy = true;
+      testState.scratchRoot = undefined;
+    }
+  });
+});
+
+it("does not classify a cached Scratch as a project before its machine config arrives", async () => {
+  testState.reset(null);
+  testState.legacy = false;
+  testState.scratchRoot = undefined;
+  try {
+    await useNewThreadHandler()({
+      environmentId: "environment-ssh",
+      projectId: "project-remote",
+    } as any);
+    expect(testState.router.navigate).not.toHaveBeenCalled();
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
+  } finally {
+    testState.legacy = true;
+  }
+});
+
+it("preserves a new-task branch/worktree request in the coordinator composer", async () => {
+  testState.reset(null);
+  testState.legacy = false;
+  testState.scratchRoot = "/scratch";
+  testState.coordinatorDraft.mockClear();
+  try {
+    await useNewThreadHandler()(
+      { environmentId: "environment-ssh", projectId: "project-remote" } as any,
+      { branch: "feature/review", worktreePath: "/worktrees/review", envMode: "worktree" },
+    );
+    expect(testState.coordinatorDraft).toHaveBeenCalledWith({
+      environmentId: "environment-ssh",
+      projectId: "project-remote",
+      text: "Use branch: feature/review\n\nUse the existing worktree: /worktrees/review",
+    });
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
+  } finally {
+    testState.legacy = true;
+    testState.scratchRoot = undefined;
+  }
 });

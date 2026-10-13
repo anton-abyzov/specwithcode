@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
+import { useComposerDraftStore } from "../../../composerDraftStore";
 
 const state = vi.hoisted(() => ({
   navigate: vi.fn(),
@@ -59,6 +60,10 @@ vi.mock("../../../env", () => ({ isElectron: false }));
 vi.mock("../../../state/server", () => ({ primaryServerKeybindingsAtom: {} }));
 vi.mock("../../../state/entities", () => ({
   useThreadShells: () => state.shells,
+  readThreadShell: (ref: { environmentId: string; threadId: string }) =>
+    state.shells.find(
+      (thread) => thread.environmentId === ref.environmentId && thread.id === ref.threadId,
+    ) ?? null,
   useServerConfigs: () => state.scratchRoots,
 }));
 vi.mock("../../../state/projects", () => ({ projectEnvironment: { update: {} } }));
@@ -73,12 +78,10 @@ vi.mock("../../../hooks/useSettings", () => ({
     select: (settings: { projectCoordinatorMachines: Record<string, string> }) => T,
   ) => select({ projectCoordinatorMachines: state.savedMachines }),
 }));
-vi.mock("../../../hooks/useHandleNewThread", () => ({
-  useHandleNewThread: () => ({
-    activeDraftThread: null,
-    activeThread: null,
-    defaultProjectRef: null,
-    handleNewThread: vi.fn(),
+vi.mock("../../../hooks/useScratchProject", () => ({
+  useScratchProject: () => ({
+    scratchEnvironmentId: (environmentId: string | null) => environmentId,
+    startScratchThread: state.start,
   }),
 }));
 vi.mock("../../../hooks/useThreadActions", () => ({
@@ -92,12 +95,14 @@ vi.mock("../../../lib/chatThreadActions", () => ({ startNewThreadFromContext: st
 vi.mock("../../../threadRoutes", () => ({
   buildThreadRouteParams: (ref: { environmentId: string; threadId: string }) => ref,
   resolveThreadRouteTarget: (params: Record<string, string>) =>
-    params.threadId
-      ? {
-          kind: "server",
-          threadRef: { environmentId: params.environmentId, threadId: params.threadId },
-        }
-      : null,
+    params.draftId
+      ? { kind: "draft", draftId: params.draftId }
+      : params.threadId
+        ? {
+            kind: "server",
+            threadRef: { environmentId: params.environmentId, threadId: params.threadId },
+          }
+        : null,
 }));
 vi.mock("../../settings/useSettingsProjectGroups", () => ({
   useSettingsProjectGroups: () => state.groups,
@@ -197,11 +202,15 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
+  vi.restoreAllMocks();
 });
 
 describe("projects and chats sidebar", () => {
   it("lists projects, marks the open one and counts what waits on the person", async () => {
     state.params = { projectKey: "host:/b" };
+    state.shells = state.shells.map((thread) =>
+      thread.id === "ask" ? { ...thread, createdBy: "agent" } : thread,
+    );
     await render();
     const rows = [...container.querySelectorAll('a[href^="/projects/"]')];
     expect(rows.map((row) => row.querySelector(".sws-side-row-label")?.textContent)).toEqual([
@@ -275,15 +284,14 @@ describe("projects and chats sidebar", () => {
     // The project row still counts what its threads need from the person.
     const atlas = container.querySelector('a[href="/projects/host:/a"]')!;
     expect(atlas.querySelector(".sws-count")?.textContent).toBe("1 waiting on you");
-    // The person's own chat in that project still opens in the project's panel.
+    // The person's own chat remains independent even in the same directory.
     const mine = [...container.querySelectorAll<HTMLButtonElement>(".sws-chat-row > button")].find(
       (button) => button.textContent?.includes("Chat mine"),
     )!;
     await act(async () => mine.click());
     expect(state.navigate).toHaveBeenLastCalledWith({
-      to: "/projects/$projectKey",
-      params: { projectKey: "host:/a" },
-      search: { thread: "mine" },
+      to: "/$environmentId/$threadId",
+      params: { environmentId: "host", threadId: "mine" },
     });
     // Only project threads left: the empty line says where they are.
     state.shells = state.shells.filter((thread) => thread.id !== "plain" && thread.id !== "mine");
@@ -444,13 +452,13 @@ describe("projects and chats sidebar", () => {
     expect(state.navigate).toHaveBeenLastCalledWith({
       to: "/projects/$projectKey",
       params: { projectKey: "host:/a" },
-      search: { thread: "thread:mcp:scope:req:0" },
+      search: { thread: "thread:mcp:scope:req:0", checkout: "host:p1" },
     });
     await act(async () => row("Fork").click());
     expect(state.navigate).toHaveBeenLastCalledWith({
       to: "/projects/$projectKey",
       params: { projectKey: "host:/a" },
-      search: { thread: "fork" },
+      search: { thread: "fork", checkout: "host:p1" },
     });
     await act(async () => row("Chat plain").click());
     expect(state.navigate).toHaveBeenLastCalledWith({
@@ -506,7 +514,7 @@ describe("projects and chats sidebar", () => {
     ).toBe(false);
     window.removeEventListener("studio:open-command-palette", listen);
   });
-  it("asks which project a new chat belongs to when there is a choice", async () => {
+  it("starts an independent chat even when several projects are available", async () => {
     const opened: unknown[] = [];
     const listen = (event: Event) => opened.push((event as CustomEvent).detail);
     window.addEventListener("studio:open-command-palette", listen);
@@ -515,13 +523,64 @@ describe("projects and chats sidebar", () => {
       b.textContent?.startsWith("New chat"),
     )!;
     await act(async () => newChat.click());
-    expect(opened).toEqual([{ open: "new-thread-in" }]);
-    expect(state.start).not.toHaveBeenCalled();
+    expect(opened).toEqual([]);
+    expect(state.start).toHaveBeenCalledWith("host");
     state.groups = state.groups.slice(0, 1);
     await render();
     await act(async () => newChat.click());
-    expect(state.start).toHaveBeenCalledTimes(1);
+    expect(state.start).toHaveBeenCalledTimes(2);
     window.removeEventListener("studio:open-command-palette", listen);
+  });
+  it("keeps independent chat attention out of the project's badge", async () => {
+    state.shells = [
+      shell("mine", { createdBy: "user", hasPendingUserInput: true }),
+      shell("unknown", { hasPendingUserInput: true }),
+      shell("project-coordinator:p1", { hasPendingUserInput: true }),
+      shell("project-coordinator:p1-old", { createdBy: "agent", hasPendingUserInput: true }),
+      shell("worker", { createdBy: "agent", hasPendingUserInput: true }),
+    ];
+    await render();
+    expect(container.querySelector('a[href="/projects/host:/a"] .sws-count')?.textContent).toBe(
+      "2 waiting on you",
+    );
+    expect(chats()).toContain("Chat mine");
+  });
+  it.each([false, true])(
+    "starts New chat on the project's selected checkout (explicit URL: %s)",
+    async (explicit) => {
+      state.params = { projectKey: "host:/a" };
+      state.groups[0]!.memberProjects.push({ environmentId: "laptop", id: "remote-p1" });
+      if (explicit) state.search = { checkout: "laptop:remote-p1" };
+      else state.savedMachines = { "host:/a": "laptop:remote-p1" };
+      await render();
+      const button = [...container.querySelectorAll("button")].find((b) =>
+        b.textContent?.startsWith("New chat"),
+      )!;
+      await act(async () => button.click());
+      expect(state.start).toHaveBeenCalledWith("laptop");
+    },
+  );
+  it("does not substitute another machine for a missing explicit project checkout", async () => {
+    state.params = { projectKey: "host:/a" };
+    state.search = { checkout: "missing:remote-p1" };
+    await render();
+    const button = [...container.querySelectorAll("button")].find((b) =>
+      b.textContent?.startsWith("New chat"),
+    )!;
+    await act(async () => button.click());
+    expect(state.start).not.toHaveBeenCalled();
+  });
+  it("starts New chat on the open draft's machine", async () => {
+    state.params = { draftId: "remote-draft" };
+    vi.spyOn(useComposerDraftStore.getState(), "getDraftSession").mockReturnValue({
+      environmentId: "laptop",
+    } as never);
+    await render();
+    const button = [...container.querySelectorAll("button")].find((b) =>
+      b.textContent?.startsWith("New chat"),
+    )!;
+    await act(async () => button.click());
+    expect(state.start).toHaveBeenCalledWith("laptop");
   });
 });
 

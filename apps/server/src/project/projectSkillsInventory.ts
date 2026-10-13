@@ -200,20 +200,54 @@ interface PendingRow {
   presences: Array<ProjectSkillPresence>;
 }
 
-/** Pick the lock entry for a name: the project lock when a copy lives in the project. */
+/**
+ * The plugin a namespaced skill (`<plugin>:<skill>`) belongs to, the key
+ * vskill files a plugin install under.
+ */
+function pluginNamespace(name: string): string | undefined {
+  const separator = name.indexOf(":");
+  return separator > 0 ? name.slice(0, separator) : undefined;
+}
+
+/**
+ * Folder names vskill could have locked a loaded copy under. A Claude Code
+ * plugin skill (`plugin` scope) is excluded: its folder sits inside the
+ * plugin, so a standalone skill locked under the same folder name (`lint`
+ * for `frontend:lint`) is a different skill.
+ */
+function lockableFolderNames(presences: ReadonlyArray<ProjectSkillPresence>): Array<string> {
+  return presences
+    .filter((presence) => presence.scope !== "plugin")
+    .map((presence) => skillFolderName(presence.path));
+}
+
+/**
+ * Pick the lock entry for a name: the project lock when a copy lives in the
+ * project. A skill locked under its own name or folder wins; otherwise a
+ * namespaced plugin skill takes its plugin's `pluginDir` entry, since vskill
+ * locks a plugin once under the plugin's name.
+ */
 function selectLock(
   name: string,
   presences: ReadonlyArray<ProjectSkillPresence>,
   locks: ReadonlyArray<VskillLockSource>,
   cwd: string,
 ): { readonly source: VskillLockSource; readonly entry: VskillLockEntry } | undefined {
-  const keys = new Set([name, ...presences.map((presence) => skillFolderName(presence.path))]);
-  const candidates = locks.flatMap((source) =>
+  const keys = new Set([name, ...lockableFolderNames(presences)]);
+  const direct = locks.flatMap((source) =>
     [...keys].flatMap((key) => {
       const entry = source.entries.get(key);
       return entry ? [{ source, entry }] : [];
     }),
   );
+  const namespace = pluginNamespace(name);
+  const candidates =
+    direct.length > 0 || namespace === undefined
+      ? direct
+      : locks.flatMap((source) => {
+          const entry = source.entries.get(namespace);
+          return entry?.pluginDir ? [{ source, entry }] : [];
+        });
   if (candidates.length === 0) return undefined;
   // A skill nothing loads is the project's own declaration first.
   const hasProjectCopy =
@@ -252,12 +286,10 @@ export function buildProjectSkillRows(
   // A locked skill no agent loads still gets a row, under its lock key,
   // unless a loaded skill already claimed that key through its folder name.
   // Plugin installs (`pluginDir`) are skipped: their skills load under the
-  // plugin's namespace, so the lock key never names a skill an agent lists.
+  // plugin's namespace, so the lock key never names a skill an agent lists;
+  // `selectLock` attaches the entry to those namespaced rows instead.
   const claimedKeys = new Set(
-    [...pending.values()].flatMap((row) => [
-      row.name,
-      ...row.presences.map((presence) => skillFolderName(presence.path)),
-    ]),
+    [...pending.values()].flatMap((row) => [row.name, ...lockableFolderNames(row.presences)]),
   );
   for (const source of input.locks) {
     for (const [key, entry] of source.entries) {

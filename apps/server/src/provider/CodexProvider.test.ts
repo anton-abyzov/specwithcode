@@ -35,6 +35,19 @@ describe("fresh Codex account status with optional discovery", () => {
       expect(status.usageLimits?.nativeRouteVerified).toBe(true);
     }).pipe(Effect.scoped),
   );
+  it.effect("keeps optional route discovery bounded without treating unknown routing as verified", () =>
+    Effect.gen(function* () {
+      const client = { request: (method: string) => {
+        if (method === "config/read") return Effect.never;
+        if (method === "skills/list") return Effect.succeed({ data: [] });
+        if (method === "model/list") return Effect.succeed({ data: [], nextCursor: null });
+        return Effect.succeed({ rateLimits: {}, ordinaryUsageAllowed: true });
+      } } as Parameters<typeof readCodexProviderMetadata>[0];
+      const probe = yield* readCodexProviderMetadata(client, { cwd: "/fixture" }).pipe(Effect.forkChild);
+      yield* TestClock.adjust("4 seconds");
+      expect((yield* Fiber.join(probe)).nativeRouteVerified).toBe(false);
+    }).pipe(Effect.scoped),
+  );
   it.effect("degrades optional RPC failures without treating failed account probes as authenticated", () =>
     Effect.gen(function* () {
       const client = { request: (method: string) => method === "config/read"
@@ -416,8 +429,31 @@ describe("supported Codex native route metadata", () => {
     expect(await Effect.runPromise(readCodexNativeRoute(client, "/workspace/custom"))).toBe(false);
     expect(requests).toEqual([{ method: "config/read", params: { cwd: "/workspace/default", includeLayers: false } }, { method: "config/read", params: { cwd: "/workspace/custom", includeLayers: false } }]);
   });
-  it("fails closed with a safe boolean when supported config read fails", async () => {
+  it("reports unavailable verification when supported config read fails", async () => {
     const client: Parameters<typeof readCodexNativeRoute>[0] = { request: () => Effect.fail(new CodexErrors.CodexAppServerInputStreamEndedError({})) };
-    expect(await Effect.runPromise(readCodexNativeRoute(client, "/workspace"))).toBe(false);
+    await expect(Effect.runPromise(readCodexNativeRoute(client, "/workspace"))).rejects.toMatchObject({
+      _tag: "CodexNativeRouteCheckError", reason: "unavailable",
+    });
   });
+  it.effect("admits delayed valid native configuration beyond optional discovery's three seconds", () =>
+    Effect.gen(function* () {
+      const client: Parameters<typeof readCodexNativeRoute>[0] = { request: () =>
+        Effect.sleep("4 seconds").pipe(Effect.as({ config: {}, origins: {} })) };
+      const checked = yield* readCodexNativeRoute(client, "/workspace").pipe(Effect.forkChild);
+      yield* TestClock.adjust("4 seconds");
+      expect(yield* Fiber.join(checked)).toBe(true);
+    }).pipe(Effect.scoped),
+  );
+  it.effect("reports a bounded admission timeout without classifying it as a custom route", () =>
+    Effect.gen(function* () {
+      const client: Parameters<typeof readCodexNativeRoute>[0] = { request: () => Effect.never };
+      const checked = yield* readCodexNativeRoute(client, "/workspace").pipe(
+        Effect.flip, Effect.forkChild,
+      );
+      yield* TestClock.adjust("61 seconds");
+      expect(yield* Fiber.join(checked)).toMatchObject({
+        _tag: "CodexNativeRouteCheckError", reason: "timeout",
+      });
+    }).pipe(Effect.scoped),
+  );
 });

@@ -19,7 +19,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { APP_DISPLAY_NAME } from "../../branding";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { isElectron } from "../../env";
-import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
+import { useNewChatDestination } from "../../hooks/useNewChatDestination";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { chatNavigationTarget } from "../../studio/projectPaneThreads";
 import {
@@ -126,7 +126,7 @@ export function StudioOverview() {
   const bootstrapped = useAllEnvironmentShellsBootstrapped();
   const { environments, isReady, networkStatus } = useEnvironments();
   const canOperate = useEnvironmentsWithScope(environments, AuthOrchestrationOperateScope);
-  const handleNewThread = useNewThreadHandler();
+  const openDestination = useNewChatDestination();
   const [request, setRequest] = useState<DraftRequest | null>(null);
   const [selectedProject, setSelectedProject] = useState("");
   const [starting, setStarting] = useState(false);
@@ -227,11 +227,12 @@ export function StudioOverview() {
       ) {
         throw new Error("native-instance-unavailable");
       }
-      const result = await handleNewThread(scopeProjectRef(project.environmentId, project.id), {
+      const result = await openDestination(scopeProjectRef(project.environmentId, project.id), {
         environmentSelection: "manual",
+        model: request?.model,
       });
-      if (!result) throw new Error("draft-unavailable");
-      if (request?.model) {
+      if (result.kind === "unavailable") throw new Error("destination-unavailable");
+      if (result.kind === "draft" && request?.model) {
         useComposerDraftStore
           .getState()
           .setModelSelection(result.draftId, request.model, { explicit: true });

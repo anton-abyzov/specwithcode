@@ -1446,7 +1446,9 @@ function OpenCommandPaletteDialog(props: {
         title: "No project",
         icon: <MessageSquareDashedIcon className={ITEM_ICON_CLASS} />,
         shortcutCommand: "chat.newWithoutProject" as const,
-        run: () => startScratchThread(scratchTargetEnvironmentId),
+        run: async () => {
+          await startScratchThread(scratchTargetEnvironmentId);
+        },
       },
       ...projectItems.slice(noProjectIndex),
     ];
@@ -2063,7 +2065,9 @@ function OpenCommandPaletteDialog(props: {
       title: "New thread without a project",
       icon: <MessageSquareDashedIcon className={ITEM_ICON_CLASS} />,
       shortcutCommand: "chat.newWithoutProject",
-      run: () => startScratchThread(scratchTargetEnvironmentId),
+      run: async () => {
+        await startScratchThread(scratchTargetEnvironmentId);
+      },
     });
   }
 

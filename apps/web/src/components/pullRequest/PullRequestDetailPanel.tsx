@@ -1,3 +1,4 @@
+import { useProjectCoordinatorHandoff } from "~/hooks/useProjectCoordinatorHandoff";
 import { parseChangeRequestUrl } from "@specweave-studio/shared/changeRequestUrl";
 import { useAtomValue } from "@effect/atom-react";
 import { usePullRequestStack } from "~/state/usePullRequestStack";
@@ -900,6 +901,7 @@ export function PullRequestDetailPanel({
   const titleDraft = titleScope?.pullRequestKey === pullRequestKey ? titleScope.text : null;
   const [titleSaving, setTitleSaving] = useState(false);
   const newThread = useNewThreadHandler();
+  const coordinatorHandoff = useProjectCoordinatorHandoff();
   const { environments } = useEnvironments();
   const unavailableGitHubUrl = useMemo(() => {
     const identity = projects.find(
@@ -1144,6 +1146,12 @@ export function PullRequestDetailPanel({
     }
     setHandoff(kind);
     const projectRef = scopeProjectRef(actingEnvironmentId, acting?.projectId ?? detail.projectId);
+    if (
+      (await coordinatorHandoff(projectRef, { ...task, url: detail.url })).kind !== "standalone"
+    ) {
+      setHandoff(null);
+      return;
+    }
     const opened = await openThreadWithTask(projectRef, task);
     setHandoff(null);
     if (opened === null) {
@@ -1157,8 +1165,6 @@ export function PullRequestDetailPanel({
     toastManager.add({
       type: "success",
       title: "Asked in a thread",
-      // "Ask" leaves the composer empty on purpose, so saying the question is in it would send
-      // the reader looking for something that is not there. The chips are what landed.
       description:
         task.prompt.length > 0
           ? "The question is in the composer — read it over, then send."
@@ -1166,15 +1172,9 @@ export function PullRequestDetailPanel({
     });
   };
 
-  // Every handoff works the same way: check the pull request out into its own worktree, open a
-  // thread there, and — when it carries a task — put that in the composer for the user to read
-  // before sending. Checking out is the whole point of the ones that carry nothing.
   const startHandoff = async (
     kind: string,
     task: { prompt: string; reviewComments?: ReadonlyArray<ReviewCommentContext> } | null,
-    // A worktree leaves whatever is open alone, which is why it is the default. Checking out in
-    // the repository itself is what you want when the point is to run the thing where you
-    // already work — and it moves the branch under everything else that is open there.
     mode: "worktree" | "local" = "worktree",
   ) => {
     if (!handoffSummary || handoff !== null) return;
@@ -1187,6 +1187,19 @@ export function PullRequestDetailPanel({
       });
       return;
     }
+    setHandoff(kind);
+    if (
+      (
+        await coordinatorHandoff(
+          scopeProjectRef(actingEnvironmentId, acting?.projectId ?? handoffSummary.projectId),
+          { ...task, url: handoffSummary.url, mode },
+        )
+      ).kind !== "standalone"
+    ) {
+      setHandoff(null);
+      return;
+    }
+    setHandoff(null);
     if (checkoutRoot === null) return;
     if (
       !prepareThread.isAllowed ||
@@ -1201,31 +1214,20 @@ export function PullRequestDetailPanel({
       return;
     }
     setHandoff(kind);
-    // The menu closes on the press and takes its "Preparing..." label with it, so this is the
-    // only thing answering for the checkout. It carries no timeout of its own: a loading toast
-    // never expires, and an explicit one would survive the update and pin the result on screen.
     const toastId = toastManager.add({
       type: "loading",
       title: "Preparing the pull request checkout...",
     });
-    // Wherever the reader chose to act: the thread, the checkout it is pointed at and the composer
-    // the task lands in are all one server's, and picking another one moves all three.
     const projectRef = scopeProjectRef(
       actingEnvironmentId,
       acting?.projectId ?? handoffSummary.projectId,
     );
-    // The thread is opened before the checkout rather than after it, because the project's setup
-    // script only runs for a checkout that knows which thread it is for — and a worktree with no
-    // dependencies installed is not something anyone can test.
     const opened = await newThread(projectRef).then(
       (session) => session,
       () => null,
     );
     if (opened === null) {
       setHandoff(null);
-      // Without a thread there is nowhere for the checkout to belong: its setup script would not
-      // run and its task would have no composer to land in. Better to stop before touching the
-      // working tree than to prepare a worktree nobody asked for.
       toastManager.update(toastId, {
         type: "error",
         title: "Could not open a thread for the checkout",

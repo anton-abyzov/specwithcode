@@ -480,6 +480,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
     searchTerms: ["queue steer running turn send default behavior composer"],
   },
+  // A provider name should lead to setup before background update controls.
+  {
+    id: "providers",
+    title: "Providers",
+    to: "/settings/providers",
+    searchTerms: [
+      "agents cli codex claude cursor copilot gemini grok opencode antigravity google setup connect chat sign in sign out install subscription instances authentication api key models configuration binary path config directory endpoint arguments environment variables display name accent color custom favorite hidden auto compact",
+    ],
+  },
   {
     id: "provider-update-checks",
     title: "Provider update checks",
@@ -662,19 +671,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "snap-shot-enabled",
   },
   {
-    id: "providers",
-    title: "Providers",
-    to: "/settings/providers",
-    searchTerms: [
-      "agents cli codex claude cursor grok opencode antigravity google sign in sign out install subscription instances authentication api key models configuration binary path config directory endpoint arguments environment variables display name accent color custom favorite hidden auto compact",
-    ],
-  },
-  {
     id: "usage-providers",
-    title: "Usage providers",
+    title: "Usage reporting",
     to: "/settings/providers",
     searchTerms: [
-      "usage sources CLIProxyAPI CLI proxy hub quota subscription limits management key add remove",
+      "usage providers reporting sources CLIProxyAPI CLI proxy hub quota subscription limits management key add remove",
     ],
     providerSettingsOnly: true,
   },

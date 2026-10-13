@@ -21,6 +21,7 @@ import {
   ProviderDriverKind,
   type ProviderInstanceConfig,
   type ProviderInstanceId,
+  type ServerProvider,
   resolveEnvironmentMachineKind,
   resolveProviderInstanceEnabled,
 } from "@specweave-studio/contracts";
@@ -193,6 +194,68 @@ function providerEnvironmentDetail(environment: EnvironmentPresentation): string
 // never changes the card's footprint.
 const providerCardHeightClassName =
   "@min-[48rem]/providers:h-[min(44rem,calc(100dvh-11rem))] @min-[48rem]/providers:min-h-[32rem]";
+
+export function ProviderReadinessSummary({
+  provider,
+  enabled,
+  environmentLabel,
+}: {
+  readonly provider: ServerProvider | undefined;
+  readonly enabled: boolean;
+  readonly environmentLabel: string;
+}) {
+  const auth = provider?.auth.status;
+  const nextStep = !enabled
+    ? "Enable this agent below to use it in chat."
+    : !provider
+      ? "Refresh provider status to check installation, sign-in and models."
+      : provider.availability === "unavailable"
+        ? (provider.unavailableReason ?? "This agent is unavailable on this machine.")
+        : !provider.installed
+          ? `Complete installation on ${environmentLabel} or configure its executable below, then refresh provider status.`
+          : auth === "unauthenticated"
+            ? provider.setup?.canAuthenticate
+              ? "Complete sign-in in Setup below, then refresh provider status to load models."
+              : `Complete sign-in using this agent on ${environmentLabel}, then refresh provider status.`
+            : auth !== "authenticated"
+              ? "Sign-in status is not reported. Review the agent settings below or refresh provider status."
+              : provider.status === "error" || provider.status === "warning"
+                ? "Review the provider status below before starting a chat."
+                : provider.models.length === 0
+                  ? "No models reported yet. Refresh provider status after completing setup."
+                  : "Choose this agent and a model in the chat model picker.";
+  const stages = [
+    [
+      "Installation",
+      provider ? (provider.installed ? "Installed" : "Not installed") : "Not checked",
+    ],
+    [
+      "Sign-in",
+      auth === "authenticated"
+        ? "Signed in"
+        : auth === "unauthenticated"
+          ? "Required"
+          : "Not reported",
+    ],
+    ["Models", provider?.models.length ? `${provider.models.length} reported` : "None reported"],
+  ] as const;
+  return (
+    <section aria-label="Agent readiness" className="space-y-3 border-b border-border/70 pb-4">
+      <p className="text-xs text-muted-foreground">Agent runs on {environmentLabel}.</p>
+      <dl className="grid grid-cols-3 gap-3">
+        {stages.map(([label, value]) => (
+          <div key={label} className="min-w-0">
+            <dt className="text-xs text-muted-foreground">{label}</dt>
+            <dd className="mt-1 text-sm font-medium">{value}</dd>
+          </div>
+        ))}
+      </dl>
+      <p className="text-xs leading-relaxed text-muted-foreground" role="status">
+        {nextStep}
+      </p>
+    </section>
+  );
+}
 
 /**
  * Same chrome as the provider editor (section heading, floating device tabs,
@@ -1209,12 +1272,13 @@ export function EnvironmentProviderSettings({
                 <TooltipTrigger
                   render={
                     <Button
-                      size="icon-xs"
-                      variant="ghost-muted"
+                      size="xs"
+                      variant="outline"
                       onClick={() => setIsAddInstanceDialogOpen(true)}
                       aria-label="Add provider"
                     >
                       <PlusIcon />
+                      Add provider
                     </Button>
                   }
                 />
@@ -1227,6 +1291,10 @@ export function EnvironmentProviderSettings({
         {deviceTabs ? (
           <div className="flex min-h-11 min-w-0 items-center gap-2 px-3 sm:px-4">{deviceTabs}</div>
         ) : null}
+        <p className="px-3 pb-3 text-xs leading-relaxed text-muted-foreground sm:px-4">
+          Configure agents on {environmentLabel}. Add Copilot, Grok, Gemini or another agent,
+          complete setup, then choose its models in chat.
+        </p>
         {readOnly ? (
           <SettingsGroup divided={false} className="overflow-hidden">
             <SettingsRow
@@ -1257,7 +1325,16 @@ export function EnvironmentProviderSettings({
           <div className="min-w-0 @min-[48rem]/providers:min-h-0">
             {selectedRow ? (
               <ScrollArea scrollFade chainVerticalScroll className="@min-[48rem]/providers:h-full">
-                <div className="space-y-6 p-4">{renderProviderInstance(selectedRow, "editor")}</div>
+                <div className="space-y-6 p-4">
+                  <ProviderReadinessSummary
+                    provider={serverProviders.find(
+                      (provider) => provider.instanceId === selectedRow.instanceId,
+                    )}
+                    enabled={resolveProviderInstanceEnabled(selectedRow.instance)}
+                    environmentLabel={environmentLabel}
+                  />
+                  {renderProviderInstance(selectedRow, "editor")}
+                </div>
               </ScrollArea>
             ) : (
               <div className="p-6 text-sm text-muted-foreground">

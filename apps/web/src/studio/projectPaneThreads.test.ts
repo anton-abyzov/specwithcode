@@ -15,7 +15,7 @@ import {
 
 type Shell = Pick<
   EnvironmentThreadShell,
-  "id" | "environmentId" | "projectId" | "deletedAt" | "lineage" | "forkedFrom"
+  "id" | "environmentId" | "projectId" | "deletedAt" | "lineage" | "forkedFrom" | "createdBy"
 >;
 
 function shell(id: string, overrides: Partial<Record<keyof Shell, unknown>> = {}): Shell {
@@ -24,6 +24,7 @@ function shell(id: string, overrides: Partial<Record<keyof Shell, unknown>> = {}
     environmentId: "host",
     projectId: "atlas",
     deletedAt: null,
+    createdBy: "agent",
     lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: id },
     forkedFrom: null,
     ...overrides,
@@ -161,16 +162,18 @@ describe("parseProjectWorkspaceSearch", () => {
 
 describe("projectPaneTargetForChat", () => {
   const project = { projectKey: "atlas-key", coordinatorThreadId: "project-coordinator:atlas" };
-  const chat = (id: string) => ({ id: id as Shell["id"] });
-  it("routes every chat of a project workspace into the project's panel, as the project lists it", () => {
+  const chat = (id: string) => ({ id: id as Shell["id"], createdBy: "agent" as const });
+  it("routes agent workers and their forks into the project panel", () => {
     expect(projectPaneTargetForChat(chat("thread:mcp:scope:req:0"), project)).toEqual({
       projectKey: "atlas-key",
       threadId: "thread:mcp:scope:req:0",
     });
     expect(projectPaneTargetForChat(chat("thread:delegated-task:cmd"), project)).not.toBeNull();
-    // A fork of a worker, and a thread started from inside the panel, carry no coordinator lineage.
+    // Agent-created forks remain owned even when their root is unavailable.
     expect(projectPaneTargetForChat(chat("fork-1"), project)).not.toBeNull();
-    expect(projectPaneTargetForChat(chat("plain-chat"), project)).not.toBeNull();
+    expect(
+      projectPaneTargetForChat({ ...chat("plain-chat"), createdBy: "user" }, project),
+    ).toBeNull();
   });
   it("keeps chats of projects without a coordinator full page", () => {
     expect(
@@ -208,6 +211,7 @@ describe("chatProjectPaneTarget", () => {
       id,
       environmentId,
       projectId: "atlas",
+      createdBy: "agent",
       lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: id },
     }) as unknown as Parameters<typeof chatProjectPaneTarget>[0];
   it("uses the coordinator of the checkout the chat lives in", () => {
@@ -273,8 +277,8 @@ describe("chatProjectPaneTarget", () => {
       expect(check(owned("mine", { createdBy: "user" }))).toBe(false);
       // A server that does not say who started a thread counts it as the person's.
       expect(check(owned("unknown"))).toBe(false);
-      // It still opens in the project's panel.
-      expect(chatProjectPaneTarget(owned("mine", { createdBy: "user" }), group)).not.toBeNull();
+      // Sharing a directory does not make it a project worker.
+      expect(chatProjectPaneTarget(owned("mine", { createdBy: "user" }), group)).toBeNull();
     });
     it("owns forks and subagents of a worker, whoever started them", () => {
       const worker = owned("worker", { createdBy: "agent" });
@@ -333,29 +337,33 @@ describe("chatNavigationTarget", () => {
     ],
   };
   const row = (projectId: string) =>
-    ({ id: "worker", environmentId: "host", projectId }) as unknown as Parameters<
-      typeof chatNavigationTarget
-    >[0];
+    ({
+      id: "worker",
+      environmentId: "host",
+      projectId,
+      createdBy: "agent",
+    }) as unknown as Parameters<typeof chatNavigationTarget>[0];
   it("names the project page with the thread, or the thread's own page", () => {
     expect(chatNavigationTarget(row("atlas"), group)).toEqual({
       to: "/projects/$projectKey",
       params: { projectKey: "atlas-key" },
-      search: { thread: "worker" },
+      search: { thread: "worker", checkout: "host:atlas" },
     });
     expect(chatNavigationTarget(row("other"), undefined)).toEqual({
       to: "/$environmentId/$threadId",
       params: { environmentId: "host", threadId: "worker" },
     });
   });
-  it("names the coordinator's own page, never the project panel", () => {
+  it("names the coordinator main project view, never the side panel", () => {
     const coordinator = {
       id: "project-coordinator:atlas",
       environmentId: "host",
       projectId: "atlas",
     } as unknown as Parameters<typeof chatNavigationTarget>[0];
     expect(chatNavigationTarget(coordinator, group)).toEqual({
-      to: "/$environmentId/$threadId",
-      params: { environmentId: "host", threadId: "project-coordinator:atlas" },
+      to: "/projects/$projectKey",
+      params: { projectKey: "atlas-key" },
+      search: { checkout: "host:atlas" },
     });
   });
 });
@@ -390,5 +398,118 @@ describe("currentSidebarChatKey", () => {
     expect(current({ paneThreadId: "c", activeProjectKey: "atlas" })).toBeNull();
     expect(current({ paneThreadId: "b" })).toBeNull();
     expect(current({})).toBeNull();
+  });
+});
+
+describe("coordinator, worker and independent chat entry points", () => {
+  const group = {
+    projectKey: "atlas",
+    memberProjects: [
+      {
+        environmentId: "host",
+        id: "atlas",
+        workspaceSettings: { coordinatorThreadId: "coordinator" },
+      },
+    ],
+  };
+  const row = (id: string, createdBy?: "agent" | "user") =>
+    ({
+      id,
+      environmentId: "host",
+      projectId: "atlas",
+      createdBy,
+      lineage: { relationshipToParent: null },
+    }) as unknown as Parameters<typeof chatNavigationTarget>[0];
+  it("opens the current coordinator in the project main pane", () => {
+    expect(chatNavigationTarget(row("coordinator"), group)).toEqual({
+      to: "/projects/$projectKey",
+      params: { projectKey: "atlas" },
+      search: { checkout: "host:atlas" },
+    });
+  });
+  it("keeps an independent human chat full-page despite sharing a checkout", () => {
+    expect(chatNavigationTarget(row("independent", "user"), group)).toEqual({
+      to: "/$environmentId/$threadId",
+      params: { environmentId: "host", threadId: "independent" },
+    });
+  });
+  it("keeps unknown provenance full-page and puts a known worker in the project side pane", () => {
+    expect(chatNavigationTarget(row("legacy"), group).to).toBe("/$environmentId/$threadId");
+    expect(chatNavigationTarget(row("worker", "agent"), group)).toEqual({
+      to: "/projects/$projectKey",
+      params: { projectKey: "atlas" },
+      search: { thread: "worker", checkout: "host:atlas" },
+    });
+  });
+});
+
+it("retains a validated exact checkout independently of the optional side thread", () => {
+  expect(parseProjectWorkspaceSearch({ checkout: " remote:project ", thread: "worker" })).toEqual({
+    checkout: "remote:project",
+    thread: "worker",
+  });
+  expect(parseProjectWorkspaceSearch({ checkout: "remote:project", thread: "" })).toEqual({
+    checkout: "remote:project",
+  });
+  expect(parseProjectWorkspaceSearch({ checkout: "remote\n:project" })).toEqual({});
+  expect(parseProjectWorkspaceSearch({ checkout: "x".repeat(1025) })).toEqual({});
+});
+
+it.each(["user", null])(
+  "keeps same-project independent %s chats full page in direct pane links",
+  (createdBy) => {
+    expect(projectPaneThread([shell("independent", { createdBy })], scope, "independent")).toEqual({
+      kind: "elsewhere",
+      environmentId: "host",
+    });
+  },
+);
+
+describe("standalone chat descendants", () => {
+  const group = {
+    projectKey: "atlas",
+    memberProjects: [
+      { environmentId: "host", id: "atlas", workspaceSettings: { coordinatorThreadId: "coord" } },
+    ],
+  };
+  it.each(["atlas", "scratch"])(
+    "keeps native descendants stored in %s with their independent human root",
+    (projectId) => {
+      const root = shell("independent", { createdBy: "user" });
+      const child = shell("native-child", { projectId, lineage: subagentOf(root.id) });
+      const grandchild = shell("nested-child", {
+        projectId,
+        lineage: subagentOf(child.id, root.id),
+      });
+      const threads = [root, child, grandchild];
+      const lookup = (id: string) => threads.find((thread) => thread.id === id);
+      for (const descendant of [child, grandchild]) {
+        expect(
+          projectPaneThread(threads, { ...scope, coordinatorThreadId: "coord" }, descendant.id)
+            .kind,
+        ).toBe("elsewhere");
+        expect(chatNavigationTarget(descendant, group, lookup).to).toBe(
+          "/$environmentId/$threadId",
+        );
+        expect(
+          isProjectOwnedChat(descendant, group, {
+            displayedCheckout: { environmentId: "host", id: "atlas" },
+            lookup,
+          }),
+        ).toBe(false);
+      }
+    },
+  );
+  it("does not claim an agent child before its referenced parent loads", () => {
+    const child = shell("native-child", { lineage: subagentOf("loading-parent") });
+    expect(chatNavigationTarget(child, group).to).toBe("/$environmentId/$threadId");
+    const parent = shell("loading-parent");
+    expect(
+      chatNavigationTarget(child, group, (id) => (id === parent.id ? parent : undefined)).to,
+    ).toBe("/projects/$projectKey");
+  });
+  it("retains exact coordinator ancestry even when the coordinator shell has not loaded", () => {
+    const child = shell("native-child", { createdBy: "user", lineage: subagentOf("coord") });
+    expect(chatNavigationTarget(child, group).to).toBe("/projects/$projectKey");
   });
 });

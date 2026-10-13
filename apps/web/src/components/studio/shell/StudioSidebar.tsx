@@ -18,7 +18,7 @@ import {
   PERSONAL_ASSISTANT_DESCRIPTION,
   PERSONAL_ASSISTANT_LABEL,
 } from "@specweave-studio/contracts";
-import { Link, useLocation, useParams } from "@tanstack/react-router";
+import { Link, useLocation, useParams, useSearch } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import {
   ArchiveIcon,
@@ -31,18 +31,12 @@ import {
   SlidersVerticalIcon,
   SquarePenIcon,
 } from "lucide-react";
-import {
-  Fragment,
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-  type MouseEvent as ReactMouseEvent,
-} from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 
 import { isCommandPaletteOpen, openCommandPalette } from "../../../commandPaletteBus";
 import { isElectron } from "../../../env";
-import { useHandleNewThread } from "../../../hooks/useHandleNewThread";
+import { useComposerDraftStore } from "../../../composerDraftStore";
+import { useScratchProject } from "../../../hooks/useScratchProject";
 import { useLocalStorage } from "../../../hooks/useLocalStorage";
 import { useNowMinute } from "../../../hooks/useNowMinute";
 import { useOpenChat } from "../../../hooks/useOpenChat";
@@ -57,7 +51,6 @@ import {
 import { isTerminalFocused } from "../../../lib/terminalFocus";
 import { isModelPickerOpen } from "../../../modelPickerVisibility";
 import { resolveAdjacentThreadId } from "../../Sidebar.logic";
-import { startNewThreadFromContext } from "../../../lib/chatThreadActions";
 import type { SidebarProjectSnapshot } from "../../../sidebarProjectGrouping";
 import { useServerConfigs, useThreadShells } from "../../../state/entities";
 import { usePrimaryEnvironmentId } from "../../../state/environments";
@@ -71,8 +64,17 @@ import {
   membersToToggle,
   partitionProjectGroups,
 } from "../../../studio/projectListVisibility";
-import { resolveCoordinatorMachine } from "../../../studio/projectCoordinatorMachine";
-import { currentSidebarChatKey, isProjectOwnedChat } from "../../../studio/projectPaneThreads";
+import {
+  coordinatorMachineKey,
+  resolveCoordinatorMachine,
+} from "../../../studio/projectCoordinatorMachine";
+import { projectCoordinatorRole } from "../../../studio/projectCoordinatorThreads";
+import {
+  currentSidebarChatKey,
+  isAgentOwnedProjectThread,
+  isProjectOwnedChat,
+  parseProjectWorkspaceSearch,
+} from "../../../studio/projectPaneThreads";
 import { projectThreadGroup } from "../../../studio/projectWorkspaceModel";
 import { useProjectPaneThreadParam } from "../../../studio/useProjectPaneThreadParam";
 import {
@@ -141,7 +143,7 @@ export default function StudioSidebar() {
   const providerEntries = useProviderEntriesByEnvironment();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const newThreadContext = useHandleNewThread();
+  const { scratchEnvironmentId, startScratchThread } = useScratchProject();
   const actions = useThreadActions();
   const now = nowFromMinute(useNowMinute());
   const onOverview = useLocation({ select: (location) => location.pathname === "/" });
@@ -157,6 +159,10 @@ export default function StudioSidebar() {
     routeTarget?.kind === "server" ? scopedThreadKey(routeTarget.threadRef) : null;
   // A project page names the thread open in its right panel in `?thread=`.
   const paneThreadId = useProjectPaneThreadParam();
+  const checkoutKey = useSearch({
+    strict: false,
+    select: (search) => parseProjectWorkspaceSearch(search as Record<string, unknown>).checkout,
+  });
   const [storedOptions, setOptions] = useLocalStorage<StoredChatOptions, StoredChatOptions>(
     CHAT_OPTIONS_STORAGE_KEY,
     DEFAULT_CHAT_LIST_OPTIONS,
@@ -186,6 +192,13 @@ export default function StudioSidebar() {
   const displayedCheckouts = useMemo(() => {
     const map = new Map<string, { readonly environmentId: string; readonly id: string }>();
     for (const group of projectGroups) {
+      if (group.projectKey === activeProjectKey && checkoutKey) {
+        const exact = group.memberProjects.find(
+          (member) => coordinatorMachineKey(member) === checkoutKey,
+        );
+        if (exact) map.set(group.projectKey, exact);
+        continue;
+      }
       const { member } = resolveCoordinatorMachine({
         members: group.memberProjects,
         saved: savedMachines[group.projectKey],
@@ -194,7 +207,7 @@ export default function StudioSidebar() {
       if (member) map.set(group.projectKey, member);
     }
     return map;
-  }, [primaryEnvironmentId, projectGroups, savedMachines]);
+  }, [activeProjectKey, checkoutKey, primaryEnvironmentId, projectGroups, savedMachines]);
   const threadByKey = useMemo(
     () => new Map(threads.map((thread) => [`${thread.environmentId}:${thread.id}`, thread])),
     [threads],
@@ -214,11 +227,29 @@ export default function StudioSidebar() {
     const counts = new Map<string, number>();
     for (const thread of threads) {
       if (thread.deletedAt !== null || projectThreadGroup(thread) !== "Waiting on you") continue;
-      const key = projectByMember.get(`${thread.environmentId}:${thread.projectId}`)?.projectKey;
-      if (key) counts.set(key, (counts.get(key) ?? 0) + 1);
+      const group = projectByMember.get(`${thread.environmentId}:${thread.projectId}`);
+      const member = group?.memberProjects.find(
+        (project) =>
+          project.environmentId === thread.environmentId && project.id === thread.projectId,
+      );
+      if (!group || !member) continue;
+      const coordinatorThreadId = member.workspaceSettings?.coordinatorThreadId ?? null;
+      const coordinatorRole = projectCoordinatorRole(thread.id, {
+        projectId: member.id,
+        coordinatorThreadId,
+      });
+      if (coordinatorRole === "previous") continue;
+      if (
+        coordinatorRole !== "current" &&
+        !isAgentOwnedProjectThread(thread, coordinatorThreadId, (id) =>
+          threadByKey.get(`${thread.environmentId}:${id}`),
+        )
+      )
+        continue;
+      counts.set(group.projectKey, (counts.get(group.projectKey) ?? 0) + 1);
     }
     return counts;
-  }, [projectByMember, threads]);
+  }, [projectByMember, threadByKey, threads]);
   // The machines' "No project" folders are not projects; archived ones wait below the
   // list unless they are open or have threads waiting on the person.
   const { listed: listedProjects, archived: archivedProjects } = useMemo(
@@ -358,19 +389,27 @@ export default function StudioSidebar() {
   const closeMobile = () => {
     if (isMobile) setOpenMobile(false);
   };
-  const newChat = (event?: ReactMouseEvent) => {
+  const newChat = () => {
     closeMobile();
-    // One project leaves nothing to pick; Shift skips the picker with several.
-    if (listedProjects.length <= 1 || event?.shiftKey) {
-      void startNewThreadFromContext({
-        activeDraftThread: newThreadContext.activeDraftThread,
-        activeThread: newThreadContext.activeThread ?? undefined,
-        defaultProjectRef: newThreadContext.defaultProjectRef,
-        handleNewThread: newThreadContext.handleNewThread,
+    const selectedProject = activeProjectKey ? displayedCheckouts.get(activeProjectKey) : undefined;
+    if (activeProjectKey && !selectedProject) {
+      toastManager.add({
+        type: "error",
+        title: "Project machine unavailable",
+        description: "Choose an available machine before starting a new chat.",
       });
       return;
     }
-    openCommandPalette({ open: "new-thread-in" });
+    const currentEnvironment =
+      routeTarget?.kind === "server"
+        ? routeTarget.threadRef.environmentId
+        : routeTarget?.kind === "draft"
+          ? useComposerDraftStore.getState().getDraftSession(routeTarget.draftId)?.environmentId
+          : selectedProject?.environmentId;
+    const environmentId = scratchEnvironmentId(
+      (currentEnvironment ?? primaryEnvironmentId) as EnvironmentId | null,
+    );
+    if (environmentId !== null) void startScratchThread(environmentId);
   };
   const openChat = (thread: EnvironmentThreadShell) => {
     closeMobile();

@@ -131,12 +131,12 @@ latest messages. The thread runs in a new worktree from the branch as pushed, so
 own checkout is never switched; anything this device had not pushed stays behind. A device signed
 in to the same full account is not offered, and a Claude instance billed per token never is.
 
-The **When a provider runs out** rows in a project's settings set the rule for that project; the
-same rows under **Settings → General** set it for every project:
+The **When a provider runs out** rows under **Usage limits** in a project's settings (General tab)
+set the rule for that project; the same rows under **Settings → General** set it for every project:
 
-- **Offer the fallback** (default): the banner shows the continue action and nothing switches by itself.
+- **Switch automatically** (default): Studio continues a limited turn on the fallback without asking.
+- **Offer the fallback**: the banner shows the continue action and nothing switches by itself.
 - **Wait for the reset**: the banner keeps its resume actions only.
-- **Switch automatically**: Studio continues a limited turn on the fallback without asking.
 
 **Fallback model** picks the provider and model to continue on. Without one, Studio picks another
 signed-in provider that is not full. A thread already running on the fallback goes back to the

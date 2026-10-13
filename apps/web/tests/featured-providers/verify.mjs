@@ -74,12 +74,19 @@ try {
   await page.keyboard.press("Enter");
   await page.getByTestId("selected").filter({ hasText: "Selected github-copilot-cli" }).waitFor();
   checks.push("Keyboard Add passes exact registry ID");
+  await page.getByRole("button", { name: "Add Gemini CLI", exact: true }).click();
+  await page.getByTestId("selected").filter({ hasText: "Selected gemini" }).waitFor();
+  checks.push("Gemini uses its exact registry identity");
+  await page.goto(`${origin}/?state=added`);
+  await page.getByRole("button", { name: "Manage Gemini CLI", exact: true }).click();
+  await page.getByTestId("selected").filter({ hasText: "Selected manage:gemini_work" }).waitFor();
+  checks.push("Added agent opens its existing settings without installation");
   for (const state of ["readonly", "loading", "preparing"]) {
     await page.goto(`${origin}/?state=${state}`);
     await page.getByRole("button").first().waitFor();
     for (const button of await page.getByRole("button").all())
       assert.equal(await button.isDisabled(), true);
-    checks.push(`${state}: both Add actions disabled`);
+    checks.push(`${state}: all Add actions disabled`);
   }
   await page.goto(`${origin}/?state=error`);
   await page.getByRole("button", { name: "Retry GitHub Copilot registry lookup" }).click();

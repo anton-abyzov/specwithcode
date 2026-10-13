@@ -4,6 +4,11 @@ import {
   projectReportMessageIds,
   projectSystemNotice,
 } from "../../studio/projectCoordinatorMessageDisplay";
+import { createCoordinatorSelectionTracker } from "../../studio/coordinatorContinuation";
+import { useCoordinatorModelSave } from "../../studio/coordinatorModelSave";
+import { useProjectCoordinatorDraft } from "../../studio/projectCoordinatorDraft";
+import { useProjectCoordinatorComposer } from "../../studio/projectCoordinatorComposer";
+import { ProjectCoordinatorDetails } from "./ProjectCoordinatorDetails";
 import { ProjectWorkspaceAttachments } from "./ProjectWorkspaceAttachments";
 import { ProjectPlan } from "./ProjectPlan";
 import { CollapsibleReport } from "../chat/CollapsibleReport";
@@ -33,7 +38,6 @@ import {
   AuthSourceControlWriteScope,
   CommandId,
   type ChatAttachment,
-  type ModelSelection,
   type ProjectStarterSuggestion,
   type ThreadId,
   PERSONAL_ASSISTANT_DESCRIPTION,
@@ -223,11 +227,16 @@ export function findProjectGroup<
 
 export function ProjectWorkspace({
   projectKey: requestedKey,
+  checkoutKey = null,
+  onSelectCheckout,
   selectedThreadId = null,
   onSelectThread,
   onProjectKeyMoved,
 }: {
   projectKey: string;
+  /** Exact checkout carried by a project link; never a cross-machine fallback. */
+  checkoutKey?: string | null;
+  onSelectCheckout?: (key: string) => void;
   /** The thread open in the right panel; the route keeps it in the URL. */
   selectedThreadId?: ThreadId | null;
   onSelectThread?: SelectProjectThread;
@@ -255,11 +264,18 @@ export function ProjectWorkspace({
   // Before settings load the saved choices read as empty, and a pick would replace them all.
   const machinesLoaded = useClientSettingsHydrationStatus() === "ready";
   // The coordinator runs on the chosen checkout's machine; the choice is saved per project.
-  const { member, savedMachineMissing } = resolveCoordinatorMachine({
-    members,
-    saved: savedMachines[projectKey],
-    primaryEnvironmentId,
-  });
+  const { member, savedMachineMissing } = checkoutKey
+    ? {
+        member: members.find((candidate) => coordinatorMachineKey(candidate) === checkoutKey),
+        savedMachineMissing: !members.some(
+          (candidate) => coordinatorMachineKey(candidate) === checkoutKey,
+        ),
+      }
+    : resolveCoordinatorMachine({
+        members,
+        saved: savedMachines[projectKey],
+        primaryEnvironmentId,
+      });
   // The thread open when the checkout changed belongs to the old machine. The
   // panel closes, and until the URL catches up the new checkout does not see it,
   // or it would send the person to that machine's full page.
@@ -272,6 +288,7 @@ export function ProjectWorkspace({
       setLeftThread(selected);
       setSelected(null, { replace: true });
     }
+    onSelectCheckout?.(key);
     void updateClientSettings({
       projectCoordinatorMachines: { ...savedMachines, [projectKey]: key },
     });
@@ -306,8 +323,25 @@ export function ProjectWorkspace({
         <div className="project-surface flex min-h-0 flex-1 flex-col">
           <WorkspacePageHeader electron={isElectron}>Project workspace</WorkspacePageHeader>
           <div className="project-empty">
-            <h1>Project unavailable</h1>
-            <p>Connect its host or select a registered project.</p>
+            <h1>{checkoutKey ? "Linked checkout unavailable" : "Project unavailable"}</h1>
+            <p>
+              {checkoutKey
+                ? "Connect the linked host, or choose an available checkout explicitly."
+                : "Connect its host or select a registered project."}
+            </p>
+            {checkoutKey && onSelectCheckout && machinesLoaded
+              ? members.map((checkout) => (
+                  <button
+                    key={coordinatorMachineKey(checkout)}
+                    type="button"
+                    className="project-control"
+                    onClick={() => chooseMachine(coordinatorMachineKey(checkout))}
+                  >
+                    Use {checkout.environmentLabel ?? checkout.environmentId} ·{" "}
+                    {checkout.workspaceRoot}
+                  </button>
+                ))
+              : null}
             <Link to="/settings/projects">Manage projects</Link>
           </div>
         </div>
@@ -413,7 +447,12 @@ function ProjectWorkspaceSurface({
   );
   const [tab, setTab] = useState<ProjectSettingsTab | null>(null);
   const [planOpen, setPlanOpen] = useState(false);
-  const [prompt, setPrompt] = useState("");
+  const [coordinatorDetailsOpen, setCoordinatorDetailsOpen] = useState(false);
+  const {
+    prompt,
+    setPrompt,
+    store: composer,
+  } = useProjectCoordinatorComposer(project.environmentId, project.id);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -431,7 +470,6 @@ function ProjectWorkspaceSurface({
   const setOverviewOpen = phone ? setPhoneOverviewOpen : setStoredOverviewOpen;
   const isPhoneKeyboard = usePhoneKeyboard();
   const sendShortcut = useClientSettings((settings) => settings.sendShortcut);
-  const [savingModel, setSavingModel] = useState(false);
   const findRef = useRef<HTMLInputElement>(null);
   const [findOpen, setFindOpen] = useState(false);
   const [paneTab, setPaneTab] = useLocalStorage<ProjectPaneTab, ProjectPaneTab>(
@@ -460,6 +498,21 @@ function ProjectWorkspaceSurface({
           ?.focus({ preventScroll: true });
     });
   }, [phone, setOverviewOpen]);
+  useProjectCoordinatorDraft(
+    project.environmentId,
+    project.id,
+    useCallback(
+      (text: string) => {
+        setPrompt((current) => (current.trim() ? `${current}\n\n${text}` : text));
+        setTab(null);
+        setPlanOpen(false);
+        setCoordinatorDetailsOpen(false);
+        setPaneExpanded(false);
+        showCoordinator();
+      },
+      [showCoordinator, setPrompt],
+    ),
+  );
   const { selectedThread, openThreadInPane, openThread } = useProjectPaneSelection({
     shells,
     scope: paneScope,
@@ -472,6 +525,7 @@ function ProjectWorkspaceSurface({
   });
   // The panel's thread steps aside for the main conversation.
   const openCoordinator = useCallback(() => {
+    setCoordinatorDetailsOpen(false);
     setSelected(null);
     showCoordinator();
   }, [setSelected, showCoordinator]);
@@ -567,28 +621,40 @@ function ProjectWorkspaceSurface({
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
   const revision = liveSettings?.revision ?? snapshot?.settings.revision ?? null;
   const refreshSnapshot = query.refresh;
-  const saveCoordinatorModel = useCallback(
-    async (selection: ModelSelection) => {
-      if (revision === null) return;
-      setSavingModel(true);
-      setError(null);
+  const [continuationSelection] = useState(createCoordinatorSelectionTracker);
+  continuationSelection.observe(model ?? null, revision);
+  const {
+    save: saveCoordinatorModel,
+    saving: savingModel,
+    runAfterSave,
+  } = useCoordinatorModelSave({
+    persist: async (selection) => {
+      const expectedRevision = continuationSelection.revision();
+      if (expectedRevision === null)
+        throw new Error("Project settings are still loading. Try again.");
       const result = await updateProject({
         environmentId: project.environmentId,
         input: {
           projectId: project.id,
-          workspaceSettings: { expectedRevision: revision, coordinatorModelSelection: selection },
+          workspaceSettings: { expectedRevision, coordinatorModelSelection: selection },
         },
       });
-      setSavingModel(false);
-      if (result._tag === "Failure") {
-        const e = squashAtomCommandFailure(result);
-        setError(
-          e instanceof Error ? e.message : "The coordinator model was not saved. Try again.",
-        );
-      } else setNotice("Coordinator model saved for this project.");
-      refreshSnapshot();
+      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+      continuationSelection.observe(selection, expectedRevision + 1);
     },
-    [project.environmentId, project.id, refreshSnapshot, revision, updateProject],
+    onError: setError,
+    onSaved: () => setNotice("Coordinator model saved for this project."),
+    onSettled: refreshSnapshot,
+  });
+  const coordinatorModelControls = (
+    <CoordinatorModelPicker
+      environmentId={project.environmentId}
+      value={model ?? null}
+      disabled={!canOperate || !connected || revision === null || (query.isPending && !snapshot)}
+      saving={savingModel}
+      onChange={(selection) => void saveCoordinatorModel(selection)}
+      onOpenSettings={() => setTab("general")}
+    />
   );
   const threadOpen = selectedThread !== null;
   const threadBusy = selectedThread ? threadTone(selectedThread) === "working" : false;
@@ -774,16 +840,18 @@ function ProjectWorkspaceSurface({
         () => randomUUID(),
       );
       try {
-        const result = await sendCommand({
-          environmentId: project.environmentId,
-          input: {
-            projectId: project.id,
-            commandId: CommandId.make(commandId),
-            prompt: text,
-            ...(attachments?.length ? { attachments } : {}),
-            ...(sourceThreadId ? { sourceThreadId } : {}),
-          },
-        });
+        const result = await runAfterSave(() =>
+          sendCommand({
+            environmentId: project.environmentId,
+            input: {
+              projectId: project.id,
+              commandId: CommandId.make(commandId),
+              prompt: text,
+              ...(attachments?.length ? { attachments } : {}),
+              ...(sourceThreadId ? { sourceThreadId } : {}),
+            },
+          }),
+        );
         if (result._tag === "Failure") {
           const e = squashAtomCommandFailure(result);
           throw new Error(
@@ -809,6 +877,7 @@ function ProjectWorkspaceSurface({
       project.environmentId,
       project.id,
       sendCommand,
+      runAfterSave,
       query.refresh,
     ],
   );
@@ -839,28 +908,32 @@ function ProjectWorkspaceSurface({
   });
   const attached = useCoordinatorAttachments({
     environmentId: project.environmentId,
+    draft: composer,
     uploadsSupported,
     canUpload: canOperate && connected,
     maxFileBytes,
   });
   const filePicker = useRef<HTMLInputElement>(null);
   // Uploads can take a while; one send owns the composer from the first keypress to the answer.
-  const submitting = useRef(false);
-  const [preparing, setPreparing] = useState(false);
+  const preparing = composer.getSnapshot().submitting;
   // One rule for the Send button and the Enter key.
   const sendDisabled =
     Boolean(blocked) ||
     (!model && !coordinatorId) ||
+    savingModel ||
     sending ||
     preparing ||
     attached.preparing.length > 0 ||
     (!prompt.trim() && attached.attachments.length === 0);
   async function submit() {
-    const text = prompt;
-    const images = attached.attachments;
-    if (submitting.current || (!text.trim() && images.length === 0)) return;
-    submitting.current = true;
-    setPreparing(true);
+    const {
+      prompt: text,
+      promptRevision,
+      attachments: images,
+      submitting,
+    } = composer.getSnapshot();
+    if (submitting || (!text.trim() && images.length === 0)) return;
+    composer.setSubmitting(true);
     setError(null);
     attached.dismissProblem();
     let release = () => {};
@@ -869,14 +942,13 @@ function ProjectWorkspaceSurface({
       release = attached.hold(images);
       await routingSend(text, undefined, attachments.length ? attachments : undefined);
       release();
-      setPrompt((current) => (current === text ? "" : current));
+      composer.clearSentPrompt(promptRevision);
       attached.clearSent(images);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Message not sent.");
     } finally {
       release();
-      submitting.current = false;
-      setPreparing(false);
+      composer.setSubmitting(false);
     }
   }
   async function resolve(thread: EnvironmentThreadShell) {
@@ -917,7 +989,7 @@ function ProjectWorkspaceSurface({
   for (const [id, failureAtSend] of startedSuggestions)
     if ((coordinatorFailure?.runId ?? null) === failureAtSend) sentSuggestions.add(id);
   async function startSuggestion(suggestion: ProjectStarterSuggestion) {
-    if (startingSuggestion !== null || submitting.current) return;
+    if (startingSuggestion !== null || composer.getSnapshot().submitting) return;
     setStartingSuggestion(suggestion.id);
     setError(null);
     try {
@@ -953,16 +1025,13 @@ function ProjectWorkspaceSurface({
     />
   );
   const coordinatorTone = coordinator ? threadTone(coordinator) : null;
-  // Approvals, answers and plans live on the coordinator's own page; the project
-  // page links there while the coordinator waits on the person, never the panel.
+  // Native review controls stay with the coordinator, in this project's main pane.
   const attention = coordinatorAttention(coordinator ?? null);
   const openCoordinatorPage = useCallback(() => {
     if (!coordinatorId) return;
-    void navigate({
-      to: "/$environmentId/$threadId",
-      params: { environmentId: project.environmentId, threadId: coordinatorId },
-    });
-  }, [coordinatorId, navigate, project.environmentId]);
+    setCoordinatorDetailsOpen(true);
+    if (phone) setOverviewOpen(false);
+  }, [coordinatorId, phone, setOverviewOpen]);
   const waiting = waitingCount(workers);
   const openLink = useOpenLink(null);
   const pullRequests = collectProjectPullRequests(
@@ -1162,230 +1231,242 @@ function ProjectWorkspaceSurface({
                 </Menu>
               </div>
             </WorkspacePageHeader>
-            <h2 className="sr-only">Coordinator</h2>
-            {query.error && (
-              <p className="project-notice sws-pane-notice" role="alert">
-                {query.error}{" "}
-                <button type="button" className="project-control" onClick={query.refresh}>
-                  Retry
-                </button>
-              </p>
-            )}
-            {coordinatorId ? (
-              <CoordinatorConversation
-                project={project}
-                coordinatorId={coordinatorId}
-                workers={workers}
-                environmentThreads={environmentThreads}
-                onOpenThread={openThread}
-                canChange={canWriteSourceControl && connected}
-                onCreatePullRequest={createPullRequest}
-                onOpenPullRequest={(url) => void openLink(url).catch(() => undefined)}
-                attention={attention}
-                onOpenCoordinatorPage={openCoordinatorPage}
-                failure={coordinatorFailure}
-                progress={coordinatorWork}
-                empty={welcome}
+            {coordinatorDetailsOpen && coordinatorId ? (
+              <ProjectCoordinatorDetails
+                environmentId={project.environmentId}
+                threadId={coordinatorId}
+                error={error}
+                routing={{
+                  coordinatorModelControls,
+                  saveCoordinatorModel,
+                  continueCoordinator: (operation) =>
+                    runAfterSave(() => operation(continuationSelection.selection())),
+                  coordinatorThreadId: coordinatorId,
+                  send: (text, attachments) => routingSend(text, undefined, attachments),
+                  openCoordinator,
+                  openThread: openThreadInPane,
+                }}
+                onClose={() => setCoordinatorDetailsOpen(false)}
               />
-            ) : snapshot != null && !mainCoordinatorId ? (
-              // Only a project known to have no coordinator yet is greeted: while the
-              // workspace read is pending, a coordinator with history may be behind it.
-              welcome
             ) : null}
-            <form
-              className="project-composer sws-composer"
-              onSubmit={(e) => {
-                e.preventDefault();
-                void submit();
-              }}
-            >
-              {blocked && (
-                <p className="project-muted" role="status">
-                  {blocked}
+            <div className={coordinatorDetailsOpen ? "hidden" : "contents"}>
+              <h2 className="sr-only">Coordinator</h2>
+              {query.error && (
+                <p className="project-notice sws-pane-notice" role="alert">
+                  {query.error}{" "}
+                  <button type="button" className="project-control" onClick={query.refresh}>
+                    Retry
+                  </button>
                 </p>
               )}
-              {error && <p role="alert">{error}</p>}
-              <CoordinatorAttachmentNotice
-                problem={attached.problem}
-                onDismiss={attached.dismissProblem}
-              />
-              {/* A "Queued" notice must not stand beside a turn that failed. */}
-              {notice &&
-                !coordinatorFailure &&
-                !(coordinatorWorking && SEND_NOTICES.has(notice)) && (
-                  <p className="project-muted" role="status">
-                    {notice}
-                  </p>
-                )}
-              <VoiceCallBar call={voiceCall} />
-              <div
-                className="sws-composer-card"
-                onDragOver={(e) => {
-                  if (e.dataTransfer.types.includes("Files")) e.preventDefault();
-                }}
-                onDrop={(e) => {
-                  if (!e.dataTransfer.types.includes("Files")) return;
-                  // Every dropped file is answered: attached, or told why not.
+              {coordinatorId ? (
+                <CoordinatorConversation
+                  project={project}
+                  coordinatorId={coordinatorId}
+                  workers={workers}
+                  environmentThreads={environmentThreads}
+                  onOpenThread={openThread}
+                  canChange={canWriteSourceControl && connected}
+                  onCreatePullRequest={createPullRequest}
+                  onOpenPullRequest={(url) => void openLink(url).catch(() => undefined)}
+                  attention={attention}
+                  onOpenCoordinatorPage={openCoordinatorPage}
+                  failure={coordinatorFailure}
+                  progress={coordinatorWork}
+                  empty={welcome}
+                />
+              ) : snapshot != null && !mainCoordinatorId ? (
+                // Only a project known to have no coordinator yet is greeted: while the
+                // workspace read is pending, a coordinator with history may be behind it.
+                welcome
+              ) : null}
+              <form
+                className="project-composer sws-composer"
+                onSubmit={(e) => {
                   e.preventDefault();
-                  attached.add(filesFrom(e.dataTransfer));
+                  void submit();
                 }}
               >
-                <CoordinatorAttachmentStrip
-                  attachments={attached.attachments}
-                  preparing={attached.preparing}
-                  locked={preparing || sending}
-                  onRemove={(id) => {
-                    attached.remove(id);
-                    // The button that had focus is gone; typing continues in the message.
-                    document.getElementById("project-prompt")?.focus();
-                  }}
+                {blocked && (
+                  <p className="project-muted" role="status">
+                    {blocked}
+                  </p>
+                )}
+                {error && <p role="alert">{error}</p>}
+                <CoordinatorAttachmentNotice
+                  problem={attached.problem}
+                  onDismiss={attached.dismissProblem}
                 />
-                <label className="sr-only" htmlFor="project-prompt">
-                  Message the project coordinator
-                </label>
-                <textarea
-                  id="project-prompt"
-                  rows={1}
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  placeholder={promptPlaceholder}
-                  onPaste={(e) => {
-                    const files = pastedFilesFrom(e.clipboardData);
-                    if (files.length === 0) return;
-                    // A file on the clipboard is the message's attachment, not text to insert.
-                    e.preventDefault();
-                    attached.add(files);
+                {/* A "Queued" notice must not stand beside a turn that failed. */}
+                {notice &&
+                  !coordinatorFailure &&
+                  !(coordinatorWorking && SEND_NOTICES.has(notice)) && (
+                    <p className="project-muted" role="status">
+                      {notice}
+                    </p>
+                  )}
+                <VoiceCallBar call={voiceCall} />
+                <div
+                  className="sws-composer-card"
+                  onDragOver={(e) => {
+                    if (e.dataTransfer.types.includes("Files")) e.preventDefault();
                   }}
-                  onKeyDown={(e) => {
-                    // The chat composer's own rule: the person's send shortcut, never on a
-                    // phone keyboard, never mid-composition or on a held key.
-                    const intent = composerSubmissionIntentForKey({
-                      event: e.nativeEvent,
-                      keybindings,
-                      isPhoneKeyboard,
-                      isDraftThread: false,
-                      sendShortcut,
-                      prompt,
-                    });
-                    if (intent !== "foreground") return;
-                    // The send key never types a new line, but it sends only when the Send
-                    // button could: images still preparing, a blocked host or a send in
-                    // flight are all visible beside it.
+                  onDrop={(e) => {
+                    if (!e.dataTransfer.types.includes("Files")) return;
+                    // Every dropped file is answered: attached, or told why not.
                     e.preventDefault();
-                    if (sendDisabled) {
-                      // The only reason not shown beside the composer: say it, as a send would.
-                      if (
-                        !blocked &&
-                        !model &&
-                        !coordinatorId &&
-                        (prompt.trim() || attached.attachments.length > 0)
-                      )
-                        setError(missingModelMessage(modelsLoading));
-                      return;
-                    }
-                    void submit();
+                    attached.add(filesFrom(e.dataTransfer));
                   }}
-                />
-                <Tip label={composerSendButtonLabel({ isPhoneKeyboard, sendShortcut, prompt })}>
-                  <button
-                    className="sws-send"
-                    aria-label="Send to coordinator"
-                    disabled={sendDisabled}
-                  >
-                    <ArrowUpIcon aria-hidden />
-                    <span className="sr-only">{sending || preparing ? "Sending…" : "Send"}</span>
-                  </button>
-                </Tip>
-              </div>
-              <div className="sws-composer-foot">
-                <span className="sws-composer-meta">
-                  <input
-                    ref={filePicker}
-                    type="file"
-                    accept={coordinatorAttachAccept(maxFileBytes !== null)}
-                    multiple
-                    hidden
-                    tabIndex={-1}
-                    aria-hidden
-                    onChange={(e) => {
-                      attached.add([...(e.target.files ?? [])]);
-                      e.target.value = "";
+                >
+                  <CoordinatorAttachmentStrip
+                    attachments={attached.attachments}
+                    preparing={attached.preparing}
+                    locked={preparing || sending}
+                    onRemove={(id) => {
+                      attached.remove(id);
+                      // The button that had focus is gone; typing continues in the message.
+                      document.getElementById("project-prompt")?.focus();
                     }}
                   />
-                  <Tip label="Attach images or files (or paste, or drop them on the message)">
+                  <label className="sr-only" htmlFor="project-prompt">
+                    Message the project coordinator
+                  </label>
+                  <textarea
+                    id="project-prompt"
+                    rows={1}
+                    value={prompt}
+                    onChange={(e) => setPrompt(e.target.value)}
+                    placeholder={promptPlaceholder}
+                    onPaste={(e) => {
+                      const files = pastedFilesFrom(e.clipboardData);
+                      if (files.length === 0) return;
+                      // A file on the clipboard is the message's attachment, not text to insert.
+                      e.preventDefault();
+                      attached.add(files);
+                    }}
+                    onKeyDown={(e) => {
+                      // The chat composer's own rule: the person's send shortcut, never on a
+                      // phone keyboard, never mid-composition or on a held key.
+                      const intent = composerSubmissionIntentForKey({
+                        event: e.nativeEvent,
+                        keybindings,
+                        isPhoneKeyboard,
+                        isDraftThread: false,
+                        sendShortcut,
+                        prompt,
+                      });
+                      if (intent !== "foreground") return;
+                      // The send key never types a new line, but it sends only when the Send
+                      // button could: images still preparing, a blocked host or a send in
+                      // flight are all visible beside it.
+                      e.preventDefault();
+                      if (sendDisabled) {
+                        // The only reason not shown beside the composer: say it, as a send would.
+                        if (
+                          !blocked &&
+                          !model &&
+                          !coordinatorId &&
+                          (prompt.trim() || attached.attachments.length > 0)
+                        )
+                          setError(missingModelMessage(modelsLoading));
+                        return;
+                      }
+                      void submit();
+                    }}
+                  />
+                  <Tip label={composerSendButtonLabel({ isPhoneKeyboard, sendShortcut, prompt })}>
                     <button
-                      type="button"
-                      className="sws-icon-button sws-attach"
-                      aria-label="Attach files"
-                      disabled={!canOperate || !connected}
-                      onClick={() => filePicker.current?.click()}
+                      className="sws-send"
+                      aria-label="Send to coordinator"
+                      disabled={sendDisabled}
                     >
-                      <PlusIcon aria-hidden />
+                      <ArrowUpIcon aria-hidden />
+                      <span className="sr-only">{sending || preparing ? "Sending…" : "Send"}</span>
                     </button>
                   </Tip>
-                  <VoiceCallButton
-                    call={voiceCall}
-                    disabled={Boolean(blocked) || (!model && !coordinatorId)}
-                  />
-                  {coordinator && coordinatorTone ? (
-                    <Tip
-                      label={
-                        attention
-                          ? `${attention.message} Open the coordinator's own page`
-                          : "Coordinator status. Show its latest message"
-                      }
-                    >
+                </div>
+                <div className="sws-composer-foot">
+                  <span className="sws-composer-meta">
+                    <input
+                      ref={filePicker}
+                      type="file"
+                      accept={coordinatorAttachAccept(maxFileBytes !== null)}
+                      multiple
+                      hidden
+                      tabIndex={-1}
+                      aria-hidden
+                      onChange={(e) => {
+                        attached.add([...(e.target.files ?? [])]);
+                        e.target.value = "";
+                      }}
+                    />
+                    <Tip label="Attach images or files (or paste, or drop them on the message)">
                       <button
                         type="button"
-                        className="sws-state"
-                        data-tone={coordinatorTone}
-                        data-opens={attention ? "coordinator-page" : "conversation"}
-                        onClick={attention ? openCoordinatorPage : openCoordinator}
+                        className="sws-icon-button sws-attach"
+                        aria-label="Attach files"
+                        disabled={!canOperate || !connected}
+                        onClick={() => filePicker.current?.click()}
                       >
-                        <span className="sws-dot" data-tone={coordinatorTone} aria-hidden />
-                        {THREAD_TONE_LABELS[coordinatorTone]}
-                        <span className="sr-only">
-                          {attention
-                            ? `, ${attention.action.toLowerCase()} on the coordinator's own page`
-                            : ", show the coordinator's latest message"}
-                        </span>
+                        <PlusIcon aria-hidden />
                       </button>
                     </Tip>
-                  ) : null}
-                  <CoordinatorMachine
-                    label={environment?.label ?? "Host"}
-                    connected={connected}
-                    current={`${project.environmentId}:${project.id}`}
-                    checkouts={checkouts}
-                    savedMachineMissing={savedMachineMissing}
-                    onChoose={onCheckout}
-                  />
-                  <ProjectUsageIndicator
-                    onOpenProjectUsage={() => setTab("usage")}
-                    projectEnvironmentId={project.environmentId}
-                  />
-                </span>
-                <CoordinatorModelPicker
-                  environmentId={project.environmentId}
-                  value={model ?? null}
-                  disabled={
-                    !canOperate || !connected || revision === null || (query.isPending && !snapshot)
-                  }
-                  saving={savingModel}
-                  onChange={(selection) => void saveCoordinatorModel(selection)}
-                  onOpenSettings={() => setTab("general")}
-                />
-                {coordinatorFallback ? (
-                  <span
-                    className="sws-model-fallback"
-                    role="status"
-                    title={`Saved model: ${coordinatorFallback.saved.full}. The coordinator goes back to it once its usage has room.`}
-                  >
-                    On {coordinatorFallback.now.full}
+                    <VoiceCallButton
+                      call={voiceCall}
+                      disabled={Boolean(blocked) || (!model && !coordinatorId)}
+                    />
+                    {coordinator && coordinatorTone ? (
+                      <Tip
+                        label={
+                          attention
+                            ? `${attention.message} Review here`
+                            : "Coordinator status. Show its latest message"
+                        }
+                      >
+                        <button
+                          type="button"
+                          className="sws-state"
+                          data-tone={coordinatorTone}
+                          data-opens={attention ? "coordinator-review" : "conversation"}
+                          onClick={attention ? openCoordinatorPage : openCoordinator}
+                        >
+                          <span className="sws-dot" data-tone={coordinatorTone} aria-hidden />
+                          {THREAD_TONE_LABELS[coordinatorTone]}
+                          <span className="sr-only">
+                            {attention
+                              ? `, ${attention.action.toLowerCase()} here`
+                              : ", show the coordinator's latest message"}
+                          </span>
+                        </button>
+                      </Tip>
+                    ) : null}
+                    <CoordinatorMachine
+                      label={environment?.label ?? "Host"}
+                      connected={connected}
+                      current={`${project.environmentId}:${project.id}`}
+                      checkouts={checkouts}
+                      savedMachineMissing={savedMachineMissing}
+                      onChoose={onCheckout}
+                    />
+                    <ProjectUsageIndicator
+                      onOpenProjectUsage={() => setTab("usage")}
+                      projectEnvironmentId={project.environmentId}
+                      providerInstanceId={model?.instanceId ?? null}
+                    />
                   </span>
-                ) : null}
-              </div>
-            </form>
+                  {coordinatorModelControls}
+                  {coordinatorFallback ? (
+                    <span
+                      className="sws-model-fallback"
+                      role="status"
+                      title={`Saved model: ${coordinatorFallback.saved.full}. The coordinator goes back to it once its usage has room.`}
+                    >
+                      On {coordinatorFallback.now.full}
+                    </span>
+                  ) : null}
+                </div>
+              </form>
+            </div>
           </section>
           {paneOpen ? (
             <aside
@@ -1563,9 +1644,9 @@ function CoordinatorConversation({
   canChange: boolean;
   onCreatePullRequest: (thread: EnvironmentThreadShell) => void;
   onOpenPullRequest: (url: string) => void;
-  /** What the coordinator waits on the person for; its controls are on its own page. */
+  /** What the coordinator waits on the person for; native controls open inside this pane. */
   attention: CoordinatorAttention | null;
-  /** Opens the coordinator full page, where its approval and answer controls are. */
+  /** Opens the coordinator's native review controls inside the main pane. */
   onOpenCoordinatorPage: () => void;
   /** The coordinator's latest run failed; the host keeps that on the run, not as a message. */
   failure: CoordinatorTurnFailure | null;
@@ -1842,9 +1923,8 @@ function CoordinatorConversation({
           <p>
             <strong>The coordinator did not answer.</strong> {failure.message}
           </p>
-          {/* Its own page, not the panel: the coordinator is this page's main conversation. */}
           <button type="button" className="project-control" onClick={onOpenCoordinatorPage}>
-            Open the coordinator thread
+            Review coordinator
           </button>
         </div>
       )}

@@ -11,7 +11,7 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@specweave-studio/client-runtime/state/runtime";
-import { Link } from "@tanstack/react-router";
+import { Link, useLocation } from "@tanstack/react-router";
 import { MailIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -40,6 +40,7 @@ const listServices = (services: ReadonlyArray<GoogleService>) =>
   services.map((service) => SERVICE_LABELS[service]).join(", ");
 
 export function GoogleAccountSettingsPanel() {
+  const returnTo = useLocation({ select: (location) => location.href });
   const environmentId = usePrimaryEnvironmentId();
   const canRead = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
   const canWrite = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
@@ -464,6 +465,7 @@ export function GoogleAccountSettingsPanel() {
                                 search={{
                                   template: MORNING_BRIEFING_TEMPLATE,
                                   projectId: project.id,
+                                  returnTo,
                                 }}
                               />
                             }

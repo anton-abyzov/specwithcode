@@ -2,7 +2,7 @@ import type { RunActivity } from "~/studio/coordinatorActivity";
 
 /**
  * Verbose detail for one coordinator turn: what it did, step by step. Long
- * output stays on the coordinator's own page, which the footnote opens.
+ * output is available in the coordinator details within the same project.
  */
 export function CoordinatorRunActivity({
   activity,
@@ -38,9 +38,9 @@ export function CoordinatorRunActivity({
         ))}
       </ol>
       <p className="sws-run-activity-note">
-        Full output is on{" "}
+        Full output is in{" "}
         <button type="button" onClick={onOpenCoordinatorPage}>
-          the coordinator&rsquo;s own page
+          coordinator details
         </button>
         .
       </p>

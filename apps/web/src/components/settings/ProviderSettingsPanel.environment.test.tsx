@@ -140,7 +140,7 @@ vi.mock("../../state/entities", () => ({
   useProjects: () => [],
 }));
 
-import { EnvironmentProviderSettings } from "./ProviderSettingsPanel";
+import { EnvironmentProviderSettings, ProviderReadinessSummary } from "./ProviderSettingsPanel";
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
 import { AcpRegistryRepair } from "./AcpRegistryRepair";
 
@@ -672,5 +672,54 @@ describe("EnvironmentProviderSettings routing", () => {
       environmentId,
       input: { instanceId, elicitationId: action.elicitationId },
     });
+  });
+});
+
+describe("Provider readiness evidence", () => {
+  const summary = (live = provider(), enabled = true) =>
+    JSON.stringify(
+      ProviderReadinessSummary({
+        provider: live,
+        enabled,
+        environmentLabel: "Remote device",
+      }),
+    );
+
+  it("does not infer signed-in status from a ready runtime", () => {
+    const live = { ...provider(), auth: { status: "unknown" as const } };
+    const output = summary(live);
+    expect(output).toContain("Installed");
+    expect(output).toContain("Not reported");
+    expect(output).toContain("Sign-in status is not reported");
+    expect(output).not.toContain("Signed in");
+    expect(output).toContain("Remote device");
+  });
+
+  it("explains missing installation, sign-in, models and disabled agents independently", () => {
+    expect(summary({ ...provider(), installed: false })).toContain("Complete installation");
+    expect(summary({ ...provider(), auth: { status: "unauthenticated" } })).toContain(
+      "Complete sign-in",
+    );
+    expect(summary()).toContain("No models reported yet");
+    expect(summary(provider(), false)).toContain("Enable this agent below");
+    const unavailable = summary({
+      ...provider(),
+      availability: "unavailable",
+      unavailableReason: "Install this driver on Remote device.",
+    });
+    expect(unavailable).toContain("Install this driver on Remote device.");
+  });
+
+  it("keeps unobserved state distinct from a failed setup", () => {
+    const output = JSON.stringify(
+      ProviderReadinessSummary({
+        provider: undefined,
+        enabled: true,
+        environmentLabel: "Remote device",
+      }),
+    );
+    expect(output).toContain("Not checked");
+    expect(output).toContain("Refresh provider status");
+    expect(output).not.toContain("Not installed");
   });
 });

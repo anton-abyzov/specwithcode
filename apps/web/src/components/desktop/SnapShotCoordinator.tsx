@@ -2,6 +2,8 @@ import {
   type DesktopPendingSnapShot,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ScopedThreadRef,
+  type ScopedProjectRef,
+  type EnvironmentId,
 } from "@specweave-studio/contracts";
 import { useCallback, useEffect, useRef } from "react";
 
@@ -11,7 +13,8 @@ import {
   useComposerDraftStore,
 } from "../../composerDraftStore";
 import { useHandleNewThread } from "../../hooks/useHandleNewThread";
-import { useClientSettings } from "../../hooks/useSettings";
+import { useClientSettings, useLegacySidebarEnabled } from "../../hooks/useSettings";
+import { useScratchProject } from "../../hooks/useScratchProject";
 import { readThreadShell } from "../../state/entities";
 import { compressImageToByteLimit, dataUrlToFile } from "../../lib/imageCompression";
 import { resolveThreadActionProjectRef } from "../../lib/chatThreadActions";
@@ -194,7 +197,27 @@ export async function deliverSnapShot(
   dispatchSnapShotComposerFocus();
 }
 
+/** A global capture without an existing chat starts an independent chat on the chosen machine. */
+export async function resolveNewSnapShotTarget(input: {
+  readonly legacy: boolean;
+  readonly projectRef: ScopedProjectRef | null;
+  readonly scratchEnvironmentId: (preferred: EnvironmentId | null) => EnvironmentId | null;
+  readonly startScratchThread: (
+    environmentId: EnvironmentId,
+  ) => Promise<{ readonly draftId: DraftId } | null>;
+  readonly openThread: (
+    projectRef: ScopedProjectRef,
+  ) => Promise<{ readonly draftId: DraftId } | null>;
+}): Promise<DraftId | null> {
+  if (input.legacy)
+    return input.projectRef ? ((await input.openThread(input.projectRef))?.draftId ?? null) : null;
+  const environmentId = input.scratchEnvironmentId(input.projectRef?.environmentId ?? null);
+  return environmentId ? ((await input.startScratchThread(environmentId))?.draftId ?? null) : null;
+}
+
 export function SnapShotCoordinator() {
+  const legacy = useLegacySidebarEnabled();
+  const { scratchEnvironmentId, startScratchThread } = useScratchProject();
   const {
     activeDraftThread,
     activeThread,
@@ -234,12 +257,25 @@ export function SnapShotCoordinator() {
       defaultProjectRef,
       handleNewThread,
     });
-    if (!projectRef) return null;
-    const created = await handleNewThread(projectRef);
-    if (!created) return null;
-    lastTargetRef.current = created.draftId;
-    return created.draftId;
-  }, [activeDraftThread, activeThread, defaultProjectRef, handleNewThread, routeThreadRef]);
+    const target = await resolveNewSnapShotTarget({
+      legacy,
+      projectRef,
+      scratchEnvironmentId,
+      startScratchThread,
+      openThread: handleNewThread,
+    });
+    if (target) lastTargetRef.current = target;
+    return target;
+  }, [
+    activeDraftThread,
+    activeThread,
+    defaultProjectRef,
+    handleNewThread,
+    routeThreadRef,
+    legacy,
+    scratchEnvironmentId,
+    startScratchThread,
+  ]);
 
   const resolveCaptureTarget = useCallback(
     () => resolveSnapShotTargetOnce(targetResolutionRef, resolveTarget),

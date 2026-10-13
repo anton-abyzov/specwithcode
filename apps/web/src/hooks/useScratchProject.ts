@@ -100,15 +100,17 @@ export function useScratchProject() {
         router.state.location !== requestingLocation ||
         router.state.location.href !== requestingHref
       )
-        return;
+        return null;
       if (project) {
         // Scratch is a server-owned plain folder, even when Git projects default to worktrees.
-        await handleNewThread(scopeProjectRef(project.environmentId, project.id), {
+        return await handleNewThread(scopeProjectRef(project.environmentId, project.id), {
           envMode: "local",
-        }).catch((error: unknown) =>
-          reportScratchFailure("Could not start without a project", error),
-        );
+        }).catch((error: unknown) => {
+          reportScratchFailure("Could not start without a project", error);
+          return null;
+        });
       }
+      return null;
     },
     [handleNewThread, openScratchProject, router],
   );

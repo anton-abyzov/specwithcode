@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import type {
   ModelSelection,
@@ -29,9 +29,14 @@ import { ProjectConnections } from "./ProjectConnections";
 import { useProjectIconEditor } from "./ProjectIconEditor";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { CharacterCount } from "../ui/character-count";
+import { ProviderLimitSettings } from "../settings/ProviderLimitSettings";
+import { SettingsScopeProvider } from "../settings/SettingsScopeContext";
+import { SettingsSection } from "../settings/settingsLayout";
 
 export type ProjectSettingsTab = "general" | "memory" | "environment" | "usage" | "routines";
 const tabs = ["general", "memory", "environment", "usage", "routines"] as const;
+// The usage limit rows edit this project's overrides only; there is no scope picker here.
+const keepProjectScope = () => {};
 export function ProjectWorkspaceSettings({
   project,
   coordinatorThreadModel = null,
@@ -61,6 +66,7 @@ export function ProjectWorkspaceSettings({
 }) {
   const countId = useId();
   const [tab, setTab] = useState(initialTab);
+  const limitScope = useMemo(() => ({ project: projectKey }), [projectKey]);
   const [title, setTitle] = useState(project.title);
   const [goal, setGoal] = useState(snapshot.settings.goal);
   const [instructions, setInstructions] = useState(snapshot.settings.instructions);
@@ -341,6 +347,11 @@ export function ProjectWorkspaceSettings({
                     Native providers own quota recovery. Already armed threads keep their recovery
                     controls. This never changes accounts or enables paid overage.
                   </p>
+                  <SettingsScopeProvider search={limitScope} onChange={keepProjectScope}>
+                    <SettingsSection id="project-provider-limits" title="Usage limits">
+                      <ProviderLimitSettings />
+                    </SettingsSection>
+                  </SettingsScopeProvider>
                   <div className="project-setting-row">
                     <div>
                       <h3>{snapshot.settings.paused ? "Resume project" : "Pause new work"}</h3>

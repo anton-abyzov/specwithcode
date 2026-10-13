@@ -39,6 +39,8 @@ export interface ProjectMetaUpdateCommand {
   readonly title?: string;
   readonly workspaceRoot?: string;
   readonly defaultModelSelection?: ModelSelection | null;
+  /** Internal automatic initialization must not replace a concurrent user choice. */
+  readonly onlyIfDefaultModelUnset?: boolean;
   readonly defaultThreadEnvMode?: ThreadEnvMode | null;
   readonly autoPull?: boolean;
   readonly faviconPath?: string | null;
@@ -105,11 +107,21 @@ export class ProjectSettingsRevisionConflictError extends Schema.TaggedError<Pro
   }
 }
 
+export class ProjectDefaultModelConflictError extends Schema.TaggedError<ProjectDefaultModelConflictError>()(
+  "ProjectDefaultModelConflictError",
+  { projectId: ProjectId },
+) {
+  override get message(): string {
+    return "Project default model changed elsewhere. Reload before saving.";
+  }
+}
+
 export const ProjectCommandRejection = Schema.Union([
   ProjectCommandInvariantError,
   ProjectCommandMissingProjectError,
   ProjectWorkspaceConflictError,
   ProjectSettingsRevisionConflictError,
+  ProjectDefaultModelConflictError,
 ]);
 export type ProjectCommandRejection = typeof ProjectCommandRejection.Type;
 
@@ -206,6 +218,9 @@ export function planProjectCommand(input: {
     case "project.meta.update": {
       const project = activeProject;
       if (project === undefined) return missingProject();
+      if (command.onlyIfDefaultModelUnset && project.defaultModelSelection !== null) {
+        return Result.fail(new ProjectDefaultModelConflictError({ projectId: command.projectId }));
+      }
       if (
         command.projectIcon?.kind === "monogram" &&
         Array.from(monogramSegmenter.segment(command.projectIcon.text)).length > 2

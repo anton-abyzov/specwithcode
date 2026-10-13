@@ -6,20 +6,20 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/process";
-import { probeCodexNativeRoute } from "../provider/CodexProvider.ts";
+import { CodexNativeRouteCheckError, probeCodexNativeRoute } from "../provider/CodexProvider.ts";
 import { resolveCodexLaunchArgs } from "../provider/codexLaunchArgs.ts";
 import { mergeNativeSubscriptionEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 
 /** External native metadata boundary, separately replaceable in offline tests. */
 export class NativeRoute extends Context.Service<NativeRoute, {
-  readonly verify: (entry: ProviderInstanceConfig, cwd: string | null, baseEnv: NodeJS.ProcessEnv) => Effect.Effect<boolean>;
+  readonly verify: (entry: ProviderInstanceConfig, cwd: string | null, baseEnv: NodeJS.ProcessEnv) => Effect.Effect<boolean, CodexNativeRouteCheckError>;
 }>()("studio/capacity/NativeRoute") {}
 export const layer = Layer.effect(NativeRoute, Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   return NativeRoute.of({ verify: (entry, cwd, baseEnv) => {
     const decoded = Schema.decodeUnknownOption(CodexSettingsSchema)(entry.config ?? {});
-    if (Option.isNone(decoded)) return Effect.succeed(false);
+    if (Option.isNone(decoded)) return Effect.fail(new CodexNativeRouteCheckError({ reason: "unavailable" }));
     const config: CodexSettings = decoded.value;
     const environment = mergeNativeSubscriptionEnvironment(entry.environment, baseEnv, "codex");
     return probeCodexNativeRoute({ binaryPath: expandHomePath(config.binaryPath),

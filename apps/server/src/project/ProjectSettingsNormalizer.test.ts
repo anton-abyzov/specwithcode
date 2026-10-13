@@ -372,6 +372,65 @@ const defaultOf = (projectId: ProjectId) =>
       .defaultModelSelection;
   });
 
+it.effect("keeps a project model saved after the startup normalizer reads its shell", () =>
+  Effect.gen(function* () {
+    const fixture = yield* makeFixture;
+    yield* Effect.gen(function* () {
+      yield* seedLegacyProjects;
+      const projects = yield* ProjectService.ProjectService;
+      fixture.beforeNextSettingsRead(
+        projects.update({
+          projectId: ids.legacy,
+          commandId: CommandId.make("legacy:concurrent-model"),
+          defaultModelSelection: codex,
+        }).pipe(Effect.asVoid, Effect.orDie),
+      );
+      const summary = yield* Normalizer.normalizeProjectModelDefaults([claudeProvider]);
+      assert.deepEqual(yield* defaultOf(ids.legacy), codex);
+      assert.equal(summary.conflict, 1);
+      assert.equal(summary.failed, 0);
+      // Clearing the user's choice later must not turn a rejected automatic
+      // command into a successful one when its stable receipt is replayed.
+      yield* projects.update({
+        projectId: ids.legacy,
+        commandId: CommandId.make("legacy:clear-concurrent-model"),
+        defaultModelSelection: null,
+      });
+      const replay = yield* Normalizer.normalizeProjectModelDefaults([claudeProvider]);
+      assert.equal(replay.conflict, 1);
+      assert.equal(replay.failed, 0);
+      assert.isNull(yield* defaultOf(ids.legacy));
+    }).pipe(Effect.provide(fixture.layer));
+  }),
+);
+
+it.effect("keeps a model saved while a new project's automatic default is resolving", () =>
+  Effect.gen(function* () {
+    const fixture = yield* makeFixture;
+    const registry = Layer.mock(ProviderRegistry.ProviderRegistry)({
+      getProviders: Effect.succeed([claudeProvider]),
+    });
+    yield* Effect.gen(function* () {
+      const projects = yield* ProjectService.ProjectService;
+      const projectId = ProjectId.make("concurrent-create-model");
+      fixture.beforeNextSettingsRead(
+        projects.update({
+          projectId,
+          commandId: CommandId.make("fresh:concurrent-model"),
+          defaultModelSelection: codex,
+        }).pipe(Effect.asVoid, Effect.orDie),
+      );
+      const created = yield* projects.create({
+        projectId,
+        commandId: CommandId.make("create:concurrent-model"),
+        title: "Concurrent model",
+        workspaceRoot: "/work/concurrent-model",
+      });
+      assert.deepEqual(created.defaultModelSelection, codex);
+    }).pipe(Effect.provide(Layer.merge(fixture.layer, registry)));
+  }),
+);
+
 it.effect("gives every project Opus 5.5 with Thinking on and keeps what was chosen", () =>
   Effect.gen(function* () {
     const fixture = yield* makeFixture;

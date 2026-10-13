@@ -2,8 +2,15 @@
  * The coordinator's model and effort, chosen under the composer. Both are
  * project settings, so a choice saves at once and every window follows it.
  */
-import type { EnvironmentId, ModelSelection } from "@specweave-studio/contracts";
+import { useNavigate } from "@tanstack/react-router";
+import {
+  AuthOrchestrationReadScope,
+  type EnvironmentId,
+  type ModelSelection,
+  type ProviderInstanceId,
+} from "@specweave-studio/contracts";
 import { createModelSelection } from "@specweave-studio/shared/model";
+import { useEffect, useRef, useState } from "react";
 import { useEnvironmentSettings } from "../../../hooks/useSettings";
 import { getCustomModelOptionsByInstance } from "../../../modelSelection";
 import {
@@ -13,11 +20,81 @@ import {
   sortProviderInstanceEntries,
 } from "../../../providerInstances";
 import { useEnvironment } from "../../../state/environments";
+import { serverEnvironment } from "../../../state/server";
+import { readEnvironmentScope, useEnvironmentScope } from "../../../state/session";
+import { useAtomCommand } from "../../../state/use-atom-command";
 import { COORDINATOR_RECOMMENDED_TRAITS, modelLabel } from "../../../studio/shellModel";
 import { ProviderModelPicker } from "../../chat/ProviderModelPicker";
 import { TraitsPicker } from "../../chat/TraitsPicker";
 import { ModelBadge, ModelBadgeMark } from "./ModelBadge";
 import { useCoordinatorModelsLoading } from "./useCoordinatorModelsLoading";
+
+function CoordinatorProviderRecovery(props: {
+  environmentId: EnvironmentId;
+  instanceId: ProviderInstanceId;
+  saving: boolean;
+}) {
+  const canRefresh = useEnvironmentScope(props.environmentId, AuthOrchestrationReadScope);
+  const refresh = useAtomCommand(serverEnvironment.refreshProviders, { reportFailure: false });
+  const [pending, setPending] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const inFlight = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  const checkAgain = async () => {
+    if (
+      props.saving ||
+      inFlight.current ||
+      !readEnvironmentScope(props.environmentId, AuthOrchestrationReadScope)
+    )
+      return;
+    inFlight.current = true;
+    setPending(true);
+    setFailed(false);
+    try {
+      const result = await refresh({
+        environmentId: props.environmentId,
+        input: { instanceId: props.instanceId, refreshModels: true },
+      });
+      if (mounted.current) setFailed(result._tag === "Failure");
+    } catch {
+      if (mounted.current) setFailed(true);
+    } finally {
+      inFlight.current = false;
+      if (mounted.current) setPending(false);
+    }
+  };
+
+  if (!canRefresh) return null;
+  return (
+    <span className="inline-flex min-w-0 items-center gap-1">
+      <button
+        type="button"
+        className="sws-model-trigger"
+        disabled={props.saving || pending}
+        aria-busy={pending}
+        onClick={() => void checkAgain()}
+      >
+        {pending ? "Checking…" : "Check again"}
+      </button>
+      {failed ? (
+        <span
+          role="alert"
+          className="text-destructive text-xs"
+          title="Provider status could not be checked. Try again."
+        >
+          Check failed
+        </span>
+      ) : null}
+    </span>
+  );
+}
 
 export function CoordinatorModelPicker(props: {
   environmentId: EnvironmentId;
@@ -25,9 +102,10 @@ export function CoordinatorModelPicker(props: {
   disabled: boolean;
   saving: boolean;
   onChange: (value: ModelSelection) => void;
-  /** No model can be listed here, so the full settings are the way to one. */
+  /** Legacy project-settings callback; provider setup opens its machine-scoped route. */
   onOpenSettings: () => void;
 }) {
+  const navigate = useNavigate();
   const environment = useEnvironment(props.environmentId);
   const settings = useEnvironmentSettings(props.environmentId);
   const providers = environment?.serverConfig?.providers ?? [];
@@ -46,6 +124,27 @@ export function CoordinatorModelPicker(props: {
     : null;
   const available = entries.filter((entry) => entry.enabled && entry.isAvailable);
   const modelsLoading = useCoordinatorModelsLoading(environment?.serverConfig);
+  const openProviderSetup = (instanceId?: ProviderInstanceId) => {
+    if (props.disabled || props.saving) return;
+    void navigate({
+      to: "/settings/providers",
+      search: { environmentId: props.environmentId, ...(instanceId ? { instanceId } : {}) },
+    });
+  };
+  const getModelDisabledReason = (id: ProviderInstanceId, model: string) => {
+    const entry = entries.find((candidate) => candidate.instanceId === id);
+    return entry &&
+      isProviderInstancePickerReady(entry) &&
+      options.get(id)?.some((option) => option.slug === model && !option.isUnavailable)
+      ? null
+      : "Unavailable on this host";
+  };
+  const changeModel = (id: ProviderInstanceId, model: string) => {
+    if (props.disabled || props.saving || getModelDisabledReason(id, model)) return;
+    if (value && id === value.instanceId && model === value.model) return;
+    // Effort and other traits belong to the model they were chosen for.
+    props.onChange(createModelSelection(id, model));
+  };
 
   if (!value) {
     // Providers have not arrived from the host or are still being checked: nothing is
@@ -64,7 +163,8 @@ export function CoordinatorModelPicker(props: {
         <button
           type="button"
           className="sws-model-pick sws-model-pick-empty"
-          onClick={props.onOpenSettings}
+          disabled={props.disabled || props.saving}
+          onClick={() => openProviderSetup()}
         >
           Choose model
           <span className="sr-only"> for the coordinator</span>
@@ -89,29 +189,49 @@ export function CoordinatorModelPicker(props: {
           triggerClassName="sws-model-trigger"
           triggerLabel="Choose model"
           triggerAriaLabel="Choose model for the coordinator"
-          onInstanceModelChange={(id, model) => {
-            if (!props.saving) props.onChange(createModelSelection(id, model));
-          }}
+          disabled={props.saving}
+          getModelDisabledReason={getModelDisabledReason}
+          onOpenProviderSetup={openProviderSetup}
+          onManageProviders={() => openProviderSetup()}
+          onInstanceModelChange={changeModel}
         />
       </span>
     );
   }
   const label = modelLabel(active, value.instanceId, value.model);
+  const recovery =
+    !props.disabled && getModelDisabledReason(value.instanceId, value.model) ? (
+      <CoordinatorProviderRecovery
+        key={`${props.environmentId}:${value.instanceId}`}
+        environmentId={props.environmentId}
+        instanceId={value.instanceId}
+        saving={props.saving}
+      />
+    ) : null;
   // A saved instance that is gone from this host can still be replaced by one that is here.
   if (available.length === 0 || props.disabled)
     return (
       // Nothing to pick from on this host right now; still say what the coordinator runs on.
-      <span
-        className="sws-model-pick sws-model-pick-static"
-        role="img"
-        aria-label={`Coordinator model: ${label.full}`}
-      >
-        <ModelBadge
-          entry={active}
-          instanceId={value.instanceId}
-          model={value.model}
-          variant="chip"
-        />
+      <span className="sws-model-pick sws-model-pick-static">
+        <span role="img" aria-label={`Coordinator model: ${label.full}`}>
+          <ModelBadge
+            entry={active}
+            instanceId={value.instanceId}
+            model={value.model}
+            variant="chip"
+          />
+        </span>
+        {!props.disabled ? (
+          <button
+            type="button"
+            className="sws-model-trigger"
+            disabled={props.saving}
+            onClick={() => openProviderSetup(active?.instanceId)}
+          >
+            Add or manage providers
+          </button>
+        ) : null}
+        {recovery}
       </span>
     );
   return (
@@ -129,20 +249,12 @@ export function CoordinatorModelPicker(props: {
         triggerLabel={`${label.provider} · ${label.model}`}
         triggerAriaLabel={`Coordinator model: ${label.full}. Change model`}
         disabled={props.saving}
-        getModelDisabledReason={(id, model) => {
-          const entry = entries.find((candidate) => candidate.instanceId === id);
-          return entry?.enabled &&
-            entry.isAvailable &&
-            options.get(id)?.some((option) => option.slug === model && !option.isUnavailable)
-            ? null
-            : "Unavailable on this host";
-        }}
-        onInstanceModelChange={(id, model) => {
-          if (id === value.instanceId && model === value.model) return;
-          // Effort and other traits belong to the model they were chosen for.
-          props.onChange(createModelSelection(id, model));
-        }}
+        getModelDisabledReason={getModelDisabledReason}
+        onOpenProviderSetup={openProviderSetup}
+        onManageProviders={() => openProviderSetup()}
+        onInstanceModelChange={changeModel}
       />
+      {recovery}
       {active ? (
         <TraitsPicker
           provider={active.driverKind}

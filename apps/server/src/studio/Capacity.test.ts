@@ -8,14 +8,15 @@ import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 import * as Settings from "../serverSettings.ts";
 import * as Providers from "../provider/ProviderRegistry.ts";
+import { CodexNativeRouteCheckError } from "../provider/CodexProvider.ts";
 import * as NativeRoute from "./NativeRoute.ts";
 import * as Capacity from "./Capacity.ts";
 import { SwitchFetch } from "./SwitchClient.ts";
 import { provider, rawAccount, rawSnapshot, settings } from "./fixtures.ts";
 
-const run = <A, E>(effect: Effect.Effect<A, E, Capacity.Capacity>, raw: unknown, native = [provider()], config = settings, unavailable = false, routeVerified = true, refreshed = native, refreshIds: string[] = [], switchOptions: { refreshedRaw?: unknown; refreshBusy?: boolean; requests?: string[]; malformedJson?: boolean } = {}) =>
+const run = <A, E>(effect: Effect.Effect<A, E, Capacity.Capacity>, raw: unknown, native = [provider()], config = settings, unavailable = false, routeVerified: boolean | CodexNativeRouteCheckError = true, refreshed = native, refreshIds: string[] = [], switchOptions: { refreshedRaw?: unknown; refreshBusy?: boolean; requests?: string[]; malformedJson?: boolean } = {}) =>
   Effect.runPromise(effect.pipe(Effect.provide(Capacity.layer), Effect.provide(Layer.mergeAll(
-    Layer.succeed(NativeRoute.NativeRoute, { verify: () => Effect.succeed(routeVerified) }),
+    Layer.succeed(NativeRoute.NativeRoute, { verify: () => typeof routeVerified === "boolean" ? Effect.succeed(routeVerified) : Effect.fail(routeVerified) }),
     Layer.mock(Settings.ServerSettingsService)({ getSettings: Effect.succeed(config) }),
     Layer.mock(Providers.ProviderRegistry)({ getProviders: Effect.succeed(native), refreshInstance: (id) => Effect.sync(() => { refreshIds.push(id); return refreshed; }) }),
   )), Effect.provideService(HostProcessEnvironment, {}), Effect.provideService(SwitchFetch,
@@ -27,6 +28,67 @@ const run = <A, E>(effect: Effect.Effect<A, E, Capacity.Capacity>, raw: unknown,
       return Response.json(path === "/api/refresh" && "refreshedRaw" in switchOptions ? switchOptions.refreshedRaw : raw);
     }) as typeof fetch)));
 const start = (id = "codex") => Effect.flatMap(Capacity.Capacity, (capacity) => capacity.assertNativeStart(ProviderInstanceId.make(id), "/workspace"));
+describe("blocking usage reset estimates", () => {
+  const scenarios = [
+    { name: "weekly exhaustion ignores an earlier session reset", session: 10, weekly: 100, sessionHours: 1, weeklyHours: 72, expectedHours: 72 },
+    { name: "every exhausted window must reset", session: 100, weekly: 100, sessionHours: 4, weeklyHours: 2, expectedHours: 4 },
+    { name: "an unknown blocker reset makes recovery unknown", session: 100, weekly: 100, sessionHours: 1, weeklyHours: null, expectedHours: null },
+    { name: "an expired blocker observation cannot predict recovery", session: 100, weekly: 100, sessionHours: 1, weeklyHours: -1, expectedHours: null },
+    { name: "below-limit windows cannot explain a denial", session: 10, weekly: 25, sessionHours: 1, weeklyHours: 72, expectedHours: null },
+    { name: "spend controls do not recover with a usage window", session: 100, weekly: 100, sessionHours: 1, weeklyHours: 72, expectedHours: null, spendControlReached: true },
+    { name: "workspace denials have no inferred window recovery", session: 100, weekly: 100, sessionHours: 1, weeklyHours: 72, expectedHours: null, rateLimitReachedType: "workspace_member_usage_limit_reached" },
+  ] as const;
+  it.each(scenarios)("native: $name", async (scenario) => {
+    const now = Date.now();
+    const at = (hours: number) => new Date(now + hours * 3600000).toISOString();
+    const base = provider("codex", "codex", now);
+    const native = { ...base, usageLimits: { ...base.usageLimits!,
+      nativeAllowanceObservedAt: new Date(now).toISOString(), ordinaryUsageAllowed: false,
+      spendControlReached: "spendControlReached" in scenario,
+      rateLimitReachedType: "rateLimitReachedType" in scenario ? scenario.rateLimitReachedType : "rate_limit_reached",
+      windows: [
+        { id: "primary", kind: "session" as const, label: "Session", usedPercent: scenario.session, resetsAt: at(scenario.sessionHours) },
+        { id: "secondary", kind: "weekly" as const, label: "Weekly", usedPercent: scenario.weekly,
+          ...(scenario.weeklyHours === null ? {} : { resetsAt: at(scenario.weeklyHours) }) },
+        { id: "other:primary", kind: "session" as const, label: "Other bucket", usedPercent: 100, resetsAt: at(200) },
+      ],
+    } };
+    const error = await run(start(), null, [native], settings, true).catch((error: unknown) => error);
+    expect(error).toMatchObject({ _tag: "ProviderSetupError", usageLimit: {} });
+    expect((error as { usageLimit: { resetAt?: string } }).usageLimit.resetAt)
+      .toBe(scenario.expectedHours === null ? undefined : at(scenario.expectedHours));
+    expect((error as { detail: string }).detail.includes("Next observed reset"))
+      .toBe(scenario.expectedHours !== null);
+  });
+  it.each(scenarios)("companion: $name", async (scenario) => {
+    const now = Math.floor(Date.now() / 1000) * 1000;
+    const at = (hours: number) => now / 1000 + hours * 3600;
+    const raw = rawSnapshot(now);
+    const base = raw.accounts[0]!;
+    const snapshot = { ...raw, accounts: [{ ...base, status: "exhausted", quota: { ...base.quota,
+      ordinaryUsageAllowed: false, spendControlReached: "spendControlReached" in scenario,
+      rateLimitReachedType: "rateLimitReachedType" in scenario ? scenario.rateLimitReachedType : "rate_limit_reached",
+      window: { usedPercent: scenario.session, resetsAt: at(scenario.sessionHours) },
+      weekly: { usedPercent: scenario.weekly, resetsAt: scenario.weeklyHours === null ? null : at(scenario.weeklyHours) },
+      windows: [{ id: "other:primary", bucketId: "other", appliesToSelection: false, usedPercent: 100, resetsAt: at(200) }],
+    } }] };
+    const error = await run(start(), snapshot).catch((error: unknown) => error);
+    expect(error).toMatchObject({ _tag: "ProviderSetupError", usageLimit: {} });
+    expect((error as { usageLimit: { resetAt?: string } }).usageLimit.resetAt)
+      .toBe(scenario.expectedHours === null ? undefined : new Date(at(scenario.expectedHours) * 1000).toISOString());
+    expect((error as { detail: string }).detail.includes("Next observed reset"))
+      .toBe(scenario.expectedHours !== null);
+  });
+  it("includes every applicable companion window beyond its summary pair", async () => {
+    const now = Math.floor(Date.now() / 1000) * 1000;
+    const raw = rawSnapshot(now), account = raw.accounts[0]!, later = now / 1000 + 72 * 3600;
+    account.quota.window.usedPercent = 100;
+    Object.assign(account.quota, { windows: [
+      { id: "codex:additional", bucketId: "codex", appliesToSelection: true, usedPercent: 100, resetsAt: later },
+    ] });
+    await expect(run(start(), raw)).rejects.toMatchObject({ usageLimit: { resetAt: new Date(later * 1000).toISOString() } });
+  });
+});
 describe("native session admission", () => {
 
   const creditStart = (now: number) => Clock.clockWith((clock) => Effect.flatMap(Capacity.Capacity, (capacity) => capacity.assertNativeStart(ProviderInstanceId.make("codex"), "/workspace", { allowCredits: true, expectedQuotaPoolId: `codex:sha256:${"a".repeat(64)}` })).pipe(Effect.provideService(Clock.Clock, { ...clock, currentTimeMillis: Effect.succeed(now), currentTimeMillisUnsafe: () => now })));
@@ -111,7 +173,10 @@ describe("native session admission", () => {
     const custom = { ...settings, providers: { ...settings.providers, codex: { ...settings.providers.codex, homePath: "/tmp/explicit-native-home" } } };
     for (const [config, unavailable] of [[settings, true], [custom, false]] as const) {
       await expect(run(start(), rawSnapshot(), [native], config, unavailable)).rejects.toThrow(/limit|spend/i);
-      await expect(run(start(), rawSnapshot(), [native], config, unavailable)).rejects.toThrow(/Next observed reset/);
+      // Neither a 20%-used window nor a spend denial proves when permission returns.
+      await expect(run(start(), rawSnapshot(), [native], config, unavailable)).rejects.toMatchObject({
+        usageLimit: {}, detail: expect.not.stringContaining("Next observed reset"),
+      });
     }
   });
   it("preserves the deliberate unbound native-home fallback when quota is unknown", async () => {
@@ -162,6 +227,15 @@ describe("native session admission", () => {
   it("rejects effective custom routes even when native account and quota are fresh", async () => {
     await expect(run(start(), rawSnapshot(), [provider()], settings, false, false)).rejects.toThrow(/effective Codex route/);
   });
+  it.each(["timeout", "unavailable"] as const)("denies %s route verification with retry guidance", async (reason) => {
+    const error = await run(start(), rawSnapshot(), [provider()], settings, false,
+      new CodexNativeRouteCheckError({ reason })).catch((error: unknown) => error);
+    expect(error).toMatchObject({ _tag: "ProviderSetupError", detail: expect.stringContaining(
+      reason === "timeout" ? "route check timed out" : "route check failed",
+    ) });
+    expect((error as { detail: string }).detail).toContain("Refresh Providers on this machine and try again");
+    expect((error as { detail: string }).detail).not.toContain("custom endpoints");
+  });
   it("rejects failed refreshed native status with status guidance rather than asking an authenticated user to sign in", async () => {
     const attempts: string[] = [];
     const native = [{ ...provider(), status: "error" as const }];
@@ -183,7 +257,10 @@ describe("native session admission", () => {
     expect(attempts).toEqual([]);
     const raw = rawSnapshot(); raw.accounts[0]!.status = "exhausted";
     const stale = { ...provider(), checkedAt: new Date(Date.now() - 16 * 60000).toISOString() };
-    await expect(run(start(), raw, [stale], settings, false, true, [provider()], attempts)).rejects.toThrow(/no remaining permitted usage.*Next observed reset/);
+    // The companion's exhausted status is binding, but its below-limit windows do not explain the denial.
+    await expect(run(start(), raw, [stale], settings, false, true, [provider()], attempts)).rejects.toMatchObject({
+      usageLimit: {}, detail: expect.stringMatching(/no remaining permitted usage under its current usage limit\. Select/),
+    });
     expect(attempts).toEqual(["codex"]);
   });
   it.each([["admits", "20 seconds"], ["still bounds", "61 seconds"]] as const)("%s a slow native status refresh on a loaded host (%s)", async (outcome, delay) => {
@@ -219,7 +296,9 @@ describe("native session admission", () => {
   });
   it("does not admit an exhausted refreshed quota or a malformed refresh response", async () => {
     const stale = rawSnapshot(Date.now() - 16 * 60000), exhausted = rawSnapshot(); exhausted.accounts[0]!.status = "exhausted";
-    await expect(run(start(), stale, [provider()], settings, false, true, [provider()], [], { refreshedRaw: exhausted })).rejects.toThrow(/no remaining permitted usage.*Next observed reset/);
+    await expect(run(start(), stale, [provider()], settings, false, true, [provider()], [], { refreshedRaw: exhausted })).rejects.toMatchObject({
+      usageLimit: {}, detail: expect.stringMatching(/no remaining permitted usage under its current usage limit\. Select/),
+    });
     await expect(run(start(), stale, [provider()], settings, false, true, [provider()], [], { refreshedRaw: {} })).rejects.toThrow(/Fresh subscription capacity could not be verified/);
   });
   it("keeps ordinary background capacity reads passive when the local quota cache expires", async () => {

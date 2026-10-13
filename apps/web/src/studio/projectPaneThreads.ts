@@ -1,7 +1,6 @@
 /**
- * Which threads open in a project's right panel. The rule of thumb: inside a
- * project, every thread of that project opens in its panel, and a thread only
- * leaves the project when it truly belongs to another one.
+ * Agent-owned workers open beside their project coordinator. Independent chats
+ * retain their full page even when they use the same folder.
  */
 import { ThreadId } from "@specweave-studio/contracts";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
@@ -11,7 +10,8 @@ import { isOrchestratorThreadId, projectCoordinatorRole } from "./projectCoordin
 type PaneShell = Pick<
   EnvironmentThreadShell,
   "id" | "environmentId" | "projectId" | "deletedAt" | "lineage" | "forkedFrom"
->;
+> &
+  Partial<Pick<EnvironmentThreadShell, "createdBy">>;
 
 export interface ProjectPaneScope {
   readonly environmentId: string;
@@ -99,7 +99,8 @@ export function projectPaneThread<T extends PaneShell>(
   if (thread.deletedAt !== null) return { kind: "deleted" };
   // A previous coordinator is not the conversation on screen: its own page shows its history.
   if (role === "previous") return { kind: "elsewhere", environmentId: thread.environmentId };
-  return threadBelongsToProject(thread, scope, (id) => byId.get(id))
+  return threadBelongsToProject(thread, scope, (id) => byId.get(id)) &&
+    isAgentOwnedProjectThread(thread, scope.coordinatorThreadId ?? null, (id) => byId.get(id))
     ? { kind: "pane", thread }
     : { kind: "elsewhere", environmentId: thread.environmentId };
 }
@@ -133,29 +134,68 @@ export function paneSelectionCorrection(
 /** `?thread=<id>` on /projects/$projectKey names the thread open in the right panel. */
 export interface ProjectWorkspaceSearch {
   readonly thread?: ThreadId;
+  /** Exact checkout for a link; never changes the saved coordinator machine. */
+  readonly checkout?: string;
 }
 
 const MAX_THREAD_ID_LENGTH = 512;
 
 export function parseProjectWorkspaceSearch(raw: Record<string, unknown>): ProjectWorkspaceSearch {
-  const value = raw.thread;
-  if (typeof value !== "string") return {};
-  const id = value.trim();
-  if (
-    id.length === 0 ||
-    id.length > MAX_THREAD_ID_LENGTH ||
-    [...id].some((char) => char.charCodeAt(0) < 0x20 || char.charCodeAt(0) === 0x7f)
-  )
-    return {};
-  return { thread: ThreadId.make(id) };
+  const valid = (value: unknown, limit: number) => {
+    if (typeof value !== "string") return null;
+    const text = value.trim();
+    return text.length > 0 &&
+      text.length <= limit &&
+      ![...text].some((char) => char.charCodeAt(0) < 0x20 || char.charCodeAt(0) === 0x7f)
+      ? text
+      : null;
+  };
+  const thread = valid(raw.thread, MAX_THREAD_ID_LENGTH);
+  const checkout = valid(raw.checkout, 1024);
+  return {
+    ...(thread ? { thread: ThreadId.make(thread) } : {}),
+    ...(checkout && checkout.includes(":") ? { checkout } : {}),
+  };
 }
 
-/** The search for /projects/$projectKey with `thread` open in the right panel, or none. */
-export function projectWorkspaceSearch(thread: ThreadId | null): ProjectWorkspaceSearch {
-  return thread === null ? {} : { thread };
+/** The project view keeps an explicit linked checkout while its side pane changes. */
+export function projectWorkspaceSearch(
+  thread: ThreadId | null,
+  checkout?: string | null,
+): ProjectWorkspaceSearch {
+  return { ...(thread === null ? {} : { thread }), ...(checkout ? { checkout } : {}) };
 }
 
-type ChatShell = Pick<EnvironmentThreadShell, "id">;
+type ChatShell = Pick<EnvironmentThreadShell, "id"> &
+  Partial<Pick<EnvironmentThreadShell, "createdBy" | "lineage" | "forkedFrom">>;
+
+/** A coordinator or agent-created root owns its descendants; a human chat keeps its own agents. */
+export function isAgentOwnedProjectThread(
+  thread: ChatShell,
+  coordinator: string | null,
+  lookup: (id: string) => ChatShell | undefined,
+): boolean {
+  const seen = new Set<string>();
+  let current: ChatShell | undefined = thread;
+  for (let step = 0; current && step < MAX_LINEAGE_STEPS; step += 1) {
+    seen.add(current.id);
+    const parent = parentOf({
+      ...current,
+      lineage: current.lineage ?? {
+        parentThreadId: null,
+        relationshipToParent: null,
+        rootThreadId: current.id,
+      },
+      forkedFrom: current.forkedFrom ?? null,
+    });
+    if (parent !== null && parent === coordinator) return true;
+    if (parent === null) return current.createdBy === "agent";
+    // A missing parent is unproven ownership; its shell arrival re-evaluates the route.
+    if (seen.has(parent)) return false;
+    current = lookup(parent);
+  }
+  return false;
+}
 
 /** A chat's place on a project page: the thread open in its right panel. */
 export interface ProjectChatTarget {
@@ -163,27 +203,16 @@ export interface ProjectChatTarget {
   readonly threadId: ThreadId;
 }
 
-/**
- * Where a sidebar chat row, a notification or a shortcut opens a chat. In a
- * project whose checkout has a coordinator, the project page lists every chat
- * of that checkout as one of its threads, so each of them opens in the
- * project's right panel, as it does from the project page itself.
- *
- * A coordinator, current or previous, never opens in the panel. It opens full
- * page (returns null), where its approval, question, plan and run controls
- * are: the project page shows only its conversation, and a notification about
- * a coordinator is usually one of those requests. Full page is also right for
- * a project on several machines, whose page shows the chosen machine's
- * coordinator, which may not be the one that asked. Any other chat that is not
- * a project thread opens full page too.
- */
+/** Agent-owned workers open beside their coordinator; independent chats keep their own page. */
 export function projectPaneTargetForChat(
   thread: ChatShell,
   project: { readonly projectKey: string; readonly coordinatorThreadId: string | null } | null,
+  lookup: (threadId: string) => ChatShell | undefined = () => undefined,
 ): ProjectChatTarget | null {
   const coordinator = project?.coordinatorThreadId ?? null;
   if (!project || coordinator === null) return null;
   if (thread.id === coordinator || isOrchestratorThreadId(thread.id)) return null;
+  if (!isAgentOwnedProjectThread(thread, coordinator, lookup)) return null;
   return { projectKey: project.projectKey, threadId: thread.id };
 }
 
@@ -200,6 +229,7 @@ interface ChatProjectGroup {
 export function chatProjectPaneTarget(
   thread: ChatShell & Pick<EnvironmentThreadShell, "environmentId" | "projectId">,
   group: ChatProjectGroup | undefined,
+  lookup: (threadId: string) => ChatShell | undefined = () => undefined,
 ): ProjectChatTarget | null {
   const member = group?.memberProjects.find(
     (candidate) =>
@@ -213,6 +243,7 @@ export function chatProjectPaneTarget(
           coordinatorThreadId: member.workspaceSettings?.coordinatorThreadId ?? null,
         }
       : null,
+    lookup,
   );
 }
 
@@ -227,7 +258,7 @@ type OwnedShell = ChatShell &
  * agent started in the project (a coordinator's worker), or a fork or subagent of
  * one, in the checkout whose page the project row opens, so that page lists it.
  * A chat the person started stays a chat, even in a project with a coordinator,
- * and still opens in the project's panel. Threads from servers that do not say
+ * and opens on its own page. Threads from servers that do not say
  * who started them count as the person's.
  */
 export function isProjectOwnedChat<T extends OwnedShell>(
@@ -240,25 +271,17 @@ export function isProjectOwnedChat<T extends OwnedShell>(
     readonly lookup: (threadId: string) => T | undefined;
   },
 ): boolean {
-  if (chatProjectPaneTarget(thread, group) === null) return false;
+  if (chatProjectPaneTarget(thread, group, input.lookup) === null) return false;
   const shown = input.displayedCheckout;
   if (shown?.environmentId !== thread.environmentId || shown.id !== thread.projectId) return false;
-  const seen = new Set<string>();
-  let current: T | undefined = thread;
-  for (let step = 0; current && step < MAX_LINEAGE_STEPS; step += 1) {
-    if (current.createdBy === "agent") return true;
-    seen.add(current.id);
-    const parent = parentOf(current);
-    if (parent === null || seen.has(parent)) return false;
-    current = input.lookup(parent);
-  }
-  return false;
+  return true;
 }
 
 /** Where a chat opens, as router navigation options. */
 export function chatNavigationTarget(
   thread: ChatShell & Pick<EnvironmentThreadShell, "environmentId" | "projectId">,
   group: ChatProjectGroup | undefined,
+  lookup: (threadId: string) => ChatShell | undefined = () => undefined,
 ):
   | {
       readonly to: "/projects/$projectKey";
@@ -272,12 +295,29 @@ export function chatNavigationTarget(
         readonly threadId: ThreadId;
       };
     } {
-  const pane = chatProjectPaneTarget(thread, group);
+  const member = group?.memberProjects.find(
+    (item) => item.environmentId === thread.environmentId && item.id === thread.projectId,
+  );
+  const checkout = member ? `${member.environmentId}:${member.id}` : undefined;
+  if (
+    group &&
+    member &&
+    projectCoordinatorRole(thread.id, {
+      projectId: member.id,
+      coordinatorThreadId: member.workspaceSettings?.coordinatorThreadId ?? null,
+    }) === "current"
+  )
+    return {
+      to: "/projects/$projectKey",
+      params: { projectKey: group.projectKey },
+      search: projectWorkspaceSearch(null, checkout),
+    };
+  const pane = chatProjectPaneTarget(thread, group, lookup);
   return pane
     ? {
         to: "/projects/$projectKey",
         params: { projectKey: pane.projectKey },
-        search: projectWorkspaceSearch(pane.threadId),
+        search: projectWorkspaceSearch(pane.threadId, checkout),
       }
     : {
         to: "/$environmentId/$threadId",

@@ -199,6 +199,7 @@ const normalizeProjectModels = Effect.fn("ProjectSettingsNormalizer.normalizePro
           projectId: project.id,
           commandId: defaultModelCommandId(project.id),
           defaultModelSelection: model,
+          onlyIfDefaultModelUnset: true,
         });
         // A replayed receipt (the person cleared it since) leaves their choice alone.
         if (sameSelection(saved.defaultModelSelection, model)) {

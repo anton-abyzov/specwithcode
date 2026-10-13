@@ -47,6 +47,16 @@ export function providerUsedPercent(provider: ServerProvider, nowMs: number): nu
   return top;
 }
 
+/** Match native admission's denial signals; window percentages cannot override them. */
+function usageDeniesTurn(provider: ServerProvider): boolean {
+  const limits = provider.usageLimits;
+  return (
+    limits?.ordinaryUsageAllowed === false ||
+    limits?.spendControlReached === true ||
+    (!!limits?.rateLimitReachedType && limits.ordinaryUsageAllowed !== true)
+  );
+}
+
 /** Signed in, enabled and ready: it can take the next turn now. */
 export function canTakeTurn(provider: ServerProvider): boolean {
   return (
@@ -55,7 +65,7 @@ export function canTakeTurn(provider: ServerProvider): boolean {
     isProviderAvailable(provider) &&
     provider.status === "ready" &&
     provider.auth.status !== "unauthenticated" &&
-    provider.usageLimits?.ordinaryUsageAllowed !== false
+    !usageDeniesTurn(provider)
   );
 }
 
@@ -390,7 +400,7 @@ export function resolveCoordinatorTurnSelection(input: {
   const full = (provider: ServerProvider | undefined): boolean => {
     if (provider === undefined) return false;
     if (limited.has(provider.instanceId)) return true;
-    if (provider.usageLimits?.ordinaryUsageAllowed === false) return true;
+    if (usageDeniesTurn(provider)) return true;
     const used = providerUsedPercent(provider, input.nowMs);
     return used !== null && used >= threshold;
   };

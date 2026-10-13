@@ -120,10 +120,10 @@ export function ProviderLimitSettings() {
             : "What threads do when their provider hits a usage limit. Projects can override it."
         }
         resetAction={
-          settings.providerLimitAction !== "ask" ? (
+          settings.providerLimitAction !== "switch" ? (
             <SettingResetButton
               label="usage limit rule"
-              onClick={() => updateSettings({ providerLimitAction: "ask" })}
+              onClick={() => updateSettings({ providerLimitAction: "switch" })}
             />
           ) : null
         }

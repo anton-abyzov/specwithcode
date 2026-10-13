@@ -28,7 +28,7 @@ import { getDriverOption } from "../../settings/providerDriverMeta";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../../ui/popover";
 import "./usage.css";
 import { resetCreditsSummary } from "../../usage/UsageLimits";
-import type { EnvironmentId } from "@specweave-studio/contracts";
+import type { EnvironmentId, ProviderInstanceId } from "@specweave-studio/contracts";
 import { HostLimitsCompact } from "./HostLimits";
 
 const driverLabel = (driver: LimitPool["driver"]) =>
@@ -145,14 +145,37 @@ function ProviderSection({
 }
 
 /** Every provider's pooled windows across the connected hosts and hubs, as of `now`. */
-function useSubscriptionUsage(now: number) {
+function useSubscriptionUsage(
+  now: number,
+  destination?: { environmentId: EnvironmentId | null; instanceId: ProviderInstanceId | null },
+) {
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
+  const environmentId = destination?.environmentId;
+  const instanceId = destination?.instanceId;
+  const scoped = destination !== undefined;
+  const presentation = environmentId ? presentations.get(environmentId) : undefined;
   const pools = useMemo(
-    () => collectLimitPools(collectLimitAccounts(presentations), now),
-    [presentations, now],
+    () => {
+      if (!scoped) return collectLimitPools(collectLimitAccounts(presentations), now);
+      // Admission runs against this host and native instance. Other accounts,
+      // even a fresher hub snapshot, cannot lend it their remaining capacity.
+      if (!environmentId || !instanceId || !presentation?.serverConfig) return [];
+      const selected = new Map([
+        [environmentId, {
+          ...presentation,
+          serverConfig: {
+            providers: presentation.serverConfig.providers?.filter(
+              (provider) => provider.instanceId === instanceId,
+            ),
+          },
+        }],
+      ]);
+      return collectLimitPools(collectLimitAccounts(selected), now);
+    },
+    [presentations, now, scoped, environmentId, instanceId, presentation],
   );
   const providers = useMemo(() => usageIndicatorProviders(pools, now), [pools, now]);
-  return { pools, providers };
+  return { pools, providers, environmentLabel: presentation?.entry.target.label };
 }
 
 function ProviderSections({
@@ -196,15 +219,20 @@ export function SubscriptionUsageSummary() {
 export function ProjectUsageIndicator({
   onOpenProjectUsage,
   projectEnvironmentId = null,
+  providerInstanceId = null,
 }: {
   onOpenProjectUsage: () => void;
-  /** The project's own host, listed first in the by-machine grid. */
+  /** The actual host and native instance used by this project's coordinator. */
   projectEnvironmentId?: EnvironmentId | null;
+  providerInstanceId?: ProviderInstanceId | null;
 }) {
   // The clock moves when the popover opens; a ticking one would repaint the composer for nothing.
   const [now, setNow] = useState(Date.now);
   const [open, setOpen] = useState(false);
-  const usage = useSubscriptionUsage(now);
+  const usage = useSubscriptionUsage(now, {
+    environmentId: projectEnvironmentId,
+    instanceId: providerInstanceId,
+  });
   const { providers } = usage;
   if (providers.length === 0) return null;
   return (
@@ -217,8 +245,8 @@ export function ProjectUsageIndicator({
     >
       <PopoverTrigger
         className="sws-usage-chip"
-        aria-label={`Subscription usage: ${usageIndicatorSummary(providers, driverLabel)}`}
-        title="Subscription usage"
+        aria-label={`Coordinator subscription usage on ${usage.environmentLabel}: ${usageIndicatorSummary(providers, driverLabel)}`}
+        title={`Coordinator subscription usage on ${usage.environmentLabel}`}
       >
         {providers.map((provider) => (
           <span key={provider.driver} className="sws-usage-chip-item" data-tone={provider.tone}>
@@ -238,7 +266,7 @@ export function ProjectUsageIndicator({
       </PopoverTrigger>
       <PopoverPopup side="top" align="start" width="lg" padding="compact">
         <div className="sws-usage-popover">
-          <PopoverTitle>Subscription usage</PopoverTitle>
+          <PopoverTitle>Coordinator usage on {usage.environmentLabel}</PopoverTitle>
           <HostLimitsCompact projectEnvironmentId={projectEnvironmentId} now={now} />
           <ProviderSections {...usage} now={now} />
           <footer>

@@ -120,8 +120,8 @@ afterEach(() => {
   act(() => renderer?.unmount());
   vi.unstubAllGlobals();
 });
-it("defaults to offering the fallback at 95 percent and waiting for a reset under 30 minutes", () => {
-  expect(row("When a provider runs out").props.value).toBe("ask");
+it("defaults to switching automatically at 95 percent and waiting for a reset under 30 minutes", () => {
+  expect(row("When a provider runs out").props.value).toBe("switch");
   expect(row("Switch before the limit").props.value).toBe("95");
   expect(row("Wait when the reset is close").props.value).toBe("30");
 });

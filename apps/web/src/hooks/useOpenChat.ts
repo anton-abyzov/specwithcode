@@ -27,11 +27,11 @@ export function useOpenChat() {
   });
   return useCallback(
     (target: OpenChatTarget) => {
-      const projectId =
-        target.projectId ??
-        readThreadShell({ environmentId: target.environmentId, threadId: target.threadId })
-          ?.projectId ??
-        null;
+      const shell = readThreadShell({
+        environmentId: target.environmentId,
+        threadId: target.threadId,
+      });
+      const projectId = target.projectId ?? shell?.projectId ?? null;
       const group =
         projectId === null
           ? undefined
@@ -43,11 +43,17 @@ export function useOpenChat() {
             );
       const next = chatNavigationTarget(
         {
+          ...shell,
           id: target.threadId,
           environmentId: target.environmentId,
           projectId: projectId ?? ("" as ProjectId),
         },
         group,
+        (threadId) =>
+          readThreadShell({
+            environmentId: target.environmentId,
+            threadId: threadId as ThreadId,
+          }) ?? undefined,
       );
       return next.to === "/projects/$projectKey"
         ? navigate({ to: next.to, params: { ...next.params }, search: { ...next.search } })

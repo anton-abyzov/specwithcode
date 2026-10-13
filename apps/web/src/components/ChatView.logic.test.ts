@@ -1035,16 +1035,21 @@ describe("resolveThreadSwitchTimeline", () => {
   });
 
   const held = { threadKey: "env-1:thread-a", entries: ["a1", "a2"] };
+  const loadingHeldThread = { loading: true, activeThreadKey: held.threadKey, nextEntries: [] };
 
-  it("keeps the previous thread's entries while the next thread is loading", () => {
-    expect(
-      resolveThreadSwitchTimeline({
-        loading: true,
-        activeThreadKey: "env-1:thread-b",
-        nextEntries: [],
-        lastReady: held,
-      }),
-    ).toEqual({ entries: ["a1", "a2"], displayThreadKey: "env-1:thread-a" });
+  it.each([
+    ["another thread in the same environment", "env-1:thread-a", "env-1:thread-b"],
+    ["another project on the same host", "env-1:easychamp", "env-1:specweave"],
+    ["the same thread id in another environment", "env-1:thread-a", "env-2:thread-a"],
+    ["a missing active thread", "env-1:thread-a", null],
+  ])("does not paint %s while loading", (_case, sourceKey, activeThreadKey) => {
+    const lastReady = { ...held, threadKey: sourceKey };
+    rememberReadyThreadTimeline(lastReady);
+    const pending = { loading: true, activeThreadKey, nextEntries: [] };
+    const expected = { entries: [], displayThreadKey: activeThreadKey };
+    expect(resolveThreadSwitchTimeline({ ...pending, lastReady })).toEqual(expected);
+    // The module-scoped cache must obey the same boundary after a remount.
+    expect(resolveThreadSwitchTimeline(pending)).toEqual(expected);
   });
 
   it("shows the new thread once its detail is ready", () => {
@@ -1059,78 +1064,68 @@ describe("resolveThreadSwitchTimeline", () => {
   });
 
   it("does not invent a timeline on the first open of a thread", () => {
-    expect(
-      resolveThreadSwitchTimeline({
-        loading: true,
-        activeThreadKey: "env-1:thread-a",
-        nextEntries: [],
-        lastReady: null,
-      }),
-    ).toEqual({ entries: [], displayThreadKey: "env-1:thread-a" });
+    expect(resolveThreadSwitchTimeline({ ...loadingHeldThread, lastReady: null })).toEqual({
+      entries: [],
+      displayThreadKey: held.threadKey,
+    });
   });
 
   it("keeps the held thread workspace cwd with the snapshot", () => {
-    rememberReadyThreadTimeline({
-      ...held,
-      markdownCwd: "/repo/a",
-      workspaceRoot: "/repo/a",
-    });
-    expect(peekHeldThreadTimeline<string[]>()).toEqual({
-      ...held,
-      markdownCwd: "/repo/a",
-      workspaceRoot: "/repo/a",
+    const snapshot = { ...held, markdownCwd: "/repo/a", workspaceRoot: "/repo/a" };
+    rememberReadyThreadTimeline(snapshot);
+    expect(peekHeldThreadTimeline<string[]>()).toEqual(snapshot);
+  });
+
+  it("restores the same scoped thread from an explicit ready snapshot", () => {
+    expect(resolveThreadSwitchTimeline({ ...loadingHeldThread, lastReady: held })).toEqual({
+      entries: held.entries,
+      displayThreadKey: held.threadKey,
     });
   });
 
-  it("survives a ChatView remount by remembering the last ready timeline", () => {
+  it("restores the same scoped thread after a ChatView remount", () => {
     rememberReadyThreadTimeline(held);
     expect(peekHeldThreadTimeline<string[]>()).toEqual(held);
-    expect(
-      resolveThreadSwitchTimeline({
-        loading: true,
-        activeThreadKey: "env-1:thread-b",
-        nextEntries: [],
-      }),
-    ).toEqual({ entries: ["a1", "a2"], displayThreadKey: "env-1:thread-a" });
+    expect(resolveThreadSwitchTimeline(loadingHeldThread)).toEqual({
+      entries: held.entries,
+      displayThreadKey: held.threadKey,
+    });
   });
 
   it("paints a remembered destination instead of the last-viewed thread", () => {
     rememberReadyThreadTimeline(held);
     rememberReadyThreadTimeline({ threadKey: "env-1:thread-b", entries: ["b1", "b2"] });
-    expect(peekRememberedThreadTimeline<string[]>("env-1:thread-a")).toEqual(["a1", "a2"]);
-    expect(
-      resolveThreadSwitchTimeline({
-        loading: true,
-        activeThreadKey: "env-1:thread-a",
-        nextEntries: [],
-      }),
-    ).toEqual({ entries: ["a1", "a2"], displayThreadKey: "env-1:thread-a" });
+    expect(peekRememberedThreadTimeline<string[]>(held.threadKey)).toEqual(held.entries);
+    expect(resolveThreadSwitchTimeline(loadingHeldThread)).toEqual({
+      entries: held.entries,
+      displayThreadKey: held.threadKey,
+    });
   });
 
-  it("prefers live entries over a remembered snapshot", () => {
-    rememberReadyThreadTimeline({ threadKey: "env-1:thread-b", entries: ["stale-b"] });
-    expect(
-      resolveThreadSwitchTimeline({
-        loading: false,
-        activeThreadKey: "env-1:thread-b",
-        nextEntries: ["fresh-b"],
-      }),
-    ).toEqual({ entries: ["fresh-b"], displayThreadKey: "env-1:thread-b" });
-  });
+  it.each([true, false])(
+    "prefers live entries over a remembered snapshot (loading: %s)",
+    (loading) => {
+      rememberReadyThreadTimeline({ threadKey: "env-1:thread-b", entries: ["stale-b"] });
+      expect(
+        resolveThreadSwitchTimeline({
+          loading,
+          activeThreadKey: "env-1:thread-b",
+          nextEntries: ["fresh-b"],
+          lastReady: held,
+        }),
+      ).toEqual({ entries: ["fresh-b"], displayThreadKey: "env-1:thread-b" });
+    },
+  );
 
-  it("does not keep a remembered snapshot on a resolved empty thread", () => {
+  it("does not keep cached entries when the same thread resolves empty", () => {
     rememberReadyThreadTimeline(held);
     expect(
-      resolveThreadSwitchTimeline({
-        loading: false,
-        activeThreadKey: "env-1:thread-a",
-        nextEntries: [],
-      }),
-    ).toEqual({ entries: [], displayThreadKey: "env-1:thread-a" });
+      resolveThreadSwitchTimeline({ ...loadingHeldThread, loading: false, lastReady: held }),
+    ).toEqual({ entries: [], displayThreadKey: held.threadKey });
   });
 
   it("does not hold another environment's timeline across a jump", () => {
-    expect(threadKeysShareEnvironment("env-1:thread-a", "env-2:thread-b")).toBe(false);
+    expect(threadKeysShareEnvironment(held.threadKey, "env-2:thread-b")).toBe(false);
     expect(
       resolveThreadSwitchTimeline({
         loading: true,

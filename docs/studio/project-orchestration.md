@@ -4,6 +4,18 @@
 
 The project workspace retains a coordinator and opens existing worker chats beside it. Coordinator and worker provider/model choices remain independent. The worker pane uses its own containing block for native controls; ordinary full-page chats keep their existing title-bar layout.
 
+### Coordinator recovery and response length
+
+The main project conversation belongs to the coordinator. Opening a worker link or using a project new-chat shortcut keeps that conversation in place. Worker navigation never uses a different thread's cached transcript while loading.
+
+The coordinator model picker remains available when its saved provider is unavailable. **Check again** refreshes that exact machine/profile and reports a failed check inline; it does not retry a turn. The picker also offers another model and host-scoped provider setup. Unsent coordinator text and attachments survive navigating to settings and back within the same window. A page reload or closing the window is not draft persistence.
+
+The usage indicator is scoped to the selected execution machine/profile. A low percentage alone does not prove that an account can start work: native spend, workspace or account limits can still deny admission. Recovery estimates include every exhausted usage window and stay unknown when the provider does not supply enough information. Automatic recovery follows the configured policy and does not select paid API capacity automatically.
+
+**Settings → Agents → Response style → Concise** is the default for short generated answers. It applies through the host/project settings, rather than a separate per-thread verbosity switch. **Appearance → Timeline detail** changes how messages are displayed, not what the agent writes.
+
+### Plans and task routing
+
 Planning is optional. The **Plan** action opens a native spec, acceptance criteria, tasks, assignments and recorded evidence without installing or invoking SpecWeave. Reading an empty plan does not create one. Saving edits uses the displayed revision; a conflict preserves the draft. **Ask coordinator** sends the saved task ID through the same durable coordinator route. Agents can read the plan and claim, report or release their own assignments through project-bound MCP tools. They cannot configure authority, impersonate a human or invoke verification.
 
 **Reported done** is distinct from **Verified**. The human verification action shows the saved executable, literal arguments, workspace and timeout before running it. It requires both orchestration-operation and terminal-operation permission. A command ID is durably reserved before execution, and retries return its receipt without running it twice. The UI retains an uncertain request ID across reloads and can recheck persisted evidence after local storage is lost. A new execution requires **New verification attempt**. Receipts show outcome, exit code, bounded output, output hash and definition revision. Changed definitions invalidate current verification while retaining historical evidence. This runner is not a sandbox; it executes the command the user requests on the selected host.

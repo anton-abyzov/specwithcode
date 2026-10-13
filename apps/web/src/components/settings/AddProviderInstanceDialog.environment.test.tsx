@@ -1,6 +1,7 @@
 import {
   EnvironmentId,
   ProviderDriverKind,
+  ProviderInstanceId,
   type AcpRegistrySearchAgent,
 } from "@specweave-studio/contracts";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -425,5 +426,29 @@ describe("AddProviderInstanceDialog environment routing", () => {
     await Promise.resolve();
     expect(settingsHooks.mutate).toHaveBeenCalledOnce();
     expect(actions.onOpenChange).toHaveBeenCalledWith(false);
+  });
+  it("opens existing agent settings on this machine without creating another instance", () => {
+    const onCreated = vi.fn();
+    const onOpenChange = vi.fn();
+    hooks.beginRender();
+    const tree = AddProviderInstanceDialog({
+      open: true,
+      environmentId: remoteEnvironmentId,
+      environmentLabel: "Remote device",
+      onCreated,
+      onOpenChange,
+    });
+    const search = visitElements(
+      tree,
+      (element) =>
+        typeof element.type === "function" && element.type.name === "AcpRegistrySearchStep",
+    );
+    expect(search?.props.environmentId).toBe(remoteEnvironmentId);
+    (search!.props.onManage as (instanceId: ProviderInstanceId) => void)(
+      ProviderInstanceId.make("copilot_work"),
+    );
+    expect(onCreated).toHaveBeenCalledExactlyOnceWith("copilot_work");
+    expect(onOpenChange).toHaveBeenCalledExactlyOnceWith(false);
+    expect(settingsHooks.mutate).not.toHaveBeenCalled();
   });
 });

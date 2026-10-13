@@ -11,6 +11,7 @@ import {
 import type { useProjects } from "~/state/entities";
 import type { EnvironmentPresentation } from "~/state/environments";
 import { readEnvironmentScope } from "~/state/session";
+import { projectDestinationUnavailableReason } from "~/studio/projectListVisibility";
 import type { EnvironmentOption } from "../BranchToolbar.logic";
 import { toastManager } from "../ui/toast";
 import {
@@ -88,10 +89,7 @@ export function useDraftMachineRouting(input: Input) {
         environment.connection.phase,
         readEnvironmentScope(target.environmentId, AuthOrchestrationOperateScope),
       ) ||
-      !draftMachineContextRef.current.allProjects.some(
-        (project) =>
-          project.environmentId === target.environmentId && project.id === target.projectId,
-      )
+      projectDestinationUnavailableReason(target, draftMachineContextRef.current.allProjects)
     )
       return;
     setDraftThreadContext(draftId, {
@@ -138,6 +136,10 @@ export function useDraftMachineRouting(input: Input) {
           (item) => item.environmentId === target.environmentId,
         );
         return environment &&
+          !projectDestinationUnavailableReason(
+            target,
+            draftMachineContextRef.current.allProjects,
+          ) &&
           !draftMachineUnavailableReason(
             environment.connection.phase,
             readEnvironmentScope(target.environmentId, AuthOrchestrationOperateScope),
@@ -207,7 +209,7 @@ export function useDraftMachineRouting(input: Input) {
         isCurrentRequest: () =>
           environmentChangeRef.current === request &&
           draftMachineContextRef.current.draftId === draftId,
-        unavailableReason: () => {
+        unavailableReason: (resolved) => {
           const latest = draftMachineContextRef.current;
           const environment = latest.environments.find(
             (item) => item.environmentId === target.environmentId,
@@ -218,6 +220,12 @@ export function useDraftMachineRouting(input: Input) {
             readEnvironmentScope(target.environmentId, AuthOrchestrationOperateScope),
           );
           if (reason) return reason;
+          const projectReason = projectDestinationUnavailableReason(
+            target,
+            latest.allProjects,
+            resolved,
+          );
+          if (projectReason) return projectReason;
           return !latest.logicalProjectEnvironments.some(
             (item) =>
               item.environmentId === target.environmentId &&

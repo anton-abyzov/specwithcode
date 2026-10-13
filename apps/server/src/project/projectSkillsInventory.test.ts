@@ -256,6 +256,46 @@ describe("buildProjectSkillRows", () => {
     assert.strictEqual(rows[0]!.path, null);
   });
 
+  it("attaches a plugin install's lock to its namespaced skills", () => {
+    const pluginSkill = `${HOME}/.claude/plugins/cache/mkt/frontend/1.0.0/skills/build/SKILL.md`;
+    const ownLocked = `${HOME}/.claude/plugins/cache/mkt/frontend/1.0.0/skills/lint/SKILL.md`;
+    const rows = buildProjectSkillRows({
+      cwd: CWD,
+      providers: [
+        provider("claude", "claudeAgent", "Claude", [
+          skill("frontend:build", pluginSkill, { scope: "plugin" }),
+          skill("frontend:lint", ownLocked, { scope: "plugin" }),
+          skill("other:build", pluginSkill, { scope: "plugin" }),
+        ]),
+      ],
+      locks: [
+        lock("user", {
+          frontend: lockEntry({ pluginDir: true, version: "2.0.0", sha: "" }),
+          // A standalone skill that shares a plugin skill's folder name is a
+          // different skill: it keeps its own row and never claims `frontend:lint`.
+          lint: lockEntry({ version: "3.0.0" }),
+          // Not a plugin install, so it never claims `other:*` skills.
+          other: lockEntry({ version: "4.0.0" }),
+        }),
+      ],
+      files: new Map([
+        [pluginSkill, fact(pluginSkill, "x")],
+        [ownLocked, fact(ownLocked, "y")],
+      ]),
+      doctor: new Map(),
+    });
+    assert.deepEqual(
+      rows.map((row) => [row.name, row.status, row.drift, row.lock?.version ?? null]),
+      [
+        ["frontend:build", "ok", "unknown", "2.0.0"],
+        ["frontend:lint", "ok", "unknown", "2.0.0"],
+        ["lint", "missing", "unknown", "3.0.0"],
+        ["other", "missing", "unknown", "4.0.0"],
+        ["other:build", "ok", "unlocked", null],
+      ],
+    );
+  });
+
   it("prefers the user lock for a skill that only loads from the user scope", () => {
     const path = `${HOME}/.agents/skills/gws/SKILL.md`;
     const row = buildProjectSkillRows({

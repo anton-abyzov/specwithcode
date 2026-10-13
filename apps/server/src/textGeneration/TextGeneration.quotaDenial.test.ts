@@ -31,6 +31,7 @@ import * as Providers from "../provider/ProviderRegistry.ts";
 import * as Settings from "../serverSettings.ts";
 import * as SourceControl from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as Capacity from "../studio/Capacity.ts";
+import { CodexNativeRouteCheckError } from "../provider/CodexProvider.ts";
 import * as NativeRoute from "../studio/NativeRoute.ts";
 import { SwitchFetch } from "../studio/SwitchClient.ts";
 import { provider, settings } from "../studio/fixtures.ts";
@@ -108,6 +109,7 @@ async function harness(
     absent?: boolean;
     rawFailure?: TextGenerationError;
     routeVerified?: boolean;
+    routeFailure?: "timeout" | "unavailable";
   } = {},
 ) {
   const instanceId = ProviderInstanceId.make(input.instanceId ?? "codex");
@@ -162,7 +164,9 @@ async function harness(
             Effect.sync(() => {
               calls.routes.push({ cwd: path, config: entry.config });
               return input.routeVerified !== false;
-            }),
+            }).pipe(Effect.flatMap((verified) => input.routeFailure
+              ? Effect.fail(new CodexNativeRouteCheckError({ reason: input.routeFailure }))
+              : Effect.succeed(verified))),
         }),
         Layer.succeed(HostProcessEnvironment, {}),
         Layer.succeed(SwitchFetch, (() =>
@@ -315,6 +319,16 @@ describe("auxiliary generation uses native admission before provider resolution"
       operation: "generateBranchName",
       detail: expect.stringContaining("unknown"),
     });
+    expect(h.calls.raw).toEqual([]);
+    expect(h.calls.links).toBe(0);
+  });
+  it.each(["timeout", "unavailable"] as const)("rejects %s workspace route checks before raw generation or link resolution", async (routeFailure) => {
+    const h = await harness({ native: snapshot(true), routeFailure });
+    await expect(Effect.runPromise(h.generation.generateThreadTitle({ cwd, message, modelSelection: h.modelSelection })))
+      .rejects.toMatchObject({ _tag: "TextGenerationError", detail: expect.stringContaining(
+        routeFailure === "timeout" ? "route check timed out" : "route check failed",
+      ) });
+    expect(h.calls.resolve).toBe(0);
     expect(h.calls.raw).toEqual([]);
     expect(h.calls.links).toBe(0);
   });

@@ -19,6 +19,17 @@ describe("planClaudeSkillDispatch", () => {
     });
   });
 
+  it("dispatches a namespaced plugin skill as its slash command", () => {
+    const skills = new Set([...SKILLS, "sw:do"]);
+    expect(planClaudeSkillDispatch("$sw:do 0042 please", skills)).toEqual({
+      leadingText: undefined,
+      commandText: "/sw:do 0042 please",
+      skillName: "sw:do",
+    });
+    // The bare leaf is not a discovered name, so it stays prose.
+    expect(planClaudeSkillDispatch("$do it", skills)).toBeUndefined();
+  });
+
   it("keeps a mention that opens the prompt as a single command block", () => {
     expect(planClaudeSkillDispatch("$review\nfocus on auth", SKILLS)).toEqual({
       leadingText: undefined,

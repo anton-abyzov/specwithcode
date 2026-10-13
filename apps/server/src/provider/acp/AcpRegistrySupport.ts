@@ -1103,7 +1103,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         platform,
         withPreferredPath(environment, binDirectory, platform),
       );
-      return executablePath === undefined
+      return executablePath === undefined || path.dirname(executablePath) !== binDirectory
         ? Option.none<AcpRegistryPackageInstallReceipt>()
         : Option.some<AcpRegistryPackageInstallReceipt>({
             agentId: agent.id,

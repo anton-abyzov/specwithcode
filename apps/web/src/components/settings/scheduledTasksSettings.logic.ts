@@ -37,8 +37,38 @@ export function matchesScheduledTaskScope(
 /** Opens the editor with a ready-made routine, such as the one Settings > Google links to. */
 export const MORNING_BRIEFING_TEMPLATE = "morning-briefing" as const;
 
+/** A routed editor may return only to a local screen, never to an external URL. */
+export function scheduledTaskReturnTo(value: unknown): string | undefined {
+  if (typeof value !== "string" || !/^\/(?!\/)/u.test(value) || /[\\\u0000-\u0020]/u.test(value)) {
+    return undefined;
+  }
+  try {
+    const url = new URL(value, "https://studio.invalid");
+    return url.origin === "https://studio.invalid" && !url.pathname.startsWith("//")
+      ? `${url.pathname}${url.search}${url.hash}`
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Consume a one-shot template on both outcomes; only dismissal returns to its origin. */
+export function scheduledTaskEditorCloseHref(
+  href: string,
+  returnTo: unknown,
+  outcome: "dismissed" | "saved",
+): string {
+  const origin = scheduledTaskReturnTo(returnTo);
+  if (outcome === "dismissed" && origin) return origin;
+  const url = new URL(href, "https://studio.invalid");
+  for (const key of ["template", "projectId", "returnTo"]) url.searchParams.delete(key);
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
 export function validateScheduledTasksSearch(raw: Record<string, unknown>) {
+  const returnTo = scheduledTaskReturnTo(raw.returnTo);
   return {
+    ...(returnTo ? { returnTo } : {}),
     ...(typeof raw.environmentId === "string" && raw.environmentId.trim()
       ? { environmentId: EnvironmentId.make(raw.environmentId) }
       : {}),

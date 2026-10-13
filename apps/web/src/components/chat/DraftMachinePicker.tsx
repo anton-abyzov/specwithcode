@@ -7,12 +7,17 @@ import { useLayoutEffect, useRef, useState } from "react";
 
 import { useComposerDraftStore, type DraftId } from "~/composerDraftStore";
 import { useScratchProject } from "~/hooks/useScratchProject";
-import { useClientSettings } from "~/hooks/useSettings";
+import { useClientSettings, useLegacySidebarEnabled } from "~/hooks/useSettings";
+import { useProjectCoordinatorHandoff } from "~/hooks/useProjectCoordinatorHandoff";
 import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
 } from "~/logicalProject";
 import { useProjects } from "~/state/entities";
+import {
+  isArchivedMember,
+  projectDestinationUnavailableReason,
+} from "~/studio/projectListVisibility";
 import { useEnvironments } from "~/state/environments";
 import { readEnvironmentScope, useEnvironmentsWithScope } from "~/state/session";
 import {
@@ -51,6 +56,8 @@ export function DraftMachinePicker(props: Props) {
   const { environments } = useEnvironments();
   const permitted = useEnvironmentsWithScope(environments, AuthOrchestrationOperateScope);
   const projects = useProjects();
+  const legacy = useLegacySidebarEnabled();
+  const coordinatorHandoff = useProjectCoordinatorHandoff();
   const grouping = useClientSettings(selectProjectGroupingSettings);
   const { scratchWorkspaceRootFor, openScratchProject } = useScratchProject();
   const [open, setOpen] = useState(false);
@@ -97,6 +104,7 @@ export function DraftMachinePicker(props: Props) {
   const destinationProjects = projects.filter(
     (project) =>
       project.environmentId === choosingEnvironmentId &&
+      !isArchivedMember(project) &&
       !isScratchProject(project, scratchWorkspaceRootFor(project.environmentId)),
   );
 
@@ -115,7 +123,7 @@ export function DraftMachinePicker(props: Props) {
           latest.current.props.disabled || latest.current.props.sendInFlightRef.current,
         isCurrentRequest: () =>
           requestRef.current === request && latest.current.props.draftId === draftId,
-        unavailableReason: () => {
+        unavailableReason: (resolved) => {
           const environment = latest.current.environments.find(
             (item) => item.environmentId === target.environmentId,
           );
@@ -125,13 +133,7 @@ export function DraftMachinePicker(props: Props) {
             readEnvironmentScope(target.environmentId, AuthOrchestrationOperateScope),
           );
           if (reason) return reason;
-          return target.projectId !== null &&
-            !latest.current.projects.some(
-              (project) =>
-                project.environmentId === target.environmentId && project.id === target.projectId,
-            )
-            ? "The destination project is no longer available. Choose it again."
-            : null;
+          return projectDestinationUnavailableReason(target, latest.current.projects, resolved);
         },
         resolveProject: async () => {
           const project =
@@ -144,6 +146,13 @@ export function DraftMachinePicker(props: Props) {
           return project ? { ...project, projectId: project.id } : null;
         },
         commit: (project) => {
+          if (
+            !legacy &&
+            !isScratchProject(project, scratchWorkspaceRootFor(project.environmentId))
+          ) {
+            void coordinatorHandoff(scopeProjectRef(project.environmentId, project.id));
+            return;
+          }
           useComposerDraftStore
             .getState()
             .setLogicalProjectDraftThreadId(
@@ -192,6 +201,7 @@ export function DraftMachinePicker(props: Props) {
       projects.find(
         (project) =>
           project.environmentId === environmentId &&
+          !isArchivedMember(project) &&
           deriveLogicalProjectKeyFromSettings(project, grouping) ===
             deriveLogicalProjectKeyFromSettings(activeProject, grouping),
       );
@@ -238,6 +248,23 @@ export function DraftMachinePicker(props: Props) {
                 <ArrowLeftIcon aria-hidden /> Machines
               </MenuItem>
               <MenuGroupLabel>Project on {choosingEnvironment.label}</MenuGroupLabel>
+              {!destinationReason &&
+                activeProject &&
+                !isScratchProject(
+                  activeProject,
+                  scratchWorkspaceRootFor(activeProject.environmentId),
+                ) &&
+                !destinationProjects.some(
+                  (project) =>
+                    deriveLogicalProjectKeyFromSettings(project, grouping) ===
+                    deriveLogicalProjectKeyFromSettings(activeProject, grouping),
+                ) && (
+                  <p role="status" className="px-2 py-2 text-sm text-muted-foreground">
+                    No active checkout of {activeProject.title} is saved on{" "}
+                    {choosingEnvironment.label}. Choose another project or No project. Your draft
+                    stays here until you choose.
+                  </p>
+                )}
               {destinationReason && (
                 <p role="status" className="px-2 py-2 text-sm text-muted-foreground">
                   {destinationReason}

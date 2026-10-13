@@ -524,6 +524,10 @@ export function AddProviderInstanceDialog({
                         environmentId={environmentId}
                         providerInstances={settings.providerInstances}
                         onPrepared={handleAcpPrepared}
+                        onManage={(instanceId) => {
+                          onCreated?.(instanceId);
+                          onOpenChange(false);
+                        }}
                         onManualConfiguration={handleManualAcpConfiguration}
                         onLocalConfiguration={handleLocalAcpConfiguration}
                         onLoadingChange={setIsRegistryLoading}

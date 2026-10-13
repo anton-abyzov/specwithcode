@@ -95,10 +95,10 @@ export function AddUsageLimitSourceDialog({
     >
       <DialogPopup className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Add a CLIProxyAPI hub</DialogTitle>
+          <DialogTitle>Add a CLIProxyAPI usage hub</DialogTitle>
           <DialogDescription>
-            Show the quota of every account the hub pools, next to the providers on{" "}
-            {environmentLabel}. The key stays on that server.
+            Read account quotas on {environmentLabel}. This does not connect chat models or sign in
+            an agent. The key stays on that server.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>

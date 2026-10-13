@@ -95,7 +95,8 @@ path.write_text(json.dumps(receipt))
 if control.get('applyFailAfterSwitch'):
     pathlib.Path(args.output).write_text(json.dumps({'result': 'update-failed', 'rollback': 'held-for-safe-review'}))
     sys.exit(1)
-pathlib.Path(args.output).write_text(json.dumps({'phase': 'verified', 'cookie': 'helper-private-receipt'}))
+pathlib.Path(args.output).write_text(json.dumps({'phase': 'verified', 'preservedRowsAuthAndIdentity': True,
+                                               'originalServicesPreserved': True, 'cookie': 'helper-private-receipt'}))
 print('helper-private-output-should-not-be-logged')
 '''
 
@@ -950,22 +951,78 @@ class PassBehaviour(AgentCase):
                 self.assertEqual(self.state()['status'], 'up-to-date')
                 self.assertIsNone(self.state()['message'])
 
-    def test_reinstalling_the_failed_version_by_hand_clears_the_error(self):
+    def test_rewriting_installation_metadata_does_not_clear_failed_update(self):
         self.fake.add_release()
         self.config(installRequestedAt='2026-10-10T10:00:00Z')
         self.control(applyFailAfterSwitch=True)
         self.assertEqual(self.run_agent(), 1)
         self.assertEqual(self.run_agent(), 1)
-        receipt = pathlib.Path(self.state()['lastInstall']['receipt'])
+        failed = self.state()['lastInstall']
+        receipt = pathlib.Path(failed['receipt'])
+        receipt_bytes = receipt.read_bytes()
+        helper_calls = self.calls()
         self.write_installation('0.2.0', NEW_COMMIT)
         later = receipt.stat().st_mtime + 5
         os.utime(str(self.own / 'installation.json'), (later, later))
         for requests in ({}, {'checkRequestedAt': '2026-10-10T11:00:00Z'}):
             with self.subTest(requests=requests):
                 self.config(**requests)
-                self.assertEqual(self.run_agent(), 0)
-                self.assertEqual(self.state()['status'], 'up-to-date')
-                self.assertIsNone(self.state()['message'])
+                self.assertEqual(self.run_agent(), 1)
+                self.assertEqual(self.state()['status'], 'error')
+                self.assertIn('See the update receipt', self.state()['message'])
+                self.assertEqual(self.state()['lastInstall'], failed)
+                self.assertEqual(receipt.read_bytes(), receipt_bytes)
+                self.assertEqual(self.calls(), helper_calls)
+
+    def test_failed_update_needs_a_positive_completion_receipt(self):
+        self.fake.add_release()
+        self.config(installRequestedAt='2026-10-10T10:00:00Z')
+        self.control(applyFailAfterSwitch=True)
+        self.assertEqual(self.run_agent(), 1)
+        failed = self.state()['lastInstall']
+        receipt = pathlib.Path(failed['receipt'])
+        helper_calls = self.calls()
+        cases = [None, 'malformed JSON', 'null', '[]', '{}', '{"phase":"prepared"}',
+                 '{"phase":"verified"}',
+                 '{"phase":"verified","preservedRowsAuthAndIdentity":false,"originalServicesPreserved":true}',
+                 '{"phase":"verified","preservedRowsAuthAndIdentity":true,"originalServicesPreserved":false}',
+                 '{"phase":"verified","preservedRowsAuthAndIdentity":true,"originalServicesPreserved":true,"result":"update-failed"}']
+        for content in cases:
+            with self.subTest(receipt=content):
+                if content is None:
+                    receipt.unlink()
+                else:
+                    receipt.write_text(content)
+                self.assertEqual(self.run_agent(), 1)
+                self.assertEqual(self.state()['status'], 'error')
+                self.assertIn('See the update receipt', self.state()['message'])
+                self.assertEqual(self.state()['lastInstall'], failed)
+                self.assertEqual(self.calls(), helper_calls)
+                self.assertEqual(receipt.read_text() if receipt.exists() else None, content)
+
+        # update.py writes these verification fields; result=updated is stdout only.
+        verified = json.dumps({'phase': 'verified', 'preservedRowsAuthAndIdentity': True,
+                               'originalServicesPreserved': True})
+        receipt.write_text(verified)
+        self.assertEqual(self.run_agent(), 0)
+        self.assertEqual(self.state()['status'], 'up-to-date')
+        self.assertIsNone(self.state()['message'])
+        self.assertEqual(self.state()['lastInstall'], failed)
+        self.assertEqual(self.calls(), helper_calls)
+        self.assertEqual(receipt.read_text(), verified)
+
+    def test_successful_install_stays_successful_if_its_receipt_is_removed(self):
+        self.fake.add_release()
+        self.config(installRequestedAt='2026-10-10T10:00:00Z')
+        self.assertEqual(self.run_agent(), 0)
+        success = self.state()['lastInstall']
+        self.assertEqual(success['result'], 'updated')
+        pathlib.Path(success['receipt']).unlink()
+        helper_calls = self.calls()
+        self.assertEqual(self.run_agent(), 0)
+        self.assertEqual(self.state()['status'], 'up-to-date')
+        self.assertEqual(self.state()['lastInstall'], success)
+        self.assertEqual(self.calls(), helper_calls)
 
     def test_older_failed_install_does_not_mark_newer_install_as_failed(self):
         self.fake.add_release()

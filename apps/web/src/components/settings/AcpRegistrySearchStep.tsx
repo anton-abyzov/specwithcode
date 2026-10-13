@@ -9,6 +9,7 @@ import type {
   AcpRegistrySearchAgent,
   EnvironmentId,
   ProviderInstanceConfig,
+  ProviderInstanceId,
 } from "@specweave-studio/contracts";
 import { ExternalLinkIcon, SearchIcon } from "lucide-react";
 import { type FormEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -36,6 +37,7 @@ interface AcpRegistrySearchStepProps {
   readonly environmentId: EnvironmentId;
   readonly providerInstances: Readonly<Record<string, ProviderInstanceConfig>>;
   readonly onPrepared: (agent: AcpRegistrySearchAgent) => void;
+  readonly onManage?: (instanceId: ProviderInstanceId) => void;
   readonly onManualConfiguration: () => void;
   readonly onLocalConfiguration?: () => void;
   readonly onLoadingChange?: (loading: boolean) => void;
@@ -58,6 +60,7 @@ export function AcpRegistrySearchStep({
   environmentId,
   providerInstances,
   onPrepared,
+  onManage,
   onManualConfiguration,
   onLocalConfiguration,
   onLoadingChange,
@@ -158,6 +161,7 @@ export function AcpRegistrySearchStep({
         canManageProviders={canManageProviders}
         preparingId={preparingId}
         onPrepare={(agent) => void handlePrepare(agent)}
+        {...(onManage ? { onManage } : {})}
       />
 
       <form className="flex flex-wrap items-center gap-2" onSubmit={handleSearch}>
