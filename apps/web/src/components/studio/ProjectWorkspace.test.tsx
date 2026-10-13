@@ -136,7 +136,7 @@ vi.mock("../../state/entities", () => ({
   useThreadStatus: () => "ready",
 }));
 vi.mock("../../state/environments", () => ({
-  useEnvironments: () => ({ isReady: true }),
+  useEnvironments: () => ({ isReady: true, environments: [] }),
   usePrimaryEnvironmentId: () => (state.primaryRegistered ? "primary" : null),
   useEnvironment: () => ({
     label: "Test host",
@@ -211,6 +211,7 @@ vi.mock("../files/AttachmentFilePreview", () => ({
   ),
 }));
 vi.mock("../../state/session", () => ({
+  useEnvironmentsWithScope: () => new Set(),
   useEnvironmentScope: (_environmentId: string, scope: string) =>
     scope === "source-control:write"
       ? (state.canWriteSourceControl ?? state.canOperate)

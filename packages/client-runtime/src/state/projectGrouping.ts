@@ -7,9 +7,10 @@ import {
   type SidebarProjectGroupingMode,
 } from "@specweave-studio/contracts";
 import type { ClientSettings } from "@specweave-studio/contracts/settings";
+import { isWindowsAbsolutePath } from "@specweave-studio/shared/path";
 
 import type { EnvironmentProject } from "./models.ts";
-import { normalizeProjectPathForComparison } from "./projects.ts";
+import { inferProjectTitleFromPath, normalizeProjectPathForComparison } from "./projects.ts";
 
 export interface ProjectGroupingSettings {
   readonly sidebarProjectGroupingMode: SidebarProjectGroupingMode;
@@ -158,7 +159,9 @@ export function deriveLogicalProjectKeyFromSettings(
 
 export function deriveProjectGroupLabel(input: {
   readonly representative: Pick<EnvironmentProject, "title" | "repositoryIdentity">;
-  readonly members: ReadonlyArray<Pick<EnvironmentProject, "title" | "repositoryIdentity">>;
+  readonly members: ReadonlyArray<
+    Pick<EnvironmentProject, "title" | "repositoryIdentity" | "workspaceRoot">
+  >;
 }): string {
   const sharedTitles = uniqueNonEmptyValues(input.members.map((member) => member.title));
   const sharedDisplayNames = uniqueNonEmptyValues(
@@ -178,6 +181,25 @@ export function deriveProjectGroupLabel(input: {
   ) {
     return sharedTitle;
   }
+
+  // Renaming one checkout must survive siblings that still have their automatic
+  // folder or repository name. Distinct custom names keep the repository fallback.
+  const customTitles = uniqueNonEmptyValues(
+    input.members.map((member) => {
+      const title = member.title.trim();
+      if (sharedDisplayNames.includes(title) || sharedRepositoryNames.includes(title)) return null;
+      const path = normalizeProjectPathForComparison(member.workspaceRoot);
+      const windowsPath = isWindowsAbsolutePath(path);
+      const folderName = path.slice(path.lastIndexOf(windowsPath ? "\\" : "/") + 1);
+      const inferredTitle = inferProjectTitleFromPath(path);
+      const comparableTitle = windowsPath ? title.toLowerCase() : title;
+      return comparableTitle === inferredTitle || comparableTitle === (folderName || "project")
+        ? null
+        : title;
+    }),
+  );
+  if (customTitles.length === 1) return customTitles[0]!;
+
   if (sharedDisplayNames.length === 1) {
     return sharedDisplayNames[0]!;
   }
