@@ -14,6 +14,7 @@ import * as Layer from "effect/Layer";
 import * as Providers from "../provider/ProviderRegistry.ts";
 import * as Settings from "../serverSettings.ts";
 import * as Capacity from "./Capacity.ts";
+import { CodexNativeRouteCheckError } from "../provider/CodexProvider.ts";
 import * as NativeRoute from "./NativeRoute.ts";
 import { SwitchFetch } from "./SwitchClient.ts";
 import { provider, rawAccount, rawSnapshot, settings } from "./fixtures.ts";
@@ -52,6 +53,7 @@ async function companion() {
     refreshIds: [] as string[],
     config: settings,
     routeVerified: true,
+    routeFailure: undefined as CodexNativeRouteCheckError | undefined,
     routes: [] as Array<{
       entry: ProviderInstanceConfig;
       cwd: string | null;
@@ -129,7 +131,7 @@ async function companion() {
                   Effect.sync(() => {
                     h.routes.push({ entry, cwd, baseEnv });
                     return h.routeVerified;
-                  }),
+                  }).pipe(Effect.flatMap((verified) => h.routeFailure ? Effect.fail(h.routeFailure) : Effect.succeed(verified))),
               }),
               Layer.mock(Settings.ServerSettingsService)({
                 getSettings: Effect.sync(() => h.config),
@@ -318,17 +320,26 @@ describe("capacity service with a real local companion transport", () => {
   it.each([
     ["busy", { status: 409, json: {} }, /refresh is already running/],
     ["invalid", { json: {} }, /Fresh subscription capacity could not be verified/],
-    ["exhausted", null, /no remaining permitted usage.*Next observed reset/],
+    ["exhausted", null, /no remaining permitted usage/],
   ] as const)(
     "does not admit expired capacity when its one refresh is %s",
-    async (_kind, reply, message) =>
+    async (kind, reply, message) =>
       withCompanion(async (h) => {
         h.state.raw = rawSnapshot(h.now - 16 * 60_000);
         const exhausted = rawSnapshot(h.now);
         exhausted.accounts[0]!.status = "exhausted";
         h.state.respond = (request) =>
           request.path === "/api/refresh" ? (reply ?? { json: exhausted }) : undefined;
-        await expect(h.run(start())).rejects.toThrow(message);
+        const denied = h.run(start());
+        await expect(denied).rejects.toThrow(message);
+        if (kind === "exhausted") {
+          // The companion denies work without identifying an exhausted window.
+          // Its ordinary session reset is not an estimate of recovery.
+          const error = await denied.catch((error: unknown) => error);
+          expect(error).toMatchObject({ _tag: "ProviderSetupError", usageLimit: {} });
+          expect((error as { usageLimit: { resetAt?: string } }).usageLimit.resetAt).toBeUndefined();
+          expect((error as { detail: string }).detail).not.toContain("Next observed reset");
+        }
         expect(h.requests).toEqual([wire("GET", "/api/state"), wire("POST", "/api/refresh", "{}")]);
         expect(h.refreshIds).toEqual([]);
       }),
@@ -356,6 +367,15 @@ describe("capacity service with a real local companion transport", () => {
       await expect(h.run(start("project-codex"))).rejects.toThrow(/effective Codex route/);
       expect(h.refreshIds).toEqual(["project-codex"]);
       expect(h.routes).toEqual([{ entry, cwd: "/owned/workspace", baseEnv: {} }]);
+      expect(h.requests).toEqual([]);
+    }));
+
+  it.each(["timeout", "unavailable"] as const)("keeps %s route verification closed before companion HTTP", async (reason) =>
+    withCompanion(async (h) => {
+      h.state.routeFailure = new CodexNativeRouteCheckError({ reason });
+      await expect(h.run(start())).rejects.toThrow(reason === "timeout" ? /route check timed out/ : /route check failed/);
+      expect(h.routes).toHaveLength(1);
+      expect(h.routes[0]?.cwd).toBe("/owned/workspace");
       expect(h.requests).toEqual([]);
     }));
 
@@ -406,7 +426,12 @@ describe("capacity service with a real local companion transport", () => {
         },
       ];
       await h.close();
-      await expect(h.run(start())).rejects.toThrow(/spend control.*Next observed reset/);
+      const denied = h.run(start());
+      await expect(denied).rejects.toThrow(/spend control/);
+      const error = await denied.catch((error: unknown) => error);
+      expect(error).toMatchObject({ _tag: "ProviderSetupError", usageLimit: {} });
+      expect((error as { usageLimit: { resetAt?: string } }).usageLimit.resetAt).toBeUndefined();
+      expect((error as { detail: string }).detail).not.toContain("Next observed reset");
       expect(h.requests).toEqual([]);
       expect(h.routes).toHaveLength(1);
     }));

@@ -12,18 +12,21 @@ import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 
-const { newThread, prepareThread, refresh, Wrapper, Trigger } = vi.hoisted(() => ({
-  newThread: vi.fn(),
-  prepareThread: vi.fn(),
-  refresh: vi.fn(),
-  Wrapper: ({ children }: { children?: ReactNode }) => children,
-  Trigger: ({ children, render }: { children?: ReactNode; render?: ReactElement }) => (
-    <>
-      {render}
-      {children}
-    </>
-  ),
-}));
+const { newThread, prepareThread, coordinatorHandoff, refresh, Wrapper, Trigger } = vi.hoisted(
+  () => ({
+    newThread: vi.fn(),
+    coordinatorHandoff: vi.fn(),
+    prepareThread: vi.fn(),
+    refresh: vi.fn(),
+    Wrapper: ({ children }: { children?: ReactNode }) => children,
+    Trigger: ({ children, render }: { children?: ReactNode; render?: ReactElement }) => (
+      <>
+        {render}
+        {children}
+      </>
+    ),
+  }),
+);
 vi.mock("~/state/session", async (original) => ({
   ...(await original<typeof import("~/state/session")>()),
   useEnvironmentScope: () => true,
@@ -42,6 +45,9 @@ vi.mock("~/hooks/useSettings", () => ({
     select(DEFAULT_CLIENT_SETTINGS),
 }));
 vi.mock("~/hooks/useLiveRefresh", () => ({ useLiveRefresh: () => {} }));
+vi.mock("~/hooks/useProjectCoordinatorHandoff", () => ({
+  useProjectCoordinatorHandoff: () => coordinatorHandoff,
+}));
 vi.mock("~/hooks/useHandleNewThread", () => ({ useNewThreadHandler: () => newThread }));
 vi.mock("~/lib/sourceControlActions", () => ({
   usePreparePullRequestThreadAction: () => ({ run: prepareThread, isAllowed: true, error: null }),
@@ -211,6 +217,7 @@ const newDraftId = DraftId.make("new-draft");
 let renderer: ReactTestRenderer;
 
 beforeEach(() => {
+  coordinatorHandoff.mockReset().mockResolvedValue({ kind: "standalone" });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", { addEventListener: vi.fn(), removeEventListener: vi.fn() });
   useComposerDraftStore.setState({ draftsByThreadKey: {} });
@@ -342,3 +349,36 @@ describe.each([
     }
   });
 });
+
+it.each(["Ask a question", "Resolve conflicts", "Fix check", "Fix findings in a thread"])(
+  "modern standalone %s stages coordinator input without opening/preparing a thread",
+  async (action) => {
+    coordinatorHandoff.mockResolvedValue({ kind: "opened", threadId: "coordinator" });
+    await act(async () => {
+      renderer = create(
+        <PullRequestDetailPanel
+          environmentId={threadRef.environmentId}
+          reference={detail}
+          context="page"
+          shortcutsEnabled={false}
+          getShortcutContext={() => ({
+            terminalFocus: false,
+            terminalOpen: false,
+            previewFocus: false,
+            previewOpen: false,
+            isWeb: true,
+            isDesktop: false,
+          })}
+        />,
+      );
+    });
+    await click(action);
+    expect(coordinatorHandoff).toHaveBeenCalledWith(
+      { environmentId: threadRef.environmentId, projectId: detail.projectId },
+      expect.objectContaining({ url: detail.url }),
+    );
+    expect(newThread).not.toHaveBeenCalled();
+    expect(prepareThread).not.toHaveBeenCalled();
+    expect(useComposerDraftStore.getState().getComposerDraft(newDraftId)).toBeNull();
+  },
+);

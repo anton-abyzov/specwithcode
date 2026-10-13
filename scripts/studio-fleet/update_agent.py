@@ -1204,13 +1204,17 @@ class Agent(object):
                   % (self.identity, type(error).__name__), file=sys.stderr)
 
     def failed_switch_stands(self, last):
-        """A failed install of the running version stands until its receipt says otherwise or Studio is reinstalled."""
-        try:
-            receipt = owned(pathlib.Path(last['receipt']), self.home)
-            reinstalled = os.stat(str(self.own / 'installation.json')).st_mtime_ns > os.stat(str(receipt)).st_mtime_ns
-            return not reinstalled and read_json(receipt, self.home).get('result') == 'update-failed'
-        except (AgentError, OSError, KeyError, TypeError, AttributeError):
+        """A recorded failure clears only when its helper receipt verifies completion."""
+        if last.get('result') != 'failed':
             return False
+        try:
+            receipt = read_json(owned(pathlib.Path(last['receipt']), self.home), self.home)
+            return not (receipt.get('phase') == 'verified'
+                        and receipt.get('preservedRowsAuthAndIdentity') is True
+                        and receipt.get('originalServicesPreserved') is True
+                        and receipt.get('result') != 'update-failed')
+        except (AgentError, OSError, KeyError, TypeError, AttributeError):
+            return True
 
     def cleanup_versions(self, installed):
         for parent in (self.updates / 'downloads', self.updates / 'helpers'):

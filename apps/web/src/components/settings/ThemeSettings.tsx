@@ -88,9 +88,21 @@ function downloadThemeFile(filename: string, contents: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
-function ThemeVariantTooltip({ label, children }: { label: string; children: ReactElement }) {
+function ThemeVariantTooltip({
+  label,
+  children,
+  onEscape,
+}: {
+  label: string;
+  children: ReactElement;
+  onEscape: () => void;
+}) {
   return (
-    <Tooltip>
+    <Tooltip
+      onOpenChange={(open, details) => {
+        if (!open && details.reason === "escape-key") onEscape();
+      }}
+    >
       <TooltipTrigger render={children} />
       <TooltipPopup>{label}</TooltipPopup>
     </Tooltip>
@@ -133,6 +145,20 @@ function ThemeLibraryCard({
   // tooltip promises exactly what clicking it does.
   const cardModes = theme.previews.map((preview) => preview.mode);
   const [radialModeOpen, setRadialModeOpen] = useState<ThemeAppearance | null>(null);
+  useEffect(() => {
+    if (radialModeOpen === null) return;
+    const dismiss = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented || event.isComposing || event.repeat)
+        return;
+      event.preventDefault();
+      event.stopPropagation();
+      setRadialModeOpen(null);
+    };
+    // Hover can open the picker without moving focus. Consume dismissal before
+    // the window-level Settings shortcut, after nested controls handle Escape.
+    document.addEventListener("keydown", dismiss);
+    return () => document.removeEventListener("keydown", dismiss);
+  }, [radialModeOpen]);
   const radialModeGroups = (["light", "dark"] as const).map((mode) => {
     const options =
       variantNavigation?.options.flatMap((option) => {
@@ -177,7 +203,11 @@ function ThemeLibraryCard({
                     }
                   }}
                   onKeyDown={(event) => {
-                    if (event.key === "Escape") setRadialModeOpen(null);
+                    if (event.key === "Escape" && radialModeOpen !== null) {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setRadialModeOpen(null);
+                    }
                   }}
                   onMouseLeave={() => setRadialModeOpen(null)}
                 >
@@ -189,7 +219,10 @@ function ThemeLibraryCard({
                     const modeLabel = mode === "light" ? "Light" : "Dark";
                     return (
                       <div className="contents" key={mode}>
-                        <ThemeVariantTooltip label={`${modeLabel}: ${selected.option.label}`}>
+                        <ThemeVariantTooltip
+                          label={`${modeLabel}: ${selected.option.label}`}
+                          onEscape={() => setRadialModeOpen(null)}
+                        >
                           <button
                             aria-label={
                               options.length > 1
@@ -249,6 +282,7 @@ function ThemeLibraryCard({
                               const optionIsActive = option.activeModes.includes(mode);
                               return (
                                 <ThemeVariantTooltip
+                                  onEscape={() => setRadialModeOpen(null)}
                                   key={option.label}
                                   label={`Use ${option.label} for ${mode} mode`}
                                 >

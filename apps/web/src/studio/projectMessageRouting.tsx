@@ -1,8 +1,9 @@
-import { createContext, useContext } from "react";
+import { createContext, useContext, type ReactNode } from "react";
 import {
   ChatAttachment as ChatAttachmentSchema,
   type ChatAttachment,
   type EnvironmentId,
+  type ModelSelection,
   type ThreadId,
 } from "@specweave-studio/contracts";
 import * as Schema from "effect/Schema";
@@ -16,6 +17,13 @@ export interface ProjectThreadOpenOptions {
 
 export interface ProjectMessageRouting {
   readonly coordinatorThreadId: ThreadId | null;
+  /** Coordinator details share the project picker, including its persistence barrier. */
+  readonly coordinatorModelControls?: ReactNode;
+  /** Present only for the coordinator's native review, never a worker's runtime answers. */
+  readonly continueCoordinator?: <T>(
+    operation: (selection: ModelSelection) => Promise<T>,
+  ) => Promise<T>;
+  readonly saveCoordinatorModel?: (selection: ModelSelection) => Promise<void>;
   readonly send: (prompt: string, attachments?: ReadonlyArray<ChatAttachment>) => Promise<void>;
   readonly openCoordinator: () => void;
   /**

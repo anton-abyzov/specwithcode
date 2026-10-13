@@ -62,12 +62,23 @@ function Fixture() {
         />
       ) : (
         <FeaturedAcpProviderCards
-          providerInstances={{}}
+          providerInstances={
+            state === "added"
+              ? {
+                  gemini_work: {
+                    driver: ProviderDriverKind.make("acpRegistry"),
+                    config: { agentId: "gemini" },
+                  },
+                }
+              : {}
+          }
           canManageProviders={state !== "readonly"}
           preparingId={state === "preparing" ? "grok-build" : null}
           onPrepare={(entry) => setSelected(entry.id)}
+          onManage={(instanceId) => setSelected(`manage:${instanceId}`)}
           copilot={query("github-copilot-cli")}
           grok={query("grok-build")}
+          gemini={query("gemini")}
         />
       )}
       <p data-testid="selected" role="status" className="text-sm text-muted-foreground">

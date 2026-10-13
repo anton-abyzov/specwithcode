@@ -21,7 +21,46 @@ import {
   matchesScheduledTaskScope,
   scheduleFromDraft,
   taskToDraft,
+  validateScheduledTasksSearch,
+  scheduledTaskReturnTo,
+  scheduledTaskEditorCloseHref,
 } from "./scheduledTasksSettings.logic";
+
+describe("routed scheduled task editor navigation", () => {
+  const origin = "/settings/google?project=aide&machine=m4&checkout=local#account";
+  const editor =
+    "/settings/scheduled-tasks?machine=m4&template=morning-briefing&projectId=aide&returnTo=%2Fsettings%2Fgoogle#tasks";
+
+  it("retains the full settings origin through validated search", () => {
+    expect(validateScheduledTasksSearch({ returnTo: origin }).returnTo).toBe(origin);
+    expect(scheduledTaskEditorCloseHref(editor, origin, "dismissed")).toBe(origin);
+  });
+
+  it.each([
+    undefined,
+    null,
+    42,
+    "",
+    "https://evil.example/",
+    "//evil.example/",
+    "/\\evil.example/",
+    "javascript:alert(1)",
+    "/\nevil.example",
+    "/..//evil.example/",
+  ])("rejects an unsafe or absent origin %s and keeps the scheduled task scope", (returnTo) => {
+    expect(scheduledTaskReturnTo(returnTo)).toBeUndefined();
+    expect(validateScheduledTasksSearch({ returnTo }).returnTo).toBeUndefined();
+    expect(scheduledTaskEditorCloseHref(editor, returnTo, "dismissed")).toBe(
+      "/settings/scheduled-tasks?machine=m4#tasks",
+    );
+  });
+
+  it("keeps a successful create on the task list and consumes the template", () => {
+    expect(scheduledTaskEditorCloseHref(editor, origin, "saved")).toBe(
+      "/settings/scheduled-tasks?machine=m4#tasks",
+    );
+  });
+});
 
 const laptopId = EnvironmentId.make("laptop");
 const serverId = EnvironmentId.make("server");

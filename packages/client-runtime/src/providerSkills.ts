@@ -83,6 +83,10 @@ export function resolveProviderSkillSourceKind(
 
   const normalizedScope = skill.scope?.trim().toLowerCase();
   switch (normalizedScope) {
+    // Claude Code plugin skills (`<plugin>:<skill>`), which may load from a
+    // local marketplace folder outside any plugins cache path.
+    case "plugin":
+      return "app";
     case "repo":
     case "repository":
       return "repo";

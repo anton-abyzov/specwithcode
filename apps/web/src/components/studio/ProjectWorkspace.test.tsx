@@ -8,6 +8,8 @@ import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/st
 
 const state = vi.hoisted(() => ({
   send: vi.fn(),
+  nativeContinue: vi.fn(async (_kind: string, _selection: unknown) => {}),
+  nativeError: null as string | null,
   openLink: vi.fn(async () => undefined),
   openMenu: vi.fn(async () => undefined),
   refresh: vi.fn(),
@@ -418,6 +420,7 @@ vi.mock("./shell/LibraryPane", () => ({ LibraryPane: () => <p>Library pane</p> }
 vi.mock("../ChatView", async () => {
   const { useProjectMessageRouting, routeProjectComposerSend } =
     await import("../../studio/projectMessageRouting");
+  const { continueWithProjectModel } = await import("../../studio/coordinatorContinuation");
   const { useOpenThread } = await import("../../hooks/useOpenThread");
   return {
     default: ({ threadId }: { threadId: string }) => {
@@ -426,6 +429,21 @@ vi.mock("../ChatView", async () => {
       const { openThread } = useOpenThread();
       return (
         <section data-native-thread={threadId}>
+          {routing?.coordinatorModelControls}
+          {["Resume", "Plan"].map((kind) => (
+            <button
+              key={kind}
+              onClick={() =>
+                void continueWithProjectModel(routing, undefined, (selection) =>
+                  state.nativeContinue(kind, selection),
+                ).catch((error) => {
+                  state.nativeError = error.message;
+                })
+              }
+            >
+              {kind} native
+            </button>
+          ))}
           <button
             onClick={() =>
               void openThread({
@@ -456,6 +474,8 @@ vi.mock("../ChatView", async () => {
   };
 });
 import { ProjectWorkspace } from "./ProjectWorkspace";
+import { enqueueProjectCoordinatorDraft } from "../../studio/projectCoordinatorDraft";
+import { getProjectCoordinatorComposer } from "../../studio/projectCoordinatorComposer";
 let root: Root, container: HTMLDivElement;
 function shell(
   id: string,
@@ -466,6 +486,7 @@ function shell(
     environmentId: "host",
     projectId: "project",
     title: `Thread ${id}`,
+    createdBy: "agent",
     runtime: null,
     hasPendingApprovals: false,
     hasPendingUserInput: false,
@@ -486,6 +507,13 @@ function shell(
 beforeEach(() => {
   (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
   Element.prototype.scrollIntoView = vi.fn();
+  const composer = getProjectCoordinatorComposer("host", "project");
+  composer.setPrompt("");
+  composer.setAttachments([]);
+  composer.setPreparing([]);
+  composer.setProblem(null);
+  composer.setSubmitting(false);
+  composer.outgoing.clear();
   state.attachments = [];
   state.messages = [];
   state.threadReports = null;
@@ -517,6 +545,7 @@ beforeEach(() => {
   state.project.defaultModelSelection = { instanceId: "codex-native", model: "worker-model" };
   state.otherCheckouts = [];
   state.savedMachines = {};
+  state.nativeError = null;
   sessionStorage.clear();
   state.connected = true;
   state.canOperate = true;
@@ -1002,13 +1031,92 @@ describe("coordinator image attachments", () => {
     await act(async () => remove.click());
     expect(document.activeElement?.id).toBe("project-prompt");
   });
-  it("withdraws uploads and previews when the project is left", async () => {
+  it("retains the exact prompt, file and preview across provider-settings navigation", async () => {
     await render();
     await paste([png()]);
-    await act(async () => root.unmount());
+    await prompt("  Review this screenshot\nwith exact whitespace  ");
+    await act(async () => root.render(<div>Provider settings</div>));
+    expect(state.uploadsReleased).toEqual([]);
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+    await render();
+    expect(container.querySelector<HTMLTextAreaElement>("#project-prompt")!.value).toBe(
+      "  Review this screenshot\nwith exact whitespace  ",
+    );
+    expect(container.querySelectorAll(".sws-attachment")).toHaveLength(1);
+    await act(async () => sendButton().click());
+    expect(state.send.mock.calls[0]![0].input).toMatchObject({
+      prompt: "  Review this screenshot\nwith exact whitespace  ",
+      attachments: [{ name: "shot.png" }],
+    });
     expect(state.uploadsReleased).toEqual(state.uploadsStarted);
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:preview");
-    root = createRoot(container);
+  });
+  it("retains failed sends and their request identity across navigation", async () => {
+    state.send.mockResolvedValueOnce({ _tag: "Failure", error: new Error("Host went away") });
+    await render();
+    await paste([png()]);
+    await prompt("Keep this request");
+    await act(async () => sendButton().click());
+    const request = state.send.mock.calls[0]![0];
+    await act(async () => root.render(<div>Provider settings</div>));
+    await render();
+    expect(container.querySelector<HTMLTextAreaElement>("#project-prompt")!.value).toBe(
+      "Keep this request",
+    );
+    expect(container.querySelectorAll(".sws-attachment")).toHaveLength(1);
+    await act(async () => sendButton().click());
+    expect(state.send.mock.calls[1]![0]).toEqual(request);
+    expect(container.querySelector<HTMLTextAreaElement>("#project-prompt")!.value).toBe("");
+    await act(async () => root.render(<div>Provider settings</div>));
+    await render();
+    expect(container.querySelector(".sws-attachments")).toBeNull();
+    expect(container.querySelector<HTMLTextAreaElement>("#project-prompt")!.value).toBe("");
+  });
+  it("keeps a pending send locked across remount and preserves newer composer input", async () => {
+    let finish!: (result: unknown) => void;
+    state.send.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await render();
+    await paste([png()]);
+    await prompt("First request");
+    await act(async () => sendButton().click());
+    await act(async () => root.render(<div>Provider settings</div>));
+    await render();
+    expect(sendButton().disabled).toBe(true);
+    await prompt("My next request");
+    await act(async () =>
+      finish({ _tag: "Success", value: { threadId: "coord", created: false } }),
+    );
+    expect(state.send).toHaveBeenCalledTimes(1);
+    expect(container.querySelector<HTMLTextAreaElement>("#project-prompt")!.value).toBe(
+      "My next request",
+    );
+    expect(container.querySelector(".sws-attachments")).toBeNull();
+    expect(sendButton().disabled).toBe(false);
+  });
+  it("finishes image preparation into the retained project draft while settings are open", async () => {
+    let finish!: (value: unknown) => void;
+    state.prepareImage.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await render();
+    await paste([png("photo.heic", "image/heic")]);
+    await act(async () => root.render(<div>Provider settings</div>));
+    await act(async () =>
+      finish({ ok: true, recompressed: true, file: png("photo.jpg", "image/jpeg") }),
+    );
+    await render();
+    expect(container.querySelector(".sws-attachment[data-state='preparing']")).toBeNull();
+    expect(container.querySelector("[aria-label='Preview photo.jpg']")).not.toBeNull();
+    await act(async () => sendButton().click());
+    expect(state.send.mock.calls[0]![0].input.attachments[0].name).toBe("photo.jpg");
   });
   it("opens the file picker from the attach button", async () => {
     await render();
@@ -1117,24 +1225,38 @@ describe("project coordinator surface", () => {
     expect(docs).not.toMatch(/goal in a strip|strip above the conversation/i);
     expect(docs).toContain("Set or edit it under **Goal** in the project settings");
   });
-  it("saves a model picked under the composer as the project's coordinator model", async () => {
-    await render();
-    await act(async () =>
-      container.querySelector<HTMLButtonElement>("[data-coordinator-model]")!.click(),
+  it("waits for a picked coordinator model before a worker reply can dispatch", async () => {
+    let finish!: (result: unknown) => void;
+    state.send.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
     );
+    await render();
+    await openFirstThread();
+    await prompt("Keep this draft");
+    let sent!: Promise<void>;
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("[data-coordinator-model]")!.click();
+      sent = state.routing!.send("Continue this worker");
+    });
     expect(state.send).toHaveBeenCalledTimes(1);
-    expect(state.send.mock.calls[0]![0]).toMatchObject({
-      environmentId: "host",
-      input: {
-        projectId: "project",
-        workspaceSettings: {
-          expectedRevision: 1,
-          coordinatorModelSelection: { instanceId: "codex-native", model: "picked-model" },
-        },
-      },
+    expect(container.querySelector<HTMLButtonElement>(".sws-send")!.disabled).toBe(true);
+    expect(state.send.mock.calls[0]![0].input.workspaceSettings).toEqual({
+      expectedRevision: 1,
+      coordinatorModelSelection: { instanceId: "codex-native", model: "picked-model" },
+    });
+    await act(async () => {
+      finish({ _tag: "Success" });
+      await sent;
+    });
+    expect(state.send.mock.calls[1]![0].input).toMatchObject({
+      projectId: "project",
+      sourceThreadId: "worker",
+      prompt: "Continue this worker",
     });
     expect(state.refresh).toHaveBeenCalled();
-    expect(container.textContent).toContain("Coordinator model saved for this project.");
   });
   it("names the provider model on every thread row and groups them by state", async () => {
     state.shells = [
@@ -1981,15 +2103,16 @@ describe("a coordinator turn that failed", () => {
     expect(alert).not.toBeNull();
     expect(alert!.textContent).toContain("The coordinator did not answer.");
     expect(alert!.textContent).toContain("no remaining permitted usage");
-    // Its own page has the controls; it never opens in the panel beside itself.
+    // Review keeps the project open and mounts native controls in its main pane.
     const open = alert!.querySelector("button")!;
-    expect(open.textContent).toBe("Open the coordinator thread");
+    expect(open.textContent).toBe("Review coordinator");
     await act(async () => open.click());
-    expect(container.querySelector('[data-native-thread="coord"]')).toBeNull();
-    expect(state.navigate).toHaveBeenCalledWith({
-      to: "/$environmentId/$threadId",
-      params: { environmentId: "host", threadId: "coord" },
-    });
+    expect(
+      container
+        .querySelector('[data-native-thread="coord"]')
+        ?.closest('[data-project-pane="coordinator"]'),
+    ).not.toBeNull();
+    expect(state.navigate).not.toHaveBeenCalled();
   });
 
   it("still says the turn failed when the host gave no reason", async () => {
@@ -2496,6 +2619,33 @@ describe("coordinator progress", () => {
 
 describe("thread links inside the project", () => {
   const openThread = (id: string) => container.querySelector(`[data-native-thread="${id}"]`);
+  it.each(["user", undefined] as const)(
+    "keeps %s-owned independent chats outside the worker pane",
+    async (createdBy) => {
+      const independent = shell("independent", { createdBy: "user" });
+      if (createdBy === undefined) Reflect.deleteProperty(independent, "createdBy");
+      state.shells.push(independent);
+      await render();
+      const pane = container.querySelector('[data-project-pane="threads"]')!;
+      expect(pane.querySelector('[data-thread-id="worker"]')).not.toBeNull();
+      expect(pane.querySelector('[data-thread-id="independent"]')).toBeNull();
+      await act(async () =>
+        root.render(
+          <ProjectWorkspace
+            projectKey="atlas"
+            selectedThreadId={"independent" as never}
+            onSelectThread={vi.fn()}
+          />,
+        ),
+      );
+      expect(openThread("independent")).toBeNull();
+      expect(state.navigate).toHaveBeenCalledWith({
+        to: "/$environmentId/$threadId",
+        params: { environmentId: "host", threadId: "independent" },
+        replace: true,
+      });
+    },
+  );
   it("opens a subagent of a project thread in the right panel, whatever its project id", async () => {
     state.shells.push(
       shell("child", {
@@ -2636,6 +2786,41 @@ describe("thread links inside the project", () => {
 });
 
 describe("switching the coordinator machine", () => {
+  it("honors a linked checkout without changing the saved machine", async () => {
+    state.otherCheckouts = [
+      { id: "remote-project", environmentId: "laptop", workspaceRoot: "/w/atlas" },
+    ];
+    state.savedMachines = { atlas: "host:project" };
+    await act(async () =>
+      root.render(<ProjectWorkspace projectKey="atlas" checkoutKey="laptop:remote-project" />),
+    );
+    await prompt("Use the linked checkout");
+    await click("Send");
+    expect(state.send.mock.calls.at(-1)?.[0]).toMatchObject({
+      environmentId: "laptop",
+      input: { projectId: "remote-project" },
+    });
+    expect(state.savedMachines).toEqual({ atlas: "host:project" });
+  });
+  it("never substitutes a different checkout when a linked checkout is missing", async () => {
+    state.savedMachines = { atlas: "host:project" };
+    const onSelectCheckout = vi.fn();
+    await act(async () =>
+      root.render(
+        <ProjectWorkspace
+          projectKey="atlas"
+          checkoutKey="host:removed-project"
+          onSelectCheckout={onSelectCheckout}
+        />,
+      ),
+    );
+    expect(container.textContent).toContain("Linked checkout unavailable");
+    expect(container.querySelector("#project-prompt")).toBeNull();
+    expect(state.send).not.toHaveBeenCalled();
+    await click("Use host · /scratch/atlas");
+    expect(onSelectCheckout).toHaveBeenCalledWith("host:project");
+    expect(state.savedMachines).toEqual({ atlas: "host:project" });
+  });
   it("closes the open thread instead of leaving for the old machine's page", async () => {
     state.otherCheckouts = [{ id: "project", environmentId: "laptop", workspaceRoot: "/w/atlas" }];
     state.shells.push(shell("old-checkout-thread"));
@@ -2715,25 +2900,136 @@ describe("the coordinator stays in the main column", () => {
     expect(nativeThread("coord")).toBeNull();
     expect(nativeThread("worker")).toBeNull();
   });
-  it("offers the coordinator's own page while it waits for an approval, never the panel", async () => {
+  it.each(["hasPendingApprovals", "hasPendingUserInput", "hasActionableProposedPlan"] as const)(
+    "reviews %s inside the coordinator pane while preserving worker and draft",
+    async (attention) => {
+      state.shells = state.shells.map((t) => (t.id === "coord" ? { ...t, [attention]: true } : t));
+      await render();
+      await openFirstThread();
+      await prompt("Keep my coordinator draft");
+      const chip = container.querySelector<HTMLButtonElement>(".sws-state")!;
+      expect(chip.dataset.opens).toBe("coordinator-review");
+      chip.focus();
+      await act(async () => chip.click());
+      expect(state.navigate).not.toHaveBeenCalled();
+      expect(nativeThread("coord")?.closest('[data-project-pane="coordinator"]')).not.toBeNull();
+      expect(nativeThread("worker")?.closest('[data-project-pane="threads"]')).not.toBeNull();
+      await click("Back to coordinator");
+      expect(nativeThread("coord")).toBeNull();
+      expect(nativeThread("worker")).not.toBeNull();
+      expect(document.activeElement).toBe(chip);
+      expect(container.querySelector<HTMLTextAreaElement>("#project-prompt")!.value).toBe(
+        "Keep my coordinator draft",
+      );
+    },
+  );
+  it("saves the project model from coordinator details before routing a reply", async () => {
     state.shells = state.shells.map((t) =>
       t.id === "coord" ? { ...t, hasPendingApprovals: true } : t,
     );
     await render();
-    const conversation = container.querySelector('[aria-label="Coordinator conversation"]')!;
-    const notice = conversation.querySelector('[data-coordinator-attention="approval"]')!;
-    expect(notice.textContent).toContain("The coordinator is waiting for your approval.");
-    await act(async () => notice.querySelector("button")!.click());
-    expect(state.navigate).toHaveBeenCalledWith({
-      to: "/$environmentId/$threadId",
-      params: { environmentId: "host", threadId: "coord" },
+    await act(async () => container.querySelector<HTMLButtonElement>(".sws-state")!.click());
+    const details = nativeThread("coord")!;
+    const picker = details.querySelector<HTMLButtonElement>("[data-coordinator-model]")!;
+    expect(picker.textContent).toBe("coordinator-model");
+    let resolveSave!: (value: unknown) => void;
+    state.send.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+    await act(async () => {
+      picker.click();
+      [...details.querySelectorAll("button")]
+        .find((button) => button.textContent === "Reply in selected thread")!
+        .click();
     });
-    state.navigate.mockClear();
-    const chip = container.querySelector<HTMLButtonElement>(".sws-state")!;
-    expect(chip.dataset.opens).toBe("coordinator-page");
-    await act(async () => chip.click());
-    expect(state.navigate).toHaveBeenCalledOnce();
-    expect(nativeThread("coord")).toBeNull();
+    expect(state.send).toHaveBeenCalledTimes(1);
+    expect(state.send.mock.calls[0]![0].input.workspaceSettings.coordinatorModelSelection).toEqual({
+      instanceId: "codex-native",
+      model: "picked-model",
+    });
+    await act(async () => resolveSave({ _tag: "Success", value: undefined }));
+    expect(state.send).toHaveBeenCalledTimes(2);
+    expect(state.send.mock.calls[1]![0].input).toMatchObject({
+      projectId: "project",
+      prompt: "Continue this worker",
+    });
+    expect(state.send.mock.calls[1]![0].input.sourceThreadId).toBeUndefined();
+  });
+  it.each(["Resume", "Plan"])(
+    "%s in native review uses the acknowledged project selection, not the stale projection",
+    async (kind) => {
+      state.shells = state.shells.map((t) =>
+        t.id === "coord" ? { ...t, hasPendingApprovals: true } : t,
+      );
+      await render();
+      await act(async () => container.querySelector<HTMLButtonElement>(".sws-state")!.click());
+      const details = nativeThread("coord")!;
+      let resolveSave!: (value: unknown) => void;
+      state.send.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveSave = resolve;
+          }),
+      );
+      await act(async () => {
+        details.querySelector<HTMLButtonElement>("[data-coordinator-model]")!.click();
+        [...details.querySelectorAll("button")]
+          .find((button) => button.textContent === `${kind} native`)!
+          .click();
+      });
+      expect(state.nativeContinue).not.toHaveBeenCalled();
+      await act(async () => resolveSave({ _tag: "Success", value: undefined }));
+      expect(state.nativeContinue).toHaveBeenCalledExactlyOnceWith(kind, {
+        instanceId: "codex-native",
+        model: "picked-model",
+      });
+      expect(state.send).toHaveBeenCalledOnce();
+    },
+  );
+  it("uses the acknowledged revision for another model change before projection refresh", async () => {
+    await render();
+    const picker = container.querySelector<HTMLButtonElement>("[data-coordinator-model]")!;
+    await act(async () => picker.click());
+    await act(async () => picker.click());
+    expect(
+      state.send.mock.calls.map(([call]) => call.input.workspaceSettings.expectedRevision),
+    ).toEqual([1, 2]);
+  });
+  it("does not resume native review when the project model save failed", async () => {
+    state.shells = state.shells.map((t) =>
+      t.id === "coord" ? { ...t, hasPendingApprovals: true } : t,
+    );
+    await render();
+    await act(async () => container.querySelector<HTMLButtonElement>(".sws-state")!.click());
+    const details = nativeThread("coord")!;
+    state.send.mockResolvedValueOnce({ _tag: "Failure", error: new Error("Conflict") });
+    await act(async () =>
+      details.querySelector<HTMLButtonElement>("[data-coordinator-model]")!.click(),
+    );
+    await act(async () =>
+      [...details.querySelectorAll("button")]
+        .find((button) => button.textContent === "Resume native")!
+        .click(),
+    );
+    expect(state.nativeContinue).not.toHaveBeenCalled();
+    expect(state.nativeError).toContain("Conflict");
+  });
+  it("shows a model save failure while coordinator review stays open", async () => {
+    state.shells = state.shells.map((t) =>
+      t.id === "coord" ? { ...t, hasPendingApprovals: true } : t,
+    );
+    await render();
+    await act(async () => container.querySelector<HTMLButtonElement>(".sws-state")!.click());
+    state.send.mockResolvedValueOnce({ _tag: "Failure", error: new Error("Host went away") });
+    await act(async () =>
+      nativeThread("coord")!.querySelector<HTMLButtonElement>("[data-coordinator-model]")!.click(),
+    );
+    expect(
+      container.querySelector('[aria-label="Coordinator review"] [role="alert"]')?.textContent,
+    ).toBe("Host went away");
   });
   it("lists neither the coordinator nor a previous one among the project's threads", async () => {
     state.shells.push(shell("project-coordinator:project", { title: "Old coordinator" }));
@@ -2887,5 +3183,46 @@ describe("thread cards' quick actions", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("project request drafts from PR actions", () => {
+  it("appends a request to the current draft once without sending or replacing the worker pane", async () => {
+    await render();
+    await openFirstThread();
+    await prompt("Keep my draft");
+    await act(async () =>
+      enqueueProjectCoordinatorDraft({
+        environmentId: "host",
+        projectId: "project",
+        text: "Review PR 42",
+      }),
+    );
+    expect(container.querySelector<HTMLTextAreaElement>("#project-prompt")!.value).toBe(
+      "Keep my draft\n\nReview PR 42",
+    );
+    expect(container.querySelector('[data-native-thread="worker"]')).not.toBeNull();
+    expect(state.send).not.toHaveBeenCalled();
+    await render();
+    expect(container.querySelector<HTMLTextAreaElement>("#project-prompt")!.value).toBe(
+      "Keep my draft\n\nReview PR 42",
+    );
+  });
+  it("keeps a staged request for its exact checkout until that checkout opens", async () => {
+    enqueueProjectCoordinatorDraft({
+      environmentId: "laptop",
+      projectId: "remote-project",
+      text: "Fix PR 9",
+    });
+    await render();
+    expect(container.querySelector<HTMLTextAreaElement>("#project-prompt")!.value).toBe("");
+    state.otherCheckouts = [
+      { id: "remote-project", environmentId: "laptop", workspaceRoot: "/w/atlas" },
+    ];
+    await act(async () =>
+      root.render(<ProjectWorkspace projectKey="atlas" checkoutKey="laptop:remote-project" />),
+    );
+    expect(container.querySelector<HTMLTextAreaElement>("#project-prompt")!.value).toBe("Fix PR 9");
+    expect(state.send).not.toHaveBeenCalled();
   });
 });

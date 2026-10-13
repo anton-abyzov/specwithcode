@@ -1,6 +1,14 @@
-# GitHub Copilot and Grok in Studio
+# GitHub Copilot, Grok and Gemini in Studio
 
 Studio uses the providers' official coding agents through the Agent Client Protocol (ACP). The agents own authentication, model access and billing. Studio supplies the conversation, tool display, approvals, cancellation and retained native session identity.
+
+## Usage reporting and chat setup
+
+A Copilot balance in Switch, or an account reported by a CLIProxyAPI usage hub, is a quota reading. It does not configure a Studio chat agent, sign it in, or establish access to a particular model. Studio reads CLIProxyAPI management data for usage reporting; it does not route chat through that connection.
+
+Use **Add or manage providers** in the coordinator model picker, or **Settings → Providers**, on the machine where the chat will run. Set up the agent, complete its sign-in if required, then choose one of its available models. The provider page reports installation, sign-in and model discovery separately. An unknown sign-in state remains unverified even when the CLI is installed. A configured provider can be opened from its featured card without installing it again.
+
+Projects with additional approved folders currently require Codex or Claude. Copilot, Grok, Gemini and other ACP agents can be used in projects that do not require those extra folders; Studio retains the server-side capability check and does not silently drop folder access. Registry chat support also does not imply support for automatic commit messages, pull-request text or title generation.
 
 ## Add GitHub Copilot
 
@@ -19,6 +27,10 @@ Use the native **Grok** option for an existing CLI. This retains Studio's Grok-s
 For a Studio-managed install, choose **Grok Build** in the featured registry agents. This uses the official `grok-build` distribution and the shared ACP runtime. Registry agents support chat but do not offer Studio's automatic commit, PR, branch-name or title generation. Adding another instance does not create a second isolated provider account; the native credential store remains authoritative. Managed Grok installation keeps its executable and installer configuration inside Studio’s tools directory; normal runtime authentication still uses the environment’s native credential store. Both managed agents disable CLI self-updates. Use **Install / update agent** to upgrade or repair a missing managed executable.
 
 Grok models and reasoning choices are discovered from the CLI. A CLI that reports `grok-4.7` makes it selectable without a Studio update. The clean, signed-out Grok 1.0.50 probe used for this change advertised Grok 4.6 and 4.5; it did **not** establish native Grok 4.7 access. The xAI API separately documents `grok-4.7`. Use the CLI's supported custom-model configuration when routing to an API model; adding a display-only model name in Studio cannot grant API access.
+
+## Add Gemini
+
+Choose **Gemini CLI** in **Add provider**. Studio resolves the exact `gemini` entry from the official ACP registry on the selected machine. Confirm the installation, complete the agent's authentication flow, then refresh its models. Registry lookup, installation and an advertised model name do not prove that a particular Google account can run that model. CLIProxyAPI's Gemini quota records remain separate from this agent connection.
 
 ## Approvals and continuation
 

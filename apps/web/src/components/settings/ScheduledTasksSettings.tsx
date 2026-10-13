@@ -46,7 +46,7 @@ import {
 import { usePrimaryCloudLinkState } from "../../cloud/primaryCloudLinkState";
 import { requestConfirmDialog } from "../../confirmDialog";
 import { webhookAddress } from "@specweave-studio/client-runtime/webhook-address";
-import { Link } from "@tanstack/react-router";
+import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import {
   useEnvironment,
@@ -67,6 +67,7 @@ import {
   matchesScheduledTaskScope,
   MORNING_BRIEFING_TEMPLATE,
   morningBriefingDraft,
+  scheduledTaskEditorCloseHref,
   scheduleFromDraft,
   scheduledTaskDefaultModel,
   taskToDraft,
@@ -242,7 +243,10 @@ export function ScheduledTasksSettings(target: {
   readonly taskId?: ScheduledTaskId | undefined;
   readonly template?: typeof MORNING_BRIEFING_TEMPLATE | undefined;
   readonly projectId?: ProjectId | undefined;
+  readonly returnTo?: string | undefined;
 }) {
+  const navigate = useNavigate();
+  const href = useLocation({ select: (location) => location.href });
   const { scope, environments, connectedEnvironments, environment } = useSettingsScope();
   const [editor, setEditor] = useState<{
     environmentId: EnvironmentId;
@@ -255,9 +259,8 @@ export function ScheduledTasksSettings(target: {
   const defaultEnvironment = environment ?? connectedEnvironments[0];
   // A template link opens a prefilled editor once; the person still picks the model and saves.
   const allProjects = useProjects();
-  const [templateDismissed, setTemplateDismissed] = useState(false);
   const templateProject =
-    target.template === MORNING_BRIEFING_TEMPLATE && !templateDismissed
+    target.template === MORNING_BRIEFING_TEMPLATE
       ? allProjects.find((project) => project.id === target.projectId)
       : undefined;
   const templateEditor =
@@ -336,9 +339,14 @@ export function ScheduledTasksSettings(target: {
           initialEnvironmentId={activeEditor.environmentId}
           task={activeEditor.task}
           preset={activeEditor.preset ?? null}
-          onClose={() => {
+          onClose={(outcome) => {
             setEditor(null);
-            setTemplateDismissed(true);
+            if (editor === null && templateEditor) {
+              void navigate({
+                href: scheduledTaskEditorCloseHref(href, target.returnTo, outcome),
+                replace: true,
+              });
+            }
           }}
         />
       ) : null}
@@ -808,7 +816,7 @@ function ScheduledTaskEditorDialog({
   readonly task: ScheduledTask | null;
   /** A new task's starting values, from a template link. */
   readonly preset?: DraftState | null;
-  readonly onClose: () => void;
+  readonly onClose: (outcome: "dismissed" | "saved") => void;
 }) {
   const { scope, connectedEnvironments } = useSettingsScope();
   const [environmentId, setEnvironmentId] = useState(initialEnvironmentId);
@@ -978,14 +986,14 @@ function ScheduledTaskEditorDialog({
       }
       return;
     }
-    onClose();
+    onClose("saved");
   };
 
   return (
     <Dialog
       open
       onOpenChange={(open) => {
-        if (!open && !saving) onClose();
+        if (!open && !saving) onClose("dismissed");
       }}
     >
       <DialogPopup className="max-w-xl">

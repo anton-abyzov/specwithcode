@@ -34,6 +34,8 @@ The app updates itself from this repository's releases. Turn that off in **Setti
 
 More: [install](docs/user/install.md), [first run](docs/user/welcome-wizard.md), [providers](docs/user/providers-claude.md), [remote access](docs/user/remote-access.md), [updating](docs/user/updating.md).
 
+To connect Copilot, Grok or Gemini, use **Add or manage providers** in the model picker. [Provider setup](docs/studio/copilot-and-grok.md) explains installation, sign-in and model discovery; a connected usage source only reports quota.
+
 ## Use it
 
 - **Start a thread**: pick a folder, a provider and a model, and talk to the agent. Plans, approvals, steering, queued turns and git checkpoints work as in the agent's own app.
@@ -47,6 +49,8 @@ More: [install](docs/user/install.md), [first run](docs/user/welcome-wizard.md),
   The output is a credential. Keep it out of chat and screenshots.
 
 The local service listens on `http://127.0.0.1:8319/` and keeps its data in `~/.specweave-studio`. The command line tool is `specweave-studio`, also installed as `specwithcode`.
+
+Projects keep their coordinator in the main pane, with workers beside it. For short replies, use **Settings → Agents → Response style → Concise**. If the coordinator's model is unavailable, open its model picker to **Check again**, choose another model, or open setup for that machine; checking availability does not resend your message.
 
 ## Privacy
 

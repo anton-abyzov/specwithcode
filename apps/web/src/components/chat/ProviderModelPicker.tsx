@@ -57,6 +57,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   triggerAriaLabel?: string;
   onOpenChange?: (open: boolean) => void;
   onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
+  /** Open the provider list even when every configured model is ready. */
+  onManageProviders?: () => void;
   getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
   onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
 }) {
@@ -310,7 +312,22 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           modelOptionsByInstance={props.modelOptionsByInstance}
           terminalOpen={props.terminalOpen ?? false}
           onRequestClose={() => setIsMenuOpen(false)}
-          {...(props.onOpenProviderSetup ? { onOpenProviderSetup: props.onOpenProviderSetup } : {})}
+          {...(props.onOpenProviderSetup
+            ? {
+                onOpenProviderSetup: (instanceId: ProviderInstanceId) => {
+                  if (!props.disabled) props.onOpenProviderSetup?.(instanceId);
+                },
+              }
+            : {})}
+          {...(props.onManageProviders || props.onOpenProviderSetup
+            ? {
+                onManageProviders: () => {
+                  if (props.disabled) return;
+                  if (props.onManageProviders) props.onManageProviders();
+                  else props.onOpenProviderSetup?.(activeInstanceId);
+                },
+              }
+            : {})}
           {...(props.getModelDisabledReason
             ? { getModelDisabledReason: props.getModelDisabledReason }
             : {})}

@@ -28,8 +28,8 @@ const identity = (version) => ({
   files: [{ path: "package.json", type: "file" }],
 });
 
-test("application packages declare the same 1.0.7 version", () => {
-  assert.equal(sourceVersion(root), "1.0.7");
+test("application packages declare the same 1.0.8 version", () => {
+  assert.equal(sourceVersion(root), "1.0.8");
 });
 test("version policy accepts the 0.1/0.2 alpha line and stable 1.x but rejects ambiguous or incompatible labels", () => {
   for (const version of ["0.1.0", "0.1.9", "0.2.0", "0.2.12", "1.0.0", "1.0.1", "1.2.0", "1.10.3"])

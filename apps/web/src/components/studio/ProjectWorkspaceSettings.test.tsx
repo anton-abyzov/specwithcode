@@ -106,6 +106,25 @@ vi.mock("./ProjectModels", () => ({
   ),
 }));
 vi.mock("./ProjectUsage", () => ({ ProjectUsage: () => <p>Recorded usage</p> }));
+vi.mock("../settings/SettingsScopeContext", () => ({
+  SettingsScopeProvider: ({
+    search,
+    children,
+  }: React.PropsWithChildren<{ search: { project?: string } }>) => (
+    <div data-settings-project={search.project}>{children}</div>
+  ),
+}));
+vi.mock("../settings/settingsLayout", () => ({
+  SettingsSection: ({ title, children }: React.PropsWithChildren<{ title: string }>) => (
+    <section>
+      <h3>{title}</h3>
+      {children}
+    </section>
+  ),
+}));
+vi.mock("../settings/ProviderLimitSettings", () => ({
+  ProviderLimitSettings: () => <p>When a provider runs out</p>,
+}));
 vi.mock("./ProjectRoutines", () => ({ ProjectRoutines: () => <p>Project routines</p> }));
 const CloseContext = createContext<() => void>(() => {});
 vi.mock("../ui/dialog", () => ({
@@ -243,6 +262,13 @@ describe("project settings and memory", () => {
     await render("general", true, { coordinatorModelSelection: null }, threadModel);
     expect(container.textContent).toContain("Coordinator model and effort: thread-model");
     expect(container.textContent).toContain("No override saved");
+  });
+  it("edits this project's usage limit rule from the General tab", async () => {
+    await render("general");
+    const scoped = container.querySelector("[data-settings-project]");
+    expect(scoped?.getAttribute("data-settings-project")).toBe("atlas");
+    expect(scoped?.textContent).toContain("Usage limits");
+    expect(scoped?.textContent).toContain("When a provider runs out");
   });
   it("falls back to the worker default, then the host default, with no coordinator thread", async () => {
     await render("general", true, { coordinatorModelSelection: null });

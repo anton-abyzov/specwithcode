@@ -9,6 +9,7 @@ import {
   UsageProviderKind,
 } from "@specweave-studio/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import { useNavigate } from "@tanstack/react-router";
 import {
   elapsedShare,
   formatDuration,
@@ -352,5 +353,56 @@ export function UsageLimitsSection({
     selectedEnvironmentIds === null
       ? presentations
       : new Map([...presentations].filter(([id]) => selectedEnvironmentIds.has(id)));
-  return <UsageLimitsPooled presentations={selected} now={now} cursorPrompt={cursorPrompt} />;
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-2 rounded-lg border border-border/60 p-3">
+        <p className="text-sm text-muted-foreground">
+          Quota reports do not confirm that an agent is ready to chat. Set up and sign in to chat
+          providers on the machine you want to use.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {[...selected].map(([environmentId, presentation]) =>
+            presentation.connection.phase === "connected" && presentation.serverConfig !== null ? (
+              <UsageAgentSetupButton
+                key={environmentId}
+                environmentId={environmentId}
+                environmentLabel={presentation.entry.target.label}
+              />
+            ) : null,
+          )}
+        </div>
+      </div>
+      <UsageLimitsPooled presentations={selected} now={now} cursorPrompt={cursorPrompt} />
+    </div>
+  );
+}
+
+/** Setup is always scoped to the machine whose usage is being viewed. */
+function UsageAgentSetupButton({
+  environmentId,
+  environmentLabel,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly environmentLabel: string;
+}) {
+  const navigate = useNavigate();
+  const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
+  if (!canManageProviders) return null;
+  return (
+    <Button
+      size="xs"
+      variant="outline"
+      aria-label={`Set up chat providers on ${environmentLabel}`}
+      onClick={() => {
+        if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
+        void navigate({
+          to: "/settings/providers",
+          search: { environmentId },
+          hash: "providers",
+        });
+      }}
+    >
+      Set up on {environmentLabel}
+    </Button>
+  );
 }

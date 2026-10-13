@@ -14,6 +14,7 @@ import {
   deliverSnapShot,
   dismissFailedSnapShot,
   resolveExistingSnapShotTarget,
+  resolveNewSnapShotTarget,
   resolveSnapShotTargetOnce,
   resolveSnapShotDeliveryTarget,
 } from "./SnapShotCoordinator";
@@ -380,3 +381,22 @@ describe("snapshot destination ownership", () => {
     },
   );
 });
+
+it.each([projectRef, null])(
+  "global capture opens Scratch without creating a project worker (%s)",
+  async (projectRef) => {
+    const draftId = DraftId.make("capture-scratch");
+    const startScratchThread = vi.fn(async () => ({ draftId }));
+    const openThread = vi.fn();
+    const target = await resolveNewSnapShotTarget({
+      legacy: false,
+      projectRef,
+      scratchEnvironmentId: () => environmentId,
+      startScratchThread,
+      openThread,
+    });
+    expect(target).toBe(draftId);
+    expect(startScratchThread).toHaveBeenCalledWith(environmentId);
+    expect(openThread).not.toHaveBeenCalled();
+  },
+);

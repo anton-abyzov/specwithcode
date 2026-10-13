@@ -15,8 +15,9 @@ import {
 import { formatAttachmentSize } from "@specweave-studio/client-runtime/state/attachments";
 import { videoMimeType } from "@specweave-studio/shared/video";
 import { FileTextIcon, XIcon } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { ComposerFileAttachment, ComposerImageAttachment } from "../../../composerDraftStore";
+import type { ProjectCoordinatorComposer } from "../../../studio/projectCoordinatorComposer";
 import {
   awaitAttachmentUploads,
   getUploadedAttachments,
@@ -95,6 +96,7 @@ export interface PreparingCoordinatorImage {
 
 export function useCoordinatorAttachments(input: {
   environmentId: EnvironmentId;
+  draft: ProjectCoordinatorComposer;
   /** The host takes uploads at all. */
   uploadsSupported: boolean;
   /** This window may send to the host right now. */
@@ -102,41 +104,28 @@ export function useCoordinatorAttachments(input: {
   /** The largest file the host takes, or null when it takes images only. */
   maxFileBytes: number | null;
 }) {
-  const { environmentId, uploadsSupported, canUpload, maxFileBytes } = input;
-  const [attachments, setAttachments] = useState<ReadonlyArray<CoordinatorAttachment>>([]);
-  const [preparing, setPreparing] = useState<ReadonlyArray<PreparingCoordinatorImage>>([]);
-  const [problem, setProblem] = useState<string | null>(null);
-  const held = useRef(attachments);
-  const converting = useRef(preparing);
-  const alive = useRef(true);
-  /** Attachments a send has handed to the host and not heard back about. */
-  const outgoing = useRef<ReadonlySet<string>>(new Set());
-  useEffect(() => {
-    alive.current = true;
-    return () => {
-      alive.current = false;
-      // Leaving the project drops the draft, so its uploads and previews go with it.
-      for (const attachment of held.current) {
-        // The host may still be claiming these; deleting them now would fail that send.
-        if (!outgoing.current.has(attachment.id)) releaseDraftAttachment(attachment);
-        if (isImage(attachment)) URL.revokeObjectURL(attachment.previewUrl);
-      }
-    };
-  }, []);
+  const { environmentId, draft, uploadsSupported, canUpload, maxFileBytes } = input;
+  const { attachments, preparing, problem } = useSyncExternalStore(
+    draft.subscribe,
+    draft.getSnapshot,
+    draft.getSnapshot,
+  );
+  const { setAttachments, setPreparing, setProblem } = draft;
+  // The exact project draft owns uploads and previews across route unmounts.
   useEffect(() => {
     // An attachment added while the host was out of reach starts as soon as it is back.
     if (!canUpload) return;
-    for (const image of held.current) startAttachmentUpload({ environmentId, image });
-  }, [canUpload, environmentId]);
+    for (const image of draft.getSnapshot().attachments)
+      startAttachmentUpload({ environmentId, image });
+  }, [canUpload, environmentId, draft]);
 
   const attach = useCallback(
     (added: ReadonlyArray<CoordinatorAttachment>) => {
       if (added.length === 0) return;
       for (const image of added) startAttachmentUpload({ environmentId, image });
-      held.current = [...held.current, ...added];
-      setAttachments(held.current);
+      setAttachments((current) => [...current, ...added]);
     },
-    [environmentId],
+    [environmentId, setAttachments],
   );
 
   /**
@@ -150,9 +139,7 @@ export function useCoordinatorAttachments(input: {
       let overBytes = 0;
       for (const job of jobs) {
         const result = await prepareImageForAttachment(job.file);
-        converting.current = converting.current.filter((image) => image.id !== job.id);
-        if (!alive.current) continue;
-        setPreparing(converting.current);
+        setPreparing((current) => current.filter((image) => image.id !== job.id));
         if (!result.ok) {
           rejections.push({
             name: job.name,
@@ -169,7 +156,7 @@ export function useCoordinatorAttachments(input: {
           sizeBytes: result.file.size,
         };
         // Its final size is known only now, so the message total is checked here.
-        if (getProviderAttachmentLimitError([...held.current, candidate])) {
+        if (getProviderAttachmentLimitError([...draft.getSnapshot().attachments, candidate])) {
           overBytes += 1;
           continue;
         }
@@ -183,14 +170,13 @@ export function useCoordinatorAttachments(input: {
           },
         ]);
       }
-      if (!alive.current) return;
       const note = composerAttachmentRejectionMessage({
         limits: overBytes > 0 ? [totalImageBytesMessage(overBytes)] : [],
         rejections,
       });
       if (note) setProblem((current) => (current ? `${current} ${note}` : note));
     },
-    [attach],
+    [attach, draft, setPreparing, setProblem],
   );
 
   const add = useCallback(
@@ -207,8 +193,10 @@ export function useCoordinatorAttachments(input: {
       const accepted: CoordinatorAttachment[] = [];
       const jobs: Array<{ id: string; name: string; file: File }> = [];
       const rejections: ComposerAttachmentRejection[] = [];
-      let total = held.current.length + converting.current.length;
-      let images = held.current.filter(isImage).length + converting.current.length;
+      let total = draft.getSnapshot().attachments.length + draft.getSnapshot().preparing.length;
+      let images =
+        draft.getSnapshot().attachments.filter(isImage).length +
+        draft.getSnapshot().preparing.length;
       let overImages = 0;
       let overTotal = 0;
       for (const file of files) {
@@ -268,33 +256,34 @@ export function useCoordinatorAttachments(input: {
       setProblem(composerAttachmentRejectionMessage({ limits, rejections }));
       attach(accepted);
       if (jobs.length === 0) return;
-      converting.current = [...converting.current, ...jobs.map(({ id, name }) => ({ id, name }))];
-      setPreparing(converting.current);
+      setPreparing((current) => [...current, ...jobs.map(({ id, name }) => ({ id, name }))]);
       void convert(jobs);
     },
-    [attach, canUpload, convert, maxFileBytes, uploadsSupported],
+    [attach, canUpload, convert, draft, maxFileBytes, setPreparing, setProblem, uploadsSupported],
   );
 
-  const remove = useCallback((id: string) => {
-    const attachment = held.current.find((candidate) => candidate.id === id);
-    if (!attachment || outgoing.current.has(id)) return;
-    releaseDraftAttachment(attachment);
-    if (isImage(attachment)) URL.revokeObjectURL(attachment.previewUrl);
-    held.current = held.current.filter((candidate) => candidate.id !== id);
-    setAttachments(held.current);
-    setProblem(null);
-  }, []);
+  const remove = useCallback(
+    (id: string) => {
+      const attachment = draft.getSnapshot().attachments.find((candidate) => candidate.id === id);
+      if (!attachment || draft.outgoing.has(id)) return;
+      releaseDraftAttachment(attachment);
+      if (isImage(attachment)) URL.revokeObjectURL(attachment.previewUrl);
+      setAttachments((current) => current.filter((candidate) => candidate.id !== id));
+      setProblem(null);
+    },
+    [draft, setAttachments, setProblem],
+  );
 
   /** The uploaded references for exactly these attachments, once every upload has settled. */
   const prepare = useCallback(
     async (sending: ReadonlyArray<CoordinatorAttachment>): Promise<ChatAttachment[]> => {
-      if (converting.current.length > 0)
+      if (draft.getSnapshot().preparing.length > 0)
         throw new Error("Wait for the images to finish preparing, then send.");
       if (sending.length === 0) return [];
       // Starting is a no-op for an upload that is running, done or failed.
       for (const image of sending) startAttachmentUpload({ environmentId, image });
       await awaitAttachmentUploads(sending.map((image) => image.id));
-      const current = sending.filter((image) => held.current.includes(image));
+      const current = sending.filter((image) => draft.getSnapshot().attachments.includes(image));
       if (current.length !== sending.length)
         throw new Error("The attachments changed while they uploaded. Send again.");
       const uploaded = getUploadedAttachments({ environmentId, images: sending });
@@ -302,30 +291,35 @@ export function useCoordinatorAttachments(input: {
         throw new Error("An attachment did not upload. Remove it and attach it again.");
       return uploaded;
     },
-    [environmentId],
+    [environmentId, draft],
   );
 
   /** Bracket the host's part of a send, so nothing withdraws what it is claiming. */
-  const hold = useCallback((sending: ReadonlyArray<CoordinatorAttachment>) => {
-    outgoing.current = new Set(sending.map((image) => image.id));
-    return () => {
-      outgoing.current = new Set();
-    };
-  }, []);
+  const hold = useCallback(
+    (sending: ReadonlyArray<CoordinatorAttachment>) => {
+      for (const image of sending) draft.outgoing.add(image.id);
+      return () => {
+        for (const image of sending) draft.outgoing.delete(image.id);
+      };
+    },
+    [draft],
+  );
 
   /** After a confirmed send: forget what went out, keep anything added meanwhile. */
-  const clearSent = useCallback((sent: ReadonlyArray<CoordinatorAttachment>) => {
-    const ids = new Set(sent.map((image) => image.id));
-    for (const attachment of sent) {
-      releaseDraftAttachment(attachment);
-      if (isImage(attachment)) URL.revokeObjectURL(attachment.previewUrl);
-    }
-    held.current = held.current.filter((image) => !ids.has(image.id));
-    setAttachments(held.current);
-    setProblem(null);
-  }, []);
+  const clearSent = useCallback(
+    (sent: ReadonlyArray<CoordinatorAttachment>) => {
+      const ids = new Set(sent.map((image) => image.id));
+      for (const attachment of sent) {
+        releaseDraftAttachment(attachment);
+        if (isImage(attachment)) URL.revokeObjectURL(attachment.previewUrl);
+      }
+      setAttachments((current) => current.filter((image) => !ids.has(image.id)));
+      setProblem(null);
+    },
+    [setAttachments, setProblem],
+  );
 
-  const dismissProblem = useCallback(() => setProblem(null), []);
+  const dismissProblem = useCallback(() => setProblem(null), [setProblem]);
 
   return {
     attachments,

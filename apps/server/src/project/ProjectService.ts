@@ -49,6 +49,8 @@ export interface ProjectCreateInput extends ProjectCreatePayload {
 }
 
 export interface ProjectUpdateInput extends ProjectUpdatePayload {
+  /** Internal automatic initialization, checked under the project command lock. */
+  readonly onlyIfDefaultModelUnset?: boolean;
   /** Internal coordinator binding, never accepted from a client settings patch. */
   readonly coordinatorThreadId?: ThreadId;
   readonly commandId: CommandId;
@@ -340,6 +342,7 @@ export const make = Effect.gen(function* () {
           conflictingProjectId: rejection.conflictingProjectId,
         });
       case "ProjectSettingsRevisionConflictError":
+      case "ProjectDefaultModelConflictError":
         return yield* new ProjectRequestDeniedError({ projectId, reason: "settings_conflict" });
       case "ProjectCommandMissingProjectError":
         return yield* new ProjectNotFoundError({ projectId });
@@ -429,7 +432,14 @@ export const make = Effect.gen(function* () {
         commandId: CommandId.make(`${input.commandId}:default-model`),
         projectId: input.projectId,
         defaultModelSelection: model,
-      });
+        onlyIfDefaultModelUnset: true,
+      }).pipe(
+        Effect.catch((error) =>
+          error._tag === "ProjectRequestDeniedError" && error.reason === "settings_conflict"
+            ? Effect.void
+            : Effect.fail(error),
+        ),
+      );
       return yield* readCommitted(input.projectId);
     },
   );
@@ -549,6 +559,9 @@ export const make = Effect.gen(function* () {
         ...(input.defaultModelSelection === undefined
           ? {}
           : { defaultModelSelection: input.defaultModelSelection }),
+        ...(input.onlyIfDefaultModelUnset === undefined
+          ? {}
+          : { onlyIfDefaultModelUnset: input.onlyIfDefaultModelUnset }),
         ...(input.autoPull === undefined ? {} : { autoPull: input.autoPull }),
         ...(input.projectIcon === undefined ? {} : { projectIcon: input.projectIcon }),
         ...(input.faviconPath === undefined ? {} : { faviconPath: input.faviconPath }),

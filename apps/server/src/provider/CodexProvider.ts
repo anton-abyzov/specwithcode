@@ -493,24 +493,37 @@ export function codexNativeRouteVerified(config: CodexSchema.V2ConfigReadRespons
   return openai.base_url == null && openai.websocket_base_url == null && openai.env_key == null && openai.http_headers == null && openai.env_http_headers == null && openai.experimental_bearer_token == null;
 }
 
+/** Admission failures carry only a category, never config, endpoints or credentials. */
+export class CodexNativeRouteCheckError extends Schema.TaggedError<CodexNativeRouteCheckError>()("CodexNativeRouteCheckError", {
+  reason: Schema.Literals(["timeout", "unavailable"]),
+}) {}
+const NATIVE_ROUTE_ADMISSION_TIMEOUT = "60 seconds";
+
+const nativeRouteWithinAdmissionBudget = <R>(effect: Effect.Effect<boolean, CodexNativeRouteCheckError, R>) =>
+  effect.pipe(
+    Effect.timeoutOption(NATIVE_ROUTE_ADMISSION_TIMEOUT),
+    Effect.flatMap((result) => Option.isSome(result)
+      ? Effect.succeed(result.value)
+      : Effect.fail(new CodexNativeRouteCheckError({ reason: "timeout" }))),
+  );
+
 /** Explicit cwd resolves project layers; a global observation cannot admit another project. */
 export const readCodexNativeRoute = (client: {
   readonly request: (method: "config/read", params: CodexSchema.V2ConfigReadParams) =>
     Effect.Effect<CodexSchema.V2ConfigReadResponse, CodexErrors.CodexAppServerError>;
 }, cwd: string) =>
-  client.request("config/read", { cwd, includeLayers: false }).pipe(
+  nativeRouteWithinAdmissionBudget(client.request("config/read", { cwd, includeLayers: false }).pipe(
     Effect.map((response) => codexNativeRouteVerified(response.config)),
-    Effect.timeoutOption(Duration.millis(RATE_LIMITS_PROBE_TIMEOUT_MS)),
-    Effect.map(Option.getOrElse(() => false)),
-    Effect.catch(() => Effect.succeed(false)),
-  );
+    Effect.mapError(() => new CodexNativeRouteCheckError({ reason: "unavailable" })),
+  ));
 
 export const probeCodexNativeRoute = (input: Parameters<typeof withCodexAppServerClient>[0]) =>
-  Effect.gen(function* () {
-    const { client } = yield* withCodexAppServerClient(input);
+  nativeRouteWithinAdmissionBudget(Effect.gen(function* () {
+    const { client } = yield* withCodexAppServerClient(input).pipe(
+      Effect.mapError(() => new CodexNativeRouteCheckError({ reason: "unavailable" })),
+    );
     return yield* readCodexNativeRoute(client, input.cwd);
-  }).pipe(Effect.scoped, Effect.timeoutOption(Duration.millis(AUTH_PROBE_TIMEOUT_MS)),
-    Effect.map(Option.getOrElse(() => false)), Effect.catch(() => Effect.succeed(false)));
+  })).pipe(Effect.scoped);
 
 /** Optional catalogs must not erase a fresh account result when discovery stalls. */
 export const readCodexProviderMetadata = Effect.fn("readCodexProviderMetadata")(function* (
@@ -552,7 +565,12 @@ export const readCodexProviderMetadata = Effect.fn("readCodexProviderMetadata")(
               failure: codexRateLimitsFailureMessage(error),
             })),
           ),
-      readCodexNativeRoute(client, input.cwd),
+      // Background discovery stays cheap; an explicit start verifies independently.
+      readCodexNativeRoute(client, input.cwd).pipe(
+        Effect.timeoutOption(Duration.millis(RATE_LIMITS_PROBE_TIMEOUT_MS)),
+        Effect.map(Option.getOrElse(() => false)),
+        Effect.catch(() => Effect.succeed(false)),
+      ),
     ],
     { concurrency: "unbounded" },
   );

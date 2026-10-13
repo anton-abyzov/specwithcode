@@ -36,6 +36,25 @@ export function isArchivedMember(member: ProjectListMember): boolean {
   return member.workspaceSettings?.archived === true;
 }
 
+/** Recheck the live catalog before a draft changes its destination. */
+export function projectDestinationUnavailableReason(
+  target: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId | null },
+  projects: ReadonlyArray<ProjectListMember>,
+  resolved?: ProjectListMember | null,
+): string | null {
+  if (target.projectId === null && !resolved) return null;
+  const projectId = target.projectId ?? resolved?.id;
+  const project = projects.find(
+    (member) => member.environmentId === target.environmentId && member.id === projectId,
+  );
+  // A freshly created Scratch may precede its catalog render; an observed archive always wins.
+  if (!project && !(target.projectId === null && resolved))
+    return "The destination project is no longer available. Choose it again.";
+  return (project && isArchivedMember(project)) || (resolved && isArchivedMember(resolved))
+    ? "This project is archived. Restore it before starting new work."
+    : null;
+}
+
 /** True when every member of the group is that machine's scratch project. */
 export function isScratchGroup(group: ProjectListGroup, scratchRootFor: ScratchRootLookup) {
   return (

@@ -5,11 +5,34 @@ import {
   type ServerProvider,
 } from "@specweave-studio/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import type { ComponentProps, ReactNode } from "react";
+import type { ModelPickerContent } from "./ModelPickerContent";
 
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import type { ModelEsque } from "./providerIconUtils";
+
+const contentState = vi.hoisted(() => ({
+  render: false,
+  props: null as ComponentProps<typeof ModelPickerContent> | null,
+}));
+vi.mock("../ui/popover", async (original) => ({
+  ...(await original<typeof import("../ui/popover")>()),
+  PopoverPopup: ({ children }: { children: ReactNode }) =>
+    contentState.render ? <div>{children}</div> : null,
+}));
+vi.mock("./ModelPickerContent", async (original) => ({
+  ...(await original<typeof import("./ModelPickerContent")>()),
+  ModelPickerContent: (props: ComponentProps<typeof ModelPickerContent>) => {
+    contentState.props = props;
+    return null;
+  },
+}));
+afterEach(() => {
+  contentState.render = false;
+  contentState.props = null;
+});
 
 function providerEntry(instanceId: string, driver: string) {
   const provider: ServerProvider = {
@@ -172,5 +195,55 @@ describe("ProviderModelPicker", () => {
     );
 
     expect(markup).toContain(">CP</span>");
+  });
+});
+
+describe("ProviderModelPicker setup callbacks", () => {
+  function renderCallbacks(input: { disabled?: boolean; manage?: boolean } = {}) {
+    contentState.render = true;
+    const onManageProviders = vi.fn();
+    const onOpenProviderSetup = vi.fn();
+    const entry = providerEntry("copilot", "acpRegistry");
+    renderToStaticMarkup(
+      <ProviderModelPicker
+        activeInstanceId={entry.instanceId}
+        model="default"
+        unset
+        lockedProvider={null}
+        instanceEntries={[entry]}
+        modelOptionsByInstance={new Map()}
+        disabled={input.disabled ?? false}
+        onOpenProviderSetup={onOpenProviderSetup}
+        {...(input.manage ? { onManageProviders } : {})}
+        onInstanceModelChange={() => {}}
+      />,
+    );
+    return { onManageProviders, onOpenProviderSetup, props: contentState.props! };
+  }
+
+  it("passes a dedicated management destination separately from instance repair", () => {
+    const { props, onManageProviders, onOpenProviderSetup } = renderCallbacks({ manage: true });
+    props.onManageProviders!();
+    expect(onManageProviders).toHaveBeenCalledOnce();
+    expect(onOpenProviderSetup).not.toHaveBeenCalled();
+    props.onOpenProviderSetup!(ProviderInstanceId.make("gemini"));
+    expect(onOpenProviderSetup).toHaveBeenCalledWith("gemini");
+  });
+
+  it("gives existing picker callers a management action through their setup destination", () => {
+    const { props, onOpenProviderSetup } = renderCallbacks();
+    props.onManageProviders!();
+    expect(onOpenProviderSetup).toHaveBeenCalledWith("copilot");
+  });
+
+  it("does not navigate when an already-open picker becomes disabled", () => {
+    const { props, onManageProviders, onOpenProviderSetup } = renderCallbacks({
+      disabled: true,
+      manage: true,
+    });
+    props.onManageProviders!();
+    props.onOpenProviderSetup!(ProviderInstanceId.make("gemini"));
+    expect(onManageProviders).not.toHaveBeenCalled();
+    expect(onOpenProviderSetup).not.toHaveBeenCalled();
   });
 });

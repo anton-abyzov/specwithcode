@@ -45,15 +45,15 @@ export async function selectDraftMachineTarget<TProject extends DraftMachineTarg
   readonly readComposer: () => ComposerThreadDraftState | null;
   readonly isBlocked: () => boolean;
   readonly isCurrentRequest: () => boolean;
-  readonly unavailableReason: () => string | null;
+  readonly unavailableReason: (resolved?: TProject | null) => string | null;
   readonly resolveProject: () => TProject | null | Promise<TProject | null>;
   readonly commit: (project: TProject) => void;
 }): Promise<DraftMachineSelectionResult> {
   const original = input.readDraft();
   if (!original || original.promotedTo || input.isBlocked() || !input.isCurrentRequest())
     return { status: "cancelled" };
-  const blockedReason = () =>
-    input.unavailableReason() ??
+  const blockedReason = (resolved?: TProject | null) =>
+    input.unavailableReason(resolved) ??
     (original.environmentId !== input.target.environmentId &&
     draftHasMachineBoundContent(input.readComposer())
       ? MACHINE_ATTACHMENT_BLOCK_REASON
@@ -69,7 +69,7 @@ export async function selectDraftMachineTarget<TProject extends DraftMachineTarg
     original.promotedTo
   )
     return { status: "cancelled" };
-  const after = blockedReason();
+  const after = blockedReason(project);
   if (after) return { status: "blocked", reason: after };
   if (
     !project ||

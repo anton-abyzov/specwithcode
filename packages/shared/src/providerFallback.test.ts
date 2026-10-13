@@ -75,6 +75,11 @@ function provider(
 const claude = provider("claudeAgent", "claudeAgent", 93);
 const codex = provider("codex", "codex", 20);
 const rule = { providerLimitFallbackModelSelection: null, defaultModelSelection: null };
+const nativeDenials = [
+  { ordinaryUsageAllowed: true, spendControlReached: true },
+  { ordinaryUsageAllowed: null, rateLimitReachedType: "workspace_member_usage_limit_reached" },
+  { rateLimitReachedType: "workspace_owner_credits_depleted" },
+] as const;
 
 describe("providerUsedPercent", () => {
   it("takes the fullest window that has not reset", () => {
@@ -84,6 +89,51 @@ describe("providerUsedPercent", () => {
 });
 
 describe("resolveProviderFallback", () => {
+  it.each(nativeDenials)("skips a known denied low-usage fallback: %j", (denial) => {
+    const denied = {
+      ...codex,
+      usageLimits: { ...codex.usageLimits!, ...denial },
+    };
+    const fallback = { instanceId: denied.instanceId, model: "codex-default" };
+    expect(canTakeTurn(denied)).toBe(false);
+    for (const selections of [
+      rule,
+      { ...rule, providerLimitFallbackModelSelection: fallback },
+      { ...rule, defaultModelSelection: fallback },
+    ])
+      expect(
+        resolveProviderFallback({
+          providers: [claude, denied],
+          currentInstanceId: claude.instanceId,
+          rule: selections,
+          nowMs: now,
+          anyReady: true,
+        }),
+      ).toBeNull();
+  });
+
+  it("keeps explicit allowance eligible despite a retained limit type", () => {
+    const allowed = {
+      ...codex,
+      usageLimits: {
+        ...codex.usageLimits!,
+        ordinaryUsageAllowed: true,
+        spendControlReached: false,
+        rateLimitReachedType: "workspace_member_usage_limit_reached",
+      },
+    };
+    expect(canTakeTurn(allowed)).toBe(true);
+    expect(
+      resolveProviderFallback({
+        providers: [claude, allowed],
+        currentInstanceId: claude.instanceId,
+        rule,
+        nowMs: now,
+        anyReady: true,
+      }),
+    ).toEqual({ instanceId: allowed.instanceId, model: "codex-default" });
+  });
+
   it("prefers the project's fallback, then its default, then any ready provider", () => {
     const fallback = { instanceId: codex.instanceId, model: "gpt-chosen" };
     expect(
@@ -478,6 +528,22 @@ describe("resolveCoordinatorTurnSelection", () => {
       nowMs: now,
       ...over,
     });
+
+  it.each(nativeDenials)(
+    "routes away from a denied saved provider below the threshold: %j",
+    (denial) => {
+      const denied = provider("claudeAgent", "claudeAgent", 10);
+      const providers = [{ ...denied, usageLimits: { ...denied.usageLimits!, ...denial } }, codex];
+      expect(pick({ providers })).toEqual({
+        selection: { instanceId: codex.instanceId, model: "codex-default" },
+        reason: "fallback",
+      });
+      expect(pick({ providers, thread: onCodex })).toEqual({
+        selection: onCodex,
+        reason: "staying-on-fallback",
+      });
+    },
+  );
 
   it("keeps the saved model while its provider has room", () => {
     expect(pick({})).toEqual({ selection: saved, reason: "saved" });

@@ -143,7 +143,7 @@ class UpdateGuards(unittest.TestCase):
   core={'root':{'pid':100,'uid':501},'parentIdentitySha256':'p','supervisor':{'pid':101},'treeSha256':'t','descendantCount':1}
   browser={'browserCount':1,'processCount':4,'browsers':[{'pid':300}],'treeSha256':'b'}
   def prestate(quiet):
-   value={key:key for key in ['identity','uid','serviceLabel','servicePid','archiveSha256','artifactSourceCommit','fileHashes','otherListeners','cookieName']}
+   value={**{key:key for key in ['identity','uid','serviceLabel','servicePid','archiveSha256','artifactSourceCommit','fileHashes','otherListeners','cookieName']},'otherListenersOwned':False}
    value['rows']={'nativeWorkIdle':True};value['processQuiescence']=quiet;return value
   for before,after in [({**core,'serverBrowser':browser},core),(core,{**core,'serverBrowser':browser}),
                        ({**core,'serverBrowser':browser},{**core,'serverBrowser':{**browser,'treeSha256':'other'}})]:
@@ -152,7 +152,7 @@ class UpdateGuards(unittest.TestCase):
    with self.subTest(key=key),self.assertRaisesRegex(AssertionError,'processQuiescence'):
     update.assert_prestate(prestate({**core,'serverBrowser':browser}),prestate({**core,key:value,'serverBrowser':browser}))
  def test_nonidle_receipt_is_not_an_admission(self):
-  value={key:None for key in ['identity','uid','serviceLabel','servicePid','archiveSha256','artifactSourceCommit','fileHashes','otherListeners','cookieName','processQuiescence']}
+  value={**{key:None for key in ['identity','uid','serviceLabel','servicePid','archiveSha256','artifactSourceCommit','fileHashes','otherListeners','cookieName','processQuiescence']},'otherListenersOwned':False}
   value['rows']={'nativeWorkIdle':False}
   with self.assertRaises(AssertionError):update.assert_prestate(value,copy.deepcopy(value))
  def test_symlinked_ancestor_is_rejected(self):
@@ -193,7 +193,7 @@ class WaitingThreadActivity(unittest.TestCase):
   waiting_fixture(self.state);self.before=REAL_ROWS_SNAPSHOT(self.state)
  def tearDown(self):self.temp.cleanup()
  def prestate(self,rows,**changes):
-  value={key:key for key in ['identity','uid','serviceLabel','servicePid','archiveSha256','artifactSourceCommit','otherListeners','cookieName','processQuiescence']}
+  value={**{key:key for key in ['identity','uid','serviceLabel','servicePid','archiveSha256','artifactSourceCommit','otherListeners','cookieName','processQuiescence']},'otherListenersOwned':False}
   value['fileHashes']={'settings':'s','environment':'e'};value['rows']=rows;value.update(changes);return value
  def rejects(self,*statements,check=True):
   if check:waiting_check(self.state,'a')
@@ -257,9 +257,18 @@ class WaitingThreadActivity(unittest.TestCase):
  def test_settings_environment_and_identity_changes_still_fail_beside_appended_rows(self):
   waiting_check(self.state,'a');rows,carried=REAL_ROWS_SINCE(self.state,self.before)
   for key,value in [('fileHashes',{'settings':'changed','environment':'e'}),('fileHashes',{'settings':'s','environment':'changed'}),
-                    ('cookieName','other-cookie'),('identity','m1'),('otherListeners',{'8318':[7]})]:
+                    ('cookieName','other-cookie'),('identity','m1'),('otherListenersOwned',True)]:
    with self.subTest(key=key),self.assertRaisesRegex(AssertionError,'Guarded prestate changed: '+key):
     update.assert_prestate(self.prestate(self.before),self.prestate(rows,**{key:value}),carried)
+ def test_service_owns_listener_only_for_its_own_tree(self):
+  processes={100:{'parent':1},200:{'parent':100},300:{'parent':200},909:{'parent':1},2521:{'parent':1}}
+  self.assertFalse(update.service_owns_listener({'8317':[909],'18319':[2521],'28319':[]},100,processes))
+  self.assertTrue(update.service_owns_listener({'18319':[300]},100,processes))
+  self.assertTrue(update.service_owns_listener({'8318':[100]},100,processes))
+ def test_another_services_listener_restarting_does_not_refuse(self):
+  waiting_check(self.state,'a');rows,carried=REAL_ROWS_SINCE(self.state,self.before)
+  update.assert_prestate(self.prestate(self.before,otherListeners={'18319':[]},otherListenersOwned=False),
+                         self.prestate(rows,otherListeners={'18319':[87381]},otherListenersOwned=False),carried)
  def test_auth_heartbeat_beside_appended_rows_passes_only_where_heartbeats_are_allowed(self):
   waiting_check(self.state,'a');mutate_state(self.state,"UPDATE auth_sessions SET last_connected_at='2026-10-11T04:05:00Z'")
   rows,carried=REAL_ROWS_SINCE(self.state,self.before)
@@ -348,7 +357,7 @@ class ApplyRecovery(unittest.TestCase):
   self.original={p:p.read_bytes() for p in [self.wrapper,self.own/'launch.sh',self.own/'installation.json']}
   self.rows={'nativeWorkIdle':True,'projectIds':['original-project'],'threadIds':['original-thread'],'hashes':{'auth':'unchanged'}}
   self.before={'identity':'m4','uid':501,'serviceLabel':'com.specweave.studio.m4','servicePid':100,'archiveSha256':'old-sha','artifactSourceCommit':'old-source',
-    'fileHashes':{'plist':update.digest(self.plist.read_bytes()),'settings':'unchanged','environment':'unchanged'},'rows':self.rows,'otherListeners':{},'cookieName':'exact-cookie','processQuiescence':{'root':{'pid':100,'uid':501},'treeSha256':'original-tree'}}
+    'fileHashes':{'plist':update.digest(self.plist.read_bytes()),'settings':'unchanged','environment':'unchanged'},'rows':self.rows,'otherListeners':{},'otherListenersOwned':False,'cookieName':'exact-cookie','processQuiescence':{'root':{'pid':100,'uid':501},'treeSha256':'original-tree'}}
   self.output=self.home/'result.json';self.restart_calls=[];self.restarted=False;self.scenario='success'
   self.after_mutation=None
   self.incoming_version='0.1.0';self.incoming_source='new-source'
@@ -961,7 +970,7 @@ class ApplyRecovery(unittest.TestCase):
  def test_heartbeat_does_not_exempt_settings(self):self.reject_heartbeat_metadata_change('settings')
  def test_heartbeat_does_not_exempt_environment(self):self.reject_heartbeat_metadata_change('environment')
  def test_heartbeat_does_not_exempt_plist(self):self.reject_heartbeat_metadata_change('plist')
- def test_heartbeat_does_not_exempt_listeners(self):self.reject_heartbeat_metadata_change('otherListeners')
+ def test_heartbeat_does_not_exempt_listeners(self):self.reject_heartbeat_metadata_change('otherListenersOwned')
  def test_heartbeat_does_not_exempt_cookie(self):self.reject_heartbeat_metadata_change('cookieName')
  def test_heartbeat_does_not_exempt_nonidle_state(self):self.reject_heartbeat_metadata_change('nativeWorkIdle')
  def test_wrong_target_after_restart_restores_state_before_the_old_release_starts(self):
@@ -1435,7 +1444,7 @@ class AuthHeartbeatPrestate(unittest.TestCase):
   if change:db.execute(change);db.commit()
   db.close();return update.rows_snapshot(state)
  def prestate(self, rows):
-  value={key:key for key in ['identity','uid','serviceLabel','servicePid','archiveSha256','artifactSourceCommit','fileHashes','otherListeners','cookieName','processQuiescence']}
+  value={**{key:key for key in ['identity','uid','serviceLabel','servicePid','archiveSha256','artifactSourceCommit','fileHashes','otherListeners','cookieName','processQuiescence']},'otherListenersOwned':False}
   value['rows']=rows;return value
  def test_a_connection_heartbeat_does_not_break_the_prestate(self):
   with tempfile.TemporaryDirectory() as tmp:

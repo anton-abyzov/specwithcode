@@ -28,7 +28,8 @@ const agent = (id: string): AcpRegistrySearchAgent => ({
 });
 const copilot = agent("github-copilot-cli");
 const grok = agent("grok-build");
-const catalog = (agents: readonly AcpRegistrySearchAgent[] = [copilot, grok]) => ({
+const gemini = agent("gemini");
+const catalog = (agents: readonly AcpRegistrySearchAgent[] = [copilot, grok, gemini]) => ({
   data: { agents },
   error: null as string | null,
   isPending: false,
@@ -42,6 +43,7 @@ function render(overrides: Partial<Parameters<typeof FeaturedAcpProviderCards>[0
     onPrepare: vi.fn(),
     copilot: catalog(),
     grok: catalog(),
+    gemini: catalog(),
     ...overrides,
   }) as ReactElement<Record<string, unknown>>;
 }
@@ -54,10 +56,10 @@ function byLabel(tree: ReactElement<Record<string, unknown>>, label: string) {
 describe("FeaturedAcpProviders", () => {
   beforeEach(() => {
     state.search.mockReset();
-    state.queries = [catalog(), catalog()];
+    state.queries = [catalog(), catalog(), catalog()];
   });
 
-  it("resolves both exact registry IDs on the selected remote environment without installation", () => {
+  it("resolves all exact registry IDs on the selected remote environment without installation", () => {
     const environmentId = EnvironmentId.make("remote-worker");
     const onPrepare = vi.fn();
     FeaturedAcpProviders({
@@ -70,6 +72,7 @@ describe("FeaturedAcpProviders", () => {
     expect(state.search.mock.calls).toEqual([
       [{ environmentId, input: { query: "github-copilot-cli" } }],
       [{ environmentId, input: { query: "grok-build" } }],
+      [{ environmentId, input: { query: "gemini" } }],
     ]);
     expect(onPrepare).not.toHaveBeenCalled();
   });
@@ -80,6 +83,8 @@ describe("FeaturedAcpProviders", () => {
     expect(onPrepare).not.toHaveBeenCalled();
     (byLabel(tree, "Add GitHub Copilot").props.onClick as () => void)();
     expect(onPrepare).toHaveBeenCalledWith(copilot);
+    (byLabel(tree, "Add Gemini CLI").props.onClick as () => void)();
+    expect(onPrepare).toHaveBeenLastCalledWith(gemini);
     expect(JSON.stringify(tree)).toContain("v9.8.7");
     expect(JSON.stringify(tree)).not.toMatch(/opus|4\.7|5\.5|unlimited/i);
   });
@@ -103,7 +108,7 @@ describe("FeaturedAcpProviders", () => {
     expect(byLabel(tree, "Retry GitHub Copilot registry lookup").props.disabled).toBe(false);
   });
 
-  it("blocks both actions while refreshing or preparing another provider", () => {
+  it("blocks all actions while refreshing or preparing another provider", () => {
     const onPrepare = vi.fn();
     const pending = render({ copilot: { ...catalog(), isPending: true }, onPrepare });
     const pendingAdd = byLabel(pending, "Add GitHub Copilot");
@@ -133,5 +138,46 @@ describe("FeaturedAcpProviders", () => {
     });
     expect(byLabel(configured, "Already added GitHub Copilot").props.disabled).toBe(true);
     expect(byLabel(configured, "Add Grok Build").props.disabled).toBe(false);
+  });
+  it("opens an existing instance even if the registry is unavailable, without preparing it", () => {
+    const onManage = vi.fn();
+    const onPrepare = vi.fn();
+    const tree = render({
+      providerInstances: {
+        copilot_work: {
+          driver: ProviderDriverKind.make("acpRegistry"),
+          enabled: false,
+          config: { agentId: copilot.id },
+        },
+      },
+      copilot: { ...catalog(), error: "Offline" },
+      canManageProviders: false,
+      onManage,
+      onPrepare,
+    });
+    const manage = byLabel(tree, "Manage GitHub Copilot");
+    expect(manage.props.disabled).toBe(false);
+    (manage.props.onClick as () => void)();
+    expect(onManage).toHaveBeenCalledExactlyOnceWith("copilot_work");
+    expect(onPrepare).not.toHaveBeenCalled();
+    expect(JSON.stringify(tree)).toContain("Added · check setup");
+  });
+
+  it("keeps manage navigation blocked while another agent is being prepared", () => {
+    const onManage = vi.fn();
+    const tree = render({
+      providerInstances: {
+        gemini_work: {
+          driver: ProviderDriverKind.make("acpRegistry"),
+          config: { agentId: gemini.id },
+        },
+      },
+      preparingId: copilot.id,
+      onManage,
+    });
+    const manage = byLabel(tree, "Manage Gemini CLI");
+    expect(manage.props.disabled).toBe(true);
+    (manage.props.onClick as () => void)();
+    expect(onManage).not.toHaveBeenCalled();
   });
 });

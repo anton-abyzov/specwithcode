@@ -19,6 +19,9 @@ function thread(overrides: Partial<EnvironmentThreadShell> = {}): EnvironmentThr
     environmentId: "host-1",
     projectId: "project-1",
     title: "Worker",
+    createdBy: "agent",
+    lineage: { relationshipToParent: null },
+    forkedFrom: null,
     runtime: null,
     latestRun: null,
     hasPendingApprovals: false,
@@ -377,4 +380,41 @@ describe("Worker-pane composer routing", () => {
     expect(await routeProjectComposerSend(null, s.input)).toBe(false);
     expect(s.send).not.toHaveBeenCalled();
   });
+});
+
+it("keeps independent chats out of the project task list while retaining worker forks", () => {
+  const user = thread({ id: ThreadId.make("human"), createdBy: "user" });
+  const unknown = thread({ id: ThreadId.make("unknown"), createdBy: "system" });
+  const worker = thread();
+  const fork = thread({
+    id: ThreadId.make("fork"),
+    createdBy: "user",
+    forkedFrom: {
+      type: "run",
+      threadId: worker.id,
+      runId: "run",
+    } as EnvironmentThreadShell["forkedFrom"],
+  });
+  expect(
+    projectThreads([user, unknown, worker, fork], "host-1", projectId, coordinator)
+      .map((t) => t.id)
+      .sort(),
+  ).toEqual(["fork", "worker-1"]);
+});
+
+it("does not list native subagents of an independent user chat as project work", () => {
+  const independent = thread({ id: ThreadId.make("independent"), createdBy: "user" });
+  const child = thread({
+    id: ThreadId.make("child"),
+    createdBy: "agent",
+    lineage: {
+      parentThreadId: independent.id,
+      relationshipToParent: "subagent",
+      rootThreadId: independent.id,
+    },
+  });
+  const worker = thread();
+  expect(
+    projectThreads([independent, child, worker], "host-1", projectId, coordinator).map((t) => t.id),
+  ).toEqual(["worker-1"]);
 });

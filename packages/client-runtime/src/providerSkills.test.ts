@@ -1,4 +1,8 @@
-import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@specweave-studio/contracts";
+import {
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+} from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -192,6 +196,12 @@ describe("resolveProviderSkillSourceKind", () => {
       resolveProviderSkillSourceKind({
         path: "/Users/dev/.codex/plugins/cache/openai-curated/github/skills/gh-fix-ci/SKILL.md",
         scope: "user",
+      }),
+    ).toBe("app");
+    expect(
+      resolveProviderSkillSourceKind({
+        path: "/Users/dev/.claude/plugins/cache/specweave/sw/3.0.12/skills/do/SKILL.md",
+        scope: "plugin",
       }),
     ).toBe("app");
   });

@@ -5,7 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 
 const state = vi.hoisted(() => ({
-  createDraft: vi.fn(async () => ({ draftId: "owned-new-draft", threadId: "owned-new-thread" })),
+  createDraft: vi.fn(async () => ({
+    kind: "draft",
+    draftId: "owned-new-draft",
+    threadId: "owned-new-thread",
+  })),
   setModel: vi.fn(),
   validateDraft: vi.fn(() => true),
   /** The worker project's coordinator, which routes its other threads to its page. */
@@ -123,7 +127,9 @@ vi.mock("../../state/environments", () => ({
 vi.mock("../../state/session", () => ({
   useEnvironmentsWithScope: () => new Set(["host-local", "host-worker"]),
 }));
-vi.mock("../../hooks/useHandleNewThread", () => ({ useNewThreadHandler: () => state.createDraft }));
+vi.mock("../../hooks/useNewChatDestination", () => ({
+  useNewChatDestination: () => state.createDraft,
+}));
 vi.mock("../../composerDraftStore", () => ({
   useComposerDraftStore: { getState: () => ({ setModelSelection: state.setModel }) },
 }));
@@ -205,7 +211,11 @@ beforeEach(() => {
   state.validateDraft.mockReturnValue(true);
   state.shells = [];
   state.workerCoordinator = null;
-  state.createDraft.mockResolvedValue({ draftId: "owned-new-draft", threadId: "owned-new-thread" });
+  state.createDraft.mockResolvedValue({
+    kind: "draft",
+    draftId: "owned-new-draft",
+    threadId: "owned-new-thread",
+  });
   state.environments[1]!.connection.phase = "connected";
   state.providers[0]!.installed = true;
   container = document.createElement("div");
@@ -317,7 +327,10 @@ describe("deliberate native session entry", () => {
         environmentId: "host-worker",
         projectId: "project-worker",
       },
-      { environmentSelection: "manual" },
+      {
+        environmentSelection: "manual",
+        model: undefined,
+      },
     );
     expect(state.setModel).not.toHaveBeenCalled();
   });
@@ -360,7 +373,10 @@ describe("deliberate native session entry", () => {
         environmentId: "host-worker",
         projectId: "project-worker",
       },
-      { environmentSelection: "manual" },
+      {
+        environmentSelection: "manual",
+        model: { instanceId: "native-worker", model: "actual-model" },
+      },
     );
     expect(state.setModel).toHaveBeenCalledWith(
       "owned-new-draft",
@@ -379,7 +395,10 @@ describe("deliberate native session entry", () => {
         environmentId: "host-worker",
         projectId: "project-worker",
       },
-      { environmentSelection: "manual" },
+      {
+        environmentSelection: "manual",
+        model: { instanceId: "native-worker", model: "actual-model" },
+      },
     );
     expect(state.createDraft.mock.invocationCallOrder[0]).toBeLessThan(
       state.setModel.mock.invocationCallOrder[0]!,
@@ -504,7 +523,7 @@ describe("deliberate native session entry", () => {
   });
   it("opens a project's thread in the project's right panel, as the sidebar does", async () => {
     state.shells = [
-      shell("worker-thread", { hasPendingApprovals: true }),
+      shell("worker-thread", { createdBy: "agent", hasPendingApprovals: true }),
       shell("coordinator"),
       shell("loose", { environmentId: "host-local", projectId: "elsewhere" } as never),
     ];
@@ -515,7 +534,7 @@ describe("deliberate native session entry", () => {
         .filter((a) => a.textContent?.includes(title))
         .map((a) => a.getAttribute("href"));
     expect(href("Cached worker-thread")).toEqual(["/projects/worker", "/projects/worker"]);
-    expect(href("Cached coordinator")).toEqual(["/host-worker/coordinator"]);
+    expect(href("Cached coordinator")).toEqual(["/projects/worker"]);
     expect(href("Cached loose")).toEqual(["/host-local/loose"]);
   });
   it("keeps real project, provider and connection destinations", async () => {
@@ -525,4 +544,21 @@ describe("deliberate native session entry", () => {
     expect(links).toContain("/settings/providers");
     expect(links).toContain("/settings/connections");
   });
+});
+
+it("opens a modern project coordinator with the chosen native model and no false draft failure", async () => {
+  state.createDraft.mockResolvedValueOnce({ kind: "coordinator", threadId: "retained" } as any);
+  await render();
+  await click("Choose verified worker profile");
+  await select("host-worker:project-worker");
+  await click("Open native draft");
+  expect(state.createDraft).toHaveBeenCalledWith(
+    { environmentId: "host-worker", projectId: "project-worker" },
+    {
+      environmentSelection: "manual",
+      model: { instanceId: "native-worker", model: "actual-model" },
+    },
+  );
+  expect(state.setModel).not.toHaveBeenCalled();
+  expect(container.querySelector('[role="alert"]')).toBeNull();
 });

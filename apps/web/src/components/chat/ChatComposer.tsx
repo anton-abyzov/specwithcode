@@ -5546,7 +5546,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const hiddenRestingBlockIds = restingBlockDefs
     .slice(restingBlockDefs.length - restingHiddenBlockCount)
     .map((def) => def.id);
-  const composerControls = showProviderUnavailable ? (
+  // Project coordinator details use the project model/options picker. A native
+  // draft-only picker here would advertise a model the routed send never uses.
+  const nativeComposerControls = showProviderUnavailable ? (
     <ComposerControl
       type="button"
       disabled={!providerSetupInstanceId}
@@ -5710,6 +5712,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       </>
     </>
   );
+  const composerControls = projectRouting?.coordinatorModelControls ?? nativeComposerControls;
   const showTasksTab =
     !hasBannerItems &&
     !showComposerTopDrawer &&

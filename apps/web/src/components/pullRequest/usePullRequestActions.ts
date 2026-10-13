@@ -1,3 +1,4 @@
+import { useProjectCoordinatorHandoff } from "~/hooks/useProjectCoordinatorHandoff";
 import { useAtomCommand } from "~/state/use-atom-command";
 /**
  * The actions a pull request offers, extracted from the detail panel so smaller surfaces — the
@@ -266,6 +267,7 @@ export function usePullRequestHandoffs({
   detail: PullRequestHandoffDetail | null;
 }) {
   const newThread = useNewThreadHandler();
+  const coordinatorHandoff = useProjectCoordinatorHandoff();
   const prepareThread = usePreparePullRequestThreadAction({
     environmentId,
     cwd: detail?.workspaceRoot ?? null,
@@ -324,6 +326,12 @@ export function usePullRequestHandoffs({
     if (!detail || handoff !== null) return;
     setHandoff(kind);
     const projectRef = scopeProjectRef(environmentId, detail.projectId);
+    if (
+      (await coordinatorHandoff(projectRef, { ...task, url: detail.url })).kind !== "standalone"
+    ) {
+      setHandoff(null);
+      return;
+    }
     const opened = await openThreadWithTask(projectRef, task);
     setHandoff(null);
     if (opened === null) {
@@ -359,6 +367,18 @@ export function usePullRequestHandoffs({
   ) => {
     if (!detail || handoff !== null) return;
     setHandoff(kind);
+    if (
+      (
+        await coordinatorHandoff(scopeProjectRef(environmentId, detail.projectId), {
+          ...task,
+          url: detail.url,
+          mode,
+        })
+      ).kind !== "standalone"
+    ) {
+      setHandoff(null);
+      return;
+    }
     // The menu closes on the press and takes its "Preparing..." label with it, so this is the
     // only thing answering for the checkout. It carries no timeout of its own: a loading toast
     // never expires, and an explicit one would survive the update and pin the result on screen.

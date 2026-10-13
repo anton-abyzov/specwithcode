@@ -3,7 +3,7 @@ import type { DesktopAppActivationRequest } from "@specweave-studio/contracts";
 import { useEffect, useEffectEvent, useRef } from "react";
 
 import { handleDesktopAppActivationRequest } from "../../desktopAppActivation";
-import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
+import { useNewChatDestination } from "../../hooks/useNewChatDestination";
 import { findProjectByPath, inferProjectTitleFromPath } from "../../lib/projectPaths";
 import { newProjectId } from "../../lib/utils";
 import { readProjects, waitForProject } from "../../state/entities";
@@ -16,7 +16,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 export function DesktopAppActivationCoordinator() {
   const primaryEnvironment = usePrimaryEnvironment();
   const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
-  const openThread = useNewThreadHandler();
+  const openDestination = useNewChatDestination();
   const queueRef = useRef(Promise.resolve());
   const activation = window.desktopBridge?.appActivation;
   const shell = useEnvironmentQuery(
@@ -72,7 +72,10 @@ export function DesktopAppActivationCoordinator() {
       waitForProject: async (projectRef) => {
         await waitForProject(projectRef);
       },
-      openThread: (projectRef) => openThread(projectRef),
+      openThread: async (projectRef) => {
+        const result = await openDestination(projectRef);
+        return result.kind === "unavailable" ? null : { threadId: result.threadId };
+      },
     }),
   );
 

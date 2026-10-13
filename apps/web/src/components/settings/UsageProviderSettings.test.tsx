@@ -10,8 +10,29 @@ const state = vi.hoisted(() => ({
   adopt: vi.fn(),
   update: vi.fn(),
   addDialogUrl: null as string | null,
+  navigate: vi.fn(),
+  canManage: true,
+  allowedOnClick: true,
+  presentations: new Map(),
+  pooledEnvironmentIds: [] as string[],
 }));
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
+vi.mock("@effect/atom-react", () => ({
+  useAtomValue: (atom: string) => (atom === "presentations" ? state.presentations : null),
+}));
+vi.mock("@tanstack/react-router", () => ({ useNavigate: () => state.navigate }));
+vi.mock("../../state/session", () => ({
+  useEnvironmentScope: () => state.canManage,
+  readEnvironmentScope: () => state.allowedOnClick,
+}));
+vi.mock("../../state/presentation", () => ({
+  environmentPresentations: { presentationsAtom: "presentations" },
+}));
+vi.mock("../usage/UsageLimitsPooled", () => ({
+  UsageLimitsPooled: ({ presentations }: { presentations: ReadonlyMap<string, unknown> }) => {
+    state.pooledEnvironmentIds = [...presentations.keys()];
+    return <p>Pooled quota reports</p>;
+  },
+}));
 vi.mock("../../hooks/useSettings", () => ({ useUpdateEnvironmentSettings: () => state.update }));
 vi.mock("../../state/server", () => ({
   serverEnvironment: {
@@ -32,7 +53,6 @@ vi.mock("./AddUsageLimitSourceDialog", () => ({
     return <p>Add hub dialog</p>;
   },
 }));
-vi.mock("./settingsSearch", () => ({ searchableSetting: () => ({}) }));
 vi.mock("./settingsLayout", () => ({
   SettingsSection: ({
     children,
@@ -64,6 +84,8 @@ vi.mock("./settingsLayout", () => ({
 }));
 
 import { UsageProviderSettings } from "./UsageProviderSettings";
+import { UsageLimitsSection } from "../usage/UsageLimits";
+import { searchSettings } from "./settingsSearch";
 
 const environmentId = EnvironmentId.make("host");
 const hub = (over: Partial<LocalUsageHub> = {}): LocalUsageHub => ({
@@ -82,6 +104,12 @@ beforeEach(() => {
   state.detect.mockReset();
   state.adopt.mockReset();
   state.addDialogUrl = null;
+  state.update.mockReset();
+  state.navigate.mockReset();
+  state.canManage = true;
+  state.allowedOnClick = true;
+  state.presentations = new Map();
+  state.pooledEnvironmentIds = [];
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -116,7 +144,7 @@ it("offers a detected hub and adds it without the browser handling a key", async
     value: { hubs: [hub({ sourceId: "cliproxy-127.0.0.1-8317" as never })] },
   });
   await render([hub()]);
-  expect(container.textContent).toContain("CLI Proxy found on Studio Mac");
+  expect(container.textContent).toContain("CLIProxyAPI found on Studio Mac");
   expect(container.textContent).toContain("http://127.0.0.1:8317 · Running");
   expect(container.textContent).not.toContain("No hubs configured.");
   await act(async () => button("Add this hub")!.click());
@@ -136,7 +164,7 @@ it("does not offer a hub that is already a source, and marks it when it is stopp
   await render([hub({ sourceId: "mine" as never, running: false })], {
     sources: { mine: { kind: "cliproxy", url: "http://localhost:8317", enabled: true } },
   });
-  expect(container.textContent).not.toContain("CLI Proxy found on");
+  expect(container.textContent).not.toContain("CLIProxyAPI found on");
   expect(container.textContent).toContain("Not running");
 });
 
@@ -145,3 +173,92 @@ it("never looks for hubs on a host the person cannot manage", async () => {
   expect(state.detect).not.toHaveBeenCalled();
   expect(container.textContent).toContain("No hubs configured.");
 });
+
+it("separates a configured quota source from chat setup on the selected machine", async () => {
+  await render([], {
+    sources: { mine: { kind: "cliproxy", url: "http://localhost:8317", enabled: true } },
+  });
+  expect(container.textContent).toContain("Usage reporting only");
+  expect(container.textContent).toContain(
+    "Adding a hub does not connect its models to Studio chats.",
+  );
+  expect(container.textContent).toContain("CLIProxyAPI · Usage reporting");
+  await act(async () => button("Set up chat providers")!.click());
+  expect(state.navigate).toHaveBeenCalledWith({
+    to: "/settings/providers",
+    search: { environmentId },
+    hash: "providers",
+  });
+  expect(state.adopt).not.toHaveBeenCalled();
+  expect(state.update).not.toHaveBeenCalled();
+});
+
+it("keeps the explanation without offering setup to a read-only session", async () => {
+  await render([], { readOnly: true });
+  expect(container.textContent).toContain("Usage reporting only");
+  expect(button("Set up chat providers")).toBeUndefined();
+});
+
+it("requires the selected machine's provider-management grant for setup", async () => {
+  state.canManage = false;
+  await render([]);
+  expect(button("Set up chat providers")).toBeUndefined();
+});
+
+it("rechecks the provider-management grant before opening setup", async () => {
+  await render([]);
+  state.allowedOnClick = false;
+  await act(async () => button("Set up chat providers")!.click());
+  expect(state.navigate).not.toHaveBeenCalled();
+});
+
+function usageEnvironment(label: string, phase = "connected") {
+  return { entry: { target: { label } }, connection: { phase }, serverConfig: {} };
+}
+
+it("routes usage-view setup to its selected machine without changing the quota filter", async () => {
+  const remoteId = EnvironmentId.make("remote");
+  state.presentations = new Map([
+    [environmentId, usageEnvironment("Local Mac")],
+    [remoteId, usageEnvironment("Remote Mac")],
+  ]);
+  await act(async () =>
+    root.render(<UsageLimitsSection selectedEnvironmentIds={new Set([remoteId])} now={0} />),
+  );
+  expect(container.textContent).toContain(
+    "Quota reports do not confirm that an agent is ready to chat.",
+  );
+  expect(button("Set up on Local Mac")).toBeUndefined();
+  await act(async () => button("Set up on Remote Mac")!.click());
+  expect(state.navigate).toHaveBeenCalledWith({
+    to: "/settings/providers",
+    search: { environmentId: remoteId },
+    hash: "providers",
+  });
+  expect(state.pooledEnvironmentIds).toEqual([remoteId]);
+});
+
+it("does not offer setup on disconnected machines or without provider-management access", async () => {
+  state.presentations = new Map([[environmentId, usageEnvironment("Offline Mac", "disconnected")]]);
+  await act(async () => root.render(<UsageLimitsSection selectedEnvironmentIds={null} now={0} />));
+  expect(container.querySelector("button")).toBeNull();
+  state.presentations = new Map([[environmentId, usageEnvironment("Read-only Mac")]]);
+  state.canManage = false;
+  await act(async () => root.render(<UsageLimitsSection selectedEnvironmentIds={null} now={0} />));
+  expect(container.querySelector("button")).toBeNull();
+  expect(container.textContent).toContain("Quota reports do not confirm");
+});
+
+it.each(["Copilot", "Gemini", "Grok"])("finds agent setup by provider name %s", (query) => {
+  expect(searchSettings(query)[0]).toMatchObject({ id: "providers", to: "/settings/providers" });
+});
+
+it.each(["usage providers", "CLIProxyAPI", "usage reporting"])(
+  "keeps quota settings discoverable under %s",
+  (query) => {
+    expect(searchSettings(query)[0]).toMatchObject({
+      id: "usage-providers",
+      title: "Usage reporting",
+    });
+  },
+);

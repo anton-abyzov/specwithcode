@@ -126,6 +126,8 @@ describe("deviceHandoffText", () => {
     });
     expect(text).toContain("started on MacBook M4");
     expect(text).toContain("Branch: fix/login");
+    expect(text).toContain("Requested workspace: a worktree based on this branch as pushed");
+    expect(text).not.toContain("This device started");
     expect(text).toContain("User: Fix the login form");
     expect(text).toContain("Assistant: Found the bug in auth.ts");
     expect(text).not.toContain("earlier messages left out");

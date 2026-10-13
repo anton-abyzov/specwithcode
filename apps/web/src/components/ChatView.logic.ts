@@ -312,15 +312,14 @@ export function resolveDraftHeroState(input: {
 }
 
 /**
- * Keep painted timelines on screen across thread jumps. Remounting LegendList
- * (or handing it an empty first paint) punches a hole through the chat pane —
- * white in light mode — so cmd+1/2/3 spam flashes even when the destination
- * is already cached.
+ * Restore only the destination thread's cached timeline while it loads.
+ * The environment-scoped thread key is the isolation boundary: a shared host
+ * does not make another thread or project's transcript safe to display.
  *
  * Stored at module scope because ChatView remounts when the thread route
  * changes (same pattern as the thread-error banner session dismissals).
- * Remember more than the last thread so jumping back to cmd+1 does not show
- * cmd+3's messages, and so a cached destination can paint on the first frame.
+ * Remember more than the last thread so a cached destination can paint on
+ * the first frame; an uncached destination stays empty until it is ready.
  */
 export type HeldThreadTimeline<T extends readonly unknown[]> = {
   threadKey: string | null;
@@ -431,9 +430,8 @@ export function resolveThreadSwitchTimeline<T extends readonly unknown[]>(input:
     input.loading &&
     lastReady !== null &&
     lastReady.threadKey !== null &&
-    lastReady.threadKey !== input.activeThreadKey &&
-    lastReady.entries.length > 0 &&
-    threadKeysShareEnvironment(lastReady.threadKey, input.activeThreadKey)
+    lastReady.threadKey === input.activeThreadKey &&
+    lastReady.entries.length > 0
   ) {
     return { entries: lastReady.entries, displayThreadKey: lastReady.threadKey };
   }

@@ -119,6 +119,16 @@ function render(options?: {
   }) as ReactElement<Record<string, unknown>>;
 }
 
+function renderSearch(options?: Parameters<typeof render>[0]) {
+  const initial = render(options);
+  const input = findByAriaLabel(initial, "Search ACP Registry");
+  (input.props.onChange as (event: { currentTarget: { value: string } }) => void)({
+    currentTarget: { value: "Gemini" },
+  });
+  vi.advanceTimersByTime(300);
+  return render(options);
+}
+
 function findByAriaLabel(
   tree: ReactElement<Record<string, unknown>>,
   label: string,
@@ -259,7 +269,7 @@ describe("AcpRegistrySearchStep", () => {
     });
     state.result = { agents: [gemini] };
     const onPrepared = vi.fn();
-    const tree = render({ onPrepared });
+    const tree = renderSearch({ onPrepared });
 
     const add = findByAriaLabel(tree, "Add Gemini CLI");
     (add.props.onClick as (() => void) | undefined)?.();
@@ -280,7 +290,7 @@ describe("AcpRegistrySearchStep", () => {
   it("rechecks the grant before preparing an agent", async () => {
     state.result = { agents: [gemini] };
     const onPrepared = vi.fn();
-    const add = findByAriaLabel(render({ onPrepared }), "Add Gemini CLI");
+    const add = findByAriaLabel(renderSearch({ onPrepared }), "Add Gemini CLI");
     state.canManage = false;
     await (add.props.onClick as () => void)();
     expect(state.prepare).not.toHaveBeenCalled();
@@ -297,7 +307,7 @@ describe("AcpRegistrySearchStep", () => {
     );
     state.result = { agents: [gemini] };
     const onPrepared = vi.fn();
-    const add = findByAriaLabel(render({ onPrepared }), "Add Gemini CLI");
+    const add = findByAriaLabel(renderSearch({ onPrepared }), "Add Gemini CLI");
     (add.props.onClick as () => void)();
     (add.props.onClick as () => void)();
     expect(state.prepare).toHaveBeenCalledOnce();
@@ -318,9 +328,9 @@ describe("AcpRegistrySearchStep", () => {
         }),
     );
     const featuredAgent = { ...gemini, id: "github-copilot-cli", name: "GitHub Copilot" };
-    state.result = { agents: [gemini, featuredAgent] };
+    state.result = { agents: [gemini] };
     const onPrepared = vi.fn();
-    const tree = render({ onPrepared });
+    const tree = renderSearch({ onPrepared });
     const featured = visitElements(tree, (element) => element.type === FeaturedAcpProviders)!;
     expect(
       visitElements(tree, (element) => element.props["aria-label"] === "Add GitHub Copilot"),
@@ -354,7 +364,7 @@ describe("AcpRegistrySearchStep", () => {
     );
     state.result = { agents: [gemini] };
     const onPrepared = vi.fn();
-    const tree = render({ onPrepared });
+    const tree = renderSearch({ onPrepared });
 
     const add = findByAriaLabel(tree, "Add Gemini CLI");
     (add.props.onClick as (() => void) | undefined)?.();
@@ -367,9 +377,28 @@ describe("AcpRegistrySearchStep", () => {
 
   it("renders existing registry configuration as already added", () => {
     state.result = { agents: [gemini] };
-    const tree = render({ configured: true });
+    const tree = renderSearch({ configured: true });
     const added = findByAriaLabel(tree, "Already added Gemini CLI");
 
     expect(added.props.disabled).toBe(true);
+  });
+  it("features Gemini once on the default catalog and preserves existing-instance navigation", () => {
+    state.result = { agents: [gemini] };
+    const onManage = vi.fn();
+    hooks.beginRender();
+    const tree = AcpRegistrySearchStep({
+      environmentId,
+      providerInstances: {},
+      onPrepared: vi.fn(),
+      onManualConfiguration: vi.fn(),
+      onManage,
+    });
+    expect(
+      visitElements(tree, (element) => element.props["aria-label"] === "Add Gemini CLI"),
+    ).toBeNull();
+    const featured = visitElements(tree, (element) => element.type === FeaturedAcpProviders);
+    expect(featured?.props.onManage).toBe(onManage);
+    expect(featured?.props.environmentId).toBe(environmentId);
+    expect(state.prepare).not.toHaveBeenCalled();
   });
 });

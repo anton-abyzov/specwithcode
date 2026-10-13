@@ -1,20 +1,32 @@
 import { scopedThreadKey } from "@specweave-studio/client-runtime/environment";
 import type { ScopedThreadRef } from "@specweave-studio/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useLegacySidebarEnabled } from "../hooks/useSettings";
+import { useSettingsProjectGroups } from "./settings/useSettingsProjectGroups";
+import { isScratchProject } from "@specweave-studio/client-runtime/state/projects";
+import { projectWorkspaceSearch } from "../studio/projectPaneThreads";
+import { chatNavigationTarget } from "../studio/projectPaneThreads";
 
 import ChatView from "./ChatView";
 import { resolveDraftPromotionNavigationTarget, threadHasStarted } from "./ChatView.logic";
 import { waitForDraftHeroTransition } from "./chat/draftHeroTransition";
 import { SidebarInset } from "./ui/sidebar";
 import {
+  composerDraftHasUserContent,
   finalizePromotedDraftThreadByRef,
   markPromotedDraftThreadByRef,
   useBackgroundDraftSubmissionPending,
   useComposerDraftStore,
 } from "../composerDraftStore";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
-import { useEnvironmentThreadRefs, useThreadRefs, useThreadShell } from "../state/entities";
+import {
+  useEnvironmentThreadRefs,
+  useThreadRefs,
+  useThreadShell,
+  useThreadShells,
+  useServerConfigs,
+} from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
 import { environmentShell } from "../state/shell";
 import {
@@ -38,11 +50,18 @@ import {
  */
 export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
   const navigate = useNavigate();
+  const legacySidebarEnabled = useLegacySidebarEnabled();
+  const projectGroups = useSettingsProjectGroups();
   const draftId = target.kind === "draft" ? target.draftId : null;
   const draftSession = useComposerDraftStore((store) =>
     draftId === null ? null : store.getDraftSession(draftId),
   );
+  const draftComposer = useComposerDraftStore((store) =>
+    draftId ? store.getComposerDraft(draftId) : null,
+  );
+  const serverConfigs = useServerConfigs();
   const threadRefs = useThreadRefs();
+  const lineageShells = useThreadShells();
   // The server thread this view is about: the route's own ref, or the draft's
   // reserved ref once the server knows it.
   const inferredThreadRef = draftSession
@@ -55,6 +74,74 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
   const serverThreadRef: ScopedThreadRef | null =
     target.kind === "server" ? target.threadRef : (draftSession?.promotedTo ?? inferredThreadRef);
   const serverThread = useThreadShell(serverThreadRef);
+  const projectNavigation = useMemo(() => {
+    if (
+      !legacySidebarEnabled &&
+      target.kind === "draft" &&
+      draftSession &&
+      !draftSession.promotedTo &&
+      !serverThread &&
+      !draftSession.worktreePath &&
+      !draftSession.branch &&
+      !composerDraftHasUserContent(draftComposer)
+    ) {
+      const group = projectGroups.find((candidate) =>
+        candidate.memberProjects.some(
+          (member) =>
+            member.environmentId === draftSession.environmentId &&
+            member.id === draftSession.projectId,
+        ),
+      );
+      const member = group?.memberProjects.find(
+        (candidate) =>
+          candidate.environmentId === draftSession.environmentId &&
+          candidate.id === draftSession.projectId,
+      );
+      if (
+        group &&
+        member &&
+        serverConfigs.get(member.environmentId)?.scratchWorkspaceRoot &&
+        !isScratchProject(member, serverConfigs.get(member.environmentId)?.scratchWorkspaceRoot)
+      )
+        return {
+          to: "/projects/$projectKey" as const,
+          params: { projectKey: group.projectKey },
+          search: projectWorkspaceSearch(null, `${member.environmentId}:${member.id}`),
+        };
+    }
+    if (
+      legacySidebarEnabled ||
+      target.kind !== "server" ||
+      !serverThread ||
+      serverThread.deletedAt !== null
+    )
+      return null;
+    const group = projectGroups.find((group) =>
+      group.memberProjects.some(
+        (member) =>
+          member.environmentId === serverThread.environmentId &&
+          member.id === serverThread.projectId,
+      ),
+    );
+    const navigation = chatNavigationTarget(serverThread, group, (id) =>
+      lineageShells.find(
+        (thread) => thread.environmentId === serverThread.environmentId && thread.id === id,
+      ),
+    );
+    return navigation.to === "/projects/$projectKey" ? navigation : null;
+  }, [
+    legacySidebarEnabled,
+    projectGroups,
+    serverThread,
+    lineageShells,
+    target.kind,
+    draftSession,
+    draftComposer,
+    serverConfigs,
+  ]);
+  useEffect(() => {
+    if (projectNavigation) void navigate({ ...projectNavigation, replace: true });
+  }, [navigate, projectNavigation]);
   const backgroundSubmissionPending = useBackgroundDraftSubmissionPending(
     target.kind === "draft" ? serverThreadRef : null,
   );
@@ -166,7 +253,7 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
 
   let view: React.ReactNode = null;
   if (target.kind === "draft") {
-    if (draftSession) {
+    if (draftSession && !projectNavigation) {
       view = (
         <ChatView
           key={target.draftId}
@@ -178,7 +265,10 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
         />
       );
     }
-  } else if (renderState === "ready" || (renderState === "loading" && serverThreadShell !== null)) {
+  } else if (
+    !projectNavigation &&
+    (renderState === "ready" || (renderState === "loading" && serverThreadShell !== null))
+  ) {
     view = (
       <ChatView
         key={nextChatViewKey?.key}

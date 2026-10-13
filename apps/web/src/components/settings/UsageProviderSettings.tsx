@@ -1,10 +1,17 @@
-import type { EnvironmentId, LocalUsageHub, UnifiedSettings } from "@specweave-studio/contracts";
+import {
+  AuthProvidersManageScope,
+  type EnvironmentId,
+  type LocalUsageHub,
+  type UnifiedSettings,
+} from "@specweave-studio/contracts";
+import { useNavigate } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
 import { PlusIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { serverEnvironment } from "../../state/server";
+import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
   AlertDialog,
@@ -35,6 +42,8 @@ export function UsageProviderSettings({
   readonly cursorKeychainUsageEnabled: boolean;
   readonly readOnly: boolean;
 }) {
+  const navigate = useNavigate();
+  const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const updateCursorSettings = useAtomCommand(serverEnvironment.updateSettings, {
     label: "update Cursor account usage",
@@ -111,6 +120,28 @@ export function UsageProviderSettings({
           ) : null
         }
       >
+        <SettingsRow
+          title="Usage reporting only"
+          description="CLIProxyAPI hubs report account quotas. Adding a hub does not connect its models to Studio chats."
+          control={
+            !readOnly && canManageProviders ? (
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={() => {
+                  if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
+                  void navigate({
+                    to: "/settings/providers",
+                    search: { environmentId },
+                    hash: "providers",
+                  });
+                }}
+              >
+                Set up chat providers
+              </Button>
+            ) : null
+          }
+        />
         {platform?.os === "darwin" ? (
           <SettingsRow
             id="cursor-keychain-usage"
@@ -130,7 +161,7 @@ export function UsageProviderSettings({
           <SettingsRow
             key={hub.id}
             id={`local-usage-hub-${hub.id}`}
-            title={`CLI Proxy found on ${environmentLabel}`}
+            title={`CLIProxyAPI found on ${environmentLabel}`}
             description={
               <span className="break-all">
                 {hub.url} · {hub.running ? "Running" : "Not running"} · {hub.configPath}
@@ -165,7 +196,7 @@ export function UsageProviderSettings({
                 title={label}
                 description={
                   <span className="break-all">
-                    CLI Proxy{source.enabled ? "" : " · Disabled"}
+                    CLIProxyAPI · Usage reporting{source.enabled ? "" : " · Disabled"}
                     {stopped.has(id) ? " · Not running" : ""}
                     {label !== source.url ? ` · ${source.url}` : ""}
                   </span>

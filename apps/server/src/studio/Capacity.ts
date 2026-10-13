@@ -21,6 +21,24 @@ import { capacitySnapshot, freshObservation, nativeCapacityBinding, nativeConfig
 // they took longer than 15 seconds and failed coordinator turns.
 export const NATIVE_STATUS_CHECK_TIMEOUT = "60 seconds";
 
+/** Every exhausted window must reset; unrelated windows cannot predict recovery. */
+function blockingUsageReset(
+  windows: ReadonlyArray<{ readonly usedPercent: number; readonly resetsAt: number | null }>,
+  limits: { readonly spendControlReached?: boolean | null | undefined; readonly rateLimitReachedType?: string | null | undefined },
+  now: number,
+): number | undefined {
+  if (limits.spendControlReached === true
+    || (limits.rateLimitReachedType != null && limits.rateLimitReachedType !== "rate_limit_reached")) return;
+  const blocking = windows.filter((window) => window.usedPercent >= 100);
+  if (blocking.length === 0) return;
+  let resetAt = 0;
+  for (const window of blocking) {
+    if (window.resetsAt === null || !Number.isFinite(new Date(window.resetsAt).getTime()) || window.resetsAt <= now) return;
+    resetAt = Math.max(resetAt, window.resetsAt);
+  }
+  return resetAt;
+}
+
 export interface NativeCreditStartOptions {
   readonly allowCredits: true;
   readonly expectedQuotaPoolId: string;
@@ -99,7 +117,11 @@ const make = Effect.gen(function* () {
       if (native?.status === "error" && native.auth.status !== "unauthenticated") return yield* deny("The native provider status check failed. Refresh Providers on this machine and try again.");
       return yield* deny("Native subscription authorization is unverified. Sign in with the official native CLI on this machine and refresh provider status.");
     }
-    if (entry.driver === "codex" && !(yield* nativeRoute.verify(entry, cwd, baseEnv)))
+    if (entry.driver === "codex" && !(yield* nativeRoute.verify(entry, cwd, baseEnv).pipe(
+      Effect.catch((error) => deny(error.reason === "timeout"
+        ? "The native Codex route check timed out for this workspace. Refresh Providers on this machine and try again."
+        : "The native Codex route check failed for this workspace. Refresh Providers on this machine and try again.")),
+    )))
       return yield* deny("The effective Codex route for this workspace is not verified as a native subscription. Configure custom endpoints as an explicit API instance.");
     if (checkCredits && (!/^codex:sha256:[a-f0-9]{64}$/.test(options!.expectedQuotaPoolId)
       || native?.usageLimits?.quotaPoolId !== options!.expectedQuotaPoolId))
@@ -119,10 +141,11 @@ const make = Effect.gen(function* () {
     // denial reported by this exact native account or its live notification.
     if (nativeQuotaDenied(native?.usageLimits, now) && !creditContinuation()) {
       const limits = native?.usageLimits;
-      const nextReset = limits?.windows.flatMap((window) => {
-        const at = window.resetsAt ? Date.parse(window.resetsAt) : NaN;
-        return ["primary", "secondary"].includes(window.id) && Number.isFinite(at) && at > now ? [at] : [];
-      }).toSorted((a, b) => a - b)[0];
+      const nextReset = limits && !limits.unavailable ? blockingUsageReset(
+        limits.windows.filter((window) => ["primary", "secondary"].includes(window.id))
+          .map((window) => ({ usedPercent: window.usedPercent, resetsAt: window.resetsAt ? Date.parse(window.resetsAt) : null })),
+        limits, now,
+      ) : undefined;
       const reason = limits?.spendControlReached === true ? "spend control" : "usage limit";
       return yield* deny(`This native subscription profile has no remaining permitted usage because its ${reason} denies new work.${nextReset ? ` Next observed reset: ${new Date(nextReset).toISOString()}.` : ""} Select an eligible profile for a new session.`, nextReset ? { resetAt: new Date(nextReset).toISOString() } : {});
     }
@@ -175,7 +198,11 @@ const make = Effect.gen(function* () {
       && (account.quota.rateLimitReachedType == null || account.quota.rateLimitReachedType === "rate_limit_reached")
       && Date.parse(account.quota.observedAt ?? "") <= Date.parse(native?.usageLimits?.nativeAllowanceObservedAt ?? "");
     if (account?.status === "exhausted" && !fundedSession) {
-      const nextReset = [account.quota.window, account.quota.weekly].flatMap((window) => window?.resetsAt && window.resetsAt * 1000 > now ? [window.resetsAt * 1000] : []).toSorted((a, b) => a - b)[0];
+      const nextReset = account.quota.freshness === "fresh" ? blockingUsageReset(
+        [account.quota.window, account.quota.weekly, ...(account.quota.windows?.filter((window) => window.appliesToSelection) ?? [])]
+          .flatMap((window) => window ? [{ usedPercent: window.usedPercent, resetsAt: window.resetsAt === null ? null : window.resetsAt * 1000 }] : []),
+        account.quota, now,
+      ) : undefined;
       return yield* deny(`This native subscription profile has no remaining permitted usage under its current usage limit.${nextReset ? ` Next observed reset: ${new Date(nextReset).toISOString()}.` : ""} Select an eligible profile for a new session.`, nextReset ? { resetAt: new Date(nextReset).toISOString() } : {});
     }
     if (!account || account.authenticated !== true || account.authError || ["blocked", "auth-required", "active", "stale"].includes(account.status) || (account.status === "exhausted" && !fundedSession)
