@@ -147,6 +147,81 @@ describe("buildProjectGroups", () => {
     );
   });
 
+  it.each([
+    ["/work/studio-review/", "studio-review"],
+    ["/work/studio-review///", "studio-review"],
+    ["C:\\Projects\\Studio-Review\\", "Studio-Review"],
+    ["C:/Projects/Studio-Review/", "studio-review"],
+    ["\\\\server\\projects\\Studio-Review\\", "Studio-Review"],
+    ["/work/studio\\review/", "studio\\review"],
+    ["\\\\server\\studio", "\\\\server\\studio"],
+    ["C:\\", "C:\\"],
+    ["/", "/"],
+    ["/", "project"],
+  ])("keeps a custom name beside the default folder title at %s", (workspaceRoot, title) => {
+    const named = makeProject("named", "/work/studio", { title: "EasyChamp" });
+    const checkout = makeProject("checkout", workspaceRoot, {
+      title,
+      environmentId: EnvironmentId.make("remote"),
+    });
+
+    for (const projects of [
+      [named, checkout],
+      [checkout, named],
+    ]) {
+      const groups = buildProjectGroups({
+        projects,
+        settings: settings("repository"),
+        preferredEnvironmentId: checkout.environmentId,
+      });
+      expect(groups[0]?.label).toBe("EasyChamp");
+      expect(groups[0]?.key).toBe(repositoryIdentity.canonicalKey);
+      expect(groups[0]?.representative.id).toBe(checkout.id);
+      expect(groups[0]?.memberProjectRefs).toHaveLength(2);
+    }
+  });
+
+  it("ignores repository names and display names beside a single custom name", () => {
+    const named = makeProject("named", "/work/studio", { title: "EasyChamp" });
+    const defaults = [
+      makeProject("repo-name", "/work/checkout-2", { title: repositoryIdentity.name }),
+      makeProject("repo-label", "/work/checkout-3", { title: repositoryIdentity.displayName }),
+    ];
+
+    for (const projects of [
+      [named, ...defaults],
+      [...defaults, named],
+    ]) {
+      expect(buildProjectGroups({ projects, settings: settings("repository") })[0]?.label).toBe(
+        "EasyChamp",
+      );
+    }
+  });
+
+  it("keeps the repository fallback when different custom names conflict", () => {
+    const projects = [
+      makeProject("first", "/work/studio", { title: "EasyChamp" }),
+      makeProject("second", "/work/studio-2", { title: "Team dashboard" }),
+      makeProject("default", "/work/studio-3", { title: "studio-3" }),
+    ];
+
+    for (const order of [projects, projects.toReversed()]) {
+      expect(
+        buildProjectGroups({ projects: order, settings: settings("repository") })[0]?.label,
+      ).toBe(repositoryIdentity.displayName);
+    }
+  });
+
+  it("keeps the repository fallback when every checkout has its default folder name", () => {
+    const projects = [
+      makeProject("first", "/work/studio", { title: "studio" }),
+      makeProject("second", "/work/studio-review", { title: "studio-review" }),
+    ];
+    expect(buildProjectGroups({ projects, settings: settings("repository") })[0]?.label).toBe(
+      repositoryIdentity.displayName,
+    );
+  });
+
   it("keeps the repository label when shared titles match its repository name", () => {
     const projects = [
       makeProject("first", "/work/studio", { title: "studio" }),
@@ -195,6 +270,36 @@ describe("buildProjectGroups", () => {
     const groups = buildProjectGroups({ projects, settings: settings("repository") });
     expect(groups).toHaveLength(1);
     expect(groups[0]?.label).toBe("internal-host");
+  });
+
+  it("preserves a fork's custom name without changing its repository identity", () => {
+    const identity = {
+      ...repositoryIdentity,
+      origin: { canonicalKey: "github.com/acme/studio-fork", displayName: "acme/studio-fork" },
+    };
+    const fork = makeProject("fork", "/work/studio-fork", {
+      title: "My workspace",
+      repositoryIdentity: identity,
+    });
+    const checkout = makeProject("checkout", "/work/studio-fork-review", {
+      title: "studio-fork-review",
+      repositoryIdentity: identity,
+    });
+    const upstream = makeProject("upstream", "/work/studio");
+
+    for (const projects of [
+      [fork, checkout, upstream],
+      [upstream, checkout, fork],
+    ]) {
+      const groups = buildProjectGroups({ projects, settings: settings("repository") });
+      expect(groups).toHaveLength(2);
+      const group = groups.find((candidate) => candidate.key === identity.origin.canonicalKey);
+      expect(group?.label).toBe("My workspace");
+      expect(group?.memberProjectRefs.map((ref) => ref.projectId).sort()).toEqual([
+        "checkout",
+        "fork",
+      ]);
+    }
   });
 
   it("keeps physical clones in separate groups when requested", () => {

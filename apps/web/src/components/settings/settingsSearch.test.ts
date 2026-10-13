@@ -45,6 +45,12 @@ const ITEMS: ReadonlyArray<SettingsSearchItem> = [
 ];
 
 describe("searchSettings", () => {
+  it.each(["privacy", "telemetry", "redacted", "feedback"])(
+    "finds privacy controls for %s",
+    (query) => {
+      expect(searchSettings(query).some((item) => item.to === "/settings/privacy")).toBe(true);
+    },
+  );
   it.each(["send shortcut", "multiline", "new line"])("finds Send shortcut for %s", (query) => {
     expect(searchSettings(query).map((item) => item.id)).toContain("send-shortcut");
   });

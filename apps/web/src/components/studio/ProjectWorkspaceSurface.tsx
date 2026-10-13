@@ -3,6 +3,7 @@ import { useCoordinatorModelSave } from "../../studio/coordinatorModelSave";
 import { useProjectCoordinatorDraft } from "../../studio/projectCoordinatorDraft";
 import { useProjectCoordinatorComposer } from "../../studio/projectCoordinatorComposer";
 import { ProjectCoordinatorDetails } from "./ProjectCoordinatorDetails";
+import { ProjectMachineHandoff } from "./ProjectMachineHandoff";
 import { ProjectPlan } from "./ProjectPlan";
 import { TimelineDetailMenu } from "../chat/TimelineDetailMenu";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -89,6 +90,7 @@ import { coordinatorTurnFailure, sentStarterIds } from "../../studio/coordinator
 import { ProjectMessageRoutingContext } from "../../studio/projectMessageRouting";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { SidebarInset } from "../ui/sidebar";
+import { Button } from "../ui/button";
 import { isElectron } from "../../env";
 import { canOpenProjectWindowFor, openProjectWindow } from "../../lib/projectWindow";
 import ChatView from "../ChatView";
@@ -242,6 +244,12 @@ export function ProjectWorkspaceSurface({
   const [tab, setTab] = useState<ProjectSettingsTab | null>(null);
   const [planOpen, setPlanOpen] = useState(false);
   const [coordinatorDetailsOpen, setCoordinatorDetailsOpen] = useState(false);
+  const [machineHandoffOpen, setMachineHandoffOpen] = useState(false);
+  const [retryingCoordinator, setRetryingCoordinator] = useState(false);
+  const [coordinatorActivityRunId, setCoordinatorActivityRunId] = useState<string | null>(null);
+  const [coordinatorReviewView, setCoordinatorReviewView] = useState<"requests" | "activity">(
+    "requests",
+  );
   const {
     prompt,
     setPrompt,
@@ -496,6 +504,7 @@ export function ProjectWorkspaceSurface({
     else setOverviewOpen(true);
   }, [hideOverview, overviewOpen, threadOpen, setOverviewOpen]);
   useEffect(() => {
+    if (coordinatorDetailsOpen) return;
     // A dialog or menu owns the keyboard while it is open. It closes itself on the
     // same key press, so look before it has the chance to.
     let overlayOwnsKey = false;
@@ -606,6 +615,7 @@ export function ProjectWorkspaceSurface({
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [
+    coordinatorDetailsOpen,
     askCoordinator,
     keybindings,
     leaveThread,
@@ -823,9 +833,31 @@ export function ProjectWorkspaceSurface({
   const attention = coordinatorAttention(coordinator ?? null);
   const openCoordinatorPage = useCallback(() => {
     if (!coordinatorId) return;
+    setCoordinatorReviewView("requests");
     setCoordinatorDetailsOpen(true);
     if (phone) setOverviewOpen(false);
   }, [coordinatorId, phone, setOverviewOpen]);
+  const openCoordinatorActivity = useCallback(
+    (runId: string) => {
+      if (!coordinatorId) return;
+      setCoordinatorActivityRunId(runId);
+      setCoordinatorReviewView("activity");
+      setCoordinatorDetailsOpen(true);
+    },
+    [coordinatorId],
+  );
+  const retryCoordinator = () => {
+    const latestUserMessage = coordinatorThread?.projection.messages.findLast(
+      (message) => message.role === "user" && message.createdBy === "user",
+    );
+    if (!latestUserMessage || sending || blocked) return;
+    setRetryingCoordinator(true);
+    void routingSend(latestUserMessage.text, undefined, latestUserMessage.attachments)
+      .catch((error) =>
+        setError(error instanceof Error ? error.message : "The message could not be retried."),
+      )
+      .finally(() => setRetryingCoordinator(false));
+  };
   const waiting = waitingCount(workers);
   const openLink = useOpenLink(null);
   const pullRequests = collectProjectPullRequests(
@@ -1030,6 +1062,8 @@ export function ProjectWorkspaceSurface({
                 environmentId={project.environmentId}
                 threadId={coordinatorId}
                 error={error}
+                view={coordinatorReviewView}
+                runId={coordinatorReviewView === "activity" ? coordinatorActivityRunId : null}
                 routing={{
                   coordinatorModelControls,
                   saveCoordinatorModel,
@@ -1043,14 +1077,14 @@ export function ProjectWorkspaceSurface({
                 onClose={() => setCoordinatorDetailsOpen(false)}
               />
             ) : null}
-            <div className={coordinatorDetailsOpen ? "hidden" : "contents"}>
+            <div className="contents">
               <h2 className="sr-only">Coordinator</h2>
               {query.error && (
                 <p className="project-notice sws-pane-notice" role="alert">
                   {query.error}{" "}
-                  <button type="button" className="project-control" onClick={query.refresh}>
+                  <Button variant="outline" size="xs" onClick={query.refresh}>
                     Retry
-                  </button>
+                  </Button>
                 </p>
               )}
               {coordinatorId ? (
@@ -1065,7 +1099,17 @@ export function ProjectWorkspaceSurface({
                   onOpenPullRequest={(url) => void openLink(url).catch(() => undefined)}
                   attention={attention}
                   onOpenCoordinatorPage={openCoordinatorPage}
+                  onOpenCoordinatorActivity={openCoordinatorActivity}
                   failure={coordinatorFailure}
+                  onRetry={retryCoordinator}
+                  retrying={retryingCoordinator}
+                  retryDisabled={
+                    Boolean(blocked) ||
+                    sending ||
+                    !coordinatorThread?.projection.messages.some(
+                      (message) => message.role === "user" && message.createdBy === "user",
+                    )
+                  }
                   progress={coordinatorWork}
                   empty={welcome}
                 />
@@ -1212,7 +1256,7 @@ export function ProjectWorkspaceSurface({
                     {coordinator && coordinatorTone ? (
                       <Tip
                         label={
-                          attention
+                          attention && attention.reason !== "failed"
                             ? `${attention.message} Review here`
                             : "Coordinator status. Show its latest message"
                         }
@@ -1221,13 +1265,21 @@ export function ProjectWorkspaceSurface({
                           type="button"
                           className="sws-state"
                           data-tone={coordinatorTone}
-                          data-opens={attention ? "coordinator-review" : "conversation"}
-                          onClick={attention ? openCoordinatorPage : openCoordinator}
+                          data-opens={
+                            attention && attention.reason !== "failed"
+                              ? "coordinator-review"
+                              : "conversation"
+                          }
+                          onClick={
+                            attention && attention.reason !== "failed"
+                              ? openCoordinatorPage
+                              : openCoordinator
+                          }
                         >
                           <span className="sws-dot" data-tone={coordinatorTone} aria-hidden />
                           {THREAD_TONE_LABELS[coordinatorTone]}
                           <span className="sr-only">
-                            {attention
+                            {attention && attention.reason !== "failed"
                               ? `, ${attention.action.toLowerCase()} here`
                               : ", show the coordinator's latest message"}
                           </span>
@@ -1242,6 +1294,12 @@ export function ProjectWorkspaceSurface({
                       savedMachineMissing={savedMachineMissing}
                       onChoose={onCheckout}
                     />
+                    <ProjectMachineHandoff
+                      key={`${project.environmentId}:${project.id}`}
+                      project={project}
+                      coordinatorId={mainCoordinatorId}
+                      onOpenChange={setMachineHandoffOpen}
+                    />
                     <ProjectUsageIndicator
                       onOpenProjectUsage={() => setTab("usage")}
                       projectEnvironmentId={project.environmentId}
@@ -1250,13 +1308,13 @@ export function ProjectWorkspaceSurface({
                   </span>
                   {coordinatorModelControls}
                   {coordinatorFallback ? (
-                    <span
-                      className="sws-model-fallback"
-                      role="status"
-                      title={`Saved model: ${coordinatorFallback.saved.full}. The coordinator goes back to it once its usage has room.`}
+                    <Tip
+                      label={`Saved model: ${coordinatorFallback.saved.full}. The coordinator goes back to it once its usage has room.`}
                     >
-                      On {coordinatorFallback.now.full}
-                    </span>
+                      <span className="sws-model-fallback" role="status">
+                        On {coordinatorFallback.now.full}
+                      </span>
+                    </Tip>
                   ) : null}
                 </div>
               </form>
@@ -1315,6 +1373,7 @@ export function ProjectWorkspaceSurface({
                         threadId={selectedThread.id}
                         routeKind="server"
                         layoutMode="embedded"
+                        suspendShortcuts={coordinatorDetailsOpen || machineHandoffOpen}
                         embeddedHeaderToolsTarget={threadToolsSlot}
                         reserveTitleBarControlInset={false}
                       />
