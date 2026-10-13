@@ -3,6 +3,10 @@
 Product usage data is off by default. A SpecWithCode server records and sends nothing unless
 you turn collection on, and no PostHog project is built in.
 
+Disabled or unconfigured collection also avoids reading native-provider identity files and creating a telemetry
+identifier. Local diagnostics and explicitly configured OpenTelemetry export are separate; see
+[Data and privacy](privacy.md) for a voluntary support-report workflow.
+
 To turn it on, set `STUDIO_TELEMETRY_ENABLED=true` in the server's environment before starting it,
 together with `STUDIO_POSTHOG_HOST` and `STUDIO_POSTHOG_KEY` for the PostHog project that should
 receive the events. The server then sends product usage events there, associated with a hashed

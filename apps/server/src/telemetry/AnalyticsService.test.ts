@@ -12,6 +12,19 @@ import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { HostProcessArchitecture, HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
+import { vi } from "vite-plus/test";
+
+const identityAccess = vi.hoisted(() => ({ calls: 0 }));
+// Test collection without reading the machine's real native-provider account files.
+vi.mock("./Identify.ts", async () => {
+  const Effect = await import("effect/Effect");
+  return {
+    getTelemetryIdentifier: Effect.sync(() => {
+      identityAccess.calls += 1;
+      return "test-identity";
+    }),
+  };
+});
 
 import * as ServerConfig from "../config.ts";
 import { getTelemetryIdentifier } from "./Identify.ts";
@@ -114,6 +127,10 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
 
       yield* Effect.gen(function* () {
         const analytics = yield* AnalyticsService.AnalyticsService;
+        assert.deepEqual(analytics.configuration, {
+          productUsageEnabled: true,
+          productUsageDestinationConfigured: true,
+        });
         for (let index = 0; index < 20; index += 1) {
           yield* analytics.record("test.retry", { index });
         }
@@ -234,6 +251,7 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
 
   it.effect("does not send batch requests when telemetry is disabled", () =>
     Effect.gen(function* () {
+      const identityCallsBefore = identityAccess.calls;
       const capturedPaths: Array<string> = [];
       const layerServerConfig = ServerConfig.ServerConfig.layerTest(process.cwd(), {
         prefix: "studio-telemetry-disabled-",
@@ -269,9 +287,52 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
         const analytics = yield* AnalyticsService.AnalyticsService;
         yield* analytics.record("test.disabled", { index: 1 });
         yield* analytics.flush;
+        assert.deepEqual(analytics.configuration, {
+          productUsageEnabled: false,
+          productUsageDestinationConfigured: true,
+        });
       }).pipe(Effect.provide(layerRuntime));
 
       assert.deepEqual(capturedPaths, []);
+      assert.equal(
+        identityAccess.calls,
+        identityCallsBefore,
+        "disabled telemetry must not access native provider identity",
+      );
+    }),
+  );
+  it.effect("does not access provider identity when collection has no destination", () =>
+    Effect.gen(function* () {
+      const identityCallsBefore = identityAccess.calls;
+      const batches: Array<ReadonlyArray<{ readonly uuid: string }>> = [];
+      const runtime = AnalyticsService.layer.pipe(
+        Layer.provide(
+          ServerConfig.ServerConfig.layerTest(process.cwd(), {
+            prefix: "studio-telemetry-unconfigured-",
+          }),
+        ),
+        Layer.provide(
+          ConfigProvider.layer(ConfigProvider.fromUnknown({ STUDIO_TELEMETRY_ENABLED: true })),
+        ),
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(HostProcessPlatform, "linux"),
+            Layer.succeed(HostProcessArchitecture, "arm64"),
+            layerAcceptThenFailClient(batches),
+          ),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const analytics = yield* AnalyticsService.AnalyticsService;
+        yield* analytics.record("test.unconfigured");
+        yield* analytics.flush;
+        assert.deepEqual(analytics.configuration, {
+          productUsageEnabled: false,
+          productUsageDestinationConfigured: false,
+        });
+      }).pipe(Effect.provide(runtime));
+      assert.equal(identityAccess.calls, identityCallsBefore);
+      assert.deepEqual(batches, []);
     }),
   );
 });

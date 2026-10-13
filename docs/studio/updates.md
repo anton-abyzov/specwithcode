@@ -85,6 +85,8 @@ To install the agent by hand on a Mac without the desktop app (M1, M3):
      --arg=--allow-existing-browser-heartbeat --upload v0.2.1
    ```
 
+   Take each `<installed-commit>` from `update_agent.py --status` (`installedSourceCommit`) on the machine, not from `git rev-parse` of an older tag. The history was rewritten on 2026-10-13, so releases up to 1.0.8 report source commits that no longer exist in the repository.
+
 A release without a plan shows "needs a manual upgrade" in Settings and is never installed on its own.
 
 ## Signing, later

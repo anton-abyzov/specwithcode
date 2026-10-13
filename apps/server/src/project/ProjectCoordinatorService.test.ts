@@ -19,6 +19,7 @@ import {
   type OrchestrationV2Run,
   type OrchestrationV2ThreadShell,
   type ServerProvider,
+  type ServerSettings,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
@@ -41,6 +42,7 @@ const commandId = CommandId.make("request:one");
 const model = { instanceId: ProviderInstanceId.make("claude"), model: "sonnet" };
 const fixture = (afterCoordinatorLaunch: Effect.Effect<void> = Effect.void) => {
   let providers: ReadonlyArray<ServerProvider> = [];
+  let serverSettings = DEFAULT_SERVER_SETTINGS;
   let project: Project = {
     id,
     title: "Project",
@@ -136,7 +138,7 @@ const fixture = (afterCoordinatorLaunch: Effect.Effect<void> = Effect.void) => {
         }).pipe(Effect.tap(() => afterCoordinatorLaunch)),
     }),
     Layer.mock(Settings.ServerSettingsService)({
-      getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+      getSettings: Effect.sync(() => serverSettings),
     }),
     Layer.mock(Providers.ProviderRegistry)({
       getProviders: Effect.sync(() => providers),
@@ -166,8 +168,45 @@ const fixture = (afterCoordinatorLaunch: Effect.Effect<void> = Effect.void) => {
     setProviders: (next: ReadonlyArray<ServerProvider>) => {
       providers = next;
     },
+    setSettings: (patch: Partial<ServerSettings>) => {
+      serverSettings = { ...serverSettings, ...patch };
+    },
   };
 };
+it.effect(
+  "launches with the project's approval mode instead of the host's full-access default",
+  () =>
+    Effect.gen(function* () {
+      const f = fixture();
+      f.setSettings({
+        defaultRuntimeMode: "full-access",
+        projectSettingsOverrides: { [id]: { defaultRuntimeMode: "approval-required" } },
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* Coordinator.ProjectCoordinatorService;
+        yield* service.start({ projectId: id, commandId });
+      }).pipe(Effect.provide(Coordinator.layer), Effect.provide(f.dependencies));
+      expect(f.launches).toHaveLength(1);
+      expect(f.launches[0]?.runtimeMode).toBe("approval-required");
+    }),
+);
+it.effect("inherits the host approval mode when only another project has a runtime override", () =>
+  Effect.gen(function* () {
+    const f = fixture();
+    f.setSettings({
+      defaultRuntimeMode: "approval-required",
+      projectSettingsOverrides: {
+        [ProjectId.make("another-project")]: { defaultRuntimeMode: "full-access" },
+      },
+    });
+    yield* Effect.gen(function* () {
+      const service = yield* Coordinator.ProjectCoordinatorService;
+      yield* service.start({ projectId: id, commandId });
+    }).pipe(Effect.provide(Coordinator.layer), Effect.provide(f.dependencies));
+    expect(f.launches).toHaveLength(1);
+    expect(f.launches[0]?.runtimeMode).toBe("approval-required");
+  }),
+);
 it.effect(
   "serializes concurrent starts and finds the same retained coordinator after service restart",
   () =>

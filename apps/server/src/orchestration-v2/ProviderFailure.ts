@@ -10,8 +10,10 @@ import type {
   RunId,
   ThreadId,
 } from "@specweave-studio/contracts";
+import { ProjectEnvironmentError } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Cause from "effect/Cause";
+import * as Schema from "effect/Schema";
 
 import type { IdAllocatorV2Shape } from "./IdAllocator.ts";
 import { ContextHandoffBudgetError } from "./ContextHandoffDelivery.ts";
@@ -21,6 +23,69 @@ export const MAX_PROVIDER_FAILURE_MESSAGE_LENGTH = 4_096;
 export const MAX_PROVIDER_FAILURE_CODE_LENGTH = 128;
 
 const DEFAULT_PROVIDER_FAILURE_MESSAGE = "Provider turn failed.";
+
+const isProjectEnvironmentCode = Schema.is(ProjectEnvironmentError.fields.code);
+
+/** Reconstruct guidance from the closed code set, never trust a cause-provided message. */
+function projectEnvironmentCode(
+  cause: unknown,
+): typeof ProjectEnvironmentError.fields.code.Type | undefined {
+  if (typeof cause !== "object" || cause === null) return undefined;
+  try {
+    const record = cause as Record<string, unknown>;
+    return record._tag === "ProjectEnvironmentError" && isProjectEnvironmentCode(record.code)
+      ? record.code
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const DIAGNOSTIC_ERROR_TAGS = new Set([
+  "ProviderAdapterTurnStartError",
+  "ProviderAdapterOpenSessionError",
+  "ProviderAdapterEventStreamError",
+  "ProviderAdapterProtocolError",
+  "ProviderAdapterResumeThreadError",
+  "ProviderSetupError",
+  "ProjectEnvironmentError",
+  "ContextHandoffBudgetError",
+  "ContextHandoffDeliveryUncertainError",
+  "AcpRequestError",
+  "AcpSpawnError",
+  "AcpTransportError",
+  "SystemError",
+]);
+
+/** Local logs need the cause category, never raw prompts, paths, credentials or defect text. */
+export function providerFailureDiagnostics(cause: unknown): {
+  readonly errorTags: ReadonlyArray<string>;
+  readonly errorCode?: string;
+} {
+  const errorTags: string[] = [],
+    seen = new Set<unknown>();
+  let errorCode: string | undefined;
+  for (let depth = 0; depth < 16 && cause != null && !seen.has(cause); depth++) {
+    seen.add(cause);
+    try {
+      if (Cause.isCause(cause)) {
+        cause = Cause.squash(cause);
+        continue;
+      }
+      if (typeof cause !== "object") break;
+      const tag = (cause as Record<string, unknown>)._tag;
+      errorTags.push(
+        typeof tag === "string" && DIAGNOSTIC_ERROR_TAGS.has(tag) ? tag : "UnknownError",
+      );
+      const projectCode = projectEnvironmentCode(cause);
+      if (projectCode !== undefined) errorCode = projectCode;
+      cause = (cause as Record<string, unknown>).cause;
+    } catch {
+      break;
+    }
+  }
+  return { errorTags, ...(errorCode === undefined ? {} : { errorCode }) };
+}
 
 /** Translate known categories without exposing arbitrary provider defect text. */
 function causeMessage(cause: unknown): string | undefined {
@@ -35,6 +100,17 @@ function causeMessage(cause: unknown): string | undefined {
       }
       if (typeof cause !== "object") break;
       switch ((cause as Record<string, unknown>)._tag) {
+        case "ProjectEnvironmentError":
+          const projectCode = projectEnvironmentCode(cause);
+          if (projectCode !== undefined) {
+            return projectCode === "unsupported_provider"
+              ? "This provider cannot use additional project folders under the current permissions. For ACP, select Full access without a restrictive sandbox or approval override, use a provider that supports folder grants, or remove the extra folders in Project settings."
+              : new ProjectEnvironmentError({
+                  projectId: "diagnostic-project" as ProjectEnvironmentError["projectId"],
+                  code: projectCode,
+                }).message;
+          }
+          break;
         case "ContextHandoffBudgetError":
           return new ContextHandoffBudgetError().message;
         case "ClaudeBackgroundWorkBlocksQueryReplacementError":
@@ -148,7 +224,7 @@ export function makeProviderFailure(input: {
   readonly resetAt?: string | null;
 }): OrchestrationV2ProviderFailure {
   const setup = providerSetupFailure(input.cause);
-  const failureClass = setup?.usageLimit ? "usage_limit" : input.class ?? "unknown";
+  const failureClass = setup?.usageLimit ? "usage_limit" : (input.class ?? "unknown");
   const resetAt = setup?.usageLimit?.resetAt ?? input.resetAt;
   const rawMessage = input.message ?? causeMessage(input.cause) ?? DEFAULT_PROVIDER_FAILURE_MESSAGE;
   const message = boundedText(rawMessage, MAX_PROVIDER_FAILURE_MESSAGE_LENGTH);
@@ -161,9 +237,7 @@ export function makeProviderFailure(input: {
     message: message || DEFAULT_PROVIDER_FAILURE_MESSAGE,
     code,
     retryable: input.retryable ?? null,
-    ...(failureClass === "usage_limit" &&
-    resetAt != null &&
-    Number.isFinite(Date.parse(resetAt))
+    ...(failureClass === "usage_limit" && resetAt != null && Number.isFinite(Date.parse(resetAt))
       ? { resetAt: DateTime.formatIso(DateTime.makeUnsafe(resetAt)) }
       : {}),
   };

@@ -50,6 +50,10 @@ interface DeliveryState {
 }
 
 const FLUSH_INTERVAL_MS = 1_000;
+interface ProductUsageConfiguration {
+  readonly productUsageEnabled: boolean;
+  readonly productUsageDestinationConfigured: boolean;
+}
 // A hung send would hold the flush lock, and with it the shutdown flush.
 const SEND_TIMEOUT = "10 seconds";
 const MAX_BATCH_ATTEMPTS = 5;
@@ -67,12 +71,8 @@ export function retryDelayMs(failures: number, random: number): number {
 }
 
 const TelemetryEnvConfig = Config.all({
-  posthogKey: Config.String("STUDIO_POSTHOG_KEY").pipe(
-    Config.withDefault(""),
-  ),
-  posthogHost: Config.String("STUDIO_POSTHOG_HOST").pipe(
-    Config.withDefault(""),
-  ),
+  posthogKey: Config.String("STUDIO_POSTHOG_KEY").pipe(Config.withDefault("")),
+  posthogHost: Config.String("STUDIO_POSTHOG_HOST").pipe(Config.withDefault("")),
   enabled: Config.Boolean("STUDIO_TELEMETRY_ENABLED").pipe(Config.withDefault(false)),
   flushBatchSize: Config.Number("STUDIO_TELEMETRY_FLUSH_BATCH_SIZE").pipe(Config.withDefault(20)),
   maxBufferedEvents: Config.Number("STUDIO_TELEMETRY_MAX_BUFFERED_EVENTS").pipe(
@@ -84,6 +84,8 @@ const TelemetryEnvConfig = Config.all({
 export class AnalyticsService extends Context.Service<
   AnalyticsService,
   {
+    /** Startup configuration, not a delivery receipt. Test adapters may omit it. */
+    readonly configuration?: ProductUsageConfiguration;
     /** Record an anonymous event for best-effort buffered delivery. */
     readonly record: (
       event: string,
@@ -98,6 +100,7 @@ export class AnalyticsService extends Context.Service<
   static readonly layerTest = Layer.succeed(
     AnalyticsService,
     AnalyticsService.of({
+      configuration: { productUsageEnabled: false, productUsageDestinationConfigured: false },
       record: () => Effect.void,
       flush: Effect.void,
     }),
@@ -122,6 +125,17 @@ function serverOsFromNodePlatform(platform: string): ClientOs {
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const telemetryConfig = yield* TelemetryEnvConfig;
+  const destinationConfigured =
+    telemetryConfig.posthogKey.trim().length > 0 && telemetryConfig.posthogHost.trim().length > 0;
+  const configuration = {
+    productUsageEnabled: telemetryConfig.enabled && destinationConfigured,
+    productUsageDestinationConfigured: destinationConfigured,
+  };
+  // Disabled collection must not read native-provider account files, create an
+  // installation identifier, or start a background exporter.
+  if (!configuration.productUsageEnabled) {
+    return AnalyticsService.of({ configuration, record: () => Effect.void, flush: Effect.void });
+  }
   const httpClient = yield* HttpClient.HttpClient;
   const serverConfig = yield* ServerConfig.ServerConfig;
   const identifier = yield* getTelemetryIdentifier;
@@ -282,7 +296,7 @@ export const make = Effect.gen(function* () {
 
   yield* Effect.addFinalizer(() => flush);
 
-  return AnalyticsService.of({ record, flush });
+  return AnalyticsService.of({ configuration, record, flush });
 });
 
 export const layer = Layer.effect(AnalyticsService, make);

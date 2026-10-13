@@ -323,17 +323,57 @@ try {
   await page.getByRole("button", { name: /Needs review/i }).waitFor({ timeout: 30000 });
   await page.locator("#project-prompt").fill("Preserve this coordinator draft");
   await page.getByRole("button", { name: /Needs review/i }).click();
-  await page.getByRole("button", { name: /Back to coordinator/i }).waitFor({ timeout: 15000 });
-  assert.equal(page.url(), projectUrl, "Review must stay inside the project route");
-  receipt.checks.push({ reviewStaysInProject: true });
-  await page.screenshot({ path: join(out, "coordinator-review-desktop.png"), fullPage: true });
-  receipt.screenshots.push(join(out, "coordinator-review-desktop.png"));
-  await page.getByRole("button", { name: /Back to coordinator/i }).click();
+  assert.equal(page.url(), projectUrl, "A failed coordinator must stay in its conversation");
+  assert.equal(
+    await page.getByRole("button", { name: /Back to coordinator|Review coordinator/i }).count(),
+    0,
+  );
+  assert.equal(await page.getByRole("dialog").count(), 0);
+  assert.equal(await page.locator("#project-prompt").count(), 1);
+  await page.getByText("Error details", { exact: true }).click();
+  const retry = page.getByRole("button", { name: "Retry last message", exact: true });
+  assert.equal(await retry.getAttribute("data-slot"), "button");
+  const historyUrl = `/api/orchestration/threads/${encodeURIComponent(receipt.coordinatorId)}`;
+  const beforeRetry = await page.evaluate(async (url) => {
+    const response = await fetch(url, { headers: { "x-studio-orchestration-protocol": "2" } });
+    if (!response.ok) throw new Error(`Owned thread read failed: ${response.status}`);
+    return (await response.json()).projection.runs.at(-1);
+  }, historyUrl);
+  assert.equal(beforeRetry.status, "failed");
+  await retry.click();
+  const retriedRun = await page.waitForFunction(
+    async ({ url, ordinal }) => {
+      const response = await fetch(url, { headers: { "x-studio-orchestration-protocol": "2" } });
+      if (!response.ok) return false;
+      const run = (await response.json()).projection.runs.at(-1);
+      return run && run.ordinal > ordinal && run.status === "failed" ? run : false;
+    },
+    { url: historyUrl, ordinal: beforeRetry.ordinal },
+    { timeout: 30000 },
+  );
+  const latestRun = await retriedRun.jsonValue();
+  await page.waitForFunction(
+    (id) => document.querySelector("[data-coordinator-failure] dd")?.textContent === id,
+    latestRun.id,
+  );
+  await page.locator("[data-coordinator-failure]").waitFor({ timeout: 30000 });
+  await retry.waitFor({ state: "visible", timeout: 30000 });
+  assert.equal(await retry.isEnabled(), true, "Retry must settle and become usable again");
+  receipt.checks.push({
+    recoveryStaysInConversation: true,
+    styledRetry: true,
+    retrySettles: true,
+    retryStartsNewRun: true,
+    errorDetailsMatchLatestRun: true,
+    singleCoordinatorComposer: true,
+  });
+  await page.screenshot({ path: join(out, "coordinator-recovery-desktop.png"), fullPage: true });
+  receipt.screenshots.push(join(out, "coordinator-recovery-desktop.png"));
   assert.equal(
     await page.locator("#project-prompt").inputValue(),
     "Preserve this coordinator draft",
   );
-  receipt.checks.push({ reviewPreservesDraft: true });
+  receipt.checks.push({ retryPreservesDraft: true });
   await page.getByText("Routing worker", { exact: true }).click();
   await page.waitForURL(
     (url) => url.pathname.startsWith("/projects/") && url.searchParams.has("thread"),
@@ -465,6 +505,10 @@ try {
     const path = join(out, `project-${width}-${theme}.png`);
     await page.screenshot({ path, fullPage: true });
     receipt.screenshots.push(path);
+  }
+  if (process.env.STUDIO_TEST_INCLUDE_PRIVACY === "1") {
+    const { verifyPrivacyPage } = await import("./coordinator-privacy.mjs");
+    await verifyPrivacyPage({ page, origin, out, receipt });
   }
   assert.deepEqual(errors, []);
   receipt.checks.push({ pageErrors: errors });

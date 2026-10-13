@@ -24,6 +24,7 @@ import { Route as SettingsSkillsRouteImport } from './routes/settings.skills'
 import { Route as SettingsScheduledTasksRouteImport } from './routes/settings.scheduled-tasks'
 import { Route as SettingsProvidersRouteImport } from './routes/settings.providers'
 import { Route as SettingsProjectsRouteImport } from './routes/settings.projects'
+import { Route as SettingsPrivacyRouteImport } from './routes/settings.privacy'
 import { Route as SettingsOpenSourceLicensesRouteImport } from './routes/settings.open-source-licenses'
 import { Route as SettingsModsRouteImport } from './routes/settings.mods'
 import { Route as SettingsMessagingRouteImport } from './routes/settings.messaging'
@@ -113,6 +114,11 @@ const SettingsProvidersRoute = SettingsProvidersRouteImport.update({
 const SettingsProjectsRoute = SettingsProjectsRouteImport.update({
   id: '/projects',
   path: '/projects',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsPrivacyRoute = SettingsPrivacyRouteImport.update({
+  id: '/privacy',
+  path: '/privacy',
   getParentRoute: () => SettingsRoute,
 } as any)
 const SettingsOpenSourceLicensesRoute =
@@ -220,6 +226,7 @@ export interface FileRoutesByFullPath {
   '/settings/messaging': typeof SettingsMessagingRoute
   '/settings/mods': typeof SettingsModsRoute
   '/settings/open-source-licenses': typeof SettingsOpenSourceLicensesRoute
+  '/settings/privacy': typeof SettingsPrivacyRoute
   '/settings/projects': typeof SettingsProjectsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/scheduled-tasks': typeof SettingsScheduledTasksRoute
@@ -251,6 +258,7 @@ export interface FileRoutesByTo {
   '/settings/messaging': typeof SettingsMessagingRoute
   '/settings/mods': typeof SettingsModsRoute
   '/settings/open-source-licenses': typeof SettingsOpenSourceLicensesRoute
+  '/settings/privacy': typeof SettingsPrivacyRoute
   '/settings/projects': typeof SettingsProjectsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/scheduled-tasks': typeof SettingsScheduledTasksRoute
@@ -285,6 +293,7 @@ export interface FileRoutesById {
   '/settings/messaging': typeof SettingsMessagingRoute
   '/settings/mods': typeof SettingsModsRoute
   '/settings/open-source-licenses': typeof SettingsOpenSourceLicensesRoute
+  '/settings/privacy': typeof SettingsPrivacyRoute
   '/settings/projects': typeof SettingsProjectsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/scheduled-tasks': typeof SettingsScheduledTasksRoute
@@ -320,6 +329,7 @@ export interface FileRouteTypes {
     | '/settings/messaging'
     | '/settings/mods'
     | '/settings/open-source-licenses'
+    | '/settings/privacy'
     | '/settings/projects'
     | '/settings/providers'
     | '/settings/scheduled-tasks'
@@ -351,6 +361,7 @@ export interface FileRouteTypes {
     | '/settings/messaging'
     | '/settings/mods'
     | '/settings/open-source-licenses'
+    | '/settings/privacy'
     | '/settings/projects'
     | '/settings/providers'
     | '/settings/scheduled-tasks'
@@ -384,6 +395,7 @@ export interface FileRouteTypes {
     | '/settings/messaging'
     | '/settings/mods'
     | '/settings/open-source-licenses'
+    | '/settings/privacy'
     | '/settings/projects'
     | '/settings/providers'
     | '/settings/scheduled-tasks'
@@ -512,6 +524,13 @@ declare module '@tanstack/react-router' {
       path: '/projects'
       fullPath: '/settings/projects'
       preLoaderRoute: typeof SettingsProjectsRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/privacy': {
+      id: '/settings/privacy'
+      path: '/privacy'
+      fullPath: '/settings/privacy'
+      preLoaderRoute: typeof SettingsPrivacyRouteImport
       parentRoute: typeof SettingsRoute
     }
     '/settings/open-source-licenses': {
@@ -658,6 +677,7 @@ interface SettingsRouteChildren {
   SettingsMessagingRoute: typeof SettingsMessagingRoute
   SettingsModsRoute: typeof SettingsModsRoute
   SettingsOpenSourceLicensesRoute: typeof SettingsOpenSourceLicensesRoute
+  SettingsPrivacyRoute: typeof SettingsPrivacyRoute
   SettingsProjectsRoute: typeof SettingsProjectsRoute
   SettingsProvidersRoute: typeof SettingsProvidersRoute
   SettingsScheduledTasksRoute: typeof SettingsScheduledTasksRoute
@@ -680,6 +700,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsMessagingRoute: SettingsMessagingRoute,
   SettingsModsRoute: SettingsModsRoute,
   SettingsOpenSourceLicensesRoute: SettingsOpenSourceLicensesRoute,
+  SettingsPrivacyRoute: SettingsPrivacyRoute,
   SettingsProjectsRoute: SettingsProjectsRoute,
   SettingsProvidersRoute: SettingsProvidersRoute,
   SettingsScheduledTasksRoute: SettingsScheduledTasksRoute,

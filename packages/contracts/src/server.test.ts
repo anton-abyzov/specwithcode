@@ -208,6 +208,20 @@ describe("ServerObservability", () => {
 
     expect(parsed.otlpLogsEnabled).toBe(false);
     expect(parsed.otlpLogsUrl).toBeUndefined();
+    expect(parsed.productUsageEnabled).toBeUndefined();
+    expect(parsed.productUsageDestinationConfigured).toBeUndefined();
+  });
+  it("preserves explicit product collection state without destination credentials", () => {
+    const parsed = decodeServerObservability({
+      logsDirectoryPath: "/tmp/studio/logs",
+      localTracingEnabled: true,
+      otlpTracesEnabled: false,
+      otlpMetricsEnabled: false,
+      productUsageEnabled: false,
+      productUsageDestinationConfigured: true,
+    });
+    expect(parsed.productUsageEnabled).toBe(false);
+    expect(parsed.productUsageDestinationConfigured).toBe(true);
   });
 });
 

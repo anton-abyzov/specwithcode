@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { formatDisplayDate, formatDisplayDates, getDisplayDateSegments } from "./displayDates";
 
 const ny = { locale: "en-US", timeZone: "America/New_York" };
