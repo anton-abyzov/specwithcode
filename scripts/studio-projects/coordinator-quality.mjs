@@ -55,9 +55,10 @@ export function readBrief(path) {
 }
 
 export function validateReview(review, observed, now = Date.now()) {
-  assert.deepEqual(Object.keys(review).sort(), ['authorization', 'briefs', 'buildSha256', 'coordinator', 'expiresAt', 'maxRuns', 'schemaVersion', 'sourceCommit', 'timeoutMs', 'toolingSha256', 'worker'].sort());
+  assert.deepEqual(Object.keys(review).filter(key => key !== 'projectKinds').sort(), ['authorization', 'briefs', 'buildSha256', 'coordinator', 'expiresAt', 'maxRuns', 'schemaVersion', 'sourceCommit', 'timeoutMs', 'toolingSha256', 'worker'].sort());
+  if (review.projectKinds !== undefined) invariant(JSON.stringify(review.projectKinds) === '["specweave"]', 'review-project-selection');
   invariant(review.schemaVersion === 1 && review.authorization === 'two-realistic-coordinator-ui-cycles', 'review-authorization');
-  invariant(review.maxRuns === MAX_RUNS && Number.isInteger(review.timeoutMs) && review.timeoutMs >= 60_000 && review.timeoutMs <= 360_000, 'review-budget');
+  invariant(Number.isInteger(review.maxRuns) && review.maxRuns >= 1 && review.maxRuns <= MAX_RUNS && Number.isInteger(review.timeoutMs) && review.timeoutMs >= 60_000 && review.timeoutMs <= 360_000, 'review-budget');
   invariant(Date.parse(review.expiresAt) > now && Date.parse(review.expiresAt) <= now + 3_600_000, 'review-expiry');
   for (const key of ['sourceCommit', 'buildSha256', 'toolingSha256']) invariant(review[key] === observed[key], 'review-binding');
   assert.deepEqual(review.briefs, observed.briefs, 'brief bindings differ');
@@ -174,7 +175,7 @@ export function observeQuality(scope, projection) {
   }
   for (const turn of projection.providerTurns ?? []) scope.turns.add(turn.id);
   for (const attempt of projection.attempts ?? []) scope.attempts.add(attempt.id);
-  invariant(scope.runs.size <= MAX_RUNS && scope.turns.size <= MAX_RUNS && scope.attempts.size <= MAX_RUNS, 'native-run-budget');
+  invariant(scope.runs.size <= scope.review.maxRuns && scope.turns.size <= scope.review.maxRuns && scope.attempts.size <= scope.review.maxRuns, 'native-run-budget');
   invariant([...scope.threads.values()].filter(t => t.projectId === project.id).length <= 2, 'extra-worker');
   invariant((projection.subagents ?? []).every(s => s.origin === 'app_owned' && s.childThreadId), 'native-subagent-refused');
   const coordinator = projection.thread.id === `project-coordinator:${project.id}`;
@@ -218,14 +219,34 @@ export function approvalCandidate(scope, projection) {
   const turn = projection.providerTurns.find(t => t.id === q.providerTurnId);
   const provider = projection.providerThreads.find(t => t.id === run.providerThreadId);
   const session = projection.providerSessions.find(s => s.id === q.responseCapability.providerSessionId);
-  invariant(attempt?.runId === run.id && attempt.providerTurnId === q.providerTurnId && attempt.providerThreadId === run.providerThreadId && ACTIVE.has(attempt.status), 'approval-attempt-binding');
+  // Native attempts may retain a null forward link; the provider turn owns the
+  // authoritative reverse link (OrchestrationV2RunAttempt / ProviderEventIngestor).
+  invariant(attempt?.runId === run.id && (attempt.providerTurnId === null || attempt.providerTurnId === q.providerTurnId) && attempt.providerThreadId === run.providerThreadId && ACTIVE.has(attempt.status), 'approval-attempt-binding');
   invariant(turn?.runAttemptId === attempt.id && turn.providerThreadId === run.providerThreadId && ACTIVE.has(turn.status), 'approval-turn-binding');
-  invariant(provider?.appThreadId === projection.thread.id && provider.driver === 'codex' && provider.providerSessionId === session?.id && session?.driver === 'codex' && session.providerInstanceId === scope.review.coordinator.instanceId && ACTIVE.has(session.status), 'approval-session-binding');
+  const activeTurns = projection.providerTurns.filter(t => t.runAttemptId === attempt.id && ACTIVE.has(t.status));
+  invariant(activeTurns.length === 1 && activeTurns[0] === turn, 'approval-ambiguous-turn-binding');
+  invariant(provider?.appThreadId === projection.thread.id && provider.driver === 'codex' && provider.providerSessionId === session?.id && session?.driver === 'codex' && session.providerInstanceId === scope.review.coordinator.instanceId && ['ready', 'running', 'waiting'].includes(session.status), 'approval-session-binding');
   invariant(call.providerThreadId === provider.id && item.providerThreadId === provider.id, 'approval-provider-binding');
   const binding = { threadId: projection.thread.id, requestId: q.id, runId: run.id, providerTurnId: q.providerTurnId, providerSessionId: q.responseCapability.providerSessionId, callId: call.id, inputSha256: sha(JSON.stringify(call.input)), op };
   if (scope.approvals.has(q.id)) { assert.deepEqual(scope.approvals.get(q.id), binding); return null; }
   invariant(scope.approvals.size < 8, 'approval-budget');
   return binding;
+}
+
+export function validateAutomaticWake(parent, worker, wake) {
+  const tasks = parent.subagents.filter(s => s.origin === 'app_owned');
+  invariant(tasks.length === 1, 'delegation-not-complete');
+  const task = tasks[0];
+  invariant(task.threadId === parent.thread.id && task.childThreadId === worker.thread.id && task.status === 'completed' && task.completionWake === 'always', 'delegation-not-complete');
+  invariant(task.completionDelivery?.state === 'acknowledged' && task.completionDelivery.observedByRunId === wake.id, 'completion-not-delivered');
+  const messages = parent.messages.filter(message => message.id === wake.userMessageId);
+  invariant(messages.length === 1, 'automatic-wake-missing');
+  const message = messages[0], marker = message.delegatedCompletion;
+  const original = parent.runs.find(run => run.id === task.runId);
+  invariant(message.threadId === parent.thread.id && message.runId === wake.id && message.role === 'user' && message.createdBy === 'agent' && message.creationSource === 'server', 'automatic-wake-provenance');
+  invariant(original && original.id !== wake.id && original.ordinal < wake.ordinal && marker?.parentRunId === original.id && Number.isInteger(marker.generation) && marker.generation >= 1 && original.delegatedCompletion?.nextGeneration === marker.generation + 1, 'automatic-wake-generation');
+  assert.deepEqual(marker.taskIds, [task.id], 'automatic-wake-task-binding');
+  return { messageId: message.id, parentRunId: original.id, wakeRunId: wake.id, generation: marker.generation, taskId: task.id };
 }
 
 function settingsFor(review) {
@@ -282,9 +303,9 @@ export async function run(options) {
   const reportDir = options['--report-dir']; invariant(!existsSync(reportDir), 'fresh-report-required'); mkdirSync(reportDir, { recursive: true, mode: 0o700 });
   const stateDir = mkdtempSync(join(tmpdir(), 'studio-coordinator-quality-')), dataDir = join(stateDir, 'studio');
   mkdirSync(join(dataDir, 'userdata'), { recursive: true, mode: 0o700 });
-  const projects = Object.keys(briefs).map(kind => ({ kind, id: randomUUID(), title: `${kind === 'easychamp' ? 'EasyChamp' : 'SpecWeave'} QA`, workspaceRoot: join(stateDir, kind) }));
+  const projects = (review.projectKinds ?? Object.keys(briefs)).map(kind => ({ kind, id: randomUUID(), title: `${kind === 'easychamp' ? 'EasyChamp' : 'SpecWeave'} QA`, workspaceRoot: join(stateDir, kind) }));
   const scope = makeScope(projects, review), snapshots = new Map();
-  const receipt = { schemaVersion: 1, ...observed, startedAt: new Date().toISOString(), reportDir, stateDir, origin: ORIGIN, maxRuns: MAX_RUNS, success: false, nativeProof: 'pending', projects: [], steps: [], approvals: [], observedRuns: [], browser: { headless: true, PWDEBUG: '0', PLAYWRIGHT_HTML_OPEN: 'never' }, limitations: ['Bounded observation stops unexpected activity but cannot prevent native read-only calls between polls.', 'Native provider requests inside an app run are not a subscription-spend measurement.', 'Factual assertions check supplied required and forbidden phrases; human editorial review remains separate.'] };
+  const receipt = { schemaVersion: 1, ...observed, startedAt: new Date().toISOString(), reportDir, stateDir, origin: ORIGIN, maxRuns: review.maxRuns, projectKinds: projects.map(p => p.kind), success: false, nativeProof: 'pending', projects: [], steps: [], approvals: [], observedRuns: [], browser: { headless: true, PWDEBUG: '0', PLAYWRIGHT_HTML_OPEN: 'never' }, limitations: ['Bounded observation stops unexpected activity but cannot prevent native read-only calls between polls.', 'Native provider requests inside an app run are not a subscription-spend measurement.', 'Factual assertions check supplied required and forbidden phrases; human editorial review remains separate.'] };
   const save = () => { receipt.observedRuns = [...scope.runs.values()]; receipt.observedProviderTurns = scope.turns.size; receipt.approvals = [...scope.approvals.values()].map(({ providerSessionId, ...binding }) => ({ ...binding, sessionSha256: sha(providerSessionId) })); saveJson(join(reportDir, 'receipt.json'), receipt); };
   const env = { ...nativeEnvironment(process.env, join(stateDir, 'unused-home'), true), STUDIO_DISABLE_AUTO_UPDATE: 'true' };
   let child, browser, context, page, stage = 'preflight', guardError, running = false, monitor;
@@ -350,7 +371,7 @@ export async function run(options) {
     await page.goto(ORIGIN, { waitUntil: 'domcontentloaded' });
     // Complete only deterministic fresh-store onboarding; never import native history.
     for (let i = 0; i < 5; i++) {
-      const skip = page.getByRole('button', { name: 'Do not import projects', exact: true }), next = page.getByRole('button', { name: 'Continue', exact: true }), project = page.locator('a[href*="/projects/"]').filter({ hasText: 'EasyChamp QA' }).first();
+      const skip = page.getByRole('button', { name: 'Do not import projects', exact: true }), next = page.getByRole('button', { name: 'Continue', exact: true }), project = page.locator('a[href*="/projects/"]').filter({ hasText: projects[0].title }).first();
       await Promise.any([skip, next, project].map(x => x.waitFor({ state: 'visible', timeout: 30_000 })));
       if (await skip.isVisible()) await skip.click(); else if (await next.isVisible()) await next.click(); else break;
     }
@@ -399,13 +420,13 @@ export async function run(options) {
           invariant(delegated.length === 1 && delegated[0].childThreadId === worker.thread.id && delegated[0].status === 'completed', 'delegation-not-complete');
           invariant(['acknowledged', 'delivered'].includes(delegated[0].completionDelivery?.state), 'completion-not-delivered');
           const wake = [...parent.runs].sort((a, b) => a.ordinal - b.ordinal).at(-1);
-          invariant(wake.delegatedCompletion, 'automatic-wake-missing');
+          const autoWake = validateAutomaticWake(parent, worker, wake);
           const textFor = (p, runId) => p.turnItems.filter(i => i.type === 'assistant_message' && i.runId === runId).map(i => i.text).join('\n');
           const workerText = textFor(worker, worker.runs[0].id), relayText = textFor(parent, wake.id);
           if (!workerText.trim() || !relayText.trim()) { await pause(250); continue; }
           settledAt ??= Date.now();
           if (Date.now() - settledAt < 750) { await pause(250); continue; }
-          outcome = { worker, workerText, relayText, checks: validateOutput(workerText, relayText, worker.thread.id, briefs[project.kind]) }; break;
+          outcome = { worker, workerText, relayText, autoWake, checks: validateOutput(workerText, relayText, worker.thread.id, briefs[project.kind]) }; break;
         } else settledAt = null;
         await pause(250);
       }
@@ -414,7 +435,7 @@ export async function run(options) {
       // erases useful output or justifies repeating subscription turns.
       writeFileSync(join(reportDir, `${project.kind}-brief.md`), outcome.workerText + '\n', { mode: 0o600 });
       writeFileSync(join(reportDir, `${project.kind}-relay.md`), outcome.relayText + '\n', { mode: 0o600 });
-      const cycle = { kind: project.kind, projectId: project.id, workerId: outcome.worker.thread.id, checks: outcome.checks, autoRelay: true, sidepaneKeptCoordinator: false, sourceUnchanged: false };
+      const cycle = { kind: project.kind, projectId: project.id, workerId: outcome.worker.thread.id, checks: outcome.checks, autoWake: outcome.autoWake, autoRelay: true, sidepaneKeptCoordinator: false, sourceUnchanged: false };
       receipt.projects.push(cycle); save();
       stage = `${project.kind}-render-and-link`;
       await page.reload({ waitUntil: 'domcontentloaded' }); await coordinator.waitFor();
