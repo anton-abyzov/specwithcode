@@ -63,6 +63,7 @@ import * as ThreadForkService from "./ThreadForkService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as ServiceUpdateCleanup from "../serviceUpdate/ServiceUpdateCleanup.ts";
 import * as ServiceUpdatePreparation from "../serviceUpdate/ServiceUpdatePreparation.ts";
 
 /** The shared application event log and its command receipts. */
@@ -299,6 +300,7 @@ const layerThreadLaunchProvided = ThreadLaunchService.layer.pipe(
 const layerProjectCoordinatorProvided = ProjectCoordinatorService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      ProjectionStore.layer,
       layerEventSinkProvided,
       layerProjectWorkspaceProvided,
       layerProjectService,
@@ -405,7 +407,23 @@ export const layerProduction = Layer.mergeAll(
   ),
   layerProviderContinuationWorkerProvided,
   ServiceUpdatePreparation.layer.pipe(
-    Layer.provide(Layer.merge(layerThreadManagementProvided, layerProviderSessionManagerProvided)),
+    Layer.provide(
+      Layer.mergeAll(
+        layerThreadManagementProvided,
+        layerProviderSessionManagerProvided,
+        ServiceUpdateCleanup.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              layerEventSinkProvided,
+              IdAllocator.layer,
+              ProjectionStore.layer,
+              EffectOutbox.layer,
+              layerProviderSessionManagerProvided,
+            ),
+          ),
+        ),
+      ),
+    ),
   ),
   layerAgentSessionImporterProvided,
   EffectOutbox.layerPruneWorker.pipe(Layer.provide(EffectOutbox.layer)),

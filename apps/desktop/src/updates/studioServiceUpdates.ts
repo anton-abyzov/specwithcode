@@ -4,6 +4,10 @@ import type {
   StudioServiceUpdateState,
   StudioServiceUpdateStatus,
 } from "@specweave-studio/contracts";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import { execFile } from "node:child_process";
 import * as FS from "node:fs";
 import * as Path from "node:path";
@@ -73,6 +77,13 @@ export function findManagedServiceInstallations(
   return found;
 }
 
+/**
+ * How the agent handles an install request: `normal` waits for a quiet
+ * service; `force` means the app has stopped and held the service's work, so
+ * the agent retries its snapshot every few seconds until `installHoldUntil`.
+ */
+export type ServiceInstallMode = "normal" | "force";
+
 export interface ServiceAgentConfig {
   readonly schemaVersion: 1;
   readonly checkAutomatically: boolean;
@@ -82,7 +93,109 @@ export interface ServiceAgentConfig {
   readonly quietMinutes: number;
   readonly installRequestedAt: string | null;
   readonly checkRequestedAt: string | null;
+  // Older agents ignore these three keys, so a forced request falls back to a
+  // normal one there.
+  readonly installMode: ServiceInstallMode;
+  readonly installHoldUntil: string | null;
+  readonly installCancelledAt: string | null;
+  /**
+   * The version the app showed for the pending request, when it knew one. The
+   * agent installs only that version and only within
+   * SERVICE_INSTALL_REQUEST_TTL_MS of `at`, which equals `installRequestedAt`.
+   * Older agents ignore it and treat `installRequestedAt` as before.
+   */
+  readonly installRequest?: ServiceInstallRequestRecord | null;
   readonly repository?: string;
+}
+
+export interface ServiceInstallRequestRecord {
+  readonly at: string;
+  readonly version: string;
+}
+
+/** What an install request writes besides `installRequestedAt`. */
+export interface ServiceInstallRequest {
+  readonly mode: ServiceInstallMode;
+  readonly holdUntil: string | null;
+  /** The version the renderer showed; null from older renderers. */
+  readonly version: string | null;
+}
+
+/**
+ * An install request the agent has not started within this long lapses
+ * (`update_request.py` REQUEST_TTL), so it never installs at a later idle moment.
+ */
+export const SERVICE_INSTALL_REQUEST_TTL_MS = 10 * 60_000;
+
+const RELEASE_VERSION = /^(?:0|[1-9]\d{0,8})\.(?:0|[1-9]\d{0,8})\.(?:0|[1-9]\d{0,8})$/;
+
+function releaseVersion(value: unknown): string | null {
+  return typeof value === "string" && RELEASE_VERSION.test(value) ? value : null;
+}
+
+/** A forced install's hold may end at most this far ahead; later times are ignored. */
+export const SERVICE_INSTALL_HOLD_LIMIT_MS = 30 * 60_000;
+
+const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
+
+function isoMillis(value: unknown): number | null {
+  if (typeof value !== "string" || value.length > 64 || !ISO_TIME.test(value)) return null;
+  return Option.match(DateTime.make(value), {
+    onNone: () => null,
+    onSome: (time) => DateTime.toEpochMillis(time),
+  });
+}
+
+/**
+ * Reads the renderer's install options. Anything unexpected is ignored rather
+ * than refused: an older renderer sends nothing, and a malformed hold must not
+ * stop the install. A hold time is kept only when it lies within the next 30
+ * minutes, normalised to UTC.
+ */
+export function parseServiceInstallOptions(raw: unknown, nowMs: number): ServiceInstallRequest {
+  if (typeof raw !== "object" || raw === null) {
+    return { mode: "normal", holdUntil: null, version: null };
+  }
+  const record = raw as {
+    readonly force?: unknown;
+    readonly holdUntil?: unknown;
+    readonly version?: unknown;
+  };
+  const version = releaseVersion(record.version);
+  if (record.force !== true) return { mode: "normal", holdUntil: null, version };
+  const until = isoMillis(record.holdUntil);
+  const holdUntil =
+    until !== null && until > nowMs && until <= nowMs + SERVICE_INSTALL_HOLD_LIMIT_MS
+      ? DateTime.formatIso(DateTime.makeUnsafe(until))
+      : null;
+  return { mode: "force", holdUntil, version };
+}
+
+/**
+ * Ties a request made at `at` to the version the renderer showed, or, from an
+ * older renderer that sends none, to the one the agent offers (what Settings
+ * showed). Null when no version is known: the agent then treats the request
+ * as older desktops wrote it.
+ */
+export function serviceInstallRequestRecord(
+  at: string,
+  shownVersion: string | null,
+  state: Pick<StudioServiceUpdateState, "downloadedVersion" | "availableVersion"> | null,
+): ServiceInstallRequestRecord | null {
+  const version =
+    releaseVersion(shownVersion) ??
+    releaseVersion(state?.downloadedVersion) ??
+    releaseVersion(state?.availableVersion);
+  return version === null ? null : { at, version };
+}
+
+function installRequestRecord(value: unknown): ServiceInstallRequestRecord | null {
+  if (typeof value !== "object" || value === null) return null;
+  const record = value as { readonly at?: unknown; readonly version?: unknown };
+  const version = releaseVersion(record.version);
+  return typeof record.at === "string" && isoMillis(record.at) !== null && version !== null
+    ? { at: record.at, version }
+    : null;
 }
 
 export const NO_AUTOMATIC_UPDATES = {
@@ -113,13 +226,76 @@ export function agentChannel(channel: DesktopUpdateChannel): "stable" | "preview
   return channel === "nightly" ? "preview" : "stable";
 }
 
-export function buildServiceAgentConfig(input: {
-  readonly previous: Partial<ServiceAgentConfig> | null;
-  readonly preferences: DesktopUpdatePreferences;
-  readonly channel: DesktopUpdateChannel;
-  readonly installRequestedAt?: string;
+/** Fields one request changes in the agent config; the rest carry over. */
+export interface ServiceAgentConfigChange {
+  /** Null clears a pending request. */
+  readonly installRequestedAt?: string | null;
   readonly checkRequestedAt?: string;
-}): ServiceAgentConfig {
+  readonly installMode?: ServiceInstallMode;
+  readonly installHoldUntil?: string | null;
+  readonly installCancelledAt?: string;
+  /** Null clears it; a request without one is not tied to a version. */
+  readonly installRequest?: ServiceInstallRequestRecord | null;
+}
+
+function stringOrNullValue(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+/**
+ * What "Cancel update" writes. The request itself is cleared too: an agent
+ * copy older than `installCancelledAt` still treats a set `installRequestedAt`
+ * as pending and would install at its next quiet moment.
+ */
+export function cancelServiceInstallChange(at: string): ServiceAgentConfigChange {
+  return {
+    installRequestedAt: null,
+    installCancelledAt: at,
+    installMode: "normal",
+    installHoldUntil: null,
+    installRequest: null,
+  };
+}
+
+/**
+ * A forced install is pending and its hold has not passed: the app quit or
+ * restarted before the agent was started for it, so start it now.
+ */
+export function hasPendingForcedInstall(configText: string | null, nowMs: number): boolean {
+  if (configText === null) return false;
+  let config: Partial<ServiceAgentConfig> | null;
+  try {
+    config = JSON.parse(configText) as Partial<ServiceAgentConfig> | null;
+  } catch {
+    return false;
+  }
+  if (config?.installMode !== "force") return false;
+  const requested = isoMillis(config.installRequestedAt);
+  const holdUntil = isoMillis(config.installHoldUntil);
+  const cancelled = isoMillis(config.installCancelledAt);
+  // The agent lets a request tied to a version lapse; starting it for one would do nothing.
+  const bound = installRequestRecord(config.installRequest);
+  const lapsed =
+    bound !== null &&
+    bound.at === config.installRequestedAt &&
+    requested !== null &&
+    nowMs - requested > SERVICE_INSTALL_REQUEST_TTL_MS;
+  return (
+    requested !== null &&
+    holdUntil !== null &&
+    holdUntil > nowMs &&
+    !lapsed &&
+    (cancelled === null || cancelled <= requested)
+  );
+}
+
+export function buildServiceAgentConfig(
+  input: {
+    readonly previous: Partial<ServiceAgentConfig> | null;
+    readonly preferences: DesktopUpdatePreferences;
+    readonly channel: DesktopUpdateChannel;
+  } & ServiceAgentConfigChange,
+): ServiceAgentConfig {
   const previous = input.previous ?? {};
   return {
     schemaVersion: 1,
@@ -131,8 +307,21 @@ export function buildServiceAgentConfig(input: {
       typeof previous.quietMinutes === "number" && previous.quietMinutes >= 1
         ? previous.quietMinutes
         : SERVICE_AGENT_QUIET_MINUTES,
-    installRequestedAt: input.installRequestedAt ?? previous.installRequestedAt ?? null,
+    installRequestedAt:
+      input.installRequestedAt !== undefined
+        ? input.installRequestedAt
+        : stringOrNullValue(previous.installRequestedAt),
     checkRequestedAt: input.checkRequestedAt ?? previous.checkRequestedAt ?? null,
+    installMode: input.installMode ?? (previous.installMode === "force" ? "force" : "normal"),
+    installHoldUntil:
+      input.installHoldUntil !== undefined
+        ? input.installHoldUntil
+        : stringOrNullValue(previous.installHoldUntil),
+    installCancelledAt: input.installCancelledAt ?? stringOrNullValue(previous.installCancelledAt),
+    installRequest:
+      input.installRequest !== undefined
+        ? input.installRequest
+        : installRequestRecord(previous.installRequest),
     ...(typeof previous.repository === "string" ? { repository: previous.repository } : {}),
   };
 }
@@ -229,7 +418,31 @@ export function toServiceUpdateState(input: {
     quietSince: stringOrNull(record.quietSince),
     message: stringOrNull(record.message),
     lastInstall,
+    updatedAt: stringOrNull(record.updatedAt),
   };
+}
+
+/** The desktop could not start the agent for a request it was given. */
+export interface AgentStartFailure {
+  /** ISO time of the failure. */
+  readonly at: string;
+  readonly message: string;
+}
+
+/**
+ * Reports a failed agent start through the state the renderer polls, until the
+ * agent writes a newer state of its own. The failure carries its own time, so
+ * a renderer that ignores answers older than its request still takes it.
+ */
+export function withAgentStartFailure(
+  state: StudioServiceUpdateState,
+  failure: AgentStartFailure | null,
+): StudioServiceUpdateState {
+  if (failure === null || state.status === "not-managed") return state;
+  const written = isoMillis(state.updatedAt ?? null);
+  const failed = isoMillis(failure.at);
+  if (written !== null && failed !== null && written >= failed) return state;
+  return { ...state, status: "error", message: failure.message, updatedAt: failure.at };
 }
 
 /**
@@ -288,17 +501,55 @@ function readTextOrNull(filePath: string): string | null {
 export interface ServiceUpdateController {
   readonly installation: () => ManagedServiceInstallation | null;
   readonly readState: () => StudioServiceUpdateState;
-  readonly writeConfig: (input: {
-    readonly preferences: DesktopUpdatePreferences;
-    readonly channel: DesktopUpdateChannel;
-    readonly installRequestedAt?: string;
-    readonly checkRequestedAt?: string;
-  }) => void;
+  readonly writeConfig: (
+    input: {
+      readonly preferences: DesktopUpdatePreferences;
+      readonly channel: DesktopUpdateChannel;
+    } & ServiceAgentConfigChange,
+  ) => void;
   /** Installs or refreshes the agent's launchd job; a no-op when unchanged. */
   readonly ensureAgent: () => Promise<void>;
   /** Asks launchd to run one agent pass now. */
   readonly runAgentNow: () => Promise<void>;
+  /** See `hasPendingForcedInstall`. */
+  readonly pendingForcedInstall: (nowMs: number) => boolean;
 }
+
+/**
+ * How long "Update now" waits for the bundled agent to be installed before it
+ * kicks the job anyway. Installing is a quick local process; the wait only
+ * keeps a slow one from holding the click's reply.
+ */
+export const INSTALL_AGENT_REFRESH_WAIT = Duration.seconds(10);
+
+export type AgentRefreshOutcome = "refreshed" | "failed" | "timed out";
+
+/**
+ * Installs the bundled agent, then asks launchd to run it. The kicked pass
+ * takes the agent lock, so refreshing after the kick would find it busy and
+ * leave the older agent to handle the request. A refresh that fails or outlives
+ * `wait` still kicks (the refresh process keeps running, never cut off
+ * mid-reload): the job already installed can still run. Fails only when the
+ * kick does.
+ */
+export const refreshThenRunAgent = (
+  controller: Pick<ServiceUpdateController, "ensureAgent" | "runAgentNow">,
+  wait: Duration.Input = INSTALL_AGENT_REFRESH_WAIT,
+) =>
+  Effect.gen(function* () {
+    const outcome = yield* Effect.tryPromise(() => controller.ensureAgent()).pipe(
+      Effect.timeoutOption(wait),
+      Effect.map(
+        Option.match({
+          onNone: (): AgentRefreshOutcome => "timed out",
+          onSome: (): AgentRefreshOutcome => "refreshed",
+        }),
+      ),
+      Effect.orElseSucceed((): AgentRefreshOutcome => "failed"),
+    );
+    yield* Effect.tryPromise(() => controller.runAgentNow());
+    return outcome;
+  });
 
 export function makeServiceUpdateController(input: {
   readonly homeDirectory: string;
@@ -358,6 +609,14 @@ export function makeServiceUpdateController(input: {
         "/bin/launchctl",
         ["kickstart", `gui/${uid()}/${serviceAgentLabel(target.identity)}`],
         15_000,
+      );
+    },
+    pendingForcedInstall: (nowMs) => {
+      const target = installation();
+      if (target === null) return false;
+      return hasPendingForcedInstall(
+        readTextOrNull(Path.join(updatesDir(target), "config.json")),
+        nowMs,
       );
     },
   };

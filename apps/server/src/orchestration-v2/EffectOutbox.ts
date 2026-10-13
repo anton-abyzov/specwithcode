@@ -26,6 +26,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { forkParked } from "../serverActivation.ts";
+import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 
 export const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({
@@ -113,6 +114,23 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
   }),
 ]);
 export type OrchestrationEffectRequestV2 = typeof OrchestrationEffectRequestV2.Type;
+
+/**
+ * Effects that change the workspace (a rollback restores files, a capture
+ * writes a git checkpoint). A service update lets a running one finish
+ * instead of cancelling it partway.
+ */
+export const UNINTERRUPTED_BY_UPDATE_EFFECT_TYPES = [
+  "provider-thread.rollback",
+  "checkpoint.capture",
+] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
+
+export interface CancelledEffect {
+  readonly effectId: string;
+  readonly effectType: string;
+  readonly commandId: string;
+  readonly threadId: string;
+}
 
 export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "provider-runtime.continue",
@@ -214,6 +232,16 @@ export interface EffectOutboxV2Shape {
     readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
     readonly reason: string;
   }) => Effect.Effect<ReadonlyArray<string>, EffectOutboxError>;
+  /**
+   * Cancels every effect the outbox has not settled, on every thread, and wakes
+   * the workers running them. Not for use inside a transaction: it signals at
+   * once. Used before a service update, whose helper refuses while any is left.
+   * A running effect in `UNINTERRUPTED_BY_UPDATE_EFFECT_TYPES` is left to finish:
+   * stopping it partway would leave its files or git state half done.
+   */
+  readonly cancelAllUnsettled: (input: {
+    readonly reason: string;
+  }) => Effect.Effect<ReadonlyArray<CancelledEffect>, EffectOutboxError>;
   readonly signalCancellations: (effectIds: ReadonlyArray<string>) => Effect.Effect<void>;
   readonly awaitCancellation: (effectId: string) => Effect.Effect<void>;
   readonly clearCancellation: (effectId: string) => Effect.Effect<void>;
@@ -360,6 +388,22 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
       return created;
     };
 
+    const signalCancellationsFor = (effectIds: ReadonlyArray<string>) =>
+      Effect.gen(function* () {
+        yield* Effect.forEach(
+          effectIds,
+          (effectId) => {
+            const signal = cancellationSignals.get(effectId);
+            return signal === undefined ? Effect.void : Deferred.succeed(signal, undefined);
+          },
+          { discard: true },
+        );
+        // Cancellation can unblock other pending work on the same thread.
+        // This method is deliberately post-commit, so it is also the safe
+        // place to wake claimers after the durable status change.
+        if (effectIds.length > 0) yield* notifyAvailable(effectIds.length);
+      });
+
     const decodeRows = (operation: string, rows: ReadonlyArray<EffectRow>) =>
       Effect.forEach(rows, rowToEffect).pipe(
         Effect.mapError((cause) => new EffectOutboxError({ operation, cause })),
@@ -460,21 +504,47 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             (cause) => new EffectOutboxError({ operation: "cancel-unsettled", cause }),
           ),
         ),
-      signalCancellations: (effectIds) =>
+      cancelAllUnsettled: ({ reason }) =>
         Effect.gen(function* () {
-          yield* Effect.forEach(
-            effectIds,
-            (effectId) => {
-              const signal = cancellationSignals.get(effectId);
-              return signal === undefined ? Effect.void : Deferred.succeed(signal, undefined);
-            },
-            { discard: true },
-          );
-          // Cancellation can unblock other pending work on the same thread.
-          // This method is deliberately post-commit, so it is also the safe
-          // place to wake claimers after the durable status change.
-          if (effectIds.length > 0) yield* notifyAvailable(effectIds.length);
-        }),
+          const now = DateTime.formatIso(yield* DateTime.now);
+          // The same predicate as update.py's idle check: NULL or any status
+          // that is not settled counts as unsettled.
+          const rows = yield* sql<{
+            readonly effect_id: string;
+            readonly effect_type: string;
+            readonly command_id: string;
+            readonly thread_id: string;
+          }>`
+            UPDATE orchestration_v2_effect_outbox
+            SET
+              status = 'cancelled',
+              lease_owner = NULL,
+              lease_expires_at = NULL,
+              completed_at = ${now},
+              updated_at = ${now},
+              last_error = ${reason}
+            WHERE (status IS NULL OR status NOT IN ('succeeded', 'failed', 'cancelled'))
+              AND NOT (
+                status = 'running'
+                AND effect_type IN ${sql.in(UNINTERRUPTED_BY_UPDATE_EFFECT_TYPES)}
+              )
+            RETURNING effect_id, effect_type, command_id, thread_id
+          `;
+          return rows.map((row): CancelledEffect => ({
+            effectId: row.effect_id,
+            effectType: row.effect_type,
+            commandId: row.command_id,
+            threadId: row.thread_id,
+          }));
+        }).pipe(
+          Effect.mapError(
+            (cause) => new EffectOutboxError({ operation: "cancel-all-unsettled", cause }),
+          ),
+          Effect.tap((cancelled) =>
+            signalCancellationsFor(cancelled.map((effect) => effect.effectId)),
+          ),
+        ),
+      signalCancellations: signalCancellationsFor,
       awaitCancellation: (effectId) => Deferred.await(cancellationSignal(effectId)),
       clearCancellation: (effectId) =>
         Effect.sync(() => {
@@ -689,12 +759,18 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
   }),
 );
 
-/** Prunes settled effect rows once the server is active, then every hour. */
+/**
+ * Prunes settled effect rows once the server is active, then every hour. Never while
+ * held or gated for an update: the update helper compares these rows before and
+ * after its restart.
+ */
 export const layerPruneWorker = Layer.effectDiscard(
   Effect.gen(function* () {
     const outbox = yield* EffectOutboxV2;
+    const updateHold = yield* ServiceUpdateHold.optional;
     yield* forkParked(
-      outbox.pruneSettled.pipe(
+      updateHold.awaitReleased.pipe(
+        Effect.andThen(outbox.pruneSettled),
         Effect.catch((cause) => Effect.logWarning("Failed to prune settled effects", { cause })),
         Effect.repeat(Schedule.spaced(Duration.hours(1))),
       ),

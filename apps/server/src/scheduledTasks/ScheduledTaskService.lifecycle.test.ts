@@ -8,6 +8,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -42,6 +43,7 @@ const harness = Effect.gen(function* () {
     dispatchGate: Effect.void,
     dispatchStarted: Effect.void,
     due: Effect.void as Effect.Effect<void, unknown, SqlClient.SqlClient>,
+    heldMs: 0,
   };
   const dependencies = () =>
     Layer.mergeAll(
@@ -84,6 +86,7 @@ const harness = Effect.gen(function* () {
           Effect.sync(() => {
             state.due = work as typeof state.due;
           }),
+        heldMsBetween: () => Effect.sync(() => state.heldMs),
       }),
     );
   const run = <A, E, R>(
@@ -122,6 +125,34 @@ it.effect("refuses manual and due routines for paused, archived or deleted proje
         }
         state.policy = "active";
         yield* state.due;
+        yield* state.due;
+        assert.equal(state.launches, 1);
+      }),
+    );
+  }).pipe(Effect.provide(Sqlite.layerMemory)),
+);
+
+it.effect("runs a fixed-time slot held back by an update hold instead of skipping it", () =>
+  Effect.gen(function* () {
+    const { state, run, sql } = yield* harness;
+    yield* TestClock.setTime(Date.parse("2026-07-01T09:30:00.000Z"));
+    yield* run((service) =>
+      Effect.gen(function* () {
+        yield* service.upsert(taskInput({ schedule: { type: "fixed_time", timeOfDay: "09:00" } }));
+        const slot = "2026-07-01T09:00:00.000Z";
+        const nextRunAt = Effect.map(
+          sql<{ next_run_at: string }>`SELECT next_run_at FROM scheduled_tasks`,
+          (rows) => rows[0]?.next_run_at,
+        );
+        // Thirty minutes late with nothing held: missed, moved to the next occurrence.
+        yield* sql`UPDATE scheduled_tasks SET next_run_at = ${slot}`;
+        yield* state.due;
+        assert.equal(state.launches, 0);
+        assert.isAbove(Date.parse((yield* nextRunAt) ?? ""), Date.parse("2026-07-01T09:30:00Z"));
+
+        // The same slot, but the scheduler sat out 25 of those minutes for an update.
+        yield* sql`UPDATE scheduled_tasks SET next_run_at = ${slot}`;
+        state.heldMs = 25 * 60_000;
         yield* state.due;
         assert.equal(state.launches, 1);
       }),

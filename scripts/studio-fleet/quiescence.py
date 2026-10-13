@@ -103,6 +103,10 @@ def read_argv(pid):
 
 
 PROC_PIDPATHINFO_MAXSIZE = 4096  # macOS sys/proc_info.h: 4 * MAXPATHLEN.
+# What a kernel read reports for a process ps listed that exited (or awaits reaping) before
+# the read: the read failed, nothing was found wrong. A caller may retry the whole capture.
+VANISHED_READS = frozenset({'Process executable unavailable', 'Supervisor arguments unavailable',
+                            'Invalid supervisor argument size'})
 
 
 def read_executable(pid):
@@ -192,7 +196,7 @@ def _server_browsers(processes, root_pid, uid, home, candidates):
     return browsers
 
 
-def _owned_tree(processes, pid, uid, executable, home=None, check_browsers=True):
+def _owned_tree(processes, pid, uid, executable, home=None, check_browsers=True, supervisor_of=None):
     root = processes.get(pid)
     assert root and pid > 0 and root['uid'] == uid, 'Owned service process identity changed'
     assert root['executable'] == executable, 'Owned service executable changed'
@@ -212,11 +216,17 @@ def _owned_tree(processes, pid, uid, executable, home=None, check_browsers=True)
     # The verified LaunchAgent requires exactly this supervisor, with no work
     # beneath it. Even idle native/MCP/repl resources require operator review.
     # The service's own server browser is the one exception (see _server_browsers).
-    supervisors = [item for item in descendants if item['executable'] == '/usr/bin/caffeinate']
-    others = [item for item in descendants if item['executable'] != '/usr/bin/caffeinate']
+    # The supervisor is a caffeinate started directly by the service; one started deeper (an
+    # agent's `caffeinate -i npm test`) is work like any other. `supervisor_of` (the reap)
+    # picks the one with the LaunchAgent's arguments when the service has several.
+    caffeinates = [item for item in descendants if item['executable'] == '/usr/bin/caffeinate']
+    supervisors = [item for item in caffeinates if item['parent'] == pid] or caffeinates
+    if len(supervisors) > 1 and supervisor_of is not None:
+        supervisors = supervisor_of(supervisors)
     assert len(supervisors) == 1, 'Owned service has unexpected or missing descendants'
-    assert not others or home is not None, 'Owned service has unexpected or missing descendants'
     supervisor = supervisors[0]
+    others = [item for item in descendants if item['pid'] != supervisor['pid']]
+    assert not others or home is not None, 'Owned service has unexpected or missing descendants'
     assert supervisor['parent'] == pid and supervisor['uid'] == uid, 'Supervisor parent or owner changed'
     browsers = _server_browsers(processes, pid, uid, home, others) if others and check_browsers else []
     return root, parent, supervisor, browsers, sorted(others, key=lambda item: item['pid'])
@@ -240,13 +250,22 @@ def _capture(pid, uid, executable, supervisor_argv, process_reader, argv_reader,
     process_reader = process_reader or read_processes
     argv_reader = argv_reader or read_argv
     first = _owned_tree(process_reader(), pid, uid, executable, home)
-    assert argv_reader(first[2]['pid']) == supervisor_argv, 'Supervisor arguments differ from the verified LaunchAgent'
-    for browser in first[3]:
-        _server_browser_argv(argv_reader(browser['pid']), home)
     executable_reader = executable_reader or read_executable
+
+    def kernel(reader, target):
+        try:
+            return reader(target)
+        except AssertionError:
+            # A listed process that exited or was replaced before its read is churn, not a fault.
+            assert _owned_tree(process_reader(), pid, uid, executable, home) == first, \
+                'Owned process identities changed during inventory'
+            raise
+    assert kernel(argv_reader, first[2]['pid']) == supervisor_argv, 'Supervisor arguments differ from the verified LaunchAgent'
+    for browser in first[3]:
+        _server_browser_argv(kernel(argv_reader, browser['pid']), home)
     for item in first[4]:
         # ps reports a name the process chose; the kernel resolves the file it actually runs.
-        assert executable_reader(item['pid']) == item['executable'], 'Owned service has unexpected descendants'
+        assert kernel(executable_reader, item['pid']) == item['executable'], 'Owned service has unexpected descendants'
     second = _owned_tree(process_reader(), pid, uid, executable, home)
     assert first == second, 'Owned process identities changed during inventory'
     root, parent, supervisor, browsers, others = second
@@ -409,3 +428,151 @@ def assert_quiescence(expected, executable, supervisor_argv, *, process_reader=N
     after = _capture(pid, uid, executable, supervisor_argv, process_reader, argv_reader, executable_reader)[0]
     assert after == quiescence_core(expected), 'Owned process prestate changed while its browser stopped'
     return record
+
+
+# Update now's fallback (update.py --reap): a graceful stop, then a forced stop of what is left.
+REAP_TERM_SECONDS = 10
+REAP_KILL_SECONDS = 5
+# The whole reap, inventories included, ends within this; the agent allows the helper 120 s.
+REAP_BUDGET_SECONDS = 60
+
+
+def read_process(pid):
+    """One process as read_processes lists it, or None once it is gone. A per-target
+    re-check that costs one small ps, not a full inventory."""
+    for attempt in range(1, PS_ATTEMPTS + 1):
+        try:
+            result = subprocess.run(['/bin/ps', '-ww', '-o', 'pid=,ppid=,uid=,lstart=,comm=', '-p', str(int(pid))],
+                                    capture_output=True, text=True, timeout=PS_TIMEOUT_SECONDS,
+                                    env={'PATH': '/usr/bin:/bin', 'LC_ALL': 'C'})
+        except subprocess.TimeoutExpired:
+            if attempt == PS_ATTEMPTS:
+                raise
+            continue
+        if result.returncode == 1 and not result.stdout.strip():
+            return None
+        assert result.returncode == 0, 'Process inventory unavailable; output withheld'
+        return parse_processes(result.stdout).get(pid)
+
+
+def _spared_browsers(processes, root_pid, uid, home, others):
+    """Pids of the service's own server browser among `others`; the apply step stops it itself."""
+    owned_browser = _server_browser_executable(home)
+    spared = set()
+    for item in others:
+        top = item
+        while top['parent'] != root_pid:
+            top = processes[top['parent']]
+        if top['uid'] == uid and owned_browser.fullmatch(top['executable']) \
+                and item['uid'] == uid and item['executable'] == top['executable']:
+            spared.add(item['pid'])
+    return spared
+
+
+def reap_descendants(pid, uid, executable, supervisor_argv, *, process_reader=None, argv_reader=None,
+                     executable_reader=None, single_reader=None, signaler=None, clock=None, sleeper=None,
+                     report=None, guard=None):
+    """Stop what keeps a held service from updating: a provider that never answered its
+    interrupt, or a command left running beneath a closed terminal.
+
+    The service and its supervisor are verified as for a snapshot; the supervisor is the
+    caffeinate the service started with the LaunchAgent's arguments, and any other caffeinate
+    is work. Every other process beneath the service, except its own server browser, is
+    recorded by pid, owner, start time and the executable the kernel resolves; one whose
+    executable cannot be read is never signalled. SIGTERM, then SIGKILL for what is still
+    there. Each round takes one inventory; each signal goes to one pid, right after that pid
+    alone is read again, and only while it still matches its record and is still beneath its
+    recorded parent (or was adopted by launchd as that parent exited). `guard` (update.py:
+    the service is still held for this request) runs before every signal and stops the reap
+    by raising. The service, its parent and supervisor, and every process outside its tree are
+    never signalled. The whole reap ends within REAP_BUDGET_SECONDS. `report` (optional) holds
+    the record as it is built, so a failed reap still records what it sent. Returns the record:
+    identities (no argv), signals sent and survivors."""
+    process_reader = process_reader or read_processes
+    argv_reader = argv_reader or read_argv
+    executable_reader = executable_reader or read_executable
+    single_reader = single_reader or (read_process if process_reader is read_processes
+                                      else lambda target: process_reader().get(target))
+    signaler = signaler or os.kill
+    clock = clock or time.monotonic
+    sleeper = sleeper or time.sleep
+    guard = guard or (lambda: None)
+    assert uid == 501 and isinstance(pid, int) and not isinstance(pid, bool) and pid > 1
+    home = studio_home_of(supervisor_argv)
+    started = clock()
+    report = {} if report is None else report
+    report.update(processCount=0, sparedBrowserCount=0, unverifiedCount=0, processes=[], signals=[],
+                  survivors=[], budgetExceeded=False)
+
+    def supervisor_of(candidates):
+        chosen = []
+        for item in candidates:
+            try:
+                if argv_reader(item['pid']) == supervisor_argv:
+                    chosen.append(item)
+            except AssertionError:
+                continue  # Exited before its read: not the supervisor.
+        return chosen
+
+    processes = process_reader()
+    root, _, supervisor, _, others = _owned_tree(processes, pid, uid, executable, home, check_browsers=False,
+                                                 supervisor_of=supervisor_of)
+    assert argv_reader(supervisor['pid']) == supervisor_argv, 'Supervisor arguments differ from the verified LaunchAgent'
+    spared = _spared_browsers(processes, pid, uid, home, others)
+    targets, unverified = [], 0
+    for item in others:
+        if item['pid'] in spared or _exited(item) or item['pid'] == os.getpid():
+            continue
+        try:
+            kernel = executable_reader(item['pid']) if item['uid'] == uid else None
+        except (AssertionError, OSError):
+            kernel = None
+        if kernel is None:
+            unverified += 1
+            continue
+        targets.append(dict(item, kernel=kernel))
+    report.update(processCount=len(targets), sparedBrowserCount=len(spared), unverifiedCount=unverified,
+                  processes=[dict(_identity(item), name=posixpath.basename(item['kernel'])[:40]) for item in targets])
+
+    def running():
+        current = process_reader()
+        assert _same_process(current.get(pid), root), 'Owned service process identity changed'
+        return [item for item in targets if _same_process(current.get(item['pid']), item)]
+
+    def signal_all(number, stop_at):
+        for item in running():
+            if clock() >= stop_at:
+                report['budgetExceeded'] = True
+                return
+            guard()
+            found = single_reader(item['pid'])  # This pid alone, read again right before its signal.
+            if not _same_process(found, item) or found['parent'] not in {item['parent'], 1}:
+                continue  # Gone, replaced or moved somewhere unproven: never signalled.
+            try:
+                if executable_reader(item['pid']) != item['kernel']:
+                    continue
+            except (AssertionError, OSError):
+                continue  # Exiting: the kernel released its executable.
+            try:
+                signaler(item['pid'], number)
+            except ProcessLookupError:
+                continue
+            report['signals'].append({'pid': item['pid'], 'startedAt': item['startedAt'],
+                                      'signal': signal.Signals(number).name})
+
+    def left_after(seconds):
+        deadline = min(clock() + seconds, started + REAP_BUDGET_SECONDS)
+        while True:
+            left = running()
+            if not left or clock() >= deadline:
+                return left
+            sleeper(0.25)
+
+    if targets:
+        # SIGTERM may use half the budget, so a hung provider always gets its SIGKILL.
+        signal_all(signal.SIGTERM, started + REAP_BUDGET_SECONDS / 2)
+        if left_after(REAP_TERM_SECONDS):
+            signal_all(signal.SIGKILL, started + REAP_BUDGET_SECONDS)
+            report['survivors'] = [{'pid': item['pid'], 'startedAt': item['startedAt']}
+                                   for item in left_after(REAP_KILL_SECONDS)]
+    return dict(report)

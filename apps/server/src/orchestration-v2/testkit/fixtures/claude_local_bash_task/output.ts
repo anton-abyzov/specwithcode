@@ -53,6 +53,9 @@ export function assertClaudeLocalBashTaskOutput(
 
   const command = projection.turnItems.find((item) => item.type === "command_execution");
   assert.isDefined(command);
-  assert.include(JSON.stringify(command ?? null), "vp run --filter @specweave-studio/web typecheck");
+  assert.include(
+    JSON.stringify(command ?? null),
+    "vp run --filter @specweave-studio/web typecheck",
+  );
   assert.include(JSON.stringify(command?.output ?? null), "tsgo --noEmit");
 }

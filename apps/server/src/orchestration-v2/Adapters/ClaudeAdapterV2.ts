@@ -2701,6 +2701,10 @@ function providerFailureFromResult(
   });
 }
 
+/** Shown when the Claude process exits, or Studio restarts, while a turn is running. */
+export const CLAUDE_PROCESS_ENDED_MESSAGE =
+  "The Claude process stopped before this turn finished, for example because Studio restarted for an update. Send your message again to continue.";
+
 function providerFailureFromApiRetry(message: SDKAPIRetryMessage): OrchestrationV2ProviderFailure {
   const errorName = message.error.replaceAll("_", " ");
   return makeProviderFailure({
@@ -5372,6 +5376,7 @@ export function makeClaudeAdapterV2(
               : {
                   failure: makeProviderFailure({
                     cause: cause === undefined ? undefined : Cause.squash(cause),
+                    message: CLAUDE_PROCESS_ENDED_MESSAGE,
                     class: "transport_error",
                   }),
                 }),

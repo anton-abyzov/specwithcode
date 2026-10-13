@@ -1,19 +1,29 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import { RuntimeRequestId, ThreadId } from "@specweave-studio/contracts";
 import * as NodeSqliteClient from "@specweave-studio/shared/nodeSqliteClient";
+import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import { describe, expect } from "vite-plus/test";
 
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as TerminalManager from "../terminal/Manager.ts";
+import * as Cleanup from "./ServiceUpdateCleanup.ts";
+import * as Hold from "./ServiceUpdateHold.ts";
 import * as Preparation from "./ServiceUpdatePreparation.ts";
 
 /** The columns update.py and this service read, nothing else. */
 const schema = [
   `CREATE TABLE orchestration_v2_projection_runs (run_id TEXT, thread_id TEXT, status TEXT, provider_thread_id TEXT)`,
   `CREATE TABLE orchestration_v2_projection_runtime_requests (thread_id TEXT, status TEXT)`,
-  `CREATE TABLE orchestration_v2_effect_outbox (thread_id TEXT, status TEXT)`,
+  `CREATE TABLE orchestration_v2_effect_outbox (thread_id TEXT, status TEXT, command_id TEXT, effect_type TEXT)`,
   `CREATE TABLE orchestration_v2_projection_provider_sessions (thread_id TEXT, status TEXT)`,
   `CREATE TABLE orchestration_v2_projection_threads (thread_id TEXT, title TEXT, project_id TEXT)`,
   `CREATE TABLE projection_projects (project_id TEXT, title TEXT)`,
@@ -21,10 +31,21 @@ const schema = [
   `CREATE TABLE orchestration_v2_projection_provider_turns (provider_thread_id TEXT, provider_turn_id TEXT, ordinal INTEGER)`,
 ];
 
-const fast = { interruptGraceMs: 40, settleMs: 40, pollMs: 5 };
+const fast: Preparation.ServiceUpdatePreparationTimings = {
+  interruptGraceMs: 40,
+  settleMs: 40,
+  effectGraceMs: 40,
+  deadlineMs: 5_000,
+  pollMs: 5,
+};
 
 interface Fixture {
-  readonly dispatched: Array<{ type: string; threadId?: string; runId?: string }>;
+  readonly dispatched: Array<{
+    type: string;
+    threadId?: string;
+    runId?: string;
+    requestId?: string;
+  }>;
   readonly released: Array<string>;
   releasedIdle: number;
   /** What an interrupt does in the fixture: end the run (a provider that answers), or nothing (hung). */
@@ -33,6 +54,20 @@ interface Fixture {
   readonly uninterruptible?: ReadonlySet<string>;
   /** Interrupting this run wakes its coordinator: a new queued run on `t2`. */
   readonly wakesCoordinator?: string;
+  /** The cleanup writes nothing: what Stop leaves stays. */
+  readonly cleanupStuck?: boolean;
+  /** Questions asked as a plain message, for the dismiss step. */
+  readonly messageModeRequests?: ReadonlyArray<{ threadId: string; requestId: string }>;
+  readonly cleanupCalls: Array<string>;
+  /** Whether the hold was on when the drain sent its first command. */
+  heldAtFirstDispatch?: boolean;
+  readonly hold?: Hold.ServiceUpdateHoldShape;
+  readonly terminals?: { open: number };
+  /** How long closing one agent process takes (a hung CLI). */
+  readonly releaseDelayMs?: number;
+  /** Runs still `waiting` on their checkpoint when the cleanup ended stuck runs. */
+  waitingAtFinalize?: number;
+  readonly timings?: Preparation.ServiceUpdatePreparationTimings;
 }
 
 const run = <E>(
@@ -48,10 +83,15 @@ const run = <E>(
       Layer.mock(ThreadManagementService.ThreadManagementService)({
         dispatch: (command) =>
           Effect.gen(function* () {
+            if (fixture.dispatched.length === 0 && fixture.hold !== undefined)
+              fixture.heldAtFirstDispatch = yield* fixture.hold.isHeld;
             fixture.dispatched.push({
               type: command.type,
               ...("threadId" in command ? { threadId: command.threadId } : {}),
               ...("runId" in command ? { runId: command.runId } : {}),
+              ...(command.type === "checkpoint.rollback.fail"
+                ? { requestId: command.requestId }
+                : {}),
             });
             if (command.type === "run.interrupt") {
               if (fixture.uninterruptible?.has(command.runId))
@@ -79,9 +119,13 @@ const run = <E>(
       }),
       Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
         release: (input) =>
-          Effect.sync(() => {
-            fixture.released.push(input.providerSessionId);
-          }) as never,
+          Effect.sleep(Duration.millis(fixture.releaseDelayMs ?? 0)).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                fixture.released.push(input.providerSessionId);
+              }),
+            ),
+          ) as never,
         releaseIdle: () =>
           sql`UPDATE orchestration_v2_projection_provider_sessions SET status = 'stopped'`.pipe(
             Effect.orDie,
@@ -93,12 +137,83 @@ const run = <E>(
             ),
           ),
       }),
+      Layer.mock(Cleanup.ServiceUpdateCleanup)({
+        finalizeStuckRuns: () =>
+          Effect.gen(function* () {
+            fixture.cleanupCalls.push("finalize");
+            const waiting = yield* sql<{ readonly count: number }>`
+              SELECT COUNT(*) AS count FROM orchestration_v2_projection_runs WHERE status = 'waiting'`;
+            fixture.waitingAtFinalize = Number(waiting[0]?.count ?? 0);
+            if (fixture.cleanupStuck) return { interrupted: 0, completed: 0 };
+            yield* sql`UPDATE orchestration_v2_projection_runs SET status = 'completed' WHERE status = 'waiting'`;
+            yield* sql`UPDATE orchestration_v2_projection_runs SET status = 'interrupted'
+              WHERE status IN ('preparing', 'starting', 'running')`;
+            return { interrupted: 0, completed: 0 };
+          }).pipe(Effect.orDie),
+        listMessageModeRequests: Effect.sync(() =>
+          (fixture.messageModeRequests ?? []).map((request) => ({
+            threadId: ThreadId.make(request.threadId),
+            requestId: RuntimeRequestId.make(request.requestId),
+          })),
+        ),
+        cancelPendingRequests: () =>
+          Effect.gen(function* () {
+            fixture.cleanupCalls.push("requests");
+            if (!fixture.cleanupStuck)
+              yield* sql`UPDATE orchestration_v2_projection_runtime_requests SET status = 'cancelled'
+                WHERE status = 'pending'`;
+            return 0;
+          }).pipe(Effect.orDie),
+        reconcileOrphanedSessions: Effect.sync(() => {
+          fixture.cleanupCalls.push("sessions");
+          return 0;
+        }),
+        cancelUnsettledEffects: () =>
+          Effect.gen(function* () {
+            fixture.cleanupCalls.push("effects");
+            if (fixture.cleanupStuck) return [];
+            // As the outbox does: a running rollback or checkpoint is left to finish.
+            const rows = yield* sql<{
+              readonly effect_type: string;
+              readonly command_id: string;
+              readonly thread_id: string;
+            }>`UPDATE orchestration_v2_effect_outbox SET status = 'cancelled'
+                WHERE (status IS NULL OR status NOT IN ('succeeded', 'failed', 'cancelled'))
+                  AND NOT (status = 'running'
+                    AND effect_type IN ('provider-thread.rollback', 'checkpoint.capture'))
+                RETURNING effect_type, command_id, thread_id`;
+            return rows.map((row) => ({
+              effectId: `effect:${row.command_id}`,
+              effectType: row.effect_type,
+              commandId: row.command_id,
+              threadId: row.thread_id,
+            }));
+          }).pipe(Effect.orDie),
+      }),
+    );
+    const optional = Layer.mergeAll(
+      fixture.hold === undefined
+        ? Layer.empty
+        : Layer.succeed(Hold.ServiceUpdateHold, fixture.hold),
+      fixture.terminals === undefined
+        ? Layer.empty
+        : Layer.mock(TerminalManager.TerminalManager)({
+            closeAll: Effect.sync(() => {
+              const terminals = fixture.terminals!;
+              const closed = terminals.open;
+              terminals.open = 0;
+              fixture.cleanupCalls.push("terminals");
+              return closed;
+            }),
+            countOpen: Effect.sync(() => fixture.terminals!.open),
+          }),
     );
     yield* body.pipe(
       Effect.provide(
-        Layer.effect(Preparation.ServiceUpdatePreparation, Preparation.makeWithTimings(fast)).pipe(
-          Layer.provide(mocks),
-        ),
+        Layer.effect(
+          Preparation.ServiceUpdatePreparation,
+          Preparation.makeWithTimings(fixture.timings ?? fast),
+        ).pipe(Layer.provide(Layer.merge(mocks, optional))),
       ),
     );
   }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" })));
@@ -107,6 +222,7 @@ const newFixture = (stopEndsRun: boolean, extra: Partial<Fixture> = {}): Fixture
   dispatched: [],
   released: [],
   releasedIdle: 0,
+  cleanupCalls: [],
   stopEndsRun,
   ...extra,
 });
@@ -179,7 +295,14 @@ it.live(
         assert.deepEqual(fixture.dispatched, []);
 
         const result = yield* preparation.prepare({ stopWork: true });
-        assert.deepEqual(result, { idle: true, stoppedThreads: 1, blockers: [] });
+        assert.deepEqual(result, {
+          idle: true,
+          stoppedThreads: 1,
+          blockers: [],
+          held: false,
+          interruptedRuns: 1,
+          openTerminals: 0,
+        });
         // The queue goes first so the interrupt does not start it, and a plain
         // interrupt keeps the thread's pull request watches; Stop is not used.
         assert.deepEqual(fixture.dispatched, [
@@ -216,13 +339,14 @@ it.live("ends a turn whose provider never answers the interrupt", () => {
 });
 
 it.live("names what is left when work will not stop", () => {
-  const fixture = newFixture(false);
+  const fixture = newFixture(false, { cleanupStuck: true });
   return run(
     fixture,
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       // An effect the outbox has not finished, and a run with no provider turn to settle.
-      yield* sql`INSERT INTO orchestration_v2_effect_outbox VALUES ('t2', 'pending'), (NULL, NULL), ('t2', 'succeeded')`;
+      yield* sql`INSERT INTO orchestration_v2_effect_outbox (thread_id, status)
+        VALUES ('t2', 'pending'), (NULL, NULL), ('t2', 'succeeded')`;
       yield* sql`INSERT INTO orchestration_v2_projection_runs VALUES ('r1', 't1', 'starting', NULL)`;
       const preparation = yield* Preparation.ServiceUpdatePreparation;
       const result = yield* preparation.prepare({ stopWork: true });
@@ -248,7 +372,14 @@ it.live("stops the coordinator turn an interrupted worker wakes", () => {
       yield* sql`INSERT INTO orchestration_v2_projection_runs VALUES ('r1', 't1', 'running', 'pt1')`;
       const preparation = yield* Preparation.ServiceUpdatePreparation;
       const result = yield* preparation.prepare({ stopWork: true });
-      assert.deepEqual(result, { idle: true, stoppedThreads: 2, blockers: [] });
+      assert.deepEqual(result, {
+        idle: true,
+        stoppedThreads: 2,
+        blockers: [],
+        held: false,
+        interruptedRuns: 1,
+        openTerminals: 0,
+      });
       assert.deepEqual(fixture.dispatched, [
         { type: "run.interrupt", threadId: "t1", runId: "r1" },
         { type: "queued-run.cancel", threadId: "t2", runId: "wake" },
@@ -257,22 +388,327 @@ it.live("stops the coordinator turn an interrupted worker wakes", () => {
   );
 });
 
-it.live("falls back to Stop for a run it cannot interrupt and for a request left alone", () => {
-  const fixture = newFixture(true, { uninterruptible: new Set(["r1"]) });
+it.live(
+  "falls back to Stop for a run it cannot interrupt, and closes a lone request without Stop",
+  () => {
+    const fixture = newFixture(true, { uninterruptible: new Set(["r1"]) });
+    return run(
+      fixture,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`INSERT INTO orchestration_v2_projection_runs VALUES ('r1', 't1', 'preparing', NULL)`;
+        yield* sql`INSERT INTO orchestration_v2_projection_runtime_requests VALUES ('t2', 'pending')`;
+        const preparation = yield* Preparation.ServiceUpdatePreparation;
+        const result = yield* preparation.prepare({ stopWork: true });
+        assert.deepEqual(result, {
+          idle: true,
+          stoppedThreads: 1,
+          blockers: [],
+          held: false,
+          interruptedRuns: 1,
+          openTerminals: 0,
+        });
+        // Stop would also end t2's pull request watches; the cleanup cancels its request.
+        assert.deepEqual(fixture.dispatched, [
+          { type: "run.interrupt", threadId: "t1", runId: "r1" },
+          { type: "thread.stop", threadId: "t1" },
+        ]);
+        assert.include(fixture.cleanupCalls, "requests");
+      }),
+    );
+  },
+);
+
+it.live("clears what Stop leaves behind even without a hold", () => {
+  const fixture = newFixture(false);
   return run(
     fixture,
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* sql`INSERT INTO orchestration_v2_projection_runs VALUES ('r1', 't1', 'preparing', NULL)`;
+      // A turn that never reached its provider, a request on an ended run, an
+      // effect nobody will finish and a session row whose process is gone.
+      yield* sql`INSERT INTO orchestration_v2_projection_runs VALUES ('r1', 't1', 'starting', NULL)`;
       yield* sql`INSERT INTO orchestration_v2_projection_runtime_requests VALUES ('t2', 'pending')`;
+      yield* sql`INSERT INTO orchestration_v2_effect_outbox (thread_id, status) VALUES ('t2', 'pending')`;
+      yield* sql`INSERT INTO orchestration_v2_projection_provider_sessions VALUES ('t1', 'working')`;
       const preparation = yield* Preparation.ServiceUpdatePreparation;
       const result = yield* preparation.prepare({ stopWork: true });
-      assert.deepEqual(result, { idle: true, stoppedThreads: 2, blockers: [] });
-      assert.deepEqual(fixture.dispatched, [
-        { type: "run.interrupt", threadId: "t1", runId: "r1" },
-        { type: "thread.stop", threadId: "t1" },
-        { type: "thread.stop", threadId: "t2" },
-      ]);
+      assert.isTrue(result.idle);
+      assert.equal(result.held, false);
+      assert.equal(result.interruptedRuns, 1);
+      assert.deepEqual(fixture.cleanupCalls, ["finalize", "requests", "sessions", "effects"]);
     }),
   );
 });
+
+/** A hold whose update agent reports a release ready to install. */
+const holdFor = () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const dir = yield* fs.makeTempDirectoryScoped({ prefix: "service-update-prepare-" });
+    const agentStatePath = `${dir}/state.json`;
+    yield* fs.writeFileString(agentStatePath, JSON.stringify({ status: "downloaded" }));
+    return yield* Hold.makeWithOptions({ agentStatePath });
+  });
+
+it.live("does not hold the service when no update is on its way", () =>
+  Effect.gen(function* () {
+    const hold = yield* Hold.makeWithOptions({
+      agentStatePath: "/nonexistent/specweave-studio-test/updates/state.json",
+    });
+    const fixture = newFixture(false, { hold });
+    yield* run(
+      fixture,
+      Effect.gen(function* () {
+        const preparation = yield* Preparation.ServiceUpdatePreparation;
+        const result = yield* preparation.prepare({ stopWork: true, hold: true });
+        assert.isFalse(result.held);
+        assert.isFalse(yield* hold.isHeld);
+      }),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("Update now holds the service before draining, then closes terminals", () =>
+  Effect.gen(function* () {
+    const hold = yield* holdFor();
+    const fixture = newFixture(false, {
+      hold,
+      terminals: { open: 2 },
+      messageModeRequests: [{ threadId: "t2", requestId: "question-1" }],
+    });
+    yield* run(
+      fixture,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        // r1 waits on its checkpoint; r2 never reached its provider.
+        yield* sql`INSERT INTO orchestration_v2_projection_runs VALUES
+          ('r1', 't1', 'waiting', NULL), ('r2', 't2', 'starting', NULL)`;
+        yield* sql`INSERT INTO orchestration_v2_projection_runtime_requests VALUES ('t2', 'pending')`;
+        const preparation = yield* Preparation.ServiceUpdatePreparation;
+
+        const looked = yield* preparation.prepare({ stopWork: false });
+        assert.equal(looked.held, false);
+        assert.equal(looked.openTerminals, 2);
+
+        const drainStarted = yield* Clock.currentTimeMillis;
+        const { holdUntil, ...result } = yield* preparation.prepare({
+          stopWork: true,
+          hold: true,
+        });
+        assert.deepEqual(result, {
+          idle: true,
+          stoppedThreads: 2,
+          blockers: [],
+          held: true,
+          interruptedRuns: 1,
+          openTerminals: 2,
+        });
+        // The time limit starts over once drained, as the install request is written.
+        const current = yield* hold.current;
+        assert.isTrue(current._tag === "Some");
+        if (current._tag === "Some") {
+          assert.isAbove(current.value.startedAtMs, drainStarted);
+          assert.equal(
+            holdUntil,
+            DateTime.formatIso(DateTime.makeUnsafe(current.value.expiresAtMs)),
+          );
+        }
+        assert.isTrue(fixture.heldAtFirstDispatch);
+        // One pass: nothing new can start behind a held drain.
+        assert.deepEqual(
+          fixture.dispatched.map((command) => [command.type, command.runId ?? command.threadId]),
+          [
+            ["run.interrupt", "r1"],
+            ["run.interrupt", "r2"],
+            ["thread.user-input.dismiss", "t2"],
+          ],
+        );
+        assert.deepEqual(fixture.cleanupCalls, ["finalize", "requests", "sessions", "terminals"]);
+
+        const meanwhile = yield* preparation.prepare({ stopWork: false });
+        assert.equal(meanwhile.held, true);
+        assert.equal(meanwhile.openTerminals, 0);
+
+        const cancelled = yield* preparation.prepare({ stopWork: false, releaseHold: true });
+        assert.equal(cancelled.held, false);
+        assert.isFalse(yield* hold.isHeld);
+      }),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("a failed drain lets work start again", () =>
+  Effect.gen(function* () {
+    const hold = yield* holdFor();
+    const fixture = newFixture(false, { hold });
+    yield* run(
+      fixture,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        // Without the runs table the drain cannot read what is running.
+        yield* sql`DROP TABLE orchestration_v2_projection_runs`;
+        const preparation = yield* Preparation.ServiceUpdatePreparation;
+        const failed = yield* Effect.flip(preparation.prepare({ stopWork: true, hold: true }));
+        assert.equal(failed._tag, "ServerPrepareServiceUpdateError");
+        assert.isFalse(yield* hold.isHeld);
+      }),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("tells a thread its rollback was cancelled and leaves a running checkpoint", () => {
+  const fixture = newFixture(true);
+  return run(
+    fixture,
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO orchestration_v2_effect_outbox VALUES
+        ('t1', 'pending', 'rollback-1', 'provider-thread.rollback'),
+        ('t2', 'running', 'capture-1', 'checkpoint.capture')`;
+      const preparation = yield* Preparation.ServiceUpdatePreparation;
+      const result = yield* preparation.prepare({ stopWork: true });
+      // The capture keeps writing its checkpoint; the update helper waits for it.
+      assert.deepEqual(
+        result.blockers.map((blocker) => [blocker.kind, blocker.threadTitle]),
+        [["effect", "Docs"]],
+      );
+      assert.deepEqual(
+        fixture.dispatched.filter((command) => command.type === "checkpoint.rollback.fail"),
+        [{ type: "checkpoint.rollback.fail", threadId: "t1", requestId: "rollback-1" }],
+      );
+    }),
+  );
+});
+
+it.live("lets a finished turn's checkpoint finish before closing the turn", () => {
+  const fixture = newFixture(false, {
+    timings: { ...fast, interruptGraceMs: 10, settleMs: 10, effectGraceMs: 2_000 },
+  });
+  return run(
+    fixture,
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO orchestration_v2_projection_runs VALUES ('r1', 't1', 'waiting', NULL)`;
+      yield* sql`INSERT INTO orchestration_v2_effect_outbox VALUES
+        ('t1', 'running', 'command:effect:checkpoint.capture:r1', 'checkpoint.capture')`;
+      // The capture takes longer than every other wait in the drain.
+      yield* Effect.sleep(Duration.millis(150)).pipe(
+        Effect.andThen(
+          sql`UPDATE orchestration_v2_effect_outbox SET status = 'succeeded'`.pipe(
+            Effect.andThen(
+              sql`UPDATE orchestration_v2_projection_runs SET status = 'completed' WHERE run_id = 'r1'`,
+            ),
+          ),
+        ),
+        Effect.forkChild,
+      );
+      const preparation = yield* Preparation.ServiceUpdatePreparation;
+      const result = yield* preparation.prepare({ stopWork: true });
+      assert.isTrue(result.idle);
+      assert.equal(fixture.waitingAtFinalize, 0);
+    }),
+  );
+});
+
+it.live("closes a finished turn without its checkpoint once the wait runs out", () => {
+  const fixture = newFixture(false, {
+    timings: { ...fast, interruptGraceMs: 10, settleMs: 10, effectGraceMs: 30 },
+  });
+  return run(
+    fixture,
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO orchestration_v2_projection_runs VALUES ('r1', 't1', 'waiting', NULL)`;
+      yield* sql`INSERT INTO orchestration_v2_effect_outbox VALUES
+        ('t1', 'pending', 'command:effect:checkpoint.capture:r1', 'checkpoint.capture')`;
+      const preparation = yield* Preparation.ServiceUpdatePreparation;
+      const result = yield* preparation.prepare({ stopWork: true });
+      assert.isTrue(result.idle);
+      assert.equal(fixture.waitingAtFinalize, 1);
+    }),
+  );
+});
+
+it.live("keeps to its budget when agent processes take long to close", () => {
+  const fixture = newFixture(false, {
+    releaseDelayMs: 3_000,
+    timings: { ...fast, interruptGraceMs: 10, settleMs: 10, deadlineMs: 300 },
+  });
+  return run(
+    fixture,
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO orchestration_v2_projection_runs VALUES
+        ('r1', 't1', 'running', 'pt1'), ('r2', 't2', 'running', 'pt2')`;
+      yield* sql`INSERT INTO orchestration_v2_projection_provider_threads VALUES
+        ('pt1', 'session-1'), ('pt2', 'session-2')`;
+      const preparation = yield* Preparation.ServiceUpdatePreparation;
+      const started = yield* Clock.currentTimeMillis;
+      yield* preparation.prepare({ stopWork: true });
+      // Two hung processes would take 6 s one after another.
+      assert.isBelow((yield* Clock.currentTimeMillis) - started, 1_500);
+    }),
+  );
+});
+
+it.live("an interrupted drain releases the hold", () =>
+  Effect.gen(function* () {
+    const hold = yield* holdFor();
+    const fixture = newFixture(false, {
+      hold,
+      timings: { ...fast, interruptGraceMs: 5_000 },
+    });
+    yield* run(
+      fixture,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`INSERT INTO orchestration_v2_projection_runs VALUES ('r1', 't1', 'running', 'pt1')`;
+        const preparation = yield* Preparation.ServiceUpdatePreparation;
+        // The window that asked closes while Stop is still waiting on the turn.
+        const fiber = yield* preparation
+          .prepare({ stopWork: true, hold: true })
+          .pipe(Effect.forkChild);
+        yield* Effect.sleep(Duration.millis(100));
+        assert.isTrue(yield* hold.isHeld);
+        yield* Fiber.interrupt(fiber);
+        assert.isFalse(yield* hold.isHeld);
+      }),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("a held drain cancels a message queued after its single round", () =>
+  Effect.gen(function* () {
+    const hold = yield* holdFor();
+    const fixture = newFixture(true, { hold, wakesCoordinator: "r1" });
+    yield* run(
+      fixture,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`INSERT INTO orchestration_v2_projection_runs VALUES ('r1', 't1', 'running', 'pt1')`;
+        const preparation = yield* Preparation.ServiceUpdatePreparation;
+        const result = yield* preparation.prepare({ stopWork: true, hold: true });
+        assert.isTrue(result.idle);
+        assert.deepEqual(
+          fixture.dispatched.map((command) => [command.type, command.runId]),
+          [
+            ["run.interrupt", "r1"],
+            ["queued-run.cancel", "wake"],
+          ],
+        );
+
+        // One that lands later is cleared by the next look while held.
+        yield* sql`INSERT INTO orchestration_v2_projection_runs VALUES ('late', 't2', 'queued', NULL)`;
+        const looked = yield* preparation.prepare({ stopWork: false });
+        assert.isTrue(looked.idle);
+        assert.isString(looked.holdUntil);
+        assert.deepEqual(fixture.dispatched.at(-1), {
+          type: "queued-run.cancel",
+          threadId: "t2",
+          runId: "late",
+        });
+      }),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

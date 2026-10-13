@@ -68,6 +68,7 @@ import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
 import { deriveProviderInstanceConfigMap } from "../provider/ProviderInstanceRegistryHydration.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import {
   increment,
   terminalRestartsTotal,
@@ -220,6 +221,16 @@ export class TerminalManager extends Context.Service<
       readonly terminalId?: string;
       readonly deleteHistory?: boolean;
     }) => Effect.Effect<ReadonlyArray<string>>;
+
+    /**
+     * Closes every terminal, whatever runs in it, and keeps each one's history.
+     * Returns how many were running. Used before a service update, whose helper
+     * refuses while any shell still runs under the service.
+     */
+    readonly closeAll: Effect.Effect<number>;
+
+    /** How many terminals have a running shell. */
+    readonly countOpen: Effect.Effect<number>;
 
     /**
      * Subscribe to terminal runtime events with a direct callback.
@@ -1473,6 +1484,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const updateHold = yield* ServiceUpdateHold.optional;
   const context = yield* Effect.context<never>();
   const runFork = Effect.runForkWith(context);
 
@@ -2374,6 +2386,25 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     }
   });
 
+  /**
+   * A new shell waits while the service is held for an update; reusing a running
+   * one does not. Checked before the thread lock, so the drain can close
+   * terminals meanwhile.
+   */
+  const awaitSpawnAllowed = (
+    threadId: string,
+    terminalId: string,
+    options?: { readonly restarting?: boolean },
+  ) =>
+    Effect.gen(function* () {
+      if (!(yield* updateHold.isHeld)) return;
+      if (options?.restarting !== true) {
+        const existing = yield* getSession(threadId, terminalId);
+        if (Option.isSome(existing) && existing.value.status === "running") return;
+      }
+      yield* updateHold.awaitReleased;
+    });
+
   const closeSession = Effect.fn("terminal.closeSession")(function* (
     threadId: string,
     terminalId: string,
@@ -2709,9 +2740,13 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     );
 
   const open: TerminalManager["Service"]["open"] = (input) =>
-    withThreadLock(
-      input.threadId,
-      resolveLaunchInputEnvironment(input).pipe(Effect.flatMap(openLocked)),
+    awaitSpawnAllowed(input.threadId, input.terminalId).pipe(
+      Effect.andThen(
+        withThreadLock(
+          input.threadId,
+          resolveLaunchInputEnvironment(input).pipe(Effect.flatMap(openLocked)),
+        ),
+      ),
     );
 
   const openOrAttachForStream = (input: TerminalAttachInput) =>
@@ -2858,7 +2893,13 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   };
 
   const attachStream: TerminalManager["Service"]["attachStream"] = (input, listener) =>
-    streamSession(input, openOrAttachForStream(input), listener);
+    streamSession(
+      input,
+      awaitSpawnAllowed(input.threadId, input.terminalId).pipe(
+        Effect.andThen(openOrAttachForStream(input)),
+      ),
+      listener,
+    );
 
   const observeStream: TerminalManager["Service"]["observeStream"] = (input, listener) =>
     streamSession(
@@ -3096,6 +3137,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     });
 
   const restart: TerminalManager["Service"]["restart"] = (input) =>
+    awaitSpawnAllowed(input.threadId, input.terminalId, { restarting: true }).pipe(
+      Effect.andThen(restartLocked(input)),
+    );
+
+  const restartLocked = (input: TerminalRestartInput) =>
     withThreadLock(
       input.threadId,
       resolveLaunchInputEnvironment(input).pipe(
@@ -3182,6 +3228,34 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       ),
     );
 
+  const closeAll: TerminalManager["Service"]["closeAll"] = Effect.gen(function* () {
+    const sessions = [...(yield* readManagerState).sessions.values()];
+    let running = 0;
+    for (const session of sessions) {
+      if (session.status === "running") running += 1;
+      yield* withThreadLock(
+        session.threadId,
+        closeSession(session.threadId, session.terminalId, false),
+      ).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("failed to close terminal for update", {
+            threadId: session.threadId,
+            terminalId: session.terminalId,
+            cause,
+          }),
+        ),
+      );
+    }
+    return running;
+  });
+
+  const countOpen: TerminalManager["Service"]["countOpen"] = readManagerState.pipe(
+    Effect.map(
+      (state) =>
+        [...state.sessions.values()].filter((session) => session.status === "running").length,
+    ),
+  );
+
   return TerminalManager.of({
     open,
     attachStream,
@@ -3192,6 +3266,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     restart,
     close,
     closeIdle,
+    closeAll,
+    countOpen,
     subscribe,
     subscribeMetadata,
   });

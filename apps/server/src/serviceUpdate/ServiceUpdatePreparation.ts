@@ -13,6 +13,13 @@
  * whatever is still left. The predicates below mirror `_read_state` in
  * update.py; the helper's own check stays the authority.
  *
+ * "Update now" asks for more: it also holds the service (`ServiceUpdateHold`),
+ * so nothing new starts while the helper works, and it clears what Stop leaves
+ * behind (`ServiceUpdateCleanup`): runs stuck before their provider answered,
+ * pending requests, session rows with no live session, unsettled effects and
+ * open terminals. Interrupted runs end `interrupted`; the person continues them
+ * by hand after the restart (no restart continuation starts them on its own).
+ *
  * @module ServiceUpdatePreparation
  */
 import {
@@ -32,13 +39,21 @@ import {
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
+
+import type * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
 
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as TerminalManager from "../terminal/Manager.ts";
+import * as ServiceUpdateCleanup from "./ServiceUpdateCleanup.ts";
+import * as ServiceUpdateHold from "./ServiceUpdateHold.ts";
 
 /** Run statuses update.py accepts; every other status keeps the service busy. */
 export const TERMINAL_RUN_STATUSES = [
@@ -51,18 +66,31 @@ export const TERMINAL_RUN_STATUSES = [
 /** Effect outbox statuses update.py accepts (EffectOutbox writes `succeeded`). */
 export const TERMINAL_EFFECT_STATUSES = ["succeeded", "failed", "cancelled"] as const;
 /** Provider session statuses update.py counts as working. */
-export const WORKING_SESSION_STATUSES = ["running", "working", "connecting", "starting"] as const;
+export const WORKING_SESSION_STATUSES = ServiceUpdateCleanup.WORKING_SESSION_STATUSES;
 
 export const STOP_REASON = "Stopped to install the SpecWithCode update";
+export const ROLLBACK_CANCELLED_MESSAGE =
+  "The rollback was cancelled to install the SpecWithCode update. Run it again.";
 const RELEASE_DETAIL = "Closed to install the SpecWithCode update.";
+/** Effects enqueued after the drain's own cancel get at least this long to finish. */
+const LATE_EFFECT_POLLS = 5;
 /** Passes over new work an interrupted worker can start on its coordinator. */
 const STOP_ROUNDS = 3;
+/** With the hold nothing new starts, so one pass is enough. */
+const HELD_STOP_ROUNDS = 1;
 
 export interface ServiceUpdatePreparationTimings {
   /** How long Stop gets before a turn that is still running is ended locally. */
   readonly interruptGraceMs: number;
   /** How long the forced end and the outbox get to settle afterwards. */
   readonly settleMs: number;
+  /** How long effects get to finish on their own before they are cancelled. */
+  readonly effectGraceMs: number;
+  /**
+   * The whole drain's budget. Waits shrink to fit it; the cleanup that follows
+   * them only writes, so the call ends shortly after.
+   */
+  readonly deadlineMs: number;
   readonly pollMs: number;
 }
 
@@ -71,6 +99,8 @@ export const DEFAULT_TIMINGS: ServiceUpdatePreparationTimings = {
   // provider is ended by its own adapter before it is forced here.
   interruptGraceMs: 21_000,
   settleMs: 10_000,
+  effectGraceMs: 20_000,
+  deadlineMs: 70_000,
   pollMs: 400,
 };
 
@@ -121,6 +151,7 @@ export function summarizeBlockers(rows: ReadonlyArray<BlockerRow>): Array<Servic
 
 interface ActiveRun {
   readonly runId: string;
+  readonly status: string;
   readonly threadId: string;
   readonly providerThreadId: string | null;
   readonly providerSessionId: string | null;
@@ -146,6 +177,10 @@ export const makeWithTimings = (timings: ServiceUpdatePreparationTimings) =>
     const sql = yield* SqlClient.SqlClient;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    const cleanup = yield* ServiceUpdateCleanup.ServiceUpdateCleanup;
+    // Both are absent in tools and tests that build the runtime alone.
+    const hold = yield* Effect.serviceOption(ServiceUpdateHold.ServiceUpdateHold);
+    const terminals = yield* Effect.serviceOption(TerminalManager.TerminalManager);
 
     const readBlockerRows = Effect.gen(function* () {
       const rows = yield* sql.unsafe<{
@@ -206,12 +241,13 @@ export const makeWithTimings = (timings: ServiceUpdatePreparationTimings) =>
 
     const readActiveRuns = sql<{
       readonly run_id: string;
+      readonly status: string;
       readonly thread_id: string;
       readonly provider_thread_id: string | null;
       readonly provider_session_id: string | null;
       readonly provider_turn_id: string | null;
     }>`
-      SELECT r.run_id, r.thread_id, r.provider_thread_id, pt.provider_session_id,
+      SELECT r.run_id, r.status, r.thread_id, r.provider_thread_id, pt.provider_session_id,
              (SELECT t.provider_turn_id FROM orchestration_v2_projection_provider_turns t
                WHERE t.provider_thread_id = r.provider_thread_id
                ORDER BY t.ordinal DESC LIMIT 1) AS provider_turn_id
@@ -223,6 +259,7 @@ export const makeWithTimings = (timings: ServiceUpdatePreparationTimings) =>
       Effect.map((rows) =>
         rows.map((row): ActiveRun => ({
           runId: row.run_id,
+          status: row.status,
           threadId: row.thread_id,
           providerThreadId: row.provider_thread_id,
           providerSessionId: row.provider_session_id,
@@ -230,6 +267,59 @@ export const makeWithTimings = (timings: ServiceUpdatePreparationTimings) =>
         })),
       ),
     );
+
+    /** `ms`, cut to what is left before `deadline`. */
+    const within = (deadline: number, ms: number) =>
+      Effect.map(Clock.currentTimeMillis, (now) => Math.max(0, Math.min(ms, deadline - now)));
+
+    /**
+     * Runs `work` in the background and waits for it at most until `deadline`.
+     * Session releases can each take up to their close timeout on a hung CLI;
+     * one left over finishes on its own (it is never interrupted, so its
+     * release record is still written) while the drain moves on.
+     */
+    const boundedBy = <A, E>(deadline: number, work: Effect.Effect<A, E>) =>
+      Effect.gen(function* () {
+        const fiber = yield* work.pipe(Effect.forkDetach);
+        const budget = Math.max(yield* within(deadline, Number.MAX_SAFE_INTEGER), timings.pollMs);
+        yield* Fiber.join(fiber).pipe(
+          Effect.timeoutOption(Duration.millis(budget)),
+          Effect.catchCause((cause) =>
+            Effect.logWarning("service-update.prepare.background-failed", { cause }),
+          ),
+        );
+      });
+
+    const countUnsettledEffects = sql<{ readonly count: number }>`
+      SELECT COUNT(*) AS count FROM orchestration_v2_effect_outbox
+       WHERE status IS NULL OR status NOT IN ${sql.in(TERMINAL_EFFECT_STATUSES)}
+    `.pipe(Effect.map((rows) => Number(rows[0]?.count ?? 0)));
+
+    /** Finished turns still waiting on a checkpoint that is queued or being written. */
+    const countPendingCaptures = sql<{ readonly count: number }>`
+      SELECT COUNT(*) AS count FROM orchestration_v2_projection_runs r
+        JOIN orchestration_v2_effect_outbox e
+          ON e.command_id = ${ServiceUpdateCleanup.CHECKPOINT_CAPTURE_COMMAND_PREFIX} || r.run_id
+       WHERE r.status = 'waiting' AND e.status IN ('pending', 'running')
+    `.pipe(Effect.map((rows) => Number(rows[0]?.count ?? 0)));
+
+    const readRunStatuses = (runIds: ReadonlyArray<string>) =>
+      runIds.length === 0
+        ? Effect.succeed([])
+        : sql<{ readonly run_id: string; readonly status: string }>`
+            SELECT run_id, status FROM orchestration_v2_projection_runs
+             WHERE run_id IN ${sql.in(runIds)}
+          `;
+
+    // This process's own hold; the install gate of a restart in progress is not one.
+    const isHeld = Option.match(hold, {
+      onNone: () => Effect.succeed(false),
+      onSome: (service) => Effect.map(service.current, Option.isSome),
+    });
+    const openTerminals = Option.match(terminals, {
+      onNone: () => Effect.succeed(0),
+      onSome: (service) => service.countOpen,
+    });
 
     const logged =
       (label: string, detail: Record<string, unknown>) =>
@@ -276,33 +366,101 @@ export const makeWithTimings = (timings: ServiceUpdatePreparationTimings) =>
         );
 
     /** Ends turns whose provider never answered the interrupt (a hung CLI, a dead socket). */
-    const forceEndRuns = (nonce: string) =>
+    const forceEndRuns = (nonce: string, deadline: number) =>
       Effect.gen(function* () {
-        for (const run of yield* readActiveRuns) {
-          // Close its process, then end the turn the way a completed Stop does.
-          if (run.providerSessionId !== null) {
-            yield* providerSessions
-              .release({
-                providerSessionId: ProviderSessionId.make(run.providerSessionId),
-                reason: "manual_shutdown",
-                detail: RELEASE_DETAIL,
-              })
-              .pipe(logged("release-failed", { runId: run.runId }));
-          }
-          if (run.providerThreadId !== null && run.providerTurnId !== null) {
-            yield* threads
-              .dispatch({
-                type: "thread.background-work.settle",
-                commandId: CommandId.make(`service-update:${nonce}:settle:${run.runId}`),
-                threadId: ThreadId.make(run.threadId),
-                providerThreadId: ProviderThreadId.make(run.providerThreadId),
-                providerTurnId: ProviderTurnId.make(run.providerTurnId),
-              })
-              .pipe(logged("settle-failed", { runId: run.runId }));
-          }
-        }
-        yield* awaitRunsSettled(timings.settleMs);
+        const endRun = (run: ActiveRun) =>
+          Effect.gen(function* () {
+            // Close its process, then end the turn the way a completed Stop does.
+            if (run.providerSessionId !== null) {
+              yield* providerSessions
+                .release({
+                  providerSessionId: ProviderSessionId.make(run.providerSessionId),
+                  reason: "manual_shutdown",
+                  detail: RELEASE_DETAIL,
+                })
+                .pipe(logged("release-failed", { runId: run.runId }));
+            }
+            if (run.providerThreadId !== null && run.providerTurnId !== null) {
+              yield* threads
+                .dispatch({
+                  type: "thread.background-work.settle",
+                  commandId: CommandId.make(`service-update:${nonce}:settle:${run.runId}`),
+                  threadId: ThreadId.make(run.threadId),
+                  providerThreadId: ProviderThreadId.make(run.providerThreadId),
+                  providerTurnId: ProviderTurnId.make(run.providerTurnId),
+                })
+                .pipe(logged("settle-failed", { runId: run.runId }));
+            }
+          });
+        // All at once, and no longer than the drain's budget: hung CLIs close in parallel.
+        const runs = yield* readActiveRuns;
+        yield* boundedBy(
+          deadline,
+          Effect.forEach(runs, endRun, { concurrency: "unbounded", discard: true }),
+        );
+        yield* awaitRunsSettled(yield* within(deadline, timings.settleMs));
       });
+
+    /** Rollbacks the cancel stopped before they ran: their thread is told so it stops waiting. */
+    const failCancelledRollbacks = (cancelled: ReadonlyArray<EffectOutbox.CancelledEffect>) =>
+      Effect.forEach(
+        cancelled.filter((effect) => effect.effectType === "provider-thread.rollback"),
+        (effect) =>
+          threads
+            .dispatch({
+              type: "checkpoint.rollback.fail",
+              commandId: CommandId.make(`${effect.commandId}:rollback-failed`),
+              threadId: ThreadId.make(effect.threadId),
+              requestId: CommandId.make(effect.commandId),
+              message: ROLLBACK_CANCELLED_MESSAGE,
+            })
+            .pipe(logged("rollback-fail-failed", { effectId: effect.effectId })),
+        { discard: true },
+      );
+
+    /**
+     * Gives unsettled effects `graceMs` to finish, then cancels the rest. A
+     * rollback or checkpoint that is already running is left to finish (it
+     * stays a blocker until it does); one that never started is cancelled.
+     */
+    const settleEffects = (label: string, graceMs: number) =>
+      Effect.gen(function* () {
+        const until = (yield* Clock.currentTimeMillis) + graceMs;
+        while (true) {
+          if ((yield* countUnsettledEffects) === 0) return;
+          if ((yield* Clock.currentTimeMillis) >= until) break;
+          yield* Effect.sleep(Duration.millis(timings.pollMs));
+        }
+        const cancelled = yield* cleanup
+          .cancelUnsettledEffects({ reason: STOP_REASON })
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning(`service-update.prepare.${label}`, { cause }).pipe(
+                Effect.as([] as ReadonlyArray<EffectOutbox.CancelledEffect>),
+              ),
+            ),
+          );
+        yield* failCancelledRollbacks(cancelled);
+      });
+
+    /** Cancels queued messages; the queue cannot start while held, so each would block the update. */
+    const cancelQueued = (nonce: string, rows: ReadonlyArray<BlockerRow>, touched?: Set<string>) =>
+      Effect.forEach(
+        rows,
+        (row) => {
+          if (row.kind !== "queued" || row.threadId === null || !row.runId) return Effect.void;
+          touched?.add(row.threadId);
+          return threads
+            .dispatch({
+              type: "queued-run.cancel",
+              commandId: CommandId.make(`service-update:${nonce}:cancel:${row.runId}`),
+              threadId: ThreadId.make(row.threadId),
+              runId: RunId.make(row.runId),
+            })
+            .pipe(logged("cancel-queued-failed", { threadId: row.threadId, runId: row.runId }));
+        },
+        { discard: true },
+      );
 
     /**
      * One pass over the work left: queued messages are cancelled first, so an
@@ -311,21 +469,10 @@ export const makeWithTimings = (timings: ServiceUpdatePreparationTimings) =>
      * rest of its delegated work. Stop is the fallback for a run that cannot be
      * interrupted and for a request whose run has already ended.
      */
-    const stopRound = (nonce: string, touched: Set<string>) =>
+    const stopRound = (nonce: string, touched: Set<string>, deadline: number) =>
       Effect.gen(function* () {
         const rows = yield* readBlockerRows;
-        for (const row of rows) {
-          if (row.kind !== "queued" || row.threadId === null || !row.runId) continue;
-          touched.add(row.threadId);
-          yield* threads
-            .dispatch({
-              type: "queued-run.cancel",
-              commandId: CommandId.make(`service-update:${nonce}:cancel:${row.runId}`),
-              threadId: ThreadId.make(row.threadId),
-              runId: RunId.make(row.runId),
-            })
-            .pipe(logged("cancel-queued-failed", { threadId: row.threadId, runId: row.runId }));
-        }
+        yield* cancelQueued(nonce, rows, touched);
         const interrupted = new Set<string>();
         const stopThreads = new Set<string>();
         for (const row of rows) {
@@ -344,15 +491,8 @@ export const makeWithTimings = (timings: ServiceUpdatePreparationTimings) =>
             .pipe(dispatched("interrupt-failed", { threadId: row.threadId, runId: row.runId }));
           if (!accepted) stopThreads.add(row.threadId);
         }
-        const runThreads = new Set(
-          rows.flatMap((row) =>
-            row.kind === "run" && row.threadId !== null ? [row.threadId] : [],
-          ),
-        );
-        for (const row of rows) {
-          if (row.kind === "request" && row.threadId !== null && !runThreads.has(row.threadId))
-            stopThreads.add(row.threadId);
-        }
+        // A request whose run already ended is closed by the cleanup below. A full
+        // Stop here would also end that thread's pull request watches and wakes.
         for (const threadId of stopThreads) {
           touched.add(threadId);
           yield* threads
@@ -364,37 +504,189 @@ export const makeWithTimings = (timings: ServiceUpdatePreparationTimings) =>
             })
             .pipe(logged("stop-failed", { threadId }));
         }
-        if (!(yield* awaitRunsSettled(timings.interruptGraceMs))) yield* forceEndRuns(nonce);
+        if (!(yield* awaitRunsSettled(yield* within(deadline, timings.interruptGraceMs))))
+          yield* forceEndRuns(nonce, deadline);
       });
 
-    const stopWork = Effect.gen(function* () {
-      const nonce = yield* Clock.currentTimeMillis;
-      const touched = new Set<string>();
-      // An interrupted worker can wake its coordinator, which queues or starts a new
-      // turn; later rounds stop that too.
-      for (let round = 0; round < STOP_ROUNDS; round += 1) {
-        yield* stopRound(`${nonce}:${round}`, touched);
-        const left = yield* readBlockerRows;
-        if (!left.some((row) => row.kind === "run" || row.kind === "queued")) break;
-      }
-      // Agent processes kept open between turns also block the helper.
-      yield* providerSessions
-        .releaseIdle({ detail: RELEASE_DETAIL })
-        .pipe(logged("release-idle-failed", {}));
-      return touched.size;
+    /**
+     * What Stop cannot end on its own: turns that never reached their provider,
+     * requests whose run already ended, session rows whose process is gone,
+     * effects nobody will finish, and terminal shells.
+     */
+    const clearLeftovers = (nonce: string, deadline: number) =>
+      Effect.gen(function* () {
+        // Agent processes, including any still busy after Stop, also block the helper.
+        yield* boundedBy(
+          deadline,
+          providerSessions
+            .releaseIdle({ detail: RELEASE_DETAIL, includeBusy: true })
+            .pipe(logged("release-sessions-failed", {})),
+        );
+        // Closing a busy session can end its turn through the provider's own events.
+        if ((yield* readActiveRuns).length > 0)
+          yield* awaitRunsSettled(yield* within(deadline, timings.settleMs));
+        // A finished turn waits on its checkpoint; a restart would replay it, so it
+        // gets what is left of the effect grace before the turn is closed without one.
+        const captureUntil =
+          (yield* Clock.currentTimeMillis) + (yield* within(deadline, timings.effectGraceMs));
+        while ((yield* countPendingCaptures) > 0) {
+          if ((yield* Clock.currentTimeMillis) >= captureUntil) break;
+          yield* Effect.sleep(Duration.millis(timings.pollMs));
+        }
+        yield* cleanup
+          .finalizeStuckRuns({ nonce, reason: STOP_REASON })
+          .pipe(logged("finalize-runs-failed", {}));
+        for (const request of yield* cleanup.listMessageModeRequests.pipe(
+          Effect.orElseSucceed(() => []),
+        )) {
+          yield* threads
+            .dispatch({
+              type: "thread.user-input.dismiss",
+              commandId: CommandId.make(`service-update:${nonce}:dismiss:${request.requestId}`),
+              threadId: request.threadId,
+              requestId: request.requestId,
+            })
+            .pipe(logged("dismiss-failed", { requestId: request.requestId }));
+        }
+        yield* cleanup
+          .cancelPendingRequests({ nonce, reason: STOP_REASON })
+          .pipe(logged("cancel-requests-failed", {}));
+        yield* cleanup.reconcileOrphanedSessions.pipe(logged("reconcile-sessions-failed", {}));
+        // Effects get a moment to finish, typically the interrupts above; the rest is cancelled.
+        yield* settleEffects(
+          "cancel-effects-failed",
+          yield* within(deadline, timings.effectGraceMs),
+        );
+        // Shells end; their scrollback stays for after the restart.
+        return yield* Option.match(terminals, {
+          onNone: () => Effect.succeed(0),
+          onSome: (service) => service.closeAll,
+        });
+      });
+
+    const stopWork = (input: { readonly rounds: number; readonly deadline: number }) =>
+      Effect.gen(function* () {
+        const nonce = yield* Clock.currentTimeMillis;
+        const touched = new Set<string>();
+        const activeBefore = (yield* readActiveRuns).map((active) => active.runId);
+        // An interrupted worker can wake its coordinator, which queues or starts a new
+        // turn; later rounds stop that too. A held service defers those wakes.
+        for (let round = 0; round < input.rounds; round += 1) {
+          yield* stopRound(`${nonce}:${round}`, touched, input.deadline);
+          const left = yield* readBlockerRows;
+          if (!left.some((row) => row.kind === "run" || row.kind === "queued")) break;
+        }
+        const closedTerminals = yield* clearLeftovers(`${nonce}:cleanup`, input.deadline);
+        const interruptedRuns = (yield* readRunStatuses(activeBefore)).filter(
+          (row) => row.status === "interrupted",
+        ).length;
+        return { stoppedThreads: touched.size, interruptedRuns, closedTerminals };
+      });
+
+    const report = (rows: ReadonlyArray<BlockerRow>) => {
+      const blockers = summarizeBlockers(rows);
+      return { idle: blockers.length === 0, blockers };
+    };
+
+    const holdUntil = Effect.gen(function* () {
+      if (Option.isNone(hold)) return {};
+      const current = yield* hold.value.current;
+      return Option.isNone(current)
+        ? {}
+        : { holdUntil: DateTime.formatIso(DateTime.makeUnsafe(current.value.expiresAtMs)) };
     });
+
+    const drain = (input: { readonly holding: boolean }) =>
+      Effect.gen(function* () {
+        // Held before the drain, so nothing new starts behind it.
+        if (input.holding && Option.isSome(hold)) yield* hold.value.acquire();
+        const deadline = (yield* Clock.currentTimeMillis) + timings.deadlineMs;
+        const drained = yield* stopWork({
+          rounds: input.holding ? HELD_STOP_ROUNDS : STOP_ROUNDS,
+          deadline,
+        });
+        // At least one look, even when the budget is spent.
+        let rows = yield* awaitIdle(yield* within(deadline, timings.settleMs));
+        // A message that passed the hold check just before it began, or a watch
+        // wake already in flight, can queue after the single held round.
+        if (input.holding && rows.some((row) => row.kind === "queued")) {
+          yield* cancelQueued(`${yield* Clock.currentTimeMillis}:late`, rows);
+          rows = yield* readBlockerRows;
+        }
+        // Reactions to the runs ended above can enqueue work after the cancel.
+        if (rows.some((row) => row.kind === "effect")) {
+          yield* settleEffects(
+            "cancel-late-effects-failed",
+            Math.max(
+              yield* within(deadline, timings.effectGraceMs),
+              Math.min(timings.effectGraceMs, timings.pollMs * LATE_EFFECT_POLLS),
+            ),
+          );
+          rows = yield* readBlockerRows;
+        }
+        // The hold's time limit starts again now, as the install request is written.
+        if (input.holding && Option.isSome(hold)) yield* hold.value.acquire();
+        return { rows, drained };
+      });
 
     const prepare = (input: ServerPrepareServiceUpdateInput) =>
       Effect.gen(function* () {
-        const stoppedThreads = input.stopWork ? yield* stopWork : 0;
-        const rows = input.stopWork ? yield* awaitIdle(timings.settleMs) : yield* readBlockerRows;
-        const blockers = summarizeBlockers(rows);
-        if (input.stopWork)
-          yield* Effect.logInfo("service-update.prepare", {
-            stoppedThreads,
-            remaining: blockers.length,
+        if (input.releaseHold === true) {
+          if (Option.isSome(hold)) yield* hold.value.release("cancelled");
+          return {
+            ...report(yield* readBlockerRows),
+            stoppedThreads: 0,
+            held: false,
+            openTerminals: yield* openTerminals,
+          };
+        }
+        if (!input.stopWork) {
+          const held = yield* isHeld;
+          let rows = yield* readBlockerRows;
+          // While held a queued message can never start, and it keeps the helper waiting.
+          if (held && rows.some((row) => row.kind === "queued")) {
+            yield* cancelQueued(`${yield* Clock.currentTimeMillis}:held`, rows);
+            rows = yield* readBlockerRows;
+          }
+          return {
+            ...report(rows),
+            stoppedThreads: 0,
+            held,
+            ...(held ? yield* holdUntil : {}),
+            openTerminals: yield* openTerminals,
+          };
+        }
+        // Only a release the agent has found is worth holding the service for.
+        const holding =
+          input.hold === true && Option.isSome(hold) && (yield* hold.value.updatePending);
+        if (input.hold === true && Option.isSome(hold) && !holding)
+          yield* Effect.logWarning("service-update.hold.refused", {
+            reason: "no service update is on its way",
           });
-        return { idle: blockers.length === 0, stoppedThreads, blockers };
+        const { rows, drained } = yield* drain({ holding }).pipe(
+          // A drain that failed or was cut off (a closed window) installs nothing:
+          // nobody would release the hold, so work may start again now.
+          Effect.onError(() =>
+            holding && Option.isSome(hold) ? hold.value.release("prepare-aborted") : Effect.void,
+          ),
+        );
+        const held = yield* isHeld;
+        const result = {
+          ...report(rows),
+          stoppedThreads: drained.stoppedThreads,
+          held,
+          ...(held ? yield* holdUntil : {}),
+          interruptedRuns: drained.interruptedRuns,
+          openTerminals: drained.closedTerminals,
+        };
+        yield* Effect.logInfo("service-update.prepare", {
+          stoppedThreads: result.stoppedThreads,
+          interruptedRuns: result.interruptedRuns,
+          openTerminals: result.openTerminals,
+          held: result.held,
+          remaining: result.blockers.length,
+        });
+        return result;
       }).pipe(
         Effect.catchCause((cause) =>
           Cause.hasInterruptsOnly(cause)

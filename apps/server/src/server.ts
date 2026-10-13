@@ -56,6 +56,7 @@ import * as ForgejoCli from "./sourceControl/ForgejoCli.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import * as ProviderInstanceRegistryHydration from "./provider/ProviderInstanceRegistryHydration.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
+import * as ServiceUpdateHold from "./serviceUpdate/ServiceUpdateHold.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
@@ -682,6 +683,9 @@ const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
   Layer.provideMerge(RemoteOpenTargets.layer),
   Layer.provideMerge(DirectEndpoints.layer),
   Layer.provideMerge(ServerLifecycleEvents.layer),
+  // One hold for the whole service: the update drain sets it, and the
+  // orchestrator, schedulers, pollers and terminals read it.
+  Layer.provideMerge(ServiceUpdateHold.layer),
   Layer.provide(NetService.layer),
 );
 const layerCommandReadiness = HttpRouter.middleware(

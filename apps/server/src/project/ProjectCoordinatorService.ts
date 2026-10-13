@@ -3,6 +3,7 @@ import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   ProjectWorkspaceError,
   ThreadId,
+  type ModelSelection,
   type ProjectCoordinatorResult,
   type ProjectCoordinatorSendInput,
   type ProjectCoordinatorStartInput,
@@ -10,6 +11,11 @@ import {
 } from "@specweave-studio/contracts";
 import { resolveCoordinatorModelSelection } from "@specweave-studio/shared/coordinatorDefault";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
+import {
+  limitStopWaitsForReset,
+  resolveCoordinatorTurnSelection,
+} from "@specweave-studio/shared/providerFallback";
+import * as DateTime from "effect/DateTime";
 import * as KeyedLock from "@specweave-studio/shared/KeyedLock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -27,6 +33,12 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import * as CoordinatorAttachments from "./ProjectCoordinatorAttachments.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import { simulatedUsageLimitInstances } from "../orchestration-v2/ProviderFailure.ts";
+import {
+  limitStopIsCurrent,
+  ProviderFallbackEnv,
+} from "../orchestration-v2/ProviderFallbackWorker.ts";
 
 export class ProjectCoordinatorService extends Context.Service<
   ProjectCoordinatorService,
@@ -53,6 +65,7 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
   const locks = yield* KeyedLock.make<ProjectId>();
   const fail = (projectId: ProjectId, code: ProjectWorkspaceError["code"]) =>
     new ProjectWorkspaceError({ projectId, code });
@@ -138,6 +151,83 @@ const make = Effect.gen(function* () {
         }),
       )
       .pipe(mapFailure(input.projectId));
+  /**
+   * The model the next coordinator turn names: the saved one unless its
+   * provider is limited (see resolveCoordinatorTurnSelection), so a
+   * coordinator moved to a fallback is not pulled back into the limit by
+   * every message.
+   */
+  const turnSelection = (
+    projectId: ProjectId,
+    threadId: ThreadId,
+    settings: { readonly coordinatorModelSelection: ModelSelection | null },
+  ) =>
+    Effect.gen(function* () {
+      const saved = settings.coordinatorModelSelection;
+      if (saved === null) return null;
+      const shell = yield* threads.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null));
+      const project = yield* projects
+        .getById(projectId)
+        .pipe(Effect.orElseSucceed(() => Option.none()));
+      const rule = resolveProjectSettings(
+        yield* serverSettings.getSettings,
+        projectId,
+        Option.getOrUndefined(project),
+      ).settings;
+      const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+      const limited = new Set<string>(simulatedUsageLimitInstances(yield* ProviderFallbackEnv));
+      if (
+        shell &&
+        shell.status === "failed" &&
+        shell.lastErrorClass === "usage_limit" &&
+        limitStopIsCurrent(shell, nowMs) &&
+        !limitStopWaitsForReset({
+          resetAt: shell.usageLimitResetAt,
+          waitUnderMinutes: rule.providerLimitWaitUnderMinutes,
+          nowMs,
+        })
+      )
+        limited.add(shell.providerInstanceId);
+      // Moved off the saved model: when its last run there failed, which keeps
+      // it off that model until a newer usage read shows room.
+      const savedStoppedAtMs =
+        shell && shell.modelSelection.instanceId !== saved.instanceId
+          ? yield* projections.getThreadRecords(threadId, ["runs"]).pipe(
+              Effect.map(({ runs }) => {
+                let last: (typeof runs)[number] | undefined;
+                for (const run of runs)
+                  if (
+                    run.providerInstanceId === saved.instanceId &&
+                    (!last || run.ordinal > last.ordinal)
+                  )
+                    last = run;
+                return last?.status === "failed" && last.completedAt
+                  ? DateTime.toEpochMillis(last.completedAt)
+                  : null;
+              }),
+              Effect.orElseSucceed(() => null),
+            )
+          : null;
+      const decision = resolveCoordinatorTurnSelection({
+        saved,
+        thread: shell?.modelSelection ?? null,
+        providers: yield* providerRegistry.getProviders,
+        rule,
+        nowMs,
+        limitedInstanceIds: limited,
+        savedStoppedAtMs,
+      });
+      if (decision.reason !== "saved")
+        yield* Effect.logInfo("project.coordinator.turn-model", {
+          projectId,
+          threadId,
+          reason: decision.reason,
+          saved: saved.instanceId,
+          selected: decision.selection.instanceId,
+          model: decision.selection.model,
+        });
+      return decision.selection;
+    }).pipe(Effect.orElseSucceed(() => settings.coordinatorModelSelection));
   const send = (input: ProjectCoordinatorSendInput) =>
     Effect.gen(function* () {
       yield* CoordinatorAttachments.validate(input);
@@ -157,6 +247,7 @@ const make = Effect.gen(function* () {
           }
           yield* workspace.assertAdmission(input.projectId);
           const settings = (yield* workspace.readWorkspace(input)).settings;
+          const modelSelection = yield* turnSelection(input.projectId, result.threadId, settings);
           yield* CoordinatorAttachments.send({
             projectId: input.projectId,
             threadId: result.threadId,
@@ -167,9 +258,7 @@ const make = Effect.gen(function* () {
               input.sourceThreadId === undefined
                 ? input.prompt
                 : `User follow-up from selected worker ${input.sourceThreadId}. Review that thread and decide whether to reuse it or route elsewhere.\n\n${input.prompt}`,
-            ...(settings.coordinatorModelSelection
-              ? { modelSelection: settings.coordinatorModelSelection }
-              : {}),
+            ...(modelSelection ? { modelSelection } : {}),
             attachments: input.attachments ?? [],
             mode: "queue",
             createdBy: "user",

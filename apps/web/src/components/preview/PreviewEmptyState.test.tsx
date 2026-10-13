@@ -84,10 +84,10 @@ describe("PreviewEmptyState", () => {
   });
 
   it("headlines an unknown binary as Local server, keeping its name on the second line", () => {
-    mocks.servers = [{ ...server(3773), processName: "studio" }];
+    mocks.servers = [{ ...server(3773), processName: "devd" }];
     const html = render([]);
     expect(html).toContain(">Local server<");
-    expect(html).toContain("localhost:3773 \u00b7 studio");
+    expect(html).toContain("localhost:3773 \u00b7 devd");
   });
 
   it("renders only the recents group when no servers are found", () => {

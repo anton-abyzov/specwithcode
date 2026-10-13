@@ -5,6 +5,8 @@ import type {
 } from "@specweave-studio/contracts";
 import { useCallback, useEffect, useState } from "react";
 
+import { startServiceUpdateNow, useServiceUpdateFlow } from "../serviceUpdateFlow";
+import { canRetryServiceUpdate } from "../sidebar/SidebarRestartToUpdate.logic";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -30,6 +32,7 @@ export function UpdatePreferencesSection() {
   const [preferences, setPreferences] = useState<DesktopUpdatePreferences | null>(null);
   const [serviceState, setServiceState] = useState<StudioServiceUpdateState | null>(null);
   const [servicePending, setServicePending] = useState(false);
+  const serviceUpdate = useServiceUpdateFlow(serviceState);
 
   useEffect(() => {
     if (!supported || !bridge) return;
@@ -69,10 +72,30 @@ export function UpdatePreferencesSection() {
   );
 
   const serviceAction = serviceState ? resolveServiceUpdateAction(serviceState) : "none";
+  // An install already under way is followed in its toast; it is not started twice.
+  const serviceUpdateBusy =
+    serviceUpdate.starting ||
+    (serviceUpdate.progress !== null && !canRetryServiceUpdate(serviceUpdate.progress));
   const runServiceAction = useCallback(() => {
     if (!bridge || serviceAction === "none") return;
-    const request =
-      serviceAction === "install" ? bridge.installServiceUpdate : bridge.checkServiceUpdate;
+    if (serviceAction === "install") {
+      // The same "Update now" as the sidebar: stop and hold the work, then install.
+      if (typeof bridge.installServiceUpdate !== "function") return;
+      setServicePending(true);
+      void startServiceUpdateNow(serviceState)
+        .catch((error: unknown) => {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not start the service update",
+              description: errorText(error, "The update agent did not answer."),
+            }),
+          );
+        })
+        .finally(() => setServicePending(false));
+      return;
+    }
+    const request = bridge.checkServiceUpdate;
     if (typeof request !== "function") return;
     setServicePending(true);
     void request()
@@ -81,16 +104,13 @@ export function UpdatePreferencesSection() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title:
-              serviceAction === "install"
-                ? "Could not start the service update"
-                : "Could not check for service updates",
+            title: "Could not check for service updates",
             description: errorText(error, "The update agent did not answer."),
           }),
         );
       })
       .finally(() => setServicePending(false));
-  }, [bridge, serviceAction]);
+  }, [bridge, serviceAction, serviceState]);
 
   if (!supported || preferences === null) return null;
   // The build keeps self-update off: the switches report what runs (nothing)
@@ -148,7 +168,7 @@ export function UpdatePreferencesSection() {
               <Button
                 size="sm"
                 variant="outline"
-                disabled={servicePending}
+                disabled={servicePending || (serviceAction === "install" && serviceUpdateBusy)}
                 onClick={runServiceAction}
               >
                 {serviceAction === "install" ? "Install now" : "Check now"}

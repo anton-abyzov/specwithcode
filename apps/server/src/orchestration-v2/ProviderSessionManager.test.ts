@@ -59,6 +59,8 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
+import { awaitGateOpen, makeGatedHold } from "../serviceUpdate/UpdateInstallGate.testkit.ts";
 
 const layerTestDatabase = SqlitePersistence.layerMemory;
 const layerTestStores = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
@@ -1093,6 +1095,49 @@ it.effect("ProviderSessionManagerV2 opens a duplicate session only once", () =>
       ),
     );
   }),
+);
+
+it.effect("ProviderSessionManagerV2 opens no new session while an install's gate is live", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const gated = yield* makeGatedHold().pipe(Effect.provide(NodeServices.layer));
+
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-install-gate");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const open = manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+
+      const refused = yield* Effect.flip(open);
+      assert.equal(refused._tag, "ProviderSessionOpenError");
+      const cause = (refused as ProviderSessionManager.ProviderSessionOpenError).cause;
+      assert.instanceOf(cause, ServiceUpdateHold.ServiceUpdateInProgressError);
+      assert.equal(
+        (cause as ServiceUpdateHold.ServiceUpdateInProgressError).message,
+        ServiceUpdateHold.SERVICE_UPDATE_VERIFYING_MESSAGE,
+      );
+      assert.equal((yield* Ref.get(state)).openCount, 0);
+
+      yield* gated.clear.pipe(Effect.provide(NodeServices.layer));
+      assert.isTrue(yield* awaitGateOpen(gated.hold));
+      yield* open;
+      assert.equal((yield* Ref.get(state)).openCount, 1);
+    });
+
+    yield* effect.pipe(
+      Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })),
+      Effect.provideService(ServiceUpdateHold.ServiceUpdateHold, gated.hold),
+    );
+  }).pipe(Effect.scoped),
 );
 
 it.effect("ProviderSessionManagerV2 cleans up an open interrupted mid-handshake", () =>

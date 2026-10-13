@@ -1,12 +1,16 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerActivation from "../serverActivation.ts";
+import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import * as Scheduler from "./Scheduler.ts";
 
 it.effect("keeps other sources running after a source defects", () =>
@@ -107,4 +111,42 @@ it.effect("holds due work and the clock until startup recovery activates the ser
     );
     assert.isAtLeast(yield* Ref.get(runs), 1);
   }),
+);
+
+it.effect("records how long it sat out an update hold", () =>
+  Effect.gen(function* () {
+    const startMs = Date.parse("2026-07-01T08:50:00.000Z");
+    yield* TestClock.setTime(startMs);
+    const hold = yield* ServiceUpdateHold.makeWithOptions({
+      agentStatePath: "/nonexistent/specweave-studio-test/updates/state.json",
+    });
+    yield* hold.acquire({ ttlMs: 60 * 60_000 });
+    const ranAt = yield* Queue.unbounded<number>();
+    yield* Effect.gen(function* () {
+      const scheduler = yield* Scheduler.Scheduler;
+      yield* scheduler.register(
+        "due",
+        Effect.flatMap(Clock.currentTimeMillis, (now) => Queue.offer(ranAt, now)).pipe(
+          Effect.asVoid,
+        ),
+      );
+      yield* TestClock.adjust("30 minutes");
+      assert.isTrue(Option.isNone(yield* Queue.poll(ranAt)));
+      yield* hold.release("test");
+      yield* TestClock.adjust("5 seconds");
+      const resumedMs = yield* Queue.take(ranAt);
+      const heldMsBetween = scheduler.heldMsBetween;
+      if (heldMsBetween === undefined) return assert.fail("heldMsBetween is missing");
+      // From the registration it skipped to the first tick after the release.
+      assert.equal(yield* heldMsBetween(startMs, resumedMs), resumedMs - startMs);
+      // A slot at 09:00 waited 20 minutes and 5 seconds, all of it held.
+      const slotMs = Date.parse("2026-07-01T09:00:00.000Z");
+      assert.equal(yield* heldMsBetween(slotMs, resumedMs), resumedMs - slotMs);
+      // Time after the hold is not held.
+      assert.equal(yield* heldMsBetween(resumedMs, resumedMs + 60_000), 0);
+    }).pipe(
+      Effect.provide(Scheduler.layer),
+      Effect.provideService(ServiceUpdateHold.ServiceUpdateHold, hold),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

@@ -11,6 +11,7 @@ import {
   ServerAuthDescriptor,
   TrimmedNonEmptyString,
 } from "@specweave-studio/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -40,6 +41,10 @@ import {
   type RunningServerRuntimeState,
   type ServiceCliCommand,
 } from "./localServiceAttach.ts";
+import {
+  SERVICE_INSTALL_LIMIT_MS,
+  serviceInstallInProgress,
+} from "../updates/serviceInstallMarker.ts";
 import serverPackageJson from "../../../server/package.json" with { type: "json" };
 
 const { logInfo, logWarning } = DesktopObservability.makeComponentLogger("desktop-local-service");
@@ -49,6 +54,10 @@ const PROBE_TIMEOUT_MS = 2_500;
 // A service that was just (re)started may own the store before it answers.
 const UNRESPONSIVE_GRACE_ATTEMPTS = 6;
 const UNRESPONSIVE_GRACE_INTERVAL_MS = 1_000;
+// An update installing over the service restarts it on the new release; the
+// app waits while the install runs (the marker's own age bounds that), and
+// never longer than this in all, measured in time rather than probes.
+const INSTALL_WAIT_LIMIT_MS = SERVICE_INSTALL_LIMIT_MS;
 const PAIR_TIMEOUT_MS = 30_000;
 const DESKTOP_SESSION_LABEL = "SpecWithCode Desktop";
 
@@ -76,6 +85,11 @@ interface StudioHomeCandidate {
   readonly serviceInstalled: boolean;
 }
 
+export interface DiscoverOptions {
+  /** Runs once when discovery starts waiting for a service update to finish. */
+  readonly onInstallWait?: Effect.Effect<void>;
+}
+
 export class DesktopLocalServicePairingError extends Schema.TaggedError<DesktopLocalServicePairingError>()(
   "DesktopLocalServicePairingError",
   { reason: Schema.String, cause: Schema.optional(Schema.Defect()) },
@@ -98,7 +112,7 @@ export class DesktopLocalService extends Context.Service<
   DesktopLocalService,
   {
     /** Finds a live server that already owns this machine's Studio home. */
-    readonly discover: Effect.Effect<LocalServiceDiscovery>;
+    readonly discover: (options?: DiscoverOptions) => Effect.Effect<LocalServiceDiscovery>;
     readonly attach: (service: AttachedLocalService) => Effect.Effect<void>;
     readonly attached: Effect.Effect<Option.Option<AttachedLocalService>>;
     /** A bearer for the attached service, minted through that installation's own CLI. */
@@ -270,62 +284,94 @@ export const make = Effect.gen(function* () {
     return [own, ...installed];
   });
 
-  const discover = Effect.gen(function* () {
-    const candidates = yield* listCandidates;
-    let unresponsive: { runtime: RunningServerRuntimeState; stateDir: string } | null = null;
-    for (let attempt = 0; attempt < UNRESPONSIVE_GRACE_ATTEMPTS; attempt += 1) {
-      let waiting = false;
-      unresponsive = null;
-      for (const candidate of candidates) {
-        const runtime = yield* readRuntime(candidate.stateDir);
-        if (runtime === null || runtime.pid === process.pid || !isProcessAlive(runtime.pid)) {
-          // launchd restarts a KeepAlive service shortly after it stops.
-          if (candidate.serviceInstalled) waiting = true;
-          continue;
-        }
-        const descriptor = yield* probeDescriptor(runtime.origin);
-        if (Option.isSome(descriptor)) {
-          yield* logInfo("found a running Studio server", {
-            pid: runtime.pid,
-            origin: runtime.origin,
-            baseDir: candidate.baseDir,
-            serviceManaged: runtime.serviceManaged,
-            serverVersion: descriptor.value.serverVersion,
-          });
-          return {
-            _tag: "running",
-            service: {
+  const discover = (options?: DiscoverOptions) =>
+    Effect.gen(function* () {
+      const candidates = yield* listCandidates;
+      let unresponsive: { runtime: RunningServerRuntimeState; stateDir: string } | null = null;
+      let installWaitStartedAt: number | null = null;
+      let installWaitOver = false;
+      for (let attempt = 0; attempt < UNRESPONSIVE_GRACE_ATTEMPTS; attempt += 1) {
+        let waiting = false;
+        unresponsive = null;
+        for (const candidate of candidates) {
+          const runtime = yield* readRuntime(candidate.stateDir);
+          if (runtime === null || runtime.pid === process.pid || !isProcessAlive(runtime.pid)) {
+            // launchd restarts a KeepAlive service shortly after it stops.
+            if (candidate.serviceInstalled) waiting = true;
+            continue;
+          }
+          const descriptor = yield* probeDescriptor(runtime.origin);
+          if (Option.isSome(descriptor)) {
+            yield* logInfo("found a running Studio server", {
+              pid: runtime.pid,
+              origin: runtime.origin,
               baseDir: candidate.baseDir,
-              runtime,
-              descriptor: descriptor.value,
-              httpBaseUrl: new URL(runtime.origin),
-            },
-          } as const;
+              serviceManaged: runtime.serviceManaged,
+              serverVersion: descriptor.value.serverVersion,
+            });
+            return {
+              _tag: "running",
+              service: {
+                baseDir: candidate.baseDir,
+                runtime,
+                descriptor: descriptor.value,
+                httpBaseUrl: new URL(runtime.origin),
+              },
+            } as const;
+          }
+          waiting = true;
+          unresponsive ??= { runtime, stateDir: candidate.stateDir };
         }
-        waiting = true;
-        unresponsive ??= { runtime, stateDir: candidate.stateDir };
+        if (!waiting) return { _tag: "none" } as const;
+        // A server started now would take the port the updated service needs.
+        const now = yield* Clock.currentTimeMillis;
+        const installing = installWaitOver
+          ? undefined
+          : candidates.find(
+              (candidate) =>
+                candidate.serviceInstalled && serviceInstallInProgress(candidate.baseDir, now),
+            );
+        if (installing !== undefined && installWaitStartedAt === null) {
+          installWaitStartedAt = now;
+          yield* logInfo("waiting for the Studio service update to finish", {
+            baseDir: installing.baseDir,
+          });
+          if (options?.onInstallWait !== undefined) yield* options.onInstallWait;
+        }
+        if (installing !== undefined && installWaitStartedAt !== null) {
+          if (now - installWaitStartedAt < INSTALL_WAIT_LIMIT_MS) {
+            // Not counted: the full grace still follows once the install ends.
+            attempt = -1;
+          } else {
+            installWaitOver = true;
+            yield* logWarning("the Studio service update did not finish in time", {
+              baseDir: installing.baseDir,
+            });
+          }
+        }
+        yield* Effect.sleep(UNRESPONSIVE_GRACE_INTERVAL_MS);
       }
-      if (!waiting) return { _tag: "none" } as const;
-      yield* Effect.sleep(UNRESPONSIVE_GRACE_INTERVAL_MS);
-    }
-    // Only a live owner of the app's own home blocks startup; an installed
-    // service elsewhere that never answered leaves this home free.
-    if (unresponsive === null || unresponsive.stateDir !== environment.stateDir) {
-      if (unresponsive !== null) {
-        yield* logWarning("an installed Studio service does not answer; starting a local server", {
-          pid: unresponsive.runtime.pid,
-          origin: unresponsive.runtime.origin,
-        });
+      // Only a live owner of the app's own home blocks startup; an installed
+      // service elsewhere that never answered leaves this home free.
+      if (unresponsive === null || unresponsive.stateDir !== environment.stateDir) {
+        if (unresponsive !== null) {
+          yield* logWarning(
+            "an installed Studio service does not answer; starting a local server",
+            {
+              pid: unresponsive.runtime.pid,
+              origin: unresponsive.runtime.origin,
+            },
+          );
+        }
+        return { _tag: "none" } as const;
       }
-      return { _tag: "none" } as const;
-    }
-    if (!isProcessAlive(unresponsive.runtime.pid)) return { _tag: "none" } as const;
-    yield* logWarning("a live process owns this Studio home but does not answer", {
-      pid: unresponsive.runtime.pid,
-      origin: unresponsive.runtime.origin,
-    });
-    return { _tag: "unresponsive", ...unresponsive } as const;
-  }).pipe(Effect.withSpan("desktop.localService.discover"));
+      if (!isProcessAlive(unresponsive.runtime.pid)) return { _tag: "none" } as const;
+      yield* logWarning("a live process owns this Studio home but does not answer", {
+        pid: unresponsive.runtime.pid,
+        origin: unresponsive.runtime.origin,
+      });
+      return { _tag: "unresponsive", ...unresponsive } as const;
+    }).pipe(Effect.withSpan("desktop.localService.discover"));
 
   const resolvePairCommand = Effect.fn("desktop.localService.resolvePairCommand")(function* (
     service: AttachedLocalService,
@@ -466,9 +512,10 @@ export const layerTest = (input?: {
   Layer.succeed(
     DesktopLocalService,
     DesktopLocalService.of({
-      discover: Effect.succeed(
-        input?.attached ? { _tag: "running", service: input.attached } : { _tag: "none" },
-      ),
+      discover: () =>
+        Effect.succeed(
+          input?.attached ? { _tag: "running", service: input.attached } : { _tag: "none" },
+        ),
       attach: () => Effect.void,
       attached: Effect.succeed(Option.fromUndefinedOr(input?.attached)),
       bearerToken:

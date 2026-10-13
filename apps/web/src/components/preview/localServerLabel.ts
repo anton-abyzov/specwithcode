@@ -2,7 +2,7 @@
  * How a scanned local server is named in the "Local servers" list.
  *
  * The scanner knows the listening process (`node`, `ssh`, a binary such as
- * `studio`) and, when the port serves a page, that page's `<title>`. The title is
+ * `devd`) and, when the port serves a page, that page's `<title>`. The title is
  * what a person recognises, so it wins. A known process gets a plain-words
  * name ("Node server"); an unknown binary is never the headline - the row says
  * "Local server" and keeps the raw name on its second line.

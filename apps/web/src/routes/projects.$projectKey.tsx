@@ -37,11 +37,23 @@ function ProjectWorkspaceRoute() {
     },
     [navigate, projectKey, thread],
   );
+  // A link made before the repository was known names the machine and path.
+  const moveProjectKey = useCallback(
+    (next: string) =>
+      void navigate({
+        to: "/projects/$projectKey",
+        params: { projectKey: next },
+        search: projectWorkspaceSearch(thread ?? null),
+        replace: true,
+      }),
+    [navigate, thread],
+  );
   return (
     <ProjectWorkspace
       projectKey={projectKey}
       selectedThreadId={thread ?? null}
       onSelectThread={selectThread}
+      onProjectKeyMoved={moveProjectKey}
     />
   );
 }

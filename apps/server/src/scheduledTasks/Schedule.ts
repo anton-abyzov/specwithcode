@@ -1,4 +1,7 @@
-import { MIN_SCHEDULED_TASK_INTERVAL_MS, type ScheduledTaskSchedule } from "@specweave-studio/contracts";
+import {
+  MIN_SCHEDULED_TASK_INTERVAL_MS,
+  type ScheduledTaskSchedule,
+} from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
 
 const MINUTE_MS = 60_000;
@@ -84,15 +87,19 @@ const MISSED_FIXED_TIME_GRACE_MS = 10 * MINUTE_MS;
  * True when a due fixed-time run was missed by more than the grace window and
  * should be rescheduled to its next occurrence instead of firing now.
  * Interval schedules are never considered missed: an overdue interval task
- * catching up with a single run is the desired behaviour.
+ * catching up with a single run is the desired behaviour. `heldMs` is the part
+ * of the wait the scheduler sat out for an update hold: a run held back is
+ * not missed, so it fires once the hold ends.
  */
 export function isMissedFixedTimeRun(
   schedule: ScheduledTaskSchedule,
   dueAt: DateTime.DateTime,
   now: DateTime.DateTime,
+  heldMs = 0,
 ): boolean {
   if (schedule.type !== "fixed_time") return false;
-  return DateTime.toEpochMillis(now) - DateTime.toEpochMillis(dueAt) > MISSED_FIXED_TIME_GRACE_MS;
+  const lateMs = DateTime.toEpochMillis(now) - DateTime.toEpochMillis(dueAt);
+  return lateMs - heldMs > MISSED_FIXED_TIME_GRACE_MS;
 }
 
 function describeSchedule(schedule: ScheduledTaskSchedule): string {

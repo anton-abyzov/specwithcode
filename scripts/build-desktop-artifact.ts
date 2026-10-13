@@ -1145,8 +1145,15 @@ export function resolveMacVoiceHelperTargets(arch: typeof BuildArch.Type): Reado
   if (arch === "universal") return [triple("arm64"), triple("x86_64")];
   return [triple(arch === "arm64" ? "arm64" : "x86_64")];
 }
-// The Studio service update agent (scripts/studio-fleet/update_agent.py).
-// The desktop installs it beside a fleet-installed service on macOS.
+// The Studio service update agent (scripts/studio-fleet/update_agent.py) and the
+// sibling modules it imports. The desktop installs them beside a fleet-installed
+// service on macOS; the agent copies its siblings next to its installed copy.
+export const MAC_SERVICE_UPDATER_FILES = [
+  "update_agent.py",
+  "update_agent_reap.py",
+  "update_agent_cache.py",
+  "update_request.py",
+] as const;
 export const MAC_SERVICE_UPDATER_EXTRA_RESOURCES = [
   {
     from: "apps/desktop/prod-resources/studio-updater",
@@ -3909,10 +3916,12 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   if (options.platform === "mac") {
     const updaterDir = path.join(stageProdResourcesDir, "studio-updater");
     yield* fs.makeDirectory(updaterDir, { recursive: true });
-    yield* fs.copyFile(
-      path.join(repoRoot, "scripts/studio-fleet/update_agent.py"),
-      path.join(updaterDir, "update_agent.py"),
-    );
+    for (const file of MAC_SERVICE_UPDATER_FILES) {
+      yield* fs.copyFile(
+        path.join(repoRoot, "scripts/studio-fleet", file),
+        path.join(updaterDir, file),
+      );
+    }
     yield* stageMacVoiceHelper({
       repoRoot,
       destinationDirectory: path.join(stageProdResourcesDir, "voice"),

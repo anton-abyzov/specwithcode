@@ -76,7 +76,7 @@ export function assertGrokMonitorOutput(
   );
   assert.include(rootTexts, "ROOT_DONE");
 
-  // Full access approves the monitor prompt for SpecWithCode. It must answer with
+  // Full access approves the monitor prompt for Studio. It must answer with
   // Grok's allow-once: Grok saves `always-allow` for the whole project.
   const permissionAnswer = transcript.entries.find(
     (entry) =>

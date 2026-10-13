@@ -85,9 +85,11 @@ export function ConfirmDialogHost() {
           ) : null}
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+          <AlertDialogClose render={<Button variant="outline" />}>
+            {(state.status === "idle" ? undefined : state.cancelLabel) ?? "Cancel"}
+          </AlertDialogClose>
           <Button variant={confirmVariant} onClick={onConfirm}>
-            Confirm
+            {(state.status === "idle" ? undefined : state.confirmLabel) ?? "Confirm"}
           </Button>
         </AlertDialogFooter>
       </AlertDialogPopup>

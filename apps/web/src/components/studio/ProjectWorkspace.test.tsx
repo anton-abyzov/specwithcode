@@ -2346,6 +2346,16 @@ describe("a project that is not loaded", () => {
     expect(container.querySelector("#project-prompt")).not.toBeNull();
   });
 
+  it("opens a project linked by its machine and path after the repository key replaced it", async () => {
+    const moved = vi.fn();
+    await act(async () =>
+      root.render(<ProjectWorkspace projectKey="host:/scratch/atlas" onProjectKeyMoved={moved} />),
+    );
+    expect(container.textContent).not.toContain("Project unavailable");
+    expect(container.querySelector("#project-prompt")).not.toBeNull();
+    expect(moved).toHaveBeenCalledWith("atlas");
+  });
+
   it("says so once every host has answered without it", async () => {
     state.projectLoaded = false;
     await render();

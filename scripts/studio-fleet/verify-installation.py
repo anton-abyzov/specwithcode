@@ -59,7 +59,7 @@ assert len({host['environmentIdFingerprint'] for host in hosts.values()}) == 3
 
 probe = '''import json,subprocess,urllib.request,urllib.error
 r={'listeners':{},'authNegative':{}}
-for port in [8317,8318,3773,3774,8319]:
+for port in [8317,8318,8319]:
  p=subprocess.run(['/usr/sbin/lsof','-nP','-t','-iTCP:'+str(port),'-sTCP:LISTEN'],capture_output=True,text=True)
  r['listeners'][str(port)]=sorted(set(p.stdout.split()))
 for label,headers in [('unauth',{}),('foreignOrigin',{'Origin':'https://foreign.invalid'}),('foreignHost',{'Host':'foreign.invalid'})]:

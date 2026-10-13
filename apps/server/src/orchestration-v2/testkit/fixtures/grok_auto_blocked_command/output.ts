@@ -44,7 +44,7 @@ export function assertGrokAutoBlockedCommandOutput(
   assert.deepEqual(
     frames.find(({ frame }) => frame.method === "initialize")?.frame.params?._meta,
     { clientType: "extension" },
-    "SpecWithCode must tell Grok it can show permission prompts",
+    "Studio must tell Grok it can show permission prompts",
   );
 
   const commands = projection.turnItems.flatMap((item) =>

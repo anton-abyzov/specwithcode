@@ -28,6 +28,7 @@ import * as Context from "effect/Context";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -46,11 +47,20 @@ import type {
   ProviderAdapterV2SessionRuntime,
   ProviderAdapterV2TurnMessage,
 } from "./ProviderAdapter.ts";
-import { ProviderAdapterTurnStartError } from "./ProviderAdapter.ts";
+import { ProviderAdapterTurnStartError, providerSetupFailureDetail } from "./ProviderAdapter.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import type { ProjectionStoreV2Error } from "./ProjectionStore.ts";
 import { makeProviderFailure, makeProviderFailureTurnItem } from "./ProviderFailure.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
+
+
+// A native status check that times out or fails on a busy host runs before
+// anything reaches the provider, so the turn start is retried a few times
+// before the run fails.
+const TRANSIENT_TURN_START_RETRIES = 2;
+const TRANSIENT_TURN_START_RETRY_DELAY = "10 seconds";
+export const isTransientTurnStartFailure = (error: unknown): boolean =>
+  /native provider status check (timed out|failed)/u.test(providerSetupFailureDetail(error) ?? "");
 
 export interface ProviderEventRoutingState {
   readonly ownedThreadIds: ReadonlySet<ThreadId>;
@@ -1387,7 +1397,22 @@ export const layer: Layer.Layer<
                   cause: "This provider does not support context compaction.",
                 }),
               ))
-            : input.session.startTurn(turnInput);
+            : input.session.startTurn(turnInput).pipe(
+                Effect.retry({
+                  // A credit submission admits exactly one request, so it is never resent.
+                  times:
+                    input.run.manualCodexCreditIntent === undefined ? TRANSIENT_TURN_START_RETRIES : 0,
+                  schedule: Schedule.spaced(TRANSIENT_TURN_START_RETRY_DELAY),
+                  // A Stop during the wait leaves no provider turn to interrupt,
+                  // so the run is checked again before each resend.
+                  while: (error) =>
+                    !isTransientTurnStartFailure(error)
+                      ? Effect.succeed(false)
+                      : input.shouldStartProviderTurn === undefined
+                        ? Effect.succeed(true)
+                        : input.shouldStartProviderTurn().pipe(Effect.orElseSucceed(() => false)),
+                }),
+              );
           yield* Effect.andThen(shouldStart, startTurn).pipe(
             Effect.catchCause((cause) =>
               Effect.logError("orchestration V2 provider turn start failed", {

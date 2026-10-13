@@ -6,8 +6,8 @@ files, waits for a quiet moment and then runs the target release's own guarded
 update.py. The agent never stops or signals the Studio service; only that verified
 helper restarts it. GitHub tokens stay in memory: they are never written, logged or
 placed in exception text. Helper output is discarded; only short status lines print.
-Stdlib only and Python 3.9 compatible (macOS /usr/bin/python3); self-contained so it
-can be copied alone into the updater LaunchAgent location.
+Stdlib only and Python 3.9 compatible (macOS /usr/bin/python3); copied with its siblings
+update_agent_reap.py, update_agent_cache.py and update_request.py into the updater LaunchAgent location.
 """
 import argparse
 import datetime
@@ -26,10 +26,16 @@ import stat
 import subprocess
 import sys
 import tarfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+
+sys.dont_write_bytecode = True  # Never write __pycache__ into the signed app bundle.
+import update_agent_reap as reaper  # noqa: E402  Update now's fallback; installed beside this file.
+import update_agent_cache as cache  # noqa: E402  Shipped beside this file.
+import update_request  # noqa: E402  Shipped beside this file.
 
 AGENT_VERSION = 1
 IDENTITIES = ('m4', 'm1', 'm3')
@@ -44,10 +50,24 @@ RESERVED_ASSETS = (PLAN_ASSET, SUMS_ASSET, MANIFEST_ASSET)
 DEFAULT_REPOSITORY = 'anton-abyzov/specwithcode'
 DEFAULT_API = 'https://api.github.com'
 CHECK_INTERVAL = datetime.timedelta(minutes=60)
-# Two process inventories bracket the snapshot; each may take 2 x 30 s on a loaded Mac.
-SNAPSHOT_TIMEOUT = 240
-APPLY_TIMEOUT = 900
+# Two process inventories bracket the snapshot and it hashes every guarded table; on a
+# loaded Mac one took almost 4 minutes, so the limit leaves room before reporting "busy".
+SNAPSHOT_TIMEOUT = 600
+APPLY_TIMEOUT = 1500
+# While an install request waits for the service to drain, a pass snapshots again this often.
+# A forced request retries until the service's update hold ends (at most 15 minutes); a plain
+# one retries briefly, then waits for quiet as before. A forced apply that the helper refused
+# before the restart, because work changed meanwhile, runs again this many more times.
+RETRY_SECONDS = 10
+FORCE_WINDOW = datetime.timedelta(minutes=15)
+REQUEST_WINDOW = datetime.timedelta(minutes=2)
+FORCE_APPLY_RETRIES = 2
+RETRYABLE_REFUSALS = ('Guarded prestate changed', 'Native work changed before restart', 'Native work is not idle',
+                      'Complete database prestate changed', 'Complete database changed before restart')
 GH_TIMEOUT = 10
+# launchd runs the agent as a Background process; on a loaded Mac its children ran about
+# 25x slower, so `gh auth token` and the snapshot timed out. Children leave darwin background.
+PRIO_DARWIN_PROCESS = 4
 HTTP_TIMEOUT = 60
 NOTES_LIMIT = 4000
 SYSTEM_PYTHON = '/usr/bin/python3'
@@ -55,12 +75,19 @@ GH_PATHS = ('/opt/homebrew/bin/gh', '/usr/local/bin/gh')
 LOOPBACK = ('127.0.0.1', 'localhost', '::1')
 SIGN_IN = 'Sign in with `gh auth login` so Studio can read private releases.'
 WAITING = 'Waiting for running sessions and open Studio terminals to finish'
+TIMED_OUT = "The updater's check took too long; retrying"
+CANCELLED = 'Update cancelled'
 # What the snapshot helper's refusal means, in the words the app shows. The helper's
-# output is read only for these phrases; it is never logged or kept.
+# output is read only for its REFUSAL line or these phrases; it is never logged or kept.
 WAITING_REASONS = (
     ('Native work is not idle', 'Waiting for running tasks, queued messages and open questions to finish'),
     ('has unexpected descendants', 'Waiting for open Studio terminals and agent processes to close'),
+    ('unexpected or missing descendants', 'Waiting for open Studio terminals and agent processes to close'),
 )
+# `REFUSAL <code> <detail>`, the helper's structured reason; details are counts and names only.
+REFUSAL_LINE = re.compile(r'^REFUSAL ([a-z][a-z-]{0,31})(?: ([ -~]{0,400}))?$', re.M)
+WORK_NOUNS = (('runs', 'running task'), ('requests', 'open request'), ('effects', 'finishing step'),
+              ('sessions', 'active session'))
 STATUSES = ('disabled', 'up-to-date', 'available', 'downloading', 'downloaded', 'waiting-for-quiet',
             'installing', 'installed', 'manual-required', 'error')
 LIMITS = {'list': 10 << 20, PLAN_ASSET: 256 << 10, SUMS_ASSET: 256 << 10, MANIFEST_ASSET: 4 << 20,
@@ -81,14 +108,14 @@ REPOSITORY = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9][A-Za-z0-9_
 TOKEN_SHAPE = re.compile(r'[A-Za-z0-9_.\-]{8,1024}')
 DEFAULT_CONFIG = {'schemaVersion': 1, 'checkAutomatically': True, 'downloadInBackground': True,
                   'installAutomatically': True, 'channel': 'stable', 'quietMinutes': 10,
-                  'repository': DEFAULT_REPOSITORY, 'installRequestedAt': None, 'checkRequestedAt': None}
+                  'repository': DEFAULT_REPOSITORY, 'installRequestedAt': None, 'checkRequestedAt': None,
+                  'installMode': 'normal', 'installHoldUntil': None, 'installCancelledAt': None, 'installRequest': None}
 STATE_KEYS = ('schemaVersion', 'agentVersion', 'status', 'installedVersion', 'installedSourceCommit',
               'availableVersion', 'availableTag', 'availableNotes', 'availablePublishedAt',
               'downloadedVersion', 'checkedAt', 'quietSince', 'message', 'lastInstall',
               'handledInstallRequestAt', 'handledCheckRequestAt', 'updatedAt')
 
 _REDACT = set()  # In-memory only: values scrubbed from any text the agent emits.
-
 
 class AgentError(Exception):
     """A user-facing failure; its message must never contain secrets or command output."""
@@ -98,16 +125,17 @@ class AgentError(Exception):
         Exception.__init__(self, message)
         self.message = message
 
-
 class ManualRequired(AgentError):
     status = 'manual-required'
-
 
 class HttpFailure(AgentError):
     def __init__(self, message, code):
         AgentError.__init__(self, message)
         self.code = code
 
+def _refuse_if(condition, message):
+    if condition:
+        raise AgentError(message)
 
 def redact(text):
     text = str(text)
@@ -116,18 +144,14 @@ def redact(text):
             text = text.replace(secret, '[redacted]')
     return text
 
-
 def utcnow():
     return datetime.datetime.now(datetime.timezone.utc)
-
 
 def iso(moment):
     return moment.isoformat()
 
-
 def stamp():
     return utcnow().strftime('%Y%m%dT%H%M%S%fZ')
-
 
 def parse_time(value):
     if not isinstance(value, str) or len(value) > 64:
@@ -143,13 +167,11 @@ def parse_time(value):
         moment = moment.replace(tzinfo=datetime.timezone.utc)
     return moment
 
-
 def version_tuple(value):
     if not isinstance(value, str):
         return None
     match = re.fullmatch(SEMVER, value)
     return tuple(int(part) for part in match.groups()) if match else None
-
 
 def tag_version(tag):
     if not isinstance(tag, str):
@@ -157,21 +179,17 @@ def tag_version(tag):
     match = re.fullmatch('v' + SEMVER, tag)
     return tag[1:] if match else None
 
-
 def sha256_bytes(data):
     return hashlib.sha256(data).hexdigest()
-
 
 def sha256_file(path):
     digest = hashlib.sha256()
     fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW)
     with os.fdopen(fd, 'rb') as handle:
-        if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
-            raise AgentError('Expected a regular file')
+        _refuse_if(not stat.S_ISREG(os.fstat(handle.fileno()).st_mode), 'Expected a regular file')
         for chunk in iter(lambda: handle.read(1 << 20), b''):
             digest.update(chunk)
     return digest.hexdigest()
-
 
 # ---------------------------------------------------------------- owned paths
 
@@ -184,13 +202,10 @@ def owned(path, home):
         raise AgentError('Path escapes the owned home') from None
     ancestor = home
     for part in relative.parts:
-        if part in ('', '.', '..'):
-            raise AgentError('Unsafe owned path component')
+        _refuse_if(part in ('', '.', '..'), 'Unsafe owned path component')
         ancestor = ancestor / part
-        if ancestor.is_symlink():
-            raise AgentError('Owned path has a symlink ancestor')
+        _refuse_if(ancestor.is_symlink(), 'Owned path has a symlink ancestor')
     return path
-
 
 def ensure_dir(path, home):
     owned(path, home)
@@ -202,7 +217,6 @@ def ensure_dir(path, home):
         elif not ancestor.is_dir():
             raise AgentError('Owned path has a non-directory ancestor')
     return path
-
 
 def read_owned(path, home, limit):
     owned(path, home)
@@ -221,14 +235,12 @@ def read_owned(path, home, limit):
         raise AgentError('Oversized file: ' + pathlib.Path(path).name)
     return data
 
-
 def read_json(path, home, limit=LIMITS['json']):
     data = read_owned(path, home, limit)
     try:
         return json.loads(data.decode('utf-8'))
     except (UnicodeDecodeError, ValueError):
         raise AgentError('Malformed JSON: ' + pathlib.Path(path).name) from None
-
 
 def atomic_write(path, data, home, mode=0o600):
     owned(path, home)
@@ -249,10 +261,8 @@ def atomic_write(path, data, home, mode=0o600):
             pass
         raise
 
-
 def write_json(path, value, home):
     atomic_write(path, (json.dumps(value, indent=2) + '\n').encode(), home)
-
 
 def remove_path(path, home):
     owned(path, home)
@@ -261,7 +271,6 @@ def remove_path(path, home):
         path.unlink()
     elif path.is_dir():
         shutil.rmtree(str(path))
-
 
 # ---------------------------------------------------------------- release policy
 
@@ -276,25 +285,20 @@ def parse_sums(data):
         if not line.strip():
             continue
         match = re.fullmatch(r'([0-9a-fA-F]{64}) [ *](\S+)', line)
-        if not match:
-            raise AgentError('SHA256SUMS has a malformed line')
+        _refuse_if(not match, 'SHA256SUMS has a malformed line')
         name = match.group(2)
         if name.startswith('./'):
             name = name[2:]
-        if name in sums:
-            raise AgentError('SHA256SUMS lists a file twice')
+        _refuse_if(name in sums, 'SHA256SUMS lists a file twice')
         sums[name] = match.group(1).lower()
     return sums
-
 
 def _plan_need(condition, why):
     if not condition:
         raise AgentError('Update plan was rejected: ' + why)
 
-
 def _safe_name(value):
     return isinstance(value, str) and ASSET_NAME.fullmatch(value) is not None and '..' not in value
-
 
 def validate_plan(plan, expected_version=None):
     need = _plan_need
@@ -336,11 +340,9 @@ def validate_plan(plan, expected_version=None):
         need(len(set(args)) == len(args), 'duplicate args')
     return plan
 
-
 def work_counts(counts):
     """Row counts that move only when a session works; the service's own bookkeeping is left out."""
     return {name: value for name, value in counts.items() if name not in BOOKKEEPING_COUNTS}
-
 
 def select_upgrade(plan, source_commit):
     for upgrade in plan['service']['upgrades']:
@@ -349,7 +351,6 @@ def select_upgrade(plan, source_commit):
     raise ManualRequired('Studio %s needs a manual upgrade from this installation (%s).'
                          % (plan['version'], source_commit[:12]))
 
-
 def select_release(releases, channel, installed):
     """Highest plain vX.Y.Z release above installed; drafts never.
 
@@ -357,8 +358,7 @@ def select_release(releases, channel, installed):
     alpha releases were published as prereleases, yet a plain vX.Y.Z is a
     stable release. From 1.0.0 plain versions are also published as Latest.
     """
-    if not isinstance(releases, list):
-        raise AgentError('GitHub returned an unexpected releases response')
+    _refuse_if(not isinstance(releases, list), 'GitHub returned an unexpected releases response')
     best = None
     for release in releases:
         if not isinstance(release, dict) or release.get('draft'):
@@ -373,37 +373,31 @@ def select_release(releases, channel, installed):
             best = (ranked, release)
     return best[1] if best else None
 
-
 def validate_manifest(manifest, helpers_asset, helpers_sha):
-    if not isinstance(manifest, dict) or not isinstance(manifest.get('files'), list) or not manifest['files']:
-        raise AgentError('Helper manifest is malformed')
+    _refuse_if(not isinstance(manifest, dict) or not isinstance(manifest.get('files'), list) or not manifest['files'],
+               'Helper manifest is malformed')
     entries = {}
     for entry in manifest['files']:
-        if not isinstance(entry, dict):
-            raise AgentError('Helper manifest is malformed')
+        _refuse_if(not isinstance(entry, dict), 'Helper manifest is malformed')
         path = entry.get('path')
         parts = pathlib.PurePosixPath(path).parts if isinstance(path, str) else ()
         if (not parts or pathlib.PurePosixPath(path).is_absolute() or any(p in ('.', '..') for p in parts)
                 or '/'.join(parts) != path):
             raise AgentError('Helper manifest has an unsafe path')
-        if not isinstance(entry.get('sha256'), str) or not HEX64.fullmatch(entry['sha256']):
-            raise AgentError('Helper manifest has an invalid hash')
+        _refuse_if(not isinstance(entry.get('sha256'), str) or not HEX64.fullmatch(entry['sha256']),
+                   'Helper manifest has an invalid hash')
         size = entry.get('bytes')
-        if size is not None and (type(size) is not int or size < 0):
-            raise AgentError('Helper manifest has an invalid size')
+        _refuse_if(size is not None and (type(size) is not int or size < 0), 'Helper manifest has an invalid size')
         mode = entry.get('mode')
-        if mode is not None and type(mode) is not int:
-            raise AgentError('Helper manifest has an invalid mode')
-        if path in entries:
-            raise AgentError('Helper manifest lists a file twice')
+        _refuse_if(mode is not None and type(mode) is not int, 'Helper manifest has an invalid mode')
+        _refuse_if(path in entries, 'Helper manifest lists a file twice')
         entries[path] = entry
     archive = manifest.get('archive')
-    if archive is not None and (not isinstance(archive, str) or posixpath.basename(archive) != helpers_asset):
-        raise AgentError('Helper manifest names a different archive')
-    if manifest.get('archiveSha256') is not None and manifest.get('archiveSha256') != helpers_sha:
-        raise AgentError('Helper manifest describes a different archive')
+    _refuse_if(archive is not None and (not isinstance(archive, str) or posixpath.basename(archive) != helpers_asset),
+               'Helper manifest names a different archive')
+    _refuse_if(manifest.get('archiveSha256') is not None and manifest.get('archiveSha256') != helpers_sha,
+               'Helper manifest describes a different archive')
     return entries
-
 
 def safe_extract(archive, stage, root, expected, home):
     """Write only regular files under root/; reject links, specials, escapes and unindexed files."""
@@ -419,35 +413,27 @@ def safe_extract(archive, stage, root, expected, home):
             members = tar.getmembers()
         except (tarfile.TarError, OSError, EOFError):
             raise AgentError('Helper archive is not a readable tarball') from None
-        if len(members) > HELPER_MAX_FILES:
-            raise AgentError('Helper archive has too many entries')
+        _refuse_if(len(members) > HELPER_MAX_FILES, 'Helper archive has too many entries')
         for member in members:
             name = pathlib.PurePosixPath(member.name)
-            if name.is_absolute() or '..' in name.parts or '\\' in member.name:
-                raise AgentError('Helper archive has an unsafe path')
+            _refuse_if(name.is_absolute() or '..' in name.parts or '\\' in member.name,
+                       'Helper archive has an unsafe path')
             parts = [part for part in name.parts if part != '.']
-            if not parts or parts[0] != root:
-                raise AgentError('Helper archive has an entry outside its root folder')
+            _refuse_if(not parts or parts[0] != root, 'Helper archive has an entry outside its root folder')
             if member.isdir():
                 continue
-            if not member.isfile():
-                raise AgentError('Helper archive contains a link or special file')
+            _refuse_if(not member.isfile(), 'Helper archive contains a link or special file')
             relative = '/'.join(parts[1:])
-            if not relative:
-                raise AgentError('Helper archive has an unsafe path')
-            if relative in files:
-                raise AgentError('Helper archive lists a file twice')
-            if expected is not None and relative not in expected:
-                raise AgentError('Helper archive contains a file not in the manifest')
+            _refuse_if(not relative, 'Helper archive has an unsafe path')
+            _refuse_if(relative in files, 'Helper archive lists a file twice')
+            _refuse_if(expected is not None and relative not in expected,
+                       'Helper archive contains a file not in the manifest')
             total += member.size
-            if total > HELPER_MAX_BYTES:
-                raise AgentError('Helper archive is too large')
+            _refuse_if(total > HELPER_MAX_BYTES, 'Helper archive is too large')
             files[relative] = None
             selected.append((member, relative))
-        if expected is not None and set(files) != set(expected):
-            raise AgentError('Helper archive is missing manifest files')
-        if ENTRYPOINT not in files:
-            raise AgentError('Helper archive has no ' + ENTRYPOINT)
+        _refuse_if(expected is not None and set(files) != set(expected), 'Helper archive is missing manifest files')
+        _refuse_if(ENTRYPOINT not in files, 'Helper archive has no ' + ENTRYPOINT)
         for member, relative in selected:
             destination = stage.joinpath(*relative.split('/'))
             ensure_dir(destination.parent, home)
@@ -455,8 +441,7 @@ def safe_extract(archive, stage, root, expected, home):
             mode_bits = entry.get('mode') if entry and entry.get('mode') is not None else member.mode
             mode = 0o700 if mode_bits & 0o111 else 0o600
             source = tar.extractfile(member)
-            if source is None:
-                raise AgentError('Helper archive member is unreadable')
+            _refuse_if(source is None, 'Helper archive member is unreadable')
             digest = hashlib.sha256()
             size = 0
             fd = os.open(str(destination), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
@@ -468,33 +453,28 @@ def safe_extract(archive, stage, root, expected, home):
             os.chmod(str(destination), mode)
             value = digest.hexdigest()
             if entry is not None:
-                if value != entry['sha256'] or (entry.get('bytes') is not None and size != entry['bytes']):
-                    raise AgentError('Helper file does not match the manifest: ' + relative)
+                _refuse_if(value != entry['sha256'] or (entry.get('bytes') is not None and size != entry['bytes']),
+                           'Helper file does not match the manifest: ' + relative)
             files[relative] = value
     return files
-
 
 # ---------------------------------------------------------------- installation and config
 
 def studio_home(home, identity):
     return home / '.specweave-studio' / identity
 
-
 def load_installation(home, identity):
     own = owned(studio_home(home, identity), home)
     receipt = read_json(own / 'installation.json', home, 1 << 20)
-    if not isinstance(receipt, dict):
-        raise AgentError('Studio installation receipt is malformed')
+    _refuse_if(not isinstance(receipt, dict), 'Studio installation receipt is malformed')
     service = receipt.get('service') if isinstance(receipt.get('service'), dict) else {}
     checks = [receipt.get('identity') == identity, receipt.get('studioHome') == str(own),
               service.get('label') == 'com.specweave.studio.' + identity,
               version_tuple(receipt.get('version')) is not None,
               isinstance(receipt.get('sourceCommit'), str) and HEX40.fullmatch(receipt['sourceCommit']) is not None]
-    if not all(checks):
-        raise AgentError('Studio installation receipt does not describe this service')
+    _refuse_if(not all(checks), 'Studio installation receipt does not describe this service')
     return {'identity': identity, 'studioHome': own, 'version': receipt['version'],
             'sourceCommit': receipt['sourceCommit'], 'label': service['label']}
-
 
 def load_config(updates, home):
     path = updates / 'config.json'
@@ -502,8 +482,7 @@ def load_config(updates, home):
     if not os.path.lexists(str(path)):
         return config
     raw = read_json(path, home, 64 << 10)
-    if not isinstance(raw, dict):
-        raise AgentError('Update settings are malformed')
+    _refuse_if(not isinstance(raw, dict), 'Update settings are malformed')
     for key in DEFAULT_CONFIG:
         if key in raw:
             config[key] = raw[key]
@@ -513,19 +492,16 @@ def load_config(updates, home):
              and config['channel'] in ('stable', 'preview')
              and type(config['quietMinutes']) is int and 0 <= config['quietMinutes'] <= 10080
              and isinstance(config['repository'], str) and REPOSITORY.fullmatch(config['repository']) is not None
-             and '..' not in config['repository']
+             and '..' not in config['repository'] and config['installMode'] in ('normal', 'force')
              and all(config[key] is None or (isinstance(config[key], str) and 0 < len(config[key]) <= 100)
-                     for key in ('installRequestedAt', 'checkRequestedAt')))
-    if not valid:
-        raise AgentError('Update settings are invalid')
+                     for key in ('installRequestedAt', 'checkRequestedAt', 'installHoldUntil', 'installCancelledAt')))
+    _refuse_if(not valid, 'Update settings are invalid')
     return config
-
 
 def blank_state():
     state = {key: None for key in STATE_KEYS}
     state.update({'schemaVersion': 1, 'agentVersion': AGENT_VERSION, 'status': 'up-to-date'})
     return state
-
 
 def load_state(path, home):
     state = blank_state()
@@ -547,8 +523,14 @@ def load_state(path, home):
             state[key] = value if isinstance(value, str) else None
     return state
 
-
 # ---------------------------------------------------------------- injectable process seams
+
+def leave_background():
+    """Run in a child before exec: drop the agent's darwin-background CPU and I/O throttling."""
+    try:
+        os.setpriority(PRIO_DARWIN_PROCESS, 0, 0)
+    except (AttributeError, OSError):
+        pass  # Not macOS, or already a normal process.
 
 def find_gh_token(home):
     """`gh auth token` from known Homebrew locations, then PATH. Output stays in memory."""
@@ -564,7 +546,7 @@ def find_gh_token(home):
         try:
             result = subprocess.run([candidate, 'auth', 'token'], stdin=subprocess.DEVNULL,
                                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                    timeout=GH_TIMEOUT, env=environment)
+                                    timeout=GH_TIMEOUT, env=environment, preexec_fn=leave_background)
         except (OSError, subprocess.SubprocessError):
             continue
         if result.returncode == 0:
@@ -572,7 +554,6 @@ def find_gh_token(home):
             if TOKEN_SHAPE.fullmatch(value):
                 return value
     return None
-
 
 def run_helper_process(command, cwd, env, timeout, pass_fds=(), wait_detached=False, log_path=None, home=None):
     """Run a verified helper. Returns 'ok', 'failed' or 'timeout'.
@@ -594,11 +575,12 @@ def run_helper_process(command, cwd, env, timeout, pass_fds=(), wait_detached=Fa
     try:
         if not wait_detached:
             result = subprocess.run(command, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
-                                    stdout=sink, stderr=sink, timeout=timeout)
+                                    stdout=sink, stderr=sink, timeout=timeout, preexec_fn=leave_background)
             return 'ok' if result.returncode == 0 else 'failed'
         process = subprocess.Popen(command, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
                                    stdout=sink, stderr=sink,
-                                   start_new_session=True, pass_fds=tuple(pass_fds))
+                                   start_new_session=True, pass_fds=tuple(pass_fds),
+                                   preexec_fn=leave_background)
         try:
             return 'ok' if process.wait(timeout=timeout) == 0 else 'failed'
         except subprocess.TimeoutExpired:
@@ -611,20 +593,36 @@ def run_helper_process(command, cwd, env, timeout, pass_fds=(), wait_detached=Fa
         if isinstance(sink, int) and sink >= 0:
             os.close(sink)
 
+def install_cancelled(config):
+    """True when the desktop cancelled the pending install request after making it."""
+    cancelled, requested = parse_time(config['installCancelledAt']), parse_time(config['installRequestedAt'])
+    return cancelled is not None and (requested is None or cancelled > requested)
 
-def waiting_reason(refusal):
-    """The message for a refused snapshot: what is still running, when the helper said."""
-    for phrase, message in WAITING_REASONS:
-        if phrase in refusal:
-            return message
-    return WAITING
-
+def refusal_reason(refusal, outcome):
+    """(status, message) for a refused snapshot. The helper's last REFUSAL line wins; older
+    helpers print none, so the phrase table stays. Only an environment fault is an error."""
+    found = REFUSAL_LINE.findall(refusal) if outcome != 'timeout' else [('timeout', '')]
+    code, detail = found[-1] if found else ('', '')
+    detail = re.sub(r'[^A-Za-z0-9 ._:,=()+-]', '', detail).strip()[:200]
+    if code == 'timeout':
+        return 'waiting-for-quiet', TIMED_OUT
+    if code == 'environment':
+        return 'error', 'Studio cannot be updated right now: ' + (detail or 'the service does not match its installation')
+    if code == 'native-work':
+        counts = {key: int(value) for key, value in re.findall(r'([a-z]+)=(\d{1,6})', detail)}
+        parts = ['%d %s%s' % (counts[key], noun, '' if counts[key] == 1 else 's')
+                 for key, noun in WORK_NOUNS if counts.get(key)]
+        return 'waiting-for-quiet', WAITING_REASONS[0][1] + (' (%s)' % ', '.join(parts) if parts else '')
+    if code == 'descendants':
+        names = ['%s%s' % (name, '' if count == '1' else ' x' + count)
+                 for name, count in re.findall(r'([A-Za-z0-9._+-]{1,40})=(\d{1,4})', detail)][:6]
+        return 'waiting-for-quiet', WAITING_REASONS[1][1] + (' (%s)' % ', '.join(names) if names else '')
+    return 'waiting-for-quiet', next((message for phrase, message in WAITING_REASONS if phrase in refusal), WAITING)
 
 def helper_log_path(receipt):
     """The private helper output file kept next to an update receipt."""
     receipt = pathlib.Path(receipt)
     return receipt.with_name(receipt.stem + '.log')
-
 
 def read_tail(path, home, limit=HELPER_TAIL):
     """The last `limit` bytes of a helper output file as text, or '' when unreadable."""
@@ -640,34 +638,28 @@ def read_tail(path, home, limit=HELPER_TAIL):
         handle.seek(max(0, info.st_size - limit))
         return handle.read(limit).decode('utf-8', 'replace')
 
-
 def launchctl(args):
-    if sys.platform != 'darwin':
-        raise AgentError('LaunchAgents are only available on macOS')
+    _refuse_if(sys.platform != 'darwin', 'LaunchAgents are only available on macOS')
     try:
         return subprocess.run(['/bin/launchctl'] + list(args), stdin=subprocess.DEVNULL,
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30).returncode
     except (OSError, subprocess.SubprocessError):
         return 1
 
-
 def current_uid():
     return os.getuid()
-
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None  # Redirects are followed manually so credentials stay on the API host.
 
-
 def _loopback(parts):
     return (parts.hostname or '') in LOOPBACK
-
 
 # ---------------------------------------------------------------- the pass
 
 class Agent(object):
-    def __init__(self, home, identity, test_mode, out):
+    def __init__(self, home, identity, test_mode, out, lock_fd=None):
         self.home = home
         self.identity = identity
         self.test_mode = test_mode
@@ -679,7 +671,7 @@ class Agent(object):
         self.state = blank_state()
         self.config = dict(DEFAULT_CONFIG)
         self.inst = None
-        self.lock_fd = None
+        self.lock_fd = lock_fd  # Passed to the helper, which keeps the pass lock while it runs.
         self._token = None
         self._token_resolved = False
 
@@ -782,8 +774,7 @@ class Agent(object):
                     if not chunk:
                         break
                     total += len(chunk)
-                    if total > limit:
-                        raise AgentError('A GitHub download exceeded its size limit')
+                    _refuse_if(total > limit, 'A GitHub download exceeded its size limit')
                     sink(chunk)
         except (http.client.HTTPException, OSError) as error:
             raise AgentError('GitHub download was interrupted (%s)' % type(error).__name__) from None
@@ -798,30 +789,7 @@ class Agent(object):
         return '%s/repos/%s/releases/assets/%d' % (self.api_base(), self.config['repository'], asset['id'])
 
     def download_asset(self, name, asset, destination, limit):
-        expected = asset.get('size')
-        if destination.is_file() and not destination.is_symlink() and type(expected) is int \
-                and destination.stat().st_size == expected:
-            return destination  # Completed by an earlier pass; verification follows regardless.
-        part = destination.with_name(destination.name + '.part')
-        if os.path.lexists(str(part)):
-            remove_path(part, self.home)
-        fd = os.open(str(part), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-        try:
-            with os.fdopen(fd, 'wb') as handle:
-                try:
-                    size = self.fetch(self.asset_url(asset), 'application/octet-stream', limit, handle.write)
-                except HttpFailure as error:
-                    raise AgentError('Downloading %s failed (HTTP %d)' % (name, error.code)) from None
-                handle.flush()
-                os.fsync(handle.fileno())
-            if type(expected) is int and size != expected:
-                raise AgentError('Download of %s was incomplete' % name)
-            os.replace(str(part), str(destination))
-        except BaseException:
-            if os.path.lexists(str(part)):
-                os.unlink(str(part))
-            raise
-        return destination
+        return cache.download(self, name, asset, destination, limit)
 
     # -- check
 
@@ -906,10 +874,8 @@ class Agent(object):
         if version_tuple(version) is None:
             return None
         path = self.release_dir(version) / 'release.json'
-        if not path.is_file():
-            return None
         try:
-            meta = read_json(path, self.home)
+            meta = read_json(path, self.home) if path.is_file() else None
         except AgentError:
             return None
         if not isinstance(meta, dict) or meta.get('version') != version or not isinstance(meta.get('assets'), dict):
@@ -930,19 +896,15 @@ class Agent(object):
             return None
         try:
             verified = read_json(path, self.home)
-        except AgentError:
-            return None
-        try:
             if not isinstance(verified, dict) or verified.get('version') != meta['version'] \
                     or verified.get('planSha256') != meta['planSha256'] \
                     or not isinstance(verified['helpers']['files'], dict) \
                     or not HEX64.fullmatch(verified['runtime']['sha256']) \
                     or not _safe_name(verified['runtime']['asset']) or not _safe_name(verified['helpers']['root']) \
-                    or not all(arg in ALLOWED_ARGS for arg in verified['args']):
+                    or not all(arg in ALLOWED_ARGS for arg in verified['args']) \
+                    or not (directory / verified['runtime']['asset']).is_file():
                 return None
-            if not (directory / verified['runtime']['asset']).is_file():
-                return None
-        except (KeyError, TypeError):
+        except (AgentError, KeyError, TypeError):
             return None
         return verified
 
@@ -950,9 +912,7 @@ class Agent(object):
         version, plan = meta['version'], meta['plan']
         runtime, helpers = plan['service']['runtime'], plan['service']['helpers']
         directory = ensure_dir(self.release_dir(version), self.home)
-        names = [SUMS_ASSET, runtime['asset'], helpers['asset']]
-        if MANIFEST_ASSET in meta['assets']:
-            names.append(MANIFEST_ASSET)
+        names = [SUMS_ASSET, runtime['asset'], helpers['asset']] + [n for n in (MANIFEST_ASSET,) if n in meta['assets']]
         limits = {runtime['asset']: LIMITS['runtime'], helpers['asset']: LIMITS['helpers']}
         try:
             for name in names:
@@ -978,18 +938,14 @@ class Agent(object):
                 expected = validate_manifest(manifest, helpers['asset'], helpers['sha256'])
             files = self.extract_helpers(directory / helpers['asset'], version, helpers['root'], expected)
         except AgentError:
-            for name in names:
-                for path in (directory / name, directory / (name + '.part')):
-                    if os.path.lexists(str(path)):
-                        remove_path(path, self.home)
+            cache.forget(self, directory, names)
             raise
         verified = {'schemaVersion': 1, 'version': version, 'tag': meta['tag'], 'planSha256': meta['planSha256'],
                     'runtime': {'asset': runtime['asset'], 'sha256': runtime['sha256']},
                     'helpers': {'root': helpers['root'], 'sha256': helpers['sha256'], 'files': files},
                     'entrypoint': ENTRYPOINT, 'args': meta['args'], 'verifiedAt': iso(utcnow())}
         write_json(directory / 'verified.json', verified, self.home)
-        if os.path.lexists(str(directory / 'rejected.json')):
-            remove_path(directory / 'rejected.json', self.home)
+        remove_path(directory / 'rejected.json', self.home)
         return verified
 
     def extract_helpers(self, archive, version, root, expected):
@@ -999,8 +955,7 @@ class Agent(object):
         ensure_dir(stage / root, self.home)
         try:
             files = safe_extract(archive, stage / root, root, expected, self.home)
-            if os.path.lexists(str(final)):
-                remove_path(final, self.home)
+            remove_path(final, self.home)
             os.rename(str(stage), str(final))
         except BaseException:
             if os.path.lexists(str(stage)):
@@ -1010,19 +965,16 @@ class Agent(object):
 
     def verify_helpers(self, verified):
         root = owned(self.updates / 'helpers' / verified['version'] / verified['helpers']['root'], self.home)
-        if not root.is_dir():
-            raise AgentError('Verified helpers are missing; they will be downloaded again')
+        _refuse_if(not root.is_dir(), 'Verified helpers are missing; they will be downloaded again')
         actual = {}
         for directory, dirnames, filenames in os.walk(str(root)):
             for name in dirnames + filenames:
                 path = pathlib.Path(directory) / name
-                if path.is_symlink():
-                    raise AgentError('Verified helpers changed on disk')
+                _refuse_if(path.is_symlink(), 'Verified helpers changed on disk')
             for name in filenames:
                 path = pathlib.Path(directory) / name
                 actual[path.relative_to(root).as_posix()] = sha256_file(path)
-        if actual != verified['helpers']['files']:
-            raise AgentError('Verified helpers changed on disk')
+        _refuse_if(actual != verified['helpers']['files'], 'Verified helpers changed on disk')
         return root / 'scripts' / 'studio-fleet'
 
     def reject(self, version, message):
@@ -1048,7 +1000,7 @@ class Agent(object):
         return SYSTEM_PYTHON
 
     def helper_env(self):
-        return {'HOME': str(self.home), 'PATH': '/usr/bin:/bin', 'LANG': 'en_US.UTF-8'}
+        return {'HOME': str(self.home), 'PATH': '/usr/bin:/bin', 'LANG': 'en_US.UTF-8', 'STUDIO_UPDATE_APPLY_BUDGET': str(APPLY_TIMEOUT)}
 
     def helper_command(self, helper_dir, args):
         return [self.helper_python(), '-B', '-E', '-s', str(helper_dir / 'update.py')] + [str(arg) for arg in args]
@@ -1066,11 +1018,8 @@ class Agent(object):
 
     # -- install
 
-    def quiet_then_install(self, verified, install_request):
-        version = verified['version']
-        helper_dir = self.verify_helpers(verified)
-        snapshots = ensure_dir(self.updates / 'snapshots', self.home)
-        baseline_path = snapshots / 'baseline.json'
+    def take_snapshot(self, helper_dir, snapshots):
+        """One snapshot by the verified helper: (path, snapshot, None), or (None, None, (status, message))."""
         newest = snapshots / ('snapshot-%s-%s.json' % (stamp(), uuid.uuid4().hex[:8]))
         output = newest.with_suffix('.log')
         outcome = run_helper_process(self.helper_command(helper_dir, ['--identity', self.identity, '--snapshot', newest]),
@@ -1080,12 +1029,66 @@ class Agent(object):
         refusal = read_tail(output, self.home) if snapshot is None and os.path.lexists(str(output)) else ''
         if os.path.lexists(str(output)):
             remove_path(output, self.home)
-        if snapshot is None:
-            for path in (newest, baseline_path):
-                if os.path.lexists(str(path)):
-                    remove_path(path, self.home)
-            self.state['quietSince'] = None
-            return self.finish('waiting-for-quiet', waiting_reason(refusal))
+        if snapshot is not None:
+            return newest, snapshot, None
+        if os.path.lexists(str(newest)):
+            remove_path(newest, self.home)
+        return None, None, refusal_reason(refusal, outcome)
+
+    def retry_deadline(self, started):
+        """Until when a pending install request snapshots again within this pass."""
+        hold = parse_time(self.config['installHoldUntil']) if self.config['installMode'] == 'force' else None
+        return min(hold, started + FORCE_WINDOW) if hold else started + REQUEST_WINDOW
+
+    def withdrawn(self, version):
+        """Re-reads the settings: the (status, message) ending the pass once the request is gone or changed."""
+        try:
+            config = load_config(self.updates, self.home)
+        except AgentError:
+            return None
+        request, self.config = self.config['installRequestedAt'], config
+        if config['installRequestedAt'] is not None and not install_cancelled(config):
+            return update_request.replaced(request, config, self.state, version, utcnow())
+        self.state['handledInstallRequestAt'] = config['installRequestedAt'] or request
+        self.state['quietSince'] = None
+        return 'downloaded', CANCELLED
+
+    def quiet_then_install(self, verified, install_request):
+        version = verified['version']
+        helper_dir = self.verify_helpers(verified)
+        snapshots = ensure_dir(self.updates / 'snapshots', self.home)
+        baseline_path = snapshots / 'baseline.json'
+        started, attempt, retries = utcnow(), 0, 0
+        reaper.reset(self, self.config['installRequestedAt'])  # A second pass in run_once starts afresh.
+        while True:
+            attempt += 1
+            newest, snapshot, refused = self.take_snapshot(helper_dir, snapshots)
+            if snapshot is None:
+                if os.path.lexists(str(baseline_path)):
+                    remove_path(baseline_path, self.home)
+                self.state['quietSince'] = None
+                retry_by = self.retry_deadline(started) if install_request else started
+                if refused[0] != 'waiting-for-quiet' or utcnow() + datetime.timedelta(seconds=RETRY_SECONDS) >= retry_by:
+                    return self.finish(*refused)
+                self.set_status(refused[0], '%s (attempt %d)' % (refused[1], attempt))
+                if (ended := self.withdrawn(version)):  # Written while the snapshot ran: no reap.
+                    return self.finish(*ended)
+                time.sleep(reaper.before_retry(self, helper_dir, refused, started))
+                if (ended := self.withdrawn(version)):
+                    return self.finish(*ended)
+                continue
+            if install_request and (ended := self.withdrawn(version)):
+                remove_path(newest, self.home)
+                return self.finish(*ended)
+            if install_request:
+                retry = self.config['installMode'] == 'force' and retries < FORCE_APPLY_RETRIES
+                result = self.apply(verified, helper_dir, newest, baseline_path, install_request, retry)
+                if result is not None:
+                    return result
+                retries, attempt = retries + 1, 0
+                self.set_status('waiting-for-quiet', 'New work started before the restart; trying again')
+                continue
+            break
         baseline = self.read_snapshot(baseline_path) if os.path.lexists(str(baseline_path)) else None
         now = utcnow()
         quiet = False
@@ -1097,7 +1100,7 @@ class Agent(object):
                 quiet = now - since >= datetime.timedelta(minutes=self.config['quietMinutes'])
             else:
                 same = False  # A future-dated baseline cannot prove quiet time.
-        if install_request or quiet:
+        if quiet:
             return self.apply(verified, helper_dir, newest, baseline_path, install_request)
         if same:
             remove_path(newest, self.home)  # Keep the older matching baseline so quiet time accrues.
@@ -1107,11 +1110,13 @@ class Agent(object):
         self.state['quietSince'] = baseline['observedAt']
         return self.finish('waiting-for-quiet', 'Waiting for a quiet moment before installing Studio %s' % version)
 
-    def apply(self, verified, helper_dir, prestate, baseline_path, install_request):
+    def apply(self, verified, helper_dir, prestate, baseline_path, install_request, may_retry=False):
+        """Run the verified helper once. None means it refused before the restart and put every
+        pointer back, so the caller may snapshot and apply again (only when may_retry)."""
         version = verified['version']
         runtime = owned(self.release_dir(version) / verified['runtime']['asset'], self.home)
         if sha256_file(runtime) != verified['runtime']['sha256']:
-            remove_path(self.release_dir(version) / 'verified.json', self.home)
+            cache.forget(self, self.release_dir(version), ('verified.json', verified['runtime']['asset']))
             raise AgentError('Downloaded runtime changed on disk; it will be downloaded again')
         receipts = ensure_dir(self.updates / 'receipts', self.home)
         moment = stamp()
@@ -1121,18 +1126,37 @@ class Agent(object):
         if os.path.lexists(str(baseline_path)):
             remove_path(baseline_path, self.home)
         self.state['quietSince'] = None
-        if install_request:
-            self.state['handledInstallRequestAt'] = self.config['installRequestedAt']
+        handled = self.state['handledInstallRequestAt']
+        if install_request: self.state['handledInstallRequestAt'] = self.config['installRequestedAt']  # noqa: E701
         write_json(self.marker_path, {'version': version, 'receipt': str(receipt), 'at': iso(utcnow())}, self.home)
         self.set_status('installing', 'Installing Studio %s' % version)
+        if install_request and (ended := self.withdrawn(version)):  # A cancel that raced the status write above.
+            return remove_path(self.marker_path, self.home) or self.finish(*ended)
         args = ['--identity', self.identity, '--prestate', kept, '--archive', runtime,
                 '--sha256', verified['runtime']['sha256'], '--output', receipt] + list(verified['args'])
         pass_fds = (self.lock_fd,) if self.lock_fd is not None else ()
         outcome = run_helper_process(self.helper_command(helper_dir, args), str(helper_dir), self.helper_env(),
                                      APPLY_TIMEOUT, pass_fds=pass_fds, wait_detached=True,
                                      log_path=helper_log_path(receipt))
+        if may_retry and outcome == 'failed' and self.refused_before_restart(receipt, version):
+            remove_path(self.marker_path, self.home)
+            self.state['handledInstallRequestAt'] = handled  # Still pending until an attempt completes.
+            return None
         status, message = self.complete_install(version, receipt, outcome)
         return self.finish(status, message)
+
+    def refused_before_restart(self, receipt, version):
+        """The helper stopped before restarting the service because work changed after the
+        snapshot, and every pointer is as it was: running it again is safe."""
+        try:
+            value = read_json(receipt, self.home)
+            inst = load_installation(self.home, self.identity)
+        except AgentError:
+            return False
+        error = value.get('error') if isinstance(value, dict) else None
+        return (isinstance(error, str) and any(phrase in error for phrase in RETRYABLE_REFUSALS)
+                and value.get('pointers') in ('unchanged', 'previous-release') and inst['version'] != version
+                and not any(key in value for key in ('restartStartedAt', 'rollbackError', 'stateBackup')))
 
     def complete_install(self, version, receipt, outcome):
         try:
@@ -1143,8 +1167,8 @@ class Agent(object):
             self.inst = inst
             self.state['installedVersion'] = inst['version']
             self.state['installedSourceCommit'] = inst['sourceCommit']
-        if os.path.lexists(str(self.marker_path)):
-            remove_path(self.marker_path, self.home)
+        if outcome != 'timeout' and os.path.lexists(str(self.marker_path)):
+            remove_path(self.marker_path, self.home)  # A timed-out helper runs on; a later pass settles it.
         now = iso(utcnow())
         if outcome == 'ok' and inst is not None and inst['version'] == version:
             self.state['lastInstall'] = {'version': version, 'at': now, 'result': 'updated', 'receipt': str(receipt)}
@@ -1178,6 +1202,15 @@ class Agent(object):
         except (OSError, AgentError) as error:
             print('update-agent %s: could not write the failed-install receipt (%s)'
                   % (self.identity, type(error).__name__), file=sys.stderr)
+
+    def failed_switch_stands(self, last):
+        """A failed install of the running version stands until its receipt says otherwise or Studio is reinstalled."""
+        try:
+            receipt = owned(pathlib.Path(last['receipt']), self.home)
+            reinstalled = os.stat(str(self.own / 'installation.json')).st_mtime_ns > os.stat(str(receipt)).st_mtime_ns
+            return not reinstalled and read_json(receipt, self.home).get('result') == 'update-failed'
+        except (AgentError, OSError, KeyError, TypeError, AttributeError):
+            return False
 
     def cleanup_versions(self, installed):
         for parent in (self.updates / 'downloads', self.updates / 'helpers'):
@@ -1220,8 +1253,7 @@ class Agent(object):
             settled = self.settle_interrupted()
             if settled is not None:
                 return self.finish(*settled)
-        # A manual or failed install leaves downloads and helpers that only a
-        # successful agent install used to clean; drop any at or below this version.
+        # Manual or failed installs leave downloads and helpers only an agent install cleaned; drop any <= this version.
         try:
             self.cleanup_versions(installed)
         except (AgentError, OSError):
@@ -1232,8 +1264,7 @@ class Agent(object):
                 if key == 'availableVersion':
                     self.clear_available()
                 state[key] = None
-        install_request = config['installRequestedAt'] is not None and \
-            config['installRequestedAt'] != state.get('handledInstallRequestAt')
+        install_request = update_request.pending(config, state, installed, utcnow(), install_cancelled, AgentError)
         check_request = config['checkRequestedAt'] is not None and \
             config['checkRequestedAt'] != state.get('handledCheckRequestAt')
         if not config['checkAutomatically'] and not install_request and not check_request:
@@ -1252,16 +1283,20 @@ class Agent(object):
                 if not (meta and meta.get('plan') and self.load_verified(meta)):
                     return self.finish(error.status, error.message)
                 # The network failed but a verified download is ready: keep going with it.
+        last = state.get('lastInstall') or {}  # The version can switch before the helper's checks fail.
         if meta is None:
             if install_request:
                 state['handledInstallRequestAt'] = config['installRequestedAt']
+            if last.get('version') == self.inst['version'] and self.failed_switch_stands(last):
+                return self.finish('error', 'Updating to Studio %s failed. See the update receipt.' % last['version'])
             return self.finish('up-to-date', None)
-        if meta.get('manual') or meta.get('rejected') or not meta.get('plan'):
+        refused = install_request and update_request.refuse(config, state, meta['version'])  # Bound to another version.
+        if meta.get('manual') or meta.get('rejected') or not meta.get('plan') or refused:
             if install_request:
                 state['handledInstallRequestAt'] = config['installRequestedAt']
             if meta.get('manual'):
                 return self.finish('manual-required', meta['manual'])
-            return self.finish('error', meta.get('rejected') or 'The release update plan is unusable')
+            return self.finish('error', refused or meta.get('rejected') or 'The release update plan is unusable')
         version = meta['version']
         verified = self.load_verified(meta)
         if verified is None:
@@ -1286,12 +1321,9 @@ class Agent(object):
         state['downloadedVersion'] = version
         if not (config['installAutomatically'] or install_request):
             return self.finish('downloaded', None)
-        last = state.get('lastInstall')
-        if not install_request and isinstance(last, dict) and last.get('version') == version \
-                and last.get('result') == 'failed':
+        if not install_request and last.get('version') == version and last.get('result') == 'failed':
             return self.finish('error', 'Studio %s did not install automatically; choose Install now to retry.' % version)
         return self.quiet_then_install(verified, install_request)
-
 
 # ---------------------------------------------------------------- entry points
 
@@ -1307,7 +1339,6 @@ def acquire_lock(path, home):
         raise
     return fd
 
-
 def run_once(home, identity, test_mode, out):
     own = owned(studio_home(home, identity), home)
     if not own.is_dir():
@@ -1318,33 +1349,28 @@ def run_once(home, identity, test_mode, out):
     if lock_fd is None:
         return 0  # Another pass (or a still-running helper) holds the lock.
     try:
-        agent = Agent(home, identity, test_mode, out)
-        agent.lock_fd = lock_fd
+        agent = Agent(home, identity, test_mode, out, lock_fd)
         agent.rotate_log()
-        agent.state = load_state(agent.state_path, home)
-        try:
-            agent.config = load_config(updates, home)
-            agent.inst = load_installation(home, identity)
-            return agent.run_pass()
-        except AgentError as error:
-            return agent.finish(error.status, error.message)
-        except Exception as error:  # Never let a traceback (with possible values) reach the log.
-            return agent.finish('error', 'Unexpected updater failure (%s)' % type(error).__name__)
+        for again in (True, False):  # Once more for a request written while this pass held the lock.
+            agent.state = load_state(agent.state_path, home)
+            try:
+                agent.config = load_config(updates, home)
+                agent.inst = load_installation(home, identity)
+                code = agent.run_pass()
+            except AgentError as error:
+                code = agent.finish(error.status, error.message)
+            except Exception as error:  # Never let a traceback (with possible values) reach the log.
+                code = agent.finish('error', 'Unexpected updater failure (%s)' % type(error).__name__)
+            if not (again and update_request.arrived(agent, lambda: load_config(updates, home))):
+                return code
     finally:
         os.close(lock_fd)
-
 
 def show_status(home, identity, out):
     own = owned(studio_home(home, identity), home)
     path = own / 'updates' / 'state.json'
     if path.is_file():
-        state = load_state(path, home)
-        try:
-            raw = read_json(path, home)
-            if isinstance(raw, dict) and raw.get('updatedAt'):
-                state['updatedAt'] = raw['updatedAt'] if isinstance(raw['updatedAt'], str) else None
-        except AgentError:
-            pass
+        state = load_state(path, home)  # Keeps the saved updatedAt.
     else:
         state = blank_state()
         try:
@@ -1363,47 +1389,55 @@ def show_status(home, identity, out):
     out(json.dumps({key: state.get(key) for key in STATE_KEYS}))
     return 0
 
-
 def agent_label(identity):
     return 'com.specweave.studio.%s.updater' % identity
 
-
 def install_launch_agent(home, identity, out):
     inst = load_installation(home, identity)
+    cache.install_beside(sys.modules[__name__], home)  # Before the agent that imports it.
     updates = ensure_dir(inst['studioHome'] / 'updates', home)
     label = agent_label(identity)
-    target_dir = ensure_dir(home / '.local' / 'share' / 'specweave-studio' / 'updater', home)
-    os.chmod(str(target_dir), 0o700)
-    script = owned(target_dir / 'update_agent.py', home)
-    source = pathlib.Path(os.path.abspath(__file__)).read_bytes()
-    plist_path = owned(home / 'Library' / 'LaunchAgents' / (label + '.plist'), home)
-    ensure_dir(plist_path.parent, home)
-    log = str(updates / 'agent.log')
-    content = plistlib.dumps({'Label': label,
-                              'ProgramArguments': [SYSTEM_PYTHON, str(script), '--identity', identity],
-                              'StartInterval': 600, 'RunAtLoad': True, 'ProcessType': 'Background',
-                              'LowPriorityIO': True, 'StandardOutPath': log, 'StandardErrorPath': log,
-                              'WorkingDirectory': str(updates)})
+    lock_fd = acquire_lock(updates / 'agent.lock', home)
+    try:
+        target_dir = ensure_dir(home / '.local' / 'share' / 'specweave-studio' / 'updater', home)
+        os.chmod(str(target_dir), 0o700)
+        files = [(owned(target_dir / os.path.basename(name), home), pathlib.Path(os.path.abspath(name)).read_bytes())
+                 for name in (update_request.__file__, __file__)]  # Modules first: a new script needs them.
 
-    def same(path, data):
-        return path.is_file() and not path.is_symlink() and read_owned(path, home, 8 << 20) == data
+        def same(path, data):
+            return path.is_file() and not path.is_symlink() and read_owned(path, home, 8 << 20) == data
 
-    script_same, plist_same = same(script, source), same(plist_path, content)
-    domain = 'gui/%d' % current_uid()
-    if script_same and plist_same and launchctl(['print', domain + '/' + label]) == 0:
-        result = 'unchanged'
-    else:
-        if not script_same:
-            atomic_write(script, source, home, 0o700)
-        if not plist_same:
+        # Atomic writes are safe while a pass runs: launchd runs the new copy next time; no reload.
+        written = reaper.install_beside(files[-1][0], home, same, atomic_write)
+        for path, data in files:
+            if not same(path, data):
+                atomic_write(path, data, home, 0o700)
+                written = True
+        if lock_fd is None:
+            # A pass (or the install helper it started) runs: a bootout would stop it mid-snapshot
+            # or mid-install. Its files are in place; the next request reloads the job if needed.
+            out(json.dumps({'result': 'busy', 'written': written, 'label': label}))
+            return 0
+        plist_path = owned(home / 'Library' / 'LaunchAgents' / (label + '.plist'), home)
+        ensure_dir(plist_path.parent, home)
+        log = str(updates / 'agent.log')
+        content = plistlib.dumps({'Label': label,
+                                  'ProgramArguments': [SYSTEM_PYTHON, str(files[-1][0]), '--identity', identity],
+                                  'StartInterval': 600, 'RunAtLoad': True, 'ProcessType': 'Standard',
+                                  'LowPriorityIO': True, 'StandardOutPath': log, 'StandardErrorPath': log,
+                                  'WorkingDirectory': str(updates)})
+        domain, result = 'gui/%d' % current_uid(), 'installed' if written else 'unchanged'
+        if not same(plist_path, content) or launchctl(['print', domain + '/' + label]) != 0:
             atomic_write(plist_path, content, home, 0o644)
-        launchctl(['bootout', domain + '/' + label])  # Not loaded yet is fine.
-        if launchctl(['bootstrap', domain, str(plist_path)]) != 0:
-            raise AgentError('launchctl could not load the update agent')
-        result = 'installed'
+            launchctl(['bootout', domain + '/' + label])  # Not loaded yet is fine.
+            if launchctl(['bootstrap', domain, str(plist_path)]) != 0:
+                raise AgentError('launchctl could not load the update agent')
+            result = 'installed'
+    finally:
+        if lock_fd is not None:
+            os.close(lock_fd)
     out(json.dumps({'result': result, 'label': label}))
     return 0
-
 
 def uninstall_launch_agent(home, identity, out):
     label = agent_label(identity)
@@ -1414,7 +1448,6 @@ def uninstall_launch_agent(home, identity, out):
         remove_path(plist_path, home)
     out(json.dumps({'result': 'uninstalled' if existed else 'absent', 'label': label}))
     return 0
-
 
 def main(argv=None):
     os.umask(0o077)
@@ -1447,7 +1480,6 @@ def main(argv=None):
         print('update-agent %s: error: unexpected failure (%s)' % (args.identity, type(error).__name__),
               file=sys.stderr)
         return 1
-
 
 if __name__ == '__main__':
     sys.exit(main())

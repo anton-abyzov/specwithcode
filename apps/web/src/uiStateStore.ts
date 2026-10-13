@@ -13,10 +13,6 @@ const LEGACY_PERSISTED_STATE_KEYS = [
   "studio:renderer-state:v5",
   "studio:renderer-state:v4",
   "studio:renderer-state:v3",
-  "codething:renderer-state:v4",
-  "codething:renderer-state:v3",
-  "codething:renderer-state:v2",
-  "codething:renderer-state:v1",
 ] as const;
 
 export interface PersistedUiState {

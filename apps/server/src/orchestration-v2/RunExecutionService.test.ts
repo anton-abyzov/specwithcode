@@ -26,9 +26,12 @@ import {
   ServerSettingsError,
   ThreadId,
   TurnItemId,
+  ProviderSetupError,
 } from "@specweave-studio/contracts";
 import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -3389,6 +3392,101 @@ it.effect("refreshes pull requests only once when startup failure closes its eve
   }),
 );
 
+it.effect("retries a turn start whose native status check timed out, then names the reason", () =>
+  Effect.gen(function* () {
+    const ingestionStarted = yield* Deferred.make<void>();
+    const attempts = yield* Ref.make(0);
+    const fiber = yield* Effect.forkChild(
+      captureRootRunTermination({
+        key: "transient-start:status-check",
+        shouldFinalizeRun: () => Effect.succeed(true),
+        events: () =>
+          Stream.unwrap(Deferred.succeed(ingestionStarted, undefined).pipe(Effect.as(Stream.never))),
+        startTurn: (input) =>
+          Deferred.await(ingestionStarted).pipe(
+            Effect.andThen(Ref.update(attempts, (count) => count + 1)),
+            Effect.andThen(
+              Effect.fail(
+                new ProviderAdapterTurnStartError({
+                  driver,
+                  threadId: input.threadId,
+                  providerThreadId: input.providerThread.id,
+                  runId: input.runId,
+                  cause: new ProviderSetupError({
+                    instanceId: ProviderInstanceId.make("codex"),
+                    operation: "session",
+                    detail:
+                      "The native provider status check timed out. Refresh Providers on this machine and try again.",
+                  }),
+                }),
+              ),
+            ),
+          ),
+      }),
+    );
+    yield* TestClock.adjust("30 seconds");
+    const { observed, written } = yield* Fiber.join(fiber);
+    assert.equal(yield* Ref.get(attempts), 3);
+    assert.equal(observed[0], "run:failed");
+    const error = written.find((item) => item.type === "error");
+    assert.include(error?.failure.message ?? "", "native provider status check timed out");
+  }),
+);
+
+it.effect("stops resending a turn start once the run was stopped during the wait", () =>
+  Effect.gen(function* () {
+    const ingestionStarted = yield* Deferred.make<void>();
+    const attempts = yield* Ref.make(0);
+    const fiber = yield* Effect.forkChild(
+      captureRootRunTermination({
+        key: "transient-start:stopped",
+        shouldFinalizeRun: () => Effect.succeed(true),
+        // The user stops the run after the first attempt, before the resend.
+        shouldStartProviderTurn: () => Ref.get(attempts).pipe(Effect.map((count) => count === 0)),
+        events: () =>
+          Stream.unwrap(Deferred.succeed(ingestionStarted, undefined).pipe(Effect.as(Stream.never))),
+        startTurn: (input) =>
+          Deferred.await(ingestionStarted).pipe(
+            Effect.andThen(Ref.update(attempts, (count) => count + 1)),
+            Effect.andThen(
+              Effect.fail(
+                new ProviderAdapterTurnStartError({
+                  driver,
+                  threadId: input.threadId,
+                  providerThreadId: input.providerThread.id,
+                  runId: input.runId,
+                  cause: new ProviderSetupError({
+                    instanceId: ProviderInstanceId.make("codex"),
+                    operation: "session",
+                    detail:
+                      "The native provider status check timed out. Refresh Providers on this machine and try again.",
+                  }),
+                }),
+              ),
+            ),
+          ),
+      }),
+    );
+    yield* TestClock.adjust("30 seconds");
+    yield* Fiber.join(fiber);
+    assert.equal(yield* Ref.get(attempts), 1);
+  }),
+);
+
+it("treats only native status check denials as transient turn start failures", () => {
+  const wrap = (detail: string) =>
+    new ProviderAdapterTurnStartError({
+      driver,
+      threadId: ThreadId.make("thread:transient"),
+      providerThreadId: ProviderThreadId.make("provider-thread:transient"),
+      runId: RunId.make("run:transient"),
+      cause: new ProviderSetupError({ instanceId: ProviderInstanceId.make("codex"), operation: "session", detail }),
+    });
+  assert.isTrue(RunExecutionService.isTransientTurnStartFailure(wrap("The native provider status check failed. Refresh Providers on this machine and try again.")));
+  assert.isFalse(RunExecutionService.isTransientTurnStartFailure(wrap("This provider instance is disabled.")));
+  assert.isFalse(RunExecutionService.isTransientTurnStartFailure(new Error("The native provider status check timed out.")));
+});
+
 it.effect("keeps completed runs completed when pull request refresh fails", () =>
   Effect.gen(function* () {
     const { observed } = yield* captureRootRunTermination({
@@ -3406,6 +3504,7 @@ function captureRootRunTermination(input: {
   readonly shouldFinalizeRun: () => Effect.Effect<boolean, ProjectionStore.ProjectionStoreV2Error>;
   readonly rejectTerminalWrite?: boolean;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
+  readonly shouldStartProviderTurn?: () => Effect.Effect<boolean, ProjectionStore.ProjectionStoreV2Error>;
   readonly seedOpenSubagent?: boolean;
   readonly events?: (
     ids: BackgroundScenarioIds,
@@ -3553,6 +3652,9 @@ function captureRootRunTermination(input: {
         attemptId: ids.attemptId,
         providerTurnOrdinal: 1,
         shouldFinalizeRun: input.shouldFinalizeRun,
+        ...(input.shouldStartProviderTurn === undefined
+          ? {}
+          : { shouldStartProviderTurn: input.shouldStartProviderTurn }),
         ...(input.hasUnpairedRunInterruptRequest === undefined
           ? {}
           : {

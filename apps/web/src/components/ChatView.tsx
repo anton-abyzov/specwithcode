@@ -7777,6 +7777,7 @@ export default function ChatView(props: ChatViewProps) {
       ? resolveProviderFallback({
           providers: providerStatuses,
           currentInstanceId: activeThreadShell.providerInstanceId,
+          currentModel: activeThreadShell.modelSelection.model,
           rule: activeProjectSettings.settings,
           nowMs: Date.now(),
           belowPercent: 100,
@@ -7981,6 +7982,7 @@ export default function ChatView(props: ChatViewProps) {
       ? resolveProviderFallback({
           providers: providerStatuses,
           currentInstanceId: approachingProvider.instanceId,
+          currentModel: activeThreadShell?.modelSelection.model,
           rule: limitRule,
           nowMs: approachingNowMs,
           belowPercent: approachingThreshold,

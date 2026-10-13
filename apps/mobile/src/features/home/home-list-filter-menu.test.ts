@@ -8,7 +8,7 @@ describe("buildHomeListFilterMenu", () => {
     const menu = buildHomeListFilterMenu({
       environments: [],
       projects: [
-        { key: "environment-1:project-1", label: "Codething" },
+        { key: "environment-1:project-1", label: "Codebase" },
         { key: "environment-1:project-2", label: "Website" },
       ],
       selectedEnvironmentId: null,
@@ -25,7 +25,7 @@ describe("buildHomeListFilterMenu", () => {
       type: "submenu",
       items: [
         { title: "All projects", state: "off" },
-        { title: "Codething", state: "on" },
+        { title: "Codebase", state: "on" },
         { title: "Website", state: "off" },
       ],
     });

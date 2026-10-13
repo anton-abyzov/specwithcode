@@ -120,7 +120,7 @@ const NOTICE_TEXT_EXTENSIONS = new Set([
   ".txt",
   ".unlicense",
 ]);
-const FIRST_PARTY_PACKAGE_PREFIXES = ["@specweave-studio/", "@specweave-studio/"] as const;
+const FIRST_PARTY_PACKAGE_PREFIXES = ["@specweave-studio/"] as const;
 
 function isNoticeTextFile(fileName: string): boolean {
   return (

@@ -45,6 +45,7 @@ import { creditAdmissionOptions } from "./manualCreditRuntime.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSession from "../mcp/McpProviderSession.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
@@ -195,11 +196,13 @@ export interface ProviderSessionManagerV2Shape {
   /**
    * Releases every live session with no turn in flight, as an idle timeout
    * would, and returns how many it released. A session whose turn is still
-   * running is left alone: Stop owns it. Used before a service update, whose
-   * helper refuses while any agent process still runs under the service.
+   * running is left alone: Stop owns it. With `includeBusy`, those are released
+   * too, after the caller has stopped their turns. Used before a service update,
+   * whose helper refuses while any agent process still runs under the service.
    */
   readonly releaseIdle: (input: {
     readonly detail: string;
+    readonly includeBusy?: boolean;
   }) => Effect.Effect<number, ProviderSessionManagerV2Error>;
   readonly detach: (input: {
     readonly providerSessionId: ProviderSessionId;
@@ -395,6 +398,8 @@ export const layerWithOptions = (
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
       const capacity = yield* Effect.serviceOption(StudioCapacity.Capacity);
+      // No new agent process starts while the service is held for an update.
+      const updateHold = yield* ServiceUpdateHold.optional;
       const eventSink = yield* EventSink.EventSinkV2;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const providerEventIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
@@ -1912,27 +1917,35 @@ export const layerWithOptions = (
       const releaseIdle: ProviderSessionManagerV2Shape["releaseIdle"] = (input) =>
         Effect.gen(function* () {
           const idle = [...(yield* Ref.get(sessions)).values()].filter(
-            (entry) => entry.busyTurns.size === 0,
+            (entry) => input.includeBusy === true || entry.busyTurns.size === 0,
           );
-          let released = 0;
-          for (const entry of idle) {
-            // The generation guard skips a session that started a turn meanwhile.
-            const exit = yield* Effect.exit(
-              releaseEntry({
-                providerSessionId: entry.runtime.providerSessionId,
-                reason: "manual_shutdown",
-                detail: input.detail,
-                onlyIfIdleGeneration: entry.idleGeneration,
-              }),
-            );
-            if (Exit.isSuccess(exit)) released += 1;
-            else
-              yield* Effect.logWarning("orchestration-v2.driver-session.release-idle-failed", {
-                providerSessionId: entry.runtime.providerSessionId,
-                cause: exit.cause,
-              });
-          }
-          return released;
+          // In parallel, so one session whose close hangs does not hold up the rest.
+          const exits = yield* Effect.forEach(
+            idle,
+            (entry) =>
+              Effect.exit(
+                // The generation guard skips a session that started a turn meanwhile.
+                releaseEntry({
+                  providerSessionId: entry.runtime.providerSessionId,
+                  reason: "manual_shutdown",
+                  detail: input.detail,
+                  ...(input.includeBusy === true
+                    ? {}
+                    : { onlyIfIdleGeneration: entry.idleGeneration }),
+                }),
+              ).pipe(
+                Effect.tap((exit) =>
+                  Exit.isSuccess(exit)
+                    ? Effect.void
+                    : Effect.logWarning("orchestration-v2.driver-session.release-idle-failed", {
+                        providerSessionId: entry.runtime.providerSessionId,
+                        cause: exit.cause,
+                      }),
+                ),
+              ),
+            { concurrency: "unbounded" },
+          );
+          return exits.filter(Exit.isSuccess).length;
         });
 
       return ProviderSessionManagerV2.of({
@@ -1957,6 +1970,18 @@ export const layerWithOptions = (
               }
               const key = sessionKey(input.providerSessionId);
               const existing = (yield* Ref.get(sessions)).get(key);
+              if (existing === undefined) {
+                yield* updateHold.refuse("provider-session.open").pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProviderSessionOpenError({
+                        instanceId: input.modelSelection.instanceId,
+                        providerSessionId: input.providerSessionId,
+                        cause,
+                      }),
+                  ),
+                );
+              }
               if (existing !== undefined) {
                 if (
                   !existing.attachedThreadIds.has(input.threadId) &&

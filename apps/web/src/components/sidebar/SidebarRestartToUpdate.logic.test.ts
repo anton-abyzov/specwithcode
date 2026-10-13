@@ -10,7 +10,12 @@ import {
   canRetryServiceUpdate,
   INSTALL_TIMEOUT_MS,
   describeServiceUpdateBlockers,
+  describeServiceUpdateStop,
+  isStaleServiceAnswer,
+  retryServiceUpdateProgress,
+  SERVICE_UPDATE_NOW_DESCRIPTION,
   serviceFailureKey,
+  serviceUpdateButtonLabel,
   STALE_FAILURE_MS,
   serviceUpdateToast,
   startServiceUpdateProgress,
@@ -87,10 +92,16 @@ describe("restart to update", () => {
     expect(view?.description).toContain("Restarts the app to install it.");
   });
 
-  it("installs a waiting service update on its own", () => {
+  it("offers to update a waiting service now", () => {
     const view = getRestartToUpdateView(appIdle, serviceWaiting);
-    expect(view).toMatchObject({ app: false, service: true, label: "Restart to update" });
-    expect(view?.description).toContain("Restarts the SpecWithCode service to install it.");
+    expect(view).toMatchObject({ app: false, service: true, label: "Update now" });
+    expect(view?.description).toContain(SERVICE_UPDATE_NOW_DESCRIPTION);
+    expect(SERVICE_UPDATE_NOW_DESCRIPTION).toBe(
+      "Stops running work, closes terminals and restarts SpecWithCode. You can continue interrupted tasks afterwards.",
+    );
+    expect(
+      getRestartToUpdateView(appIdle, { ...serviceWaiting, status: "downloaded" })?.label,
+    ).toBe("Update now");
   });
 
   it("does both when the app and the service each have an update", () => {
@@ -98,8 +109,9 @@ describe("restart to update", () => {
       ...serviceWaiting,
       status: "downloaded",
     });
-    expect(view).toMatchObject({ app: true, service: true });
-    expect(view?.description).toContain("Restarts the app and the SpecWithCode service");
+    expect(view).toMatchObject({ app: true, service: true, label: "Update now" });
+    expect(view?.description).toContain(SERVICE_UPDATE_NOW_DESCRIPTION);
+    expect(view?.description).toContain("The app restarts too.");
   });
 
   it("offers a retry with the reason after a failed install", () => {
@@ -207,6 +219,26 @@ describe("service update progress", () => {
     });
   });
 
+  it("retries a failed request for the version the agent offers now", () => {
+    const failed = { ...requested, phase: "failed" as const, message: "0.2.5 was asked for" };
+    const newer = {
+      ...serviceWaiting,
+      status: "error" as const,
+      availableVersion: "0.2.6",
+      downloadedVersion: null,
+    };
+    expect(retryServiceUpdateProgress(failed, newer)).toMatchObject({
+      phase: "stopping",
+      targetVersion: "0.2.6",
+      message: null,
+      blockers: [],
+    });
+    expect(retryServiceUpdateProgress(failed, null).targetVersion).toBe("0.2.5");
+    // Asking again while waiting keeps the version this request named.
+    const waiting = { ...requested, phase: "waiting" as const };
+    expect(retryServiceUpdateProgress(waiting, newer).targetVersion).toBe("0.2.5");
+  });
+
   it("follows the agent from waiting to installing to the new version", () => {
     const waiting = advanceServiceUpdateProgress(requested, {
       ...serviceWaiting,
@@ -283,7 +315,7 @@ describe("service update progress", () => {
     ).toMatchObject({ phase: "failed", message: "SpecWithCode stayed on 0.0.1." });
   });
 
-  it("names what still runs, most important first, and offers to stop it after a while", () => {
+  it("names what still runs, most important first, and always offers to update now", () => {
     const blockers = [
       {
         kind: "run",
@@ -323,11 +355,100 @@ describe("service update progress", () => {
         "1 agent process still working; and 1 more.",
     );
     const waiting = { ...requested, phase: "waiting" as const, blockers };
-    expect(serviceUpdateToast(waiting, false)).toMatchObject({ type: "loading", action: null });
-    expect(serviceUpdateToast(waiting, true)).toMatchObject({ type: "warning", action: "stop" });
-    expect(serviceUpdateToast({ ...waiting, blockers: [] }, true)).toMatchObject({
-      action: "retry",
+    expect(serviceUpdateToast(waiting, false)).toMatchObject({
+      type: "loading",
+      description: expect.stringContaining("Still running: 1 running task"),
+      action: "update-now",
+      cancel: true,
     });
+    // Waiting long only changes the tone.
+    expect(serviceUpdateToast(waiting, true)).toMatchObject({
+      type: "warning",
+      action: "update-now",
+      cancel: true,
+    });
+  });
+
+  it("offers Update now and Cancel while waiting with nothing the server knows of", () => {
+    const waiting = {
+      ...requested,
+      phase: "waiting" as const,
+      message: "Waiting for open Studio terminals and agent processes to close",
+    };
+    expect(serviceUpdateToast(waiting, false)).toEqual({
+      type: "loading",
+      title: "Preparing to install SpecWithCode 0.2.5",
+      description: "Waiting for open Studio terminals and agent processes to close",
+      action: "update-now",
+      cancel: true,
+    });
+    expect(serviceUpdateToast({ ...waiting, message: null }, false).description).toBe(
+      "Waiting for the last work to finish…",
+    );
+    expect(serviceUpdateToast(requested, false)).toMatchObject({
+      description: "Asking the update agent to install it…",
+      action: "update-now",
+      cancel: true,
+    });
+    expect(serviceUpdateToast({ ...requested, phase: "stopping" }, true)).toMatchObject({
+      description: "Stopping running tasks and cancelling queued messages…",
+      action: null,
+      cancel: false,
+    });
+    expect(serviceUpdateToast({ ...requested, phase: "failed" }, false)).toMatchObject({
+      action: "retry",
+      cancel: false,
+    });
+  });
+
+  it("lets every phase but installing and restarting be clicked again", () => {
+    const phases = ["stopping", "requesting", "waiting", "installing", "restarting", "failed"];
+    expect(
+      phases.map((phase) =>
+        canRetryServiceUpdate({ ...requested, phase: phase as typeof requested.phase }),
+      ),
+    ).toEqual([false, true, true, false, false, true]);
+    expect(serviceUpdateButtonLabel(requested)).toBe("Update now");
+    expect(serviceUpdateButtonLabel({ ...requested, phase: "waiting" })).toBe("Update now");
+    expect(serviceUpdateButtonLabel({ ...requested, phase: "stopping" })).toBe("Stopping tasks…");
+  });
+
+  it("asks before stopping work, naming what ends", () => {
+    const blocker = (kind: ServiceUpdateBlocker["kind"], count: number) =>
+      ({
+        kind,
+        count,
+        threadId: null,
+        threadTitle: null,
+        projectId: null,
+        projectTitle: null,
+      }) as unknown as ServiceUpdateBlocker;
+    expect(describeServiceUpdateStop({ blockers: [] })).toBeNull();
+    expect(describeServiceUpdateStop({ blockers: [], openTerminals: 0 })).toBeNull();
+    expect(
+      describeServiceUpdateStop({
+        blockers: [
+          blocker("run", 2),
+          blocker("run", 1),
+          blocker("queued", 1),
+          blocker("request", 2),
+          blocker("effect", 1),
+        ],
+        openTerminals: 1,
+      }),
+    ).toBe(
+      [
+        "Stop running work and update now?",
+        "3 tasks will be interrupted. You can continue them after the update.",
+        "1 queued message will be cancelled.",
+        "2 open questions or approvals will be closed.",
+        "1 terminal will close.",
+        "1 agent step will be stopped.",
+      ].join("\n"),
+    );
+    expect(describeServiceUpdateStop({ blockers: [], openTerminals: 2 })).toBe(
+      "Stop running work and update now?\n2 terminals will close.",
+    );
   });
 
   it("does not take the previous attempt's failure as this attempt's answer", () => {
@@ -342,6 +463,61 @@ describe("service update progress", () => {
     expect(advanceServiceUpdateProgress(retry, failed, 1_000 + STALE_FAILURE_MS).phase).toBe(
       "failed",
     );
-    expect(serviceFailureKey(serviceWaiting)).toBeNull();
+    expect(serviceFailureKey(serviceUpToDate)).toBeNull();
+  });
+
+  it("ignores a waiting or failed state the agent wrote before this request", () => {
+    const requestedAt = Date.parse("2026-10-12T20:08:31.000Z");
+    const retry = { ...requested, requestedAt };
+    const oldWaiting = {
+      ...serviceWaiting,
+      message: "Waiting for running tasks, queued messages and open questions to finish",
+      updatedAt: "2026-10-12T20:08:30.123456+00:00",
+    };
+    expect(isStaleServiceAnswer(retry, oldWaiting, requestedAt + 1_000)).toBe(true);
+    expect(advanceServiceUpdateProgress(retry, oldWaiting, requestedAt + 1_000)).toBe(retry);
+    // An old "waiting" never ends this attempt, however long the agent takes.
+    expect(advanceServiceUpdateProgress(retry, oldWaiting, requestedAt + 10 * 60_000)).toBe(retry);
+    // Written after the request: the agent's answer.
+    const fresh = { ...oldWaiting, updatedAt: "2026-10-12T20:08:40+00:00" };
+    expect(advanceServiceUpdateProgress(retry, fresh, requestedAt + 10_000)).toMatchObject({
+      phase: "waiting",
+      message: oldWaiting.message,
+    });
+    // An old failure never ends this attempt either: the agent may still be in
+    // its first snapshot, and believing it would withdraw the live request.
+    const oldError = { ...oldWaiting, status: "error" as const, message: "Did not install" };
+    expect(advanceServiceUpdateProgress(retry, oldError, requestedAt + 1_000)).toBe(retry);
+    expect(advanceServiceUpdateProgress(retry, oldError, requestedAt + STALE_FAILURE_MS)).toBe(
+      retry,
+    );
+    const oldManual = { ...oldError, status: "manual-required" as const };
+    expect(isStaleServiceAnswer(retry, oldManual, requestedAt + 10 * 60_000)).toBe(true);
+    expect(advanceServiceUpdateProgress(retry, oldManual, requestedAt + 10 * 60_000)).toBe(retry);
+    // A failure written after the request is this attempt's.
+    expect(
+      advanceServiceUpdateProgress(
+        retry,
+        { ...oldError, updatedAt: "2026-10-12T20:08:40+00:00" },
+        requestedAt + 10_000,
+      ).phase,
+    ).toBe("failed");
+    // Installing is always news.
+    expect(
+      advanceServiceUpdateProgress(retry, { ...oldWaiting, status: "installing" }, requestedAt)
+        .phase,
+    ).toBe("installing");
+  });
+
+  it("without the agent's write time, compares with the state seen before the request", () => {
+    const before = { ...serviceWaiting, message: "Waiting for open Studio terminals" };
+    const retry = { ...requested, staleFailure: serviceFailureKey(before), requestedAt: 1_000 };
+    expect(advanceServiceUpdateProgress(retry, before, 2_000)).toBe(retry);
+    expect(advanceServiceUpdateProgress(retry, before, 1_000 + STALE_FAILURE_MS).phase).toBe(
+      "waiting",
+    );
+    expect(
+      advanceServiceUpdateProgress(retry, { ...before, message: "Waiting for tasks" }, 2_000).phase,
+    ).toBe("waiting");
   });
 });

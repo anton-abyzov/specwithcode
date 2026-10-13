@@ -38,6 +38,10 @@ function causeMessage(cause: unknown): string | undefined {
           return new ContextHandoffBudgetError().message;
         case "ClaudeBackgroundWorkBlocksQueryReplacementError":
           return stringField(cause, "message");
+        // Setup details are Studio's own safe text (see ProviderSetupError) and
+        // name the real reason, such as a native status check that timed out.
+        case "ProviderSetupError":
+          return stringField(cause, "detail") ?? message;
         case "ContextHandoffDeliveryUncertainError":
           return "Studio could not confirm whether conversation history reached the provider. Retry the turn to recover the session.";
         case "ProviderAdapterTurnStartError":
@@ -65,7 +69,7 @@ function causeMessage(cause: unknown): string | undefined {
   return message;
 }
 
-function stringField(value: unknown, key: "message" | "code"): string | undefined {
+function stringField(value: unknown, key: "message" | "code" | "detail"): string | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   try {
     const candidate = (value as Record<string, unknown>)[key];

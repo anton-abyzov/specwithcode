@@ -7,6 +7,7 @@ import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, beforeEach, describe, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -472,12 +473,229 @@ describe("DesktopLocalService.discover", () => {
       const { home, studioHome } = makeHomeWithInstalledService(origin);
       return Effect.gen(function* () {
         const service = yield* DesktopLocalService.DesktopLocalService;
-        const discovery = yield* service.discover;
+        const discovery = yield* service.discover();
         assert.equal(discovery._tag, "running");
         if (discovery._tag !== "running") return;
         assert.equal(discovery.service.baseDir, studioHome);
         assert.equal(discovery.service.httpBaseUrl.origin, origin);
         assert.equal(discovery.service.descriptor.serverVersion, "0.1.4");
+      }).pipe(
+        Effect.provide(layerFor(home)),
+        Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
+      );
+    }),
+  );
+
+  // The helper has stopped the old service and not yet started the new one.
+  // The marker is dated `ageMs` before the test clock's now.
+  const stopForInstall = (studioHome: string, ageMs: number, marker: object = {}) =>
+    Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis;
+      const runtimePath = NodePath.join(studioHome, "userdata", "server-runtime.json");
+      const runtime = NodeFS.readFileSync(runtimePath, "utf8");
+      const markerPath = NodePath.join(studioHome, "updates", "install-in-progress.json");
+      NodeFS.rmSync(runtimePath);
+      writeJson(markerPath, {
+        version: "1.0.7",
+        ...marker,
+        at: new Date(now - ageMs).toISOString(),
+      });
+      return {
+        restart: () => NodeFS.writeFileSync(runtimePath, runtime),
+        clearMarker: () => NodeFS.rmSync(markerPath),
+      };
+    });
+
+  const advanceSeconds = (seconds: number) =>
+    Effect.gen(function* () {
+      for (let second = 0; second < seconds; second += 1) yield* TestClock.adjust("1 second");
+    });
+
+  it.effect("waits for a service update instead of starting its own server", () =>
+    withDescriptorServer((origin) => {
+      const { home, studioHome } = makeHomeWithInstalledService(origin);
+      return Effect.gen(function* () {
+        const install = yield* stopForInstall(studioHome, 0, { receipt: "update-1.0.7.json" });
+        const service = yield* DesktopLocalService.DesktopLocalService;
+        let notices = 0;
+        const discovering = yield* Effect.forkChild(
+          service.discover({ onInstallWait: Effect.sync(() => (notices += 1)) }),
+        );
+        // Well past the six seconds a restarting service normally gets.
+        yield* advanceSeconds(60);
+        assert.isUndefined(discovering.pollUnsafe());
+        // The app shows that it waits, once.
+        assert.equal(notices, 1);
+        // The new release answers, then the agent clears its marker.
+        install.restart();
+        yield* TestClock.adjust("1 second");
+        const discovery = yield* Fiber.join(discovering);
+        assert.equal(discovery._tag, "running");
+        assert.equal(notices, 1);
+        install.clearMarker();
+      }).pipe(
+        Effect.provide(layerFor(home)),
+        Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
+      );
+    }),
+  );
+
+  it.effect("keeps the full grace after the install ends without a running service", () =>
+    withDescriptorServer((origin) => {
+      const { home, studioHome } = makeHomeWithInstalledService(origin);
+      return Effect.gen(function* () {
+        const install = yield* stopForInstall(studioHome, 0);
+        const service = yield* DesktopLocalService.DesktopLocalService;
+        const discovering = yield* Effect.forkChild(service.discover());
+        yield* advanceSeconds(30);
+        install.clearMarker();
+        yield* advanceSeconds(4);
+        assert.isUndefined(discovering.pollUnsafe());
+        // launchd brings the new release up within the grace.
+        install.restart();
+        yield* TestClock.adjust("1 second");
+        assert.equal((yield* Fiber.join(discovering))._tag, "running");
+      }).pipe(
+        Effect.provide(layerFor(home)),
+        Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
+      );
+    }),
+  );
+
+  it.effect("starts its own server once an install outlasts the agent's window", () =>
+    withDescriptorServer((origin) => {
+      const { home, studioHome } = makeHomeWithInstalledService(origin);
+      return Effect.gen(function* () {
+        yield* stopForInstall(studioHome, 0);
+        const service = yield* DesktopLocalService.DesktopLocalService;
+        const discovering = yield* Effect.forkChild(service.discover());
+        yield* TestClock.adjust("14 minutes");
+        assert.isUndefined(discovering.pollUnsafe());
+        // 15 minutes of waiting, then the usual six-second grace.
+        yield* TestClock.adjust("1 minute");
+        yield* advanceSeconds(5);
+        assert.isUndefined(discovering.pollUnsafe());
+        yield* TestClock.adjust("1 second");
+        assert.equal((yield* Fiber.join(discovering))._tag, "none");
+      }).pipe(
+        Effect.provide(layerFor(home)),
+        Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
+      );
+    }),
+  );
+
+  it.effect("falls back when the marker ages out partway through the wait", () =>
+    withDescriptorServer((origin) => {
+      const { home, studioHome } = makeHomeWithInstalledService(origin);
+      return Effect.gen(function* () {
+        // Ten seconds of the agent's 15-minute window are left.
+        yield* stopForInstall(studioHome, 14 * 60_000 + 50_000);
+        const service = yield* DesktopLocalService.DesktopLocalService;
+        const discovering = yield* Effect.forkChild(service.discover());
+        yield* advanceSeconds(15);
+        assert.isUndefined(discovering.pollUnsafe());
+        yield* TestClock.adjust("1 second");
+        assert.equal((yield* Fiber.join(discovering))._tag, "none");
+      }).pipe(
+        Effect.provide(layerFor(home)),
+        Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
+      );
+    }),
+  );
+
+  it.effect("keeps waiting past the window while the install helper still runs", () =>
+    withDescriptorServer((origin) => {
+      const { home, studioHome } = makeHomeWithInstalledService(origin);
+      const receipt = NodePath.join(studioHome, "updates", "receipts", "update-1.0.7-x.json");
+      // The agent gave up waiting at 15 minutes; the helper (a live process) rolls back.
+      writeJson(receipt, { phase: "restart-requested", helperPid: process.ppid });
+      return Effect.gen(function* () {
+        const install = yield* stopForInstall(studioHome, 20 * 60_000, { receipt });
+        const service = yield* DesktopLocalService.DesktopLocalService;
+        const discovering = yield* Effect.forkChild(service.discover());
+        yield* TestClock.adjust("10 minutes");
+        assert.isUndefined(discovering.pollUnsafe());
+        // The helper put the service back; the next agent pass clears the marker.
+        install.restart();
+        yield* TestClock.adjust("1 second");
+        assert.equal((yield* Fiber.join(discovering))._tag, "running");
+      }).pipe(
+        Effect.provide(layerFor(home)),
+        Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
+      );
+    }),
+  );
+
+  it.effect("stops waiting for a live helper once the marker reaches the hard limit", () =>
+    withDescriptorServer((origin) => {
+      const { home, studioHome } = makeHomeWithInstalledService(origin);
+      const receipt = NodePath.join(studioHome, "updates", "receipts", "update-1.0.7-x.json");
+      writeJson(receipt, { helperPid: process.ppid });
+      return Effect.gen(function* () {
+        // 59 minutes old: one minute of the hour a helper is trusted is left.
+        yield* stopForInstall(studioHome, 59 * 60_000, { receipt });
+        const service = yield* DesktopLocalService.DesktopLocalService;
+        const discovering = yield* Effect.forkChild(service.discover());
+        yield* TestClock.adjust("1 minute");
+        yield* advanceSeconds(5);
+        assert.isUndefined(discovering.pollUnsafe());
+        yield* TestClock.adjust("1 second");
+        assert.equal((yield* Fiber.join(discovering))._tag, "none");
+      }).pipe(
+        Effect.provide(layerFor(home)),
+        Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
+      );
+    }),
+  );
+
+  it.effect("ignores a marker left by an install that died long ago", () =>
+    withDescriptorServer((origin) => {
+      const { home, studioHome } = makeHomeWithInstalledService(origin);
+      return Effect.gen(function* () {
+        yield* stopForInstall(studioHome, 16 * 60_000);
+        const service = yield* DesktopLocalService.DesktopLocalService;
+        let notices = 0;
+        const discovering = yield* Effect.forkChild(
+          service.discover({ onInstallWait: Effect.sync(() => (notices += 1)) }),
+        );
+        yield* advanceSeconds(6);
+        assert.equal((yield* Fiber.join(discovering))._tag, "none");
+        assert.equal(notices, 0);
+      }).pipe(
+        Effect.provide(layerFor(home)),
+        Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
+      );
+    }),
+  );
+
+  it.effect("gives a stopped service only the usual grace when no update is installing", () =>
+    withDescriptorServer((origin) => {
+      const { home, studioHome } = makeHomeWithInstalledService(origin);
+      NodeFS.rmSync(NodePath.join(studioHome, "userdata", "server-runtime.json"));
+      return Effect.gen(function* () {
+        const service = yield* DesktopLocalService.DesktopLocalService;
+        const discovering = yield* Effect.forkChild(service.discover());
+        yield* advanceSeconds(5);
+        assert.isUndefined(discovering.pollUnsafe());
+        yield* TestClock.adjust("1 second");
+        assert.equal((yield* Fiber.join(discovering))._tag, "none");
+      }).pipe(
+        Effect.provide(layerFor(home)),
+        Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
+      );
+    }),
+  );
+
+  it.effect("attaches at once to a service that still answers while its update runs", () =>
+    withDescriptorServer((origin) => {
+      const { home, studioHome } = makeHomeWithInstalledService(origin);
+      return Effect.gen(function* () {
+        writeJson(NodePath.join(studioHome, "updates", "install-in-progress.json"), {
+          at: new Date(yield* Clock.currentTimeMillis).toISOString(),
+        });
+        const service = yield* DesktopLocalService.DesktopLocalService;
+        const discovery = yield* service.discover();
+        assert.equal(discovery._tag, "running");
       }).pipe(
         Effect.provide(layerFor(home)),
         Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
@@ -491,7 +709,7 @@ describe("DesktopLocalService.discover", () => {
       const own = NodePath.join(home, "elsewhere");
       return Effect.gen(function* () {
         const service = yield* DesktopLocalService.DesktopLocalService;
-        assert.equal((yield* service.discover)._tag, "none");
+        assert.equal((yield* service.discover())._tag, "none");
       }).pipe(
         Effect.provide(layerFor(home, { STUDIO_HOME: own })),
         Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),

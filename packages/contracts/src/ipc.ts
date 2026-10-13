@@ -394,8 +394,29 @@ export const StudioServiceUpdateStateSchema = Schema.Struct({
       result: Schema.Literals(["updated", "failed"]),
     }),
   ),
+  /**
+   * When the agent last wrote its state. A state older than an install request
+   * is the agent's answer to an earlier request. Absent from older desktops.
+   */
+  updatedAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 export type StudioServiceUpdateState = typeof StudioServiceUpdateStateSchema.Type;
+
+export interface StudioServiceInstallOptions {
+  /**
+   * The caller has stopped and held the service's work. The agent retries the
+   * install every few seconds until the service is quiet or `holdUntil`
+   * passes, rather than waiting for a quiet period on its own schedule.
+   */
+  readonly force?: boolean;
+  /** ISO time the service's update hold expires; the agent stops retrying then. */
+  readonly holdUntil?: string;
+  /**
+   * The service version the user was shown. The agent installs only this
+   * version, and only if it starts within 10 minutes; older desktops ignore it.
+   */
+  readonly version?: string;
+}
 
 /**
  * Why an install request was not accepted: another update step holds the
@@ -1472,7 +1493,18 @@ export interface DesktopBridge {
   /** Background updates of the Studio service installed on this computer. */
   getServiceUpdateState?: () => Promise<StudioServiceUpdateState>;
   checkServiceUpdate?: () => Promise<StudioServiceUpdateState>;
-  installServiceUpdate?: () => Promise<StudioServiceUpdateState>;
+  /**
+   * Asks the update agent to install now. `force` keeps it retrying until the
+   * drained service is quiet enough to snapshot, instead of waiting for quiet.
+   */
+  installServiceUpdate?: (
+    options?: StudioServiceInstallOptions,
+  ) => Promise<StudioServiceUpdateState>;
+  /**
+   * Withdraws a pending install request; absent on older desktop builds.
+   * Rejects when the withdrawal could not be saved.
+   */
+  cancelServiceUpdate?: () => Promise<StudioServiceUpdateState>;
   onServiceUpdateState?: (listener: (state: StudioServiceUpdateState) => void) => () => void;
   /** Present when the desktop shell accepts `specweave-studio app` activation requests. */
   appActivation?: {
@@ -1579,6 +1611,10 @@ export type ConfirmDialogVariant = "default" | "destructive";
 
 export interface ConfirmDialogOptions {
   readonly variant?: ConfirmDialogVariant;
+  /** Label of the confirming button in the themed dialog; defaults to "Confirm". */
+  readonly confirmLabel?: string;
+  /** Label of the cancelling button in the themed dialog; defaults to "Cancel". */
+  readonly cancelLabel?: string;
 }
 
 /**
