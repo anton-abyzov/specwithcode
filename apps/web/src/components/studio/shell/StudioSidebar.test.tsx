@@ -2,8 +2,13 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
+import type {
+  EnvironmentProject,
+  EnvironmentThreadShell,
+} from "@specweave-studio/client-runtime/state/shell";
+import { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
 import { useComposerDraftStore } from "../../../composerDraftStore";
+import { buildSidebarProjectSnapshots } from "../../../sidebarProjectGrouping";
 
 const state = vi.hoisted(() => ({
   navigate: vi.fn(),
@@ -25,13 +30,16 @@ const state = vi.hoisted(() => ({
     memberProjects: Array<{
       environmentId: string;
       id: string;
+      title?: string;
       workspaceRoot?: string;
-      workspaceSettings?: {
-        kind: "code" | "personal";
-        coordinatorThreadId?: string | null;
-        archived?: boolean;
-        revision?: number;
-      };
+      workspaceSettings?:
+        | {
+            kind: "code" | "personal";
+            coordinatorThreadId?: string | null;
+            archived?: boolean;
+            revision?: number;
+          }
+        | undefined;
     }>;
   }>,
 }));
@@ -41,9 +49,18 @@ vi.mock("@tanstack/react-router", () => ({
     children,
     to,
     params,
+    search,
     ...rest
-  }: React.PropsWithChildren<{ to: string; params?: { projectKey: string } }>) => (
-    <a href={params ? `/projects/${params.projectKey}` : to} {...rest}>
+  }: React.PropsWithChildren<{
+    to: string;
+    params?: { projectKey: string };
+    search?: Record<string, string>;
+  }>) => (
+    <a
+      href={params ? `/projects/${params.projectKey}` : to}
+      data-route-search={search ? JSON.stringify(search) : undefined}
+      {...rest}
+    >
       {children}
     </a>
   ),
@@ -117,7 +134,15 @@ vi.mock("../../ui/sidebar", () => ({
   ),
   useSidebar: () => ({ isMobile: false, setOpenMobile: vi.fn() }),
 }));
-vi.mock("../../ProjectFavicon", () => ({ ProjectFavicon: () => null }));
+vi.mock("../../ProjectFavicon", () => ({
+  ProjectFavicon: ({ project }: { project: EnvironmentProject }) => (
+    <i
+      data-project-title={project.title}
+      data-project-environment={project.environmentId}
+      data-project-root={project.workspaceRoot}
+    />
+  ),
+}));
 vi.mock("./ModelBadge", () => ({
   ModelBadgeMark: ({ provider }: { provider: string }) => <i data-mark={provider} />,
   useProviderEntriesByEnvironment: () => new Map(),
@@ -582,6 +607,139 @@ describe("projects and chats sidebar", () => {
     await act(async () => button.click());
     expect(state.start).toHaveBeenCalledWith("laptop");
   });
+});
+
+describe("saved project names across grouped checkouts", () => {
+  function groupFor(repository: string, title: string) {
+    const project = (id: string, name: string, environmentId = "host"): EnvironmentProject => ({
+      environmentId: EnvironmentId.make(environmentId),
+      id: ProjectId.make(id),
+      title: name,
+      workspaceRoot: `/${environmentId}/${id}`,
+      repositoryIdentity: {
+        canonicalKey: `github.com/anton-abyzov/${repository}`,
+        displayName: `anton-abyzov/${repository}`,
+        name: repository,
+        rootPath: `/${environmentId}/${id}`,
+        locator: {
+          source: "git-remote",
+          remoteName: "origin",
+          remoteUrl: `https://github.com/anton-abyzov/${repository}.git`,
+        },
+      },
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: iso(2),
+      updatedAt: iso(0),
+    });
+    // Proof projects can precede the regular checkout, as on the actual host.
+    const group = buildSidebarProjectSnapshots({
+      projects: [
+        project("proof", `${repository} M4 handoff proof`),
+        project("canonical", title),
+        project("product-proof", `${repository} product handoff 0907`),
+        project("remote", `${title} on M3`, "laptop"),
+      ],
+      settings: {
+        sidebarProjectGroupingMode: "repository",
+        sidebarProjectGroupingOverrides: {},
+      },
+      primaryEnvironmentId: EnvironmentId.make("host"),
+      resolveEnvironmentLabel: (id) => id,
+    })[0]!;
+    return { ...group, memberProjects: [...group.memberProjects] };
+  }
+
+  it.each([
+    ["sw-easychamp", "EasyChamp"],
+    ["specweave-umb", "SpecWeave umbrella"],
+    ["jobweave-umb", "JobWeave"],
+  ])(
+    "shows %s's saved checkout name despite conflicting proof titles",
+    async (repository, title) => {
+      const group = groupFor(repository, title);
+      expect(group.displayName).toBe(`anton-abyzov/${repository}`);
+      const before = JSON.stringify(group);
+      state.groups = [group];
+      state.savedMachines = { [group.projectKey]: "host:canonical" };
+      state.params = { projectKey: group.projectKey };
+      await render();
+      const row = container.querySelector('a[href^="/projects/"]')!;
+      expect(row.querySelector(".sws-side-row-label")?.textContent).toBe(title);
+      expect(row.getAttribute("href")).toBe(`/projects/${group.projectKey}`);
+      expect(row.getAttribute("aria-current")).toBe("page");
+      expect(container.querySelector(`[aria-label="Actions for ${title}"]`)).not.toBeNull();
+      expect(JSON.stringify(group)).toBe(before);
+    },
+  );
+
+  it.each([false, true])(
+    "keeps the name, icon and tooltip on the selected remote checkout (explicit: %s)",
+    async (explicit) => {
+      const group = groupFor("sw-easychamp", "EasyChamp");
+      state.groups = [group];
+      state.params = { projectKey: group.projectKey };
+      state.savedMachines = {
+        [group.projectKey]: explicit ? "host:canonical" : "laptop:remote",
+      };
+      if (explicit) state.search = { checkout: "laptop:remote", thread: "old-panel-thread" };
+      await render();
+      const row = container.querySelector<HTMLAnchorElement>('a[href^="/projects/"]')!;
+      expect(row.querySelector(".sws-side-row-label")?.textContent).toBe("EasyChamp on M3");
+      expect(JSON.parse(row.getAttribute("data-route-search")!)).toEqual({
+        checkout: "laptop:remote",
+      });
+      const icon = row.querySelector("[data-project-title]")!;
+      expect(icon.getAttribute("data-project-title")).toBe("EasyChamp on M3");
+      expect(icon.getAttribute("data-project-environment")).toBe("laptop");
+      expect(icon.getAttribute("data-project-root")).toBe("/laptop/remote");
+      expect(container.querySelector('[aria-label="Actions for EasyChamp on M3"]')).not.toBeNull();
+      await act(async () => {
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab" }));
+        row.focus();
+      });
+      await vi.waitFor(() => {
+        expect(document.querySelector('[data-slot="tooltip-popup"][data-open]')?.textContent).toBe(
+          "EasyChamp on M3 · /laptop/remote",
+        );
+      });
+    },
+  );
+
+  it.each(["missing:remote", "laptop:missing-project"])(
+    "does not label a missing explicit checkout %s as another selected machine",
+    async (checkout) => {
+      const group = groupFor("sw-easychamp", "EasyChamp");
+      state.groups = [group];
+      state.params = { projectKey: group.projectKey };
+      state.savedMachines = { [group.projectKey]: "laptop:remote" };
+      state.search = { checkout };
+      await render();
+      expect(container.querySelector(".sws-project-row .sws-side-row-label")?.textContent).toBe(
+        group.displayName,
+      );
+      const newChat = [...container.querySelectorAll("button")].find((button) =>
+        button.textContent?.startsWith("New chat"),
+      )!;
+      await act(async () => newChat.click());
+      expect(state.start).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["", " \n ", "bad\ncheckout", "malformed"])(
+    "uses the saved checkout when URL parsing rejects %j, as the workspace does",
+    async (checkout) => {
+      const group = groupFor("sw-easychamp", "EasyChamp");
+      state.groups = [group];
+      state.params = { projectKey: group.projectKey };
+      state.savedMachines = { [group.projectKey]: "laptop:remote" };
+      state.search = { checkout };
+      await render();
+      expect(container.querySelector(".sws-project-row .sws-side-row-label")?.textContent).toBe(
+        "EasyChamp on M3",
+      );
+    },
+  );
 });
 
 describe("cleaning up the projects list", () => {

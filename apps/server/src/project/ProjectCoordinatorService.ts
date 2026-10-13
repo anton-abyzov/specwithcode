@@ -92,14 +92,17 @@ const make = Effect.gen(function* () {
             if (existing.archivedAt !== null) return yield* fail(input.projectId, "archived");
             return { threadId, created: false };
           }
-          const defaults = yield* serverSettings.getSettings;
+          const defaults = resolveProjectSettings(
+            yield* serverSettings.getSettings,
+            input.projectId,
+            project,
+          ).settings;
           // Nobody chose a model: start on the project's defaults or this host's best
           // signed-in model instead of refusing, in the order the project view shows.
           const modelSelection = resolveCoordinatorModelSelection({
             saved: settings.coordinatorModelSelection,
             projectDefault: project.defaultModelSelection,
-            scopedDefault: resolveProjectSettings(defaults, input.projectId, project).settings
-              .defaultModelSelection,
+            scopedDefault: defaults.defaultModelSelection,
             providers: yield* providerRegistry.getProviders,
           });
           if (!modelSelection) return yield* fail(input.projectId, "model_required");

@@ -63,6 +63,10 @@ export class CodexAppServerClient extends Context.Service<
         payload: CodexRpc.ServerNotificationParamsByMethod[M],
       ) => Effect.Effect<void, CodexError.CodexAppServerError>,
     ) => Effect.Effect<void>;
+    /** Observes rejected payloads synchronously, before later frames are dispatched. */
+    readonly handleInvalidServerNotification?: (
+      handler: (method: string, params: unknown) => Effect.Effect<void>,
+    ) => Effect.Effect<void>;
     readonly handleUnknownServerRequest: (
       handler: (
         method: string,
@@ -106,6 +110,9 @@ export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make
     | undefined;
   let unknownNotificationHandler:
     | ((method: string, params: unknown) => Effect.Effect<void, CodexError.CodexAppServerError>)
+    | undefined;
+  let invalidNotificationHandler:
+    | ((method: string, params: unknown) => Effect.Effect<void>)
     | undefined;
 
   const getServerRequestParamSchema = <M extends CodexRpc.ServerRequestMethod>(
@@ -163,10 +170,16 @@ export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make
 
     if (schema) {
       return decodeNotificationPayload(notification.method, schema, notification.params).pipe(
-        Effect.flatMap((decoded) =>
-          Effect.forEach(handlers, (handler) => handler(decoded), { discard: true }),
-        ),
-        Effect.ignore,
+        Effect.matchEffect({
+          onFailure: () =>
+            invalidNotificationHandler
+              ? invalidNotificationHandler(notification.method, notification.params)
+              : Effect.void,
+          onSuccess: (decoded) =>
+            Effect.forEach(handlers, (handler) => handler(decoded), { discard: true }).pipe(
+              Effect.ignore,
+            ),
+        }),
       );
     }
 
@@ -249,6 +262,10 @@ export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make
         const current = notificationHandlers.get(method) ?? [];
         current.push(handler as ServerNotificationHandler);
         notificationHandlers.set(method, current);
+      }),
+    handleInvalidServerNotification: (handler) =>
+      Effect.sync(() => {
+        invalidNotificationHandler = handler;
       }),
     handleUnknownServerRequest: (handler) =>
       Effect.sync(() => {

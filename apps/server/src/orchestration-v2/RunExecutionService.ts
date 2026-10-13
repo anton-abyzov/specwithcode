@@ -51,12 +51,10 @@ import { ProviderAdapterTurnStartError, providerSetupFailureDetail } from "./Pro
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import type { ProjectionStoreV2Error } from "./ProjectionStore.ts";
 import { makeProviderFailure, makeProviderFailureTurnItem } from "./ProviderFailure.ts";
+import { logProviderTurnStartFailure } from "./ProviderTurnStartLogging.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 
-
-// A native status check that times out or fails on a busy host runs before
-// anything reaches the provider, so the turn start is retried a few times
-// before the run fails.
+// Retry bounded status checks before any provider request is sent.
 const TRANSIENT_TURN_START_RETRIES = 2;
 const TRANSIENT_TURN_START_RETRY_DELAY = "10 seconds";
 export const isTransientTurnStartFailure = (error: unknown): boolean =>
@@ -1358,9 +1356,7 @@ export const layer: Layer.Layer<
             return;
           }
 
-          // A provider turn is a sign that the session is still alive. Keep
-          // its already-issued MCP credential valid even when the agent goes
-          // a long time between browser-tool calls.
+          // Keep the active turn's MCP credential valid between browser calls.
           yield* McpSessionRegistry.touchActiveMcpThread(input.run.threadId);
           const turnInput = {
             appThread: input.appThread,
@@ -1401,10 +1397,11 @@ export const layer: Layer.Layer<
                 Effect.retry({
                   // A credit submission admits exactly one request, so it is never resent.
                   times:
-                    input.run.manualCodexCreditIntent === undefined ? TRANSIENT_TURN_START_RETRIES : 0,
+                    input.run.manualCodexCreditIntent === undefined
+                      ? TRANSIENT_TURN_START_RETRIES
+                      : 0,
                   schedule: Schedule.spaced(TRANSIENT_TURN_START_RETRY_DELAY),
-                  // A Stop during the wait leaves no provider turn to interrupt,
-                  // so the run is checked again before each resend.
+                  // Recheck the run after Stop before each resend.
                   while: (error) =>
                     !isTransientTurnStartFailure(error)
                       ? Effect.succeed(false)
@@ -1415,10 +1412,7 @@ export const layer: Layer.Layer<
               );
           yield* Effect.andThen(shouldStart, startTurn).pipe(
             Effect.catchCause((cause) =>
-              Effect.logError("orchestration V2 provider turn start failed", {
-                runId: input.run.id,
-                cause,
-              }).pipe(
+              logProviderTurnStartFailure(input.run.id, cause).pipe(
                 Effect.andThen(Fiber.interrupt(providerEventFiber)),
                 Effect.andThen(Ref.get(latestProviderThread)),
                 Effect.flatMap((providerThread) =>

@@ -1717,6 +1717,7 @@ const layerWsRpc = (
             ),
             directEndpoints: yield* resolveAvailableEditorsForConfig(directEndpoints.resolve()),
             observability: {
+              ...analytics.configuration,
               logsDirectoryPath: config.logsDir,
               localTracingEnabled: true,
               ...(config.otlpTracesUrl !== undefined

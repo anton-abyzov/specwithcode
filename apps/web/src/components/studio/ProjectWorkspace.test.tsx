@@ -5,6 +5,9 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
+vi.mock("../../state/queries", () => ({
+  useTurnItemDetail: () => ({ data: undefined, isPending: false, error: null }),
+}));
 
 const state = vi.hoisted(() => ({
   send: vi.fn(),
@@ -136,7 +139,16 @@ vi.mock("../../state/entities", () => ({
   useThreadStatus: () => "ready",
 }));
 vi.mock("../../state/environments", () => ({
-  useEnvironments: () => ({ isReady: true }),
+  useEnvironments: () => ({
+    isReady: true,
+    environments: [
+      {
+        environmentId: "host",
+        label: "Test host",
+        connection: { phase: state.connected ? "connected" : "disconnected" },
+      },
+    ],
+  }),
   usePrimaryEnvironmentId: () => (state.primaryRegistered ? "primary" : null),
   useEnvironment: () => ({
     label: "Test host",
@@ -211,6 +223,7 @@ vi.mock("../files/AttachmentFilePreview", () => ({
   ),
 }));
 vi.mock("../../state/session", () => ({
+  useEnvironmentsWithScope: () => new Set(state.canOperate ? ["host"] : []),
   useEnvironmentScope: (_environmentId: string, scope: string) =>
     scope === "source-control:write"
       ? (state.canWriteSourceControl ?? state.canOperate)
@@ -423,13 +436,25 @@ vi.mock("../ChatView", async () => {
   const { continueWithProjectModel } = await import("../../studio/coordinatorContinuation");
   const { useOpenThread } = await import("../../hooks/useOpenThread");
   return {
-    default: ({ threadId }: { threadId: string }) => {
+    default: ({
+      threadId,
+      reviewOnly,
+      suspendShortcuts,
+    }: {
+      threadId: string;
+      reviewOnly?: boolean;
+      suspendShortcuts?: boolean;
+    }) => {
       const routing = useProjectMessageRouting();
       state.routing = routing;
       const { openThread } = useOpenThread();
       return (
-        <section data-native-thread={threadId}>
-          {routing?.coordinatorModelControls}
+        <section
+          data-native-thread={threadId}
+          data-native-review={reviewOnly ? "" : undefined}
+          data-native-suspend={suspendShortcuts ? "" : undefined}
+        >
+          {!reviewOnly && routing?.coordinatorModelControls}
           {["Resume", "Plan"].map((kind) => (
             <button
               key={kind}
@@ -619,7 +644,7 @@ async function press(init: KeyboardEventInit) {
   });
 }
 async function click(text: string) {
-  const b = [...container.querySelectorAll("button")].find((b) => b.textContent?.trim() === text);
+  const b = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === text);
   expect(b).toBeDefined();
   await act(async () => b!.click());
 }
@@ -2103,15 +2128,17 @@ describe("a coordinator turn that failed", () => {
     expect(alert).not.toBeNull();
     expect(alert!.textContent).toContain("The coordinator did not answer.");
     expect(alert!.textContent).toContain("no remaining permitted usage");
-    // Review keeps the project open and mounts native controls in its main pane.
-    const open = alert!.querySelector("button")!;
-    expect(open.textContent).toBe("Review coordinator");
-    await act(async () => open.click());
-    expect(
-      container
-        .querySelector('[data-native-thread="coord"]')
-        ?.closest('[data-project-pane="coordinator"]'),
-    ).not.toBeNull();
+    await prompt("Preserve this draft");
+    const retry = alert!.querySelector<HTMLButtonElement>("button")!;
+    expect(retry.textContent).toBe("Retry last message");
+    expect(retry.dataset.slot).toBe("button");
+    await act(async () => retry.click());
+    expect(state.send.mock.calls.at(-1)![0].input.prompt).toBe("Reply with OK");
+    expect(container.querySelector<HTMLTextAreaElement>("#project-prompt")!.value).toBe(
+      "Preserve this draft",
+    );
+    expect(document.querySelector('[data-native-thread="coord"]')).toBeNull();
+    expect(alert!.querySelector("details")!.textContent).toContain("run-1");
     expect(state.navigate).not.toHaveBeenCalled();
   });
 
@@ -2854,7 +2881,7 @@ describe("switching the coordinator machine", () => {
 });
 
 describe("the coordinator stays in the main column", () => {
-  const nativeThread = (id: string) => container.querySelector(`[data-native-thread="${id}"]`);
+  const nativeThread = (id: string) => document.querySelector(`[data-native-thread="${id}"]`);
   const renderSelected = async (id: string, onSelectThread = vi.fn()) => {
     await act(async () =>
       root.render(
@@ -2900,8 +2927,25 @@ describe("the coordinator stays in the main column", () => {
     expect(nativeThread("coord")).toBeNull();
     expect(nativeThread("worker")).toBeNull();
   });
+  it("suspends worker commands during handoff and restores them without replacing the coordinator draft", async () => {
+    await render();
+    await openFirstThread();
+    await prompt("Keep my coordinator draft");
+    expect(nativeThread("worker")?.hasAttribute("data-native-suspend")).toBe(false);
+    await click("Handoff");
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(nativeThread("worker")?.hasAttribute("data-native-suspend")).toBe(true);
+    expect(container.querySelector<HTMLTextAreaElement>("#project-prompt")!.value).toBe(
+      "Keep my coordinator draft",
+    );
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('[role="dialog"] [aria-label="Close"]')!.click(),
+    );
+    expect(nativeThread("worker")?.hasAttribute("data-native-suspend")).toBe(false);
+    expect(state.navigate).not.toHaveBeenCalled();
+  });
   it.each(["hasPendingApprovals", "hasPendingUserInput", "hasActionableProposedPlan"] as const)(
-    "reviews %s inside the coordinator pane while preserving worker and draft",
+    "reviews %s in a dialog while preserving the coordinator, worker, and draft",
     async (attention) => {
       state.shells = state.shells.map((t) => (t.id === "coord" ? { ...t, [attention]: true } : t));
       await render();
@@ -2912,9 +2956,11 @@ describe("the coordinator stays in the main column", () => {
       chip.focus();
       await act(async () => chip.click());
       expect(state.navigate).not.toHaveBeenCalled();
-      expect(nativeThread("coord")?.closest('[data-project-pane="coordinator"]')).not.toBeNull();
+      expect(nativeThread("coord")?.closest('[role="dialog"]')).not.toBeNull();
+      expect(container.querySelector("#project-prompt")).not.toBeNull();
       expect(nativeThread("worker")?.closest('[data-project-pane="threads"]')).not.toBeNull();
-      await click("Back to coordinator");
+      expect(nativeThread("worker")?.hasAttribute("data-native-suspend")).toBe(true);
+      await click("Close review");
       expect(nativeThread("coord")).toBeNull();
       expect(nativeThread("worker")).not.toBeNull();
       expect(document.activeElement).toBe(chip);
@@ -2923,41 +2969,6 @@ describe("the coordinator stays in the main column", () => {
       );
     },
   );
-  it("saves the project model from coordinator details before routing a reply", async () => {
-    state.shells = state.shells.map((t) =>
-      t.id === "coord" ? { ...t, hasPendingApprovals: true } : t,
-    );
-    await render();
-    await act(async () => container.querySelector<HTMLButtonElement>(".sws-state")!.click());
-    const details = nativeThread("coord")!;
-    const picker = details.querySelector<HTMLButtonElement>("[data-coordinator-model]")!;
-    expect(picker.textContent).toBe("coordinator-model");
-    let resolveSave!: (value: unknown) => void;
-    state.send.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          resolveSave = resolve;
-        }),
-    );
-    await act(async () => {
-      picker.click();
-      [...details.querySelectorAll("button")]
-        .find((button) => button.textContent === "Reply in selected thread")!
-        .click();
-    });
-    expect(state.send).toHaveBeenCalledTimes(1);
-    expect(state.send.mock.calls[0]![0].input.workspaceSettings.coordinatorModelSelection).toEqual({
-      instanceId: "codex-native",
-      model: "picked-model",
-    });
-    await act(async () => resolveSave({ _tag: "Success", value: undefined }));
-    expect(state.send).toHaveBeenCalledTimes(2);
-    expect(state.send.mock.calls[1]![0].input).toMatchObject({
-      projectId: "project",
-      prompt: "Continue this worker",
-    });
-    expect(state.send.mock.calls[1]![0].input.sourceThreadId).toBeUndefined();
-  });
   it.each(["Resume", "Plan"])(
     "%s in native review uses the acknowledged project selection, not the stale projection",
     async (kind) => {
@@ -2975,7 +2986,7 @@ describe("the coordinator stays in the main column", () => {
           }),
       );
       await act(async () => {
-        details.querySelector<HTMLButtonElement>("[data-coordinator-model]")!.click();
+        container.querySelector<HTMLButtonElement>("[data-coordinator-model]")!.click();
         [...details.querySelectorAll("button")]
           .find((button) => button.textContent === `${kind} native`)!
           .click();
@@ -3007,7 +3018,7 @@ describe("the coordinator stays in the main column", () => {
     const details = nativeThread("coord")!;
     state.send.mockResolvedValueOnce({ _tag: "Failure", error: new Error("Conflict") });
     await act(async () =>
-      details.querySelector<HTMLButtonElement>("[data-coordinator-model]")!.click(),
+      container.querySelector<HTMLButtonElement>("[data-coordinator-model]")!.click(),
     );
     await act(async () =>
       [...details.querySelectorAll("button")]
@@ -3025,11 +3036,11 @@ describe("the coordinator stays in the main column", () => {
     await act(async () => container.querySelector<HTMLButtonElement>(".sws-state")!.click());
     state.send.mockResolvedValueOnce({ _tag: "Failure", error: new Error("Host went away") });
     await act(async () =>
-      nativeThread("coord")!.querySelector<HTMLButtonElement>("[data-coordinator-model]")!.click(),
+      container.querySelector<HTMLButtonElement>("[data-coordinator-model]")!.click(),
     );
-    expect(
-      container.querySelector('[aria-label="Coordinator review"] [role="alert"]')?.textContent,
-    ).toBe("Host went away");
+    expect(document.querySelector('[role="dialog"] [role="alert"]')?.textContent).toBe(
+      "Host went away",
+    );
   });
   it("lists neither the coordinator nor a previous one among the project's threads", async () => {
     state.shells.push(shell("project-coordinator:project", { title: "Old coordinator" }));
