@@ -8,6 +8,7 @@
 // No real Google account, provider turn or personal browser is involved.
 //
 // Usage: node scripts/studio-google/verify.mjs /absolute/report-dir
+// Use --frozen-108 only when checking the frozen 1.0.8 build, before the chat-link follow-up.
 import * as NodeAssert from "node:assert/strict";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
@@ -23,6 +24,8 @@ process.env.PWDEBUG = "0";
 process.env.PLAYWRIGHT_HTML_OPEN = "never";
 const root = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "../..");
 const out = NodePath.resolve(process.argv[2] ?? ".studio-build-evidence/google");
+// The linked chat editor follow-up is tested separately from the frozen 1.0.8 candidate.
+const verifyLinkedEditors = !process.argv.includes("--frozen-108");
 NodeFS.mkdirSync(out, { recursive: true });
 const state = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-google-"));
 NodeFS.mkdirSync(NodePath.join(state, "userdata"), { recursive: true });
@@ -186,6 +189,7 @@ const receipt = {
   realBuiltServer: true,
   fakeGoogle: true,
   nativeTurns: 0,
+  linkedTaskEditorsIncluded: verifyLinkedEditors,
   checks: [],
   screenshots: [],
 };
@@ -221,6 +225,25 @@ try {
     reducedMotion: "reduce",
   });
   await context.addInitScript(() => {
+    localStorage.setItem(
+      "studio:themes:v1",
+      JSON.stringify([
+        {
+          id: "cancel-test-light",
+          label: "Cancel test light",
+          appearance: "light",
+          colors: { canvas: "#ffffff" },
+          collection: { id: "cancel-test", label: "Cancel test" },
+        },
+        {
+          id: "cancel-test-soft",
+          label: "Cancel test soft",
+          appearance: "light",
+          colors: { canvas: "#eeeeee" },
+          collection: { id: "cancel-test", label: "Cancel test" },
+        },
+      ]),
+    );
     if (!localStorage.getItem("studio:client-settings:v1"))
       localStorage.setItem(
         "studio:client-settings:v1",
@@ -248,6 +271,8 @@ try {
   });
 
   const project = await rpc(context, "projects.createNew", { kind: "personal", name: "Errands" });
+  const config = await rpc(context, "server.getConfig");
+  const scopedSearch = `?machine=${encodeURIComponent(config.environment.environmentId)}`;
   receipt.checks.push({ personalProjectCreated: project.projectId });
 
   const page = await context.newPage();
@@ -265,6 +290,10 @@ try {
     await page.getByRole("button", { name: "Connect Google", exact: true }).waitFor();
     await shot("0-google-built-in.png");
     await page.getByRole("button", { name: "Use your own OAuth client", exact: true }).click();
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    NodeAssert.equal(page.url(), origin + "/settings/google");
+    await page.getByRole("button", { name: "Use your own OAuth client", exact: true }).click();
+    receipt.checks.push({ inlineGoogleClientCancelStaysInSettings: true });
   }
   await idInput.waitFor({ timeout: 20000 });
   await shot("1-google-empty.png");
@@ -329,17 +358,173 @@ try {
   await shot("3-google-connected.png");
   receipt.checks.push({ projectAccess: granted.projects });
 
-  // The morning briefing link opens the routine editor ready to save.
-  await page.getByRole("link", { name: "Morning briefing" }).click();
+  // Every dismissal returns to the exact originating settings URL. A local
+  // editor and a directly opened template have different, explicit fallbacks.
+  // Use a persistent fragment; recognized Settings search targets are intentionally
+  // consumed after scrolling and therefore are no longer the editor's origin.
+  const googleHref = origin + "/settings/google" + scopedSearch + "#cancel-origin";
+  await page.goto(googleHref);
   const titleInput = page.locator("#scheduled-task-title");
-  await titleInput.waitFor({ timeout: 15000 });
-  NodeAssert.equal(await titleInput.inputValue(), "Morning briefing");
-  const prompt = await page.locator("textarea").first().inputValue();
-  NodeAssert.ok(prompt.includes("studio_google_calendar_events"));
-  NodeAssert.ok(prompt.includes("never send, change or delete anything"));
-  await shot("4-morning-briefing-template.png");
-  receipt.checks.push({ morningBriefingTemplate: true });
+  const dismiss = async (method) => {
+    if (method === "cancel")
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    else if (method === "close")
+      await page.getByRole("button", { name: "Close", exact: true }).click();
+    else if (method === "escape") await page.keyboard.press("Escape");
+    else await page.mouse.click(5, 850);
+  };
+  const tasksBefore = await rpc(context, "scheduledTasks.list");
+  for (const method of ["cancel", "close", "escape", "backdrop"]) {
+    await page.getByRole("link", { name: "Morning briefing" }).click();
+    await titleInput.waitFor({ timeout: 15000 });
+    NodeAssert.equal(await titleInput.inputValue(), "Morning briefing");
+    const prompt = await page.locator("textarea").first().inputValue();
+    NodeAssert.ok(prompt.includes("studio_google_calendar_events"));
+    NodeAssert.ok(prompt.includes("never send, change or delete anything"));
+    if (method === "cancel") await shot("4-morning-briefing-template.png");
+    await dismiss(method);
+    await page.waitForURL(googleHref, { timeout: 5000 }).catch((error) => {
+      throw new Error(`Dismiss ${method}: expected ${googleHref}, received ${page.url()}`, {
+        cause: error,
+      });
+    });
+    await titleInput.waitFor({ state: "detached" });
+    receipt.checks.push({ morningBriefingDismissal: method, exactOriginRestored: true });
+  }
+  // Escape in a nested select closes only that control, then closes the editor.
+  await page.getByRole("link", { name: "Morning briefing" }).click();
+  await titleInput.waitFor();
+  const templateHref = page.url();
+  await page.getByRole("dialog").getByRole("combobox").first().click();
+  await page.getByRole("listbox").waitFor();
   await page.keyboard.press("Escape");
+  await page.getByRole("listbox").waitFor({ state: "detached" });
+  NodeAssert.equal(page.url(), templateHref);
+  NodeAssert.equal(await titleInput.isVisible(), true);
+  await page.keyboard.press("Escape");
+  await page.waitForURL(googleHref);
+  receipt.checks.push({ nestedSelectEscapeStaysInEditor: true });
+
+  const taskListHref = origin + "/settings/scheduled-tasks" + scopedSearch;
+  const directTemplateHref =
+    taskListHref + `&template=morning-briefing&projectId=${project.projectId}`;
+  await page.goto(directTemplateHref);
+  await titleInput.waitFor();
+  await dismiss("cancel");
+  await page.waitForURL(taskListHref);
+  await page.reload();
+  await page.getByRole("button", { name: "New task", exact: true }).waitFor();
+  NodeAssert.equal(await titleInput.count(), 0);
+  await page.goBack();
+  await page.goForward();
+  NodeAssert.equal(page.url(), taskListHref);
+  NodeAssert.equal(await titleInput.count(), 0);
+  for (const method of ["cancel", "escape"]) {
+    await page.getByRole("button", { name: "New task", exact: true }).click();
+    await titleInput.waitFor();
+    await dismiss(method);
+    await titleInput.waitFor({ state: "detached" });
+    NodeAssert.equal(page.url(), taskListHref);
+  }
+  NodeAssert.deepEqual(await rpc(context, "scheduledTasks.list"), tasksBefore);
+  receipt.checks.push({
+    directLinkFallbackAndHistory: true,
+    localTaskCancelStaysOnList: true,
+    noTasksCreatedByCancel: true,
+  });
+
+  // Saving is a different outcome: keep the list and consume the template.
+  // Disable the fixture before saving so this check can never start a turn.
+  await page.goto(googleHref);
+  await page.getByRole("link", { name: "Morning briefing" }).click();
+  await titleInput.waitFor();
+  const enabledSwitch = page.getByRole("dialog").getByRole("switch");
+  await enabledSwitch.click();
+  NodeAssert.equal(await enabledSwitch.getAttribute("aria-checked"), "false");
+  await page.getByRole("button", { name: "Create task", exact: true }).click();
+  await titleInput.waitFor({ state: "detached" });
+  await page.waitForURL(taskListHref);
+  const savedTasks = await rpc(context, "scheduledTasks.list");
+  NodeAssert.equal(savedTasks.tasks.length, tasksBefore.tasks.length + 1);
+  const savedTask = savedTasks.tasks.find((task) => task.title === "Morning briefing");
+  NodeAssert.equal(savedTask.enabled, false);
+  NodeAssert.equal(savedTask.runCount, 0);
+  await page.getByRole("button", { name: "Actions for Morning briefing", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
+  await titleInput.waitFor();
+  await titleInput.fill("Unsaved title");
+  await dismiss("cancel");
+  await titleInput.waitFor({ state: "detached" });
+  NodeAssert.equal(page.url(), taskListHref);
+  NodeAssert.deepEqual(await rpc(context, "scheduledTasks.list"), savedTasks);
+  receipt.checks.push({
+    saveStaysOnTaskList: true,
+    editCancelPreservesTask: true,
+    disabledFixtureNeverRan: true,
+  });
+  if (verifyLinkedEditors) {
+    const linkedEditHref = taskListHref + `&taskId=${savedTask.id}`;
+    await page.goto(
+      linkedEditHref + `&returnTo=${encodeURIComponent(googleHref.slice(origin.length))}`,
+    );
+    await titleInput.waitFor();
+    await dismiss("escape");
+    await page.waitForURL(googleHref);
+    await page.goto(linkedEditHref);
+    await titleInput.waitFor();
+    await dismiss("cancel");
+    await page.waitForURL(taskListHref);
+    await page.reload();
+    await page.getByRole("button", { name: "New task", exact: true }).waitFor();
+    NodeAssert.equal(await titleInput.count(), 0);
+    receipt.checks.push({ linkedEditReturnsToOrigin: true, directEditConsumesTaskId: true });
+  }
+
+  const providersHref = origin + "/settings/providers" + scopedSearch + "#cancel-origin";
+  await page.goto(providersHref);
+  for (const method of ["cancel", "escape"]) {
+    await page.getByRole("button", { name: "Add provider", exact: true }).click();
+    await page.getByRole("dialog").waitFor();
+    await dismiss(method);
+    await page.getByRole("dialog").waitFor({ state: "detached" });
+    NodeAssert.equal(page.url(), providersHref);
+  }
+  receipt.checks.push({ providerWizardCancelAndEscapeStayInSettings: true });
+
+  const appearanceHref = origin + "/settings/appearance" + scopedSearch + "#cancel-origin";
+  await page.goto(appearanceHref);
+  const variant = page.getByRole("button", {
+    name: "Choose light variant, 2 options, currently light",
+    exact: true,
+  });
+  await variant.waitFor();
+  const radialOption = variant
+    .locator("..")
+    .getByRole("button", { name: /for light mode/ })
+    .first();
+  const waitForRadial = async (open) => {
+    const element = await radialOption.elementHandle();
+    await page.waitForFunction(
+      ([option, visible]) =>
+        option !== null && Number(getComputedStyle(option).opacity) === (visible ? 1 : 0),
+      [element, open],
+    );
+  };
+  // Focus outside the picker proves hover-only opening also owns Escape.
+  await variant.evaluate((element) => element.blur());
+  await page.mouse.move(0, 0);
+  await variant.hover();
+  await waitForRadial(true);
+  await page.keyboard.press("Escape");
+  await waitForRadial(false);
+  NodeAssert.equal(page.url(), appearanceHref);
+  await variant.focus();
+  await waitForRadial(true);
+  await page.keyboard.press("Escape");
+  await waitForRadial(false);
+  NodeAssert.equal(page.url(), appearanceHref);
+  receipt.checks.push({ themeVariantHoverAndFocusEscapeStayInSettings: true });
+  await shot("5-cancel-settings-verified.png");
 
   // A forged callback is refused without touching the sign-in.
   const forged = await context.request.get(

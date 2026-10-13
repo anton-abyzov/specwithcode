@@ -341,7 +341,10 @@ export function ScheduledTasksSettings(target: {
           preset={activeEditor.preset ?? null}
           onClose={(outcome) => {
             setEditor(null);
-            if (editor === null && templateEditor) {
+            if (
+              (editor === null && templateEditor) ||
+              (target.taskId && editor?.task?.id === target.taskId)
+            ) {
               void navigate({
                 href: scheduledTaskEditorCloseHref(href, target.returnTo, outcome),
                 replace: true,

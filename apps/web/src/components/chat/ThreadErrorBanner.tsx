@@ -1,5 +1,7 @@
 import type { OrchestrationV2ProviderFailureClass } from "@specweave-studio/contracts";
 import { memo } from "react";
+import { useClientSettings } from "../../hooks/useSettings";
+import { formatDisplayDates } from "../../lib/displayDates";
 import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { CircleAlertIcon, XIcon } from "lucide-react";
@@ -47,7 +49,9 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   onDismiss?: () => void;
   chatGptUsageLimit?: boolean;
 }) {
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   if (!error) return null;
+  const displayError = formatDisplayDates(error, timestampFormat);
   const variant = errorClass === "usage_limit" ? "warning" : "error";
   return (
     <div className="pointer-events-auto mx-auto w-fit max-w-[min(48rem,calc(100%-2rem))] pt-3">
@@ -65,9 +69,19 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
             </div>
           ) : (
             <Tooltip>
-              <TooltipTrigger render={<div className="line-clamp-3" />}>{error}</TooltipTrigger>
+              <TooltipTrigger
+                render={
+                  <div
+                    className={
+                      displayError === error ? "line-clamp-3" : "whitespace-pre-wrap break-words"
+                    }
+                  />
+                }
+              >
+                {displayError}
+              </TooltipTrigger>
               <TooltipPopup side="top" className="whitespace-pre-wrap">
-                {error}
+                {displayError}
               </TooltipPopup>
             </Tooltip>
           )}

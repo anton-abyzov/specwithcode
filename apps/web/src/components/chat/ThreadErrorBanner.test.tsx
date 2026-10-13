@@ -10,6 +10,16 @@ import {
 } from "./ThreadErrorBanner";
 
 describe("ThreadErrorBanner", () => {
+  it("formats the persisted reset timestamp in the banner", () => {
+    const error = "Next observed reset: 2026-10-18T03:58:37.000Z. Select an eligible profile.";
+    const markup = renderToStaticMarkup(<ThreadErrorBanner error={error} />);
+    expect(markup).not.toContain("2026-10-18T03:58:37.000Z");
+    expect(markup).toContain("2026");
+    expect(markup).toContain("Select an eligible profile.");
+    expect(markup).not.toContain("line-clamp-3");
+    expect(getThreadErrorBannerKey("thread", error)).toContain("2026-10-18T03:58:37.000Z");
+  });
+
   it("stays hidden after its current error is dismissed", () => {
     const bannerKey = getThreadErrorBannerKey("env:thread-a", "Aborted");
     dismissThreadErrorBannerForSession(bannerKey);

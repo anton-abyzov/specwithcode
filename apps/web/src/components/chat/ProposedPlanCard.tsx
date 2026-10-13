@@ -185,6 +185,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
         <div className={cn("relative", canCollapse && !expanded && "max-h-104 overflow-hidden")}>
           {canCollapse && !expanded ? (
             <ChatMarkdown
+              formatDates
               text={collapsedPreview ?? ""}
               cwd={cwd}
               environmentId={environmentId}
@@ -194,6 +195,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
             />
           ) : (
             <ChatMarkdown
+              formatDates
               text={displayedPlanMarkdown}
               cwd={cwd}
               environmentId={environmentId}
