@@ -2,6 +2,8 @@ import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput } from "./git.ts";
 import {
   AuthFilesystemWriteScope,
+  AuthFilesystemReadScope,
+  AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
   AuthTerminalOperateScope,
@@ -12,6 +14,8 @@ import { WS_METHODS } from "./rpc.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
+  [WS_METHODS.machineHandoffPrepare]: AuthOrchestrationOperateScope,
+  [WS_METHODS.machineHandoffReceive]: AuthSourceControlWriteScope,
   [WS_METHODS.projectsEnvironmentPrepare]: AuthSourceControlWriteScope,
   [WS_METHODS.projectsPlanReplace]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsPlanConfigure]: AuthOrchestrationOperateScope,
@@ -82,6 +86,23 @@ export function clientRpcRequiredScopes(
   method: string,
   input: unknown,
 ): readonly AuthEnvironmentScope[] {
+  if (method === WS_METHODS.machineHandoffPrepare || method === WS_METHODS.machineHandoffReceive) {
+    const value = input as { publish?: boolean; mode?: string } | undefined;
+    const writes =
+      method === WS_METHODS.machineHandoffPrepare
+        ? value?.publish === true
+        : value?.mode === "start";
+    return writes
+      ? [
+          AuthOrchestrationReadScope,
+          AuthFilesystemReadScope,
+          AuthFilesystemWriteScope,
+          AuthSourceControlWriteScope,
+          AuthOrchestrationOperateScope,
+          ...(method === WS_METHODS.machineHandoffReceive ? [AuthSettingsWriteScope] : []),
+        ]
+      : [AuthOrchestrationReadScope, AuthFilesystemReadScope];
+  }
   if (method === WS_METHODS.projectsConnectionSave || method === WS_METHODS.projectsConnectionCheck)
     return [AuthOrchestrationOperateScope, AuthTerminalOperateScope];
   if (method === WS_METHODS.projectsPlanVerify)

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { approvalCandidate, briefContext, isWorkerSidepaneRoute, makeScope, observeQuality, parseOptions, persistedResponseStyle, projectPrompt, readBrief, validateOutput, validateReview, validateTool, waitForReadyResponseStyle } from './coordinator-quality.mjs';
+import { approvalCandidate, briefContext, isWorkerSidepaneRoute, makeScope, observeQuality, parseOptions, persistedResponseStyle, projectPrompt, readBrief, validateOutput, validateAutomaticWake, validateReview, validateTool, waitForReadyResponseStyle } from './coordinator-quality.mjs';
 import { APPROVAL_OPTIONS } from './native-approval.mjs';
 
 const now = Date.parse('2026-10-13T12:00:00Z');
@@ -91,6 +91,16 @@ test('observed runs preserve exceeded budgets and reject foreign projects and na
   assert.equal(scope.runs.size, 10, 'over-budget observations must remain in evidence');
 });
 
+test('a smaller reviewed run budget preserves the cumulative cap after an earlier attempt', () => {
+  const { observed, review } = manifest();
+  for (const maxRuns of [1, 7, 8]) assert.equal(validateReview({ ...review, maxRuns }, observed, now).maxRuns, maxRuns);
+  for (const maxRuns of [0, -1, 9, 7.5, '7']) assert.throws(() => validateReview({ ...review, maxRuns }, observed, now), /review-budget/);
+  const { scope, projection } = fixture(); scope.review.maxRuns = 7;
+  for (let i = 0; i < 7; i++) observeQuality(scope, { ...projection, runs: [{ id: `run${i}`, status: 'running' }] });
+  assert.throws(() => observeQuality(scope, { ...projection, runs: [{ id: 'run7', status: 'running' }] }), /native-run-budget/);
+  assert.equal(scope.runs.size, 8, 'over-budget evidence remains retained');
+});
+
 test('exactly one local async worker can be delegated and no workspace permission can be broadened', () => {
   for (const [input, message] of [[{ mode: 'wait' }, /invalid-delegation/], [{ runtimeMode: 'full-access' }, /worker-permission-escalation/], [{ machine: 'remote' }, /remote-worker-refused/], [{ target: { providerInstanceId: 'paid-api', model: 'gpt-6.1-sol' } }, /worker-model-changed/]]) {
     const { scope, projection, call } = fixture(); assert.throws(() => validateTool(scope, projection, { ...call, input: { ...call.input, ...input } }), message);
@@ -118,6 +128,38 @@ test('approval is bound to one live Studio call, run, attempt, native turn and s
   ]) {
     const f = fixture(); mutate(f.projection); assert.throws(() => approvalCandidate(f.scope, f.projection));
   }
+});
+
+test('native approval accepts a nullable forward turn link only with one exact active reverse binding', () => {
+  const realShape = () => {
+    const f = fixture();
+    // Native run-attempt.updated retains null; provider-turn.updated owns the reverse link.
+    f.projection.attempts[0].providerTurnId = null;
+    f.projection.providerSessions[0].status = 'ready';
+    return f;
+  };
+  const valid = realShape();
+  assert.equal(approvalCandidate(valid.scope, valid.projection).providerTurnId, 'turn');
+  for (const mutate of [
+    p => { p.attempts[0].providerTurnId = undefined; },
+    p => { p.attempts[0].providerTurnId = 'conflicting-turn'; },
+    p => { p.attempts[0].runId = 'foreign-run'; },
+    p => { p.attempts[0].providerThreadId = 'foreign-provider'; },
+    p => { p.attempts[0].status = 'completed'; },
+    p => { p.providerTurns[0].runAttemptId = 'foreign-attempt'; },
+    p => { p.providerTurns[0].providerThreadId = 'foreign-provider'; },
+    p => { p.providerTurns[0].status = 'completed'; },
+    p => { p.providerTurns.push({ ...p.providerTurns[0], id: 'ambiguous-turn' }); },
+    p => { p.providerTurns.push({ ...p.providerTurns[0] }); },
+    p => { p.providerThreads[0].providerSessionId = 'foreign-session'; },
+    ...['starting', 'stopped', 'error', 'queued', undefined].map(status => p => { p.providerSessions[0].status = status; }),
+  ]) {
+    const f = realShape(); mutate(f.projection);
+    assert.throws(() => approvalCandidate(f.scope, f.projection));
+  }
+  const previous = realShape();
+  previous.projection.providerTurns.push({ ...previous.projection.providerTurns[0], id: 'older-completed-turn', status: 'completed' });
+  assert.equal(approvalCandidate(previous.scope, previous.projection).providerTurnId, 'turn');
 });
 
 test('incomplete approval publication never authorizes a request', () => {
@@ -195,4 +237,40 @@ test('persisted response-style readback accepts omitted concise defaults but rej
     assert.throws(() => persistedResponseStyle({ responseStyle }), /invalid-persisted-response-style/);
   for (const value of [null, [], 'concise'])
     assert.throws(() => persistedResponseStyle(value), /invalid-persisted-settings/);
+});
+
+
+test('automatic completion is bound through its canonical server-created user message and acknowledged task', () => {
+  const fixture = () => ({
+    parent: { thread: { id: 'parent' }, runs: [{ id: 'original', ordinal: 1, delegatedCompletion: { nextGeneration: 2 } }, { id: 'wake', ordinal: 2 }],
+      subagents: [{ id: 'task', origin: 'app_owned', threadId: 'parent', runId: 'original', childThreadId: 'child', status: 'completed', completionWake: 'always', completionDelivery: { state: 'acknowledged', observedByRunId: 'wake' } }],
+      messages: [{ id: 'wake-message', threadId: 'parent', runId: 'wake', role: 'user', createdBy: 'agent', creationSource: 'server', delegatedCompletion: { parentRunId: 'original', generation: 1, taskIds: ['task'] } }] },
+    worker: { thread: { id: 'child' } }, wake: { id: 'wake', ordinal: 2, userMessageId: 'wake-message' },
+  });
+  const good = fixture(); assert.equal(validateAutomaticWake(good.parent, good.worker, good.wake).generation, 1);
+  for (const mutate of [
+    f => { f.wake.userMessageId = 'foreign'; },
+    f => { f.parent.messages[0].createdBy = 'user'; },
+    f => { f.parent.messages[0].creationSource = 'web'; },
+    f => { f.parent.messages[0].role = 'assistant'; },
+    f => { f.parent.messages[0].runId = 'foreign'; },
+    f => { f.parent.messages[0].threadId = 'foreign'; },
+    f => { f.parent.messages[0].delegatedCompletion.parentRunId = 'foreign'; },
+    f => { f.parent.messages[0].delegatedCompletion.generation = 0; },
+    f => { f.parent.messages[0].delegatedCompletion.generation = 2; },
+    f => { f.parent.messages[0].delegatedCompletion.taskIds = ['foreign']; },
+    f => { f.parent.messages[0].delegatedCompletion.taskIds.push('task'); },
+    f => { f.parent.subagents[0].completionDelivery.observedByRunId = 'foreign'; },
+    f => { f.parent.subagents[0].completionDelivery.state = 'pending'; },
+    f => { f.parent.subagents[0].childThreadId = 'foreign'; },
+    f => { f.parent.subagents.push({ ...f.parent.subagents[0] }); },
+    f => { f.parent.messages.push({ ...f.parent.messages[0] }); },
+  ]) { const f = fixture(); mutate(f); assert.throws(() => validateAutomaticWake(f.parent, f.worker, f.wake)); }
+});
+
+test('reviewed project selection can continue only the unexecuted SpecWeave cycle', () => {
+  const { review, observed } = manifest();
+  assert.deepEqual(validateReview({ ...review, projectKinds: ['specweave'], maxRuns: 4 }, observed, now).projectKinds, ['specweave']);
+  for (const projectKinds of [[], ['easychamp'], ['foreign'], ['specweave','specweave'], 'specweave'])
+    assert.throws(() => validateReview({ ...review, projectKinds }, observed, now), /review-project-selection/);
 });
