@@ -1,3 +1,6 @@
+import * as MachineHandoff from "../fleet/MachineHandoff.ts";
+import * as MachineHandoffStore from "../fleet/MachineHandoffStore.ts";
+import * as HandoffGit from "../fleet/handoffGit.ts";
 import * as ProjectConnectionService from "../project/ProjectConnectionService.ts";
 import * as ProjectConnectionTransport from "../project/connections/ProjectConnectionTransport.ts";
 import * as ProjectEnvironmentService from "../project/ProjectEnvironmentService.ts";
@@ -379,6 +382,19 @@ export const layer = Layer.mergeAll(
 );
 
 export const layerProduction = Layer.mergeAll(
+  MachineHandoff.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        MachineHandoffStore.layer,
+        layerEventSinkProvided,
+        HandoffGit.layer.pipe(Layer.provide(ProcessRunner.layer)),
+        ProjectionStore.layer,
+        layerProjectService,
+        layerProjectWorkspaceProvided,
+        layerProjectCoordinatorProvided,
+      ),
+    ),
+  ),
   ProjectConnectionService.layer.pipe(
     Layer.provide(Layer.merge(ProjectStore.layer, ProjectConnectionTransport.layer)),
   ),

@@ -112,9 +112,37 @@ export function SidebarUpdatePill() {
   return isElectron ? <SidebarUpdateControl /> : null;
 }
 
+function showManualUpdateCheckResult(state: DesktopUpdateState): boolean {
+  if (state.status === "checking") return false;
+  if (state.status === "up-to-date") {
+    toastManager.add(
+      stackedThreadToast({
+        type: "success",
+        title: "No newer update available",
+        description: `SpecWithCode ${state.currentVersion} is installed.`,
+      }),
+    );
+  } else if (
+    state.status === "error" &&
+    (state.errorContext === null || state.errorContext === "check")
+  ) {
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title: "Could not check for updates",
+        description: state.message ?? "Update check failed.",
+      }),
+    );
+  }
+  return true;
+}
+
 function SidebarUpdateControl() {
   const state = useDesktopUpdateState();
   const [isActionPending, setIsActionPending] = useState(false);
+  const [pendingManualCheck, setPendingManualCheck] = useState<{
+    checkedAt: string | null;
+  } | null>(null);
   const [checkAnimationKey, setCheckAnimationKey] = useState(0);
   const [isCheckAnimationLatched, setIsCheckAnimationLatched] = useState(false);
   const [releaseNotesPopoverHandle] = useState(() => PopoverCreateHandle());
@@ -122,6 +150,21 @@ function SidebarUpdateControl() {
   const releaseNotesPopupRef = useRef<HTMLDivElement>(null);
   const releaseNotesTriggerId = useId();
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
+
+  useEffect(() => {
+    // Updater events can reach the renderer after the check RPC resolves. Only
+    // announce the requested check, never an earlier state or a background poll.
+    if (
+      pendingManualCheck &&
+      state &&
+      (pendingManualCheck.checkedAt === null ||
+        (state.checkedAt !== null &&
+          Date.parse(state.checkedAt) >= Date.parse(pendingManualCheck.checkedAt))) &&
+      showManualUpdateCheckResult(state)
+    ) {
+      setPendingManualCheck(null);
+    }
+  }, [pendingManualCheck, state]);
 
   useEffect(() => {
     if (prefersReducedMotion) {
@@ -155,7 +198,7 @@ function SidebarUpdateControl() {
     : showUpdateDetails
       ? isDesktopUpdateButtonDisabled(state)
       : !canCheckForUpdate(state);
-  const isInteractionDisabled = disabled || isActionPending;
+  const isInteractionDisabled = disabled || isActionPending || pendingManualCheck !== null;
   const showReleaseNotesPopover = shouldUseSidebarUpdateReleaseNotesPopover(
     showUpdateDetails,
     state,
@@ -266,7 +309,12 @@ function SidebarUpdateControl() {
     void bridge
       .checkForUpdate()
       .then((result) => {
-        if (result.checked) return;
+        if (result.checked) {
+          if (!showManualUpdateCheckResult(result.state)) {
+            setPendingManualCheck({ checkedAt: result.state.checkedAt });
+          }
+          return;
+        }
         toastManager.add(
           stackedThreadToast({
             type: "error",

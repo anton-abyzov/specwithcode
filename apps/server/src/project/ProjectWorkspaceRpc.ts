@@ -1,3 +1,4 @@
+import * as MachineHandoff from "../fleet/MachineHandoff.ts";
 import * as ProjectConnectionRpc from "./ProjectConnectionRpc.ts";
 import * as ProjectEnvironmentService from "./ProjectEnvironmentService.ts";
 import { WS_METHODS } from "@specweave-studio/contracts";
@@ -10,6 +11,7 @@ import * as ProjectPlanRpc from "./ProjectPlanRpc.ts";
 import * as ProjectSkillsService from "./ProjectSkillsService.ts";
 import * as ThreadReportService from "./ThreadReportService.ts";
 export const handlers = Effect.gen(function* () {
+  const handoff = yield* MachineHandoff.MachineHandoff;
   const environment = yield* ProjectEnvironmentService.ProjectEnvironmentService;
   const usage = yield* ProjectUsageService.ProjectUsageService;
   const skills = yield* ProjectSkillsService.ProjectSkillsService;
@@ -18,6 +20,8 @@ export const handlers = Effect.gen(function* () {
   const starters = yield* ProjectStarterSuggestions.ProjectStarterSuggestionsService;
   const reports = yield* ThreadReportService.ThreadReportService;
   return {
+    [WS_METHODS.machineHandoffPrepare]: handoff.prepare,
+    [WS_METHODS.machineHandoffReceive]: handoff.receive,
     ...(yield* ProjectPlanRpc.handlers),
     ...(yield* ProjectConnectionRpc.handlers),
     [WS_METHODS.projectsEnvironmentRead]: environment.read,

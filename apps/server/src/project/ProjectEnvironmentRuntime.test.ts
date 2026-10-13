@@ -93,6 +93,85 @@ it.layer(NodeServices.layer)("project folder runtime boundary", (it) => {
       }),
   );
   it.effect(
+    "allows the Aide ACP coordinator's approved folders only with effective Full access",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs
+          .makeTempDirectoryScoped({ prefix: "aide-acp-folders-" })
+          .pipe(Effect.flatMap((folder) => fs.realPath(folder)));
+        const main = `${root}/aide`,
+          first = `${root}/specweave`,
+          second = `${root}/easychamp`;
+        yield* fs.makeDirectory(main);
+        yield* fs.makeDirectory(first);
+        yield* fs.makeDirectory(second);
+        const project = {
+          id: ProjectId.make("p"),
+          workspaceRoot: main,
+          workspaceSettings: {
+            ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+            environment: { additionalFolders: [first, second], repositories: [] },
+          },
+        } as unknown as Project;
+        const received: ProviderAdapterV2TurnInput[] = [];
+        const wrap = yield* makeEnvironmentRuntime;
+        const session = {
+          driver: ProviderDriverKind.make("acpRegistry"),
+          startTurn: (value: ProviderAdapterV2TurnInput) =>
+            Effect.sync(() => {
+              received.push(value);
+            }),
+        } as unknown as ProviderAdapterV2SessionRuntime;
+        const runtime = wrap(session, () => Effect.succeed(Option.some(project)));
+        const input = {
+          ...turn(),
+          runtimePolicy: {
+            ...turn().runtimePolicy,
+            cwd: main,
+            runtimeMode: "full-access" as const,
+          },
+        };
+        yield* runtime.startTurn(input);
+        yield* runtime.startTurn({
+          ...input,
+          runtimePolicy: {
+            ...input.runtimePolicy,
+            approvalPolicy: "never",
+            sandboxPolicy: { type: "dangerFullAccess" },
+          },
+        });
+        assert.equal(received.length, 2);
+        assert.deepEqual(received[0]?.projectAdditionalDirectories, [first, second]);
+        assert.include(received[0]!.message.text, JSON.stringify([first, second]));
+        assert.isTrue(received[0]!.message.text.endsWith("\n\nuser"));
+        assert.deepEqual(received[0]!.message.attachments, input.message.attachments);
+        for (const override of [
+          { runtimeMode: "approval-required" as const },
+          { interactionMode: "plan" as const },
+          { approvalPolicy: "on-request" },
+          { approvalPolicy: "never", sandboxPolicy: { type: "readOnly" } },
+          { sandboxPolicy: { type: "workspaceWrite", writableRoots: [first, second] } },
+          { sandboxPolicy: { type: "externalSandbox" } },
+          { sandboxPolicy: { type: "unknown" } },
+          { sandboxPolicy: null },
+          { approvalPolicy: null },
+        ]) {
+          const error = yield* runtime
+            .startTurn({ ...input, runtimePolicy: { ...input.runtimePolicy, ...override } })
+            .pipe(Effect.flip);
+          assert.equal(error._tag, "ProviderAdapterTurnStartError");
+          assert.equal((error.cause as { code: string }).code, "unsupported_provider");
+        }
+        assert.equal(received.length, 2);
+        yield* fs.remove(second, { recursive: true });
+        yield* fs.symlink(first, second);
+        const moved = yield* runtime.startTurn(input).pipe(Effect.flip);
+        assert.equal((moved.cause as { code: string }).code, "path_not_approved");
+        assert.equal(received.length, 2);
+      }),
+  );
+  it.effect(
     "fails closed for unsupported providers, moved approved symlinks and missing projects",
     () =>
       Effect.gen(function* () {

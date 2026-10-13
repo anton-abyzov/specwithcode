@@ -79,3 +79,5 @@ export * from "./studio.ts";
 
 export * from "./projectUsage.ts";
 export * from "./projectSkills.ts";
+
+export * from "./machineHandoff.ts";
