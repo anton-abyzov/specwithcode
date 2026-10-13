@@ -61,7 +61,7 @@ export function scheduledTaskEditorCloseHref(
   const origin = scheduledTaskReturnTo(returnTo);
   if (outcome === "dismissed" && origin) return origin;
   const url = new URL(href, "https://studio.invalid");
-  for (const key of ["template", "projectId", "returnTo"]) url.searchParams.delete(key);
+  for (const key of ["template", "projectId", "taskId", "returnTo"]) url.searchParams.delete(key);
   return `${url.pathname}${url.search}${url.hash}`;
 }
 

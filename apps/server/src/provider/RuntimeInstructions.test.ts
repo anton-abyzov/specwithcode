@@ -4,6 +4,7 @@ import {
   responseStyleInstructions,
   STUDIO_CONCISE_RESPONSE_STYLE_INSTRUCTIONS,
   STUDIO_DETAILED_RESPONSE_STYLE_INSTRUCTIONS,
+  STUDIO_OUTPUT_FORMATTING_INSTRUCTIONS,
 } from "./RuntimeInstructions.ts";
 
 describe("buildRuntimeInstructions", () => {
@@ -40,6 +41,60 @@ describe("buildRuntimeInstructions", () => {
       expect(instructions).toContain(STUDIO_CONCISE_RESPONSE_STYLE_INSTRUCTIONS);
       expect(instructions).not.toContain(STUDIO_DETAILED_RESPONSE_STYLE_INSTRUCTIONS);
     }
+  });
+
+  it.each(["concise", "detailed"] as const)(
+    "includes common formatting once for every harness in %s mode",
+    (responseStyle) => {
+      for (const harness of [
+        "Claude Code",
+        "Claude Managed Agents beta",
+        "Codex",
+        "Cursor",
+        "OpenCode",
+        "Pi",
+        "ACP",
+      ]) {
+        const instructions = buildRuntimeInstructions({ harness, responseStyle });
+        expect(instructions).toContain(STUDIO_OUTPUT_FORMATTING_INSTRUCTIONS);
+        expect(instructions.match(/<output_formatting>/g)).toHaveLength(1);
+      }
+      // Pi injects a style constant directly rather than buildRuntimeInstructions.
+      expect(responseStyleInstructions(responseStyle)).toContain(
+        STUDIO_OUTPUT_FORMATTING_INSTRUCTIONS,
+      );
+    },
+  );
+
+  it("requires readable dates without guessing or changing literal data", () => {
+    const instructions = STUDIO_OUTPUT_FORMATTING_INSTRUCTIONS;
+    expect(instructions).toContain("month name, day and year");
+    expect(instructions).toContain("not raw ISO timestamps");
+    expect(instructions).toContain("12/24-hour preference");
+    expect(instructions).toContain("include the timezone");
+    expect(instructions).toContain("retain the source timezone");
+    expect(instructions).toContain("never infer a timezone");
+    expect(instructions).toContain("Preserve date-only calendar dates");
+    expect(instructions).toContain("Do not guess invalid or ambiguous dates");
+    expect(instructions).toContain("explicit exact-output requests take precedence");
+    expect(instructions).toContain("raw machine exports such as JSON or CSV exactly");
+    expect(instructions).toContain("Quote errors verbatim when required");
+    expect(instructions).toContain("give a readable date separately");
+  });
+
+  it("keeps structured output readable and missing data distinct from zero", () => {
+    const instructions = STUDIO_OUTPUT_FORMATTING_INSTRUCTIONS;
+    expect(instructions).toContain("real Markdown bullets or numbered steps");
+    expect(instructions).toContain("blank line before the list");
+    expect(instructions).toContain("header row, separator row and consistent columns");
+    expect(instructions).toContain("Label units and currencies");
+    expect(instructions).toContain("right-align numeric columns");
+    expect(instructions).toContain("appropriate digit grouping and consistent precision");
+    expect(instructions).toContain("currency codes when the symbol is ambiguous");
+    expect(instructions).toContain("Do not invent units, currencies or precision");
+    expect(instructions).toContain(
+      "Distinguish unknown, unavailable and not applicable from zero or an empty value",
+    );
   });
 
   it("follows Claude Code's Concise rules for users, workers and coordinators", () => {

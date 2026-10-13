@@ -60,6 +60,18 @@ describe("routed scheduled task editor navigation", () => {
       "/settings/scheduled-tasks?machine=m4#tasks",
     );
   });
+
+  it("returns linked task edits to their chat, and consumes direct task links", () => {
+    const edit = "/settings/scheduled-tasks?environmentId=m4&taskId=task-1&returnTo=%2Fchat#tasks";
+    const chat = "/thread-1?environmentId=m4#latest";
+    expect(scheduledTaskEditorCloseHref(edit, chat, "dismissed")).toBe(chat);
+    expect(scheduledTaskEditorCloseHref(edit, undefined, "dismissed")).toBe(
+      "/settings/scheduled-tasks?environmentId=m4#tasks",
+    );
+    expect(scheduledTaskEditorCloseHref(edit, chat, "saved")).toBe(
+      "/settings/scheduled-tasks?environmentId=m4#tasks",
+    );
+  });
 });
 
 const laptopId = EnvironmentId.make("laptop");

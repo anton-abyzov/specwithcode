@@ -1,3 +1,5 @@
+import { useClientSettings } from "../../hooks/useSettings";
+import { formatDisplayDate } from "../../lib/displayDates";
 import {
   type OrchestrationV2LimitRecovery,
   type OrchestrationV2LimitRecoveryUpdate,
@@ -71,17 +73,10 @@ export function ResetCountdown({
   waiting?: boolean;
   automaticLabel?: string | null;
 }) {
-  const resetMs = Date.parse(resetAt ?? "");
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
+  const clock = resetAt ? formatDisplayDate(resetAt, timestampFormat) : null;
+  const resetMs = clock ? Date.parse(resetAt ?? "") : Number.NaN;
   const nowMs = useNowUntil(resetMs);
-  // A weekly reset days away needs its day; a session reset only its time.
-  const clock = Number.isFinite(resetMs)
-    ? new Date(resetMs).toLocaleString(
-        [],
-        resetMs - nowMs > 20 * 60 * 60_000
-          ? { weekday: "short", hour: "numeric", minute: "2-digit" }
-          : { hour: "numeric", minute: "2-digit" },
-      )
-    : null;
   const when = !Number.isFinite(resetMs)
     ? "Reset time unavailable"
     : resetMs > nowMs

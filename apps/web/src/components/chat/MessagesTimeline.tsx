@@ -1,3 +1,5 @@
+import { formatDisplayDates } from "../../lib/displayDates";
+import { FailureDetail } from "./FailureDetail";
 import { useProjectMessageRouting } from "../../studio/projectMessageRouting";
 import { ComputerUseAppIcon } from "~/components/Icons";
 import { useChatCanvas } from "./ChatCanvasContext";
@@ -46,6 +48,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { environmentThreadDetails } from "../../state/threads";
 import { resolveUserMessagePresentation } from "@specweave-studio/client-runtime/user-message";
 import { Link } from "@tanstack/react-router";
+import { ScheduledTaskLink } from "../settings/ScheduledTaskLink";
 import { canForkProjectedAssistantItem } from "@specweave-studio/client-runtime/state/thread-workflows";
 import { notificationChildThreadId } from "@specweave-studio/client-runtime/state/thread-execution";
 import { replaceComposerContextReferences } from "@specweave-studio/shared/composerContextReferences";
@@ -2240,16 +2243,13 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           data-user-message-attribution="automation"
         >
           {userMessage.scheduledTaskId ? (
-            <Link
-              to="/settings/scheduled-tasks"
-              search={{
-                environmentId: ctx.activeThreadEnvironmentId,
-                taskId: userMessage.scheduledTaskId,
-              }}
+            <ScheduledTaskLink
+              environmentId={ctx.activeThreadEnvironmentId}
+              taskId={userMessage.scheduledTaskId}
               className="rounded-sm hover:text-muted-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring"
             >
               Sent by automation
-            </Link>
+            </ScheduledTaskLink>
           ) : (
             "Sent by automation"
           )}
@@ -2686,6 +2686,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
   );
   const markdown = (
     <ChatMarkdown
+      formatDates
       text={messageText}
       cwd={ctx.markdownCwd}
       threadRef={ctx.threadRef ?? undefined}
@@ -3087,7 +3088,7 @@ function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event"
           ) : null}
           {presentation.detail ? (
             <span className="min-w-0 flex-1 truncate text-muted-foreground/65">
-              {presentation.detail}
+              {formatDisplayDates(presentation.detail, ctx.timestampFormat)}
             </span>
           ) : null}
           {visibility !== "local" ? (
@@ -3101,6 +3102,7 @@ function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event"
           {presentation.detail ? (
             <div className="text-xs leading-relaxed text-muted-foreground">
               <ChatMarkdown
+                formatDates
                 text={presentation.detail}
                 cwd={ctx.markdownCwd}
                 threadRef={ctx.threadRef ?? undefined}
@@ -3176,6 +3178,7 @@ function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event"
           {presentation.detail ? (
             <div className="mt-1 text-xs leading-relaxed text-muted-foreground">
               <ChatMarkdown
+                formatDates
                 text={presentation.detail}
                 cwd={ctx.markdownCwd}
                 threadRef={ctx.threadRef ?? undefined}
@@ -5152,6 +5155,7 @@ function ReasoningTraceContent({ entries }: { entries: ReadonlyArray<TimelineWor
     <WorkLogDetails>
       {entries.map((entry) => (
         <ChatMarkdown
+          formatDates
           key={entry.id}
           className="text-foreground"
           text={entry.detail ?? ""}
@@ -5276,9 +5280,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         }
       >
         {!warning ? (
-          <p className="ms-7 whitespace-pre-wrap break-words py-1 text-sm leading-relaxed text-foreground/80">
-            {failureItem.failure.message}
-          </p>
+          <FailureDetail message={failureItem.failure.message} timestampFormat={timestampFormat} />
         ) : null}
         {retryRunId !== null && onRetryWorkspacePreparation ? (
           <div className="ms-7 pb-1">

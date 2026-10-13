@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
-import { useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate } from "@tanstack/react-router";
 import { CalendarClockIcon, PencilIcon, PlayIcon, Settings2Icon } from "lucide-react";
 import { useState } from "react";
 import {
@@ -60,6 +60,7 @@ export function ThreadAutomationsPanel(props: {
     label: "thread automation run now",
   });
   const navigate = useNavigate();
+  const returnTo = useLocation({ select: (location) => location.href });
   const [busyTaskId, setBusyTaskId] = useState<string | null>(null);
 
   const boundTasks = (tasksQuery.data?.tasks ?? []).filter(
@@ -194,7 +195,7 @@ export function ThreadAutomationsPanel(props: {
                     onClick={() =>
                       void navigate({
                         to: "/settings/scheduled-tasks",
-                        search: { environmentId: props.environmentId, taskId: task.id },
+                        search: { environmentId: props.environmentId, taskId: task.id, returnTo },
                       })
                     }
                   >
