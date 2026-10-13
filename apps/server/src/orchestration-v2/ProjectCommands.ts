@@ -28,6 +28,8 @@ export interface ProjectCreateCommand {
   readonly title: string;
   readonly workspaceRoot: string;
   readonly scripts?: ReadonlyArray<ProjectScript>;
+  /** Internal handoff seed; public create payloads cannot supply this field. */
+  readonly initialWorkerModelSelection?: ModelSelection | null;
 }
 
 export interface ProjectMetaUpdateCommand {
@@ -202,13 +204,16 @@ export function planProjectCommand(input: {
           projectId: command.projectId,
           title: command.title,
           workspaceRoot: command.workspaceRoot,
-          // Project creation has no user model choice. Older clients sent an
-          // automatic seed, but only a metadata update records an explicit default.
-          defaultModelSelection: null,
+          // Public create seeds remain ignored. A handoff copies the destination's
+          // saved choice atomically, before settings writes or launch can fail.
+          defaultModelSelection: command.initialWorkerModelSelection ?? null,
           faviconPath: null,
           projectIcon: null,
           scripts: command.scripts ?? [],
-          workspaceSettings: {...DEFAULT_PROJECT_WORKSPACE_SETTINGS, kind: command.kind ?? "code"},
+          workspaceSettings: {
+            ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+            kind: command.kind ?? "code",
+          },
           createdAt: occurredAt,
           updatedAt: occurredAt,
         },

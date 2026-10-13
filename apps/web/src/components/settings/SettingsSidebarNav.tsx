@@ -26,6 +26,7 @@ import {
   PuzzleIcon,
   SearchIcon,
   Settings2Icon,
+  ShieldCheckIcon,
   SparklesIcon,
   XIcon,
 } from "lucide-react";
@@ -82,6 +83,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   Record<SettingsPath, ComponentType<{ className?: string }>>
 > = {
   "/settings/general": Settings2Icon,
+  "/settings/privacy": ShieldCheckIcon,
   "/settings/agents": BotIcon,
   "/settings/appearance": PaletteIcon,
   "/settings/projects": PanelsTopLeftIcon,

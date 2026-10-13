@@ -10,13 +10,17 @@
 }
 .sws-thread-card-actions {
   display: inline-flex;
-  flex: none;
+  min-width: 0;
+  max-width: 100%;
+  flex: 0 1 auto;
   flex-wrap: wrap;
   align-items: center;
   gap: 4px;
 }
 .sws-thread-card-action {
   display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
   align-items: center;
   gap: 5px;
   height: 26px;
@@ -66,7 +70,9 @@
 /* The machine a worker started elsewhere runs on. */
 .sws-machine-chip {
   display: inline-flex;
-  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 100%;
+  flex: 0 1 auto;
   align-items: center;
   gap: 4px;
   padding: 1px 7px;
@@ -79,4 +85,5 @@
 .sws-machine-chip svg {
   width: 12px;
   height: 12px;
+  flex: none;
 }

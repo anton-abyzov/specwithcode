@@ -1,13 +1,15 @@
+import { registerChatViewWindowInput } from "./chat/chatViewWindowInput";
+import type {
+  ChatViewProps,
+  TerminalLaunchContext,
+  PersistentTerminalLaunchContext,
+} from "./chat/ChatViewProps";
 import { useProjectDraftSendGuard } from "./chat/ProjectDraftSendGuard";
 import { useProjectCoordinatorHandoff } from "~/hooks/useProjectCoordinatorHandoff";
 import { coordinatorForkHandoff } from "./chat/coordinatorForkHandoff";
 import { coordinatorDeviceHandoff } from "./chat/coordinatorDeviceHandoff";
 import { openBackgroundChatComposer, useNewChatDestination } from "~/hooks/useNewChatDestination";
-import {
-  chatControlAnchor,
-  chatUsesPanelSheet,
-  type ChatLayoutMode,
-} from "./chat/embeddedProjectLayout";
+import { chatControlAnchor, chatUsesPanelSheet } from "./chat/embeddedProjectLayout";
 import { resolveCollapseLongReports } from "./chat/delegatedThreadMemory";
 import {
   useProjectMessageRouting,
@@ -29,6 +31,7 @@ import {
 } from "./chat/UsageLimitRecoveryBanner";
 import { deviceHandoffText, pickDeviceModel } from "./chat/deviceHandoff";
 import {
+  formatOutgoingPrompt,
   resolveBackgroundDraftWorkspaceOptions,
   resolveDraftHeroState,
   shouldDockDraftHeroForSubmission,
@@ -156,10 +159,8 @@ import {
   scopeThreadRef,
 } from "@specweave-studio/client-runtime/environment";
 import {
-  applyClaudePromptEffortPrefix,
   createModelSelection,
   formatModelSlugName,
-  resolvePromptInjectedEffort,
   resolveSelectableModel,
 } from "@specweave-studio/shared/model";
 import {
@@ -370,7 +371,6 @@ import {
 } from "~/projectScripts";
 import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { registerFaviconProjectForThread } from "~/browserFaviconStore";
-import { getProviderModelCapabilities } from "../providerModels";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -458,6 +458,7 @@ import {
 import { terminalEnvironment } from "../state/terminal";
 import { environmentThreadDetails, threadEnvironment } from "../state/threads";
 import { workspacePreparationRetryRunIds } from "@specweave-studio/client-runtime/state/turn-item-presentation";
+import { CoordinatorNativeControls } from "./studio/CoordinatorNativeControls";
 import { resolveProviderSkillsForCwd } from "@specweave-studio/client-runtime/providerSkills";
 import { vcsEnvironment } from "../state/vcs";
 import { sourceControlEnvironment } from "../state/sourceControl";
@@ -854,17 +855,6 @@ const draftFanoutStateAtom = Atom.family((_routeKey: string) =>
   }).pipe(Atom.keepAlive),
 );
 
-function formatOutgoingPrompt(params: {
-  provider: ProviderDriverKind;
-  model: string | null;
-  models: ReadonlyArray<ServerProvider["models"][number]>;
-  effort: string | null;
-  text: string;
-}): string {
-  const caps = getProviderModelCapabilities(params.models, params.model, params.provider);
-  const promptEffort = resolvePromptInjectedEffort(caps, params.effort);
-  return applyClaudePromptEffortPrefix(params.text, promptEffort);
-}
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
 
@@ -872,39 +862,6 @@ function isCompactCommandMessage(message: ChatMessage): boolean {
   const text = message.text.trim().toLowerCase();
   return message.role === "user" && text === "/compact" && !message.attachments?.length;
 }
-
-type ChatViewProps =
-  | {
-      environmentId: EnvironmentId;
-      threadId: ThreadId;
-      onDiffPanelOpen?: () => void;
-      reserveTitleBarControlInset?: boolean;
-      layoutMode?: ChatLayoutMode;
-      /** Embedded only: the host's header slot for the terminal and details toggles. */
-      embeddedHeaderToolsTarget?: HTMLElement | null;
-      forceExpandedMobileComposer?: boolean;
-      routeKind: "server";
-      draftId?: never;
-    }
-  | {
-      environmentId: EnvironmentId;
-      threadId: ThreadId;
-      onDiffPanelOpen?: () => void;
-      reserveTitleBarControlInset?: boolean;
-      layoutMode?: ChatLayoutMode;
-      embeddedHeaderToolsTarget?: HTMLElement | null;
-      forceExpandedMobileComposer?: boolean;
-      routeKind: "draft";
-      draftId: DraftId;
-    };
-
-interface TerminalLaunchContext {
-  threadId: ThreadId;
-  cwd: string;
-  worktreePath: string | null;
-}
-
-type PersistentTerminalLaunchContext = Pick<TerminalLaunchContext, "cwd" | "worktreePath">;
 
 function useLocalDispatchState(input: {
   activeThread: Thread | undefined;
@@ -1634,9 +1591,12 @@ export default function ChatView(props: ChatViewProps) {
     onDiffPanelOpen,
     reserveTitleBarControlInset = true,
     layoutMode = "workspace",
+    reviewOnly = false,
+    suspendShortcuts = false,
     embeddedHeaderToolsTarget = null,
     forceExpandedMobileComposer = false,
   } = props;
+  const suspendChatInput = reviewOnly || suspendShortcuts;
   const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const hasTerminalWriteAccess = useCallback(
@@ -4246,7 +4206,7 @@ export default function ChatView(props: ChatViewProps) {
     remoteOpenMode: remoteOpenState.mode,
   });
   useOpenFavoriteEditorShortcut({
-    enabled: showOpenInPicker,
+    enabled: showOpenInPicker && !suspendChatInput,
     environmentId: activeThread?.environmentId ?? environmentId,
     keybindings,
     availableEditors,
@@ -8500,9 +8460,9 @@ export default function ChatView(props: ChatViewProps) {
       event.stopPropagation();
       void runProjectScript(script);
     };
-    window.addEventListener("keydown", handler, true);
-    return () => window.removeEventListener("keydown", handler, true);
+    return registerChatViewWindowInput("keydown", handler, !suspendChatInput);
   }, [
+    suspendChatInput,
     activeProject,
     activeRightPanelSurface,
     activeProjectScripts,
@@ -8582,13 +8542,13 @@ export default function ChatView(props: ChatViewProps) {
         event.stopPropagation();
       }
     };
-    window.addEventListener("keydown", keyHandler, true);
-    window.addEventListener("paste", handler, true);
+    const stopKeys = registerChatViewWindowInput("keydown", keyHandler, !suspendChatInput);
+    const stopPaste = registerChatViewWindowInput("paste", handler, !suspendChatInput);
     return () => {
-      window.removeEventListener("keydown", keyHandler, true);
-      window.removeEventListener("paste", handler, true);
+      stopKeys();
+      stopPaste();
     };
-  }, [activeThreadId, composerRef]);
+  }, [activeThreadId, composerRef, suspendChatInput]);
 
   const [pendingRevert, setPendingRevert] = useState<{
     turnCount: number;
@@ -10782,19 +10742,13 @@ export default function ChatView(props: ChatViewProps) {
 
     const sendCtx = composerRef.current?.getSendContext();
     if (
-      !sendCtx ||
-      (!projectRouting?.continueCoordinator &&
-        (!sendCtx.providerAvailable || !sendCtx.interactionModeEnabled))
+      !projectRouting?.continueCoordinator &&
+      (!sendCtx || !sendCtx.providerAvailable || !sendCtx.interactionModeEnabled)
     ) {
       return false;
     }
-    const {
-      selectedProvider: ctxSelectedProvider,
-      selectedModel: ctxSelectedModel,
-      selectedProviderModels: ctxSelectedProviderModels,
-      selectedPromptEffort: ctxSelectedPromptEffort,
-      selectedModelSelection: ctxSelectedModelSelection,
-    } = sendCtx;
+    const ctxSelectedModelSelection =
+      sendCtx?.selectedModelSelection ?? activeThread.modelSelection;
 
     const threadIdForSend = activeThread.id;
     const messageIdForSend = newMessageId();
@@ -10802,10 +10756,10 @@ export default function ChatView(props: ChatViewProps) {
     const outgoingMessageText = projectRouting?.continueCoordinator
       ? trimmed
       : formatOutgoingPrompt({
-          provider: ctxSelectedProvider,
-          model: ctxSelectedModel,
-          models: ctxSelectedProviderModels,
-          effort: ctxSelectedPromptEffort,
+          provider: sendCtx!.selectedProvider,
+          model: sendCtx!.selectedModel,
+          models: sendCtx!.selectedProviderModels,
+          effort: sendCtx!.selectedPromptEffort,
           text: trimmed,
         });
 
@@ -11684,6 +11638,46 @@ export default function ChatView(props: ChatViewProps) {
     addFiles: (files) => composerRef.current?.addDroppedFiles(files),
     addFolders: (folders) => composerRef.current?.addDroppedFolders(folders),
   });
+
+  // Keep every hook above this presentation branch. Native callbacks retain
+  // their host permission checks and persisted request/model identity.
+  if (reviewOnly)
+    return (
+      <CoordinatorNativeControls
+        markdownContext={{
+          environmentId,
+          threadRef: activeThreadRef ?? undefined,
+          cwd: gitCwd ?? undefined,
+        }}
+        loading={threadDetailLoading}
+        disabled={!canOperateThread || activeEnvironmentUnavailable || isSendBusy || isConnecting}
+        error={visibleThreadError ?? null}
+        approvals={pendingApprovals}
+        respondingApprovals={respondingRequestIds}
+        onApproval={onRespondToApproval}
+        questions={pendingUserInputs}
+        answers={activePendingDraftAnswers}
+        questionIndex={activePendingQuestionIndex}
+        progress={activePendingProgress}
+        respondingQuestions={respondingUserInputRequestIds}
+        onOption={onSelectActivePendingUserInputOption}
+        onCustomAnswer={(id, value) =>
+          onChangeActivePendingUserInputCustomAnswer(id, value, value.length, value.length, false)
+        }
+        questionAttachmentContext={
+          supportsQuestionAttachments && supportsAttachmentUploads && activeThreadId
+            ? { environmentId, threadId: activeThreadId, maxFileBytes: maxFileAttachmentBytes }
+            : undefined
+        }
+        onPrevious={onPreviousActivePendingUserInputQuestion}
+        onAdvance={onAdvanceActivePendingUserInput}
+        onDismiss={(id) => void onDismissUserInput(id)}
+        planMarkdown={showPlanFollowUpPrompt ? (activeProposedPlan?.planMarkdown ?? null) : null}
+        onImplementPlan={() =>
+          onSubmitPlanFollowUp({ text: "Implement this plan.", interactionMode: "default" })
+        }
+      />
+    );
 
   return (
     <div

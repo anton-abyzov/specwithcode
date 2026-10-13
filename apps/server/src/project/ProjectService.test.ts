@@ -4,9 +4,12 @@ import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
+  type ModelSelection,
   type Project,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
+  type ServerProvider,
 } from "@specweave-studio/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -26,9 +29,12 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
+import { projectMutationOperation } from "./ProjectMutation.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 
@@ -89,6 +95,113 @@ const layerProjectServiceDependencies = Layer.mergeAll(
   Layer.provideMerge(SqlitePersistence.layerMemory),
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "project-service-race-" })),
   Layer.provide(NodeServices.layer),
+);
+
+const handoffWorker: ModelSelection = {
+  instanceId: ProviderInstanceId.make("codex"),
+  model: "gpt-6-astra",
+  options: [{ id: "reasoningEffort", value: "high" }],
+};
+const automaticWorker: ModelSelection = {
+  instanceId: ProviderInstanceId.make("claudeAgent"),
+  model: "claude-opus-5-5",
+};
+const automaticProviders: ReadonlyArray<ServerProvider> = [
+  {
+    instanceId: automaticWorker.instanceId,
+    driver: ProviderDriverKind.make("claudeAgent"),
+    enabled: true,
+    installed: true,
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-10-13T00:00:00.000Z",
+    version: "test-only",
+    models: [
+      {
+        slug: automaticWorker.model,
+        name: "Claude Opus 5.5",
+        isCustom: false,
+        isDefault: true,
+        capabilities: null,
+      },
+    ],
+    slashCommands: [],
+    skills: [],
+  },
+];
+const handoffCreationLayer = Layer.mergeAll(
+  layerProjectServiceDependencies,
+  NodeServices.layer,
+  Layer.mock(ProviderRegistry.ProviderRegistry)({
+    getProviders: Effect.succeed(automaticProviders),
+  }),
+  ServerSettings.layerTest({ projectSettingsFolded: true, defaultModelSelection: null }),
+);
+
+for (const initial of [handoffWorker, null])
+  it.effect(
+    `atomically creates an internal worker ${initial === null ? "clear" : "choice"} and never reseeds it on replay`,
+    () =>
+      Effect.gen(function* () {
+        const service = yield* ProjectService.make;
+        const sql = yield* SqlClient.SqlClient;
+        const input = {
+          commandId: CommandId.make("command:internal-worker-create"),
+          projectId: ProjectId.make("project:internal-worker"),
+          title: "Internal worker",
+          workspaceRoot: "/work/internal-worker",
+          initialWorkerModelSelection: initial,
+        };
+        const created = yield* service.create(input);
+        assert.deepEqual(created.defaultModelSelection, initial);
+        const creation = yield* sql<{ readonly event_type: string; readonly payload_json: string }>`
+      SELECT event_type, payload_json FROM orchestration_events
+      WHERE stream_id = ${input.projectId} ORDER BY sequence
+    `;
+        assert.equal(creation.length, 1);
+        assert.equal(creation[0]?.event_type, "project.created");
+        assert.deepEqual(JSON.parse(creation[0]!.payload_json).defaultModelSelection, initial);
+        let current = created;
+        for (const choice of [{ ...handoffWorker, model: "gpt-6.1-sol" }, null]) {
+          current = yield* service.update({
+            commandId: CommandId.make(
+              `command:internal-worker-edit:${choice === null ? "clear" : "choice"}`,
+            ),
+            projectId: input.projectId,
+            defaultModelSelection: choice,
+            workspaceSettings: {
+              expectedRevision: current.workspaceSettings?.revision ?? 0,
+              goal: "Later user choice",
+            },
+          });
+          assert.deepEqual((yield* service.create(input)).defaultModelSelection, choice);
+        }
+        const automaticEvents = yield* sql<{ readonly count: number }>`
+      SELECT count(*) AS count FROM orchestration_events
+      WHERE command_id = ${`${input.commandId}:default-model`}
+    `;
+        assert.equal(automaticEvents[0]?.count, 0);
+      }).pipe(Effect.provide(handoffCreationLayer)),
+  );
+
+it.effect("keeps public creation automatic and excludes internal worker seeds", () =>
+  Effect.gen(function* () {
+    const service = yield* ProjectService.make;
+    for (const mode of ["absent", "legacy", "internal"]) {
+      const mutation = {
+        type: "project.create" as const,
+        commandId: CommandId.make(`command:ordinary-create:${mode}`),
+        projectId: ProjectId.make(`project:ordinary:${mode}`),
+        title: "Ordinary project",
+        workspaceRoot: `/work/ordinary-${mode}`,
+        ...(mode === "legacy" ? { defaultModelSelection: handoffWorker } : {}),
+        ...(mode === "internal" ? { initialWorkerModelSelection: handoffWorker } : {}),
+      };
+      yield* projectMutationOperation(service, mutation);
+      const created = Option.getOrThrow(yield* service.getById(mutation.projectId));
+      assert.deepEqual(created.defaultModelSelection, automaticWorker);
+    }
+  }).pipe(Effect.provide(handoffCreationLayer)),
 );
 
 const waitForProject = Effect.fn("ProjectServiceTest.waitForProject")(function* (

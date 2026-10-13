@@ -6,6 +6,7 @@ import {
   ProjectEnvironmentError,
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   type OrchestrationProjectShell,
+  type ModelSelection,
   ProjectId,
   type Project,
   type ProjectCreatePayload,
@@ -44,6 +45,8 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
 export interface ProjectCreateInput extends ProjectCreatePayload {
+  /** Internal handoff seed, committed atomically with creation; null disables auto-seeding. */
+  readonly initialWorkerModelSelection?: ModelSelection | null;
   readonly commandId: CommandId;
   readonly projectId: ProjectId;
 }
@@ -407,10 +410,14 @@ export const make = Effect.gen(function* () {
         ...(input.kind === undefined ? {} : { kind: input.kind }),
         workspaceRoot,
         ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
+        ...(input.initialWorkerModelSelection === undefined
+          ? {}
+          : { initialWorkerModelSelection: input.initialWorkerModelSelection }),
       });
       yield* projectEnrichment.invalidate([workspaceRoot]);
       const created = yield* readCommitted(input.projectId);
-      if (created.defaultModelSelection !== null) return created;
+      if (input.initialWorkerModelSelection !== undefined || created.defaultModelSelection !== null)
+        return created;
       // A new project starts on Opus 5.5 with Thinking on when this host's Claude
       // subscription offers it, unless Settings already names a default for it.
       const registry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
