@@ -2,44 +2,40 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import * as DateTime from "effect/DateTime";
 import type { ProjectMessageRouting } from "../../studio/projectMessageRouting";
 import { ProjectCoordinatorDetails } from "./ProjectCoordinatorDetails";
 
 const native = vi.hoisted(() => ({
   props: null as Record<string, unknown> | null,
   answer: vi.fn(),
+  items: [] as unknown[],
+  detail: vi.fn(() => ({ data: undefined as unknown, isPending: false, error: null })),
 }));
-vi.mock("../ChatView", async () => {
-  const { useProjectMessageRouting, routeProjectComposerSend } =
-    await import("../../studio/projectMessageRouting");
-  return {
-    default: (props: Record<string, unknown>) => {
-      native.props = props;
-      const routing = useProjectMessageRouting();
-      const send = async (nativeInput: boolean) => {
-        const routed = await routeProjectComposerSend(routing, {
-          prompt: "Continue",
-          hasOtherContent: false,
-          nativeInput,
-          clear: () => {},
-          reportError: () => {},
-        });
-        if (!routed) native.answer();
-      };
-      return (
-        <div>
-          {routing?.coordinatorModelControls}
-          <button onClick={() => void send(false)}>Message</button>
-          <button onClick={() => void send(true)}>Answer native question</button>
-        </div>
-      );
-    },
-  };
-});
+vi.mock("../../state/queries", () => ({
+  useTurnItemDetail: native.detail,
+}));
+vi.mock("../chat/toolOutputPresentation", () => ({
+  ToolCodePanel: ({ label, text }: { label: string; text: string }) => (
+    <pre aria-label={label}>{text}</pre>
+  ),
+}));
+vi.mock("../../state/entities", () => ({
+  useThreadProjection: () => ({ projection: { turnItems: native.items } }),
+  useThreadStatus: () => "live",
+}));
+vi.mock("../ChatView", () => ({
+  default: (props: Record<string, unknown>) => {
+    native.props = props;
+    return <button onClick={native.answer}>Answer native question</button>;
+  },
+}));
 let root: Root, container: HTMLDivElement, trigger: HTMLButtonElement;
 let routing: ProjectMessageRouting;
 beforeEach(() => {
   vi.clearAllMocks();
+  native.props = null;
+  native.items = [];
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   trigger = document.createElement("button");
   container = document.createElement("div");
@@ -51,7 +47,6 @@ beforeEach(() => {
     send: vi.fn(async () => {}),
     openCoordinator: vi.fn(),
     openThread: vi.fn(() => true),
-    coordinatorModelControls: <span>Project saved model</span>,
   };
 });
 afterEach(async () => {
@@ -59,43 +54,114 @@ afterEach(async () => {
   container.remove();
   trigger.remove();
 });
-const mount = () =>
+const mount = (view: "requests" | "activity" = "requests") =>
   act(async () =>
     root.render(
       <ProjectCoordinatorDetails
         environmentId={"host" as never}
         threadId={"coord" as never}
         routing={routing}
+        view={view}
         onClose={() => root.render(null)}
       />,
     ),
   );
 const click = (text: string) =>
   act(async () =>
-    [...container.querySelectorAll("button")]
-      .find((button) => button.textContent === text)!
-      .click(),
+    [...document.querySelectorAll("button")].find((button) => button.textContent === text)!.click(),
   );
-it("embeds coordinator controls, focuses Back, and restores the attention trigger", async () => {
+it("opens a named modal for native controls, without another conversation or message composer", async () => {
   await mount();
   expect(native.props).toMatchObject({
     environmentId: "host",
     threadId: "coord",
     layoutMode: "embedded",
     routeKind: "server",
-    reserveTitleBarControlInset: false,
+    reviewOnly: true,
   });
-  expect(native.props!.embeddedHeaderToolsTarget).toBeInstanceOf(HTMLSpanElement);
-  expect(document.activeElement?.textContent).toBe("Back to coordinator");
-  expect(container.textContent).toContain("Project saved model");
-  await click("Back to coordinator");
-  expect(document.activeElement).toBe(trigger);
-});
-it("routes ordinary replies once and leaves native questions in their runtime", async () => {
-  await mount();
-  await click("Message");
-  expect(routing.send).toHaveBeenCalledExactlyOnceWith("Continue");
+  const dialog = document.querySelector('[role="dialog"]')!;
+  expect(dialog.getAttribute("aria-labelledby")).toBeTruthy();
+  expect(dialog.textContent).toContain("Coordinator requests");
+  expect(dialog.textContent).not.toContain("Back to coordinator");
+  expect(dialog.querySelector("textarea")).toBeNull();
+  expect(document.activeElement?.textContent).toBe("Close review");
   await click("Answer native question");
   expect(native.answer).toHaveBeenCalledOnce();
-  expect(routing.send).toHaveBeenCalledOnce();
+  expect(routing.send).not.toHaveBeenCalled();
+  await click("Close review");
+  expect(document.activeElement).toBe(trigger);
+});
+it("Escape dismisses review and restores the originating control", async () => {
+  await mount();
+  await act(async () =>
+    document.activeElement!.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+    ),
+  );
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  expect(document.activeElement).toBe(trigger);
+});
+it("shows expandable tool output without mounting native chat or duplicating user messages", async () => {
+  native.items = [
+    { id: "u", type: "user_message", status: "completed", text: "Private user message" },
+    {
+      id: "t",
+      type: "dynamic_tool",
+      status: "completed",
+      toolName: "Read",
+      output: "File content",
+    },
+  ];
+  await mount("activity");
+  expect(native.props).toBeNull();
+  const dialog = document.querySelector('[role="dialog"]')!;
+  expect(dialog.textContent).toContain("Coordinator activity");
+  const item = dialog.querySelector("details")!;
+  expect(item.querySelector("pre")).toBeNull();
+  await act(async () => {
+    item.open = true;
+    item.dispatchEvent(new Event("toggle"));
+  });
+  expect(item.querySelector("pre")!.textContent).toContain("File content");
+  expect(dialog.textContent).not.toContain("Private user message");
+});
+
+it("fetches withheld tool output lazily using the exact host, thread, item, and revision", async () => {
+  native.items = [
+    {
+      id: "tool",
+      threadId: "coord",
+      type: "dynamic_tool",
+      status: "completed",
+      toolName: "Read",
+      input: "README",
+      outputOmitted: true,
+      updatedAt: DateTime.makeUnsafe("2026-10-13T12:00:00Z"),
+    },
+  ];
+  await mount("activity");
+  expect(native.detail).toHaveBeenCalledWith(null);
+  const item = document.querySelector('[role="dialog"] details') as HTMLDetailsElement;
+  native.detail.mockReturnValue({
+    data: {
+      item: {
+        ...(native.items[0] as object),
+        outputOmitted: false,
+        output: "Complete file content",
+      },
+    },
+    isPending: false,
+    error: null,
+  });
+  await act(async () => {
+    item.open = true;
+    item.dispatchEvent(new Event("toggle"));
+  });
+  expect(native.detail).toHaveBeenLastCalledWith({
+    environmentId: "host",
+    threadId: "coord",
+    itemId: "tool",
+    revision: "2026-10-13T12:00:00.000Z",
+  });
+  expect(item.querySelector('[aria-label="Output"]')!.textContent).toBe("Complete file content");
 });

@@ -14,6 +14,19 @@ import {
   type ProviderAdapterV2TurnInput,
 } from "../orchestration-v2/ProviderAdapter.ts";
 import { resolveProjectEnvironment } from "./ProjectEnvironmentPaths.ts";
+import { acpClientExecuteDisposition, unknownRecord } from "../provider/acp/AcpClientPolicy.ts";
+
+/** Extra roots supply context only when ACP already has unrestricted native access. */
+function fullAccessAcpProjectFolders(input: ProviderAdapterV2TurnInput): boolean {
+  const policy = input.runtimePolicy;
+  return (
+    policy.runtimeMode === "full-access" &&
+    policy.interactionMode === "default" &&
+    (policy.sandboxPolicy === undefined ||
+      unknownRecord(policy.sandboxPolicy)?.type === "dangerFullAccess") &&
+    acpClientExecuteDisposition(policy) === "allow"
+  );
+}
 
 /** Capture filesystem services once; dispatch effects run after layer construction. */
 export const makeEnvironmentRuntime = Effect.gen(function* () {
@@ -60,9 +73,11 @@ export const makeEnvironmentRuntime = Effect.gen(function* () {
           ...(input.runtimePolicy.cwd === resolved.workspaceRoot ? [] : [resolved.workspaceRoot]),
           ...resolved.additionalFolders,
         ];
+        const unrestrictedAcp =
+          session.driver === "acpRegistry" && fullAccessAcpProjectFolders(input);
         if (
           directories.length > 0 &&
-          ((session.driver !== "codex" && session.driver !== "claudeAgent") ||
+          ((session.driver !== "codex" && session.driver !== "claudeAgent" && !unrestrictedAcp) ||
             (session.driver === "codex" &&
               typeof input.runtimePolicy.sandboxPolicy === "object" &&
               input.runtimePolicy.sandboxPolicy !== null &&
@@ -73,7 +88,17 @@ export const makeEnvironmentRuntime = Effect.gen(function* () {
             projectId: project.id,
             code: "unsupported_provider",
           });
-        const next = { ...input, projectAdditionalDirectories: directories };
+        const next = {
+          ...input,
+          projectAdditionalDirectories: directories,
+          message:
+            unrestrictedAcp && directories.length > 0
+              ? {
+                  ...input.message,
+                  text: `Approved project folders (paths only; existing permissions apply): ${JSON.stringify(directories)}\n\n${input.message.text}`,
+                }
+              : input.message,
+        };
         return yield* compact && session.compactThread
           ? session.compactThread(next)
           : session.startTurn(next);

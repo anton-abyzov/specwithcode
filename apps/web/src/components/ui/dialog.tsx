@@ -93,6 +93,7 @@ function DialogPopup({
           {children}
           {showCloseButton && (
             <DialogPrimitive.Close
+              data-slot="dialog-close"
               aria-label="Close"
               className="absolute end-2 top-2"
               render={<Button size="icon" variant="ghost" />}
@@ -143,7 +144,10 @@ function DialogFooter({
 function DialogTitle({ className, ...props }: DialogPrimitive.Title.Props) {
   return (
     <DialogPrimitive.Title
-      className={cn("wrap-anywhere font-semibold text-xl leading-none", className)}
+      className={cn(
+        "wrap-anywhere font-semibold text-xl leading-none in-[[data-slot=dialog-popup]:has(>[data-slot=dialog-close])]:pe-8",
+        className,
+      )}
       data-slot="dialog-title"
       {...props}
     />

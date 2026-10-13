@@ -83,9 +83,13 @@ export function RemoteWorkerCard({
         <Tip label={title} side="top">
           <span className="sws-thread-card-title">{title}</span>
         </Tip>
-        <span className="sws-machine-chip" data-machine={worker.machineId}>
+        <span
+          className="sws-machine-chip"
+          data-machine={worker.machineId}
+          title={worker.machineLabel}
+        >
           <LaptopIcon aria-hidden />
-          {worker.machineLabel}
+          <span className="min-w-0 truncate">{worker.machineLabel}</span>
         </span>
         <span className="sws-thread-card-status">{status.label}</span>
       </span>
@@ -99,7 +103,7 @@ export function RemoteWorkerCard({
               onClick={onOpen}
             >
               <ExternalLinkIcon aria-hidden />
-              Open on {worker.machineLabel}
+              <span className="min-w-0 truncate">Open on {worker.machineLabel}</span>
             </button>
           </Tip>
         ) : (
