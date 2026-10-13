@@ -40,11 +40,11 @@ const read = <A>(
   });
 
 export const layer = Access.toLayer(GoogleToolkit, {
-  studio_google_status: Access.reads(() =>
+  studio_google_status: Access.reads((input) =>
     Effect.gen(function* () {
       const projectId = yield* callerProject();
       const service = yield* Google.GoogleAccountService;
-      return yield* service.projectAccess(projectId);
+      return yield* service.projectAccess(projectId, input);
     }),
   ),
   studio_google_gmail_search: Access.reads((input) =>

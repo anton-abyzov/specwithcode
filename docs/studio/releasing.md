@@ -80,3 +80,9 @@ It only handles bundles with the id `com.specweave.studio`, and never touches an
 `/Applications` or `~/Applications`, or one that is running. A copy it zipped but could not delete
 is listed under `failed` with its archive; the rest still run.
 The service updater's `pre-*` database backups are separate and stay where they are.
+
+## Google sign-in packaging gate
+
+Official release builds must receive both `STUDIO_GOOGLE_OAUTH_CLIENT_ID` and `STUDIO_GOOGLE_OAUTH_CLIENT_SECRET`. Isolated worktrees do not inherit another checkout's ignored `.env`. Inject only this pair into the build environment from the approved release configuration; never copy the full `.env`, print its contents or put it in an artifact. The server build embeds the Desktop-app OAuth client; no Google account refresh token belongs in the build.
+
+After building, run `STUDIO_TEST_REQUIRE_BUILTIN_GOOGLE=1 node scripts/studio-google/verify.mjs <fresh-evidence-directory>`. The private test server has no runtime Google client variables and must report its compiled Studio client as configured. The headless check also verifies the optional own-client override and that removing it restores the compiled client. An official release without this receipt must not be published. Real account access additionally requires the user's Google consent and per-project grants.

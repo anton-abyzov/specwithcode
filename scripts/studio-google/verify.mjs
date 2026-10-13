@@ -180,6 +180,7 @@ const rpc = async (context, tag, payload = {}) => {
 };
 
 let browser;
+let activePage;
 const receipt = {
   headless: true,
   realBuiltServer: true,
@@ -231,11 +232,26 @@ try {
     headers: { Origin: origin },
   });
   NodeAssert.equal(auth.status(), 200);
+  // Read the actual compiled default with no runtime Google client variables.
+  // Official release checks require this so an isolated checkout cannot silently
+  // ship a build whose Google sign-in button is unavailable.
+  const initialGoogle = await rpc(context, "googleAccount.status");
+  const hasBuiltInClient = initialGoogle.clientSource === "studio";
+  if (process.env.STUDIO_TEST_REQUIRE_BUILTIN_GOOGLE === "1") {
+    NodeAssert.equal(hasBuiltInClient, true, "Release must include its Google OAuth client");
+    NodeAssert.equal(initialGoogle.clientConfigured, true);
+  }
+  NodeAssert.equal(initialGoogle.connected, false);
+  receipt.checks.push({
+    compiledGoogleClientAvailable: hasBuiltInClient,
+    noRuntimeGoogleClient: true,
+  });
 
   const project = await rpc(context, "projects.createNew", { kind: "personal", name: "Errands" });
   receipt.checks.push({ personalProjectCreated: project.projectId });
 
   const page = await context.newPage();
+  activePage = page;
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(origin + "/settings/google");
@@ -245,6 +261,11 @@ try {
     receipt.screenshots.push(file);
   };
   const idInput = page.getByLabel("Google OAuth client ID", { exact: true });
+  if (hasBuiltInClient) {
+    await page.getByRole("button", { name: "Connect Google", exact: true }).waitFor();
+    await shot("0-google-built-in.png");
+    await page.getByRole("button", { name: "Use your own OAuth client", exact: true }).click();
+  }
   await idInput.waitFor({ timeout: 20000 });
   await shot("1-google-empty.png");
 
@@ -257,13 +278,13 @@ try {
   await idInput.fill(CLIENT_ID);
   await page.getByLabel("Google OAuth client secret", { exact: true }).fill(CLIENT_SECRET);
   await page.getByRole("button", { name: "Save client" }).click();
-  await page.getByRole("button", { name: "Sign in with Google" }).waitFor({ timeout: 15000 });
+  await page.getByRole("button", { name: "Connect Google" }).waitFor({ timeout: 15000 });
 
   // Untick Drive, then sign in: the consent tab redirects back to the host's callback.
   await page.getByRole("checkbox", { name: "Ask Google for Drive" }).click();
   const [consent] = await Promise.all([
     context.waitForEvent("page"),
-    page.getByRole("button", { name: "Sign in with Google" }).click(),
+    page.getByRole("button", { name: "Connect Google" }).click(),
   ]);
   await consent.getByText("Google account connected").waitFor({ timeout: 15000 });
   NodeAssert.match(new URL(consent.url()).pathname, /^\/api\/google\/oauth\/callback$/u);
@@ -350,12 +371,21 @@ try {
   receipt.checks.push({ pastedSignIn: true, singleUseState: true, forgedCallbackRefused: true });
 
   await page.getByRole("button", { name: "Disconnect" }).click();
-  await page.getByRole("button", { name: "Sign in with Google" }).waitFor({ timeout: 15000 });
+  await page.getByRole("button", { name: "Connect Google" }).waitFor({ timeout: 15000 });
   NodeAssert.deepEqual(google.revoked, [REFRESH_TOKEN]);
   await page.getByRole("button", { name: "Remove" }).click();
-  await page.getByLabel("Google OAuth client ID", { exact: true }).waitFor({ timeout: 15000 });
+  if (hasBuiltInClient) {
+    await page
+      .getByRole("button", { name: "Use your own OAuth client", exact: true })
+      .waitFor({ timeout: 15000 });
+  } else {
+    await page.getByLabel("Google OAuth client ID", { exact: true }).waitFor({ timeout: 15000 });
+  }
   const removed = await rpc(context, "googleAccount.status");
-  NodeAssert.equal(removed.clientConfigured, false);
+  NodeAssert.equal(removed.clientConfigured, hasBuiltInClient);
+  NodeAssert.equal(removed.clientSource, hasBuiltInClient ? "studio" : null);
+  NodeAssert.equal(removed.connected, false);
+  NodeAssert.deepEqual(removed.projects, []);
   NodeAssert.deepEqual(errors, []);
   receipt.checks.push({ revokedOnDisconnect: true, removed: true, pageErrors: errors });
   for (const secret of [CLIENT_SECRET, REFRESH_TOKEN, "code-1", "code-2"]) {
@@ -363,7 +393,20 @@ try {
   }
   receipt.checks.push({ secretsNotLogged: true });
 } catch (error) {
-  NodeFS.writeFileSync(NodePath.join(out, "failure-server-log.txt"), serverLog.slice(-20000));
+  if (activePage) {
+    await activePage.screenshot({ path: NodePath.join(out, "failure-page.png"), fullPage: true });
+    NodeFS.writeFileSync(
+      NodePath.join(out, "failure-page.txt"),
+      await activePage.locator("body").innerText(),
+    );
+  }
+  NodeFS.writeFileSync(
+    NodePath.join(out, "failure-server-log.txt"),
+    serverLog
+      .slice(-20000)
+      .replace(/(Token: )[^\s]+/g, "$1[redacted]")
+      .replace(/(\/pair#token=)[^\s]+/g, "$1[redacted]"),
+  );
   throw error;
 } finally {
   await browser?.close();

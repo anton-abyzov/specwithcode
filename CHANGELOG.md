@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.7 — Google sign-in and assistant connection diagnostics
+
+Changes since 1.0.6:
+
+- Official builds now include the Google OAuth client when built from an isolated release checkout. The release check requires the compiled client with runtime overrides absent and verifies the own-client override and removal flow.
+- Google tool status explains missing client configuration, sign-in, project access and service permissions. Optional connection checks verify allowed Gmail, Calendar and Drive APIs without returning personal content.
+- Personal assistants discover native Google tools separately from external project connections and use direct reads for simple requests. They distinguish a worker's AI usage-limit failure from a Google API failure.
+- Provider admission rechecks denied native quota and preserves usage-limit/reset metadata for the existing recovery controls. It respects the configured recovery policy; it does not silently change account choices or repair historical failed workers.
+
+Google account consent and per-project permissions are still required. No database migration was added since 1.0.6.
+
 ## 1.0.6 — Update now, coordinator stays on its fallback at a usage limit, steadier turns under load
 
 Changes since 1.0.5:

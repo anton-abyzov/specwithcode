@@ -426,6 +426,10 @@
     "./threadReport": {
       "types": "./src/threadReport.ts",
       "import": "./src/threadReport.ts"
+    },
+    "./specweaveIncrement": {
+      "types": "./src/specweaveIncrement.ts",
+      "import": "./src/specweaveIncrement.ts"
     }
   },
   "scripts": {

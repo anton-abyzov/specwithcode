@@ -41,6 +41,13 @@ import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as GoogleApi from "./GoogleApi.ts";
+import {
+  googleHealthFailure,
+  googleHealthRequest,
+  projectGoogleStatus,
+  type GoogleProjectStatus,
+  type GoogleServiceCheck,
+} from "./googleAccountHealth.ts";
 import { BuiltInGoogleClient, type GoogleOAuthClient } from "./googleBuiltInClient.ts";
 import {
   base64Url,
@@ -131,10 +138,10 @@ export class GoogleAccountService extends Context.Service<
     readonly remove: Effect.Effect<GoogleAccountStatus, GoogleAccountError>;
 
     // Agent reads, each limited to what the project was given.
-    readonly projectAccess: (projectId: ProjectId) => Effect.Effect<{
-      readonly email: string | null;
-      readonly services: ReadonlyArray<GoogleService>;
-    }>;
+    readonly projectAccess: (
+      projectId: ProjectId,
+      input?: { readonly checkConnection?: boolean | undefined },
+    ) => Effect.Effect<GoogleProjectStatus>;
     readonly gmailSearch: (
       projectId: ProjectId,
       input: GmailSearchInput,
@@ -606,7 +613,7 @@ const make = Effect.gen(function* () {
     });
 
   /** One authorized call, retried once with a fresh token after a 401. */
-  const withToken = <A>(
+  const withRawToken = <A>(
     call: (token: Redacted.Redacted<string>) => Effect.Effect<A, GoogleApi.GoogleApiError>,
   ) =>
     accessToken(false).pipe(
@@ -614,14 +621,17 @@ const make = Effect.gen(function* () {
         call(token).pipe(
           Effect.catchIf(
             (error) => error.status === 401,
-            () =>
-              accessToken(true).pipe(
-                Effect.flatMap((fresh) => call(fresh).pipe(Effect.mapError(toAccountError))),
-              ),
+            () => accessToken(true).pipe(Effect.flatMap(call)),
           ),
-          Effect.mapError((error) => (isAccountError(error) ? error : toAccountError(error))),
         ),
       ),
+    );
+
+  const withToken = <A>(
+    call: (token: Redacted.Redacted<string>) => Effect.Effect<A, GoogleApi.GoogleApiError>,
+  ) =>
+    withRawToken(call).pipe(
+      Effect.mapError((error) => (isAccountError(error) ? error : toAccountError(error))),
     );
 
   const gmailSearch = (projectId: ProjectId, input: GmailSearchInput) =>
@@ -782,14 +792,84 @@ const make = Effect.gen(function* () {
       return { file: summary, content: truncateText(content, DRIVE_TEXT_LIMIT), note: null };
     });
 
-  const projectAccess = (projectId: ProjectId) =>
+  const projectStatus = (projectId: ProjectId) =>
     Effect.gen(function* () {
+      const client = yield* currentClient;
       const refresh = yield* Ref.get(refreshRef);
       const state = yield* Ref.get(stateRef);
-      if (Option.isNone(refresh)) return { email: null, services: [] };
-      const services = projectServices(state, projectId);
-      // A project with no Google service turned on learns nothing about the account.
-      return { email: services.length > 0 ? state.email : null, services };
+      return projectGoogleStatus({
+        clientConfigured: Option.isSome(client),
+        connected: Option.isSome(refresh),
+        email: state.email,
+        grantedServices: state.services,
+        projectServices:
+          state.projects.find((project) => project.projectId === projectId)?.services ?? [],
+      });
+    });
+
+  const projectAccess = (
+    projectId: ProjectId,
+    input?: { readonly checkConnection?: boolean | undefined },
+  ) =>
+    Effect.gen(function* () {
+      const initial = yield* projectStatus(projectId);
+      // Status discovery never refreshes tokens or contacts Google by default.
+      if (!input?.checkConnection || initial.services.length === 0) return initial;
+      const checks = yield* Effect.forEach(initial.services, (service) =>
+        requireService(projectId, service).pipe(
+          Effect.andThen(
+            withRawToken((accessToken) =>
+              api.getJson({
+                ...googleHealthRequest(service, api.endpoints),
+                accessToken,
+              }),
+            ),
+          ),
+          // Discard every byte of the API body, even if Google ignores its field mask.
+          Effect.as({ service, status: "ok", message: null } satisfies GoogleServiceCheck),
+          Effect.catch((error) => Effect.succeed(googleHealthFailure(service, error))),
+        ),
+      );
+      // A failed refresh can have removed the sign-in, or the user may have changed grants.
+      const current = yield* projectStatus(projectId);
+      const authorized = new Set(
+        current.serviceChecks
+          .filter((check) => check.status !== "not_authorized")
+          .map((check) => check.service),
+      );
+      const visibleChecks = checks.filter(
+        (check) =>
+          authorized.has(check.service) &&
+          (check.status !== "ok" || current.services.includes(check.service)),
+      );
+      const failed = visibleChecks.some((check) => check.status !== "ok");
+      const verified = current.services.every((service) =>
+        visibleChecks.some((check) => check.service === service && check.status === "ok"),
+      );
+      const checkedAt = isoAt(yield* Clock.currentTimeMillis);
+      return {
+        ...current,
+        connectionState:
+          current.connectionState !== "configured"
+            ? current.connectionState
+            : failed
+              ? "error"
+              : verified
+                ? "verified"
+                : "configured",
+        guidance:
+          current.connectionState !== "configured"
+            ? current.guidance
+            : failed
+              ? "Some authorized Google services failed their live check. Follow each service's message."
+              : verified
+                ? "The authorized Google services answered live read-only checks. No mail, event or file content was returned."
+                : "Project access changed during the check. Run checkConnection: true again to verify the current services.",
+        checkedAt,
+        serviceChecks: current.serviceChecks.map(
+          (check) => visibleChecks.find((result) => result.service === check.service) ?? check,
+        ),
+      } satisfies GoogleProjectStatus;
     });
 
   return GoogleAccountService.of({

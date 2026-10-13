@@ -626,6 +626,21 @@ effectIt.effect("shows the native admission reason instead of nested session ide
   }),
 );
 
+effectIt.effect("retains typed native quota denial and reset without retrying session creation", () =>
+  Effect.gen(function* () {
+    const resetAt = "2026-10-18T03:58:37.000Z";
+    const detail = "The selected subscription cannot accept new work.";
+    const harness = makeLocalCommandHarness({ text: "Continue", openFailure: new ProviderAdapterOpenSessionError({
+      driver: ProviderDriverKind.make("codex"), providerSessionId: ProviderSessionId.make("shared-fixture"),
+      cause: new ProviderSetupError({ instanceId: ProviderInstanceId.make("codex"), operation: "session", detail, usageLimit: { resetAt } }),
+    }) });
+    yield* harness.startWithRetry;
+    expect(harness.open).toHaveBeenCalledOnce();
+    expect(harness.startRootRun).not.toHaveBeenCalled();
+    expect(harness.projection().turnItems).toMatchObject([{ type: "error", failure: { class: "usage_limit", message: detail, resetAt } }]);
+  }),
+);
+
 effectIt.effect("leaves the run starting when a session-open failure will be retried", () =>
   Effect.gen(function* () {
     const harness = makeLocalCommandHarness({

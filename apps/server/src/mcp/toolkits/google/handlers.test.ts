@@ -5,6 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import { Tool } from "effect/ai";
 import * as Google from "../../../integrations/google/GoogleAccountService.ts";
+import { projectGoogleStatus } from "../../../integrations/google/googleAccountHealth.ts";
 import * as Threads from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as Context from "../../McpInvocationContext.ts";
 import * as Access from "../../McpToolAccess.ts";
@@ -35,10 +36,16 @@ const fixture = () => {
     });
   const deps = Layer.mergeAll(
     Layer.mock(Google.GoogleAccountService)({
-      projectAccess: (projectId) =>
+      projectAccess: (projectId, input) =>
         Effect.sync(() => {
-          calls.push({ operation: "status", projectId, input: null });
-          return { email: "me@example.com", services: ["gmail"] };
+          calls.push({ operation: "status", projectId, input });
+          return projectGoogleStatus({
+            clientConfigured: true,
+            connected: true,
+            email: "me@example.com",
+            grantedServices: ["gmail"],
+            projectServices: ["gmail"],
+          });
         }),
       gmailSearch: record("gmailSearch"),
       gmailRead: record("gmailRead"),
@@ -63,7 +70,15 @@ it.effect("reads Google data for the calling thread's own project only", () =>
       const status = yield* toolkit
         .handle("studio_google_status", {})
         .pipe(Stream.unwrap, Stream.runCollect);
-      expect(status.at(-1)?.result).toEqual({ email: "me@example.com", services: ["gmail"] });
+      expect(status.at(-1)?.result).toMatchObject({
+        email: "me@example.com",
+        services: ["gmail"],
+        connectionState: "configured",
+        checkedAt: null,
+      });
+      yield* toolkit
+        .handle("studio_google_status", { checkConnection: true })
+        .pipe(Stream.unwrap, Stream.runCollect);
       yield* toolkit
         .handle("studio_google_gmail_search", { query: "is:unread" })
         .pipe(Stream.unwrap, Stream.runCollect);
@@ -71,7 +86,8 @@ it.effect("reads Google data for the calling thread's own project only", () =>
         .handle("studio_google_drive_read", { fileId: "f1" })
         .pipe(Stream.unwrap, Stream.runCollect);
       expect(f.calls).toEqual([
-        { operation: "status", projectId: caller.projectId, input: null },
+        { operation: "status", projectId: caller.projectId, input: {} },
+        { operation: "status", projectId: caller.projectId, input: { checkConnection: true } },
         { operation: "gmailSearch", projectId: caller.projectId, input: { query: "is:unread" } },
         { operation: "driveRead", projectId: caller.projectId, input: "f1" },
       ]);
@@ -90,6 +106,10 @@ it.effect.each(["read-only", "full-access"] as const)(
           .handle("studio_google_gmail_search", { query: "is:unread" })
           .pipe(Stream.unwrap, Stream.runCollect);
         expect(result.at(-1)?.result).toMatchObject({ code: "capability_denied" });
+        const status = yield* toolkit
+          .handle("studio_google_status", { checkConnection: true })
+          .pipe(Stream.unwrap, Stream.runCollect);
+        expect(status.at(-1)?.result).toMatchObject({ code: "capability_denied" });
         expect(f.calls).toEqual([]);
       }).pipe(
         Effect.provideService(Context.McpInvocationContext, {

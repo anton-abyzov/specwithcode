@@ -20,6 +20,7 @@ import type {
   ModSpecweaveResult,
   ModSpecweaveTask,
 } from "@specweave-studio/contracts";
+import { compareIncrementFoldersNewestFirst } from "@specweave-studio/shared/specweaveIncrement";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -28,13 +29,21 @@ import * as Path from "effect/Path";
 export const MAX_PROJECTS = 20;
 export const MAX_INCREMENTS = 60;
 export const MAX_INCREMENTS_PER_PROJECT = 25;
-const MAX_DIRECTORIES_SCANNED = 400;
+/**
+ * Folders whose metadata is read per project. Only metadata is read for
+ * each, so an open increment is never dropped for being old; this bounds a
+ * runaway folder only.
+ */
+const MAX_DIRECTORIES_SCANNED = 5_000;
+const METADATA_CONCURRENCY = 16;
 const MAX_CRITERIA = 64;
 const MAX_TASKS = 200;
 const MAX_TASK_CRITERIA = 16;
 const SPEC_BYTES = 262_144;
 const LEDGER_BYTES = 1_048_576;
 const SMALL_BYTES = 65_536;
+/** SpecWeave appends sync events to metadata.json; past this an increment reads as unknown. */
+const METADATA_BYTES = 524_288;
 const LEASE_MS = 2 * 3_600_000;
 /** Closed increments stay listed this long, so a standup can say what finished. */
 export const RECENTLY_CLOSED_MS = 7 * 24 * 3_600_000;
@@ -114,7 +123,9 @@ export function parseSpecweaveSpec(spec: string): ParsedSpec {
     // A task's own `- AC-..` bullet cites criteria; it does not define them.
     const criterion =
       current === null
-        ? /^\s*- (?:\[[ xX]\]\s*)?\**(AC-[A-Za-z0-9_-]{1,40})\**\s*(?::|—|–|-)?\**\s*(.*)$/u.exec(line)
+        ? /^\s*- (?:\[[ xX]\]\s*)?\**(AC-[A-Za-z0-9_-]{1,40})\**\s*(?::|—|–|-)?\**\s*(.*)$/u.exec(
+            line,
+          )
         : null;
     if (criterion) {
       if (criteria.size < MAX_CRITERIA && !criteria.has(criterion[1]!)) {
@@ -252,7 +263,12 @@ export function foldSpecweaveLedger(
           (state.status === "claimed" || state.status === "blocked") &&
           state.owner === entry.by
         ) {
-          Object.assign(state, { status: "released", owner: null, changedAt: entry.iso, note: null });
+          Object.assign(state, {
+            status: "released",
+            owner: null,
+            changedAt: entry.iso,
+            note: null,
+          });
         }
         break;
     }
@@ -354,33 +370,46 @@ export const readSpecweaveProgress = (projects: ReadonlyArray<SpecweaveProject>,
         .pipe(Effect.orElseSucceed(() => null));
       if (directory === null || !inside(root, directory)) continue;
       const names = yield* fs.readDirectory(directory).pipe(Effect.orElseSucceed(() => []));
-      const candidates = names
+      const folders = names
         .filter((name) => name.length <= MAX_INCREMENT_ID && INCREMENT_DIRECTORY.test(name))
-        .sort()
-        .reverse()
-        .slice(0, MAX_DIRECTORIES_SCANNED);
+        .sort(compareIncrementFoldersNewestFirst);
+      if (folders.length > MAX_DIRECTORIES_SCANNED) truncated = true;
 
-      let listed = 0;
-      for (const name of candidates) {
-        if (listed >= MAX_INCREMENTS_PER_PROJECT || increments.length >= MAX_INCREMENTS) {
-          truncated = true;
-          break;
-        }
+      // Metadata first, for every folder: it decides what is listed before any
+      // spec or ledger is read, and closed increments past the window cost one read.
+      const statuses = yield* Effect.forEach(
+        folders.slice(0, MAX_DIRECTORIES_SCANNED),
+        (name) =>
+          readText(root, path.join(directory, name, "metadata.json"), METADATA_BYTES).pipe(
+            Effect.map((text) => {
+              const metadata = parseIncrementMetadata(text);
+              const status = bounded(metadata.status, 32)?.toLowerCase() ?? "unknown";
+              const updatedAt =
+                isoOrNull(metadata.lastActivity) ??
+                isoOrNull(metadata.updated) ??
+                isoOrNull(metadata.created);
+              const closed = CLOSED_STATUSES.has(status);
+              const stale =
+                closed && (updatedAt === null || now - Date.parse(updatedAt) > RECENTLY_CLOSED_MS);
+              return { name, metadata, status, updatedAt, closed, stale };
+            }),
+          ),
+        { concurrency: METADATA_CONCURRENCY },
+      );
+      const listable = statuses.filter((entry) => !entry.stale);
+      const room = Math.min(MAX_INCREMENTS_PER_PROJECT, MAX_INCREMENTS - increments.length);
+      if (listable.length > room) truncated = true;
+      // When the cap is hit, open increments win over recently closed ones; the
+      // chosen ones are still listed newest first.
+      const chosen = new Set(
+        [...listable.filter((entry) => !entry.closed), ...listable.filter((entry) => entry.closed)]
+          .slice(0, room)
+          .map((entry) => entry.name),
+      );
+
+      for (const { name, metadata, status, updatedAt } of listable) {
+        if (!chosen.has(name)) continue;
         const folder = path.join(directory, name);
-        const metadataText = yield* readText(root, path.join(folder, "metadata.json"), SMALL_BYTES);
-        const metadata = parseIncrementMetadata(metadataText);
-        const status = bounded(metadata.status, 32)?.toLowerCase() ?? "unknown";
-        const updatedAt =
-          isoOrNull(metadata.lastActivity) ??
-          isoOrNull(metadata.updated) ??
-          isoOrNull(metadata.created);
-        if (
-          CLOSED_STATUSES.has(status) &&
-          (updatedAt === null || now - Date.parse(updatedAt) > RECENTLY_CLOSED_MS)
-        ) {
-          continue;
-        }
-
         const spec = yield* readText(root, path.join(folder, "spec.md"), SPEC_BYTES);
         // A ledger that exists but cannot be read must not fold as empty.
         const ledgerPath = path.join(folder, "ledger.jsonl");
@@ -416,7 +445,6 @@ export const readSpecweaveProgress = (projects: ReadonlyArray<SpecweaveProject>,
           malformedLedgerLines: folded.malformed,
           verify,
         });
-        listed++;
       }
     }
     return { increments, truncated } satisfies ModSpecweaveResult;

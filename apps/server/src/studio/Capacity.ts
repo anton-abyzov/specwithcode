@@ -62,7 +62,7 @@ const make = Effect.gen(function* () {
     Effect.flatMap((snapshot) => snapshot.available ? Effect.succeed(snapshot) : Effect.fail(new CapacityMutationError({ category: snapshot.error ?? "switch-invalid-response" }))),
   );
   const assertNativeStart = (id: ProviderInstanceId, cwd: string | null, options?: NativeCreditStartOptions) => Effect.gen(function* () {
-    const deny = (detail: string) => new ProviderSetupError({ instanceId: id, operation: "session", detail });
+    const deny = (detail: string, usageLimit?: { readonly resetAt?: string }) => new ProviderSetupError({ instanceId: id, operation: "session", detail, ...(usageLimit ? { usageLimit } : {}) });
     const config = yield* settings.getSettings.pipe(Effect.mapError(() => deny("Native provider settings could not be verified.")));
     const entry = nativeConfigForInstance(config, id);
     if (options?.allowCredits && entry?.driver !== "codex")
@@ -84,7 +84,11 @@ const make = Effect.gen(function* () {
     // as a sign-in failure. Refresh never logs in or admits the cached result.
     const checkCredits = entry.driver === "codex" && options?.allowCredits === true;
     const creditCheckStartedAt = now;
-    if (!nativeSnapshotAuthorized(native, now) || checkCredits) {
+    // An explicit start can follow a native login or quota reset before the
+    // background snapshot expires. Recheck this exact instance once, never
+    // another account; a failed probe cannot clear its previous denial.
+    const recheckDenied = nativeQuotaDenied(native?.usageLimits, now);
+    if (!nativeSnapshotAuthorized(native, now) || checkCredits || recheckDenied) {
       const observed = yield* providers.refreshInstance(id).pipe(Effect.timeoutOption(NATIVE_STATUS_CHECK_TIMEOUT));
       if (Option.isNone(observed)) return yield* deny("The native provider status check timed out. Refresh Providers on this machine and try again.");
       observedProviders = observed.value;
@@ -120,7 +124,15 @@ const make = Effect.gen(function* () {
         return ["primary", "secondary"].includes(window.id) && Number.isFinite(at) && at > now ? [at] : [];
       }).toSorted((a, b) => a - b)[0];
       const reason = limits?.spendControlReached === true ? "spend control" : "usage limit";
-      return yield* deny(`This native subscription profile has no remaining permitted usage because its ${reason} denies new work.${nextReset ? ` Next observed reset: ${new Date(nextReset).toISOString()}.` : ""} Select an eligible profile for a new session.`);
+      return yield* deny(`This native subscription profile has no remaining permitted usage because its ${reason} denies new work.${nextReset ? ` Next observed reset: ${new Date(nextReset).toISOString()}.` : ""} Select an eligible profile for a new session.`, nextReset ? { resetAt: new Date(nextReset).toISOString() } : {});
+    }
+    if (recheckDenied && !creditContinuation()) {
+      const limits = native?.usageLimits;
+      const observedAt = Date.parse(limits?.nativeAllowanceObservedAt ?? "");
+      if (!limits || limits.unavailable || !Number.isFinite(observedAt) || observedAt < creditCheckStartedAt
+        || !freshObservation(limits.nativeAllowanceObservedAt, now)
+        || (entry.driver === "codex" && limits.ordinaryUsageAllowed !== true))
+        return yield* deny("Current native subscription permission could not be verified. Refresh Providers on this machine and try again.");
     }
     const binding = nativeCapacityBinding(entry, baseEnv);
     if (!binding && entry.driver === "claudeAgent") return yield* deny("Independent Claude profile isolation is unverified. Use a supported consumer sign-in on this machine; copied OAuth cannot authorize a profile.");
@@ -164,7 +176,7 @@ const make = Effect.gen(function* () {
       && Date.parse(account.quota.observedAt ?? "") <= Date.parse(native?.usageLimits?.nativeAllowanceObservedAt ?? "");
     if (account?.status === "exhausted" && !fundedSession) {
       const nextReset = [account.quota.window, account.quota.weekly].flatMap((window) => window?.resetsAt && window.resetsAt * 1000 > now ? [window.resetsAt * 1000] : []).toSorted((a, b) => a - b)[0];
-      return yield* deny(`This native subscription profile has no remaining permitted usage under its current usage limit.${nextReset ? ` Next observed reset: ${new Date(nextReset).toISOString()}.` : ""} Select an eligible profile for a new session.`);
+      return yield* deny(`This native subscription profile has no remaining permitted usage under its current usage limit.${nextReset ? ` Next observed reset: ${new Date(nextReset).toISOString()}.` : ""} Select an eligible profile for a new session.`, nextReset ? { resetAt: new Date(nextReset).toISOString() } : {});
     }
     if (!account || account.authenticated !== true || account.authError || ["blocked", "auth-required", "active", "stale"].includes(account.status) || (account.status === "exhausted" && !fundedSession)
       || ((account.status === "unknown" || account.quota.freshness !== "fresh") && (account.quota.window !== null || account.quota.weekly !== null || account.quota.observedAt !== null)))

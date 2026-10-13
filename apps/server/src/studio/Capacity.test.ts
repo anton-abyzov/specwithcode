@@ -132,6 +132,33 @@ describe("native session admission", () => {
     const custom = { ...settings, providers: { ...settings.providers, codex: { ...settings.providers.codex, homePath: "/tmp/explicit-native-home" } } };
     for (const config of [settings, custom]) await expect(run(start(), null, [native], config, true)).rejects.toThrow(/spend control/);
   });
+  it("rechecks a cached native denial once and admits a newly allowed selected account", async () => {
+    const now = Date.now(), denied = fundedProvider(now - 1000), allowed = provider("codex", "codex", now);
+    Object.assign(allowed.usageLimits!, { ordinaryUsageAllowed: true, nativeAllowanceObservedAt: new Date(now).toISOString() });
+    const checks: string[] = [];
+    const effect = Clock.clockWith((clock) => start().pipe(Effect.provideService(Clock.Clock, { ...clock, currentTimeMillis: Effect.succeed(now), currentTimeMillisUnsafe: () => now })));
+    await expect(run(effect, null, [denied], settings, true, true, [allowed], checks)).resolves.toBeUndefined();
+    expect(checks).toEqual(["codex"]);
+  });
+  it("keeps a current denial structured after its bounded refresh", async () => {
+    const denied = fundedProvider(Date.now()), checks: string[] = [];
+    await expect(run(start(), null, [denied], settings, true, true, [denied], checks)).rejects.toMatchObject({
+      _tag: "ProviderSetupError", usageLimit: { resetAt: denied.usageLimits.windows[0]!.resetsAt },
+    });
+    expect(checks).toEqual(["codex"]);
+  });
+  it("does not clear a cached denial with a failed or incomplete refresh", async () => {
+    const now = Date.now(), denied = fundedProvider(now - 1000);
+    for (const next of [
+      { ...provider(), status: "error" as const },
+      { ...provider(), usageLimits: { checkedAt: new Date(now).toISOString(), windows: [] } },
+      { ...provider(), usageLimits: { ...provider().usageLimits!, nativeAllowanceObservedAt: new Date(now - 1000).toISOString(), ordinaryUsageAllowed: true } },
+    ]) {
+      const checks: string[] = [];
+      await expect(run(start(), null, [denied], settings, true, true, [next], checks)).rejects.toThrow(/status check failed|permission could not be verified/);
+      expect(checks).toEqual(["codex"]);
+    }
+  });
   it("rejects effective custom routes even when native account and quota are fresh", async () => {
     await expect(run(start(), rawSnapshot(), [provider()], settings, false, false)).rejects.toThrow(/effective Codex route/);
   });

@@ -46,6 +46,8 @@ const makeHarness = (
   const revoked: string[] = [];
   let accessCounter = 0;
   let refreshFailure: GoogleApi.GoogleApiError | null = null;
+  let apiFailure: GoogleApi.GoogleApiError | null = null;
+  let scope = SCOPE_GMAIL_CALENDAR;
   let unauthorizedOnce = false;
   const nextAccess = () => Redacted.make(`access-${++accessCounter}`);
 
@@ -58,7 +60,7 @@ const makeHarness = (
             accessToken: nextAccess(),
             expiresInSeconds: 3600,
             refreshToken: Redacted.make("refresh-1"),
-            scope: SCOPE_GMAIL_CALENDAR,
+            scope,
             idToken: idToken("me@example.com"),
           })
         : Effect.fail(
@@ -75,7 +77,7 @@ const makeHarness = (
             accessToken: nextAccess(),
             expiresInSeconds: 3600,
             refreshToken: null,
-            scope: SCOPE_GMAIL_CALENDAR,
+            scope,
             idToken: undefined,
           }),
     revoke: (token) => Effect.sync(() => void revoked.push(Redacted.value(token))),
@@ -86,6 +88,7 @@ const makeHarness = (
           unauthorizedOnce = false;
           return yield* new GoogleApi.GoogleApiError({ operation, status: 401 });
         }
+        if (apiFailure) return yield* apiFailure;
         if (url.endsWith("/users/me/messages")) return { messages: [{ id: "m1" }] };
         if (url.endsWith("/users/me/messages/m1")) {
           return {
@@ -148,6 +151,12 @@ const makeHarness = (
     tokenClients,
     failRefresh: (error: GoogleApi.GoogleApiError | null) => {
       refreshFailure = error;
+    },
+    failApi: (error: GoogleApi.GoogleApiError | null) => {
+      apiFailure = error;
+    },
+    grantAllScopes: () => {
+      scope = `${SCOPE_GMAIL_CALENDAR} https://www.googleapis.com/auth/drive.readonly`;
     },
     unauthorizeNextCall: () => {
       unauthorizedOnce = true;
@@ -218,6 +227,190 @@ it.effect("signs in once with the state it issued and keeps secrets off the stat
       "refresh-1",
     );
   }),
+);
+
+const connectForHealth = (google: GoogleAccountService.GoogleAccountService["Service"]) =>
+  Effect.gen(function* () {
+    const state = new URL(
+      (yield* google.startSignIn({ services: ["gmail", "calendar", "drive"] })).signIn!
+        .authorizationUrl,
+    ).searchParams.get("state");
+    yield* google.completeSignIn({ callbackUrl: `?code=good-code&state=${state}` });
+  });
+
+it.effect(
+  "explains setup, project grants and consent without network requests or ungranted identity",
+  () =>
+    Effect.gen(function* () {
+      const harness = makeHarness();
+      yield* Effect.gen(function* () {
+        const google = yield* GoogleAccountService.GoogleAccountService;
+        assert.strictEqual(
+          (yield* google.projectAccess(PROJECT, { checkConnection: true })).connectionState,
+          "not_configured",
+        );
+        yield* google.configureClient({ clientId: CLIENT_ID, clientSecret: CLIENT_SECRET });
+        assert.strictEqual(
+          (yield* google.projectAccess(PROJECT, { checkConnection: true })).connectionState,
+          "disconnected",
+        );
+        yield* connectForHealth(google);
+        const ungranted = yield* google.projectAccess(OTHER_PROJECT, { checkConnection: true });
+        assert.strictEqual(ungranted.connectionState, "project_access_required");
+        assert.strictEqual(ungranted.email, null);
+        assert.deepStrictEqual(ungranted.services, []);
+        assert.isTrue(ungranted.serviceChecks.every((check) => check.status === "not_authorized"));
+        yield* google.setProjectAccess({ projectId: PROJECT, services: ["drive"] });
+        const missingScope = yield* google.projectAccess(PROJECT, { checkConnection: true });
+        assert.strictEqual(missingScope.connectionState, "scope_required");
+        assert.strictEqual(missingScope.email, null);
+        assert.deepStrictEqual(
+          missingScope.serviceChecks.find((check) => check.service === "drive"),
+          {
+            service: "drive",
+            status: "scope_missing",
+            message: "Reconnect Google and approve this service.",
+          },
+        );
+        assert.strictEqual(
+          missingScope.serviceChecks.find((check) => check.service === "gmail")?.status,
+          "not_authorized",
+        );
+        assert.strictEqual(missingScope.checkedAt, null);
+        assert.deepStrictEqual(harness.calls, []);
+        assert.strictEqual(harness.tokenClients.length, 1);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+);
+
+it.effect(
+  "checks all three granted APIs using content-free requests and discards their bodies",
+  () =>
+    Effect.gen(function* () {
+      const harness = makeHarness(STUDIO_CLIENT);
+      harness.grantAllScopes();
+      yield* Effect.gen(function* () {
+        const google = yield* GoogleAccountService.GoogleAccountService;
+        yield* connectForHealth(google);
+        yield* google.setProjectAccess({
+          projectId: PROJECT,
+          services: ["gmail", "calendar", "drive"],
+        });
+        const saved = yield* google.projectAccess(PROJECT);
+        assert.strictEqual(saved.connectionState, "configured");
+        assert.strictEqual(saved.checkedAt, null);
+        assert.deepStrictEqual(harness.calls, []);
+        const checked = yield* google.projectAccess(PROJECT, { checkConnection: true });
+        assert.strictEqual(checked.connectionState, "verified");
+        assert.isNotNull(checked.checkedAt);
+        assert.deepStrictEqual(
+          checked.serviceChecks.map((check) => check.status),
+          ["ok", "ok", "ok"],
+        );
+        assert.deepStrictEqual(
+          harness.calls.map(({ url, query }) => ({ url, query })),
+          [
+            {
+              url: "https://gmail.googleapis.com/gmail/v1/users/me/profile",
+              query: { fields: "historyId" },
+            },
+            {
+              url: "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+              query: { maxResults: "1", fields: "kind" },
+            },
+            {
+              url: "https://www.googleapis.com/drive/v3/files",
+              query: { pageSize: "1", fields: "kind" },
+            },
+          ],
+        );
+        const serialized = JSON.stringify(checked);
+        for (const forbidden of [
+          "Standup",
+          "Europe/Berlin",
+          "e1",
+          "access-1",
+          "refresh-1",
+          "Dinner",
+          "GOCSPX",
+        ])
+          assert.notInclude(serialized, forbidden);
+        assert.strictEqual(harness.tokenClients.length, 1);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+);
+
+it.effect("probes only this project's allowed and consented services", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness(STUDIO_CLIENT);
+    yield* Effect.gen(function* () {
+      const google = yield* GoogleAccountService.GoogleAccountService;
+      yield* connectForHealth(google);
+      yield* google.setProjectAccess({ projectId: PROJECT, services: ["calendar", "drive"] });
+      yield* google.setProjectAccess({ projectId: OTHER_PROJECT, services: ["gmail"] });
+      const result = yield* google.projectAccess(PROJECT, { checkConnection: true });
+      assert.deepStrictEqual(result.services, ["calendar"]);
+      assert.deepStrictEqual(
+        result.serviceChecks.map((check) => check.status),
+        ["not_authorized", "ok", "scope_missing"],
+      );
+      assert.strictEqual(harness.calls.length, 1);
+      assert.include(harness.calls[0]!.url, "/calendars/primary/events");
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect.each([
+  { status: 403, reason: "accessNotConfigured", expected: "api_disabled" },
+  { status: 403, reason: "insufficientPermissions", expected: "access_denied" },
+  { status: 401, expected: "authentication_failed" },
+  { expected: "unreachable" },
+  { status: 500, expected: "error" },
+])("reports live Google health failure $expected without claiming connectivity", (failure) =>
+  Effect.gen(function* () {
+    const harness = makeHarness(STUDIO_CLIENT);
+    yield* Effect.gen(function* () {
+      const google = yield* GoogleAccountService.GoogleAccountService;
+      yield* connectForHealth(google);
+      yield* google.setProjectAccess({ projectId: PROJECT, services: ["gmail"] });
+      harness.failApi(
+        new GoogleApi.GoogleApiError({ operation: "Gmail connection check", ...failure }),
+      );
+      const result = yield* google.projectAccess(PROJECT, { checkConnection: true });
+      assert.strictEqual(result.connectionState, "error");
+      assert.strictEqual(result.serviceChecks[0]!.status, failure.expected);
+      assert.isNotNull(result.checkedAt);
+      assert.notInclude(JSON.stringify(result), "access-1");
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect(
+  "a revoked refresh token produces disconnected diagnostics and hides account identity",
+  () =>
+    Effect.gen(function* () {
+      const harness = makeHarness(STUDIO_CLIENT);
+      yield* Effect.gen(function* () {
+        const google = yield* GoogleAccountService.GoogleAccountService;
+        yield* connectForHealth(google);
+        yield* google.setProjectAccess({ projectId: PROJECT, services: ["gmail"] });
+        harness.unauthorizeNextCall();
+        harness.failRefresh(
+          new GoogleApi.GoogleApiError({
+            operation: "token refresh",
+            status: 400,
+            reason: "invalid_grant",
+          }),
+        );
+        const result = yield* google.projectAccess(PROJECT, { checkConnection: true });
+        assert.strictEqual(result.connectionState, "disconnected");
+        assert.strictEqual(result.email, null);
+        assert.deepStrictEqual(result.services, []);
+        assert.strictEqual(result.serviceChecks[0]!.status, "authentication_failed");
+        assert.notInclude(JSON.stringify(result), "me@example.com");
+        assert.isFalse(harness.secrets.has("google-refresh-token"));
+      }).pipe(Effect.provide(harness.layer));
+    }),
 );
 
 it.effect("lets agents read only what their project was given", () =>

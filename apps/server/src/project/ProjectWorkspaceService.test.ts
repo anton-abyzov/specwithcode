@@ -48,6 +48,35 @@ const seed = (id = projectId) =>
   });
 it.layer(layer)("ProjectWorkspaceService", (it) => {
   it.effect(
+    "gives personal coordinators native Google readiness guidance separately from external connections",
+    () =>
+      Effect.gen(function* () {
+        const id = ProjectId.make("google-assistant");
+        const coordinator = ThreadId.make("google-coordinator");
+        yield* seed(id);
+        const sql = yield* SqlClient.SqlClient;
+        const settings = {
+          ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+          kind: "personal",
+          coordinatorThreadId: coordinator,
+        };
+        yield* sql`UPDATE projection_projects SET workspace_settings_json=${JSON.stringify(settings)} WHERE project_id=${id}`;
+        const service = yield* Workspace.ProjectWorkspaceService;
+        const context = yield* service.context(id, coordinator);
+        assert.include(context, "studio_google_status with checkConnection: true");
+        assert.include(context, "native Google tools are separate from that list");
+        assert.include(context, "Handle simple permitted Gmail, Calendar and Drive reads yourself");
+        assert.include(context, "For requests that need a worker, route them at once");
+        assert.include(context, "studio_google_* read tools directly for simple requests");
+        assert.include(
+          context,
+          "inspect the run and tool evidence before stating whether the worker started",
+        );
+        assert.include(context, "require the user's authorization");
+        assert.isAtMost(context.length, PROJECT_CONTEXT_CHARACTER_LIMIT);
+      }),
+  );
+  it.effect(
     "lists only sorted memory metadata and keeps UTF-8 totals current and project-scoped",
     () =>
       Effect.gen(function* () {

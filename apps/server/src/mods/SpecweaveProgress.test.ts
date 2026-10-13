@@ -7,6 +7,7 @@ import * as Path from "effect/Path";
 
 import {
   foldSpecweaveLedger,
+  MAX_INCREMENTS_PER_PROJECT,
   parseSpecweaveSpec,
   parseVerifyReport,
   readSpecweaveProgress,
@@ -329,6 +330,110 @@ it.layer(NodeServices.layer)("readSpecweaveProgress", (it) => {
         result.increments[1]!.criteria.map((criterion) => criterion.id),
         ["AC-01", "AC-02", "AC-03"],
       );
+    }),
+  );
+
+  /** A temporary project holding these increments, each with metadata and a spec. */
+  const seedProject = (
+    increments: ReadonlyArray<{ readonly name: string; readonly metadata: object }>,
+  ) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "specweave-progress-" });
+      yield* Effect.forEach(
+        increments,
+        ({ name, metadata }) =>
+          Effect.gen(function* () {
+            const folder = path.join(root, ".specweave", "increments", name);
+            yield* fs.makeDirectory(folder, { recursive: true });
+            yield* fs.writeFileString(path.join(folder, "metadata.json"), JSON.stringify(metadata));
+            yield* fs.writeFileString(path.join(folder, "spec.md"), SPEC);
+          }),
+        { concurrency: 16 },
+      );
+      return root;
+    });
+  const numbered = (number: number, slug: string) =>
+    `${String(number).padStart(4, "0")}-${slug}-${number}`;
+
+  it.effect("finds an open increment older than hundreds of closed ones", () =>
+    Effect.gen(function* () {
+      const root = yield* seedProject([
+        { name: "0001-ancient-open", metadata: { status: "active", lastActivity: hoursAgo(1) } },
+        ...Array.from({ length: 450 }, (_, index) => ({
+          name: numbered(index + 2, "closed"),
+          metadata: { status: "completed", lastActivity: hoursAgo(24 * 60) },
+        })),
+      ]);
+      const result = yield* readSpecweaveProgress(
+        [{ title: "Umbrella", workspaceRoot: root }],
+        NOW,
+      );
+      assert.deepEqual(
+        result.increments.map((increment) => increment.id),
+        ["0001-ancient-open"],
+      );
+      assert.isFalse(result.truncated);
+    }),
+  );
+
+  it.effect("reads a closed increment's metadata past 64 KB as closed, not unknown", () =>
+    Effect.gen(function* () {
+      const root = yield* seedProject([
+        { name: "0002-open", metadata: { status: "active", lastActivity: hoursAgo(1) } },
+        {
+          name: "0001-big-closed",
+          metadata: {
+            status: "completed",
+            lastActivity: hoursAgo(24 * 60),
+            acSyncEvents: Array.from({ length: 1_500 }, (_, index) => ({
+              at: hoursAgo(24 * 60),
+              note: `sync event ${index} with some detail`,
+            })),
+          },
+        },
+      ]);
+      const result = yield* readSpecweaveProgress([{ title: "Big", workspaceRoot: root }], NOW);
+      assert.deepEqual(
+        result.increments.map((increment) => increment.id),
+        ["0002-open"],
+      );
+    }),
+  );
+
+  it.effect("sorts increments by number past 9999", () =>
+    Effect.gen(function* () {
+      const open = { status: "active", lastActivity: hoursAgo(1) };
+      const root = yield* seedProject([
+        { name: "0998-early", metadata: open },
+        { name: "9999-four-digits", metadata: open },
+        { name: "10000-five-digits", metadata: open },
+      ]);
+      const result = yield* readSpecweaveProgress([{ title: "Big", workspaceRoot: root }], NOW);
+      assert.deepEqual(
+        result.increments.map((increment) => increment.id),
+        ["10000-five-digits", "9999-four-digits", "0998-early"],
+      );
+    }),
+  );
+
+  it.effect("keeps open increments over recently closed ones when the cap is hit", () =>
+    Effect.gen(function* () {
+      const root = yield* seedProject([
+        { name: "0001-old-open", metadata: { status: "active", lastActivity: hoursAgo(24 * 90) } },
+        ...Array.from({ length: MAX_INCREMENTS_PER_PROJECT + 5 }, (_, index) => ({
+          name: numbered(index + 100, "just-closed"),
+          metadata: { status: "completed", lastActivity: hoursAgo(24) },
+        })),
+      ]);
+      const result = yield* readSpecweaveProgress([{ title: "Busy", workspaceRoot: root }], NOW);
+      const ids = result.increments.map((increment) => increment.id);
+      assert.lengthOf(ids, MAX_INCREMENTS_PER_PROJECT);
+      assert.isTrue(result.truncated);
+      // Still newest first: the old open increment comes last, after the newest closed ones.
+      assert.equal(ids.at(-1), "0001-old-open");
+      assert.equal(ids[0], numbered(MAX_INCREMENTS_PER_PROJECT + 104, "just-closed"));
     }),
   );
 });

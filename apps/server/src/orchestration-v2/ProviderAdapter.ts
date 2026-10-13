@@ -38,6 +38,7 @@ import {
   ThreadId,
 } from "@specweave-studio/contracts";
 import * as Context from "effect/Context";
+import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import type * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
@@ -175,15 +176,24 @@ export class ProviderAdapterCapabilitiesError extends Schema.TaggedError<Provide
 }
 
 /** Expose curated setup guidance through session wrappers, never a raw stack. */
-export function providerSetupFailureDetail(error: unknown): string | undefined {
+export function providerSetupFailure(error: unknown): ProviderSetupError | undefined {
   const seen = new Set<unknown>();
   let current = error;
   for (let depth = 0; depth < 8 && current != null && !seen.has(current); depth++) {
-    if (current instanceof ProviderSetupError) return current.detail;
-    seen.add(current);
-    current = typeof current === "object" && "cause" in current ? current.cause : undefined;
+    try {
+      if (current instanceof ProviderSetupError) return current;
+      seen.add(current);
+      current = Cause.isCause(current) ? Cause.squash(current)
+        : typeof current === "object" && "cause" in current ? current.cause : undefined;
+    } catch {
+      return undefined;
+    }
   }
   return undefined;
+}
+
+export function providerSetupFailureDetail(error: unknown): string | undefined {
+  return providerSetupFailure(error)?.detail;
 }
 
 export class ProviderAdapterOpenSessionError extends Schema.TaggedError<ProviderAdapterOpenSessionError>()(
