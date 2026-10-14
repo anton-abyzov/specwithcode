@@ -20,6 +20,17 @@ DESKTOP_SESSION_METHODS = ('bearer-access-token', 'dpop-access-token')
 MAX_DESKTOP_HEARTBEATS = 4
 
 
+def session_policy(identity, policy=None):
+    # Dependency-free: the read-only network verifier streams this module by itself.
+    assert isinstance(identity, str) and re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?', identity) and identity not in {'stage', 'backups'}, 'Unsafe service identity'
+    legacy = {'m4': 'browser-cookie', 'm1': 'worker-relay', 'm3': 'worker-relay'}.get(identity)
+    assert policy is None or policy in {'browser-cookie', 'worker-relay'}, 'Unknown web session policy'
+    assert legacy is None or policy in (None, legacy), 'Legacy web session policy cannot change'
+    policy = policy or legacy
+    assert policy is not None, 'Generic service requires an explicit web session policy'
+    return ('browser-session-cookie', 2) if policy == 'browser-cookie' else ('bearer-access-token', 1)
+
+
 def encoded(value):
     return json.dumps(value, default=lambda item: item.hex(), separators=(',', ':'))
 
@@ -86,11 +97,11 @@ def assert_only_auth_hash_changed(before, after):
     assert before['nativeWorkIdle'] is True and after['nativeWorkIdle'] is True
 
 
-def active_session(auth, row, instant, identity):
+def active_session(auth, row, instant, identity, web_session_policy=None):
     """'web' or 'desktop' for an active session allowed to heartbeat; raises otherwise."""
     fields = dict(zip(auth['columns'], row))
     assert fields['revoked_at'] is None, 'Heartbeat session is revoked'
-    if fields['method'] == WEB_SESSION_METHOD[identity] and fields['client_surface'] == 'web':
+    if fields['method'] == session_policy(identity, web_session_policy)[0] and fields['client_surface'] == 'web':
         kind = 'web'
     elif fields['method'] in DESKTOP_SESSION_METHODS and fields['client_surface'] == 'desktop':
         kind = 'desktop'
@@ -100,8 +111,8 @@ def active_session(auth, row, instant, identity):
     return kind
 
 
-def active_browser(auth, row, instant, identity):
-    assert active_session(auth, row, instant, identity) == 'web', \
+def active_browser(auth, row, instant, identity, web_session_policy=None):
+    assert active_session(auth, row, instant, identity, web_session_policy) == 'web', \
         'Heartbeat is not the supported existing web-browser session'
 
 
@@ -120,9 +131,9 @@ def invariant_row_hash(auth, row):
     return hashlib.sha256(('studio-auth-heartbeat-row-v2\n' + encoded(cells)).encode()).hexdigest()
 
 
-def prove_restart_heartbeat(before, after, original, current, restart_started_at, observed_after_at, *, identity='m4'):
+def prove_restart_heartbeat(before, after, original, current, restart_started_at, observed_after_at, *, identity='m4', web_session_policy=None):
     """Return a noncredential witness; never alter or normalize the reported snapshots."""
-    assert identity in {'m4', 'm1', 'm3'}, 'Restart heartbeat exception requires M4 cookie or paired-worker relay WEB session'
+    _, max_web = session_policy(identity, web_session_policy)
     assert original is not None and current is not None, 'Restart heartbeat proof requires the auth sessions table'
     bind_auth(original, before)
     bind_auth(current, after)
@@ -139,7 +150,7 @@ def prove_restart_heartbeat(before, after, original, current, restart_started_at
     assert len(old_rows) == len(original['rows']) and len(new_rows) == len(current['rows']), 'Duplicate auth session identity'
     assert old_rows.keys() == new_rows.keys(), 'Auth session identities changed'
     changed = [(old, new_rows[key]) for key, old in old_rows.items() if old != new_rows[key]]
-    assert 1 <= len(changed) <= MAX_WEB_HEARTBEATS[identity] + MAX_DESKTOP_HEARTBEATS, \
+    assert 1 <= len(changed) <= max_web + MAX_DESKTOP_HEARTBEATS, \
         'Heartbeat exceeds the supported existing-session count'
     restored = copy.deepcopy(current)
     changes = []
@@ -151,14 +162,14 @@ def prove_restart_heartbeat(before, after, original, current, restart_started_at
                 if type(pair[0]) is not type(pair[1]) or pair[0] != pair[1]] == [timestamp], 'Heartbeat changed another auth cell'
         previous, connected = utc_timestamp(old[timestamp]), utc_timestamp(new[timestamp])
         assert previous <= start <= connected <= end and previous < connected, 'Heartbeat did not advance inside the owned restart window'
-        kind = active_session(original, old, start, identity)
-        assert active_session(current, new, connected, identity) == kind, 'Heartbeat session kind changed'
+        kind = active_session(original, old, start, identity, web_session_policy)
+        assert active_session(current, new, connected, identity, web_session_policy) == kind, 'Heartbeat session kind changed'
         kinds.append(kind)
         restored['rows'][current['rows'].index(new)][timestamp] = old[timestamp]
         changes.append({'rowSha256': invariant_row_hash(current, new),
                         'beforeLastConnectedAt': old[timestamp], 'afterLastConnectedAt': new[timestamp]})
         sessions.append({**session_name(current, new, kind), 'rowSha256': changes[-1]['rowSha256']})
-    assert kinds.count('web') <= MAX_WEB_HEARTBEATS[identity] and kinds.count('desktop') <= MAX_DESKTOP_HEARTBEATS, \
+    assert kinds.count('web') <= max_web and kinds.count('desktop') <= MAX_DESKTOP_HEARTBEATS, \
         'Heartbeat exceeds the supported existing-session count'
     assert len({cell['rowSha256'] for cell in changes}) == len(changes), 'Duplicate heartbeat row fingerprint'
     bind_auth(restored, before)
@@ -168,6 +179,11 @@ def prove_restart_heartbeat(before, after, original, current, restart_started_at
             'beforeAuthSessionsSha256': before['hashes']['auth_sessions'],
             'afterAuthSessionsSha256': after['hashes']['auth_sessions'],
             'originalCompleteRowsReconstructed': True}
+    if identity not in WEB_SESSION_METHOD:
+        witness.update(schemaVersion=4, serviceIdentity=identity, webSessionPolicy=web_session_policy,
+                       timestampChanges=sorted(changes, key=lambda cell: cell['rowSha256']),
+                       sessions=sorted(sessions, key=lambda cell: cell['rowSha256']))
+        return witness
     if 'desktop' in kinds:
         # Version 3: any mix of the web session and existing desktop-app sessions, each named.
         witness.update(schemaVersion=3, serviceIdentity=identity,
@@ -230,13 +246,14 @@ def restore_timestamps(auth, changes, expected):
 
 def restore_witness(current, witness, expected):
     """The complete original auth rows a verified witness of any version reverses to."""
-    if witness['schemaVersion'] in (2, 3):
+    if witness['schemaVersion'] in (2, 3, 4):
         return restore_timestamps(current, witness['timestampChanges'], expected)
     return restore_timestamp(current, witness['beforeLastConnectedAt'], witness['afterLastConnectedAt'], expected)
 
 
-def verify_restart_witness(before, after, witness, current, *, identity='m4'):
+def verify_restart_witness(before, after, witness, current, *, identity='m4', web_session_policy=None):
     """Recompute the complete proof from live rows, not the witness's booleans."""
+    session_policy(identity, web_session_policy)
     bind_auth(current, after)
     assert schema_hash(current) == witness['authSchemaSha256'], 'Live auth schema does not match restart proof'
     assert type(witness['schemaVersion']) is int and type(witness['changedRows']) is int, 'Heartbeat witness counts must be integers'
@@ -244,7 +261,9 @@ def verify_restart_witness(before, after, witness, current, *, identity='m4'):
     if witness['schemaVersion'] == 2:
         assert identity == 'm4' and witness['changedRows'] == 2, 'Only M4 supports exactly two cookie heartbeats'
         original = restore_m4_timestamps(current, witness['timestampChanges'], before)
-    elif witness['schemaVersion'] == 3:
+    elif witness['schemaVersion'] in (3, 4):
+        if witness['schemaVersion'] == 4:
+            assert identity not in WEB_SESSION_METHOD and witness.get('webSessionPolicy') == web_session_policy, 'Heartbeat witness policy differs'
         assert witness.get('serviceIdentity') == identity, 'Heartbeat witness names another service'
         assert isinstance(witness['timestampChanges'], list) and witness['changedRows'] == len(witness['timestampChanges']), \
             'Heartbeat witness counts differ'
@@ -253,6 +272,6 @@ def verify_restart_witness(before, after, witness, current, *, identity='m4'):
         assert witness['schemaVersion'] == 1 and witness['changedRows'] == 1, 'Unsupported heartbeat witness version or count'
         original = restore_timestamp(current, witness['beforeLastConnectedAt'], witness['afterLastConnectedAt'], before)
     verified = prove_restart_heartbeat(before, after, original, current,
-                                      witness['restartStartedAt'], witness['observedAfterAt'], identity=identity)
+                                      witness['restartStartedAt'], witness['observedAfterAt'], identity=identity, web_session_policy=web_session_policy)
     assert verified is not None and verified == witness, 'Restart heartbeat witness differs from complete reconstruction'
     return verified

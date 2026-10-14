@@ -1,5 +1,9 @@
 import {
   type ModelSelection,
+  type LogicalProject,
+  type LogicalProjectMember,
+  type EnvironmentId,
+  type Project,
   type OrchestrationV2Notification,
   type OrchestratorMcpMachineProject,
   type OrchestratorMcpMachineProvider,
@@ -11,6 +15,27 @@ import {
 } from "@specweave-studio/contracts";
 import type { StudioFleetWorkers } from "@specweave-studio/contracts/studioFleet";
 import { studioThreadLinkLabel } from "@specweave-studio/shared/studioThreadLinks";
+
+/** Membership is explicit and reciprocal; repository/name resemblance is never authority. */
+export function isLogicalProjectBinding(
+  project: Project,
+  logical: LogicalProject,
+  member: LogicalProjectMember,
+): boolean {
+  const remote = project.workspaceSettings?.logicalProject;
+  return (
+    project.deletedAt === null &&
+    project.id === member.projectId &&
+    remote?.id === logical.id &&
+    remote.coordinatorId === logical.coordinatorId &&
+    remote.members.some(
+      (candidate) =>
+        candidate.environmentId === member.environmentId &&
+        candidate.projectId === member.projectId &&
+        candidate.coordinatorThreadId === member.coordinatorThreadId,
+    )
+  );
+}
 
 /** The parts of a project, here or there, that decide whether two are the same work. */
 export interface MatchableProject {
@@ -40,6 +65,66 @@ export type RemoteProjectMatch = OrchestratorMcpMachineProject & {
   /** Why nothing matched, in words an agent can act on. */
   readonly reason?: string;
 };
+
+/** Select a declared binding before consulting remote state; availability never elects an owner. */
+export function logicalProjectBindingMatch(input: {
+  readonly logical: LogicalProject;
+  readonly environmentId: EnvironmentId;
+  readonly projectId?: ProjectId | undefined;
+}): RemoteProjectMatch {
+  const members = [
+    ...new Map(
+      input.logical.members
+        .filter(
+          (member) =>
+            member.environmentId === input.environmentId &&
+            (input.projectId === undefined || member.projectId === input.projectId),
+        )
+        .map((member) => [JSON.stringify([member.projectId, member.coordinatorThreadId]), member]),
+    ).values(),
+  ];
+  if (members.length === 0)
+    return {
+      match: "none",
+      reason:
+        input.projectId === undefined
+          ? "This logical project has no execution binding on this machine. Establish a project handoff binding before launching workers there."
+          : `Project ${input.projectId} is not an execution binding of this logical project on this machine. Choose an admitted binding.`,
+    };
+  if (members.length > 1)
+    return {
+      match: "ambiguous",
+      candidates: members.map((member) => ({
+        projectId: member.projectId,
+        title: input.logical.title,
+      })),
+      reason:
+        "This logical project has multiple execution bindings on this machine. Pass machineProjectId for the intended binding.",
+    };
+  return { match: "configured", projectId: members[0]!.projectId, title: input.logical.title };
+}
+
+/** Listing machines cannot attach same-repository registrations to a logical project. */
+export function matchLogicalRemoteProject(input: {
+  readonly logical: LogicalProject;
+  readonly environmentId: EnvironmentId;
+  readonly remote: ReadonlyArray<Project>;
+  readonly projectId?: ProjectId | undefined;
+}): RemoteProjectMatch {
+  const selected = logicalProjectBindingMatch(input);
+  if (selected.match !== "configured" || selected.projectId === undefined) return selected;
+  const member = input.logical.members.find(
+    (binding) =>
+      binding.environmentId === input.environmentId && binding.projectId === selected.projectId,
+  )!;
+  const project = input.remote.find((candidate) => candidate.id === selected.projectId);
+  return project !== undefined && isLogicalProjectBinding(project, input.logical, member)
+    ? { ...selected, title: project.title }
+    : {
+        match: "none",
+        reason: "The destination project could not confirm membership in this logical project.",
+      };
+}
 
 /**
  * Finds the project on another machine that holds the same work as `local`.

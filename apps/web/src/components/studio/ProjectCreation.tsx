@@ -1,6 +1,5 @@
 import {
   DEFAULT_PERSONAL_ASSISTANT_NAME,
-  PERSONAL_ASSISTANT_DESCRIPTION,
   PERSONAL_ASSISTANT_LABEL,
 } from "@specweave-studio/contracts";
 import {
@@ -14,37 +13,6 @@ import type { CommandPaletteView } from "../CommandPalette.logic";
 import { GitHubIcon } from "../Icons";
 import { Checkbox } from "../ui/checkbox";
 import type { NewProjectKind } from "../../studio/projectCreation";
-
-export function projectKindGroup(
-  kind: NewProjectKind,
-  disabled: boolean,
-  select: (kind: NewProjectKind) => void,
-): CommandPaletteView["groups"][number] {
-  return {
-    value: "new-project-kind",
-    label: "Project type",
-    items: (["code", "personal"] as const).map((value) => ({
-      kind: "action" as const,
-      value: `new-project:kind:${value}`,
-      searchTerms: value === "personal" ? [value, "assistant", "agent"] : [value],
-      title: value === "personal" ? PERSONAL_ASSISTANT_LABEL : "Code project",
-      description:
-        value === "personal" ? PERSONAL_ASSISTANT_DESCRIPTION : "Start with a new Git repository",
-      icon:
-        value === "personal" ? (
-          <ConciergeBellIcon className="size-4" />
-        ) : (
-          <FolderGit2Icon className="size-4" />
-        ),
-      ...(value === kind
-        ? { titleTrailingContent: <CheckIcon className="ms-auto size-4 text-muted-foreground" /> }
-        : {}),
-      disabled,
-      keepOpen: true,
-      run: async () => select(value),
-    })),
-  };
-}
 
 export function ProjectCreationPreview({
   kind,
@@ -76,9 +44,11 @@ export function ProjectCreationPreview({
               ? name
                 ? "Private, app-managed storage · No repository created"
                 : "Press Enter to keep this name, or type your own"
-              : name
-                ? `Creates ${path}`
-                : `Goes in ${root}`}
+              : root === null
+                ? "Choose a folder below"
+                : name
+                  ? `Creates ${path} (adds a suffix if taken)`
+                  : `New project inside ${root}`}
             {machine === null ? "" : ` on ${machine}`}
           </span>
         </span>
@@ -90,7 +60,6 @@ export function ProjectCreationPreview({
 export function projectCreationGroups(input: {
   kind: NewProjectKind;
   busy: boolean;
-  selectKind: (kind: NewProjectKind) => void;
   machines: readonly {
     item: import("../CommandPalette.logic").CommandPaletteActionItem;
     selected: boolean;
@@ -99,18 +68,7 @@ export function projectCreationGroups(input: {
   addExisting: () => void;
 }): CommandPaletteView["groups"] {
   return [
-    projectKindGroup(input.kind, input.busy, input.selectKind),
-    {
-      value: "new-project-machines",
-      label: "Execution machine",
-      items: input.machines.map(({ item, selected }) => ({
-        ...item,
-        disabled: input.busy || item.disabled === true,
-        ...(selected
-          ? { titleTrailingContent: <CheckIcon className="ms-auto size-4 text-muted-foreground" /> }
-          : {}),
-      })),
-    },
+    projectMachineGroup(input.machines, input.busy),
     ...(input.kind === "code" && input.github
       ? [
           {
@@ -158,4 +116,24 @@ export function projectCreationGroups(input: {
       ],
     },
   ];
+}
+
+export function projectMachineGroup(
+  machines: readonly {
+    item: import("../CommandPalette.logic").CommandPaletteActionItem;
+    selected: boolean;
+  }[],
+  busy = false,
+): CommandPaletteView["groups"][number] {
+  return {
+    value: "new-project-machines",
+    label: "Execution machine",
+    items: machines.map(({ item, selected }) => ({
+      ...item,
+      disabled: busy || item.disabled === true,
+      ...(selected
+        ? { titleTrailingContent: <CheckIcon className="ms-auto size-4 text-muted-foreground" /> }
+        : {}),
+    })),
+  };
 }

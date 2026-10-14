@@ -16,6 +16,7 @@ import {
 export interface SelectThreadOptions extends ProjectThreadOpenOptions {
   /** Replace the history entry: for corrections the user did not ask for. */
   readonly replace?: boolean;
+  readonly environmentId?: EnvironmentId;
 }
 export type SelectProjectThread = (
   threadId: ThreadId | null,
@@ -32,6 +33,7 @@ export function useProjectPaneSelection(input: {
   readonly shells: readonly EnvironmentThreadShell[];
   readonly scope: ProjectPaneScope;
   readonly selected: ThreadId | null;
+  readonly selectedEnvironmentId?: string | null;
   readonly setSelected: SelectProjectThread;
   readonly setOverviewOpen: (open: boolean) => void;
   /** Where to hand the keyboard back when the opened thread is left. */
@@ -45,8 +47,16 @@ export function useProjectPaneSelection(input: {
   const navigate = useNavigate();
   // Subagents and forks of this project's threads open here too, whatever their project id.
   const decision = useMemo(
-    () => (selected === null ? null : projectPaneThread(shells, scope, selected)),
-    [scope, selected, shells],
+    () =>
+      selected === null
+        ? null
+        : projectPaneThread(
+            shells,
+            scope,
+            selected,
+            input.selectedEnvironmentId ?? scope.environmentId,
+          ),
+    [scope, selected, shells, input.selectedEnvironmentId],
   );
   const selectedThread = decision?.kind === "pane" ? decision.thread : null;
 
@@ -84,7 +94,9 @@ export function useProjectPaneSelection(input: {
       }
       if (next.kind !== "pane") return false;
       current.lastOpened.current = id;
-      if (options === undefined) current.setSelected(id);
+      if (next.thread.environmentId !== current.scope.environmentId || current.scope.members)
+        current.setSelected(id, { ...options, environmentId: next.thread.environmentId });
+      else if (options === undefined) current.setSelected(id);
       else current.setSelected(id, options);
       current.setOverviewOpen(true);
       return true;
@@ -92,12 +104,15 @@ export function useProjectPaneSelection(input: {
     [],
   );
   const openThread = useCallback(
-    (id: ThreadId) => {
-      if (!openThreadInPane(id))
+    (id: ThreadId, environmentId?: EnvironmentId) => {
+      if (!openThreadInPane(id, environmentId))
         void navigate({
           to: "/$environmentId/$threadId",
           params: buildThreadRouteParams(
-            scopeThreadRef(latest.current.scope.environmentId as EnvironmentId, id),
+            scopeThreadRef(
+              environmentId ?? (latest.current.scope.environmentId as EnvironmentId),
+              id,
+            ),
           ),
         });
     },

@@ -32,6 +32,7 @@ import {
 } from "@specweave-studio/contracts";
 import { Tool, Toolkit } from "effect/ai";
 
+import * as ProjectService from "../../../project/ProjectService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
@@ -178,12 +179,12 @@ export const CreateThreadsTool = Tool.make("create_threads", {
 
 const ThreadListTool = Tool.make("studio_thread_list", {
   description:
-    "List Studio threads in a project, newest first. Omit projectId for the calling thread's project. Filter by durable run status, title, or settled state (settled=true lists threads the user or auto-settlement moved out of the active list) and paginate with the returned cursor.",
+    "List project threads, newest first. A project coordinator with machine omitted discovers every explicit logical-project binding, including archived history. Read partial and members before treating results as complete; unavailable or unauthorized machines are explicit. Use each returned environment-scoped threadRef or threadLink for follow-up tools. Pass machine to list only that machine. Omit projectId for the calling thread's project. Filter by status, title, settled state or includeArchived, and paginate with nextCursor. Pages use current snapshots and can shift as threads change.",
   parameters: OrchestratorMcpThreadListInput,
   success: OrchestratorMcpThreadListResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
-  dependencies,
+  dependencies: [...dependencies, ProjectService.ProjectService],
 })
   .annotate(Tool.Title, "List Studio threads")
   .annotate(Tool.Readonly, true)

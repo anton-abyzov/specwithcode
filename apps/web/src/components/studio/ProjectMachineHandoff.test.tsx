@@ -8,6 +8,7 @@ import { machineHandoffStorageKey } from "../../studio/machineHandoffPending";
 import { buildProjectGroups } from "../../logicalProject";
 import { ProjectMachineHandoff } from "./ProjectMachineHandoff";
 
+vi.mock("./HandoffFolderPicker", () => ({ HandoffFolderPicker: () => null }));
 const state = vi.hoisted(() => ({
   prepare: vi.fn(),
   receive: vi.fn(),
@@ -79,6 +80,7 @@ const target = {
   repositoryIdentity,
 };
 const bundle = {
+  destination: { executionMode: "project-folder", environmentId: "m1", projectId: "target" },
   manifest: { operationId, repositories: [{ relativePath: ".", head: "a".repeat(40) }] },
   sourceEnvironmentId: "m4",
   sourceProjectId: "source",
@@ -92,8 +94,15 @@ const bundle = {
   },
   digest: "b".repeat(64),
 };
-const ready = { operationId, phase: "ready", projectId: "target", coordinatorThreadId: null };
+const ready = {
+  executionMode: "project-folder",
+  operationId,
+  phase: "ready",
+  projectId: "target",
+  coordinatorThreadId: null,
+};
 const started = {
+  executionMode: "project-folder",
   operationId,
   phase: "started",
   projectId: "isolated",
@@ -114,6 +123,31 @@ const mount = async () => {
 const review = () => act(async () => props().onReview());
 const consent = () => act(async () => props().onConsent(true));
 const transfer = () => act(async () => props().onContinue());
+it("reviews a handoff using the canonical EasyChamp name instead of its checkout label", async () => {
+  await act(async () =>
+    root.render(
+      <ProjectMachineHandoff
+        project={
+          {
+            ...source,
+            title: "sw-easychamp product handoff 0907",
+            workspaceSettings: {
+              logicalProject: {
+                id: "easychamp",
+                title: "EasyChamp",
+                coordinatorId: "coordinator",
+                members: [],
+              },
+            },
+          } as never
+        }
+        coordinatorId={"coordinator" as never}
+      />,
+    ),
+  );
+  await act(async () => container.querySelector("button")!.click());
+  expect(props().projectTitle).toBe("EasyChamp");
+});
 it("reports dialog open, close and unmount so the workspace can suspend background commands", async () => {
   const onOpenChange = vi.fn();
   await act(async () =>
@@ -177,6 +211,7 @@ it("previews without publishing, then rechecks the selected machine before one e
       sourceProjectId: "source",
       sourceThreadId: "coordinator",
       digest: bundle.digest,
+      destination: bundle.destination,
     },
   });
   expect(JSON.stringify(state.receive.mock.calls)).not.toContain("PRIVATE_");
@@ -420,4 +455,115 @@ it("refuses destination navigation if the receipt omits its isolated workspace",
   await act(async () => props().onOpenDestination());
   expect(state.navigate).not.toHaveBeenCalled();
   expect(props().error).toContain("destination workspace is missing");
+});
+
+it("binds the picker destination and retains a fenced transfer until source acknowledgment succeeds", async () => {
+  const logicalProject = {
+    id: "one",
+    title: "One project",
+    coordinatorId: "one-coordinator",
+    members: [],
+  };
+  const inspected = {
+    ...bundle,
+    logicalProject,
+    destination: { environmentId: "m1", projectId: "target", executionMode: "project-folder" },
+    coordinatorBinding: { epoch: 0, state: "active" },
+  };
+  const published = {
+    ...inspected,
+    digest: "c".repeat(64),
+    coordinatorBinding: { epoch: 0, state: "transferring" },
+  };
+  let launched = false;
+  let ackAttempts = 0;
+  state.prepare.mockImplementation(async ({ input }) => {
+    expect(input.destination).toMatchObject({ environmentId: "m1", projectId: "target" });
+    if (input.acknowledgment) {
+      expect(input.acknowledgment.digest).toBe(published.digest);
+      ackAttempts += 1;
+      if (ackAttempts === 1)
+        return { _tag: "Failure", error: new Error("Source disconnected before acknowledgment") };
+    }
+    return {
+      _tag: "Success",
+      value: {
+        bundle: input.publish || launched ? published : inspected,
+        messageCount: 5,
+        publication: input.publish ? "published" : "unpublished",
+      },
+    };
+  });
+  state.receive.mockImplementation(async ({ input }) => {
+    if (input.mode === "start") launched = true;
+    return {
+      _tag: "Success",
+      value: launched ? { ...started, logicalProject, environmentId: "m1" } : ready,
+    };
+  });
+  await act(async () =>
+    root.render(
+      <ProjectMachineHandoff
+        project={source as never}
+        coordinatorId={"coordinator" as never}
+        requestedTarget="m1:target"
+      />,
+    ),
+  );
+  expect(props().open).toBe(true);
+  expect(props().selected).toBe("m1:target");
+  await review();
+  await consent();
+  await transfer();
+  expect(props().phase).toBe("review");
+  expect(props().error).toContain("Source disconnected");
+  expect(localStorage.getItem(key)).not.toBeNull();
+  expect(state.navigate).not.toHaveBeenCalled();
+  await transfer();
+  expect(ackAttempts).toBe(2);
+  expect(state.receive.mock.calls.filter(([call]) => call.input.mode === "start")).toHaveLength(1);
+  expect(state.receive.mock.calls.at(-1)?.[0].input.digest).toBe(published.digest);
+  expect(state.navigate).toHaveBeenCalledWith({
+    to: "/projects/$projectKey",
+    params: { projectKey: "logical-project:one" },
+    search: {},
+  });
+  expect(localStorage.getItem(key)).toBeNull();
+});
+
+it("lets an unpublished legacy preview restart without publishing its old checkout plan", async () => {
+  localStorage.setItem(key, JSON.stringify({ operationId, targetKey: "m1:target" }));
+  state.prepare.mockResolvedValue({
+    _tag: "Success",
+    value: {
+      bundle: { ...bundle, destination: { environmentId: "m1", projectId: "target" } },
+      publication: "unpublished",
+      messageCount: 5,
+    },
+  });
+  await mount();
+  await review();
+  expect(state.prepare.mock.calls[0]?.[0].input.destination).toBeUndefined();
+  expect(props().onRestart).toBeDefined();
+  expect(state.receive).not.toHaveBeenCalled();
+  await act(async () => props().onRestart!());
+  expect(localStorage.getItem(key)).toBeNull();
+  expect(props().phase).toBe("choose");
+});
+
+it("recovers a pointer persisted before an interrupted first source request", async () => {
+  localStorage.setItem(key, JSON.stringify({ operationId, targetKey: "m1:target" }));
+  state.prepare.mockResolvedValueOnce({
+    _tag: "Failure",
+    error: Object.assign(new Error("No saved plan"), { code: "invalid" }),
+  });
+  await mount();
+  await review();
+  expect(state.prepare.mock.calls[0]?.[0].input.destination).toBeUndefined();
+  expect(state.prepare.mock.calls[1]?.[0].input).toMatchObject({
+    operationId,
+    publish: false,
+    destination: { projectId: "target", executionMode: "project-folder" },
+  });
+  expect(props().phase).toBe("review");
 });

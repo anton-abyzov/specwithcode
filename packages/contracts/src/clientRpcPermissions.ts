@@ -1,6 +1,8 @@
 import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput } from "./git.ts";
 import {
+  AuthAccessWriteScope,
+  AuthEnvironmentMaintainScope,
   AuthFilesystemWriteScope,
   AuthFilesystemReadScope,
   AuthOrchestrationReadScope,
@@ -14,6 +16,9 @@ import { WS_METHODS } from "./rpc.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
+  [WS_METHODS.managedUpdatesEnroll]: AuthAccessWriteScope,
+  [WS_METHODS.managedUpdatesRevoke]: AuthAccessWriteScope,
+  [WS_METHODS.managedUpdatesCheck]: AuthEnvironmentMaintainScope,
   [WS_METHODS.machineHandoffPrepare]: AuthOrchestrationOperateScope,
   [WS_METHODS.machineHandoffReceive]: AuthSourceControlWriteScope,
   [WS_METHODS.projectsEnvironmentPrepare]: AuthSourceControlWriteScope,
@@ -86,6 +91,8 @@ export function clientRpcRequiredScopes(
   method: string,
   input: unknown,
 ): readonly AuthEnvironmentScope[] {
+  if (method === WS_METHODS.managedUpdatesEnroll || method === WS_METHODS.managedUpdatesRevoke)
+    return [AuthAccessWriteScope, AuthEnvironmentMaintainScope];
   if (method === WS_METHODS.machineHandoffPrepare || method === WS_METHODS.machineHandoffReceive) {
     const value = input as { publish?: boolean; mode?: string } | undefined;
     const writes =

@@ -383,6 +383,19 @@ it.layer(layerTest)("ProjectService", (it) => {
       // A retry re-plans against the row it created; its receipt still answers.
       const retried = yield* service.create(input);
       assert.deepEqual(retried, first);
+      assert.match(first.workspaceSettings!.logicalProject!.id, /^logical:/);
+      assert.equal(first.workspaceSettings!.logicalProject!.title, "Retry");
+      assert.deepEqual(first.workspaceSettings!.coordinatorBinding, { epoch: 0, state: "active" });
+      const separate = yield* service.create({
+        ...input,
+        commandId: CommandId.make("different-project"),
+        projectId: ProjectId.make("separate-project"),
+        workspaceRoot: "/work/separate",
+      });
+      assert.notEqual(
+        separate.workspaceSettings!.logicalProject!.id,
+        first.workspaceSettings!.logicalProject!.id,
+      );
       const updateInput = {
         commandId: CommandId.make("command:retry:update"),
         projectId,

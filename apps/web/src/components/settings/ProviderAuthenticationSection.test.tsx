@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import type { ProviderAuthState, ServerProvider } from "@specweave-studio/contracts";
+import { ProviderInstanceId, ProviderDriverKind, type ProviderAuthState, type ServerProvider } from "@specweave-studio/contracts";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { visitElements } from "../../test/reactElementTree";
 import { reactHookHarness as hooks } from "../../test/reactHookHarness";
@@ -50,11 +50,12 @@ vi.mock("./settingsLayout", () => ({ SettingsRow: () => null }));
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
 
 const provider = {
-  instanceId: "copilot-m1",
-  driver: "acpRegistry",
+  instanceId: ProviderInstanceId.make("copilot-m1"),
+  driver: ProviderDriverKind.make("acpRegistry"),
   displayName: "GitHub Copilot",
   enabled: true,
   installed: true,
+  version: null,
   status: "ready",
   auth: { status: "unknown" },
   setup: { canAuthenticate: true, canInstall: false },

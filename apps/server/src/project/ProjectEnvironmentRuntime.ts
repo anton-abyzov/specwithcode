@@ -1,5 +1,7 @@
 import {
   DEFAULT_PROJECT_ENVIRONMENT,
+  projectExecutionIsFenced,
+  ProjectWorkspaceError,
   type Project,
   ProjectEnvironmentError,
   fullAccessAcpProjectFolders,
@@ -33,6 +35,8 @@ export const makeEnvironmentRuntime = Effect.gen(function* () {
             code: "not_found",
           });
         const project = found.value;
+        if (projectExecutionIsFenced(project.workspaceSettings, project.id, input.threadId))
+          return yield* new ProjectWorkspaceError({ projectId: project.id, code: "transferred" });
         const environment = project.workspaceSettings?.environment ?? DEFAULT_PROJECT_ENVIRONMENT;
         // Empty legacy environments retain existing provider behavior and need no filesystem probe.
         if (environment.additionalFolders.length === 0 && environment.repositories.length === 0)

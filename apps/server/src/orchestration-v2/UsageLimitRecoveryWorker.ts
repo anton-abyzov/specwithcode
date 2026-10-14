@@ -1,3 +1,4 @@
+import { projectExecutionIsFenced } from "@specweave-studio/contracts";
 import * as ProjectAdmission from "../project/ProjectAdmission.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as Option from "effect/Option";
@@ -145,6 +146,7 @@ export const makeSweep = Effect.gen(function* () {
         const project = yield* projects.get(shell.projectId);
         if (
           Option.isNone(project) ||
+          projectExecutionIsFenced(project.value.workspaceSettings, shell.projectId, thread.id) ||
           project.value.workspaceSettings?.paused ||
           project.value.workspaceSettings?.archived
         )
@@ -168,6 +170,11 @@ export const makeSweep = Effect.gen(function* () {
               if (
                 Option.isNone(currentProject) ||
                 currentProject.value.deletedAt != null ||
+                projectExecutionIsFenced(
+                  currentProject.value.workspaceSettings,
+                  shell.projectId,
+                  thread.id,
+                ) ||
                 currentProject.value.workspaceSettings?.paused ||
                 currentProject.value.workspaceSettings?.archived
               )
@@ -223,6 +230,11 @@ export const makeSweep = Effect.gen(function* () {
             if (
               Option.isNone(currentProject) ||
               currentProject.value.deletedAt != null ||
+              projectExecutionIsFenced(
+                currentProject.value.workspaceSettings,
+                shell.projectId,
+                thread.id,
+              ) ||
               currentProject.value.workspaceSettings?.paused ||
               currentProject.value.workspaceSettings?.archived
             )

@@ -18,6 +18,11 @@ export interface ProjectPaneScope {
   readonly projectId: string;
   /** The coordinator the project page shows in its main column; null until known. */
   readonly coordinatorThreadId?: string | null;
+  readonly members?: readonly {
+    environmentId: string;
+    projectId: string;
+    coordinatorThreadId: string | null;
+  }[];
 }
 
 /** Forks and subagents rarely nest deeply; the cap only stops a malformed cycle. */
@@ -78,6 +83,29 @@ export function projectPaneThread<T extends PaneShell>(
   threadId: string,
   environmentId: string = scope.environmentId,
 ): ProjectPaneThreadDecision<T> {
+  const binding = scope.members?.find(
+    (member) =>
+      member.environmentId === environmentId &&
+      threads.some(
+        (thread) =>
+          thread.environmentId === environmentId &&
+          thread.id === threadId &&
+          thread.projectId === member.projectId,
+      ),
+  );
+  if (binding) {
+    const thread = threads.find(
+      (candidate) =>
+        candidate.environmentId === environmentId &&
+        candidate.id === threadId &&
+        candidate.projectId === binding.projectId,
+    );
+    if (thread?.deletedAt !== null) return thread ? { kind: "deleted" } : { kind: "unknown" };
+    if (threadId === scope.coordinatorThreadId && environmentId === scope.environmentId)
+      return { kind: "coordinator" };
+    if (thread && !isOrchestratorThreadId(threadId) && threadId !== binding.coordinatorThreadId)
+      return { kind: "pane", thread };
+  }
   if (environmentId !== scope.environmentId) return { kind: "elsewhere", environmentId };
   const role = projectCoordinatorRole(threadId, {
     projectId: scope.projectId,
@@ -134,6 +162,7 @@ export function paneSelectionCorrection(
 /** `?thread=<id>` on /projects/$projectKey names the thread open in the right panel. */
 export interface ProjectWorkspaceSearch {
   readonly thread?: ThreadId;
+  readonly threadEnvironment?: string;
   /** Exact checkout for a link; never changes the saved coordinator machine. */
   readonly checkout?: string;
 }
@@ -152,8 +181,11 @@ export function parseProjectWorkspaceSearch(raw: Record<string, unknown>): Proje
   };
   const thread = valid(raw.thread, MAX_THREAD_ID_LENGTH);
   const checkout = valid(raw.checkout, 1024);
+  const threadEnvironment = valid(raw.threadEnvironment, 512);
   return {
-    ...(thread ? { thread: ThreadId.make(thread) } : {}),
+    ...(thread
+      ? { thread: ThreadId.make(thread), ...(threadEnvironment ? { threadEnvironment } : {}) }
+      : {}),
     ...(checkout && checkout.includes(":") ? { checkout } : {}),
   };
 }
@@ -162,8 +194,12 @@ export function parseProjectWorkspaceSearch(raw: Record<string, unknown>): Proje
 export function projectWorkspaceSearch(
   thread: ThreadId | null,
   checkout?: string | null,
+  threadEnvironment?: string | null,
 ): ProjectWorkspaceSearch {
-  return { ...(thread === null ? {} : { thread }), ...(checkout ? { checkout } : {}) };
+  return {
+    ...(thread === null ? {} : { thread, ...(threadEnvironment ? { threadEnvironment } : {}) }),
+    ...(checkout ? { checkout } : {}),
+  };
 }
 
 type ChatShell = Pick<EnvironmentThreadShell, "id"> &
@@ -221,7 +257,10 @@ interface ChatProjectGroup {
   readonly memberProjects: ReadonlyArray<{
     readonly environmentId: string;
     readonly id: string;
-    readonly workspaceSettings?: { readonly coordinatorThreadId: string | null } | null | undefined;
+    readonly workspaceSettings?:
+      | { readonly coordinatorThreadId: string | null; readonly logicalProject?: unknown }
+      | null
+      | undefined;
   }>;
 }
 
@@ -272,6 +311,7 @@ export function isProjectOwnedChat<T extends OwnedShell>(
   },
 ): boolean {
   if (chatProjectPaneTarget(thread, group, input.lookup) === null) return false;
+  if (group?.memberProjects.some((member) => member.workspaceSettings?.logicalProject)) return true;
   const shown = input.displayedCheckout;
   if (shown?.environmentId !== thread.environmentId || shown.id !== thread.projectId) return false;
   return true;
@@ -298,7 +338,8 @@ export function chatNavigationTarget(
   const member = group?.memberProjects.find(
     (item) => item.environmentId === thread.environmentId && item.id === thread.projectId,
   );
-  const checkout = member ? `${member.environmentId}:${member.id}` : undefined;
+  const explicit = group?.memberProjects.some((item) => item.workspaceSettings?.logicalProject);
+  const checkout = member && !explicit ? `${member.environmentId}:${member.id}` : undefined;
   if (
     group &&
     member &&
@@ -317,7 +358,11 @@ export function chatNavigationTarget(
     ? {
         to: "/projects/$projectKey",
         params: { projectKey: pane.projectKey },
-        search: projectWorkspaceSearch(pane.threadId, checkout),
+        search: projectWorkspaceSearch(
+          pane.threadId,
+          checkout,
+          explicit ? thread.environmentId : null,
+        ),
       }
     : {
         to: "/$environmentId/$threadId",

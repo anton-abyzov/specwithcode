@@ -11,6 +11,7 @@ import { isUnresolvedFirstPartyCliImport, selectCliRuntimeExternalDependencies }
 import { sourceVersion } from '../studio-projects/version.mjs';
 import { generateThirdPartyLicenseManifest } from '../lib/third-party-licenses.ts';
 import { runtimePackage } from './runtime-package.mjs';
+import { MAC_SERVICE_UPDATER_FILES } from '../lib/studio-service-updater.ts';
 
 assert.equal(process.versions.node.split('.')[0], '22', 'Use the supported Node22 toolchain');
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -47,6 +48,15 @@ for (const file of readdirSync(dist).filter((file) => file.endsWith('.mjs'))) {
 assert.ok(roots.has('node-pty') && roots.has('@napi-rs/keyring'), 'Native runtime imports were not detected');
 mkdirSync(output, { recursive: true, mode: 0o700 });
 cpSync(dist, output, { recursive: true, dereference: false });
+// The server invokes its own immutable helper graph beside bin.mjs. The same
+// authoritative list supplies the desktop resources and the installed updater.
+const updater = join(output, 'studio-updater');
+mkdirSync(updater, { recursive: true, mode: 0o700 });
+for (const file of MAC_SERVICE_UPDATER_FILES) {
+  const source = join(root, 'scripts/studio-fleet', file);
+  assert.ok(lstatSync(source).isFile() && !lstatSync(source).isSymbolicLink(), 'Unsafe updater helper source');
+  cpSync(source, join(updater, file));
+}
 for (const file of ['LICENSE', 'UPSTREAM.md']) cpSync(join(root, file), join(output, file));
 const manifest = { schemaVersion: 1, product: 'SpecWeave Studio', version,
   sourceCommit, runtime: 'Node22.20.0', platform: process.platform, arch: process.arch,

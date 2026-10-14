@@ -8,9 +8,17 @@ import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import {
   DEFAULT_SERVER_SETTINGS,
   RuntimeRequestId,
+  ProviderDriverKind,
+  NodeId,
+  ProviderTurnId,
+  ProviderThreadId,
+  ProviderSessionId,
+  RunId,
+  TurnItemId,
   type EnvironmentId,
   type ThreadId,
 } from "@specweave-studio/contracts";
+import { derivePendingThreadRequests } from "@specweave-studio/client-runtime/state/thread-requests";
 import { CoordinatorNativeControls } from "../../src/components/studio/CoordinatorNativeControls";
 import { useComposerDraftStore } from "../../src/composerDraftStore";
 import {
@@ -27,6 +35,8 @@ import {
 import type { PendingUserInput } from "../../src/session-logic";
 import type { AttachmentUploadState } from "../../src/lib/attachmentUploadState";
 const scenario = new URLSearchParams(location.search).get("request") ?? "approval";
+const isFileApproval = scenario === "file-approval" || scenario === "file-approval-no-patch";
+const isApproval = scenario === "approval" || isFileApproval;
 const receipts = {
   approvals: [] as unknown[],
   answers: [] as unknown[],
@@ -43,7 +53,7 @@ export const useThreadShells = () =>
       ? thread
       : {
           ...thread,
-          hasPendingApprovals: scenario === "approval",
+          hasPendingApprovals: isApproval,
           hasPendingUserInput: scenario === "question",
           hasActionableProposedPlan: scenario === "plan",
         },
@@ -151,6 +161,70 @@ const questions: PendingUserInput["questions"] = [
     multiSelect: false,
   },
 ];
+function fileApprovals(threadId: ThreadId) {
+  const createdAt = DateTime.makeUnsafe("2026-10-14T12:00:00Z");
+  const request = {
+    id: RuntimeRequestId.make("fixture-edit-approval"),
+    nodeId: NodeId.make("fixture-edit-node"),
+    providerTurnId: ProviderTurnId.make("fixture-edit-turn"),
+    nativeRequestRef: null,
+    kind: "file-change" as const,
+    status: "pending" as const,
+    responseCapability: {
+      type: "live" as const,
+      providerSessionId: ProviderSessionId.make("fixture-session"),
+    },
+    createdAt,
+    resolvedAt: null,
+  };
+  const approval = {
+    id: TurnItemId.make("fixture-approval-item"),
+    threadId,
+    runId: RunId.make("fixture-edit-run"),
+    nodeId: request.nodeId,
+    providerThreadId: ProviderThreadId.make("fixture-provider-thread"),
+    providerTurnId: request.providerTurnId,
+    nativeItemRef: {
+      driver: ProviderDriverKind.make("acpRegistry"),
+      nativeId: "fixture-edit-tool",
+      strength: "weak" as const,
+    },
+    parentItemId: null,
+    ordinal: 0,
+    status: "pending" as const,
+    title: null,
+    startedAt: createdAt,
+    completedAt: null,
+    updatedAt: createdAt,
+    type: "approval_request" as const,
+    requestId: request.id,
+    requestKind: "file-change" as const,
+    prompt: "Changed files",
+    options: [
+      { decision: "decline" as const, label: "Decline" },
+      { decision: "accept" as const, label: "Approve" },
+    ],
+  };
+  const file = {
+    ...approval,
+    id: TurnItemId.make("fixture-file"),
+    type: "file_change" as const,
+    nativeItemRef: { ...approval.nativeItemRef, strength: "strong" as const },
+    fileName: "/workspace/long directory/selected project/source/value.cjs",
+    ...(scenario === "file-approval"
+      ? {
+          diffStr:
+            "--- a/value.cjs\n+++ b/value.cjs\n@@ -1 +1 @@\n-module.exports = 1;\n+module.exports = 2;",
+        }
+      : {}),
+  };
+  return derivePendingThreadRequests({
+    thread: { id: threadId },
+    runtimeRequests: [request],
+    turnItems: [approval, file],
+  }).approvals;
+}
+
 export function NativeThreadFixture(props: {
   environmentId: EnvironmentId;
   threadId: ThreadId;
@@ -206,25 +280,27 @@ function NativeDecisionFixture({
       disabled={false}
       error={null}
       approvals={
-        scenario === "approval" && !approved
-          ? [
-              {
-                requestId: RuntimeRequestId.make("fixture-approval"),
-                requestKind: "command",
-                responseCapability: "live",
-                createdAt: "2026-10-13T12:00:00Z",
-                detail: "npm run test:unit -- coordinator-recovery",
-                options: [
-                  { decision: "decline", label: "Decline" },
-                  { decision: "accept", label: "Approve" },
-                ],
-              },
-            ]
+        isApproval && !approved
+          ? isFileApproval
+            ? fileApprovals(threadId)
+            : [
+                {
+                  requestId: RuntimeRequestId.make("fixture-approval"),
+                  requestKind: "command",
+                  responseCapability: "live",
+                  createdAt: "2026-10-13T12:00:00Z",
+                  detail: "npm run test:unit -- coordinator-recovery",
+                  options: [
+                    { decision: "decline", label: "Decline" },
+                    { decision: "accept", label: "Approve" },
+                  ],
+                },
+              ]
           : []
       }
       respondingApprovals={[]}
       onApproval={async (id, decision) => {
-        receipts.approvals.push({ requestId: id, decision });
+        receipts.approvals.push({ environmentId, threadId, requestId: id, decision });
         setApproved(true);
       }}
       questions={

@@ -52,3 +52,23 @@ attachments reserve 4,096 each for their references. Existing context is estimat
 activity when usage telemetry is unavailable. Known smaller windows still constrain the handoff.
 These are fallback estimates, not exact token counts. Image resolution, custom models, and hidden
 native context can differ, so the provider may still reject an input.
+
+## Moving a project between machines
+
+A project keeps one logical identity across machines. Each machine can have one or more saved
+execution folders for that project. In **Handoff**, choose the machine and its saved folder, or
+expand **Choose another folder on a machine** to browse that machine's filesystem and save an
+existing checkout. The folder must contain the same umbrella repository. Selecting a folder does
+not move work yet; **Review handoff** checks the source and destination before transfer.
+
+New handoffs advance the chosen folder and its nested repositories in place. They do not create
+another project checkout under the application's data directory. The destination must be clean,
+not ahead of or diverged from the transferred commits, and free of conflicting active work.
+Ignored files are preserved; an incoming tracked file that would overwrite one stops the move.
+Commit or otherwise preserve local changes before trying again. Both machines must support
+handoff into a saved project folder.
+
+Temporary transfer folders are omitted from the destination picker. Older transfers retain their
+original recovery path and history. An unpublished old preview can be restarted to choose a saved
+folder; a transfer already published must be recovered before beginning another. Application data
+still stores private conversation context and recovery receipts, separate from source code.

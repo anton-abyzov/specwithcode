@@ -488,6 +488,7 @@ import { buildLogicalProjectEnvironments } from "./chat/logicalProjectEnvironmen
 import { useDraftMachineRouting } from "./chat/useDraftMachineRouting";
 import { explicitCreditSendStillMatches, type CreditSendContext } from "./chat/explicitCreditSend";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
+import { EmbeddedThreadDiffPanel } from "./chat/EmbeddedThreadDiffPanel";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { MessagesTimeline, type MessagesTimelineHistoryControls } from "./chat/MessagesTimeline";
@@ -751,7 +752,6 @@ function useDraftHeroLayoutTransition(
 const PreviewPanel = lazy(() =>
   import("./preview/PreviewPanel").then((module) => ({ default: module.PreviewPanel })),
 );
-const DiffPanel = lazy(() => import("./DiffPanel"));
 const selectAutoShowFloatingPreview = (settings: { browserAutoShowFloatingPreview: boolean }) =>
   settings.browserAutoShowFloatingPreview;
 const DevicePanel = lazy(() =>
@@ -11449,14 +11449,11 @@ export default function ChatView(props: ChatViewProps) {
         closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
       />
     ) : renderedRightPanelSurface?.kind === "diff" ? (
-      <Suspense fallback={null}>
-        <DiffPanel
-          key={activeThreadKey}
-          mode="embedded"
-          composerDraftTarget={composerDraftTarget}
-          workspaceMutationId={workspaceMutationId}
-        />
-      </Suspense>
+      <EmbeddedThreadDiffPanel
+        threadRef={activeThreadRef}
+        composerDraftTarget={composerDraftTarget}
+        workspaceMutationId={workspaceMutationId}
+      />
     ) : renderedRightPanelSurface?.kind === "pull-request" && !pullRequestsCapabilityKnown ? (
       <PullRequestDetailGhost />
     ) : renderedRightPanelSurface?.kind === "pull-request" && !supportsPullRequests ? (

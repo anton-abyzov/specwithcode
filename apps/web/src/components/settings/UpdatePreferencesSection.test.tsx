@@ -13,6 +13,9 @@ const mocks = vi.hoisted(() => ({
   },
 }));
 
+vi.mock("../../state/environments", () => ({ usePrimaryEnvironment: () => null }));
+vi.mock("./ManagedUpdatesSection", () => ({ ManagedUpdatesSection: () => null }));
+
 vi.mock("../serviceUpdateFlow", () => ({
   startServiceUpdateNow: mocks.startServiceUpdateNow,
   useServiceUpdateFlow: () => mocks.flow,

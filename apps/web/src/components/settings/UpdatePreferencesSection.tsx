@@ -1,3 +1,5 @@
+import { ManagedUpdatesSection } from "./ManagedUpdatesSection";
+import { usePrimaryEnvironment } from "../../state/environments";
 import type {
   DesktopUpdatePreferences,
   DesktopUpdatePreferencesPatch,
@@ -25,6 +27,7 @@ const errorText = (error: unknown, fallback: string) =>
  * updates for this app and for the Studio service on this computer.
  */
 export function UpdatePreferencesSection() {
+  const localEnvironment = usePrimaryEnvironment();
   const bridge = typeof window === "undefined" ? undefined : window.desktopBridge;
   const supported =
     typeof bridge?.getUpdatePreferences === "function" &&
@@ -119,6 +122,14 @@ export function UpdatePreferencesSection() {
 
   return (
     <>
+      {localEnvironment && (
+        <ManagedUpdatesSection
+          environmentId={localEnvironment.environmentId}
+          label={localEnvironment.label}
+          reachable={localEnvironment.connection.phase === "connected"}
+          local
+        />
+      )}
       <SettingsRow
         {...searchableSetting("app-updates")}
         description={

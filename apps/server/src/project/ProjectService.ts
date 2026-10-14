@@ -1,3 +1,11 @@
+import { randomUuidV4 } from "../orchestration-v2/RandomUuid.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import {
+  ThreadId as CoordinatorThreadId,
+  type LogicalProject,
+  type ProjectCoordinatorBinding,
+} from "@specweave-studio/contracts";
+import type { ProjectOwnershipUpdate } from "../orchestration-v2/ProjectCommands.ts";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { normalizeProjectEnvironment } from "./ProjectEnvironmentPaths.ts";
@@ -45,6 +53,8 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
 export interface ProjectCreateInput extends ProjectCreatePayload {
+  readonly initialLogicalProject?: LogicalProject;
+  readonly initialCoordinatorBinding?: ProjectCoordinatorBinding;
   /** Internal handoff seed, committed atomically with creation; null disables auto-seeding. */
   readonly initialWorkerModelSelection?: ModelSelection | null;
   readonly commandId: CommandId;
@@ -52,6 +62,7 @@ export interface ProjectCreateInput extends ProjectCreatePayload {
 }
 
 export interface ProjectUpdateInput extends ProjectUpdatePayload {
+  readonly ownership?: ProjectOwnershipUpdate;
   /** Internal automatic initialization, checked under the project command lock. */
   readonly onlyIfDefaultModelUnset?: boolean;
   /** Internal coordinator binding, never accepted from a client settings patch. */
@@ -402,8 +413,28 @@ export const make = Effect.gen(function* () {
         workspaceRoot: input.workspaceRoot,
         createIfMissing: input.createWorkspaceRootIfMissing ?? false,
       });
+      const serverEnvironment = yield* Effect.serviceOption(ServerEnvironment.ServerEnvironment);
+      const logicalId = input.initialLogicalProject?.id ?? `logical:${yield* randomUuidV4}`;
+      const members = Option.isSome(serverEnvironment)
+        ? [
+            {
+              environmentId: yield* serverEnvironment.value.getEnvironmentId,
+              projectId: input.projectId,
+              coordinatorThreadId: CoordinatorThreadId.make(
+                `project-coordinator:${input.projectId}`,
+              ),
+            },
+          ]
+        : [];
       yield* commit({
         type: "project.create",
+        initialLogicalProject: input.initialLogicalProject ?? {
+          id: logicalId,
+          title: input.title,
+          coordinatorId: `coordinator:${logicalId}`,
+          members,
+        },
+        initialCoordinatorBinding: input.initialCoordinatorBinding ?? { epoch: 0, state: "active" },
         commandId: input.commandId,
         projectId: input.projectId,
         title: input.title,
@@ -548,6 +579,7 @@ export const make = Effect.gen(function* () {
       }
       yield* commit({
         type: "project.meta.update",
+        ...(input.ownership ? { ownership: input.ownership } : {}),
         commandId: input.commandId,
         projectId: input.projectId,
         ...(input.workspaceSettings === undefined

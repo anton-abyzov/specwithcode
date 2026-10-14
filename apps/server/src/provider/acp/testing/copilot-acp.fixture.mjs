@@ -3,6 +3,7 @@ import { createInterface } from "node:readline";
 import { appendFileSync, writeFileSync } from "node:fs";
 const scenario = process.env.COPILOT_FIXTURE_SCENARIO;
 const startup = scenario?.startsWith("startup-");
+const negotiation = scenario?.startsWith("startup-negotiate");
 const cliArgs = process.argv.slice(2);
 const startupModel = cliArgs.find((arg) => arg.startsWith("--model="))?.slice(8);
 if (process.env.COPILOT_FIXTURE_RECORD_LAUNCH === "1") {
@@ -32,12 +33,15 @@ const models = {
 };
 if (startup) {
   models.currentModelId =
-    scenario === "startup-auto"
+    scenario === "startup-auto" || negotiation
       ? "auto"
       : scenario === "startup-mismatch"
         ? "other-model"
         : (startupModel ?? "auto");
-  models.availableModels = [{ modelId: "auto", name: "Auto" }];
+  models.availableModels = [
+    { modelId: "auto", name: "Auto" },
+    ...(negotiation ? [{ modelId: "claude-opus-5.5", name: "Claude Opus 5.5" }] : []),
+  ];
 }
 const modelOption = (id = "model-1", currentValue = models.currentModelId) => ({
   id,
@@ -66,7 +70,7 @@ const effort = {
 };
 const autoOnlyConfig = scenario === "auto-config";
 let configOptions =
-  scenario === "config"
+  scenario === "config" || negotiation
     ? [modelOption(), effort]
     : autoOnlyConfig
       ? [
@@ -86,7 +90,7 @@ const answer = (id, result) => send({ id, result });
 const setup = () => ({
   ...(scenario === "legacy" ? { models } : {}),
   ...(startup && scenario !== "startup-missing" ? { models } : {}),
-  ...(scenario === "config" || autoOnlyConfig ? { configOptions } : {}),
+  ...(scenario === "config" || autoOnlyConfig || negotiation ? { configOptions } : {}),
 });
 for await (const line of createInterface({ input: process.stdin })) {
   const message = JSON.parse(line);
@@ -151,6 +155,14 @@ for await (const line of createInterface({ input: process.stdin })) {
     models.currentModelId = params.modelId;
     answer(id, {});
   } else if (method === "session/set_config_option") {
+    if (scenario === "startup-negotiate-denied") {
+      send({ id, error: { code: -32602, message: "Native model denied" } });
+      continue;
+    }
+    if (scenario === "startup-negotiate-empty") {
+      answer(id, { configOptions: [] });
+      continue;
+    }
     if (params.configId === "effort")
       configOptions = [modelOption("model-live"), { ...effort, currentValue: params.value }];
     else if (params.configId === configOptions[0]?.id)
@@ -159,6 +171,8 @@ for await (const line of createInterface({ input: process.stdin })) {
       send({ id, error: { code: -32602, message: "Stale config id" } });
       continue;
     }
+    if (scenario === "startup-negotiate-auto") configOptions[0].currentValue = "auto";
+    if (scenario === "startup-negotiate-wrong") configOptions[0].currentValue = "other-model";
     answer(id, { configOptions });
   } else if (method === "session/load") answer(id, setup());
   else if (method === "session/prompt") {

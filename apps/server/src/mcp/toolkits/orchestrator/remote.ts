@@ -242,6 +242,7 @@ export const listRemote = (
       (yield* workers.remoteProjectFor({ machine, localProjectId: caller.projectId }));
     return yield* proxied(OrchestratorMcpThreadListResult, machine, "studio_thread_list", {
       ...input,
+      machine: "local",
       projectId,
     });
   });

@@ -3,6 +3,7 @@ import { AcpRequestError, AcpSpawnError } from "@specweave-studio/effect-acp/err
 import * as Effect from "effect/Effect";
 import { ChildProcess, type ChildProcessSpawner } from "effect/process";
 import { collectUint8StreamText } from "../../stream/collectUint8StreamText.ts";
+import { collectSessionConfigOptionValues } from "./AcpRuntimeModel.ts";
 import type { ResolvedAcpRegistryAgent } from "./AcpRegistrySupport.ts";
 import type {
   AcpSpawnInput,
@@ -15,13 +16,18 @@ export const COPILOT_STARTUP_MODEL_VERSION = "1.0.97";
 const isExplicitModel = (model: string | undefined): model is string =>
   model !== undefined && model !== "" && model !== "default" && model !== "auto";
 const seededRuntimes = new WeakSet<AcpSessionRuntime["Service"]>();
+const negotiatedRuntimes = new WeakSet<AcpSessionRuntime["Service"]>();
 
 /** Explicit user default selection, never an error fallback. */
 export const resetCopilotStartupModel = Effect.fn("resetCopilotStartupModel")(function* (
   runtime: AcpSessionRuntime["Service"],
 ) {
   if (!seededRuntimes.has(runtime)) return false;
-  yield* runtime.setSessionModel("auto");
+  if (negotiatedRuntimes.has(runtime)) {
+    yield* selectAdvertisedCopilotModel(runtime, "auto");
+  } else {
+    yield* runtime.setSessionModel("auto");
+  }
   return true;
 });
 
@@ -52,6 +58,35 @@ export function supportsCopilotStartupModel(version: string, help: string): bool
 const modelFailure = (message: string) =>
   new AcpRequestError({ method: "session/new", code: -32602, errorMessage: message });
 
+const selectAdvertisedCopilotModel = Effect.fn("selectAdvertisedCopilotModel")(function* (
+  runtime: Pick<AcpSessionRuntime["Service"], "getConfigOptions" | "setConfigOption">,
+  requested: string,
+) {
+  const options = (yield* runtime.getConfigOptions).filter((entry) => entry.category === "model");
+  const option = options[0];
+  if (
+    options.length !== 1 ||
+    option === undefined ||
+    !collectSessionConfigOptionValues(option).includes(requested)
+  ) {
+    return yield* modelFailure("Copilot does not advertise the requested native model option.");
+  }
+  const response = yield* runtime.setConfigOption(option.id, requested);
+  const returned = (response.configOptions ?? []).filter((entry) => entry.category === "model");
+  const current = (yield* runtime.getConfigOptions).filter((entry) => entry.category === "model");
+  if (
+    returned.length !== 1 ||
+    current.length !== 1 ||
+    returned[0]?.currentValue !== requested ||
+    current[0]?.currentValue !== requested ||
+    returned[0]?.id !== current[0]?.id
+  ) {
+    return yield* modelFailure(
+      `Copilot did not acknowledge the requested model '${requested}' after native selection. No prompt was sent.`,
+    );
+  }
+});
+
 /** Return confirmation only from native setup; never synthesize a model or catalog. */
 export function confirmCopilotStartupModel(
   started: AcpSessionRuntimeStartResult,
@@ -80,6 +115,46 @@ export function confirmCopilotStartupModel(
   });
 }
 
+/** Initial Auto is not proof of a selected model. Negotiate only an advertised
+ * native option, and require the native setter response plus current state to
+ * acknowledge the exact model before the caller can send a prompt. */
+export const negotiateCopilotStartupModel = Effect.fn("negotiateCopilotStartupModel")(function* (
+  runtime: Pick<AcpSessionRuntime["Service"], "getConfigOptions" | "setConfigOption">,
+  started: AcpSessionRuntimeStartResult,
+  requested: string,
+) {
+  const agent = started.initializeResult.agentInfo;
+  const setup = started.sessionSetupResult;
+  const observed = [
+    ...(setup.models == null ? [] : [setup.models.currentModelId]),
+    ...(setup.configOptions ?? [])
+      .filter((option) => option.category === "model")
+      .map((option) => option.currentValue),
+  ];
+  if (
+    agent?.name !== "Copilot" ||
+    agent.version !== COPILOT_STARTUP_MODEL_VERSION ||
+    observed.length === 0 ||
+    observed.some((value) => value !== "auto")
+  )
+    return yield* confirmCopilotStartupModel(started, requested);
+
+  const modelOptions = (yield* runtime.getConfigOptions).filter(
+    (option) => option.category === "model",
+  );
+  const option = modelOptions[0];
+  if (
+    modelOptions.length !== 1 ||
+    option === undefined ||
+    option.currentValue !== "auto" ||
+    !collectSessionConfigOptionValues(option).includes(requested)
+  )
+    return yield* confirmCopilotStartupModel(started, requested);
+
+  yield* selectAdvertisedCopilotModel(runtime, requested);
+  return true;
+});
+
 /**
  * Consume a confirmed startup selection once. Later setters and activations
  * remain native operations, including rejection and switching back to this model.
@@ -92,6 +167,9 @@ export function acknowledgeCopilotStartupModel(
   let pending = false;
   const invalidate = Effect.sync(() => {
     pending = false;
+  });
+  const clearNegotiated = Effect.sync(() => {
+    negotiatedRuntimes.delete(wrapped);
   });
   const consume = (requested: string) =>
     Effect.sync(() => {
@@ -106,7 +184,15 @@ export function acknowledgeCopilotStartupModel(
         Effect.tap((started) =>
           Effect.gen(function* () {
             if (inspected) return;
-            pending = yield* confirmCopilotStartupModel(started, model);
+            pending = yield* negotiateCopilotStartupModel(runtime, started, model);
+            if (
+              pending &&
+              (started.sessionSetupResult.models?.currentModelId === "auto" ||
+                started.sessionSetupResult.configOptions?.some(
+                  (option) => option.category === "model" && option.currentValue === "auto",
+                ))
+            )
+              negotiatedRuntimes.add(wrapped);
             inspected = true;
           }),
         ),
@@ -122,9 +208,18 @@ export function acknowledgeCopilotStartupModel(
         ),
       ),
     setConfigOption: (...args) => invalidate.pipe(Effect.andThen(runtime.setConfigOption(...args))),
-    loadSession: (...args) => invalidate.pipe(Effect.andThen(runtime.loadSession(...args))),
-    resumeSession: (...args) => invalidate.pipe(Effect.andThen(runtime.resumeSession(...args))),
-    forkSession: (...args) => invalidate.pipe(Effect.andThen(runtime.forkSession(...args))),
+    loadSession: (...args) =>
+      invalidate.pipe(
+        Effect.andThen(runtime.loadSession(...args).pipe(Effect.tap(() => clearNegotiated))),
+      ),
+    resumeSession: (...args) =>
+      invalidate.pipe(
+        Effect.andThen(runtime.resumeSession(...args).pipe(Effect.tap(() => clearNegotiated))),
+      ),
+    forkSession: (...args) =>
+      invalidate.pipe(
+        Effect.andThen(runtime.forkSession(...args).pipe(Effect.tap(() => clearNegotiated))),
+      ),
   };
   seededRuntimes.add(wrapped);
   return wrapped;

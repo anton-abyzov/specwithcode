@@ -398,6 +398,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   installServiceUpdate: (options) =>
     ipcRenderer.invoke(IpcChannels.SERVICE_UPDATE_INSTALL_CHANNEL, options),
   cancelServiceUpdate: () => ipcRenderer.invoke(IpcChannels.SERVICE_UPDATE_CANCEL_CHANNEL),
+  requestManagedUpdateConsent: (input) =>
+    ipcRenderer.invoke(IpcChannels.MANAGED_UPDATE_CONSENT_CHANNEL, input),
   onServiceUpdateState: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, state: unknown) => {
       if (typeof state !== "object" || state === null) return;

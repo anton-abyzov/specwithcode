@@ -1,5 +1,7 @@
 import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+  type LogicalProject,
+  type ProjectCoordinatorBinding,
   type ProjectWorkspacePatch,
   type ProjectKind,
   type ThreadId,
@@ -20,7 +22,19 @@ import * as Schema from "effect/Schema";
 import type { UnsequencedProjectEvent } from "../persistence/OrchestrationEventStore.ts";
 import type { ProjectRow } from "./ProjectStore.ts";
 
+export interface ProjectOwnershipUpdate {
+  readonly expectedRevision: number;
+  /** Exact singleton identity the explicit handoff plan is allowed to join. */
+  readonly joinExpectedLogicalProjectId?: string | null;
+  /** Internal only: MachineHandoff verified a destination-bound published checkpoint. */
+  readonly acceptedHandoffOperationId?: string;
+  readonly logicalProject: LogicalProject;
+  readonly coordinatorBinding: ProjectCoordinatorBinding;
+}
+
 export interface ProjectCreateCommand {
+  readonly initialLogicalProject?: LogicalProject;
+  readonly initialCoordinatorBinding?: ProjectCoordinatorBinding;
   readonly kind?: ProjectKind;
   readonly type: "project.create";
   readonly commandId: CommandId;
@@ -33,6 +47,8 @@ export interface ProjectCreateCommand {
 }
 
 export interface ProjectMetaUpdateCommand {
+  /** Server-only ownership transition, never read from an ordinary settings patch. */
+  readonly ownership?: ProjectOwnershipUpdate;
   readonly workspaceSettings?: ProjectWorkspacePatch;
   readonly coordinatorThreadId?: ThreadId;
   readonly type: "project.meta.update";
@@ -213,6 +229,12 @@ export function planProjectCommand(input: {
           workspaceSettings: {
             ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
             kind: command.kind ?? "code",
+            ...(command.initialLogicalProject
+              ? { logicalProject: command.initialLogicalProject }
+              : {}),
+            ...(command.initialCoordinatorBinding
+              ? { coordinatorBinding: command.initialCoordinatorBinding }
+              : {}),
           },
           createdAt: occurredAt,
           updatedAt: occurredAt,
@@ -245,9 +267,75 @@ export function planProjectCommand(input: {
           }),
         );
       }
-      const { expectedRevision: _expected, ...settingsPatch } = command.workspaceSettings ?? {};
+      if (command.ownership) {
+        if (command.ownership.expectedRevision !== previousSettings.revision)
+          return Result.fail(
+            new ProjectSettingsRevisionConflictError({
+              projectId: command.projectId,
+              expectedRevision: command.ownership.expectedRevision,
+              actualRevision: previousSettings.revision,
+            }),
+          );
+        const old = previousSettings.coordinatorBinding;
+        const next = command.ownership.coordinatorBinding;
+        const acceptedIncoming =
+          command.ownership.acceptedHandoffOperationId !== undefined &&
+          command.ownership.acceptedHandoffOperationId === next.operationId &&
+          next.state === "active" &&
+          next.predecessor !== undefined &&
+          (!old || next.epoch > old.epoch) &&
+          command.ownership.logicalProject.members.some(
+            (m) =>
+              m.projectId === next.predecessor!.projectId &&
+              m.environmentId === next.predecessor!.environmentId &&
+              m.coordinatorThreadId === next.predecessor!.coordinatorThreadId,
+          );
+        if (
+          previousSettings.logicalProject &&
+          previousSettings.logicalProject.id !== command.ownership.logicalProject.id &&
+          !(
+            command.ownership.joinExpectedLogicalProjectId === previousSettings.logicalProject.id &&
+            previousSettings.logicalProject.members.every(
+              (member) => member.projectId === command.projectId,
+            ) &&
+            previousSettings.logicalProject.members.length <= 1 &&
+            (next.state === "transferred" || acceptedIncoming)
+          )
+        )
+          return invariant(
+            "Only an explicitly accepted standalone project can join another identity.",
+          );
+        if (
+          old &&
+          !acceptedIncoming &&
+          (next.epoch !== old.epoch ||
+            (old.state !== "active" &&
+              (next.state === "active" || next.operationId !== old.operationId)) ||
+            (old.state === "transferred" && next.state !== "transferred"))
+        )
+          return invariant("A relinquished coordinator cannot resume or change its handoff.");
+      }
+      // Ignore forged extras even in internal direct calls that bypass wire decoding.
+      const {
+        expectedRevision: _expected,
+        logicalProject: _identity,
+        coordinatorBinding: _binding,
+        ...settingsPatch
+      } = (command.workspaceSettings ?? {}) as ProjectWorkspacePatch & {
+        logicalProject?: unknown;
+        coordinatorBinding?: unknown;
+      };
+      const renamedIdentity =
+        command.title !== undefined &&
+        previousSettings.logicalProject &&
+        previousSettings.coordinatorBinding?.state === "active"
+          ? { ...previousSettings.logicalProject, title: command.title }
+          : undefined;
       const workspaceSettings =
-        command.workspaceSettings || command.coordinatorThreadId
+        command.workspaceSettings ||
+        command.coordinatorThreadId ||
+        command.ownership ||
+        renamedIdentity
           ? {
               ...previousSettings,
               ...Object.fromEntries(
@@ -255,6 +343,13 @@ export function planProjectCommand(input: {
               ),
               ...(command.coordinatorThreadId
                 ? { coordinatorThreadId: command.coordinatorThreadId }
+                : {}),
+              ...(renamedIdentity ? { logicalProject: renamedIdentity } : {}),
+              ...(command.ownership
+                ? {
+                    logicalProject: command.ownership.logicalProject,
+                    coordinatorBinding: command.ownership.coordinatorBinding,
+                  }
                 : {}),
               revision: previousSettings.revision + 1,
             }

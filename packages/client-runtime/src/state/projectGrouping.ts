@@ -127,12 +127,14 @@ function deriveRepositoryScopedKey(
 export function deriveLogicalProjectKey(
   project: Pick<
     EnvironmentProject,
-    "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity"
+    "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity" | "workspaceSettings"
   >,
   options?: {
     readonly groupingMode?: SidebarProjectGroupingMode;
   },
 ): string {
+  const identity = project.workspaceSettings?.logicalProject;
+  if (identity) return `logical-project:${identity.id}`;
   const groupingMode = options?.groupingMode ?? "repository";
   if (groupingMode === "separate") {
     return derivePhysicalProjectKey(project);
@@ -148,7 +150,7 @@ export function deriveLogicalProjectKey(
 export function deriveLogicalProjectKeyFromSettings(
   project: Pick<
     EnvironmentProject,
-    "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity"
+    "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity" | "workspaceSettings"
   >,
   settings: ProjectGroupingSettings,
 ): string {
@@ -277,9 +279,61 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
   readonly settings: ProjectGroupingSettings;
   readonly preferredEnvironmentId?: EnvironmentId | null;
 }): ReadonlyArray<ProjectGroup<TProject>> {
+  // An explicit membership survives a source that has not streamed its new metadata yet.
+  // Conflicting declarations never absorb a registration by guesswork.
+  const membership = new Map<string, Set<string>>();
+  const identityOwners = new Map<string, TProject>();
+  const identities = new Map<
+    string,
+    NonNullable<TProject["workspaceSettings"]>["logicalProject"]
+  >();
+  for (const project of input.projects) {
+    const identity = project.workspaceSettings?.logicalProject;
+    if (!identity) continue;
+    const previous = identities.get(identity.id);
+    const owner = identityOwners.get(identity.id);
+    const binding = project.workspaceSettings?.coordinatorBinding;
+    const ownerBinding = owner?.workspaceSettings?.coordinatorBinding;
+    const preferCurrent =
+      !owner ||
+      (binding?.epoch ?? 0) > (ownerBinding?.epoch ?? 0) ||
+      ((binding?.epoch ?? 0) === (ownerBinding?.epoch ?? 0) && binding?.state === "active");
+    if (preferCurrent) identityOwners.set(identity.id, project);
+    identities.set(identity.id, {
+      ...(preferCurrent ? identity : previous!),
+      members: [...(previous?.members ?? []), ...identity.members].filter(
+        (member, index, refs) =>
+          refs.findIndex(
+            (other) =>
+              other.environmentId === member.environmentId && other.projectId === member.projectId,
+          ) === index,
+      ),
+    });
+    for (const member of identity.members) {
+      const key = scopedProjectKey(scopeProjectRef(member.environmentId, member.projectId));
+      const ids = membership.get(key) ?? new Set<string>();
+      ids.add(identity.id);
+      membership.set(key, ids);
+    }
+  }
+  const logicalKeyFor = (project: TProject) => {
+    const own = project.workspaceSettings?.logicalProject;
+    const linked = membership.get(
+      scopedProjectKey(scopeProjectRef(project.environmentId, project.id)),
+    );
+    const identity = own?.id ?? (linked?.size === 1 ? [...linked][0] : undefined);
+    return identity
+      ? `logical-project:${identity}`
+      : deriveLogicalProjectKeyFromSettings(project, input.settings);
+  };
+  // Domain bindings can share a checkout, but each carries independent ownership metadata.
+  const registrationKeyFor = (project: TProject) =>
+    logicalKeyFor(project).startsWith("logical-project:")
+      ? scopedProjectKey(scopeProjectRef(project.environmentId, project.id))
+      : derivePhysicalProjectKey(project);
   const projectsByPhysicalKey = new Map<string, TProject[]>();
   for (const project of input.projects) {
-    const physicalProjectKey = derivePhysicalProjectKey(project);
+    const physicalProjectKey = registrationKeyFor(project);
     const existing = projectsByPhysicalKey.get(physicalProjectKey);
     if (existing) {
       existing.push(project);
@@ -295,9 +349,7 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
       shouldReplacePhysicalProjectWinner(current, candidate) ? candidate : current,
     );
     const identitySource = selectProjectIdentitySource(physicalProjects, winner);
-    const logicalKey = deriveLogicalProjectKey(identitySource, {
-      groupingMode: resolveProjectGroupingMode(winner, input.settings),
-    });
+    const logicalKey = logicalKeyFor(identitySource);
     logicalKeyByPhysicalKey.set(physicalProjectKey, logicalKey);
     const member = { physicalProjectKey, project: winner };
     const existing = groupedMembers.get(logicalKey);
@@ -311,10 +363,8 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
   const projectRefsByLogicalKey = new Map<string, ScopedProjectRef[]>();
   const seenProjectRefs = new Set<string>();
   for (const project of input.projects) {
-    const physicalProjectKey = derivePhysicalProjectKey(project);
-    const logicalKey =
-      logicalKeyByPhysicalKey.get(physicalProjectKey) ??
-      deriveLogicalProjectKeyFromSettings(project, input.settings);
+    const physicalProjectKey = registrationKeyFor(project);
+    const logicalKey = logicalKeyByPhysicalKey.get(physicalProjectKey) ?? logicalKeyFor(project);
     const projectRefKey = scopedProjectKey(scopeProjectRef(project.environmentId, project.id));
     if (seenProjectRefs.has(projectRefKey)) continue;
     seenProjectRefs.add(projectRefKey);
@@ -336,15 +386,24 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
     return {
       key,
       label:
-        members.length > 1
+        identities.get(key.replace(/^logical-project:/, ""))?.title ??
+        (members.length > 1
           ? deriveProjectGroupLabel({
               representative,
               members: members.map((member) => member.project),
             })
-          : representative.title,
+          : representative.title),
       representative,
       members,
-      memberProjectRefs: projectRefsByLogicalKey.get(key) ?? [],
+      memberProjectRefs: [
+        ...(projectRefsByLogicalKey.get(key) ?? []),
+        ...(identities.get(key.replace(/^logical-project:/, ""))?.members ?? []).map((member) =>
+          scopeProjectRef(member.environmentId, member.projectId),
+        ),
+      ].filter(
+        (ref, index, refs) =>
+          refs.findIndex((other) => scopedProjectKey(other) === scopedProjectKey(ref)) === index,
+      ),
     };
   });
 }

@@ -1,3 +1,7 @@
+import {
+  makeManagedUpdatesRpc,
+  makeLegacyServerUpdateRpc,
+} from "./managedUpdates/ManagedUpdatesRpc.ts";
 import * as ProjectWorkspaceRpc from "./project/ProjectWorkspaceRpc.ts";
 import { OrchestrationDispatchCommandError } from "@specweave-studio/contracts";
 import * as Crypto from "effect/Crypto";
@@ -77,8 +81,6 @@ import {
   ProviderSetupError,
   RelayClientInstallFailedError,
   type RelayClientInstallProgressEvent,
-  type ServerSelfUpdateError,
-  type ServerSelfUpdateProgressEvent,
   type ServerConfig as ClientServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleStreamEvent,
@@ -1283,8 +1285,8 @@ const layerWsRpc = (
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const providerAuth = yield* ProviderAuthService.ProviderAuthService;
       const providerInstallation = yield* makeProviderInstallation();
-      const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
-      const serviceUpdatePreparation = yield* ServiceUpdatePreparation.ServiceUpdatePreparation;
+      const managedUpdatesRpc = yield* makeManagedUpdatesRpc(currentSession);
+      const legacyServerUpdateRpc = yield* makeLegacyServerUpdateRpc;
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -2350,33 +2352,8 @@ const layerWsRpc = (
         [WS_METHODS.providerInstallCancel]: (input) => providerInstallation.cancel(input),
         [WS_METHODS.providerInstallSubscribe]: (input) => providerInstallation.subscribe(input),
         [WS_METHODS.providerInstallRemove]: (input) => providerInstallation.remove(input),
-        [WS_METHODS.serverUpdateServer]: (input) => serverSelfUpdate.update(input),
-        [WS_METHODS.serverUpdateServerWithProgress]: (input) =>
-          Stream.callback<ServerSelfUpdateProgressEvent, ServerSelfUpdateError>((queue) =>
-            serverSelfUpdate
-              .update(input, (stage) =>
-                Queue.offer(queue, {
-                  type: "progress",
-                  stage,
-                }).pipe(Effect.asVoid),
-              )
-              .pipe(
-                Effect.flatMap((result) =>
-                  Queue.offer(queue, {
-                    type: "complete",
-                    result,
-                  }),
-                ),
-                Effect.catchTags({
-                  ServerSelfUpdateError: (error) => Queue.fail(queue, error),
-                }),
-                Effect.andThen(Queue.end(queue)),
-                Effect.forkScoped,
-              ),
-          ),
-        [WS_METHODS.serverCommitDesktopUpdate]: (input) =>
-          serverSelfUpdate.commitDesktopUpdate(input.requestId),
-        [WS_METHODS.serverPrepareServiceUpdate]: (input) => serviceUpdatePreparation.prepare(input),
+        ...managedUpdatesRpc,
+        ...legacyServerUpdateRpc,
         [WS_METHODS.serverUpsertKeybinding]: (rule) =>
           Effect.gen(function* () {
             const keybindingsConfig = yield* keybindings.upsertKeybindingRule(rule);

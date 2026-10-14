@@ -9,6 +9,7 @@ import {
   PERSONAL_ASSISTANT_LABEL,
   PROJECT_GOAL_MAX_LENGTH,
   PROJECT_INSTRUCTIONS_MAX_LENGTH,
+  logicalProjectTitle,
 } from "@specweave-studio/contracts";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import { resolveCoordinatorModelSelection } from "@specweave-studio/shared/coordinatorDefault";
@@ -67,7 +68,12 @@ export function ProjectWorkspaceSettings({
   const countId = useId();
   const [tab, setTab] = useState(initialTab);
   const limitScope = useMemo(() => ({ project: projectKey }), [projectKey]);
-  const [title, setTitle] = useState(project.title);
+  const projectTitle = logicalProjectTitle(project);
+  const [title, setTitle] = useState(projectTitle);
+  const [titleEdited, setTitleEdited] = useState(false);
+  const ownsName =
+    !project.workspaceSettings?.logicalProject ||
+    project.workspaceSettings.coordinatorBinding?.state === "active";
   const [goal, setGoal] = useState(snapshot.settings.goal);
   const [instructions, setInstructions] = useState(snapshot.settings.instructions);
   const [coordinator, setCoordinator] = useState<ModelSelection | null>(
@@ -125,13 +131,19 @@ export function ProjectWorkspaceSettings({
   }
   async function save() {
     if (disabled) return;
+    if (titleEdited && title.trim() !== projectTitle && !ownsName) {
+      setError(
+        "Open the active coordinator to rename this project. This checkout does not own its name.",
+      );
+      return;
+    }
     setBusy(true);
     setError(null);
     const result = await update({
       environmentId: project.environmentId,
       input: {
         projectId: project.id,
-        title,
+        ...(titleEdited && ownsName ? { title: title.trim() } : {}),
         defaultModelSelection: worker,
         workspaceSettings: {
           expectedRevision: baseRevision,
@@ -150,6 +162,7 @@ export function ProjectWorkspaceSettings({
       return;
     }
     setDirty(false);
+    setTitleEdited(false);
     setBaseRevision(baseRevision + 1);
     onSaved();
   }
@@ -209,7 +222,7 @@ export function ProjectWorkspaceSettings({
           <header className="project-settings-heading">
             <DialogTitle>Project settings</DialogTitle>
             <DialogDescription>
-              {project.title} ·{" "}
+              {projectTitle} ·{" "}
               {snapshot.settings.kind === "personal"
                 ? PERSONAL_ASSISTANT_LABEL
                 : project.workspaceRoot}
@@ -250,7 +263,7 @@ export function ProjectWorkspaceSettings({
                         <button
                           type="button"
                           className="project-name-icon"
-                          aria-label={`Change the icon for ${project.title}`}
+                          aria-label={`Change the icon for ${projectTitle}`}
                           disabled={icon.blocked !== null || !canOperate}
                         >
                           <ProjectFavicon project={project} className="size-5" />
@@ -261,7 +274,10 @@ export function ProjectWorkspaceSettings({
                         id="project-settings-name"
                         value={title}
                         disabled={disabled}
-                        onChange={(e) => change(setTitle, e.target.value)}
+                        onChange={(e) => {
+                          setTitleEdited(true);
+                          change(setTitle, e.target.value);
+                        }}
                       />
                     </div>
                     {icon.blocked ? <p className="project-muted">{icon.blocked}</p> : null}
@@ -518,7 +534,8 @@ export function ProjectWorkspaceSettings({
                 className="project-control"
                 disabled={busy}
                 onClick={() => {
-                  setTitle(project.title);
+                  setTitle(projectTitle);
+                  setTitleEdited(false);
                   setGoal(snapshot.settings.goal);
                   setInstructions(snapshot.settings.instructions);
                   setCoordinator(snapshot.settings.coordinatorModelSelection);

@@ -162,3 +162,92 @@ it.effect("refuses to archive the retained coordinator but permits ordinary thre
     ).toBe("archived");
   }).pipe(Effect.provide(layer)),
 );
+
+it.effect(
+  "fences direct dispatch, queued/retried work, provider changes and approvals after handoff",
+  () =>
+    Effect.gen(function* () {
+      const { guard } = yield* fixture;
+      const sql = yield* SqlClient.SqlClient;
+      for (const state of ["transferring", "transferred"] as const) {
+        yield* sql`UPDATE projection_projects SET workspace_settings_json=${JSON.stringify({
+          ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+          coordinatorThreadId: threadId,
+          coordinatorBinding: { state, epoch: 0, operationId: "transfer" },
+        })} WHERE project_id=${projectId}`;
+        for (const type of [
+          "message.dispatch",
+          "queue.resume",
+          "prepared-run.release",
+          "prepared-run.retry",
+          "provider.switch",
+          "runtime-request.respond",
+          "queued-message.promote-to-steer",
+        ] as const) {
+          const input = {
+            type,
+            threadId,
+            commandId: CommandId.make(type),
+          } as OrchestrationV2ServerCommand;
+          expect(
+            yield* guard(input, Effect.die("must not start old coordinator")).pipe(Effect.flip),
+          ).toMatchObject({ code: "transferred" });
+        }
+      }
+    }).pipe(Effect.provide(layer)),
+);
+it.effect("permits nested admission in one fiber but serializes a child fiber", () =>
+  Effect.gen(function* () {
+    const { admission } = yield* fixture;
+    const entered = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const outer = yield* admission
+      .withLock(
+        projectId,
+        Effect.gen(function* () {
+          expect(yield* admission.withLock(projectId, Effect.succeed("nested"))).toBe("nested");
+          yield* Deferred.succeed(entered, undefined);
+          yield* Deferred.await(release);
+        }),
+      )
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.await(entered);
+    const waiting = yield* admission
+      .withLock(projectId, Effect.succeed("next"))
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Effect.yieldNow;
+    expect(waiting.pollUnsafe()).toBeUndefined();
+    yield* Deferred.succeed(release, undefined);
+    yield* Fiber.join(outer);
+    expect(yield* Fiber.join(waiting)).toBe("next");
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("keeps source workers usable after acknowledgment without reviving its coordinator", () =>
+  Effect.gen(function* () {
+    const { guard } = yield* fixture;
+    const sql = yield* SqlClient.SqlClient;
+    const worker = ThreadId.make("ordinary-worker");
+    yield* sql`UPDATE projection_projects SET workspace_settings_json=${JSON.stringify({
+      ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+      coordinatorThreadId: threadId,
+      coordinatorBinding: { state: "transferred", epoch: 0, operationId: "transfer" },
+    })} WHERE project_id=${projectId}`;
+    expect(yield* guard({ ...command, threadId: worker }, Effect.succeed("created"))).toBe(
+      "created",
+    );
+    expect(
+      yield* guard(
+        {
+          type: "message.dispatch",
+          threadId: worker,
+          commandId: CommandId.make("worker-send"),
+        } as OrchestrationV2ServerCommand,
+        Effect.succeed("sent"),
+      ),
+    ).toBe("sent");
+    expect(
+      yield* guard(command, Effect.die("duplicate coordinator")).pipe(Effect.flip),
+    ).toMatchObject({ code: "transferred" });
+  }).pipe(Effect.provide(layer)),
+);

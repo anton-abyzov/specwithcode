@@ -1,3 +1,22 @@
+import type {
+  DesktopUpdatePreferences,
+  DesktopUpdatePreferencesPatch,
+  StudioServiceUpdateState,
+  ManagedUpdateLocalConsentRequest,
+  ManagedUpdateStatus,
+} from "./managedUpdates.ts";
+export {
+  DesktopUpdatePreferencesSchema,
+  DesktopUpdatePreferencesPatchSchema,
+  StudioServiceUpdateStatusSchema,
+  StudioServiceUpdateStateSchema,
+} from "./managedUpdates.ts";
+export type {
+  DesktopUpdatePreferences,
+  DesktopUpdatePreferencesPatch,
+  StudioServiceUpdateStatus,
+  StudioServiceUpdateState,
+} from "./managedUpdates.ts";
 import * as Schema from "effect/Schema";
 
 import { SnapShotSource } from "./chatAttachment.ts";
@@ -317,90 +336,6 @@ export const DesktopUpdateStateSchema = Schema.Struct({
   errorContext: Schema.NullOr(Schema.Literals(["check", "download", "install"])),
   canRetry: Schema.Boolean,
 });
-
-/**
- * How Studio applies updates, shared by the desktop app and the Studio
- * service it attaches to. Older desktop builds have no preferences.
- */
-export interface DesktopUpdatePreferences {
-  /** Look for new releases in the background. Off stops every automatic step. */
-  checkAutomatically: boolean;
-  /** Download a found release in the background instead of waiting for a click. */
-  downloadAutomatically: boolean;
-  /**
-   * Install without asking: the app when it quits, the service at a quiet
-   * moment (no session working for a while).
-   */
-  installAutomatically: boolean;
-  /**
-   * False when this build keeps self-update off (STUDIO_DISABLE_AUTO_UPDATE),
-   * so nothing runs on its own and the switches above report off. Absent on
-   * desktop apps from before it was reported.
-   */
-  automaticUpdatesAllowed?: boolean;
-}
-
-export const DesktopUpdatePreferencesSchema = Schema.Struct({
-  checkAutomatically: Schema.Boolean,
-  downloadAutomatically: Schema.Boolean,
-  installAutomatically: Schema.Boolean,
-  automaticUpdatesAllowed: Schema.optionalKey(Schema.Boolean),
-});
-
-export const DesktopUpdatePreferencesPatchSchema = Schema.Struct({
-  checkAutomatically: Schema.optionalKey(Schema.Boolean),
-  downloadAutomatically: Schema.optionalKey(Schema.Boolean),
-  installAutomatically: Schema.optionalKey(Schema.Boolean),
-});
-export type DesktopUpdatePreferencesPatch = typeof DesktopUpdatePreferencesPatchSchema.Type;
-
-/**
- * Background updates of the fleet-installed Studio service on this computer,
- * applied by its own update agent (a launchd job beside the service). The
- * desktop reports the agent's state file; `not-managed` means no installed
- * service was found here, so there is nothing for this computer to update.
- */
-export const StudioServiceUpdateStatusSchema = Schema.Literals([
-  "not-managed",
-  "starting",
-  "disabled",
-  "up-to-date",
-  "available",
-  "downloading",
-  "downloaded",
-  "waiting-for-quiet",
-  "installing",
-  "installed",
-  "manual-required",
-  "error",
-]);
-export type StudioServiceUpdateStatus = typeof StudioServiceUpdateStatusSchema.Type;
-
-export const StudioServiceUpdateStateSchema = Schema.Struct({
-  status: StudioServiceUpdateStatusSchema,
-  /** Fleet identity of the service, such as `m4`. */
-  identity: Schema.NullOr(Schema.String),
-  installedVersion: Schema.NullOr(Schema.String),
-  availableVersion: Schema.NullOr(Schema.String),
-  downloadedVersion: Schema.NullOr(Schema.String),
-  checkedAt: Schema.NullOr(Schema.String),
-  /** Start of the current quiet period while an install waits for one. */
-  quietSince: Schema.NullOr(Schema.String),
-  message: Schema.NullOr(Schema.String),
-  lastInstall: Schema.NullOr(
-    Schema.Struct({
-      version: Schema.String,
-      at: Schema.String,
-      result: Schema.Literals(["updated", "failed"]),
-    }),
-  ),
-  /**
-   * When the agent last wrote its state. A state older than an install request
-   * is the agent's answer to an earlier request. Absent from older desktops.
-   */
-  updatedAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
-});
-export type StudioServiceUpdateState = typeof StudioServiceUpdateStateSchema.Type;
 
 export interface StudioServiceInstallOptions {
   /**
@@ -1461,6 +1396,9 @@ export interface DesktopBridge {
   installUpdate: (options?: DesktopUpdateInstallOptions) => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
   /** Update preferences; absent on desktop builds predating them. */
+  requestManagedUpdateConsent?: (
+    input: ManagedUpdateLocalConsentRequest,
+  ) => Promise<ManagedUpdateStatus | null>;
   getUpdatePreferences?: () => Promise<DesktopUpdatePreferences>;
   setUpdatePreferences?: (
     patch: DesktopUpdatePreferencesPatch,

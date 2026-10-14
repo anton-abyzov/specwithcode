@@ -99,6 +99,44 @@ const providers: ReadonlyArray<ServerProvider> = [
   },
 ];
 const bundleContent = {
+  logicalProject: {
+    id: "logical:source",
+    title: "Source",
+    coordinatorId: "coordinator:logical:source",
+    members: [
+      {
+        environmentId: EnvironmentId.make("source-environment"),
+        projectId: ProjectId.make("source-project"),
+        coordinatorThreadId: ThreadId.make("source-coordinator"),
+      },
+      {
+        environmentId: EnvironmentId.make("destination-environment"),
+        projectId: destinationId,
+        coordinatorThreadId: ThreadId.make(`project-coordinator:${destinationId}`),
+      },
+      {
+        environmentId: EnvironmentId.make("destination-environment"),
+        projectId: isolatedId,
+        coordinatorThreadId: coordinatorId,
+      },
+    ],
+  },
+  destination: {
+    environmentId: EnvironmentId.make("destination-environment"),
+    projectId: destinationId,
+    logicalProjectId: "logical:destination",
+    joinExistingProject: true,
+  },
+  coordinatorBinding: {
+    epoch: 0,
+    state: "transferring" as const,
+    operationId,
+    successor: {
+      environmentId: EnvironmentId.make("destination-environment"),
+      projectId: isolatedId,
+      coordinatorThreadId: coordinatorId,
+    },
+  },
   manifest: {
     version: 1 as const,
     operationId,
@@ -200,6 +238,12 @@ const fixture = Effect.gen(function* () {
   const created = yield* projects.create({
     commandId: CommandId.make("test:create-destination"),
     projectId: destinationId,
+    initialLogicalProject: {
+      id: "logical:destination",
+      title: "Destination",
+      coordinatorId: "coordinator:destination",
+      members: [],
+    },
     title: "Destination",
     workspaceRoot: destinationRoot,
   });

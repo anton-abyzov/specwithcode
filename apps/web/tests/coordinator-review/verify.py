@@ -40,7 +40,7 @@ try:
         browser = p.chromium.launch(headless=True, executable_path=args.chromium)
         try:
             for label, width, height, dark in [("desktop-light", 1440, 1000, False), ("390-dark", 390, 844, True)]:
-                for scenario in ["approval", "question", "plan", "activity"]:
+                for scenario in ["approval", "file-approval", "file-approval-no-patch", "question", "plan", "activity"]:
                     context = browser.new_context(viewport={"width": width, "height": height}, color_scheme="dark" if dark else "light", is_mobile=width == 390, has_touch=width == 390)
                     page = context.new_page()
                     page.on("pageerror", lambda error: receipt["pageErrors"].append(str(error)))
@@ -67,7 +67,7 @@ try:
                         page.get_by_role("menuitemradio", name="Verbose", exact=False).click()
                         trigger = page.get_by_role("button", name="View tool output", exact=True)
                     else:
-                        trigger = page.get_by_role("button", name={"approval": "Review the request", "question": "Answer the coordinator", "plan": "Review the plan"}[scenario], exact=True)
+                        trigger = page.get_by_role("button", name={"approval": "Review the request", "file-approval": "Review the request", "file-approval-no-patch": "Review the request", "question": "Answer the coordinator", "plan": "Review the plan"}[scenario], exact=True)
                     trigger.focus()
                     trigger.click()
                     dialog = page.get_by_role("dialog", name="Coordinator activity" if scenario == "activity" else "Coordinator requests", exact=True)
@@ -84,13 +84,31 @@ try:
                         path = args.output / f"{scenario}-{label}{suffix}.png"
                         page.screenshot(path=str(path), full_page=True, animations="disabled")
                         receipt["screenshots"].append(str(path))
-                    if scenario == "approval":
+                    if scenario in ("approval", "file-approval", "file-approval-no-patch"):
                         expect(dialog.get_by_role("button", name="Approve", exact=True)).to_have_attribute("data-slot", "button")
+                        if scenario.startswith("file-approval"):
+                            path = dialog.get_by_label("File path", exact=True)
+                            expect(path).to_have_text("/workspace/long directory/selected project/source/value.cjs")
+                            path.focus()
+                            expect(path).to_be_focused()
+                            assert path.evaluate("node => node.scrollWidth <= node.clientWidth + 1")
+                            if scenario == "file-approval":
+                                patch = dialog.get_by_label("Supplied patch", exact=True)
+                                expect(patch).to_have_text("--- a/value.cjs\n+++ b/value.cjs\n@@ -1 +1 @@\n-module.exports = 1;\n+module.exports = 2;")
+                                patch.focus()
+                                expect(patch).to_be_focused()
+                                expect(dialog.get_by_text("Preview unavailable", exact=True)).to_have_count(0)
+                            else:
+                                expect(dialog.get_by_text("Preview unavailable", exact=True)).to_be_visible()
+                                expect(dialog.get_by_label("Supplied patch", exact=True)).to_have_count(0)
+                            expect(dialog.get_by_text("Provider process is gone", exact=False)).to_have_count(0)
                         capture("")
                         dialog.get_by_role("button", name="Approve", exact=True).click()
                         expect(dialog.get_by_role("status")).to_have_text("No requests need your response.")
                         data = page.evaluate("window.__coordinatorReviewReceipts.approvals")
-                        assert data == [{"requestId": "fixture-approval", "decision": "accept"}]
+                        assert len(data) == 1 and data[0]["threadId"] == "coord" and data[0]["environmentId"] == "host"
+                        assert data[0]["requestId"] == ("fixture-edit-approval" if scenario.startswith("file-approval") else "fixture-approval")
+                        assert data[0]["decision"] == "accept"
                     elif scenario == "question":
                         expect(dialog.get_by_role("button", name="Next question", exact=True)).to_be_disabled()
                         capture("-choices")

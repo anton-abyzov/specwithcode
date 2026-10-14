@@ -11,6 +11,7 @@ import {
   type Project,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import type {
@@ -421,4 +422,53 @@ it("Claude SDK receives additional project folders alongside cwd and attachment 
     },
   });
   assert.deepEqual(options.additionalDirectories, ["/extra", "/main", "/attachments"]);
+});
+
+it.layer(NodeServices.layer)("logical coordinator runtime fence", (it) => {
+  it.effect(
+    "blocks native start and compaction after transfer while allowing acknowledged source workers",
+    () =>
+      Effect.gen(function* () {
+        const wrap = yield* makeEnvironmentRuntime;
+        let state: "transferring" | "transferred" = "transferring";
+        const received: string[] = [];
+        const runtime = wrap(
+          {
+            driver: "codex",
+            startTurn: (input: ProviderAdapterV2TurnInput) =>
+              Effect.sync(() => {
+                received.push(input.threadId);
+              }),
+            compactThread: (input: ProviderAdapterV2TurnInput) =>
+              Effect.sync(() => {
+                received.push(input.threadId);
+              }),
+          } as unknown as ProviderAdapterV2SessionRuntime,
+          () =>
+            Effect.succeed(
+              Option.some({
+                id: ProjectId.make("p"),
+                workspaceRoot: "/main",
+                workspaceSettings: {
+                  ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+                  coordinatorThreadId: ThreadId.make("t"),
+                  coordinatorBinding: { epoch: 0, state },
+                },
+              } as Project),
+            ),
+        );
+        for (const phase of ["transferring", "transferred"] as const) {
+          state = phase;
+          assert.isTrue(Exit.isFailure(yield* Effect.exit(runtime.startTurn(turn()))));
+          assert.isTrue(Exit.isFailure(yield* Effect.exit(runtime.compactThread!(turn()))));
+        }
+        assert.deepEqual(received, []);
+        const worker = { ...turn(), threadId: ThreadId.make("worker") };
+        yield* runtime.startTurn(worker);
+        yield* runtime.compactThread!(worker);
+        assert.deepEqual(received, ["worker", "worker"]);
+        state = "transferring";
+        assert.isTrue(Exit.isFailure(yield* Effect.exit(runtime.startTurn(worker))));
+      }),
+  );
 });

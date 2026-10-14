@@ -1,3 +1,4 @@
+import { ManagedConnectionUpdates } from "./ManagedUpdatesSection";
 import {
   ChevronRightIcon,
   ChevronsLeftRightEllipsisIcon,
@@ -1765,13 +1766,7 @@ function SavedBackendListRow({
           </button>
         </span>
       }
-      below={
-        serverUpdateState.status !== "idle" ? (
-          <div className="mt-1 max-w-md">
-            <ServerUpdateProgress state={serverUpdateState} />
-          </div>
-        ) : null
-      }
+      below={<ManagedConnectionUpdates environment={environment} state={serverUpdateState} />}
       detail={
         routesOpen ? (
           <EnvironmentRoutesList

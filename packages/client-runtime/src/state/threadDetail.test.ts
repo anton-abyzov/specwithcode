@@ -2,6 +2,8 @@ import {
   EnvironmentId,
   NodeId,
   ProviderDriverKind,
+  ProviderTurnId,
+  ProviderThreadId,
   RuntimeRequestId,
   TurnItemId,
   type OrchestrationV2ThreadProjection,
@@ -325,4 +327,132 @@ it("keeps worktree and pending requests stable during output updates, then refle
   expect(registry.get(details.worktreePathAtom(ref))).toBe("/workspace/moved");
   dispose();
   registry.dispose();
+});
+
+it("refreshes delayed file details and ambiguity without unrelated output churn, isolated by environment and actor registry", () => {
+  type Item = OrchestrationV2ThreadProjection["turnItems"][number];
+  const request: OrchestrationV2ThreadProjection["runtimeRequests"][number] = {
+    id: RuntimeRequestId.make("edit"),
+    nodeId: NodeId.make("edit-node"),
+    providerTurnId: ProviderTurnId.make("edit-turn"),
+    nativeRequestRef: null,
+    kind: "file-change",
+    status: "pending",
+    responseCapability: { type: "not_resumable", reason: "fixture" },
+    createdAt: v2Now,
+    resolvedAt: null,
+  };
+  const approval: Extract<Item, { type: "approval_request" }> = {
+    id: TurnItemId.make("edit-approval"),
+    threadId: ref.threadId,
+    runId: RunId.make("edit-run"),
+    nodeId: request.nodeId,
+    providerThreadId: ProviderThreadId.make("edit-provider-thread"),
+    providerTurnId: request.providerTurnId,
+    nativeItemRef: {
+      driver: ProviderDriverKind.make("acpRegistry"),
+      nativeId: "tool",
+      strength: "weak",
+    },
+    parentItemId: null,
+    ordinal: 0,
+    status: "pending",
+    title: null,
+    startedAt: v2Now,
+    completedAt: null,
+    updatedAt: v2Now,
+    type: "approval_request",
+    requestId: request.id,
+    requestKind: "file-change",
+    prompt: "Changed files",
+  };
+  const file: Extract<Item, { type: "file_change" }> = {
+    ...approval,
+    id: TurnItemId.make("file"),
+    type: "file_change",
+    fileName: "/workspace/a.cjs",
+    nativeItemRef: { ...approval.nativeItemRef!, strength: "strong" },
+  };
+  const projection: OrchestrationV2ThreadProjection = {
+    ...v2Projection,
+    runtimeRequests: [request],
+    turnItems: [approval],
+  };
+  const result = (data: OrchestrationV2ThreadProjection) =>
+    AsyncResult.success(
+      threadState({ data: Option.some(data), status: "live", error: Option.none() }),
+    );
+  const source = Atom.make(result(projection));
+  const otherSource = Atom.make(
+    result({
+      ...projection,
+      turnItems: [approval, { ...file, fileName: "/other-environment/private.cjs" }],
+    }),
+  );
+  const details = createEnvironmentThreadDetailAtoms((environmentId) =>
+    environmentId === ref.environmentId ? source : otherSource,
+  );
+  const registry = AtomRegistry.make();
+  const otherActorRegistry = AtomRegistry.make();
+  const dispose = registry.mount(details.pendingRequestsAtom(ref));
+  const otherRef = { ...ref, environmentId: EnvironmentId.make("other-environment") };
+  const disposeOther = registry.mount(details.pendingRequestsAtom(otherRef));
+  const disposeActor = otherActorRegistry.mount(details.pendingRequestsAtom(ref));
+  expect(
+    registry.get(details.pendingRequestsAtom(otherRef))?.approvals[0]?.fileChange?.fileName,
+  ).toBe("/other-environment/private.cjs");
+  expect(registry.get(details.pendingRequestsAtom(ref))?.approvals[0]).not.toHaveProperty(
+    "fileChange",
+  );
+  const write = (items: typeof projection.turnItems) =>
+    registry.set(source, result({ ...projection, turnItems: items }));
+  write([approval, file]);
+  const first = registry.get(details.pendingRequestsAtom(ref));
+  expect(first?.approvals[0]?.fileChange?.fileName).toBe(file.fileName);
+  expect(otherActorRegistry.get(details.pendingRequestsAtom(ref))?.approvals[0]).not.toHaveProperty(
+    "fileChange",
+  );
+  const patched = { ...file, diffStr: "-old\n+new" };
+  write([approval, patched]);
+  const withPatch = registry.get(details.pendingRequestsAtom(ref));
+  expect(withPatch).not.toBe(first);
+  expect(withPatch?.approvals[0]?.fileChange?.diffStr).toBe(patched.diffStr);
+  const unrelated = {
+    ...file,
+    id: TurnItemId.make("unrelated"),
+    nativeItemRef: { ...file.nativeItemRef!, nativeId: "other-tool" },
+  };
+  write([approval, patched, unrelated]);
+  expect(registry.get(details.pendingRequestsAtom(ref))).toBe(withPatch);
+  write([approval, patched, { ...unrelated, fileName: "/workspace/unrelated-update.cjs" }]);
+  expect(registry.get(details.pendingRequestsAtom(ref))).toBe(withPatch);
+  write([approval, patched, { ...file, id: TurnItemId.make("duplicate") }]);
+  expect(registry.get(details.pendingRequestsAtom(ref))?.approvals[0]).not.toHaveProperty(
+    "fileChange",
+  );
+  write([approval, patched, { ...approval, id: TurnItemId.make("duplicate-approval") }]);
+  expect(registry.get(details.pendingRequestsAtom(ref))?.approvals[0]).not.toHaveProperty(
+    "fileChange",
+  );
+  write([approval, patched]);
+  expect(registry.get(details.pendingRequestsAtom(ref))?.approvals[0]?.fileChange?.diffStr).toBe(
+    patched.diffStr,
+  );
+  expect(
+    registry.get(details.pendingRequestsAtom(otherRef))?.approvals[0]?.fileChange?.fileName,
+  ).toBe("/other-environment/private.cjs");
+  registry.set(
+    source,
+    result({
+      ...projection,
+      thread: { ...projection.thread, id: ThreadId.make("switched-thread") },
+      turnItems: [approval, patched],
+    }),
+  );
+  expect(registry.get(details.pendingRequestsAtom(ref))).toBeNull();
+  dispose();
+  disposeOther();
+  disposeActor();
+  registry.dispose();
+  otherActorRegistry.dispose();
 });

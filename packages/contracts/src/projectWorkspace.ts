@@ -1,3 +1,4 @@
+import { LogicalProject, ProjectCoordinatorBinding } from "./logicalProject.ts";
 import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import {
@@ -52,6 +53,9 @@ export const ProjectWorkerMachine = Schema.Struct({
 export type ProjectWorkerMachine = typeof ProjectWorkerMachine.Type;
 
 export const ProjectWorkspaceSettings = Schema.Struct({
+  /** Server-managed identity and transfer fence; absent on legacy independent projects. */
+  logicalProject: Schema.optional(LogicalProject),
+  coordinatorBinding: Schema.optional(ProjectCoordinatorBinding),
   kind: ProjectKind.pipe(Schema.withDecodingDefault(Effect.succeed("code" as const))),
   environment: ProjectEnvironmentSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROJECT_ENVIRONMENT)),
@@ -163,6 +167,7 @@ export class ProjectWorkspaceError extends Schema.TaggedError<ProjectWorkspaceEr
       "model_required",
       "unsupported_provider",
       "busy",
+      "transferred",
       "operation_failed",
     ]),
     projectId: ProjectId,
@@ -190,6 +195,7 @@ export class ProjectWorkspaceError extends Schema.TaggedError<ProjectWorkspaceEr
       unsupported_provider:
         "This provider cannot use additional project folders under the current permissions. Use Codex or Claude, or an ACP provider already running with Full access and no restrictive sandbox or approval override.",
       busy: "Finish or stop active project work before deleting the project.",
+      transferred: "This coordinator handed off ownership. Open its successor; an uncertain transfer must be retried with the same handoff.",
       operation_failed: "The project operation failed. Reload and try again.",
     };
     return messages[this.code];

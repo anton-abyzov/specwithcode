@@ -326,7 +326,7 @@ export const OrchestratorMcpThreadListInput = Schema.Struct({
   machine: Schema.optional(
     OrchestratorMcpMachineTarget.annotate({
       description:
-        "List threads on another machine. projectId is then that machine's project; omit it for the project matching this one.",
+        "List one machine only. Omit machine for a coordinator's logical-project inventory. projectId on an explicit remote machine names its project.",
     }),
   ),
   projectId: OrchestratorMcpProjectTarget,
@@ -336,6 +336,12 @@ export const OrchestratorMcpThreadListInput = Schema.Struct({
   titleContains: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
   settled: Schema.optional(Schema.Boolean),
   includeSubagents: Schema.optional(Schema.Boolean),
+  includeArchived: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "Include archived threads; defaults to true for a federated coordinator inventory, false for a single machine.",
+    }),
+  ),
   cursor: Schema.optional(NonNegativeInt),
   limit: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(100))),
 });
@@ -343,6 +349,12 @@ export type OrchestratorMcpThreadListInput = typeof OrchestratorMcpThreadListInp
 
 export const OrchestratorMcpThreadListItem = Schema.Struct({
   threadId: ThreadId,
+  /** Always use the compound reference for cross-machine reads. */
+  threadRef: Schema.optional(Schema.String),
+  environmentId: Schema.optional(EnvironmentId),
+  projectId: Schema.optional(ProjectId),
+  machine: Schema.optional(OrchestratorMcpMachineRef),
+  archived: Schema.optional(Schema.Boolean),
   title: Schema.String,
   threadLink: OrchestratorMcpThreadLink,
   createdBy: OrchestrationV2Actor,
@@ -364,7 +376,25 @@ export const OrchestratorMcpThreadListItem = Schema.Struct({
 });
 export type OrchestratorMcpThreadListItem = typeof OrchestratorMcpThreadListItem.Type;
 
+export const OrchestratorMcpProjectThreadInventoryMember = Schema.Struct({
+  environmentId: EnvironmentId,
+  projectId: ProjectId,
+  machine: Schema.optional(OrchestratorMcpMachineRef),
+  status: Schema.Literals(["complete", "partial", "unavailable"]),
+  total: Schema.optional(NonNegativeInt),
+  code: Schema.optional(Schema.String),
+  message: Schema.optional(Schema.String),
+});
+export type OrchestratorMcpProjectThreadInventoryMember =
+  typeof OrchestratorMcpProjectThreadInventoryMember.Type;
+
 export const OrchestratorMcpThreadListResult = Schema.Struct({
+  logicalProjectId: Schema.optional(Schema.String),
+  /** False only when every linked binding answered completely. total is a lower bound when true. */
+  partial: Schema.optional(Schema.Boolean),
+  members: Schema.optional(Schema.Array(OrchestratorMcpProjectThreadInventoryMember)),
+  /** Acknowledges archive support; absent on older servers. */
+  includeArchived: Schema.optional(Schema.Boolean),
   machine: Schema.optional(OrchestratorMcpMachineRef),
   projectId: ProjectId,
   /** The calling thread, or null when the caller is not a Studio thread. */

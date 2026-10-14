@@ -27,8 +27,8 @@ function errorMessage(error: unknown): string {
 }
 
 /**
- * Starts a project from just a name. The server makes a folder under its
- * `newProjectsRoot` with a README, an icon, and a first commit; this then
+ * Starts a project in the chosen parent folder (or managed storage for Personal
+ * and older callers). The server makes a new child folder with a README, an icon, and a first commit; this then
  * opens a new thread draft in it. With `github`, it also publishes the
  * repository as private, without holding up the draft.
  *
@@ -85,12 +85,17 @@ export function useNewProject() {
     async (input: {
       readonly environmentId: EnvironmentId;
       readonly name: string;
+      readonly parentPath?: string;
       readonly kind?: "code" | "personal";
       readonly github: { readonly account: string | null } | null;
     }): Promise<boolean> => {
       const result = await createNew({
         environmentId: input.environmentId,
-        input: { name: input.name, kind: input.kind ?? "code" },
+        input: {
+          name: input.name,
+          kind: input.kind ?? "code",
+          ...(input.parentPath ? { parentPath: input.parentPath } : {}),
+        },
       });
       if (result._tag === "Failure") {
         if (!isAtomCommandInterrupted(result)) {
@@ -106,11 +111,11 @@ export function useNewProject() {
       }
 
       const { projectId, workspaceRoot, commitError } = result.value;
-      // The folder sits in SpecWithCode's data directory, so always say where.
+      // Confirm the actual folder, including any collision suffix.
       toastManager.add(
         stackedThreadToast(
           commitError === undefined
-            ? { type: "success", title: `Created ${input.name}`, description: workspaceRoot }
+            ? { type: "success", title: input.kind === "personal" ? "Personal assistant ready" : `Created ${input.name}`, description: workspaceRoot }
             : {
                 type: "warning",
                 title: `Created ${input.name} without a first commit`,

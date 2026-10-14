@@ -2,16 +2,17 @@ import {
   DesktopUpdatePreferencesPatchSchema,
   DesktopUpdatePreferencesSchema,
   StudioServiceUpdateStateSchema,
-  type StudioServiceUpdateState,
 } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as FS from "node:fs";
 
 import * as DesktopConfig from "../../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
+import * as DesktopLocalService from "../../backend/DesktopLocalService.ts";
 import * as DesktopObservability from "../../app/DesktopObservability.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
@@ -50,12 +51,14 @@ export class ServiceUpdateCancelError extends Schema.TaggedError<ServiceUpdateCa
   }
 }
 
-const controllerFor = (
+export const controllerForAttachedService = (
   environment: DesktopEnvironment.DesktopEnvironment["Service"],
+  service: DesktopLocalService.AttachedLocalService | null,
 ): ServiceUpdateController =>
   makeServiceUpdateController({
     homeDirectory: environment.homeDirectory,
     platform: environment.platform,
+    attachedStudioHome: service?.runtime.serviceManaged ? service.baseDir : null,
     agentScriptPath: () => {
       const candidates = [
         ...environment.resolveResourcePathCandidates("studio-updater/update_agent.py"),
@@ -63,6 +66,12 @@ const controllerFor = (
       ];
       return selectAgentScriptPath(candidates, (candidate) => FS.existsSync(candidate));
     },
+  });
+
+const controllerFor = (environment: DesktopEnvironment.DesktopEnvironment["Service"]) =>
+  Effect.gen(function* () {
+    const service = yield* (yield* DesktopLocalService.DesktopLocalService).attached;
+    return controllerForAttachedService(environment, Option.getOrNull(service));
   });
 
 // Self-update follows the same build switch as the app's own updates
@@ -83,7 +92,7 @@ const writeServiceAgentConfig = Effect.fn("desktop.serviceUpdates.writeConfig")(
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const settings = yield* (yield* DesktopAppSettings.DesktopAppSettings).get;
   const allowed = yield* automaticUpdatesAllowed;
-  const controller = controllerFor(environment);
+  const controller = yield* controllerFor(environment);
   return yield* Effect.try(() =>
     controller.writeConfig({
       preferences: allowed ? settings.updatePreferences : NO_AUTOMATIC_UPDATES,
@@ -106,7 +115,7 @@ export const syncServiceAgentConfig = Effect.fn("desktop.serviceUpdates.syncConf
 ) {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   yield* writeServiceAgentConfig(extra);
-  return controllerFor(environment);
+  return yield* controllerFor(environment);
 });
 
 export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdates")(function* () {
@@ -114,7 +123,6 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
-  const controller = controllerFor(environment);
   const syncConfig = (extra?: ServiceAgentConfigChange) =>
     writeServiceAgentConfig(extra).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
@@ -124,11 +132,14 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
   // A request whose agent could not be started shows as an error in the state
   // the renderer polls, until the agent writes a newer state of its own.
   let agentFailure: AgentStartFailure | null = null;
-  const readState = () => withAgentStartFailure(controller.readState(), agentFailure);
+  const readState = Effect.gen(function* () {
+    const controller = yield* controllerFor(environment);
+    return withAgentStartFailure(controller.readState(), agentFailure);
+  });
 
   let lastSent = "";
   const publish = Effect.gen(function* () {
-    const state = readState();
+    const state = yield* readState;
     const encoded = JSON.stringify(state);
     if (encoded === lastSent) return state;
     lastSent = encoded;
@@ -138,6 +149,7 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
 
   const runAgent = (reason: string, options: { readonly reportFailure?: boolean } = {}) =>
     Effect.gen(function* () {
+      const controller = yield* controllerFor(environment);
       // A failed refresh leaves the installed job in place, which can still run.
       yield* Effect.tryPromise(() => controller.ensureAgent()).pipe(
         Effect.catch((error) =>
@@ -226,7 +238,10 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
         const updates = yield* DesktopUpdates.DesktopUpdates;
         yield* updates.applyPreferences;
         yield* syncConfig();
-        if (patch.checkAutomatically === true && controller.installation() !== null) {
+        if (
+          patch.checkAutomatically === true &&
+          (yield* controllerFor(environment)).installation() !== null
+        ) {
           yield* startAgent("checks turned on", false).pipe(Effect.forkDetach);
         }
         return effectiveUpdatePreferences(change.settings.updatePreferences, true);
@@ -239,7 +254,7 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
       channel: IpcChannels.SERVICE_UPDATE_GET_STATE_CHANNEL,
       payload: Schema.Void,
       result: StudioServiceUpdateStateSchema,
-      handler: () => Effect.sync(readState),
+      handler: () => readState,
     }),
   );
 
@@ -255,6 +270,7 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
       const now = yield* DateTime.now;
       const at = DateTime.formatIso(now);
       const install = parseServiceInstallOptions(raw, DateTime.toEpochMillis(now));
+      const state = yield* readState;
       const written = yield* syncConfig(
         kind === "check"
           ? { checkRequestedAt: at }
@@ -263,7 +279,7 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
               installMode: install.mode,
               installHoldUntil: install.mode === "force" ? install.holdUntil : null,
               // The version the user was shown: the agent installs no other, and not after 10 minutes.
-              installRequest: serviceInstallRequestRecord(at, install.version, readState()),
+              installRequest: serviceInstallRequestRecord(at, install.version, state),
             },
       );
       agentFailure = written ? null : { at, message: REQUEST_NOT_WRITTEN };
@@ -278,7 +294,7 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
           // The bundled agent first: the kicked pass takes the agent lock, and a
           // refresh after it would leave the older agent to handle the request.
           // A failed kick is reported by the background run below.
-          yield* refreshThenRunAgent(controller).pipe(
+          yield* refreshThenRunAgent(yield* controllerFor(environment)).pipe(
             Effect.tap((outcome) =>
               outcome === "refreshed"
                 ? Effect.void
@@ -297,7 +313,7 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
       channel: IpcChannels.SERVICE_UPDATE_CHECK_CHANNEL,
       payload: Schema.Void,
       result: StudioServiceUpdateStateSchema,
-      handler: (): Effect.Effect<StudioServiceUpdateState> => request("check"),
+      handler: () => request("check"),
     }),
   );
 
@@ -307,7 +323,7 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
       // Older renderers send nothing; unknown or malformed options are ignored.
       payload: Schema.Unknown,
       result: StudioServiceUpdateStateSchema,
-      handler: (options): Effect.Effect<StudioServiceUpdateState> => request("install", options),
+      handler: (options) => request("install", options),
     }),
   );
 
@@ -318,7 +334,7 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
       channel: IpcChannels.SERVICE_UPDATE_CANCEL_CHANNEL,
       payload: Schema.Void,
       result: StudioServiceUpdateStateSchema,
-      handler: (): Effect.Effect<StudioServiceUpdateState, ServiceUpdateCancelError> =>
+      handler: () =>
         Effect.gen(function* () {
           const at = DateTime.formatIso(yield* DateTime.now);
           if (!(yield* syncConfig(cancelServiceInstallChange(at)))) {
@@ -335,6 +351,7 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
   // renderer's copy of its state current. Reading one small file is cheap.
   yield* Effect.gen(function* () {
     yield* Effect.sleep(AGENT_START_DELAY);
+    const controller = yield* controllerFor(environment);
     if (controller.installation() === null) return;
     yield* syncConfig();
     const settings = yield* desktopSettings.get;

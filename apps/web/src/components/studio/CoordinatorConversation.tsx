@@ -1,3 +1,6 @@
+import { isProjectFolder } from "../../studio/projectMachineFolders";
+import { requestExecutionLabel } from "../../studio/projectDomain";
+import { useEnvironment } from "../../state/environments";
 import {
   projectCoordinatorMessageDisplay,
   projectMessageAuthor,
@@ -99,6 +102,7 @@ export function CoordinatorConversation({
   const load = useAtomCommand(threadEnvironment.loadEarlierHistory);
   const end = useRef<HTMLDivElement>(null);
   const messages = thread?.projection.messages ?? [];
+  const executionEnvironment = useEnvironment(project.environmentId);
   const working = progress !== null && failure === null;
   useEffect(() => {
     end.current?.scrollIntoView({ block: "nearest" });
@@ -241,6 +245,15 @@ export function CoordinatorConversation({
         return (
           <article key={message.id} className={`project-message project-message-${message.role}`}>
             <h3>{author}</h3>
+            {message.createdBy === "user" || message.role === "assistant" ? (
+              <p className="project-muted" data-request-execution>
+                {requestExecutionLabel(
+                  message,
+                  thread?.projection.runs ?? [],
+                  executionEnvironment?.label ?? project.environmentId,
+                )}
+              </p>
+            ) : null}
             {author === "Message from a worker" && message.senderThreadId && (
               <MessageThreadLink
                 thread={workers.find((t) => t.id === message.senderThreadId)}
@@ -490,7 +503,8 @@ export function CoordinatorMachine({
   if (checkouts.length < 2 || !onChoose)
     return <span className="project-muted sws-host">{status}</span>;
   // Two checkouts on one machine need their folders to tell them apart.
-  const machines = checkouts.map((checkout) => checkout.machine);
+  const savedCheckouts = checkouts.filter((checkout) => isProjectFolder(checkout.folder));
+  const machines = savedCheckouts.map((checkout) => checkout.machine);
   const ambiguous = (machine: string) =>
     machines.indexOf(machine) !== machines.lastIndexOf(machine);
   return (
@@ -523,7 +537,7 @@ export function CoordinatorMachine({
         <MenuGroup>
           <MenuGroupLabel>Coordinator machine</MenuGroupLabel>
           <MenuRadioGroup value={current} onValueChange={(value) => onChoose(value as string)}>
-            {checkouts.map((checkout) => (
+            {savedCheckouts.map((checkout) => (
               <MenuRadioItem key={checkout.key} value={checkout.key}>
                 <span className="flex items-center justify-between gap-6">
                   {ambiguous(checkout.machine)

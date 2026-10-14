@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   type ModelSelection,
+  DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+  EnvironmentId,
+  ThreadId,
+  type LogicalProject,
+  type Project,
   type OrchestratorMcpMachineProvider,
   ProjectId,
   ProviderDriverKind,
@@ -13,6 +18,8 @@ import {
   grantMachineStatus,
   type MatchableProject,
   matchRemoteProject,
+  logicalProjectBindingMatch,
+  matchLogicalRemoteProject,
   remoteWorkerLost,
   remoteWorkerWake,
   translateModel,
@@ -124,6 +131,100 @@ describe("matchRemoteProject", () => {
   it("cannot match a project without a repository identity", () => {
     expect(
       matchRemoteProject({ local: project("plain", "/x"), remote: [project("plain", "/x")] }).match,
+    ).toBe("none");
+  });
+});
+
+describe("logical project worker routing", () => {
+  const environmentId = EnvironmentId.make("env-m1");
+  const binding = {
+    environmentId,
+    projectId: ProjectId.make("admitted"),
+    coordinatorThreadId: ThreadId.make("coordinator"),
+  };
+  const logical: LogicalProject = {
+    id: "domain",
+    title: "App",
+    coordinatorId: "one-coordinator",
+    members: [binding],
+  };
+  const boundProject = (overrides: Partial<Project> = {}): Project => ({
+    ...project("admitted", "/work/app", identity("github.com/acme/app", "/work/app")),
+    defaultModelSelection: null,
+    scripts: [],
+    createdAt: "2026-10-13T00:00:00Z",
+    updatedAt: "2026-10-13T00:00:00Z",
+    deletedAt: null,
+    workspaceSettings: { ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, logicalProject: logical },
+    ...overrides,
+  });
+
+  it("rejects matching repositories and explicit IDs which were never admitted", () => {
+    const unbound = { ...logical, members: [] };
+    expect(
+      matchLogicalRemoteProject({ logical: unbound, environmentId, remote: [boundProject()] })
+        .match,
+    ).toBe("none");
+    expect(
+      matchLogicalRemoteProject({
+        logical,
+        environmentId,
+        projectId: ProjectId.make("other"),
+        remote: [boundProject({ id: ProjectId.make("other") })],
+      }).match,
+    ).toBe("none");
+  });
+
+  it("accepts only a reciprocal logical binding and rejects deleted or foreign registrations", () => {
+    expect(
+      matchLogicalRemoteProject({ logical, environmentId, remote: [boundProject()] }),
+    ).toMatchObject({ match: "configured", projectId: "admitted" });
+    for (const remote of [
+      boundProject({ deletedAt: "2026-10-13T00:01:00Z" }),
+      boundProject({
+        workspaceSettings: {
+          ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+          logicalProject: { ...logical, id: "another-domain" },
+        },
+      }),
+      boundProject({
+        workspaceSettings: {
+          ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+          logicalProject: { ...logical, members: [] },
+        },
+      }),
+    ])
+      expect(matchLogicalRemoteProject({ logical, environmentId, remote: [remote] }).match).toBe(
+        "none",
+      );
+  });
+
+  it("refuses to choose among repeat transfer bindings without an explicit target", () => {
+    const another = {
+      ...binding,
+      projectId: ProjectId.make("second"),
+      coordinatorThreadId: ThreadId.make("second-coordinator"),
+    };
+    const expanded = { ...logical, members: [binding, another] };
+    expect(logicalProjectBindingMatch({ logical: expanded, environmentId }).match).toBe(
+      "ambiguous",
+    );
+    expect(
+      logicalProjectBindingMatch({
+        logical: expanded,
+        environmentId,
+        projectId: binding.projectId,
+      }),
+    ).toMatchObject({ match: "configured", projectId: binding.projectId });
+    expect(
+      logicalProjectBindingMatch({
+        logical: { ...logical, members: [binding, binding] },
+        environmentId,
+      }).match,
+    ).toBe("configured");
+    expect(
+      logicalProjectBindingMatch({ logical, environmentId: EnvironmentId.make("another-machine") })
+        .match,
     ).toBe("none");
   });
 });

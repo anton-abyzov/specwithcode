@@ -1,3 +1,4 @@
+import { listFederatedProjectThreads } from "./federatedProjectThreads.ts";
 import { OrchestratorToolkit } from "./tools.ts";
 import * as Effect from "effect/Effect";
 
@@ -98,9 +99,7 @@ const handlers = {
       const workers = yield* RemoteWorkers.RemoteWorkers;
       const target = yield* workers.resolveMachine(input.machine);
       if (target.kind === "remote") return yield* listRemote(target.machine, withoutMachine(input));
-      const scope = yield* McpInvocationContext.McpInvocationContext;
-      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-      return yield* service.listThreads(scope, withoutMachine(input));
+      return yield* listFederatedProjectThreads(input);
     }),
   ),
   // Reading a child's finished result also acknowledges its delivery to the

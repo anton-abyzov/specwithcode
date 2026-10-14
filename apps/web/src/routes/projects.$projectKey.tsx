@@ -18,16 +18,21 @@ export const Route = createFileRoute("/projects/$projectKey")({
 });
 function ProjectWorkspaceRoute() {
   const { projectKey } = Route.useParams();
-  const { thread, checkout } = Route.useSearch();
+  const { thread, checkout, threadEnvironment } = Route.useSearch();
   const navigate = Route.useNavigate();
   const selectThread = useCallback<SelectProjectThread>(
     (next, options) => {
-      if ((next ?? undefined) === thread && options?.hash === undefined) return;
+      if (
+        (next ?? undefined) === thread &&
+        (options?.environmentId ?? undefined) === threadEnvironment &&
+        options?.hash === undefined
+      )
+        return;
       // Name the project outright: a late caller must not build a link from another page.
       void navigate({
         to: "/projects/$projectKey",
         params: { projectKey },
-        search: projectWorkspaceSearch(next, checkout),
+        search: projectWorkspaceSearch(next, checkout, options?.environmentId),
         ...(options?.replace ? { replace: true } : {}),
         // A quoted passage to land on in the opened thread.
         ...(options?.hash === undefined
@@ -35,7 +40,7 @@ function ProjectWorkspaceRoute() {
           : { hash: options.hash, state: { ...options.state }, resetScroll: false }),
       });
     },
-    [navigate, projectKey, thread, checkout],
+    [navigate, projectKey, thread, checkout, threadEnvironment],
   );
   // A link made before the repository was known names the machine and path.
   const moveProjectKey = useCallback(
@@ -43,10 +48,10 @@ function ProjectWorkspaceRoute() {
       void navigate({
         to: "/projects/$projectKey",
         params: { projectKey: next },
-        search: projectWorkspaceSearch(thread ?? null, checkout),
+        search: projectWorkspaceSearch(thread ?? null, checkout, threadEnvironment),
         replace: true,
       }),
-    [navigate, thread, checkout],
+    [navigate, thread, checkout, threadEnvironment],
   );
   const selectCheckout = useCallback(
     (key: string) => {
@@ -64,6 +69,7 @@ function ProjectWorkspaceRoute() {
       checkoutKey={checkout ?? null}
       onSelectCheckout={selectCheckout}
       selectedThreadId={thread ?? null}
+      selectedThreadEnvironmentId={threadEnvironment ?? null}
       onSelectThread={selectThread}
       onProjectKeyMoved={moveProjectKey}
     />

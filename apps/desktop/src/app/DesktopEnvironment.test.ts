@@ -178,8 +178,8 @@ describe("DesktopEnvironment", () => {
       );
       const production = yield* makeEnvironment();
 
-      assert.equal(development.stateDir, "/Users/alice/.specweave-studio/dev");
-      assert.equal(production.stateDir, "/Users/alice/.specweave-studio/userdata");
+      assert.equal(development.stateDir, "/Users/alice/.specwithcode/dev");
+      assert.equal(production.stateDir, "/Users/alice/.specwithcode/userdata");
     }),
   );
 

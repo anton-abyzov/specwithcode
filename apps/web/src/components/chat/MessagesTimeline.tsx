@@ -52,9 +52,7 @@ import {
 import { parseScopedThreadKey, scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import { useAtomValue } from "@effect/atom-react";
 import { environmentThreadDetails } from "../../state/threads";
-import { resolveUserMessagePresentation } from "@specweave-studio/client-runtime/user-message";
-import { Link } from "@tanstack/react-router";
-import { ScheduledTaskLink } from "../settings/ScheduledTaskLink";
+import { UserMessageProvenance } from "./UserMessageProvenance";
 import { canForkProjectedAssistantItem } from "@specweave-studio/client-runtime/state/thread-workflows";
 import { notificationChildThreadId } from "@specweave-studio/client-runtime/state/thread-execution";
 import { replaceComposerContextReferences } from "@specweave-studio/shared/composerContextReferences";
@@ -2127,7 +2125,6 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const unknownAttachments = (row.message.attachments ?? []).filter(
     (attachment) => !isImageAttachment(attachment) && !isFileAttachment(attachment),
   );
-  const userMessage = resolveUserMessagePresentation(row.message);
   const resolvedContext = useMemo(() => resolveUserMessageContext(row.message), [row.message]);
   const previewImages = useMemo(
     () => userImages.filter((image) => image.name.startsWith("preview-annotation-")),
@@ -2253,44 +2250,12 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
 
   return (
     <div className="group flex flex-col items-end gap-1">
-      {userMessage.isAutomation ? (
-        <p
-          className="me-1 text-2xs text-muted-foreground/70"
-          data-user-message-attribution="automation"
-        >
-          {userMessage.scheduledTaskId ? (
-            <ScheduledTaskLink
-              environmentId={ctx.activeThreadEnvironmentId}
-              taskId={userMessage.scheduledTaskId}
-              className="rounded-sm hover:text-muted-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring"
-            >
-              Sent by automation
-            </ScheduledTaskLink>
-          ) : (
-            "Sent by automation"
-          )}
-        </p>
-      ) : row.message.createdBy === "agent" ? (
-        <p className="me-1 text-2xs text-muted-foreground/70" data-user-message-attribution="agent">
-          {senderThreadId ? (
-            <InlineButton
-              onClick={() =>
-                senderThreadId === projectRouting?.coordinatorThreadId
-                  ? projectRouting.openCoordinator()
-                  : ctx.onOpenThread(senderThreadId)
-              }
-              tone="muted"
-              aria-label="Open sending thread"
-            >
-              {senderThreadId === projectRouting?.coordinatorThreadId
-                ? "Message received from coordinator · View coordinator"
-                : "Sent by another agent"}
-            </InlineButton>
-          ) : (
-            "Sent by another agent"
-          )}
-        </p>
-      ) : null}
+      <UserMessageProvenance
+        message={row.message}
+        runs={ctx.runs}
+        environmentId={ctx.activeThreadEnvironmentId}
+        onOpenThread={ctx.onOpenThread}
+      />
       {row.message.inputIntent && row.message.inputIntent !== "turn_start" ? (
         <UserMessageIntentMarker intent={row.message.inputIntent} />
       ) : null}

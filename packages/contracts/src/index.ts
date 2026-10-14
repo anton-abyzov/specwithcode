@@ -81,3 +81,6 @@ export * from "./projectUsage.ts";
 export * from "./projectSkills.ts";
 
 export * from "./machineHandoff.ts";
+
+export * from "./logicalProject.ts";
+export * from "./managedUpdates.ts";

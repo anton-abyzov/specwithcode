@@ -48,7 +48,7 @@ import {
   MenuTrigger,
 } from "../../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
-import { ModelBadge, useProviderEntries } from "./ModelBadge";
+import { ModelBadge, useProviderEntriesByEnvironment } from "./ModelBadge";
 import { ProjectPaneBar, type ProjectPaneBarProps } from "./ProjectPaneBar";
 import { Tip } from "./Tip";
 
@@ -85,7 +85,9 @@ export function ThreadsPane({
   threads: readonly EnvironmentThreadShell[];
   canChange: boolean;
   findRef: RefObject<HTMLInputElement | null>;
-  onOpen: (id: ThreadId) => void;
+  onOpen: (id: ThreadId, environmentId?: EnvironmentId) => void;
+  canChangeThread?: (thread: EnvironmentThreadShell) => boolean;
+  machineLabels?: ReadonlyMap<string, string>;
   onToggleResolved: (thread: EnvironmentThreadShell) => void;
   /** Anything the project has to say above the list, such as a failed archive load. */
   notice?: ReactNode;
@@ -100,7 +102,7 @@ export function ThreadsPane({
   query: string;
   onQueryChange: (query: string) => void;
 }) {
-  const entries = useProviderEntries(props.environmentId);
+  const entriesByEnvironment = useProviderEntriesByEnvironment();
   const now = nowFromMinute(useNowMinute());
   const [sortBy, setSortBy] = useLocalStorage<ThreadSort, ThreadSort>(
     SORT_STORAGE_KEY,
@@ -291,7 +293,10 @@ export function ThreadsPane({
                 <div className="sws-thread-list" id={listId}>
                   {rows.map((thread) => {
                     const tone = threadTone(thread);
-                    const entry = entries.get(thread.modelSelection.instanceId) ?? null;
+                    const entry =
+                      entriesByEnvironment
+                        .get(thread.environmentId)
+                        ?.get(thread.modelSelection.instanceId) ?? null;
                     const label = modelLabel(
                       entry,
                       thread.modelSelection.instanceId,
@@ -306,14 +311,15 @@ export function ThreadsPane({
                     return (
                       <article
                         className="sws-thread-row project-thread-card"
-                        key={thread.id}
+                        key={`${thread.environmentId}:${thread.id}`}
                         data-tone={tone}
                         data-thread-id={thread.id}
+                        data-thread-environment={thread.environmentId}
                       >
                         <button
                           type="button"
                           className="sws-thread-open"
-                          onClick={() => props.onOpen(thread.id)}
+                          onClick={() => props.onOpen(thread.id, thread.environmentId)}
                         >
                           <span
                             className="sws-dot"
@@ -324,6 +330,12 @@ export function ThreadsPane({
                             <strong>{thread.title || "Untitled thread"}</strong>
                             <span className="sws-thread-meta">
                               <span className="sws-thread-lead">
+                                {props.machineLabels && (
+                                  <span className="sws-machine-chip">
+                                    {props.machineLabels.get(thread.environmentId) ??
+                                      thread.environmentId}
+                                  </span>
+                                )}
                                 {statusWord ? (
                                   <span className="sws-thread-status" data-tone={tone}>
                                     {statusWord}
@@ -358,7 +370,11 @@ export function ThreadsPane({
                           <button
                             type="button"
                             className="sws-thread-action"
-                            disabled={!props.canChange}
+                            disabled={
+                              props.canChangeThread
+                                ? !props.canChangeThread(thread)
+                                : !props.canChange
+                            }
                             aria-label={action}
                             onClick={() => {
                               // Show where it went, so the same row can undo it.

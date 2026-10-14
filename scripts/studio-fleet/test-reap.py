@@ -330,14 +330,12 @@ time.sleep(300)
         return child
 
     def test_only_the_service_tree_is_stopped(self):
-        if os.getuid() != 501:
-            self.skipTest('the reap runs only as the installing user (501)')
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         ready = [pathlib.Path(directory.name) / name for name in ('inside', 'outside')]
         service = self.spawn([sys.executable, '-c', self.SERVICE, self.HUNG, str(ready[0])])
         outside = [self.spawn(['/bin/sleep', '300']), self.spawn([sys.executable, '-c', self.HUNG, str(ready[1])])]
-        supervisor = process(-7, service.pid, '/usr/bin/caffeinate')
+        supervisor = process(-7, service.pid, '/usr/bin/caffeinate', uid=os.getuid())
 
         def processes():
             table = quiescence.read_processes()
@@ -381,7 +379,7 @@ class UpdateReapMode(unittest.TestCase):
         self.home = pathlib.Path(directory.name).resolve()
         self.own = self.home / '.specweave-studio' / 'm4'
         (self.own / 'updates').mkdir(parents=True)
-        self.service = {'home': self.home, 'own': self.own, 'node': pathlib.Path(NODE),
+        self.service = {'owner': mock.Mock(uid=501), 'home': self.home, 'own': self.own, 'node': pathlib.Path(NODE),
                         'content': {'ProgramArguments': ARGS},
                         'runtime': {'pid': 4242, 'startedAt': '2026-10-12T19:00:00.000Z'}}
         self.hold(pid=4242, startedAt='2026-10-12T20:00:00.000Z', expiresAt='2026-10-12T20:15:00.000Z')
@@ -715,7 +713,16 @@ class InstalledAgent(agent_tests.AgentCase):
 
     def run_installed(self, content):
         """The installed agent, started as launchd starts it (its own folder, a bare environment)."""
-        return subprocess.run(content['ProgramArguments'] + ['--home', str(self.home), '--status'],
+        runner = '''import os,pathlib,pwd,runpy,sys,types
+account = pwd.getpwuid(os.getuid())
+pwd.getpwuid = lambda uid: types.SimpleNamespace(pw_name=account.pw_name, pw_dir=os.environ['HOME'])
+script = sys.argv.pop(1)
+sys.path.insert(0, str(pathlib.Path(script).parent))
+sys.argv[0] = script
+runpy.run_path(script, run_name='__main__')
+'''
+        args = content['ProgramArguments']
+        return subprocess.run([args[0], '-B', '-c', runner, *args[1:], '--home', str(self.home), '--status'],
                               cwd=content['WorkingDirectory'], capture_output=True, text=True, timeout=60,
                               env={'HOME': str(self.home), 'PATH': '/usr/bin:/bin'})
 

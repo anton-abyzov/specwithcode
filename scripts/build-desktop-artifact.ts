@@ -36,6 +36,11 @@ import {
 import { loadRepoEnv } from "./lib/public-config.ts";
 import { selectDesktopRuntimeExternalDependencies } from "./lib/desktop-external-packages.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
+import {
+  MAC_SERVICE_UPDATER_FILES,
+  MAC_SERVICE_UPDATER_EXTRA_RESOURCES,
+} from "./lib/studio-service-updater.ts";
+export { MAC_SERVICE_UPDATER_FILES, MAC_SERVICE_UPDATER_EXTRA_RESOURCES };
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -1145,22 +1150,6 @@ export function resolveMacVoiceHelperTargets(arch: typeof BuildArch.Type): Reado
   if (arch === "universal") return [triple("arm64"), triple("x86_64")];
   return [triple(arch === "arm64" ? "arm64" : "x86_64")];
 }
-// The Studio service update agent (scripts/studio-fleet/update_agent.py) and the
-// sibling modules it imports. The desktop installs them beside a fleet-installed
-// service on macOS; the agent copies its siblings next to its installed copy.
-export const MAC_SERVICE_UPDATER_FILES = [
-  "update_agent.py",
-  "update_agent_reap.py",
-  "update_agent_cache.py",
-  "update_request.py",
-  "update_agent_recovery.py",
-] as const;
-export const MAC_SERVICE_UPDATER_EXTRA_RESOURCES = [
-  {
-    from: "apps/desktop/prod-resources/studio-updater",
-    to: "studio-updater",
-  },
-] as const;
 export const LINUX_CAPTURE_EXTRA_RESOURCES = [
   {
     from: "apps/desktop/prod-resources/hyprland-capture",

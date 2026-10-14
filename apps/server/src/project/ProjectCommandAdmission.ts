@@ -1,5 +1,6 @@
 import {
   ProjectWorkspaceError,
+  projectExecutionIsFenced,
   type OrchestrationV2ServerCommand,
   type ProjectId,
 } from "@specweave-studio/contracts";
@@ -28,7 +29,16 @@ export function guardProjectCreation<E>(services: {
       command.type !== "thread.fork" &&
       command.type !== "delegated_task.request" &&
       command.type !== "thread.delete" &&
-      command.type !== "thread.archive"
+      command.type !== "thread.archive" &&
+      command.type !== "message.dispatch" &&
+      command.type !== "queue.resume" &&
+      command.type !== "prepared-run.release" &&
+      command.type !== "prepared-run.retry" &&
+      command.type !== "queued-message.promote-to-steer" &&
+      command.type !== "provider.switch" &&
+      command.type !== "runtime-request.respond" &&
+      command.type !== "thread.merge_back" &&
+      command.type !== "checkpoint.rollback"
     )
       return effect;
     const projectId: Effect.Effect<ProjectId, E> =
@@ -38,9 +48,11 @@ export function guardProjectCreation<E>(services: {
             .getThreadRecords(
               command.type === "thread.fork"
                 ? command.sourceThreadId
-                : command.type === "thread.delete" || command.type === "thread.archive"
-                  ? command.threadId
-                  : command.parentThreadId,
+                : command.type === "delegated_task.request"
+                  ? command.parentThreadId
+                  : command.type === "thread.merge_back"
+                    ? command.targetThreadId
+                    : command.threadId,
               [],
             )
             .pipe(
@@ -70,11 +82,23 @@ export function guardProjectCreation<E>(services: {
             const code =
               Option.isNone(project) || project.value.deletedAt !== null
                 ? "not_found"
-                : project.value.workspaceSettings?.archived
-                  ? "archived"
-                  : project.value.workspaceSettings?.paused
-                    ? "paused"
-                    : null;
+                : projectExecutionIsFenced(
+                      project.value.workspaceSettings,
+                      id,
+                      command.type === "thread.fork"
+                        ? command.sourceThreadId
+                        : command.type === "delegated_task.request"
+                          ? command.parentThreadId
+                          : command.type === "thread.merge_back"
+                            ? command.targetThreadId
+                            : command.threadId,
+                    )
+                  ? "transferred"
+                  : project.value.workspaceSettings?.archived
+                    ? "archived"
+                    : project.value.workspaceSettings?.paused
+                      ? "paused"
+                      : null;
             return code === null
               ? Effect.void
               : Effect.fail(

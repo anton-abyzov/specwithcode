@@ -402,6 +402,10 @@
     "./state/project-workspace": {
       "types": "./src/state/projectWorkspace.ts",
       "default": "./src/state/projectWorkspace.ts"
+    },
+    "./state/managedUpdates": {
+      "types": "./src/state/managedUpdates.ts",
+      "default": "./src/state/managedUpdates.ts"
     }
   },
   "scripts": {

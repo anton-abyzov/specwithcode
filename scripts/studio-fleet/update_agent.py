@@ -37,9 +37,9 @@ import update_agent_reap as reaper  # noqa: E402  Update now's fallback; install
 import update_agent_cache as cache  # noqa: E402  Shipped beside this file.
 import update_request  # noqa: E402  Shipped beside this file.
 import update_agent_recovery as recovery  # noqa: E402  Shipped beside this file.
+import installation_descriptor  # noqa: E402  Shipped beside this file.
 
 AGENT_VERSION = 1
-IDENTITIES = ('m4', 'm1', 'm3')
 PRODUCT = 'SpecWeave Studio'
 PLATFORM = 'darwin-arm64'
 ENTRYPOINT = 'scripts/studio-fleet/update.py'
@@ -196,17 +196,10 @@ def sha256_file(path):
 
 def owned(path, home):
     """Lexically confine a path to home and reject any symlink ancestor (dangling included)."""
-    path = pathlib.Path(path)
     try:
-        relative = path.relative_to(home)
-    except ValueError:
-        raise AgentError('Path escapes the owned home') from None
-    ancestor = home
-    for part in relative.parts:
-        _refuse_if(part in ('', '.', '..'), 'Unsafe owned path component')
-        ancestor = ancestor / part
-        _refuse_if(ancestor.is_symlink(), 'Owned path has a symlink ancestor')
-    return path
+        return installation_descriptor.owned_path(path, home)
+    except AssertionError as error:
+        raise AgentError(str(error)) from None
 
 def ensure_dir(path, home):
     owned(path, home)
@@ -229,7 +222,7 @@ def read_owned(path, home, limit):
         raise AgentError('Unreadable file: ' + pathlib.Path(path).name) from None
     with os.fdopen(fd, 'rb') as handle:
         info = os.fstat(handle.fileno())
-        if not stat.S_ISREG(info.st_mode) or info.st_size > limit:
+        if not stat.S_ISREG(info.st_mode) or info.st_size > limit or info.st_uid != os.getuid():
             raise AgentError('Unexpected file: ' + pathlib.Path(path).name)
         data = handle.read(limit + 1)
     if len(data) > limit:
@@ -465,9 +458,17 @@ def studio_home(home, identity):
     return home / '.specweave-studio' / identity
 
 def load_installation(home, identity):
+    try:
+        installation_descriptor.InstallationDescriptor(identity, home=home, require_policy=False)
+    except AssertionError as error:
+        raise AgentError(str(error)) from None
     own = owned(studio_home(home, identity), home)
     receipt = read_json(own / 'installation.json', home, 1 << 20)
     _refuse_if(not isinstance(receipt, dict), 'Studio installation receipt is malformed')
+    try:
+        descriptor = installation_descriptor.InstallationDescriptor.from_receipt(identity, receipt, home=home)
+    except AssertionError as error:
+        raise AgentError(str(error)) from None
     service = receipt.get('service') if isinstance(receipt.get('service'), dict) else {}
     checks = [receipt.get('identity') == identity, receipt.get('studioHome') == str(own),
               service.get('label') == 'com.specweave.studio.' + identity,
@@ -475,7 +476,8 @@ def load_installation(home, identity):
               isinstance(receipt.get('sourceCommit'), str) and HEX40.fullmatch(receipt['sourceCommit']) is not None]
     _refuse_if(not all(checks), 'Studio installation receipt does not describe this service')
     return {'identity': identity, 'studioHome': own, 'version': receipt['version'],
-            'sourceCommit': receipt['sourceCommit'], 'label': service['label']}
+            'sourceCommit': receipt['sourceCommit'], 'label': service['label'], 'uid': descriptor.uid,
+            'domain': descriptor.domain, 'port': descriptor.port, 'webSessionPolicy': descriptor.policy}
 
 def load_config(updates, home):
     path = updates / 'config.json'
@@ -804,6 +806,28 @@ class Agent(object):
 
     def check(self):
         return recovery.check(self)
+
+    def discover_version(self):
+        """Bounded information-only discovery: no plans, caches, downloads or preferences."""
+        body = self.fetch_bytes('%s/repos/%s/releases?per_page=30' % (self.api_base(), self.config['repository']),
+                                'application/vnd.github+json', LIMITS['list'])
+        try:
+            releases = json.loads(body.decode('utf-8'))
+        except (UnicodeDecodeError, ValueError):
+            raise AgentError('Unreadable release list') from None
+        _refuse_if(not isinstance(releases, list) or len(releases) > recovery.FEED_LIMIT,
+                   'Unexpected bounded release list')
+        versions = [tag_version(item.get('tag_name')) for item in releases
+                    if isinstance(item, dict) and not item.get('draft')]
+        versions = [version for version in versions if version is not None]
+        _refuse_if(len(versions) != len(set(versions)), 'Ambiguous release versions')
+        installed = version_tuple(self.inst['version'])
+        newer = [version for version in versions if version_tuple(version) > installed]
+        if newer:
+            return 'available', max(newer, key=version_tuple)
+        if len(releases) == recovery.FEED_LIMIT and self.inst['version'] not in versions:
+            return 'manual-required', None
+        return 'up-to-date', None
 
     def load_release(self, version):
         return recovery.load_release(self, version)
@@ -1290,6 +1314,7 @@ def acquire_lock(path, home):
     return fd
 
 def run_once(home, identity, test_mode, out):
+    load_installation(home, identity)  # Refuse before creating locks, logs or update state.
     own = owned(studio_home(home, identity), home)
     if not own.is_dir():
         raise AgentError('Studio %s is not installed' % identity)
@@ -1354,7 +1379,8 @@ def install_launch_agent(home, identity, out):
         target_dir = ensure_dir(home / '.local' / 'share' / 'specweave-studio' / 'updater', home)
         os.chmod(str(target_dir), 0o700)
         files = [(owned(target_dir / os.path.basename(name), home), pathlib.Path(os.path.abspath(name)).read_bytes())
-                 for name in (update_request.__file__, recovery.__file__, __file__)]  # Modules first: a new script needs them.
+                 for name in (update_request.__file__, recovery.__file__, installation_descriptor.__file__,
+                              pathlib.Path(__file__).with_name('managed_updates.py'), __file__)]  # Modules first.
 
         def same(path, data):
             return path.is_file() and not path.is_symlink() and read_owned(path, home, 8 << 20) == data
@@ -1392,9 +1418,11 @@ def install_launch_agent(home, identity, out):
     return 0
 
 def uninstall_launch_agent(home, identity, out):
-    label = agent_label(identity)
-    plist_path = owned(home / 'Library' / 'LaunchAgents' / (label + '.plist'), home)
-    launchctl(['bootout', 'gui/%d/%s' % (current_uid(), label)])
+    try:
+        domain, label, plist_path = installation_descriptor.updater_removal(home, identity)
+    except AssertionError as error:
+        raise AgentError(str(error)) from None
+    launchctl(['bootout', domain + '/' + label])
     existed = os.path.lexists(str(plist_path))
     if existed:
         remove_path(plist_path, home)
@@ -1404,20 +1432,21 @@ def uninstall_launch_agent(home, identity, out):
 def main(argv=None):
     os.umask(0o077)
     parser = argparse.ArgumentParser(description='SpecWithCode background update agent')
-    parser.add_argument('--identity', choices=IDENTITIES, required=True)
+    parser.add_argument('--identity', required=True)
     parser.add_argument('--home', help=argparse.SUPPRESS)  # Tests only: a temporary private home.
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--install-launch-agent', action='store_true')
     mode.add_argument('--uninstall-launch-agent', action='store_true')
     mode.add_argument('--status', action='store_true')
     args = parser.parse_args(argv)
-    home = pathlib.Path(args.home).resolve() if args.home else pathlib.Path.home().resolve()
+    home = pathlib.Path(args.home) if args.home else pathlib.Path.home()
 
     def out(line):
         print(redact(line))
         sys.stdout.flush()
 
     try:
+        installation_descriptor.validate_identity(args.identity)
         if args.install_launch_agent:
             return install_launch_agent(home, args.identity, out)
         if args.uninstall_launch_agent:
