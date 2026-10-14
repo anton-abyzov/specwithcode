@@ -7743,7 +7743,7 @@ export default function ChatView(props: ChatViewProps) {
         );
   // A thread the provider never answered resends its request on the fallback.
   const limitRestart =
-    limitFallbackSelection !== null && serverProjection !== null && resumableRunId !== null
+    serverProjection !== null && resumableRunId !== null
       ? limitRestartRequest({
           threadId: serverProjection.thread.id,
           runId: resumableRunId,
@@ -7861,6 +7861,30 @@ export default function ChatView(props: ChatViewProps) {
     if (result._tag === "Failure") throw squashAtomCommandFailure(result);
     await openThreadRoute(scopeThreadRef(target.environmentId, threadId));
   };
+  const creditRecoveryContext: CreditSendContext | null =
+    activeThread && activeThreadShell
+      ? {
+          environmentId,
+          projectId: activeThread.projectId,
+          threadId: activeThread.id,
+          draftId: null,
+          runtimeMode,
+          selection: activeThreadShell.modelSelection,
+          allowed:
+            canOperateThread &&
+            projectRouting === null &&
+            !activeEnvironmentUnavailable &&
+            !activeGoal &&
+            !hasHeldQueuedRuns &&
+            !activePendingApproval &&
+            pendingUserInputs.length === 0 &&
+            !isRevertingCheckpoint &&
+            !threadDetailLoading &&
+            editingQueuedRun === null,
+        }
+      : null;
+  const creditRecoveryContextRef = useRef(creditRecoveryContext);
+  creditRecoveryContextRef.current = creditRecoveryContext;
   const limitRecoveryBanner =
     limitStopped && activeThreadShell?.latestRun
       ? usageLimitRecoveryBannerItem({
@@ -7869,6 +7893,24 @@ export default function ChatView(props: ChatViewProps) {
               provider.instanceId === activeThreadShell.providerInstanceId &&
               provider.driver === "codex",
           ),
+          credits: (() => {
+            const provider = providerStatuses.find(
+              (p) => p.instanceId === activeThreadShell.providerInstanceId,
+            );
+            if (
+              !activeThread ||
+              provider?.driver !== "codex" ||
+              provider.usageLimits?.credits?.hasCredits !== true ||
+              projectRouting !== null
+            )
+              return null;
+            return {
+              provider,
+              context: creditRecoveryContext!,
+              onContinue: (intent: ManualCodexCreditIntent) =>
+                onResume(activeThreadShell.modelSelection, limitRestart ?? undefined, intent),
+            };
+          })(),
           runId: activeThreadShell.latestRun.runId,
           resetAt: serverRuntime.usageLimitResetAt ?? null,
           stoppedAt: activeThreadShell.latestRun.completedAt ?? activeThreadShell.updatedAt,
@@ -8831,6 +8873,7 @@ export default function ChatView(props: ChatViewProps) {
       readonly text: string;
       readonly attachments: ReadonlyArray<ContractChatAttachment>;
     },
+    creditIntent?: ManualCodexCreditIntent,
   ) => {
     if (
       !activeThread ||
@@ -8845,6 +8888,29 @@ export default function ChatView(props: ChatViewProps) {
     ) {
       return;
     }
+    const capturedRecoveryContext = creditRecoveryContextRef.current;
+    const creditStillCurrent = () => {
+      if (!creditIntent) return true;
+      const current = creditRecoveryContextRef.current;
+      const provider = appAtomRegistry
+        .get(environmentServerConfigsAtom)
+        .get(environmentId)
+        ?.providers.find((entry) => entry.instanceId === creditIntent.instanceId);
+      const selection = composerRef.current?.getSendContext().selectedModelSelection;
+      return (
+        capturedRecoveryContext !== null &&
+        current !== null &&
+        selection !== undefined &&
+        explicitCreditSendStillMatches(
+          creditIntent,
+          capturedRecoveryContext,
+          { ...current, selection, allowed: current.allowed && capturedRecoveryContext.allowed },
+          provider,
+        )
+      );
+    };
+    if (!creditStillCurrent())
+      throw new Error("Credit account, model or chat changed. Refresh Providers and try again.");
     const threadId = activeThread.id;
     const readCurrentRuns = () =>
       appAtomRegistry.get(
@@ -8873,17 +8939,28 @@ export default function ChatView(props: ChatViewProps) {
           interactionMode,
         });
         if (settingsResult._tag === "Failure") return settingsResult;
+        if (!creditStillCurrent())
+          throw new Error(
+            "Credit account, model or chat changed. Refresh Providers and try again.",
+          );
         const turnResult = await continueWithProjectModel(
           projectRouting,
           selectedModel,
           (currentModel) => {
             if (projectRouting?.continueCoordinator && currentModel)
               assertCoordinatorQueueModel(currentModel, readCurrentRuns());
+            if (!creditStillCurrent())
+              throw new Error(
+                "Credit account, model or chat changed. Refresh Providers and try again.",
+              );
             return startThreadTurn({
               environmentId,
               input: {
                 threadId,
-                manualContinuationOfRunId: resumableRunId,
+                // An explicit credit click submits one foreground message, never a persistent recovery rule.
+                ...(creditIntent
+                  ? { manualCodexCreditIntent: creditIntent }
+                  : { manualContinuationOfRunId: resumableRunId }),
                 ...(currentModel === undefined ? {} : { modelSelection: currentModel }),
                 message: {
                   messageId: newMessageId(),
@@ -11874,6 +11951,10 @@ export default function ChatView(props: ChatViewProps) {
                   )?.serverConfig?.providers ?? EMPTY_PROVIDERS
                 }
                 runs={paintOnlyDisplayedTimeline ? [] : (serverProjection?.runs ?? [])}
+                recoveryRuns={paintOnlyDisplayedTimeline ? [] : (serverProjection?.runs ?? [])}
+                recoveryItems={
+                  paintOnlyDisplayedTimeline ? [] : (serverProjection?.turnItems ?? [])
+                }
                 latestRun={paintOnlyDisplayedTimeline ? null : activeActivityRun}
                 runningRunId={paintOnlyDisplayedTimeline ? null : activeRunningTurnId}
                 turnDiffSummaries={

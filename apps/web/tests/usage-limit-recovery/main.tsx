@@ -1,9 +1,11 @@
+import { UsageWarningLabel } from "../../src/components/chat/UsageWarningLabel";
 import { createRoot } from "react-dom/client";
 import {
   CommandId,
   ProviderInstanceId,
   RunId,
   type OrchestrationV2LimitRecovery,
+  type ServerProvider,
 } from "@specweave-studio/contracts";
 import { ComposerBanner } from "../../src/components/chat/ComposerBanner";
 import { ComposerBannerStack } from "../../src/components/chat/ComposerBannerStack";
@@ -38,7 +40,52 @@ const recovery: OrchestrationV2LimitRecovery = {
         },
       }),
 };
+const at = new Date().toISOString();
+const creditProvider: ServerProvider = {
+  instanceId: ProviderInstanceId.make("codex"),
+  driver: "codex" as ServerProvider["driver"],
+  enabled: true,
+  installed: true,
+  status: "warning",
+  auth: { status: "authenticated", type: "chatgpt" },
+  checkedAt: at,
+  models: [{ slug: "gpt-6.1-sol", name: "Sol", isCustom: false, capabilities: null }],
+  skills: [],
+  slashCommands: [],
+  usageLimits: {
+    checkedAt: at,
+    windows: [],
+    nativeAllowanceObservedAt: at,
+    quotaPoolObservedAt: at,
+    nativeRouteObservedAt: at,
+    nativeRouteVerified: true,
+    quotaPoolId: `codex:sha256:${"a".repeat(64)}`,
+    ordinaryUsageAllowed: false,
+    spendControlReached: false,
+    rateLimitReachedType: "rate_limit_reached",
+    credits: { hasCredits: true, unlimited: false, balance: "39034.0733405" },
+  },
+};
 const item = usageLimitRecoveryBannerItem({
+  ...(params.has("credits")
+    ? {
+        credits: {
+          provider: creditProvider,
+          context: {
+            environmentId: "test",
+            projectId: "test",
+            threadId: "test",
+            draftId: null,
+            runtimeMode: "approval-required",
+            selection: { instanceId: creditProvider.instanceId, model: "gpt-6.1-sol" },
+            allowed: true,
+          },
+          onContinue: async () => {
+            document.body.dataset.creditContinued = "true";
+          },
+        },
+      }
+    : {}),
   canCheck: true,
   runId,
   resetAt,
@@ -57,6 +104,11 @@ const item = usageLimitRecoveryBannerItem({
 function Fixture() {
   return (
     <main className="flex min-h-screen flex-col justify-end bg-background px-3 pb-6 sm:px-5">
+      {params.has("resolved") ? (
+        <div data-resolved-warning="true" className="mb-4">
+          <UsageWarningLabel resolved resetTime="Oct 20, 9:25 AM" />
+        </div>
+      ) : null}
       <ComposerSurface.Shell>
         <form
           className="mx-auto w-full min-w-0 max-w-(--chat-content-max-width)"
@@ -64,7 +116,7 @@ function Fixture() {
         >
           <ComposerBanner.Dock>
             <ComposerBanner.Column>
-              <ComposerBannerStack className="relative z-0" items={[item]} />
+              <ComposerBannerStack className="relative z-0" items={params.has("resolved") ? [] : [item]} />
             </ComposerBanner.Column>
           </ComposerBanner.Dock>
           <ComposerSurface.Host>

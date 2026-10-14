@@ -308,3 +308,25 @@ Use `Ctrl+Shift+1/2/3/4` (`Cmd+Shift+1/2/3/4` on macOS) for the past
 24 hours, 7 days, 30 days, or 90 days. Period shortcuts do nothing on Limits.
 Press `Escape` to return to the previous page. Customize these shortcuts in
 **Settings → Keybindings**.
+
+### Included limit reached, but credits remain
+
+The included weekly allowance and your paid Codex credits are separate. A full
+allowance does not mean your credit balance is empty. The stopped chat's recovery
+card shows the reported balance and **Continue using credits** for eligible Codex
+accounts. Click it to submit one continuation on that chat's current model using
+existing credits. It does not purchase credits, change automatic reload, or enable
+future automatic spending. Requests that received no provider answer resend their
+original prompt and attachments; existing conversations continue in context.
+
+If the action is disabled, refresh the selected account under **Settings → Providers**
+and return to the chat. The account, model, route and credit observation must still
+match; a stale balance is not spending permission. A provider rejection remains
+visible even when credits are reported. **Check now** checks included usage; it does
+not authorize paid continuation. For automatic recovery, explicitly enable
+**Spend Codex credits first** in the provider fallback settings.
+
+Once a later run starts successfully or completes, the earlier timeline warning
+reads **Usage limit resolved — chat continued** in muted text. This records chat
+recovery, including switching providers; it does not claim the original provider's
+weekly allowance has reset. Merely submitting or queueing a request is insufficient.

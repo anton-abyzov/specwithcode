@@ -16,7 +16,8 @@ vi.mock("react", async (importOriginal) => {
 });
 
 import {
-  AcpRegistryAgentIcon,
+  AcpRegistryAgentIcon as ProviderRegistryIcon,
+  RemoteAcpRegistryAgentIcon as AcpRegistryAgentIcon,
   loadCachedAcpRegistryIcon,
   officialAcpRegistryIconUrlForAgentId,
   resolveOfficialAcpRegistryIconUrl,
@@ -203,4 +204,15 @@ describe("ACP Registry icon cache", () => {
       visitElements(failed, (element) => element.props["data-slot"] === "acp-icon-fallback"),
     ).not.toBeNull();
   });
+});
+
+it("renders bundled Copilot immediately without fetching or cache access", () => {
+  const fetchIcon = vi.fn();
+  vi.stubGlobal("fetch", fetchIcon);
+  const element = ProviderRegistryIcon({ agentId: "github-copilot-cli", icon: null });
+  expect(typeof element.type).toBe("function");
+  const svg = (element.type as Function)(element.props);
+  expect(svg.props["data-provider-icon"]).toBe("github-copilot");
+  expect(svg.props.viewBox).toBe("0 0 24 24");
+  expect(fetchIcon).not.toHaveBeenCalled();
 });

@@ -66,6 +66,8 @@ try {
         await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
         false,
       );
+      assert.equal(await page.locator('[data-provider-icon="github-copilot"]').count(), 1);
+      assert.equal(await page.locator('[data-provider-icon="github-copilot"] path').count(), 2);
       await page.screenshot({ path: path.join(output, `${width}-${theme}.png`), fullPage: true });
       checks.push(`${width}-${theme}: no overflow`);
     }

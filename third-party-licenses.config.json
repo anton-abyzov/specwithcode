@@ -149,6 +149,18 @@
       "name": "Expo text editor implementation",
       "noticeFile": "apps/mobile/modules/studio-composer-editor/LICENSE",
       "sourceUrl": "https://github.com/expo/expo"
+    },
+    {
+      "bundles": ["assets", "desktop", "web", "mobile"],
+      "license": "MIT",
+      "name": "GitHub Octicons \u2014 Copilot icon",
+      "sourceUrl": "https://github.com/primer/octicons",
+      "generatedNotices": [
+        {
+          "licenseId": "MIT",
+          "copyrights": ["Copyright (c) 2026 GitHub Inc."]
+        }
+      ]
     }
   ],
   "packageOverrides": [

@@ -1,3 +1,4 @@
+import { CreditRecoveryAction, type CreditRecoveryProps } from "./CreditRecoveryAction";
 import { useClientSettings } from "../../hooks/useSettings";
 import { formatDisplayDate } from "../../lib/displayDates";
 import {
@@ -12,6 +13,7 @@ import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 
 type RecoveryProps = {
   canCheck?: boolean;
+  credits?: CreditRecoveryProps | null;
   runId: RunId;
   resetAt: string | null;
   stoppedAt: string;
@@ -100,7 +102,7 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
     variant: "warning",
     priority: "urgent",
     icon: <GaugeIcon />,
-    title: "Usage limit reached",
+    title: props.credits ? "Included usage limit reached" : "Usage limit reached",
     description: (
       <ResetCountdown
         resetAt={resetAt}
@@ -109,7 +111,7 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
       />
     ),
     actions:
-      canSchedule || props.canCheck || props.fallback || props.device ? (
+      canSchedule || props.canCheck || props.fallback || props.device || props.credits ? (
         <RecoveryActions key={`${runId}:${resetAt}`} {...props} />
       ) : null,
     // Up to four buttons plus a status line: beside the title they squeezed it to 0 px.
@@ -119,6 +121,7 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
 
 function RecoveryActions({
   canCheck,
+  credits,
   runId,
   resetAt,
   stoppedAt,
@@ -184,6 +187,7 @@ function RecoveryActions({
   }
   return (
     <div className="flex flex-wrap items-center gap-2">
+      {credits ? <CreditRecoveryAction {...credits} /> : null}
       {fallback ? (
         <Button
           size="xs"

@@ -1,3 +1,9 @@
+import { UsageWarningLabel } from "./UsageWarningLabel";
+import {
+  usageWarningResolved,
+  type UsageRecoveryRun,
+  type UsageRecoveryItem,
+} from "./usageWarningResolution";
 import { formatDisplayDates } from "../../lib/displayDates";
 import { FailureDetail } from "./FailureDetail";
 import { useProjectMessageRouting } from "../../studio/projectMessageRouting";
@@ -373,6 +379,8 @@ interface TimelineRowActivityState {
   activeTurnInProgress: boolean;
   isPreparingWorktree: boolean;
   latestRunId: RunId | null;
+  recoveryRuns: ReadonlyArray<UsageRecoveryRun>;
+  recoveryItems: ReadonlyArray<UsageRecoveryItem>;
   /**
    * A worktree setup whose script is still running after the agent took
    * over. The working header shows it as a chip with a popover; the stage
@@ -466,6 +474,8 @@ interface MessagesTimelineProps {
   listRef: React.RefObject<LegendListRef | null>;
   timelineEntries: ReadonlyArray<TimelineEntry>;
   latestRun: TimelineLatestRun | null;
+  recoveryRuns?: ReadonlyArray<UsageRecoveryRun>;
+  recoveryItems?: ReadonlyArray<UsageRecoveryItem>;
   runningRunId?: RunId | null;
   turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
   routeThreadKey: string;
@@ -561,6 +571,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   listRef,
   timelineEntries,
   latestRun,
+  recoveryRuns = [],
+  recoveryItems = [],
   runningRunId = null,
   turnDiffSummaries,
   routeThreadKey,
@@ -1356,6 +1368,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeTurnInProgress,
       isPreparingWorktree,
       latestRunId: latestRun?.runId ?? null,
+      recoveryRuns,
+      recoveryItems,
     }),
     [
       compactionAwaitingRow,
@@ -1365,6 +1379,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       isRevertingCheckpoint,
       isWorking,
       latestRun?.runId,
+      recoveryRuns,
+      recoveryItems,
     ],
   );
   const listHeader = useMemo(() => {
@@ -5240,14 +5256,15 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     }
     setToggleState({ opensByDefault, toggled });
   };
+  const { recoveryRuns: warningRecoveryRuns, recoveryItems: warningRecoveryItems } =
+    use(TimelineRowActivityCtx);
   const failureItem = workEntry.projectedItem?.item;
   if (failureItem?.type === "error" && failureItem.status === "failed") {
     const warning = failureItem.failure.class === "usage_limit";
+    const resolved =
+      warning && usageWarningResolved(failureItem.runId, warningRecoveryRuns, warningRecoveryItems);
     const resetAt = failureItem.failure.resetAt;
     const resetTime = resetAt ? formatUpcomingTimestamp(resetAt, timestampFormat) : null;
-    const label = warning
-      ? `Usage limit reached.${resetTime ? ` Retry after ${resetTime}.` : ""}`
-      : workEntry.label;
     const retryRunId =
       failureItem.runId !== null &&
       retryableWorkspacePreparationRunIds.has(failureItem.runId) &&
@@ -5261,16 +5278,20 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         wrapLabel
         icon={
           <CircleAlertIcon
-            className={cn("size-4", warning ? "text-warning" : "text-destructive")}
+            className={cn(
+              "size-4",
+              resolved ? "text-muted-foreground" : warning ? "text-warning" : "text-destructive",
+            )}
           />
         }
         label={
-          <span
-            className={cn("text-sm font-medium", warning ? "text-warning" : "text-destructive")}
-          >
-            {label}
-          </span>
+          warning ? (
+            <UsageWarningLabel resolved={resolved} resetTime={resetTime} />
+          ) : (
+            <span className="text-sm font-medium text-destructive">{workEntry.label}</span>
+          )
         }
+
         trailing={
           <TimelineRowTimestamp
             createdAt={workEntry.createdAt}

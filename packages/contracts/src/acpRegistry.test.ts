@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
 import {
+  isGitHubCopilotIcon,
   AcpRegistryImportSessionInput,
   AcpRegistryManagedBinaryUninstallInput,
   AcpRegistryManagedBinaryUninstallResult,
@@ -176,5 +177,24 @@ describe("ACP Registry contracts", () => {
         authMethods: Array.from({ length: 33 }, () => authMethod),
       }),
     ).toThrow();
+  });
+});
+
+describe("bundled Copilot identity", () => {
+  it("uses stable identity despite absent or incorrect stored icon metadata", () => {
+    expect(isGitHubCopilotIcon("github-copilot-cli", null)).toBe(true);
+    expect(isGitHubCopilotIcon("github-copilot-cli", "https://invalid.test/icon.svg")).toBe(true);
+    expect(
+      isGitHubCopilotIcon(null, officialAcpRegistryIconUrlForAgentId("github-copilot-cli")),
+    ).toBe(true);
+    expect(
+      isGitHubCopilotIcon(
+        "other-agent",
+        officialAcpRegistryIconUrlForAgentId("github-copilot-cli"),
+      ),
+    ).toBe(false);
+    expect(
+      isGitHubCopilotIcon(null, "https://invalid.test/registry/v1/latest/github-copilot-cli.svg"),
+    ).toBe(false);
   });
 });

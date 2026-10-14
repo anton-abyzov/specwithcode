@@ -325,6 +325,103 @@ function executable(
     ...Object.values(globals),
   );
 }
+
+describe("actual credit recovery callback", () => {
+  it.each(["stable", "route", "model", "account", "denial", "permission", "stale"])(
+    "revalidates %s after settings persistence before paid dispatch",
+    async (change) => {
+      vi.spyOn(Date, "now").mockReturnValue(now);
+      try {
+        const p = provider();
+        const recovery = { current: { ...context, draftId: null } };
+        let selection = context.selection;
+        let finish!: () => void;
+        const persistence = new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+        const start = vi.fn().mockResolvedValue({ _tag: "Success" });
+        const error = vi.fn();
+        const intent = deriveExplicitCreditSendOffer(p, recovery.current, now)!.intent;
+        const callback = executable(viewSource, declaration(viewSource, "onResume").initializer, {
+          activeThread: { id: context.threadId },
+          resumableRunId: "failed-run",
+          hasHeldQueuedRuns: false,
+          isSendBusy: false,
+          isResuming: false,
+          isConnecting: false,
+          isRevertingCheckpoint: false,
+          threadDetailLoading: false,
+          activeEnvironmentUnavailable: false,
+          sendInFlightRef: { current: false },
+          creditRecoveryContextRef: recovery,
+          explicitCreditSendStillMatches,
+          appAtomRegistry: { get: () => new Map([[context.environmentId, { providers: [p] }]]) },
+          environmentServerConfigsAtom: "configs",
+          environmentId: context.environmentId,
+          composerRef: {
+            current: { getSendContext: () => ({ selectedModelSelection: selection }) },
+          },
+          setResumingThreadKeys: vi.fn(),
+          routeThreadKey: "original-route",
+          setThreadError: error,
+          projectRouting: null,
+          continueWithProjectModel: async (
+            _routing: unknown,
+            model: unknown,
+            run: (model: unknown) => unknown,
+          ) => run(model),
+          persistThreadSettingsForNextTurn: async () => {
+            await persistence;
+            return { _tag: "Success" };
+          },
+          localCheckoutBranchMismatch: null,
+          runtimeMode: context.runtimeMode,
+          interactionMode: "default",
+          startThreadTurn: start,
+          newMessageId: () => "new-message",
+          clearUsageLimitsFor: vi.fn(),
+          currentRouteThreadKeyRef: { current: "original-route" },
+          scrollToEnd: vi.fn(),
+        });
+        const restart = {
+          text: "Original unanswered prompt",
+          attachments: [{ type: "file", id: "attachment" }],
+        };
+        const result = callback(selection, restart, intent);
+        if (change === "route")
+          recovery.current = { ...recovery.current, threadId: "other-thread" };
+        if (change === "model") selection = { ...selection, model: "other-model" };
+        if (change === "account")
+          Object.assign(p.usageLimits!, { quotaPoolId: `codex:sha256:${"b".repeat(64)}` });
+        if (change === "denial")
+          Object.assign(p.usageLimits!, { nativeCreditDenialObservedAt: at });
+        if (change === "permission") recovery.current = { ...recovery.current, allowed: false };
+        if (change === "stale") vi.mocked(Date.now).mockReturnValue(now + 61_000);
+        finish();
+        await result;
+        if (change === "stable") {
+          expect(start).toHaveBeenCalledTimes(1);
+          const input = start.mock.calls[0]![0].input;
+          expect(input).toMatchObject({
+            threadId: context.threadId,
+            manualCodexCreditIntent: intent,
+            dispatchMode: "start",
+            message: { text: restart.text, attachments: restart.attachments },
+          });
+          expect(input).not.toHaveProperty("manualContinuationOfRunId");
+        } else {
+          expect(start).not.toHaveBeenCalled();
+          expect(error).toHaveBeenLastCalledWith(
+            context.threadId,
+            expect.stringContaining("Credit account, model or chat changed"),
+          );
+        }
+      } finally {
+        vi.restoreAllMocks();
+      }
+    },
+  );
+});
 function actualComposer(changes: Record<string, unknown> = {}) {
   const p = provider(),
     send = vi.fn(),
@@ -367,6 +464,7 @@ describe("actual callback integration", () => {
       route = vi.fn(),
       prompt = { current: "Keep this project draft" };
     const callback = executable(viewSource, declaration(viewSource, "onSend").initializer, {
+      projectDraftSendGuard: { preventSend: () => false },
       usageLimitsOffered: false,
       projectRouting: { send: vi.fn(), coordinatorThreadId: "coordinator" },
       activePendingProgress: null,

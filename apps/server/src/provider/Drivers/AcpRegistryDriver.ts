@@ -1,5 +1,6 @@
 import {
   AcpRegistrySettings,
+  isGitHubCopilotIcon,
   officialAcpRegistryIconUrlForAgentId,
   ProviderDriverKind,
   resolveOfficialAcpRegistryIconUrl,
@@ -207,8 +208,10 @@ function baseSnapshot(
   const iconUrl =
     input.settings.source === "local"
       ? null
-      : (resolveOfficialAcpRegistryIconUrl(input.probe?.probe.icon) ??
-        officialAcpRegistryIconUrlForAgentId(input.settings.agentId));
+      : isGitHubCopilotIcon(input.settings.agentId)
+        ? officialAcpRegistryIconUrlForAgentId(input.settings.agentId)
+        : (resolveOfficialAcpRegistryIconUrl(input.probe?.probe.icon) ??
+          officialAcpRegistryIconUrlForAgentId(input.settings.agentId));
   return {
     instanceId: input.instanceId,
     driver: DRIVER_KIND,
