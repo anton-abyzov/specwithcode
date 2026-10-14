@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it as plainIt } from "@effect/vitest";
 import { it } from "@effect/vitest";
@@ -14,7 +15,8 @@ import {
 } from "./SpecweaveProgress.ts";
 
 const NOW = Date.parse("2026-10-11T12:00:00.000Z");
-const hoursAgo = (hours: number) => new Date(NOW - hours * 3_600_000).toISOString();
+const hoursAgo = (hours: number) =>
+  DateTime.formatIso(DateTime.makeUnsafe(NOW - hours * 3_600_000));
 
 const SPEC = `# Billing retries
 

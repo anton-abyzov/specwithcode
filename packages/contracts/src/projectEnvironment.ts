@@ -58,7 +58,9 @@ export function projectRepositoryIdentity(value: string): string | null {
     )
       ? `:${url.port}`
       : "";
-  return `${url.hostname.toLowerCase()}${port}/${segments.join("/").replace(/\.git$/, "")}`;
+  const host = url.hostname.toLowerCase();
+  const repository = segments.join("/").replace(/\.git$/i, "");
+  return `${host}${port}/${host === "github.com" ? repository.toLowerCase() : repository}`;
 }
 export const ProjectRepositoryUrl = Schema.String.check(
   Schema.isMaxLength(2048),
@@ -78,8 +80,11 @@ export const ProjectEnvironmentSettings = Schema.Struct({
     (value) =>
       new Set(value.additionalFolders).size === value.additionalFolders.length &&
       new Set(value.repositories.map((r) => r.id)).size === value.repositories.length &&
-      new Set(value.repositories.map((r) => projectRepositoryIdentity(r.url))).size ===
-        value.repositories.length,
+      new Set(
+        value.repositories.map((r) =>
+          JSON.stringify([projectRepositoryIdentity(r.url), r.localPath]),
+        ),
+      ).size === value.repositories.length,
   ),
 );
 export type ProjectEnvironmentSettings = typeof ProjectEnvironmentSettings.Type;
@@ -128,6 +133,36 @@ export const ProjectEnvironmentPrepareInput = Schema.Struct({
   mode: Schema.Literals(["clone", "match"]),
 });
 export type ProjectEnvironmentPrepareInput = typeof ProjectEnvironmentPrepareInput.Type;
+/** Import only describes existing checkouts. It never grants folder access or changes plan authority. */
+export const ProjectEnvironmentImportPreviewInput = Schema.Struct({
+  projectId: ProjectId,
+  root: SafePath,
+});
+export type ProjectEnvironmentImportPreviewInput = typeof ProjectEnvironmentImportPreviewInput.Type;
+export const ProjectEnvironmentImportPreview = Schema.Struct({
+  revision: NonNegativeInt,
+  root: SafePath,
+  fingerprint: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/)),
+  repositories: Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      path: Schema.String,
+      url: Schema.NullOr(ProjectRepositoryUrl),
+      status: Schema.Literals(["add", "existing", "blocked"]),
+      reason: Schema.String,
+    }),
+  ).check(Schema.isMaxLength(256)),
+  environment: ProjectEnvironmentSettings,
+  canApply: Schema.Boolean,
+});
+export type ProjectEnvironmentImportPreview = typeof ProjectEnvironmentImportPreview.Type;
+export const ProjectEnvironmentImportInput = Schema.Struct({
+  ...ProjectEnvironmentImportPreviewInput.fields,
+  expectedRevision: NonNegativeInt,
+  fingerprint: ProjectEnvironmentImportPreview.fields.fingerprint,
+  commandId: CommandId,
+});
+export type ProjectEnvironmentImportInput = typeof ProjectEnvironmentImportInput.Type;
 export class ProjectEnvironmentError extends Schema.TaggedError<ProjectEnvironmentError>()(
   "ProjectEnvironmentError",
   {
@@ -143,6 +178,8 @@ export class ProjectEnvironmentError extends Schema.TaggedError<ProjectEnvironme
       "outcome_unknown",
       "preparation_failed",
       "unsupported_provider",
+      "import_changed",
+      "import_blocked",
     ]),
   },
 ) {
@@ -161,6 +198,8 @@ export class ProjectEnvironmentError extends Schema.TaggedError<ProjectEnvironme
       preparation_failed:
         "Repository preparation failed. Check this host's Git access and inspect the destination.",
       unsupported_provider: "This provider cannot enforce additional project folder access.",
+      import_changed: "The workspace or project changed. Preview the import again.",
+      import_blocked: "Resolve the blocked repositories before importing this workspace.",
     }[this.code];
   }
 }

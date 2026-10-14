@@ -65,7 +65,7 @@ const thread = (id: string, minute = 1): OrchestratorMcpThreadListItem => ({
   itemCount: 2,
   archived: false,
   createdAt: "2026-10-13T00:00:00Z",
-  updatedAt: new Date(1791849600000 + minute * 60_000).toISOString(),
+  updatedAt: DateTime.formatIso(DateTime.makeUnsafe(1791849600000 + minute * 60_000)),
 });
 const pageOf = (
   binding: LogicalProjectMember,

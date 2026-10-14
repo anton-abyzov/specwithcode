@@ -53,7 +53,7 @@ export class BackgroundPolicy extends Context.Service<
     readonly shouldRunScopeWork: (scope: BackgroundScope) => Effect.Effect<boolean>;
     readonly shouldRunOpportunisticWork: Effect.Effect<boolean>;
   }
->()("studio/background/BackgroundPolicy") {}
+>()("specweave-studio/background/BackgroundPolicy") {}
 
 const DEFAULT_LEASE_TTL_MS = 45_000;
 const MAX_LEASE_TTL_MS = 120_000;

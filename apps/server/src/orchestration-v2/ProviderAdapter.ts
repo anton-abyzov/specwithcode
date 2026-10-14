@@ -181,10 +181,13 @@ export function providerSetupFailure(error: unknown): ProviderSetupError | undef
   let current = error;
   for (let depth = 0; depth < 8 && current != null && !seen.has(current); depth++) {
     try {
-      if (current instanceof ProviderSetupError) return current;
+      if (Schema.is(ProviderSetupError)(current)) return current;
       seen.add(current);
-      current = Cause.isCause(current) ? Cause.squash(current)
-        : typeof current === "object" && "cause" in current ? current.cause : undefined;
+      current = Cause.isCause(current)
+        ? Cause.squash(current)
+        : typeof current === "object" && "cause" in current
+          ? current.cause
+          : undefined;
     } catch {
       return undefined;
     }
@@ -642,5 +645,5 @@ export interface ProviderAdapterV2Shape {
 }
 
 export class ProviderAdapterV2 extends Context.Service<ProviderAdapterV2, ProviderAdapterV2Shape>()(
-  "studio/orchestration-v2/ProviderAdapter/ProviderAdapterV2",
+  "specweave-studio/orchestration-v2/ProviderAdapter/ProviderAdapterV2",
 ) {}

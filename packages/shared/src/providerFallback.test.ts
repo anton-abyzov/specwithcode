@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import {
   ProviderDriverKind,
   ProviderInstanceId,
@@ -37,7 +38,7 @@ function provider(
     installed: true,
     status: "ready",
     auth: { status: "authenticated" },
-    checkedAt: earlier,
+    checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
     version: null,
     models: [
       { slug: `${driver}-small`, name: "Small", isCustom: false, capabilities: null },
@@ -55,7 +56,7 @@ function provider(
       ? {}
       : {
           usageLimits: {
-            checkedAt: earlier,
+            checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
             windows: [
               {
                 id: "five_hour",
@@ -64,7 +65,6 @@ function provider(
                 usedPercent: used,
                 resetsAt: later,
               },
-              { id: "old", kind: "weekly", label: "Week", usedPercent: 100, resetsAt: earlier },
             ],
           },
         }),
@@ -83,7 +83,23 @@ const nativeDenials = [
 
 describe("providerUsedPercent", () => {
   it("takes the fullest window that has not reset", () => {
-    expect(providerUsedPercent(claude, now)).toBe(93);
+    const withExpiredWindow = {
+      ...claude,
+      usageLimits: {
+        ...claude.usageLimits!,
+        windows: [
+          ...claude.usageLimits!.windows,
+          {
+            id: "old",
+            kind: "weekly" as const,
+            label: "Week",
+            usedPercent: 100,
+            resetsAt: earlier,
+          },
+        ],
+      },
+    };
+    expect(providerUsedPercent(withExpiredWindow, now)).toBe(93);
     expect(providerUsedPercent(provider("x", "codex", null), now)).toBeNull();
   });
 });
@@ -135,7 +151,7 @@ describe("resolveProviderFallback", () => {
   });
 
   it("prefers the project's fallback, then its default, then any ready provider", () => {
-    const fallback = { instanceId: codex.instanceId, model: "gpt-chosen" };
+    const fallback = { instanceId: codex.instanceId, model: "codex-small" };
     expect(
       resolveProviderFallback({
         providers: [claude, codex],
@@ -164,7 +180,7 @@ describe("resolveProviderFallback", () => {
   });
 
   it("goes back to the default model when the thread already runs on the fallback", () => {
-    const back = { instanceId: claude.instanceId, model: "opus" };
+    const back = { instanceId: claude.instanceId, model: "claudeAgent-small" };
     const target = resolveProviderFallback({
       providers: [provider("claudeAgent", "claudeAgent", 10), codex],
       currentInstanceId: codex.instanceId,
@@ -192,7 +208,11 @@ describe("resolveProviderFallback", () => {
     const signedOut = provider("codex", "codex", 5, { auth: { status: "unauthenticated" } });
     expect(canTakeTurn(signedOut)).toBe(false);
     const refusing = provider("codex", "codex", 5, {
-      usageLimits: { checkedAt: earlier, windows: [], ordinaryUsageAllowed: false },
+      usageLimits: {
+        checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
+        windows: [],
+        ordinaryUsageAllowed: false,
+      },
     });
     expect(
       resolveProviderFallback({
@@ -230,14 +250,14 @@ describe("shouldSwitchBeforeTurn", () => {
   const closeTo = (minutesToReset: number, used = 96) =>
     provider("claudeAgent", "claudeAgent", null, {
       usageLimits: {
-        checkedAt: earlier,
+        checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
         windows: [
           {
             id: "five_hour",
             kind: "session",
             label: "Session",
             usedPercent: used,
-            resetsAt: new Date(now + minutesToReset * 60_000).toISOString(),
+            resetsAt: DateTime.formatIso(DateTime.makeUnsafe(now + minutesToReset * 60_000)),
           },
           { id: "weekly", kind: "weekly", label: "Week", usedPercent: 40, resetsAt: later },
         ],
@@ -267,14 +287,14 @@ describe("shouldSwitchBeforeTurn", () => {
   it("does not wait while a full window with a far or unknown reset remains", () => {
     const weeklyFull = provider("claudeAgent", "claudeAgent", null, {
       usageLimits: {
-        checkedAt: earlier,
+        checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
         windows: [
           {
             id: "five_hour",
             kind: "session",
             label: "Session",
             usedPercent: 97,
-            resetsAt: new Date(now + 20 * 60_000).toISOString(),
+            resetsAt: DateTime.formatIso(DateTime.makeUnsafe(now + 20 * 60_000)),
           },
           { id: "weekly", kind: "weekly", label: "Week", usedPercent: 96, resetsAt: later },
         ],
@@ -286,7 +306,7 @@ describe("shouldSwitchBeforeTurn", () => {
     );
     const noReset = provider("claudeAgent", "claudeAgent", null, {
       usageLimits: {
-        checkedAt: earlier,
+        checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
         windows: [{ id: "weekly", kind: "weekly", label: "Week", usedPercent: 97 }],
       },
     });
@@ -310,7 +330,7 @@ describe("shouldSwitchBeforeTurn", () => {
 });
 
 describe("limitStopWaitsForReset", () => {
-  const at = (minutes: number) => new Date(now + minutes * 60_000).toISOString();
+  const at = (minutes: number) => DateTime.formatIso(DateTime.makeUnsafe(now + minutes * 60_000));
   it("waits for a reset within the wait and a short grace after it", () => {
     expect(limitStopWaitsForReset({ resetAt: at(25), waitUnderMinutes: 30, nowMs: now })).toBe(
       true,
@@ -450,7 +470,7 @@ describe("Claude API credits", () => {
     ).toBeNull();
   });
 
-  it("is never the any-ready fallback, only one the rule names", () => {
+  it("does not suggest unverified API capacity even when the rule names it", () => {
     const input = {
       providers: [claude, apiKey],
       currentInstanceId: claude.instanceId,
@@ -464,7 +484,7 @@ describe("Claude API credits", () => {
         ...input,
         rule: { ...rule, providerLimitFallbackModelSelection: named },
       }),
-    ).toEqual(named);
+    ).toBeNull();
   });
 });
 
@@ -576,11 +596,11 @@ describe("resolveCoordinatorTurnSelection", () => {
   });
 
   it("waits for a reset within the project's wait instead of switching", () => {
-    const soon = new Date(now + 10 * 60_000).toISOString();
+    const soon = DateTime.formatIso(DateTime.makeUnsafe(now + 10 * 60_000));
     const providers = [
       provider("claudeAgent", "claudeAgent", null, {
         usageLimits: {
-          checkedAt: earlier,
+          checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
           windows: [
             {
               id: "five_hour",
@@ -625,7 +645,9 @@ describe("review follow-ups", () => {
   };
 
   it("stays off the saved model after a failed run there until a newer usage read", () => {
-    const stale = provider("claudeAgent", "claudeAgent", 10);
+    const stale = provider("claudeAgent", "claudeAgent", 10, {
+      usageLimits: { ...claude.usageLimits!, checkedAt: earlier },
+    });
     const input = { saved, thread: onCodex, rule: switchRule, nowMs: now };
     const stoppedAfterRead = Date.parse(earlier) + 60_000;
     expect(
@@ -637,7 +659,7 @@ describe("review follow-ups", () => {
     ).toBe("staying-on-fallback");
     const fresh = provider("claudeAgent", "claudeAgent", 10, {
       usageLimits: {
-        checkedAt: new Date(now - 1_000).toISOString(),
+        checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now - 1_000)),
         windows: [
           { id: "five_hour", kind: "session", label: "Session", usedPercent: 10, resetsAt: later },
         ],
@@ -652,7 +674,7 @@ describe("review follow-ups", () => {
     ).toBe("saved");
     const unread = provider("claudeAgent", "claudeAgent", null, {
       usageLimits: {
-        checkedAt: new Date(now - 1_000).toISOString(),
+        checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now - 1_000)),
         windows: [],
         unavailable: { reason: "probeFailed" },
       },

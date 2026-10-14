@@ -1,6 +1,10 @@
+import * as DateTime from "effect/DateTime";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native fixtures independently verify Electron and installed operating-system behavior.
 import * as NodeFS from "node:fs";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native fixtures independently verify Electron and installed operating-system behavior.
 import * as NodeHttp from "node:http";
 import * as NodeOS from "node:os";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native fixtures independently verify Electron and installed operating-system behavior.
 import * as NodePath from "node:path";
 
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
@@ -498,7 +502,7 @@ describe("DesktopLocalService.discover", () => {
       writeJson(markerPath, {
         version: "1.0.7",
         ...marker,
-        at: new Date(now - ageMs).toISOString(),
+        at: DateTime.formatIso(DateTime.makeUnsafe(now - ageMs)),
       });
       return {
         restart: () => NodeFS.writeFileSync(runtimePath, runtime),
@@ -691,7 +695,7 @@ describe("DesktopLocalService.discover", () => {
       const { home, studioHome } = makeHomeWithInstalledService(origin);
       return Effect.gen(function* () {
         writeJson(NodePath.join(studioHome, "updates", "install-in-progress.json"), {
-          at: new Date(yield* Clock.currentTimeMillis).toISOString(),
+          at: DateTime.formatIso(DateTime.makeUnsafe(yield* Clock.currentTimeMillis)),
         });
         const service = yield* DesktopLocalService.DesktopLocalService;
         const discovery = yield* service.discover();

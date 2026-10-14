@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 // @effect-diagnostics nodeBuiltinImport:off - Tests use Node's glob matcher to verify electron-builder exclusions.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
@@ -324,7 +325,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   });
 
   it("stamps local builds as dev builds of the next patch release", () => {
-    const date = new Date("2026-10-10T05:30:00Z");
+    const date = DateTime.toDateUtc(DateTime.makeUnsafe("2026-10-10T05:30:00Z"));
     assert.equal(
       resolveLocalBuildVersion({
         packageVersion: "0.1.1",

@@ -63,7 +63,8 @@ export type ThreadLaunchWorkspaceStrategy =
     };
 
 export interface ThreadLaunchInitialMessage {
-  readonly manualCodexCreditIntent?: import("@specweave-studio/contracts").ManualCodexCreditIntent | undefined;
+  readonly manualCodexCreditIntent?:
+    | import("@specweave-studio/contracts").ManualCodexCreditIntent | undefined;
   readonly messageId?: MessageId;
   readonly scheduledTaskId?: ScheduledTaskId;
   readonly senderThreadId?: ThreadId;
@@ -158,7 +159,7 @@ export class ThreadLaunchService extends Context.Service<
       input: ThreadLaunchRetryInput,
     ) => Effect.Effect<Orchestrator.OrchestratorV2DispatchResult, Orchestrator.OrchestratorV2Error>;
   }
->()("studio/orchestration-v2/ThreadLaunchService") {}
+>()("specweave-studio/orchestration-v2/ThreadLaunchService") {}
 
 const isThreadLaunchError = Schema.is(ThreadLaunchError);
 
@@ -719,7 +720,10 @@ const make = Effect.gen(function* () {
         ),
       );
       if (project.workspaceSettings?.paused || project.workspaceSettings?.archived) {
-        return yield* mapError(input, "resolve-project")("Resume or restore the project before starting new threads.");
+        return yield* mapError(
+          input,
+          "resolve-project",
+        )("Resume or restore the project before starting new threads.");
       }
       if (input.reuseExistingThread === true && input.threadId === undefined) {
         return yield* mapError(
@@ -848,7 +852,9 @@ const make = Effect.gen(function* () {
               threadId,
               messageId,
               text: input.initialMessage.text,
-              ...(input.initialMessage.manualCodexCreditIntent ? { manualCodexCreditIntent: input.initialMessage.manualCodexCreditIntent } : {}),
+              ...(input.initialMessage.manualCodexCreditIntent
+                ? { manualCodexCreditIntent: input.initialMessage.manualCodexCreditIntent }
+                : {}),
               ...(input.initialMessage.scheduledTaskId === undefined
                 ? {}
                 : { scheduledTaskId: input.initialMessage.scheduledTaskId }),

@@ -35,7 +35,7 @@ export class OpenCode2Server extends Context.Service<
       use: (connection: OpenCode2Connection) => Effect.Effect<A, E, R>,
     ) => Effect.Effect<A, E | OpenCodeRuntimeError, R>;
   }
->()("studio/provider/opencode2/OpenCode2Server") {}
+>()("specweave-studio/provider/opencode2/OpenCode2Server") {}
 
 /**
  * A fresh password for a spawned server. OpenCode 2 always requires one and

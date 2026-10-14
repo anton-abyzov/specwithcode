@@ -34,7 +34,7 @@ export class ProjectUsageService extends Context.Service<
       input: ProjectUsageReadInput,
     ) => Effect.Effect<ProjectUsageSummary, ProjectUsageReadError>;
   }
->()("studio/usage/ProjectUsageService") {}
+>()("specweave-studio/usage/ProjectUsageService") {}
 
 /** Folder sessions older than this are not read: the scan cache keeps 90 days. */
 export const FOLDER_SESSION_WINDOW_DAYS = 90;
@@ -174,7 +174,7 @@ export const make = Effect.gen(function* () {
       };
     }).pipe(
       Effect.mapError((cause) =>
-        cause instanceof ProjectUsageReadError
+        Schema.is(ProjectUsageReadError)(cause)
           ? cause
           : new ProjectUsageReadError({ ...input, reason: "read_failed", cause }),
       ),

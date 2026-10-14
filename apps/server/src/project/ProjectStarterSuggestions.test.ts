@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -309,7 +310,7 @@ it.layer(layer)("ProjectStarterSuggestionsService", (it) => {
   it.effect("finds the newest open increment and a recent handoff", () =>
     Effect.gen(function* () {
       // A handoff's age is its file time against the clock, so the test clock is set to now.
-      yield* TestClock.setTime(Date.now());
+      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.nowUnsafe()));
       const fixture = yield* project();
       yield* fixture.write("README.md", "# Fixture\n");
       yield* fixture.write(
@@ -364,7 +365,7 @@ it.layer(layer)("ProjectStarterSuggestionsService", (it) => {
 
   it.effect("counts every open increment and sees a handoff on an older one", () =>
     Effect.gen(function* () {
-      yield* TestClock.setTime(Date.now());
+      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.nowUnsafe()));
       const fixture = yield* project();
       yield* fixture.write("README.md", "# Fixture\n");
       // Seven open increments; the oldest one carries the pending handoff.
@@ -491,10 +492,12 @@ it.layer(layer)("ProjectStarterSuggestionsService", (it) => {
 
   it.effect("reads an umbrella shaped like specweave-umb, with nested repositories", () =>
     Effect.gen(function* () {
-      yield* TestClock.setTime(Date.now());
+      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.nowUnsafe()));
       const fs = yield* FileSystem.FileSystem;
       const fixture = yield* project();
-      const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const yesterday = DateTime.toDateUtc(
+        DateTime.makeUnsafe(DateTime.toEpochMillis(DateTime.nowUnsafe()) - 24 * 60 * 60 * 1000),
+      );
       const aged = (name: string) => fs.utimes(`${fixture.root}/${name}`, yesterday, yesterday);
       yield* fixture.git("init");
       yield* fixture.write(".gitignore", "repositories/\n.specweave/state/\n");
@@ -585,7 +588,7 @@ it.layer(layer)("ProjectStarterSuggestionsService", (it) => {
 
   it.effect("finds a dated handoff note with no index beside it", () =>
     Effect.gen(function* () {
-      yield* TestClock.setTime(Date.now());
+      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.nowUnsafe()));
       const fixture = yield* project();
       yield* fixture.write("README.md", "# Fixture\n");
       yield* fixture.write(".specweave/handoffs/2026-10-10-INDEX.md", "# Index\n");
@@ -596,9 +599,12 @@ it.layer(layer)("ProjectStarterSuggestionsService", (it) => {
 
   it.effect("drops an increment's handoff once its ledger records the pickup", () =>
     Effect.gen(function* () {
-      yield* TestClock.setTime(Date.now());
+      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.nowUnsafe()));
       const fixture = yield* project();
-      const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+      const minutesAgo = (minutes: number) =>
+        DateTime.formatIso(
+          DateTime.makeUnsafe(DateTime.toEpochMillis(DateTime.nowUnsafe()) - minutes * 60_000),
+        );
       yield* fixture.write("README.md", "# Fixture\n");
       for (const [id, events] of [
         ["0874-paywall", ["handoff", "pickup"]],
@@ -634,12 +640,12 @@ it.layer(layer)("ProjectStarterSuggestionsService", (it) => {
 
   it.effect("ignores a handoff that has gone stale", () =>
     Effect.gen(function* () {
-      yield* TestClock.setTime(Date.now());
+      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.nowUnsafe()));
       const fs = yield* FileSystem.FileSystem;
       const fixture = yield* project();
       yield* fixture.write("README.md", "# Fixture\n");
       yield* fixture.write(".specweave/handoffs/index.json", "{}");
-      const old = new Date(Date.UTC(2026, 0, 1));
+      const old = DateTime.toDateUtc(DateTime.makeUnsafe(Date.UTC(2026, 0, 1)));
       yield* fs.utimes(`${fixture.root}/.specweave/handoffs/index.json`, old, old);
       assert.notInclude(ids(yield* fixture.read), "handoff");
     }),

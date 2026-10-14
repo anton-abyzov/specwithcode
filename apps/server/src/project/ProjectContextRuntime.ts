@@ -1,3 +1,4 @@
+import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import {
   ProviderAdapterTurnStartError,
@@ -63,7 +64,7 @@ export function withProjectContext(
         : session.startTurn(contextInput);
     }).pipe(
       Effect.mapError((cause) =>
-        cause instanceof ProviderAdapterTurnStartError
+        Schema.is(ProviderAdapterTurnStartError)(cause)
           ? cause
           : new ProviderAdapterTurnStartError({
               driver: session.driver,

@@ -401,8 +401,8 @@ export function ProjectPlan({
                           />
                         </label>
                         <p className="project-muted">
-                          The root must be inside this project folder. Choose an umbrella folder as
-                          the project when it owns the spec.
+                          Use this project's folder or a folder already approved in Environment.
+                          Removing that approval stops access to the connected plan.
                         </p>
                         <label>
                           Increment ID

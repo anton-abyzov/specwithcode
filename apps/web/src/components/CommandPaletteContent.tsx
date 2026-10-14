@@ -10,6 +10,7 @@ type CommandPaletteContentProps = Omit<ComponentProps<typeof Command>, "children
   readonly footerActionLabel?: ReactNode;
   readonly footerTrailing?: ReactNode;
   readonly inputAccessory?: ReactNode;
+  readonly primaryAction?: ReactNode;
   readonly inputProps: ComponentProps<typeof CommandInput>;
   /**
    * How tall the results panel may grow: the palette's list, a taller file list, or the whole
@@ -31,6 +32,7 @@ export function CommandPaletteContent({
   footerActionLabel,
   footerTrailing,
   inputAccessory,
+  primaryAction,
   inputProps,
   panelSize = "list",
   showBackHint,
@@ -70,8 +72,9 @@ export function CommandPaletteContent({
         >
           {children}
         </CommandPanel>
+        {primaryAction}
         <CommandFooter className="max-sm:flex-col max-sm:items-start">
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
             <KbdGroup>
               <Kbd>
                 <ArrowUpIcon />

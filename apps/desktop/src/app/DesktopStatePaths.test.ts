@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it } from "vite-plus/test";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native fixtures independently verify Electron and installed operating-system behavior.
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native fixtures independently verify Electron and installed operating-system behavior.
 import { join } from "node:path";
 import * as Option from "effect/Option";
-import { resolveDesktopBaseDir } from "./DesktopStatePaths";
+import { resolveDesktopBaseDir } from "./DesktopStatePaths.ts";
 const homes: string[] = [];
 afterEach(() => homes.splice(0).forEach((dir) => rmSync(dir, { recursive: true, force: true })));
 const home = () => {

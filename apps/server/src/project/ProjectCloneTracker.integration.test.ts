@@ -2,6 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { OrchestrationDispatchCommandError, ProjectId } from "@specweave-studio/contracts";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native Git creates the independent repository fixture for the Effect clone tracker.
 import { execFileSync } from "node:child_process";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -30,7 +31,7 @@ const layer = Repositories.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
 );
 const pid = ProjectId.make("clone-integration");
-const tick = Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 10)));
+const tick = Effect.promise(() => Effect.runPromise(Effect.sleep(10)));
 const fixture = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const root = yield* fs

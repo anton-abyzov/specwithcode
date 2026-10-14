@@ -1,5 +1,5 @@
+import { sha256 } from "../../nodeCrypto.ts";
 import { seedReplayProject } from "../../project/ProjectContextTestkit.ts";
-import { createHash } from "node:crypto";
 import * as NodeOS from "node:os";
 
 import { historyResponseItems } from "../ContextHandoffBudget.ts";
@@ -512,9 +512,7 @@ describe("CodexAdapterV2 runtime policy", () => {
             model: "gpt-5.4",
           },
           hasStudioMcp: true,
-        }).pipe(
-          Effect.map((params) => params.additionalContext?.studio_code_runtime?.value ?? ""),
-        );
+        }).pipe(Effect.map((params) => params.additionalContext?.studio_code_runtime?.value ?? ""));
       assert.include(yield* runtimeContext(), '<response_style mode="concise">');
       const detailed = yield* runtimeContext("detailed");
       assert.include(detailed, '<response_style mode="detailed">');
@@ -543,30 +541,32 @@ describe("CodexAdapterV2 runtime policy", () => {
     }),
   );
 
-  it.effect("adds Studio plan-mode developer instructions when the Studio MCP server is attached", () =>
-    Effect.gen(function* () {
-      const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
-        nativeThreadId: "native-plan-with-studio-mcp",
-        codexInput: [{ type: "text", text: "plan this task" }],
-        runtimePolicy: {
-          runtimeMode: "full-access",
-          interactionMode: "plan",
-          cwd: null,
-        },
-        modelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5.4",
-        },
-        hasStudioMcp: true,
-      });
+  it.effect(
+    "adds Studio plan-mode developer instructions when the Studio MCP server is attached",
+    () =>
+      Effect.gen(function* () {
+        const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId: "native-plan-with-studio-mcp",
+          codexInput: [{ type: "text", text: "plan this task" }],
+          runtimePolicy: {
+            runtimeMode: "full-access",
+            interactionMode: "plan",
+            cwd: null,
+          },
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5.4",
+          },
+          hasStudioMcp: true,
+        });
 
-      assert.equal(params.collaborationMode?.mode, "plan");
-      assert.include(
-        params.collaborationMode?.settings.developer_instructions ?? "",
-        "request_user_input",
-      );
-      assert.include(params.additionalContext?.studio_code_tools?.value ?? "", "preview_status");
-    }),
+        assert.equal(params.collaborationMode?.mode, "plan");
+        assert.include(
+          params.collaborationMode?.settings.developer_instructions ?? "",
+          "request_user_input",
+        );
+        assert.include(params.additionalContext?.studio_code_tools?.value ?? "", "preview_status");
+      }),
   );
 
   it.effect("keeps Codex in plan mode without referencing unavailable Studio MCP tools", () =>
@@ -593,9 +593,31 @@ describe("CodexAdapterV2 runtime policy", () => {
 
   it.effect("uses only a request-scoped default tier for existing-credit submissions", () =>
     Effect.gen(function* () {
-      const selection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol", options: [{ id: "serviceTier", value: "priority" }] };
-      const input = { nativeThreadId: "credit-thread", codexInput: [{ type: "text" as const, text: "Explain this" }], runtimePolicy: { runtimeMode: "full-access" as const, interactionMode: "default" as const, cwd: "/credit/destination" }, modelSelection: selection };
-      const params = yield* CodexAdapterV2.buildCodexTurnStartParams({ ...input, manualCodexCreditIntent: { type: "human-submit-existing-credits", instanceId: selection.instanceId, model: selection.model, expectedQuotaPoolId: `codex:sha256:${"a".repeat(64)}`, observedAt: "2026-10-09T07:00:00Z" } });
+      const selection = {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-6.1-sol",
+        options: [{ id: "serviceTier", value: "priority" }],
+      };
+      const input = {
+        nativeThreadId: "credit-thread",
+        codexInput: [{ type: "text" as const, text: "Explain this" }],
+        runtimePolicy: {
+          runtimeMode: "full-access" as const,
+          interactionMode: "default" as const,
+          cwd: "/credit/destination",
+        },
+        modelSelection: selection,
+      };
+      const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
+        ...input,
+        manualCodexCreditIntent: {
+          type: "human-submit-existing-credits",
+          instanceId: selection.instanceId,
+          model: selection.model,
+          expectedQuotaPoolId: `codex:sha256:${"a".repeat(64)}`,
+          observedAt: "2026-10-09T07:00:00Z",
+        },
+      });
       assert.equal(params.serviceTierForTurn, "default");
       assert.notProperty(params, "serviceTier");
       assert.equal(params.model, selection.model);
@@ -1588,7 +1610,11 @@ function codexReplayPreamble(input: {
         id: 1,
         method: "initialize",
         params: {
-          clientInfo: { name: "SpecWeave Studio", title: "SpecWeave Studio", version: packageJson.version },
+          clientInfo: {
+            name: "SpecWeave Studio",
+            title: "SpecWeave Studio",
+            version: packageJson.version,
+          },
           capabilities: {
             experimentalApi: true,
             optOutNotificationMethods: ["turn/diff/updated"],
@@ -2153,7 +2179,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       // version, so pin the whole value here.
       assert.deepEqual(initializeParams, [
         {
-          clientInfo: { name: "SpecWeave Studio", title: "SpecWeave Studio", version: packageJson.version },
+          clientInfo: {
+            name: "SpecWeave Studio",
+            title: "SpecWeave Studio",
+            version: packageJson.version,
+          },
           capabilities: {
             experimentalApi: true,
             optOutNotificationMethods: ["turn/diff/updated"],
@@ -7772,51 +7802,149 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       assert.isNull(CodexAdapterV2.parseCodexGoalCommand("set a /goal"));
     });
 
-    it.effect("pauses a goal activated during a single credit request and settles that request", () =>
-      Effect.gen(function* () {
-        const turnEntries = withReplayRequestId(codexReplayPreamble({ nativeThreadId, nativeTurnId: "credit-turn", prompt: "Explain this file" }).slice(5), 5).map((entry) =>
-          "frame" in entry && Predicate.isObject(entry.frame) && entry.frame.method === "turn/start" && Predicate.isObject(entry.frame.params)
-            ? { ...entry, frame: { ...entry.frame, params: { ...entry.frame.params, serviceTierForTurn: "default" } } } : entry);
-        const transcript = makeCodexReplayTranscript({ scenario: "credit-single-turn-goal-activation", entries: [
-          ...sessionStart,
-          ...request(3, "thread/goal/get", { threadId: nativeThreadId }, { goal: null }),
-          ...request(4, "account/rateLimits/read", null, { accountId: "expected-account", ordinaryUsageAllowed: false, rateLimits: { spendControlReached: false, rateLimitReachedType: "rate_limit_reached", credits: { hasCredits: true, unlimited: false, balance: "746" } } }),
-          ...turnEntries,
-          notification("unexpected goal active", "thread/goal/updated", { threadId: nativeThreadId, turnId: "credit-turn", goal: codexGoal("active", 10) }),
-          ...request(6, "thread/goal/set", { threadId: nativeThreadId, status: "paused" }, { goal: codexGoal("paused", 10) }),
-          notification("credit request complete", "turn/completed", { threadId: nativeThreadId, turn: makeCodexReplayTurn({ id: "credit-turn", status: "completed" }) }),
-        ] });
-        const harness = yield* makeCodexReplayHarness(transcript);
-        const input = yield* goalTurnInput(harness, "Explain this file");
-        yield* harness.runtime.startTurn({ ...input, manualCodexCreditIntent: { type: "human-submit-existing-credits", instanceId: input.modelSelection.instanceId, model: input.modelSelection.model, expectedQuotaPoolId: `codex:sha256:${createHash("sha256").update("expected-account").digest("hex")}`, observedAt: new Date(yield* Clock.currentTimeMillis).toISOString() } });
-        yield* harness.firstTerminal;
-        assert.equal(harness.terminalEvents().length, 1);
-        assert.equal(harness.terminalEvents()[0]?.status, "completed");
-        assert.deepEqual(providerGoals(harness.events).filter((status) => status !== null), ["paused"]);
-      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    it.effect(
+      "pauses a goal activated during a single credit request and settles that request",
+      () =>
+        Effect.gen(function* () {
+          const turnEntries = withReplayRequestId(
+            codexReplayPreamble({
+              nativeThreadId,
+              nativeTurnId: "credit-turn",
+              prompt: "Explain this file",
+            }).slice(5),
+            5,
+          ).map((entry) =>
+            "frame" in entry &&
+            Predicate.isObject(entry.frame) &&
+            entry.frame.method === "turn/start" &&
+            Predicate.isObject(entry.frame.params)
+              ? {
+                  ...entry,
+                  frame: {
+                    ...entry.frame,
+                    params: { ...entry.frame.params, serviceTierForTurn: "default" },
+                  },
+                }
+              : entry,
+          );
+          const transcript = makeCodexReplayTranscript({
+            scenario: "credit-single-turn-goal-activation",
+            entries: [
+              ...sessionStart,
+              ...request(3, "thread/goal/get", { threadId: nativeThreadId }, { goal: null }),
+              ...request(4, "account/rateLimits/read", null, {
+                accountId: "expected-account",
+                ordinaryUsageAllowed: false,
+                rateLimits: {
+                  spendControlReached: false,
+                  rateLimitReachedType: "rate_limit_reached",
+                  credits: { hasCredits: true, unlimited: false, balance: "746" },
+                },
+              }),
+              ...turnEntries,
+              notification("unexpected goal active", "thread/goal/updated", {
+                threadId: nativeThreadId,
+                turnId: "credit-turn",
+                goal: codexGoal("active", 10),
+              }),
+              ...request(
+                6,
+                "thread/goal/set",
+                { threadId: nativeThreadId, status: "paused" },
+                { goal: codexGoal("paused", 10) },
+              ),
+              notification("credit request complete", "turn/completed", {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: "credit-turn", status: "completed" }),
+              }),
+            ],
+          });
+          const harness = yield* makeCodexReplayHarness(transcript);
+          const input = yield* goalTurnInput(harness, "Explain this file");
+          yield* harness.runtime.startTurn({
+            ...input,
+            manualCodexCreditIntent: {
+              type: "human-submit-existing-credits",
+              instanceId: input.modelSelection.instanceId,
+              model: input.modelSelection.model,
+              expectedQuotaPoolId: `codex:sha256:${sha256(["expected-account"], "hex")}`,
+              observedAt: DateTime.formatIso(DateTime.makeUnsafe(yield* Clock.currentTimeMillis)),
+            },
+          });
+          yield* harness.firstTerminal;
+          assert.equal(harness.terminalEvents().length, 1);
+          assert.equal(harness.terminalEvents()[0]?.status, "completed");
+          assert.deepEqual(
+            providerGoals(harness.events).filter((status) => status !== null),
+            ["paused"],
+          );
+        }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     );
 
     it.effect("refuses an old resident account even when the selected profile has permission", () =>
       Effect.gen(function* () {
-        const transcript = makeCodexReplayTranscript({ scenario: "credit-resident-account-mismatch", entries: [
-          ...sessionStart,
-          ...request(3, "thread/goal/get", { threadId: nativeThreadId }, { goal: null }),
-          ...request(4, "account/rateLimits/read", null, { accountId: "old-resident-account", ordinaryUsageAllowed: true, rateLimits: { spendControlReached: false } }),
-        ] });
+        const transcript = makeCodexReplayTranscript({
+          scenario: "credit-resident-account-mismatch",
+          entries: [
+            ...sessionStart,
+            ...request(3, "thread/goal/get", { threadId: nativeThreadId }, { goal: null }),
+            ...request(4, "account/rateLimits/read", null, {
+              accountId: "old-resident-account",
+              ordinaryUsageAllowed: true,
+              rateLimits: { spendControlReached: false },
+            }),
+          ],
+        });
         const harness = yield* makeCodexReplayHarness(transcript);
         const input = yield* goalTurnInput(harness, "Explain this file");
-        const error = yield* harness.runtime.startTurn({ ...input, manualCodexCreditIntent: { type: "human-submit-existing-credits", instanceId: input.modelSelection.instanceId, model: input.modelSelection.model, expectedQuotaPoolId: `codex:sha256:${createHash("sha256").update("expected-account").digest("hex")}`, observedAt: new Date(yield* Clock.currentTimeMillis).toISOString() } }).pipe(Effect.flip);
-        assert.include(errorCauseChainText(error), "active native session account or credit permission changed");
+        const error = yield* harness.runtime
+          .startTurn({
+            ...input,
+            manualCodexCreditIntent: {
+              type: "human-submit-existing-credits",
+              instanceId: input.modelSelection.instanceId,
+              model: input.modelSelection.model,
+              expectedQuotaPoolId: `codex:sha256:${sha256(["expected-account"], "hex")}`,
+              observedAt: DateTime.formatIso(DateTime.makeUnsafe(yield* Clock.currentTimeMillis)),
+            },
+          })
+          .pipe(Effect.flip);
+        assert.include(
+          errorCauseChainText(error),
+          "active native session account or credit permission changed",
+        );
         assert.deepEqual(harness.terminalEvents(), []);
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     );
 
     it.effect("refuses a credit turn when the fresh native goal is active", () =>
       Effect.gen(function* () {
-        const transcript = makeCodexReplayTranscript({ scenario: "credit-active-goal", entries: [...sessionStart, ...request(3, "thread/goal/get", { threadId: nativeThreadId }, { goal: codexGoal("active", 10) })] });
+        const transcript = makeCodexReplayTranscript({
+          scenario: "credit-active-goal",
+          entries: [
+            ...sessionStart,
+            ...request(
+              3,
+              "thread/goal/get",
+              { threadId: nativeThreadId },
+              { goal: codexGoal("active", 10) },
+            ),
+          ],
+        });
         const harness = yield* makeCodexReplayHarness(transcript);
         const input = yield* goalTurnInput(harness, "Explain this file");
-        const error = yield* harness.runtime.startTurn({ ...input, manualCodexCreditIntent: { type: "human-submit-existing-credits", instanceId: input.modelSelection.instanceId, model: input.modelSelection.model, expectedQuotaPoolId: `codex:sha256:${"a".repeat(64)}`, observedAt: "2026-10-09T07:00:00Z" } }).pipe(Effect.flip);
+        const error = yield* harness.runtime
+          .startTurn({
+            ...input,
+            manualCodexCreditIntent: {
+              type: "human-submit-existing-credits",
+              instanceId: input.modelSelection.instanceId,
+              model: input.modelSelection.model,
+              expectedQuotaPoolId: `codex:sha256:${"a".repeat(64)}`,
+              observedAt: "2026-10-09T07:00:00Z",
+            },
+          })
+          .pipe(Effect.flip);
         assert.include(errorCauseChainText(error), "Pause the active goal");
         assert.deepEqual(harness.terminalEvents(), []);
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
@@ -7824,11 +7952,28 @@ describe("CodexAdapterV2 post-settle continuation", () => {
 
     it.effect("refuses credit goal commands and compaction before native requests", () =>
       Effect.gen(function* () {
-        const harness = yield* makeCodexReplayHarness(makeCodexReplayTranscript({ scenario: "credit-no-goal-command", entries: sessionStart }));
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({ scenario: "credit-no-goal-command", entries: sessionStart }),
+        );
         const input = yield* goalTurnInput(harness, "/goal do this forever");
-        const credit = { ...input, manualCodexCreditIntent: { type: "human-submit-existing-credits" as const, instanceId: input.modelSelection.instanceId, model: input.modelSelection.model, expectedQuotaPoolId: `codex:sha256:${"a".repeat(64)}`, observedAt: "2026-10-09T07:00:00Z" } };
-        assert.include(errorCauseChainText(yield* harness.runtime.startTurn(credit).pipe(Effect.flip)), "cannot start or control goals");
-        assert.include(errorCauseChainText(yield* harness.runtime.compactThread!(credit).pipe(Effect.flip)), "cannot compact");
+        const credit = {
+          ...input,
+          manualCodexCreditIntent: {
+            type: "human-submit-existing-credits" as const,
+            instanceId: input.modelSelection.instanceId,
+            model: input.modelSelection.model,
+            expectedQuotaPoolId: `codex:sha256:${"a".repeat(64)}`,
+            observedAt: "2026-10-09T07:00:00Z",
+          },
+        };
+        assert.include(
+          errorCauseChainText(yield* harness.runtime.startTurn(credit).pipe(Effect.flip)),
+          "cannot start or control goals",
+        );
+        assert.include(
+          errorCauseChainText(yield* harness.runtime.compactThread!(credit).pipe(Effect.flip)),
+          "cannot compact",
+        );
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     );
 

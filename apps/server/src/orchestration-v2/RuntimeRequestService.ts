@@ -61,7 +61,7 @@ export interface RuntimeRequestServiceV2Shape {
 export class RuntimeRequestServiceV2 extends Context.Service<
   RuntimeRequestServiceV2,
   RuntimeRequestServiceV2Shape
->()("studio/orchestration-v2/RuntimeRequestService/RuntimeRequestServiceV2") {}
+>()("specweave-studio/orchestration-v2/RuntimeRequestService/RuntimeRequestServiceV2") {}
 
 export const layer: Layer.Layer<
   RuntimeRequestServiceV2,

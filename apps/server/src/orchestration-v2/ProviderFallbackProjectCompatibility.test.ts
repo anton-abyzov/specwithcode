@@ -12,6 +12,8 @@ import {
   type ProjectEnvironmentSettings,
   type ServerProvider,
 } from "@specweave-studio/contracts";
+import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -51,7 +53,18 @@ const ready = (instance: string, driver: string, usedPercent: number): ServerPro
   },
 });
 const claude = ready("claude", "claudeAgent", 100);
-const copilot = ready("copilot", "acpRegistry", 10);
+// The switch rule's own target lists the model it names, so only folder
+// compatibility (never an unusable rule) keeps it out of a restricted project.
+const copilot: ServerProvider = (() => {
+  const base = ready("copilot", "acpRegistry", 10);
+  return {
+    ...base,
+    models: [
+      ...base.models,
+      { slug: "opus", name: "Opus", isCustom: false, isDefault: false, capabilities: null },
+    ],
+  };
+})();
 const codex = ready("codex", "codex", 20);
 const project = (
   id: string,
@@ -123,7 +136,22 @@ function sweepFixture(
         providerLimitFallbackModelSelection: { instanceId: copilot.instanceId, model: "opus" },
       }),
     }),
-    Layer.mock(Providers.ProviderRegistry)({ getProviders: Effect.succeed(providers) }),
+    // Fallback only trusts a fresh usage read, so each sweep sees one taken now.
+    Layer.mock(Providers.ProviderRegistry)({
+      getProviders: Effect.map(Clock.currentTimeMillis, (nowMs) =>
+        providers.map((entry) =>
+          entry.usageLimits === undefined
+            ? entry
+            : {
+                ...entry,
+                usageLimits: {
+                  ...entry.usageLimits,
+                  checkedAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs)),
+                },
+              },
+        ),
+      ),
+    }),
     Layer.mock(Instances.ProviderInstanceRegistry)({
       getInstance: () => Effect.die(new Error("Billing operations are outside this switch rule.")),
     }),

@@ -1,7 +1,10 @@
+import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - O_NOFOLLOW is required; Effect FileSystem does not expose numeric open flags.
 import { constants } from "node:fs";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - stat and read must use the same atomically no-follow-opened descriptor.
 import { open } from "node:fs/promises";
-import { join } from "node:path";
+import { join } from "./nodePath.ts";
 import {
   AuthAccessWriteScope,
   AuthGrantScope,
@@ -246,7 +249,7 @@ export async function discoverFleet(
   return {
     configured: config !== null,
     connectPermission: fleetConnectPermission(config),
-    observedAt: new Date().toISOString(),
+    observedAt: DateTime.formatIso(DateTime.nowUnsafe()),
     listener:
       !host || ["127.0.0.1", "localhost", "::1", "[::1]"].includes(host) ? "loopback" : "network",
     machines: await Promise.all(
@@ -307,7 +310,7 @@ export async function connectFleet(
     !text(result.credential, 8192) ||
     !text(result.expiresAt, 64) ||
     !Number.isFinite(Date.parse(result.expiresAt)) ||
-    Date.parse(result.expiresAt) <= Date.now()
+    Date.parse(result.expiresAt) <= DateTime.toEpochMillis(DateTime.nowUnsafe())
   )
     throw new FleetError("pairing-unavailable");
   return {

@@ -200,7 +200,7 @@ export class AcpAgent extends Context.Service<
       handler: (payload: A) => Effect.Effect<void, AcpError.AcpError>,
     ) => Effect.Effect<void>;
   }
->()("effect-acp/agent/AcpAgent") {}
+>()("@specweave-studio/effect-acp/agent/AcpAgent") {}
 
 interface AcpCoreAgentRequestHandlers {
   initialize?: AcpRequestHandler<AcpSchema.InitializeRequest, AcpSchema.InitializeResponse>;

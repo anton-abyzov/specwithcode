@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "@effect/vitest";
 import { ThreadId } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
@@ -105,7 +106,7 @@ describe("RemoteWorkerFollower", () => {
     const { world, layer } = setup(
       {
         studio_thread_launch: async () => {
-          await new Promise((resolve) => setTimeout(resolve, 300));
+          await Effect.runPromise(Effect.sleep(300));
           launched = true; // The other machine created and started the thread anyway.
           return { result: launchAnswer };
         },
@@ -122,7 +123,7 @@ describe("RemoteWorkerFollower", () => {
                     creationSource: "mcp",
                     status: "running",
                     latestRunId: "b-run-1",
-                    createdAt: new Date().toISOString(),
+                    createdAt: DateTime.formatIso(DateTime.nowUnsafe()),
                   },
                 ]
               : [],
@@ -160,7 +161,7 @@ describe("RemoteWorkerFollower", () => {
     return Effect.gen(function* () {
       yield* allow();
       const records = yield* RemoteWorkerStore.RemoteWorkerStore;
-      const startedAt = new Date().toISOString();
+      const startedAt = DateTime.formatIso(DateTime.nowUnsafe());
       yield* records.modify("rwt:orphan", () => ({
         id: "rwt:orphan",
         callerThreadId: "coordinator",
@@ -251,7 +252,7 @@ describe("RemoteWorkerFollower", () => {
 describe("RemoteStudioMcpClient sessions", () => {
   it.live("one call timing out does not break the others sharing the machine's session", () => {
     const slow: FakeToolHandler = async () => {
-      await new Promise((resolve) => setTimeout(resolve, 600));
+      await Effect.runPromise(Effect.sleep(600));
       return finished("b-run-1");
     };
     const { layer } = setup({ studio_thread_wait: slow, studio_thread_read: slow });

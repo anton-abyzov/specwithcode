@@ -1,3 +1,4 @@
+import { runtimeModeSessionsToDetach } from "./RuntimeModeSessions.ts";
 import * as ProjectAdmission from "../project/ProjectAdmission.ts";
 import { guardProjectCreation } from "../project/ProjectCommandAdmission.ts";
 import {
@@ -6,7 +7,7 @@ import {
   recoverySnoozeBlocks,
   updateLimitRecovery,
 } from "./usageLimitRecovery.ts";
-import type { ServerSettingsService } from "../serverSettings.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import { makeAutomaticResolutionGuard } from "./ThreadAutomaticResolutionGuard.ts";
 import { runTerminalRunReactor } from "./TerminalRunReactor.ts";
 import {
@@ -75,6 +76,7 @@ import {
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Semaphore from "effect/Semaphore";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -107,6 +109,7 @@ import {
   emptyProjection,
   threadShellFromProjection,
   ProjectionStoreV2,
+  ProjectionStoreThreadNotFoundError,
   type ProjectionRecordField,
   type ProjectionTimelinePage,
   type ProjectionTimelinePageOptions,
@@ -158,6 +161,8 @@ export class OrchestratorCommandRejectedError extends Schema.TaggedError<Orchest
     return `Orchestration command ${this.commandType} (${this.commandId}) was rejected before commit.`;
   }
 }
+
+const isProjectionThreadNotFound = Schema.is(ProjectionStoreThreadNotFoundError);
 
 export class OrchestratorProjectionError extends Schema.TaggedError<OrchestratorProjectionError>()(
   "OrchestratorProjectionError",
@@ -333,6 +338,9 @@ export interface OrchestratorV2Shape {
     },
     OrchestratorV2Error
   >;
+  readonly withProjectPermissionUpdate: <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E, R>;
   readonly getShellSnapshot: (options?: {
     readonly location?: "active" | "archive";
     /** Background sweeps only: skips settled threads. */
@@ -355,7 +363,7 @@ export interface OrchestratorV2Shape {
 }
 
 export class OrchestratorV2 extends Context.Service<OrchestratorV2, OrchestratorV2Shape>()(
-  "studio/orchestration-v2/Orchestrator/OrchestratorV2",
+  "specweave-studio/orchestration-v2/Orchestrator/OrchestratorV2",
 ) {}
 
 function nextRunOrdinal(projection: Pick<OrchestrationV2ThreadProjection, "runs">): number {
@@ -797,6 +805,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   // While the service is held for an update, nothing may start new work.
   const updateHold = yield* ServiceUpdateHold.optional;
   const projects = yield* ProjectStore.ProjectStoreV2;
+  const serverSettings = yield* Effect.serviceOption(ServerSettingsService);
+  const projectPermissionUpdates = yield* Semaphore.make(1);
   const projectionStore = yield* ProjectionStoreV2;
   const effectOutbox = yield* EffectOutbox.EffectOutboxV2;
   const nextTurnItemOrdinal = (
@@ -2188,6 +2198,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       "orchestration_v2.driver": command.modelSelection.instanceId,
     });
 
+    const runtimeMode = Option.isSome(serverSettings)
+      ? ((yield* serverSettings.value.getSettings.pipe(mapDispatchError(command)))
+          .projectSettingsOverrides[command.projectId]?.defaultRuntimeMode ?? command.runtimeMode)
+      : command.runtimeMode;
+    yield* refuseAboveDispatchModeLimit(command, command.threadId, {
+      runtimeMode,
+      interactionMode: command.interactionMode,
+    });
     const now = yield* DateTime.now;
     const emitEvent = emit(events, command);
     const thread: OrchestrationV2AppThread = {
@@ -2198,7 +2216,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       title: command.title,
       providerInstanceId: command.modelSelection.instanceId,
       modelSelection: command.modelSelection,
-      runtimeMode: command.runtimeMode,
+      runtimeMode,
       interactionMode: command.interactionMode,
       branch: command.branch,
       worktreePath: command.worktreePath,
@@ -3350,11 +3368,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             command.worktreePath !== thread.worktreePath
           ? (providerContext?.providerSessions ?? []).map((session) => session.id)
           : command.type === "thread.runtime-mode.set"
-            ? (providerContext?.providerSessions ?? [])
-                .filter(
-                  (session) => !session.capabilities.sessions.supportsRuntimeModeSwitchInSession,
-                )
-                .map((session) => session.id)
+            ? runtimeModeSessionsToDetach(command, providerContext?.providerSessions ?? [])
             : (providerSwitchPlan?.releaseProviderSessionIds ?? []),
     );
     if (detachSessionIds.size > 0) {
@@ -3589,12 +3603,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       })
       .pipe(mapDispatchError(command));
 
+    const runtimeMode = Option.isSome(serverSettings)
+      ? ((yield* serverSettings.value.getSettings.pipe(mapDispatchError(command)))
+          .projectSettingsOverrides[targetThread.projectId]?.defaultRuntimeMode ??
+        targetThread.runtimeMode)
+      : targetThread.runtimeMode;
+    yield* refuseAboveDispatchModeLimit(command, command.targetThreadId, {
+      runtimeMode,
+      interactionMode: targetThread.interactionMode,
+    });
     yield* emitEvent({
       type: "thread.created",
       threadId: command.targetThreadId,
       providerInstanceId: targetThread.providerInstanceId,
       occurredAt: now,
-      payload: targetThread,
+      payload: { ...targetThread, runtimeMode },
     });
     yield* emitEvent({
       type: "context-transfer.created",
@@ -6608,6 +6631,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.title === undefined ? {} : { title: command.title }),
         ordinal: parentProjection.subagents.length + 1,
       });
+      const runtimeMode = Option.isSome(serverSettings)
+        ? ((yield* serverSettings.value.getSettings.pipe(mapDispatchError(command)))
+            .projectSettingsOverrides[parentProjection.thread.projectId]?.defaultRuntimeMode ??
+          command.runtimeMode)
+        : command.runtimeMode;
+      yield* refuseAboveDispatchModeLimit(command, childThreadId, {
+        runtimeMode,
+        interactionMode: command.interactionMode,
+      });
       const childThread: OrchestrationV2AppThread = {
         ...makeSubagentChildThread({
           parentThread: parentProjection.thread,
@@ -6621,7 +6653,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           createdBy: command.createdBy,
           creationSource: command.creationSource,
         }),
-        runtimeMode: command.runtimeMode,
+        runtimeMode,
         interactionMode: command.interactionMode,
       };
       const task: OrchestrationV2Subagent = {
@@ -10690,12 +10722,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     admission,
     projects,
     projections: projectionStore,
-    reject: (command, cause) =>
-      new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause,
-      }),
+    // A command for a thread that does not exist was never accepted: report it
+    // as a projection miss so callers can release what they prepared for it.
+    reject: (command, cause): OrchestratorDispatchError | OrchestratorProjectionError =>
+      isProjectionThreadNotFound(cause)
+        ? new OrchestratorProjectionError({ threadId: cause.threadId, cause })
+        : new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause,
+          }),
   });
   const refuseWhileUpdateHeld = (command: OrchestrationV2ServerCommand) =>
     ServiceUpdateHold.isHeldCommand(command)
@@ -10710,7 +10746,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ),
         )
       : Effect.void;
-  const dispatchWithReceipt = (command: OrchestrationV2ServerCommand) =>
+  const dispatchWithoutPermissionGate = (command: OrchestrationV2ServerCommand) =>
     refuseWhileUpdateHeld(command).pipe(
       Effect.andThen(
         admitCreation(
@@ -10719,6 +10755,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       ),
     );
+
+  // Lock before the per-thread lock. Permission fanout dispatches metadata only,
+  // so it never re-enters this creation gate while holding it.
+  const dispatchWithReceipt = (command: OrchestrationV2ServerCommand) => {
+    const dispatch = dispatchWithoutPermissionGate(command);
+    return command.type === "thread.create" ||
+      command.type === "thread.fork" ||
+      command.type === "delegated_task.request"
+      ? projectPermissionUpdates.withPermits(1)(dispatch)
+      : dispatch;
+  };
 
   const handleTerminalRun = (stored: OrchestrationV2StoredEvent) =>
     Effect.gen(function* () {
@@ -10916,6 +10963,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     recoverDelegatedTask,
     delegatedTaskResultPending,
     dispatch: dispatchWithReceipt,
+    withProjectPermissionUpdate: projectPermissionUpdates.withPermits(1),
     getTimelinePage: (threadId, options) =>
       projectionStore
         .getTimelinePage(threadId, options)
@@ -11085,6 +11133,7 @@ const layerUnavailable: Layer.Layer<OrchestratorV2> = Layer.succeed(
           cause: "Orchestration V2 live runtime is not configured.",
         }),
       ),
+    withProjectPermissionUpdate: (effect) => effect,
     getShellSnapshot: () =>
       Effect.fail(
         new OrchestratorProjectionError({

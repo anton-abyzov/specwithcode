@@ -26,6 +26,7 @@ import {
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { readProjects, useThreadShells } from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";
+import { ProjectLocation } from "../studio/ProjectLocation";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
@@ -456,7 +457,7 @@ function ProjectDetail({
         <SettingsRow
           key={member.physicalProjectKey}
           title={member.environmentLabel ?? "Environment"}
-          description={member.workspaceRoot}
+          description={<ProjectLocation path={member.workspaceRoot} />}
           control={
             <Button
               size="sm"

@@ -1,6 +1,10 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- The detached native installer must preserve spawn, file-descriptor, and atomic swap semantics.
 import { spawn, execFile } from "node:child_process";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- The detached native installer must preserve spawn, file-descriptor, and atomic swap semantics.
 import { createHash } from "node:crypto";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- The detached native installer must preserve spawn, file-descriptor, and atomic swap semantics.
 import * as FS from "node:fs";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- The detached native installer must preserve spawn, file-descriptor, and atomic swap semantics.
 import * as Path from "node:path";
 
 /**

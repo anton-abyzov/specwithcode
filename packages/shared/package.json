@@ -430,6 +430,10 @@
     "./specweaveIncrement": {
       "types": "./src/specweaveIncrement.ts",
       "import": "./src/specweaveIncrement.ts"
+    },
+    "./providerPermissions": {
+      "types": "./src/providerPermissions.ts",
+      "import": "./src/providerPermissions.ts"
     }
   },
   "scripts": {

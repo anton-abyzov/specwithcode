@@ -530,7 +530,11 @@ describe("coordinator retry ownership", () => {
     );
     await fixture.mount();
     await act(async () => {
-      await vi.waitFor(() => expect(fixture.input.read).toHaveBeenCalledTimes(1));
+      // The surviving flight first loads the upload queue on demand; under a full parallel run
+      // that dynamic import alone can outlast waitFor's 1s default.
+      await vi.waitFor(() => expect(fixture.input.read).toHaveBeenCalledTimes(1), {
+        timeout: 10_000,
+      });
     });
     expect((fixture.input.composer.setSubmitting as ReturnType<typeof vi.fn>).mock.calls).toEqual([
       [true],

@@ -176,7 +176,7 @@ export class ThreadSettlementServiceV2 extends Context.Service<
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
     readonly drain: Effect.Effect<void>;
   }
->()("studio/orchestration-v2/ThreadSettlementService/ThreadSettlementServiceV2") {}
+>()("specweave-studio/orchestration-v2/ThreadSettlementService/ThreadSettlementServiceV2") {}
 
 function autoSettlementConfigured(
   settings: import("@specweave-studio/contracts").ServerSettings,

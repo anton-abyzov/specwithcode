@@ -1,3 +1,4 @@
+export * from "./nativeConnections.ts";
 import * as Schema from "effect/Schema";
 import { CommandId, ProjectId } from "./baseSchemas.ts";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";

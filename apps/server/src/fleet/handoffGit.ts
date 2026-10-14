@@ -1,3 +1,4 @@
+import { stringifyJson } from "../json.ts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -54,7 +55,7 @@ export class HandoffGit extends Context.Service<
       },
     ) => Effect.Effect<HandoffGitMaterialization, HandoffGitError>;
   }
->()("studio/fleet/HandoffGit") {}
+>()("specweave-studio/fleet/handoffGit") {}
 
 // Dependency/build caches are not project repositories. Git ignore rules are NOT
 // used: initialized repositories in ignored repositories/ or other source dirs
@@ -356,7 +357,7 @@ const make = Effect.gen(function* () {
       const stage = "inspect" as const;
       yield* checkManifest(input.manifest, stage);
       const workers = [
-        ...new Map(input.workers.map((worker) => [JSON.stringify(worker), worker])).values(),
+        ...new Map(input.workers.map((worker) => [stringifyJson(worker), worker])).values(),
       ];
       if (workers.length > 100) return yield* blocked(stage, "worker-checkpoint");
       for (const { worktreePath: workspaceRoot, branch } of workers) {
@@ -477,7 +478,7 @@ const make = Effect.gen(function* () {
           workspaceRoot: input.workspaceRoot,
           operationId: input.manifest.operationId,
         });
-        if (JSON.stringify(actual) !== JSON.stringify(input.manifest))
+        if (stringifyJson(actual) !== stringifyJson(input.manifest))
           return yield* blocked("publish", "source-changed");
         // The operation is bound before the first network write. A process restart
         // can retry a partial publication, but cannot reuse its ID for other code.
@@ -491,7 +492,7 @@ const make = Effect.gen(function* () {
           yield* io(fs.makeDirectory(records, { mode: 0o700 }), "publish");
         yield* realDirectory(records, "publish");
         const record = path.join(records, `${input.manifest.operationId}.json`);
-        const binding = JSON.stringify(input.manifest);
+        const binding = stringifyJson(input.manifest);
         if (!(yield* io(fs.exists(record), "publish"))) {
           yield* fs
             .writeFileString(record, binding, { flag: "wx", mode: 0o600 })
@@ -553,7 +554,7 @@ const make = Effect.gen(function* () {
         const operationDir = path.join(input.worktreeParent, input.manifest.operationId);
         const workspaceRoot = path.join(operationDir, "workspace");
         const receiptPath = path.join(operationDir, "git-operation.json");
-        const encoded = JSON.stringify(input.manifest);
+        const encoded = stringifyJson(input.manifest);
         const digest = yield* io(
           crypto.digest("SHA-256", new TextEncoder().encode(encoded)),
           stage,
@@ -561,7 +562,7 @@ const make = Effect.gen(function* () {
         const manifestSha256 = Array.from(digest, (byte) =>
           byte.toString(16).padStart(2, "0"),
         ).join("");
-        const receipt = JSON.stringify({
+        const receipt = stringifyJson({
           version: 1,
           manifestSha256,
           ...(input.useProjectFolder ? { executionMode: "project-folder" } : {}),

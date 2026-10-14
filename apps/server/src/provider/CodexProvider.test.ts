@@ -185,7 +185,7 @@ describe("native Codex model discovery continuity", () => {
   it.effect("publishes retained models through the provider check without retaining failed authentication", () =>
     Effect.gen(function* () {
       const cache = makeCodexModelCatalogCache();
-      const settings = Schema.decodeUnknownSync(CodexSettings)({ binaryPath: "fixture-only-codex" });
+      const settings = yield* Schema.decodeUnknownEffect(CodexSettings)({ binaryPath: "fixture-only-codex" });
       const check = (snapshot: CodexAppServerProviderSnapshot) => checkCodexProviderStatus(settings, () => Effect.succeed(snapshot), {}, undefined, cache).pipe(Effect.provide(Layer.mock(ChildProcessSpawner.ChildProcessSpawner)({})));
       yield* check(observation());
       expect((yield* check(observation({ models: [], modelsDiscoveryFailed: true }))).models).toEqual([future]);

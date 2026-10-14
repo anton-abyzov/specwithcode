@@ -3,6 +3,11 @@
   "updatedAt": "2026-10-02T19:45:00Z",
   "compatibility": [
     {
+      "driver": "muse",
+      "studioCodeRange": ">=0.0.46",
+      "ranges": [{ "range": ">=0.0.0", "status": "unknown" }]
+    },
+    {
       "driver": "codex",
       "studioCodeRange": ">=0.0.44",
       "recommendedRange": ">=0.159.0",

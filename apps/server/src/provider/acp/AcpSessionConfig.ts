@@ -1,3 +1,4 @@
+import { isProviderAllowAllOption } from "@specweave-studio/shared/providerPermissions";
 import type { ProviderOptionChoice, ProviderOptionDescriptor } from "@specweave-studio/contracts";
 import type * as EffectAcpSchema from "@specweave-studio/effect-acp/compat";
 
@@ -68,6 +69,7 @@ export function acpProviderOptionDescriptors(input: {
   let hasModeCategory = false;
 
   for (const option of input.configOptions ?? []) {
+    if (isProviderAllowAllOption(option.id)) continue;
     // "model" options surface as the model list; "collaboration_mode" options
     // are driven by Studio's own plan/build interaction mode in the ACP adapter.
     if (option.category === "model" || option.category === "collaboration_mode") {

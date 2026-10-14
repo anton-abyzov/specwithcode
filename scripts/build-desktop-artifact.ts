@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import * as DateTime from "effect/DateTime";
 // @effect-diagnostics nodeBuiltinImport:off - Node's typed junction API avoids Windows symlink privileges while keeping the probe isolated.
 
 import * as NodeFSP from "node:fs/promises";
@@ -3706,7 +3707,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     resolveLocalBuildVersion({
       packageVersion: serverPackageJson.version,
       releaseTags: yield* readGitLines(repoRoot, ["tag", "--list", "v*"]),
-      date: new Date(),
+      date: DateTime.toDateUtc(DateTime.nowUnsafe()),
       commitHash,
     });
   const originRepository = resolveReleaseFeedRepository(

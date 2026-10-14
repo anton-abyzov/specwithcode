@@ -1,3 +1,4 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- The platform token reader preserves the native Keychain subprocess protocol.
 import { execFile } from "node:child_process";
 
 /**

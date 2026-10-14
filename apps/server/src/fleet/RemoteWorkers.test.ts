@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "@effect/vitest";
 import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
@@ -448,7 +449,7 @@ describe("RemoteWorkers", () => {
             latestRunId: "b-run-9",
             providerInstanceId: "codex",
             model: "gpt-5.5",
-            createdAt: new Date().toISOString(),
+            createdAt: DateTime.formatIso(DateTime.nowUnsafe()),
           },
         ],
         nextCursor: null,
@@ -621,7 +622,7 @@ describe("RemoteWorkers", () => {
             creationSource: "mcp",
             status: "running",
             latestRunId: "b-run-1",
-            createdAt: new Date().toISOString(),
+            createdAt: DateTime.formatIso(DateTime.nowUnsafe()),
           },
         ],
         nextCursor: null,
@@ -631,7 +632,9 @@ describe("RemoteWorkers", () => {
     return Effect.gen(function* () {
       yield* allow();
       const store = yield* RemoteWorkerStore.RemoteWorkerStore;
-      const startedAt = new Date(Date.now() - 5 * 60_000).toISOString();
+      const startedAt = DateTime.formatIso(
+        DateTime.makeUnsafe(DateTime.toEpochMillis(DateTime.nowUnsafe()) - 5 * 60_000),
+      );
       yield* store.modify("rwt:stale", () => ({
         id: "rwt:stale",
         callerThreadId: "coordinator",

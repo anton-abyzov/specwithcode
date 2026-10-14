@@ -7,6 +7,6 @@ import * as Layer from "effect/Layer";
 export class ThreadCommandExecutor extends Context.Service<
   ThreadCommandExecutor,
   KeyedLock.KeyedLock<ThreadId>
->()("studio/orchestration-v2/ThreadCommandExecutor") {}
+>()("specweave-studio/orchestration-v2/ThreadCommandExecutor") {}
 
 export const layer = Layer.effect(ThreadCommandExecutor, KeyedLock.make<ThreadId>());

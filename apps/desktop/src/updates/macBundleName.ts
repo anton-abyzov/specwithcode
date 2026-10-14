@@ -1,5 +1,8 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native bundle inspection uses synchronous plutil and filesystem checks before the app runtime.
 import * as NodeChildProcess from "node:child_process";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native bundle inspection uses synchronous plutil and filesystem checks before the app runtime.
 import * as NodeFS from "node:fs";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native bundle inspection uses synchronous plutil and filesystem checks before the app runtime.
 import * as NodePath from "node:path";
 
 import { compareSemverVersions } from "@specweave-studio/shared/semver";

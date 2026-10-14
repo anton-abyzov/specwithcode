@@ -2,13 +2,23 @@ import { WS_METHODS } from "@specweave-studio/contracts";
 import type * as Crypto from "effect/Crypto";
 import type { Atom } from "effect/reactivity";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
-import { createEnvironmentRpcCommand, createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
+import {
+  createEnvironmentRpcCommand,
+  createEnvironmentRpcQueryAtomFamily,
+  createEnvironmentGuardedRpcQueryAtomFamily,
+} from "./runtime.ts";
 
 /** Project identity always travels with the destination environment. No mount starts a worker. */
 export function createProjectWorkspaceAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | Crypto.Crypto | R, E>,
 ) {
   return {
+    nativeConnections: createEnvironmentGuardedRpcQueryAtomFamily(runtime, {
+      label: "native-connections:read",
+      tag: WS_METHODS.nativeConnectionsRead,
+      staleTimeMs: 0,
+      idleTtlMs: 30_000,
+    }),
     connections: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "project-connections:read",
       tag: WS_METHODS.projectsConnectionsRead,
@@ -36,6 +46,14 @@ export function createProjectWorkspaceAtoms<R, E>(
     environmentPrepare: createEnvironmentRpcCommand(runtime, {
       label: "project-environment:prepare",
       tag: WS_METHODS.projectsEnvironmentPrepare,
+    }),
+    environmentImportPreview: createEnvironmentRpcCommand(runtime, {
+      label: "project-environment:import-preview",
+      tag: WS_METHODS.projectsEnvironmentImportPreview,
+    }),
+    environmentImport: createEnvironmentRpcCommand(runtime, {
+      label: "project-environment:import",
+      tag: WS_METHODS.projectsEnvironmentImport,
     }),
     planAuthority: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "project-plan:authority",

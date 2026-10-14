@@ -89,7 +89,7 @@ export interface ProviderTurnStartServiceV2Shape {
 export class ProviderTurnStartServiceV2 extends Context.Service<
   ProviderTurnStartServiceV2,
   ProviderTurnStartServiceV2Shape
->()("studio/orchestration-v2/ProviderTurnStartService/ProviderTurnStartServiceV2") {}
+>()("specweave-studio/orchestration-v2/ProviderTurnStartService/ProviderTurnStartServiceV2") {}
 
 export const layer: Layer.Layer<
   ProviderTurnStartServiceV2,
@@ -577,33 +577,49 @@ export const layer: Layer.Layer<
                   DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
               )[0]?.providerInstanceId;
       const manualCodexCreditIntent = run.manualCodexCreditIntent;
-      const sessionResult = yield* Effect.result(Effect.gen(function* () {
-        if (manualCodexCreditIntent !== undefined && !manualCreditRunAllowed({ run, attempt, message, providerThread, phase: "open", now: yield* Clock.currentTimeMillis })) {
-          return yield* new ProviderTurnStartError({ runId, cause: "Existing credits require a current explicit human submission on its first attempt." });
-        }
-        return yield* providerSessions.open({
-          threadId: projection.thread.id,
-          providerSessionId,
-          modelSelection: run.modelSelection,
-          runtimePolicy: resolvedRuntimePolicy,
-          ...(manualCodexCreditIntent === undefined ? {} : { manualCodexCreditIntent }),
-          ...(existingSessionProjection === undefined
-            ? {}
-            : { resumeFromSession: existingSessionProjection }),
-          ...(providerThread.nativeThreadRef?.nativeId == null
-            ? {}
-            : { initialNativeThreadId: providerThread.nativeThreadRef.nativeId }),
-          ...(nativeThreadSourceInstanceId === undefined
-            ? {}
-            : { nativeThreadFromInstanceId: nativeThreadSourceInstanceId }),
-          ...(providerThread.nativeMetadata?.itemIdentityVersion === undefined
-            ? {}
-            : {
-                initialProviderItemIdentityVersion:
-                  providerThread.nativeMetadata.itemIdentityVersion,
-              }),
-        });
-      }));
+      const sessionResult = yield* Effect.result(
+        Effect.gen(function* () {
+          if (
+            manualCodexCreditIntent !== undefined &&
+            !manualCreditRunAllowed({
+              run,
+              attempt,
+              message,
+              providerThread,
+              phase: "open",
+              now: yield* Clock.currentTimeMillis,
+            })
+          ) {
+            return yield* new ProviderTurnStartError({
+              runId,
+              cause:
+                "Existing credits require a current explicit human submission on its first attempt.",
+            });
+          }
+          return yield* providerSessions.open({
+            threadId: projection.thread.id,
+            providerSessionId,
+            modelSelection: run.modelSelection,
+            runtimePolicy: resolvedRuntimePolicy,
+            ...(manualCodexCreditIntent === undefined ? {} : { manualCodexCreditIntent }),
+            ...(existingSessionProjection === undefined
+              ? {}
+              : { resumeFromSession: existingSessionProjection }),
+            ...(providerThread.nativeThreadRef?.nativeId == null
+              ? {}
+              : { initialNativeThreadId: providerThread.nativeThreadRef.nativeId }),
+            ...(nativeThreadSourceInstanceId === undefined
+              ? {}
+              : { nativeThreadFromInstanceId: nativeThreadSourceInstanceId }),
+            ...(providerThread.nativeMetadata?.itemIdentityVersion === undefined
+              ? {}
+              : {
+                  initialProviderItemIdentityVersion:
+                    providerThread.nativeMetadata.itemIdentityVersion,
+                }),
+          });
+        }),
+      );
       // The last start attempt fails the run with the provider's own reason
       // instead of leaving it `starting` after the effect gives up. A run that
       // already left `starting` is not overwritten, and a failed write returns
@@ -653,31 +669,78 @@ export const layer: Layer.Layer<
       // This wrapper is local to one canonical execution; it never enters session residency.
       const baseSession = sessionResult.success;
       let creditRequestConsumed = false;
-      const creditStart: typeof baseSession.startTurn = (turnInput) => Effect.gen(function* () {
-        if (creditRequestConsumed) return yield* Effect.fail("This one-request credit permission was already consumed.");
-        creditRequestConsumed = true;
-        const current = yield* projectionStore.getTurnStartContext(input.threadId, runId);
-        const currentRun = current.runs.find((candidate) => candidate.id === runId);
-        const currentAttempt = current.attempts.find((candidate) => candidate.id === attempt.id);
-        const currentMessage = current.messages.find((candidate) => candidate.id === message.id);
-        const currentThread = current.providerThreads.find((candidate) => candidate.id === providerThread.id);
-        if (!currentRun || !currentAttempt || !currentMessage || !currentThread ||
-            currentRun.manualCodexCreditIntent?.expectedQuotaPoolId !== manualCodexCreditIntent?.expectedQuotaPoolId ||
-            currentRun.manualCodexCreditIntent?.observedAt !== manualCodexCreditIntent?.observedAt ||
-            !manualCreditRunAllowed({ run: currentRun, attempt: currentAttempt, message: currentMessage, providerThread: currentThread, phase: "turn", now: yield* Clock.currentTimeMillis }) ||
-            turnInput.runId !== runId || turnInput.attemptId !== attempt.id ||
+      const creditStart: typeof baseSession.startTurn = (turnInput) =>
+        Effect.gen(function* () {
+          if (creditRequestConsumed)
+            return yield* Effect.fail("This one-request credit permission was already consumed.");
+          creditRequestConsumed = true;
+          const current = yield* projectionStore.getTurnStartContext(input.threadId, runId);
+          const currentRun = current.runs.find((candidate) => candidate.id === runId);
+          const currentAttempt = current.attempts.find((candidate) => candidate.id === attempt.id);
+          const currentMessage = current.messages.find((candidate) => candidate.id === message.id);
+          const currentThread = current.providerThreads.find(
+            (candidate) => candidate.id === providerThread.id,
+          );
+          if (
+            !currentRun ||
+            !currentAttempt ||
+            !currentMessage ||
+            !currentThread ||
+            currentRun.manualCodexCreditIntent?.expectedQuotaPoolId !==
+              manualCodexCreditIntent?.expectedQuotaPoolId ||
+            currentRun.manualCodexCreditIntent?.observedAt !==
+              manualCodexCreditIntent?.observedAt ||
+            !manualCreditRunAllowed({
+              run: currentRun,
+              attempt: currentAttempt,
+              message: currentMessage,
+              providerThread: currentThread,
+              phase: "turn",
+              now: yield* Clock.currentTimeMillis,
+            }) ||
+            turnInput.runId !== runId ||
+            turnInput.attemptId !== attempt.id ||
             turnInput.modelSelection.instanceId !== manualCodexCreditIntent?.instanceId ||
             turnInput.modelSelection.model !== manualCodexCreditIntent?.model ||
-            turnInput.runtimePolicy.cwd !== resolvedRuntimePolicy.cwd) {
-          return yield* Effect.fail("This credit submission changed or is no longer eligible. Submit again explicitly.");
-        }
-        return yield* baseSession.startTurn({ ...turnInput, manualCodexCreditIntent: manualCodexCreditIntent! });
-      }).pipe(Effect.mapError((cause) => new ProviderAdapterTurnStartError({ driver: baseSession.driver, threadId: input.threadId, providerThreadId: providerThread.id, runId, cause })));
-      const session = manualCodexCreditIntent === undefined ? baseSession : {
-        ...baseSession,
-        startTurn: creditStart,
-        compactThread: () => Effect.fail(new ProviderAdapterTurnStartError({ driver: baseSession.driver, threadId: input.threadId, providerThreadId: providerThread.id, runId, cause: "Credit submissions cannot compact or continue goals." })),
-      };
+            turnInput.runtimePolicy.cwd !== resolvedRuntimePolicy.cwd
+          ) {
+            return yield* Effect.fail(
+              "This credit submission changed or is no longer eligible. Submit again explicitly.",
+            );
+          }
+          return yield* baseSession.startTurn({
+            ...turnInput,
+            manualCodexCreditIntent: manualCodexCreditIntent!,
+          });
+        }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProviderAdapterTurnStartError({
+                driver: baseSession.driver,
+                threadId: input.threadId,
+                providerThreadId: providerThread.id,
+                runId,
+                cause,
+              }),
+          ),
+        );
+      const session =
+        manualCodexCreditIntent === undefined
+          ? baseSession
+          : {
+              ...baseSession,
+              startTurn: creditStart,
+              compactThread: () =>
+                Effect.fail(
+                  new ProviderAdapterTurnStartError({
+                    driver: baseSession.driver,
+                    threadId: input.threadId,
+                    providerThreadId: providerThread.id,
+                    runId,
+                    cause: "Credit submissions cannot compact or continue goals.",
+                  }),
+                ),
+            };
       // Only the provider's own thread load fails the run on the last attempt;
       // store, id and handoff failures around it keep their typed errors.
       const loadFromProvider = (

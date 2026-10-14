@@ -8,7 +8,7 @@ import * as Layer from "effect/Layer";
 export class ProjectAdmission extends Context.Service<
   ProjectAdmission,
   KeyedLock.KeyedLock<ProjectId>
->()("studio/project/ProjectAdmission") {}
+>()("specweave-studio/project/ProjectAdmission") {}
 const make = Effect.gen(function* () {
   const locks = yield* KeyedLock.make<ProjectId>();
   const owners = new Map<ProjectId, number>();

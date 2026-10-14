@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, WS_METHODS } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
+import { EnvironmentRegistry } from "@specweave-studio/client-runtime/connection";
 import * as Stream from "effect/Stream";
 const fixture = vi.hoisted(() => ({ query: vi.fn(), follow: vi.fn(), subscribe: vi.fn() }));
 vi.mock("@specweave-studio/client-runtime/state/runtime", () => ({
@@ -94,10 +95,16 @@ describe("Git-aware new web thread defaults", () => {
     );
     expect(
       await Effect.runPromise(
-        observeNewThreadIsRepo(worker, "/worker/project") as Effect.Effect<
-          boolean | undefined,
-          unknown
-        >,
+        observeNewThreadIsRepo(worker, "/worker/project").pipe(
+          Effect.provideService(
+            EnvironmentRegistry.EnvironmentRegistry,
+            new Proxy({} as EnvironmentRegistry.EnvironmentRegistry["Service"], {
+              get() {
+                throw new Error("Mocked observation must not access the real registry");
+              },
+            }),
+          ),
+        ),
       ),
     ).toBe(true);
     expect(finalized).toHaveBeenCalledOnce();
@@ -108,10 +115,16 @@ describe("Git-aware new web thread defaults", () => {
       const finalized = vi.fn();
       fixture.follow.mockReturnValue(Stream.never.pipe(Stream.ensuring(Effect.sync(finalized))));
       const result = Effect.runPromiseExit(
-        observeNewThreadIsRepo(worker, "/worker/project") as Effect.Effect<
-          boolean | undefined,
-          unknown
-        >,
+        observeNewThreadIsRepo(worker, "/worker/project").pipe(
+          Effect.provideService(
+            EnvironmentRegistry.EnvironmentRegistry,
+            new Proxy({} as EnvironmentRegistry.EnvironmentRegistry["Service"], {
+              get() {
+                throw new Error("Mocked observation must not access the real registry");
+              },
+            }),
+          ),
+        ),
       );
       await vi.advanceTimersByTimeAsync(5_001);
       expect((await result)._tag).toBe("Failure");

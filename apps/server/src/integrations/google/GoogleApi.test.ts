@@ -1,6 +1,16 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native HTTP fixture verifies the actual client wire protocol on a loopback socket.
 import * as NodeHttp from "node:http";
 import { afterAll, assert, beforeAll, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
+const failureOnly = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(
+    Effect.result,
+    Effect.map((result) => {
+      if (Result.isFailure(result)) return result.failure;
+      throw new Error("Expected request to fail");
+    }),
+  );
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -130,7 +140,7 @@ it.effect("reports Google's error code and refuses oversized files without echoi
       assert.notInclude(refreshError, "secret-1");
       assert.notInclude(refreshError, "refresh-a");
 
-      const denied = yield* Effect.flip(
+      const denied = yield* failureOnly(
         api.getJson({
           operation: "Drive search",
           url: `${api.endpoints.drive}/files`,
@@ -139,7 +149,7 @@ it.effect("reports Google's error code and refuses oversized files without echoi
       );
       assert.deepStrictEqual([denied.status, denied.reason], [403, "insufficientPermissions"]);
 
-      const tooBig = yield* Effect.flip(
+      const tooBig = yield* failureOnly(
         api.getText({
           operation: "Drive download",
           url: `${api.endpoints.drive}/files/big`,

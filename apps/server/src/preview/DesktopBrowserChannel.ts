@@ -66,7 +66,7 @@ export class DesktopBrowserChannel extends Context.Service<
       pointer: { readonly phase: "move" | "click"; readonly x: number; readonly y: number },
     ) => Effect.Effect<void>;
   }
->()("studio/preview/DesktopBrowserChannel") {}
+>()("specweave-studio/preview/DesktopBrowserChannel") {}
 
 const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;

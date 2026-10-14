@@ -68,7 +68,7 @@ const receipt = {
   pid: child.pid,
   nativeTurns: 0,
   checks: [],
-  screenshots: ["new-project.png", "clone-destination.png"],
+  screenshots: ["new-project-1440.png", "new-project-390.png", "clone-destination.png"],
 };
 try {
   const credential = await new Promise((done, reject) => {
@@ -122,34 +122,89 @@ try {
   page.on("pageerror", (error) => errors.push(error.message));
   const parent = NodePath.join(state, "Projects");
   NodeFS.mkdirSync(parent);
+  const cloneSource = NodePath.join(state, "clone-fixture.git");
+  NodeChildProcess.execFileSync("/usr/bin/git", ["init", "--bare", cloneSource], {
+    stdio: "ignore",
+  });
   try {
     await page.goto(origin);
     await page.getByText("1/1", { exact: true }).waitFor({ timeout: 20000 });
     await page.getByRole("button", { name: "Add project", exact: true }).click();
     await page.getByRole("option", { name: /^New project/ }).click();
     const dialog = page.getByTestId("command-palette");
-    await dialog.getByPlaceholder("Project name").fill("Folder proof");
+    await page.getByText("Enter a project name at the top.", { exact: true }).waitFor();
+    await dialog.getByRole("combobox", { name: "Project name" }).fill("Folder proof");
     NodeAssert.equal(await page.getByText("Project type", { exact: true }).count(), 0);
     NodeAssert.equal(
-      await page.getByRole("button", { name: "Create (Enter)", exact: true }).isDisabled(),
+      await page.getByRole("button", { name: "Create project", exact: true }).isDisabled(),
       true,
     );
+    await page.getByRole("textbox", { name: "Parent folder path", exact: true }).fill(parent);
+    await page.getByRole("textbox", { name: "Parent folder path", exact: true }).press("Enter");
+    await page.getByText(parent, { exact: true }).waitFor();
+    await page.getByRole("button", { name: "Use this folder", exact: true }).click();
+    // Reselecting the current machine must not discard the confirmed location.
+    await page.getByRole("option", { name: /This device/ }).click();
+    NodeAssert.equal(
+      await page.getByRole("button", { name: "Create project", exact: true }).isEnabled(),
+      true,
+    );
+    for (const [width, height] of [
+      [1440, 1100],
+      [390, 844],
+    ]) {
+      await page.setViewportSize({ width, height });
+      const button = page.getByRole("button", { name: "Create project", exact: true });
+      const box = await button.boundingBox();
+      NodeAssert.ok(
+        box && box.y >= 0 && box.y + box.height <= height,
+        "Create stays inside viewport",
+      );
+      NodeAssert.equal(
+        await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+        true,
+      );
+      await page.screenshot({
+        path: NodePath.join(out, `new-project-${width}.png`),
+        fullPage: true,
+      });
+    }
+    await page.setViewportSize({ width: 1440, height: 1100 });
+    // Returning to the name clears the machine highlight without editing it.
+    await dialog.getByRole("combobox", { name: "Project name" }).click();
+    await dialog.getByRole("combobox", { name: "Project name" }).press("Enter");
+    await dialog.waitFor({ state: "hidden" });
+    NodeAssert.ok(NodeFS.existsSync(NodePath.join(parent, "folder-proof", ".git")));
+    receipt.checks.push(
+      "Name Enter creates; folder Enter only browses; same-machine selection preserves parent; primary action fits desktop and mobile",
+    );
+    await page.getByRole("button", { name: "Add project", exact: true }).click();
+    await page.getByRole("option", { name: /^New project/ }).click();
+    await dialog.getByRole("combobox", { name: "Project name" }).fill("Keyboard button proof");
     await page.getByRole("textbox", { name: "Parent folder path", exact: true }).fill(parent);
     await page.getByRole("button", { name: "Browse", exact: true }).click();
     await page.getByText(parent, { exact: true }).waitFor();
     await page.getByRole("button", { name: "Use this folder", exact: true }).click();
-    await page.screenshot({ path: NodePath.join(out, "new-project.png"), fullPage: true });
-    await page.getByRole("button", { name: "Create (Enter)", exact: true }).click();
+    await page.getByRole("button", { name: "Create project", exact: true }).focus();
+    await page.getByRole("button", { name: "Create project", exact: true }).press("Enter");
     await dialog.waitFor({ state: "hidden" });
-    NodeAssert.ok(NodeFS.existsSync(NodePath.join(parent, "folder-proof", ".git")));
-    receipt.checks.push(
-      "New project created in explicitly chosen parent via actual palette and server",
-    );
+    NodeAssert.ok(NodeFS.existsSync(NodePath.join(parent, "keyboard-button-proof", ".git")));
+    receipt.checks.push("Persistent Create project button activates from keyboard Enter");
+    await page.getByRole("button", { name: "Add project", exact: true }).click();
+    const existing = NodePath.join(parent, "Existing project");
+    NodeFS.mkdirSync(existing);
+    NodeFS.writeFileSync(NodePath.join(existing, "keep.txt"), "preserved");
+    await page.getByRole("option", { name: /^Local folder/ }).click();
+    await page.getByRole("combobox").fill(existing + "/");
+    await page.getByRole("combobox").press("Meta+Enter");
+    await dialog.waitFor({ state: "hidden" });
+    NodeAssert.equal(NodeFS.readFileSync(NodePath.join(existing, "keep.txt"), "utf8"), "preserved");
+    receipt.checks.push("Existing folder opens without changing its contents");
     await page.getByRole("button", { name: "Add project", exact: true }).click();
     NodeAssert.equal(await page.getByText("Setup Required", { exact: true }).count(), 0);
     NodeAssert.equal(await page.getByRole("option", { name: /^Personal assistant/ }).count(), 0);
     await page.getByRole("option", { name: /^Git URL/ }).click();
-    await page.getByRole("combobox").fill("https://github.com/anton-abyzov/orbita");
+    await page.getByRole("combobox").fill(cloneSource);
     await page.getByRole("combobox").press("Enter");
     await page.getByRole("region", { name: "Clone destination" }).waitFor();
     NodeAssert.equal(
@@ -160,14 +215,14 @@ try {
     await page.getByRole("button", { name: "Browse", exact: true }).click();
     await page.getByText(parent, { exact: true }).waitFor();
     await page.getByRole("button", { name: "Use this folder", exact: true }).click();
-    await page.getByText(`Clone into ${parent}/orbita`, { exact: true }).waitFor();
+    await page.getByText(`Clone into ${parent}/clone-fixture`, { exact: true }).waitFor();
     NodeAssert.equal(
       await page.getByRole("button", { name: "Clone repository", exact: true }).isEnabled(),
       true,
     );
     await page.screenshot({ path: NodePath.join(out, "clone-destination.png"), fullPage: true });
     receipt.checks.push(
-      "Actual clone flow shows validated destination and enables explicit clone; no external clone issued",
+      "Clone flow requires a validated destination before enabling Clone repository",
     );
     await page.getByRole("combobox").focus();
     await page.getByRole("combobox").press("ArrowDown");
@@ -177,13 +232,30 @@ try {
       await page.getByRole("button", { name: "Clone repository", exact: true }).isDisabled(),
       true,
     );
-    NodeAssert.equal(NodeFS.existsSync(NodePath.join(parent, "orbita")), false);
+    NodeAssert.equal(NodeFS.existsSync(NodePath.join(parent, "clone-fixture")), false);
     receipt.checks.push(
       "Enter on the highlighted machine resets destination without submitting a clone",
     );
-    await page.keyboard.press("Escape");
+    await page.getByRole("textbox", { name: "Parent folder path", exact: true }).fill(parent);
+    await page.getByRole("button", { name: "Browse", exact: true }).click();
+    await page.getByText(parent, { exact: true }).waitFor();
+    await page.getByRole("button", { name: "Use this folder", exact: true }).click();
+    await page.getByRole("button", { name: "Clone repository", exact: true }).click();
+    await dialog.waitFor({ state: "hidden" });
+    NodeAssert.ok(NodeFS.existsSync(NodePath.join(parent, "clone-fixture", ".git")));
+    NodeAssert.equal(
+      NodeChildProcess.execFileSync(
+        "/usr/bin/git",
+        ["-C", NodePath.join(parent, "clone-fixture"), "remote", "get-url", "origin"],
+        { encoding: "utf8" },
+      ).trim(),
+      cloneSource,
+    );
+    receipt.checks.push(
+      "Clone repository performs a real clone of an isolated local bare repository; no external network",
+    );
     await page.getByRole("button", { name: /^Personal assistant/ }).click();
-    await page.getByRole("button", { name: "Create (Enter)", exact: true }).click();
+    await page.getByRole("button", { name: "Create personal assistant", exact: true }).click();
     await dialog.waitFor({ state: "hidden" });
     await page.getByRole("button", { name: /^Personal assistant/ }).click();
     await page.waitForURL(/projects/);

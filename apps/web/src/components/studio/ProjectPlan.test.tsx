@@ -97,9 +97,10 @@ const makeSnapshot = () =>
     external: null,
   }) as ProjectPlanSnapshot;
 let root: Root, container: HTMLDivElement;
+let fixtureId = 0;
 beforeEach(() => {
   vi.clearAllMocks();
-  project = { ...project, id: ProjectId.make(crypto.randomUUID()) };
+  project = { ...project, id: ProjectId.make(`plan-fixture-${++fixtureId}`) };
   state.data = makeSnapshot();
   state.terminal = true;
   state.queryError = null;

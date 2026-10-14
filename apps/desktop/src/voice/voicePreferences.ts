@@ -30,10 +30,12 @@ export interface VoiceCrypto {
 
 export class VoicePreferencesStore {
   private pending: Promise<unknown> = Promise.resolve();
-  constructor(
-    private readonly path: string,
-    private readonly crypto: VoiceCrypto,
-  ) {}
+  private readonly path: string;
+  private readonly crypto: VoiceCrypto;
+  constructor(path: string, crypto: VoiceCrypto) {
+    this.path = path;
+    this.crypto = crypto;
+  }
 
   private async read(): Promise<StoredVoice> {
     try {

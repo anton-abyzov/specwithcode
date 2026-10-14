@@ -96,8 +96,11 @@ export function ProjectCoordinatorDetails({
             </p>
           ) : null}
           {view === "requests" ? (
-            <ProjectMessageRoutingContext value={routing}>
+            <ProjectMessageRoutingContext
+              value={{ ...routing, onCoordinatorRequestsResolved: error ? undefined : onClose }}
+            >
               <ChatView
+                key={`${environmentId}:${threadId}`}
                 environmentId={environmentId}
                 threadId={threadId}
                 routeKind="server"

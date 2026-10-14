@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { createRequire } from "node:module";
 import {
@@ -215,7 +216,7 @@ it.effect(
   () =>
     Effect.gen(function* () {
       // The direct grant and the real HTTP handler must share a current epoch.
-      yield* TestClock.setTime(Date.now());
+      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.nowUnsafe()));
       const crypto = yield* Crypto.Crypto;
       const config = Layer.effect(
         ServerConfig.ServerConfig,
@@ -395,14 +396,16 @@ it.effect(
                 expect(
                   cookies.some((cookie) => cookie.name === sessions.cookieName && cookie.secure),
                 ).toBe(true);
-                console.info(
-                  JSON.stringify({
-                    evidenceKind: "headless-browser-cookie-jar-fixture",
-                    legacyCookieRemoved: true,
-                    newCookieSecure: true,
-                    headless: true,
-                    liveTLSProof: false,
-                  }),
+                await Effect.runPromise(
+                  Effect.logInfo(
+                    JSON.stringify({
+                      evidenceKind: "headless-browser-cookie-jar-fixture",
+                      legacyCookieRemoved: true,
+                      newCookieSecure: true,
+                      headless: true,
+                      liveTLSProof: false,
+                    }),
+                  ),
                 );
               } finally {
                 await browser.close();

@@ -267,7 +267,7 @@ export class GitHubCli extends Context.Service<
       readonly force?: boolean;
     }) => Effect.Effect<void, GitHubCliError>;
   }
->()("studio/sourceControl/GitHubCli") {}
+>()("specweave-studio/sourceControl/GitHubCli") {}
 
 /**
  * The repository `gh pr list` reads in a checkout, picked the way gh picks one without a

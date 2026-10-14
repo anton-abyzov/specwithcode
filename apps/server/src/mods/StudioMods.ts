@@ -1,3 +1,5 @@
+import { sha256 as hashSha256 } from "../nodeCrypto.ts";
+import * as DateTime from "effect/DateTime";
 /**
  * StudioMods - workbench customizations a user drops into `<stateDir>/mods`.
  *
@@ -10,7 +12,6 @@
  *
  * @module StudioMods
  */
-import * as NodeCrypto from "node:crypto";
 
 import {
   ModManifest,
@@ -98,14 +99,7 @@ export const inspectModFolder = (folderPath: string, folderName: string): Inspec
   } else if (!/\bregister\b/u.test(source)) {
     problems.push(`${mainFile} does not define register(on)`);
   }
-  const sha256 =
-    source === null
-      ? null
-      : NodeCrypto.createHash("sha256")
-          .update(manifestText)
-          .update("\0")
-          .update(source)
-          .digest("hex");
+  const sha256 = source === null ? null : hashSha256([manifestText, "\0", source], "hex");
   return { name: folderName, manifest, source, sha256, problems };
 };
 
@@ -142,7 +136,7 @@ export class StudioMods extends Context.Service<
     readonly approve: (input: ModsApproveInput) => Effect.Effect<ModsListResult, ModsError>;
     readonly disable: (input: ModsDisableInput) => Effect.Effect<ModsListResult, ModsError>;
   }
->()("studio/mods/StudioMods") {}
+>()("specweave-studio/mods/StudioMods") {}
 
 /** Reads every mod folder in name order, up to `MAX_MODS`. */
 export const readModsDirectory = Effect.fn(function* (modsDir: string) {
@@ -193,7 +187,7 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const temporary = path.join(
         path.dirname(modApprovalsPath),
-        `.mod-approvals.${process.pid}.${Date.now()}.tmp`,
+        `.mod-approvals.${process.pid}.${DateTime.toEpochMillis(DateTime.nowUnsafe())}.tmp`,
       );
       yield* fs.writeFileString(temporary, `${encodeApprovals(approvals)}\n`, { mode: 0o600 });
       yield* fs.rename(temporary, modApprovalsPath);
@@ -240,7 +234,7 @@ const make = Effect.gen(function* () {
       }
       return Effect.succeed({
         ...approvals,
-        [input.name]: { sha256: mod.sha256, approvedAt: new Date().toISOString() },
+        [input.name]: { sha256: mod.sha256, approvedAt: DateTime.formatIso(DateTime.nowUnsafe()) },
       });
     });
 

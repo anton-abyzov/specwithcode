@@ -14,6 +14,7 @@ import {
   HostProcessWorkingDirectory,
 } from "@specweave-studio/shared/hostProcess";
 import * as NetService from "@specweave-studio/shared/Net";
+import { STUDIO_HOME_DIRECTORY } from "@specweave-studio/shared/studioIdentity";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -308,7 +309,7 @@ describe("specweave-studio app", () => {
     withTempDirectory("studio-app-preferred-test-", (root) =>
       Effect.gen(function* () {
         vi.mocked(NodeOS.homedir).mockReturnValue(root);
-        const baseDir = NodePath.join(root, ".specweave-studio");
+        const baseDir = NodePath.join(root, STUDIO_HOME_DIRECTORY);
         const desktop = yield* fakeDesktop({ baseDir });
         const development = yield* fakeDesktop({ baseDir, stateSubdirectory: "dev" });
 
@@ -324,7 +325,7 @@ describe("specweave-studio app", () => {
     withTempDirectory("studio-app-dev-test-", (root) =>
       Effect.gen(function* () {
         vi.mocked(NodeOS.homedir).mockReturnValue(root);
-        const baseDir = NodePath.join(root, ".specweave-studio");
+        const baseDir = NodePath.join(root, STUDIO_HOME_DIRECTORY);
         const development = yield* fakeDesktop({ baseDir, stateSubdirectory: "dev" });
 
         yield* runCli(["app"]);
@@ -340,7 +341,7 @@ describe("specweave-studio app", () => {
     withTempDirectory("studio-app-explicit-test-", (root) =>
       Effect.gen(function* () {
         vi.mocked(NodeOS.homedir).mockReturnValue(root);
-        const baseDir = NodePath.join(root, ".specweave-studio");
+        const baseDir = NodePath.join(root, STUDIO_HOME_DIRECTORY);
         const development = yield* fakeDesktop({ baseDir, stateSubdirectory: "dev" });
 
         const flagError = yield* runCli(["app", "--base-dir", baseDir]).pipe(Effect.flip);
@@ -359,7 +360,7 @@ describe("specweave-studio app", () => {
       withTempDirectory("studio-app-response-test-", (root) =>
         Effect.gen(function* () {
           vi.mocked(NodeOS.homedir).mockReturnValue(root);
-          const baseDir = NodePath.join(root, ".specweave-studio");
+          const baseDir = NodePath.join(root, STUDIO_HOME_DIRECTORY);
           const desktop = yield* fakeDesktop({
             baseDir,
             reply: (request) =>

@@ -54,7 +54,7 @@ export class ProjectCoordinatorService extends Context.Service<
       input: ProjectCoordinatorSendInput,
     ) => Effect.Effect<ProjectCoordinatorResult, ProjectWorkspaceError>;
   }
->()("studio/project/ProjectCoordinatorService") {}
+>()("specweave-studio/project/ProjectCoordinatorService") {}
 
 const isProjectWorkspaceError = Schema.is(ProjectWorkspaceError);
 

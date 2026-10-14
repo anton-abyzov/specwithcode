@@ -239,7 +239,7 @@ export class ServerBrowser extends Context.Service<
     /** Deletes a human profile's server-side storage, closing its open tabs first. */
     readonly clearProfile: (profileId: string) => Effect.Effect<void, PreviewClearProfileError>;
   }
->()("studio/preview/ServerBrowser") {}
+>()("specweave-studio/preview/ServerBrowser") {}
 
 interface ViewerState {
   readonly id: string;

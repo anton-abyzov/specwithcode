@@ -1,3 +1,4 @@
+import { isProviderAllowAllOption } from "@specweave-studio/shared/providerPermissions";
 import {
   type ModelSelection,
   type ProviderDriverKind,
@@ -165,16 +166,18 @@ function getSelectedTraits(
   const modelIsUnavailable =
     provider === "opencode" &&
     !models.some((candidate) => candidate.slug === normalizeModelSlug(model, provider));
-  const descriptors = modelIsUnavailable
-    ? buildUnavailableModelOptionDescriptors(
-        planModeEnabled
-          ? modelOptions
-          : modelOptions?.filter((option) => option.id !== "agent" || option.value !== "plan"),
-      )
-    : getProviderOptionDescriptors({
-        caps,
-        selections: modelOptions,
-      });
+  const descriptors = (
+    modelIsUnavailable
+      ? buildUnavailableModelOptionDescriptors(
+          planModeEnabled
+            ? modelOptions
+            : modelOptions?.filter((option) => option.id !== "agent" || option.value !== "plan"),
+        )
+      : getProviderOptionDescriptors({
+          caps,
+          selections: modelOptions,
+        })
+  ).filter((option) => !isProviderAllowAllOption(option.id));
   const selectDescriptors = descriptors.filter(
     (descriptor): descriptor is Extract<ProviderOptionDescriptor, { type: "select" }> =>
       descriptor.type === "select",

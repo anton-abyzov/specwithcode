@@ -1,3 +1,4 @@
+import { stringifyJson } from "../json.ts";
 /**
  * A service held by a live install gate, as a process the update helper restarted sees it.
  *
@@ -31,7 +32,7 @@ export const makeGatedHold = (
     const updates = yield* fs.makeTempDirectoryScoped({ prefix: "update-install-gate-" });
     const gatePath = path.join(updates, Gate.INSTALL_GATE_FILE);
     const at = DateTime.formatIso(DateTime.makeUnsafe(yield* Clock.currentTimeMillis));
-    yield* fs.writeFileString(gatePath, JSON.stringify({ helperPid: 4242, at }));
+    yield* fs.writeFileString(gatePath, stringifyJson({ helperPid: 4242, at }));
     const helperAlive = options.helperAlive ?? (() => true);
     const hold = yield* Hold.makeWithOptions({
       agentStatePath: path.join(updates, "state.json"),

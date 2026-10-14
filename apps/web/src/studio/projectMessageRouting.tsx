@@ -17,6 +17,8 @@ export interface ProjectThreadOpenOptions {
 
 export interface ProjectMessageRouting {
   readonly coordinatorThreadId: ThreadId | null;
+  /** Present only while the requests overlay is mounted. */
+  readonly onCoordinatorRequestsResolved?: (() => void) | undefined;
   /** Coordinator details share the project picker, including its persistence barrier. */
   readonly coordinatorModelControls?: ReactNode;
   /** Present only for the coordinator's native review, never a worker's runtime answers. */

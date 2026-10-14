@@ -127,7 +127,7 @@ export class ProviderInstanceRegistry extends Context.Service<
      */
     readonly subscribeChanges: Effect.Effect<PubSub.Subscription<void>, never, Scope.Scope>;
   }
->()("studio/provider/ProviderInstanceRegistry") {}
+>()("specweave-studio/provider/ProviderInstanceRegistry") {}
 
 /**
  * Live registry entry: the materialized `ProviderInstance` + the fresh

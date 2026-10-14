@@ -1,5 +1,6 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native stat verifies actual secret permissions independently of the Effect writer.
 import * as NodeFS from "node:fs";
-import * as NodePath from "node:path";
+import { nodePath as NodePath } from "../nodePath.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { EnvironmentId } from "@specweave-studio/contracts";

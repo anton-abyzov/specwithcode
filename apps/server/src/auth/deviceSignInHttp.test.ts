@@ -56,7 +56,7 @@ async function api(options: { readonly desktopOnly?: boolean } = {}) {
               scopes: input?.scopes ?? [],
               ...(input?.subject ? { subject: input.subject } : {}),
             });
-            const now = DateTime.makeUnsafe(Date.now());
+            const now = DateTime.makeUnsafe(DateTime.toEpochMillis(DateTime.nowUnsafe()));
             return {
               id: `link-${issued.length}`,
               credential: `ONE-TIME-${issued.length}`,

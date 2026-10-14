@@ -1208,6 +1208,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         // Git prefixes everything the server says with `remote:`, so a remote
         // hook can put arbitrary text in front of the classifier.
         const preReceive = pathService.join(remote, "hooks", "pre-receive");
+        // A user's global core.hooksPath would bypass the repository's own hooks.
+        yield* git(remote, ["config", "core.hooksPath", pathService.join(remote, "hooks")]);
         yield* writeTextFile(
           remote,
           "hooks/pre-receive",
@@ -1241,6 +1243,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* initRepoWithCommit(cwd);
         yield* git(cwd, ["init", "--bare", remote]);
         yield* git(cwd, ["remote", "add", "origin", remote]);
+        // A user's global core.hooksPath would bypass the repository's own hooks.
+        yield* git(cwd, ["config", "core.hooksPath", pathService.join(cwd, ".git", "hooks")]);
         yield* writeTextFile(
           cwd,
           ".git/hooks/pre-push",
@@ -2812,6 +2816,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           "#!/bin/sh\ngit config checkout.workers > checkout-workers\nexit 0\n",
         );
         yield* fs.chmod(path.join(cwd, ".git/hooks/post-checkout"), 0o755);
+        // A user's global core.hooksPath would bypass the repository's own hooks.
+        yield* git(cwd, ["config", "core.hooksPath", path.join(cwd, ".git", "hooks")]);
         const worktreePath = path.join(yield* makeTmpDir("git-worktrees-"), "parallel");
 
         yield* driver.createWorktree({
@@ -3063,7 +3069,11 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           branch: string,
           submodules: WorktreeSubmodules | null = null,
         ) {
-          yield* writeTextFile(cwd, "specweave-studio.json", `{ "worktreeSubmodules": "${fileMode}" }`);
+          yield* writeTextFile(
+            cwd,
+            "specweave-studio.json",
+            `{ "worktreeSubmodules": "${fileMode}" }`,
+          );
           yield* git(cwd, ["add", "specweave-studio.json"]);
           // Consecutive cases may reuse a file mode to test the option alone.
           yield* git(cwd, ["commit", "--allow-empty", "-m", `submodules: ${fileMode}`]);
@@ -3315,7 +3325,12 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* initRepoWithCommit(cwd);
         const driver = yield* GitVcsDriver.GitVcsDriver;
 
-        yield* git(cwd, ["remote", "add", "origin", "https://github.com/anton-abyzov/specwithcode.git"]);
+        yield* git(cwd, [
+          "remote",
+          "add",
+          "origin",
+          "https://github.com/anton-abyzov/specwithcode.git",
+        ]);
 
         const reusedForSsh = yield* driver.ensureRemote({
           cwd,

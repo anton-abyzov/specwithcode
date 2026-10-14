@@ -175,7 +175,12 @@ const fixture = (afterCoordinatorLaunch: Effect.Effect<void> = Effect.void) => {
   };
 };
 
-const readyWithUsage = (instance: string, driver: string, usedPercent: number): ServerProvider => ({
+const readyWithUsage = (
+  instance: string,
+  driver: string,
+  usedPercent: number,
+  checkedAt = "2026-10-13T00:00:00Z",
+): ServerProvider => ({
   ...provider(instance, driver),
   models: [
     {
@@ -187,7 +192,7 @@ const readyWithUsage = (instance: string, driver: string, usedPercent: number): 
     },
   ],
   usageLimits: {
-    checkedAt: "2026-10-13T00:00:00Z",
+    checkedAt,
     windows: [
       {
         id: "session",
@@ -203,9 +208,11 @@ const readyWithUsage = (instance: string, driver: string, usedPercent: number): 
 it.effect("keeps coordinator usage fallback inside the project's approved folder support", () =>
   Effect.gen(function* () {
     const f = fixture();
-    const native = readyWithUsage("claude", "claudeAgent", 100);
-    const copilot = readyWithUsage("copilot", "acpRegistry", 10);
-    const codex = readyWithUsage("codex", "codex", 20);
+    // A usage fallback only trusts a read taken within the last few minutes.
+    const observedAt = DateTime.formatIso(yield* DateTime.now);
+    const native = readyWithUsage("claude", "claudeAgent", 100, observedAt);
+    const copilot = readyWithUsage("copilot", "acpRegistry", 10, observedAt);
+    const codex = readyWithUsage("codex", "codex", 20, observedAt);
     f.setProject({
       workspaceSettings: {
         ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,

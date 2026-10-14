@@ -1333,7 +1333,7 @@ export class AcpSessionRuntime extends Context.Service<
       payload: unknown,
     ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
   }
->()("studio/provider/acp/AcpSessionRuntime") {
+>()("specweave-studio/provider/acp/AcpSessionRuntime") {
   static layer(
     options: AcpSessionRuntimeOptions,
   ): Layer.Layer<
@@ -2009,7 +2009,8 @@ export const make = (
           meta !== null &&
           typeof meta === "object" &&
           !Array.isArray(meta) &&
-          (meta as { readonly studioSessionLoadReady?: unknown }).studioSessionLoadReady === "replay_idle";
+          (meta as { readonly studioSessionLoadReady?: unknown }).studioSessionLoadReady ===
+            "replay_idle";
         const extractedModelConfigId = extractModelConfigId(sessionSetupResult);
         const nextModelConfigId =
           extractedModelConfigId ?? (syntheticReplayIdle ? current.modelConfigId : undefined);

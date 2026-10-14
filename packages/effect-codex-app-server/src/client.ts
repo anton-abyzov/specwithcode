@@ -80,7 +80,7 @@ export class CodexAppServerClient extends Context.Service<
       ) => Effect.Effect<void, CodexError.CodexAppServerError>,
     ) => Effect.Effect<void>;
   }
->()("effect-codex-app-server/client/CodexAppServerClient") {}
+>()("@specweave-studio/effect-codex-app-server/client/CodexAppServerClient") {}
 
 type ServerRequestHandler = (
   payload: unknown,

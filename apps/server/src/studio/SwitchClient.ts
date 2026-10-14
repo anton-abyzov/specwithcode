@@ -1,3 +1,4 @@
+import { parseJson, stringifyJson } from "../json.ts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -23,7 +24,7 @@ export class SwitchClient extends Context.Service<SwitchClient, {
   readonly refresh: Effect.Effect<unknown, SwitchRequestError>;
   readonly policy: (input: StudioCapacityPolicyInput) => Effect.Effect<unknown, SwitchRequestError>;
   readonly select: (input: StudioCapacitySelectInput) => Effect.Effect<unknown, SwitchRequestError>;
-}>()("studio/capacity/SwitchClient") {}
+}>()("specweave-studio/studio/SwitchClient") {}
 
 const make = Effect.gen(function* () {
   const requestFetch = yield* SwitchFetch;
@@ -33,12 +34,21 @@ const make = Effect.gen(function* () {
         const timeout = AbortSignal.timeout(path === "/api/refresh" ? 40000 : body === undefined ? 3000 : 5000);
         const response = await requestFetch(`${SWITCH_ORIGIN}${path}`, {
           method: body === undefined ? "GET" : "POST",
-          headers: { accept: "application/json", ...(body === undefined ? {} : { "content-type": "application/json", origin: SWITCH_ORIGIN }) },
-          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+          headers: {
+            accept: "application/json",
+            ...(body === undefined
+              ? {}
+              : { "content-type": "application/json", origin: SWITCH_ORIGIN }),
+          },
+          ...(body === undefined ? {} : { body: stringifyJson(body) }),
           signal: AbortSignal.any([signal, timeout]),
           redirect: "error",
           credentials: "omit",
-        }).catch(() => { throw new SwitchRequestError({ category: timeout.aborted ? "switch-timeout" : "switch-unavailable" }); });
+        }).catch(() => {
+          throw new SwitchRequestError({
+            category: timeout.aborted ? "switch-timeout" : "switch-unavailable",
+          });
+        });
         if (response.status === 409) throw new SwitchRequestError({ category: "switch-busy" });
         if (!response.ok) throw new SwitchRequestError({ category: "switch-unavailable" });
         if (!response.headers.get("content-type")?.toLowerCase().includes("application/json"))
@@ -63,21 +73,40 @@ const make = Effect.gen(function* () {
             chunks.push(next.value);
           }
         } catch (cause) {
-          if (cause instanceof SwitchRequestError) throw cause;
-          throw new SwitchRequestError({ category: timeout.aborted ? "switch-timeout" : "switch-unavailable" });
-        } finally { reader.releaseLock(); }
+          if (Schema.is(SwitchRequestError)(cause)) throw cause;
+          throw new SwitchRequestError({
+            category: timeout.aborted ? "switch-timeout" : "switch-unavailable",
+          });
+        } finally {
+          reader.releaseLock();
+        }
         const bytes = new Uint8Array(size);
         let offset = 0;
-        for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
-        try { return JSON.parse(new TextDecoder().decode(bytes)) as unknown; }
-        catch { throw new SwitchRequestError({ category: "switch-invalid-response" }); }
+        for (const chunk of chunks) {
+          bytes.set(chunk, offset);
+          offset += chunk.byteLength;
+        }
+        try {
+          return parseJson(new TextDecoder().decode(bytes)) as unknown;
+        } catch {
+          throw new SwitchRequestError({ category: "switch-invalid-response" });
+        }
       },
-      catch: (cause) => cause instanceof SwitchRequestError ? cause : new SwitchRequestError({ category: "switch-unavailable" }),
+      catch: (cause) =>
+        Schema.is(SwitchRequestError)(cause)
+          ? cause
+          : new SwitchRequestError({ category: "switch-unavailable" }),
     });
   return SwitchClient.of({
     read: request("/api/state"),
     refresh: request("/api/refresh", {}),
-    policy: (input) => request("/api/policy", { mode: input.mode, ...(input.preferredProvider === undefined ? {} : { preferredProvider: input.preferredProvider }) }),
+    policy: (input) =>
+      request("/api/policy", {
+        mode: input.mode,
+        ...(input.preferredProvider === undefined
+          ? {}
+          : { preferredProvider: input.preferredProvider }),
+      }),
     select: (input) => request("/api/select", { id: input.id }),
   });
 });

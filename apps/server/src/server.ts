@@ -696,6 +696,14 @@ const layerCommandReadiness = HttpRouter.middleware(
   { global: true },
 );
 
+// Preserve the complete inferred WebSocket dependency contract at the route boundary.
+export interface WebSocketRouteLayer extends Layer.Layer<
+  Layer.Success<typeof Ws.layer>,
+  Layer.Error<typeof Ws.layer>,
+  Layer.Services<typeof Ws.layer>
+> {}
+const layerWebSocketRoutes: WebSocketRouteLayer = Ws.layer;
+
 const layerMakeRoutes = Layer.mergeAll(
   Layer.mergeAll(
     HttpApiBuilder.layer(EnvironmentHttpApi).pipe(
@@ -718,7 +726,7 @@ const layerMakeRoutes = Layer.mergeAll(
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,
     ServerHttp.layerStaticAndDevRoute,
-    Ws.layer,
+    layerWebSocketRoutes,
   ),
   // The MCP session registry is provided globally (shared with V2 provider
   // sessions) rather than inline here. The orchestrator toolkit resolves

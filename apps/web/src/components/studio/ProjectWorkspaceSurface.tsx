@@ -1,3 +1,4 @@
+import { CoordinatorComposerControls } from "./CoordinatorAccessPicker";
 import { useProjectThreadInventory } from "../../studio/useProjectThreadInventory";
 import { ProjectExecutionHistory, ProjectThreadAvailability } from "./ProjectExecutionHistory";
 import { ProjectHandoffRecovery } from "./ProjectHandoffRecovery";
@@ -1338,16 +1339,9 @@ export function ProjectWorkspaceSurface({
                       providerInstanceId={model?.instanceId ?? null}
                     />
                   </span>
-                  {coordinatorModelControls}
-                  {coordinatorFallback ? (
-                    <Tip
-                      label={`Saved model: ${coordinatorFallback.saved.full}. The coordinator goes back to it once its usage has room.`}
-                    >
-                      <span className="sws-model-fallback" role="status">
-                        On {coordinatorFallback.now.full}
-                      </span>
-                    </Tip>
-                  ) : null}
+                  <CoordinatorComposerControls project={project} fallback={coordinatorFallback}>
+                    {coordinatorModelControls}
+                  </CoordinatorComposerControls>
                 </div>
               </form>
             </div>

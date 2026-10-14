@@ -372,6 +372,43 @@ describe("SidebarRestartToUpdate", () => {
       expect(state.addToast).toHaveBeenCalledTimes(1);
     });
 
+    it.each(["error", "manual-required"] as const)(
+      "reloads after a verified install even when its first observed result is a later %s",
+      async (status) => {
+        render();
+        await click();
+        const installedAt = Date.now() + 1_000;
+        agent = {
+          ...serviceWaiting,
+          status,
+          installedVersion: "0.2.5",
+          availableVersion: null,
+          downloadedVersion: null,
+          updatedAt: new Date(installedAt + 500).toISOString(),
+          lastInstall: {
+            version: "0.2.5",
+            at: new Date(installedAt).toISOString(),
+            result: "updated",
+          },
+          message: "Discovery is limited to the newest 30 releases",
+        };
+        calls.length = 0;
+        await advance(2_000);
+        expect(label()).toBe("Restarting…");
+        expect(lastToast()).toMatchObject({
+          type: "success",
+          title: "Updated to SpecWithCode 0.2.5",
+        });
+        expect(lastToast().description).toContain(agent.message);
+        expect(lastToast().description).toContain("Installed successfully");
+        expect(calls).not.toContain("cancelServiceUpdate");
+        expect(calls).not.toContain("prepare:release");
+        await advance(1_500);
+        expect(reload).toHaveBeenCalledTimes(1);
+        expect(bridge.installServiceUpdate).toHaveBeenCalledTimes(1);
+      },
+    );
+
     it("asks before stopping running work, listing what ends", async () => {
       checked = {
         idle: false,

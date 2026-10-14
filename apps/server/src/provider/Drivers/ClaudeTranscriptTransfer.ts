@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 /**
  * Two Claude instances with different config homes (two subscriptions) keep
  * their native sessions apart: Claude Code stores each one under
@@ -8,9 +9,10 @@
  * cache is per account, so the first turn after the move is uncached either
  * way; nothing else is lost.
  */
-import * as NodePath from "node:path";
+import { nodePath as NodePath } from "../../nodePath.ts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import type * as PlatformError from "effect/PlatformError";
 import * as Option from "effect/Option";
 
 export const CLAUDE_HOME_CONTINUATION_KEY_PREFIX = "claude:home:";
@@ -54,7 +56,8 @@ export const findClaudeTranscript = Effect.fn("findClaudeTranscript")(function* 
   for (const entry of entries) {
     const file = NodePath.join(projects, entry, `${input.sessionId}.jsonl`);
     const stat = yield* fs.stat(file).pipe(Effect.catch(() => Effect.succeed(null)));
-    if (stat?.type === "File") return { projectSlug: entry, file } satisfies ClaudeTranscriptLocation;
+    if (stat?.type === "File")
+      return { projectSlug: entry, file } satisfies ClaudeTranscriptLocation;
   }
   return null;
 });
@@ -67,7 +70,11 @@ export type ClaudeTranscriptTransferResult =
   /** The source home has no transcript for this session. */
   | { readonly status: "missing" };
 
-const copyTree = (fs: FileSystem.FileSystem, from: string, to: string): Effect.Effect<void, unknown> =>
+const copyTree = (
+  fs: FileSystem.FileSystem,
+  from: string,
+  to: string,
+): Effect.Effect<void, PlatformError.PlatformError> =>
   Effect.gen(function* () {
     yield* fs.makeDirectory(to, { recursive: true });
     for (const entry of yield* fs.readDirectory(from)) {
@@ -99,7 +106,7 @@ export const transferClaudeTranscript = Effect.fn("transferClaudeTranscript")(fu
   const sourceStat = yield* fs.stat(source.file);
   const targetStat = yield* fs.stat(target).pipe(Effect.catch(() => Effect.succeed(null)));
   const modifiedAt = (stat: FileSystem.File.Info) =>
-    Option.getOrElse(stat.mtime, () => new Date(0)).getTime();
+    Option.getOrElse(stat.mtime, () => DateTime.toDateUtc(DateTime.makeUnsafe(0))).getTime();
   if (
     targetStat?.type === "File" &&
     modifiedAt(targetStat) >= modifiedAt(sourceStat) &&

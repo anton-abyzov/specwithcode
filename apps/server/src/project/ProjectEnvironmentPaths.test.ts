@@ -1,5 +1,5 @@
 import { assert, it } from "@effect/vitest";
-import * as NodePath from "node:path";
+import { nodePath as NodePath } from "../nodePath.ts";
 import { exposesProtectedLocation } from "./ProjectEnvironmentPaths.ts";
 
 const path = NodePath.posix;

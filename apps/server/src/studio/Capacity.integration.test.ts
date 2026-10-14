@@ -1,3 +1,6 @@
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as DateTime from "effect/DateTime";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native HTTP fixture records real loopback requests independently of the capacity client.
 import * as NodeHttp from "node:http";
 import type { AddressInfo } from "node:net";
 import { describe, expect, it } from "vite-plus/test";
@@ -43,7 +46,7 @@ async function withCompanion(test: (h: Awaited<ReturnType<typeof companion>>) =>
 }
 
 async function companion() {
-  const now = Date.now();
+  const now = DateTime.toEpochMillis(DateTime.nowUnsafe());
   const h = {
     now,
     raw: rawSnapshot(now) as unknown,
@@ -117,7 +120,7 @@ async function companion() {
     expect(init?.redirect).toBe("error");
     expect(init?.credentials).toBe("omit");
     url.port = String(port);
-    return fetch(url, init);
+    return Effect.runSync(FetchHttpClient.Fetch)(url, init);
   }) as typeof fetch;
   const run = <A, E>(effect: Effect.Effect<A, E, Capacity.Capacity>) =>
     Effect.runPromise(
@@ -189,7 +192,7 @@ const funded = (now: number): ServerProvider => {
     ...p,
     usageLimits: {
       ...p.usageLimits!,
-      nativeAllowanceObservedAt: new Date(now).toISOString(),
+      nativeAllowanceObservedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
       ordinaryUsageAllowed: false,
       spendControlReached: false,
       rateLimitReachedType: "rate_limit_reached",
@@ -200,7 +203,7 @@ const funded = (now: number): ServerProvider => {
           kind: "weekly",
           label: "Weekly",
           usedPercent: 100,
-          resetsAt: new Date(now + 3600000).toISOString(),
+          resetsAt: DateTime.formatIso(DateTime.makeUnsafe(now + 3600000)),
           windowDurationMins: 10080,
         },
       ],
@@ -337,7 +340,9 @@ describe("capacity service with a real local companion transport", () => {
           // Its ordinary session reset is not an estimate of recovery.
           const error = await denied.catch((error: unknown) => error);
           expect(error).toMatchObject({ _tag: "ProviderSetupError", usageLimit: {} });
-          expect((error as { usageLimit: { resetAt?: string } }).usageLimit.resetAt).toBeUndefined();
+          expect(
+            (error as { usageLimit: { resetAt?: string } }).usageLimit.resetAt,
+          ).toBeUndefined();
           expect((error as { detail: string }).detail).not.toContain("Next observed reset");
         }
         expect(h.requests).toEqual([wire("GET", "/api/state"), wire("POST", "/api/refresh", "{}")]);
@@ -370,14 +375,19 @@ describe("capacity service with a real local companion transport", () => {
       expect(h.requests).toEqual([]);
     }));
 
-  it.each(["timeout", "unavailable"] as const)("keeps %s route verification closed before companion HTTP", async (reason) =>
-    withCompanion(async (h) => {
-      h.state.routeFailure = new CodexNativeRouteCheckError({ reason });
-      await expect(h.run(start())).rejects.toThrow(reason === "timeout" ? /route check timed out/ : /route check failed/);
-      expect(h.routes).toHaveLength(1);
-      expect(h.routes[0]?.cwd).toBe("/owned/workspace");
-      expect(h.requests).toEqual([]);
-    }));
+  it.each(["timeout", "unavailable"] as const)(
+    "keeps %s route verification closed before companion HTTP",
+    async (reason) =>
+      withCompanion(async (h) => {
+        h.state.routeFailure = new CodexNativeRouteCheckError({ reason });
+        await expect(h.run(start())).rejects.toThrow(
+          reason === "timeout" ? /route check timed out/ : /route check failed/,
+        );
+        expect(h.routes).toHaveLength(1);
+        expect(h.routes[0]?.cwd).toBe("/owned/workspace");
+        expect(h.requests).toEqual([]);
+      }),
+  );
 
   it("does not replace missing authorization for the selected instance with a ready different instance", async () =>
     withCompanion(async (h) => {
@@ -411,7 +421,7 @@ describe("capacity service with a real local companion transport", () => {
           ...p,
           usageLimits: {
             ...p.usageLimits!,
-            nativeAllowanceObservedAt: new Date(h.now).toISOString(),
+            nativeAllowanceObservedAt: DateTime.formatIso(DateTime.makeUnsafe(h.now)),
             spendControlReached: true,
             windows: [
               {
@@ -419,7 +429,7 @@ describe("capacity service with a real local companion transport", () => {
                 kind: "session",
                 label: "Session",
                 usedPercent: 25,
-                resetsAt: new Date(h.now + 3600000).toISOString(),
+                resetsAt: DateTime.formatIso(DateTime.makeUnsafe(h.now + 3600000)),
               },
             ],
           },
@@ -455,11 +465,13 @@ describe("capacity service with a real local companion transport", () => {
       const exhausted = rawSnapshot(h.now - 2000);
       exhausted.accounts[0]!.status = "exhausted";
       Object.assign(exhausted.accounts[0]!, {
-        lastQuotaErrorAt: new Date(h.now - 1000).toISOString(),
+        lastQuotaErrorAt: DateTime.formatIso(DateTime.makeUnsafe(h.now - 1000)),
       });
       h.state.raw = exhausted;
       await expect(h.run(start("codex", credits))).resolves.toBeUndefined();
-      Object.assign(exhausted.accounts[0]!, { lastQuotaErrorAt: new Date(h.now).toISOString() });
+      Object.assign(exhausted.accounts[0]!, {
+        lastQuotaErrorAt: DateTime.formatIso(DateTime.makeUnsafe(h.now)),
+      });
       await expect(h.run(start("codex", credits))).rejects.toThrow(/no remaining permitted usage/);
       expect(h.requests).toEqual([wire("GET", "/api/state"), wire("GET", "/api/state")]);
       expect(h.refreshIds).toEqual(["codex", "codex"]);

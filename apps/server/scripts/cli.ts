@@ -19,6 +19,7 @@ import {
   ServerCliDevelopmentIconSourceMissingError,
   ServerCliDevelopmentIconTargetMissingError,
   ServerCliExecutableImportError,
+  ServerCliUnresolvedImportError,
 } from "./cliErrors.ts";
 import { publishPlatformsThenLauncher } from "./publishOrder.ts";
 
@@ -100,7 +101,8 @@ const buildCmd = Command.make(
         const unresolved = findEsmImportsOfExternalPackages(yield* fs.readFileString(bundlePath))
           .filter(isUnresolvedFirstPartyCliImport);
         if (unresolved.length > 0) {
-          return yield* Effect.fail(new Error(`Studio bundle retains unresolved workspace imports in ${file}: ${unresolved.join(", ")}`));
+          return yield* Effect.fail(new ServerCliUnresolvedImportError({ file, specifiers: unresolved }),
+          );
         }
       }
 
@@ -130,8 +132,7 @@ const buildExeCmd = Command.make(
         "Cross-build for <platform>-<arch> in nodejs.org naming (for example darwin-x64); defaults to the host.",
       ),
       Flag.optional,
-    ),
-  },
+    )},
   (config) =>
     Effect.gen(function* () {
       const path = yield* Path.Path;

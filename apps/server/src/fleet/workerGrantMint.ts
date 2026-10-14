@@ -1,4 +1,5 @@
-import * as NodeCrypto from "node:crypto";
+import { randomBytes, sha256 } from "../nodeCrypto.ts";
+import * as DateTime from "effect/DateTime";
 import {
   AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
@@ -189,9 +190,9 @@ async function signIn(input: {
   )
     throw new WorkerGrantMintError("unsupported");
   const clientId = registered.body.client_id;
-  const verifier = base64Url(NodeCrypto.randomBytes(48));
-  const challenge = base64Url(NodeCrypto.createHash("sha256").update(verifier).digest());
-  const state = base64Url(NodeCrypto.randomBytes(24));
+  const verifier = base64Url(randomBytes(48));
+  const challenge = base64Url(sha256([verifier]));
+  const state = base64Url(randomBytes(24));
   const decision = await request(fetcher, `${target.url}/oauth/mcp/decision`, {
     method: "POST",
     json: {
@@ -249,7 +250,7 @@ async function signIn(input: {
     throw new WorkerGrantMintError("pairing_code_rejected");
   return {
     accessToken: token.body.access_token,
-    expiresAt: new Date(input.now() + token.body.expires_in * 1000).toISOString(),
+    expiresAt: DateTime.formatIso(DateTime.makeUnsafe(input.now() + token.body.expires_in * 1000)),
     resource: input.resource,
   };
 }

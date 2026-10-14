@@ -188,7 +188,7 @@ export class ProjectPlanError extends Schema.TaggedError<ProjectPlanError>()("Pr
       source_unavailable:
         "The configured spec or ledger is unavailable. Restore the source or explicitly change authority.",
       source_invalid:
-        "The configured spec or ledger is malformed, outside the project, or exceeds its size limit.",
+        "The configured spec or ledger is malformed, outside approved project folders, or exceeds its size limit.",
       forbidden: "This actor cannot perform this plan operation.",
       paused: "Resume this project before starting verification.",
       archived: "Restore this project before starting verification.",

@@ -1,7 +1,11 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native fixtures independently verify Electron and installed operating-system behavior.
 import { execFileSync } from "node:child_process";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native fixtures independently verify Electron and installed operating-system behavior.
 import { createHash } from "node:crypto";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native fixtures independently verify Electron and installed operating-system behavior.
 import * as FS from "node:fs";
 import * as OS from "node:os";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native fixtures independently verify Electron and installed operating-system behavior.
 import * as Path from "node:path";
 
 import * as Cause from "effect/Cause";

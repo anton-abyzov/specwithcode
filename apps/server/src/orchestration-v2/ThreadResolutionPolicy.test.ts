@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "@effect/vitest";
 import { resolutionMergeAt, type ResolutionPullRequest } from "./ThreadResolutionPolicy.ts";
 
@@ -5,8 +6,8 @@ const now = Date.parse("2026-10-08T12:00:00Z");
 const merged = now - 60_000;
 const ready: ResolutionPullRequest = {
   state: "merged",
-  mergedAt: new Date(merged).toISOString(),
-  updatedAt: new Date(merged).toISOString(),
+  mergedAt: DateTime.formatIso(DateTime.makeUnsafe(merged)),
+  updatedAt: DateTime.formatIso(DateTime.makeUnsafe(merged)),
   observedAt: now,
   checksState: "passing",
   reviewDecision: "approved",
@@ -37,7 +38,7 @@ describe("resolutionMergeAt", () => {
     { mergedAt: "bad" },
     { updatedAt: null },
     { updatedAt: "bad" },
-    { updatedAt: new Date(merged - 1).toISOString() },
+    { updatedAt: DateTime.formatIso(DateTime.makeUnsafe(merged - 1)) },
     { observedAt: undefined },
     { observedAt: Number.NaN },
     { observedAt: Number.POSITIVE_INFINITY },
@@ -51,7 +52,7 @@ describe("resolutionMergeAt", () => {
   );
   it("accepts the merged snapshot observation without inventing head or QA evidence", () => {
     expect(
-      resolve([{ ...ready, observedAt: undefined, syncedAt: new Date(now).toISOString() }]),
+      resolve([{ ...ready, observedAt: undefined, syncedAt: DateTime.formatIso(DateTime.makeUnsafe(now)) }]),
     ).toBe(merged);
   });
   it("keeps work requested after all merges active", () => {
@@ -61,7 +62,7 @@ describe("resolutionMergeAt", () => {
     expect(resolutionMergeAt([ready], merged, Number.NaN)).toBeNull();
   });
   it("uses the last merge across a multi-PR task", () => {
-    const earlier = { ...ready, mergedAt: new Date(merged - 1_000).toISOString() };
+    const earlier = { ...ready, mergedAt: DateTime.formatIso(DateTime.makeUnsafe(merged - 1_000)) };
     expect(resolve([earlier, ready])).toBe(merged);
   });
 });

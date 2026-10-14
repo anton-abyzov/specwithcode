@@ -1,0 +1,64 @@
+// @vitest-environment jsdom
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { beforeEach, afterEach, it, expect, vi } from "vite-plus/test";
+import { DEFAULT_SERVER_SETTINGS } from "@specweave-studio/contracts";
+import { CoordinatorAccessPicker } from "./CoordinatorAccessPicker";
+const mocks = vi.hoisted(() => ({ allowed: true, save: vi.fn() }));
+vi.mock("../../hooks/useSettings", () => ({
+  useEnvironmentSettings: () => DEFAULT_SERVER_SETTINGS,
+}));
+vi.mock("../../state/session", () => ({ useEnvironmentScope: () => mocks.allowed }));
+vi.mock("../../state/server", () => ({ serverEnvironment: { updateSettings: {} } }));
+vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => mocks.save }));
+let root: Root, container: HTMLDivElement;
+beforeEach(() => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  mocks.allowed = true;
+  mocks.save.mockReset().mockResolvedValue({ _tag: "Success" });
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+});
+afterEach(async () => {
+  await act(async () => root.unmount());
+  container.remove();
+});
+const mount = () =>
+  act(async () =>
+    root.render(
+      <CoordinatorAccessPicker environmentId={"host" as never} projectId={"project" as never} />,
+    ),
+  );
+const choose = () =>
+  act(async () => {
+    const select = container.querySelector("select")!;
+    select.value = "full-access";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+it("writes the project permission setting without changing models or global defaults", async () => {
+  await mount();
+  await choose();
+  expect(mocks.save).toHaveBeenCalledExactlyOnceWith({
+    environmentId: "host",
+    input: {
+      patch: { projectSettingsOverrides: { project: { defaultRuntimeMode: "full-access" } } },
+    },
+  });
+});
+it("retries the attempted choice after a failed save, even when settings stayed old", async () => {
+  mocks.save.mockResolvedValueOnce({ _tag: "Failure" });
+  await mount();
+  await choose();
+  expect(container.querySelector('[role="alert"]')).not.toBeNull();
+  await act(async () => container.querySelector("button")!.click());
+  expect(mocks.save).toHaveBeenCalledTimes(2);
+  expect(mocks.save.mock.calls[1]).toEqual(mocks.save.mock.calls[0]);
+});
+it("requires settings write scope", async () => {
+  mocks.allowed = false;
+  await mount();
+  expect(container.querySelector("select")!.disabled).toBe(true);
+  await choose();
+  expect(mocks.save).not.toHaveBeenCalled();
+});

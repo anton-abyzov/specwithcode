@@ -639,6 +639,35 @@ export function createEnvironmentCommand<R, ER, Input, A, E>(
   });
 }
 
+/** Protected reads use the same destination-session gate as commands. */
+export function createEnvironmentGuardedRpcQueryAtomFamily<
+  R,
+  ER,
+  TTag extends EnvironmentUnaryRpcTag & ClientGuardedRpcTag,
+>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
+  options: {
+    readonly label: string;
+    readonly tag: TTag;
+    readonly staleTimeMs?: number;
+    readonly idleTtlMs?: number;
+  },
+) {
+  return createEnvironmentQueryAtomFamily(runtime, {
+    ...options,
+    execute: (input: EnvironmentRpcInput<TTag>) =>
+      Effect.gen(function* () {
+        const registry = yield* AtomRegistry.AtomRegistry;
+        return yield* requestGuarded(options.tag, input).pipe(
+          Effect.provideService(RpcPermissionGuard, {
+            authorize: (id, method, payload) =>
+              createCommandPermissions(runtime, method).authorize(registry, id, payload),
+          }),
+        );
+      }),
+  });
+}
+
 export function createEnvironmentRpcQueryAtomFamily<
   R,
   ER,

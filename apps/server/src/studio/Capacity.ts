@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import type { ProviderInstanceId, ServerProvider } from "@specweave-studio/contracts";
 import { ProviderSetupError } from "@specweave-studio/contracts";
 import type { StudioCapacityPolicyInput, StudioCapacitySelectInput, StudioCapacitySnapshot } from "@specweave-studio/contracts/studio";
@@ -24,7 +25,8 @@ export const NATIVE_STATUS_CHECK_TIMEOUT = "60 seconds";
 /** Every exhausted window must reset; unrelated windows cannot predict recovery. */
 function blockingUsageReset(
   windows: ReadonlyArray<{ readonly usedPercent: number; readonly resetsAt: number | null }>,
-  limits: { readonly spendControlReached?: boolean | null | undefined; readonly rateLimitReachedType?: string | null | undefined },
+  limits: { readonly spendControlReached?: boolean | null | undefined; readonly rateLimitReachedType?: string | null | undefined;
+  },
   now: number,
 ): number | undefined {
   if (limits.spendControlReached === true
@@ -33,7 +35,11 @@ function blockingUsageReset(
   if (blocking.length === 0) return;
   let resetAt = 0;
   for (const window of blocking) {
-    if (window.resetsAt === null || !Number.isFinite(new Date(window.resetsAt).getTime()) || window.resetsAt <= now) return;
+    if (window.resetsAt === null || !Number.isFinite(
+        DateTime.make(window.resetsAt).pipe(
+          Option.map(DateTime.toEpochMillis),
+          Option.getOrElse(() => Number.NaN),
+        )) || window.resetsAt <= now) return;
     resetAt = Math.max(resetAt, window.resetsAt);
   }
   return resetAt;
@@ -57,7 +63,7 @@ export class Capacity extends Context.Service<Capacity, {
   readonly select: (input: StudioCapacitySelectInput) => Effect.Effect<StudioCapacitySnapshot, CapacityMutationError>;
   /** Admission check only. Never changes an existing session or chooses its account. */
   readonly assertNativeStart: (id: ProviderInstanceId, cwd: string | null, options?: NativeCreditStartOptions) => Effect.Effect<void, ProviderSetupError>;
-}>()("studio/capacity/Capacity") {}
+}>()("specweave-studio/studio/Capacity") {}
 
 const make = Effect.gen(function* () {
   const client = yield* SwitchClient.SwitchClient;
@@ -147,7 +153,7 @@ const make = Effect.gen(function* () {
         limits, now,
       ) : undefined;
       const reason = limits?.spendControlReached === true ? "spend control" : "usage limit";
-      return yield* deny(`This native subscription profile has no remaining permitted usage because its ${reason} denies new work.${nextReset ? ` Next observed reset: ${new Date(nextReset).toISOString()}.` : ""} Select an eligible profile for a new session.`, nextReset ? { resetAt: new Date(nextReset).toISOString() } : {});
+      return yield* deny(`This native subscription profile has no remaining permitted usage because its ${reason} denies new work.${nextReset ? ` Next observed reset: ${DateTime.formatIso(DateTime.makeUnsafe(nextReset))}.` : ""} Select an eligible profile for a new session.`, nextReset ? { resetAt: DateTime.formatIso(DateTime.makeUnsafe(nextReset)) } : {});
     }
     if (recheckDenied && !creditContinuation()) {
       const limits = native?.usageLimits;
@@ -203,7 +209,7 @@ const make = Effect.gen(function* () {
           .flatMap((window) => window ? [{ usedPercent: window.usedPercent, resetsAt: window.resetsAt === null ? null : window.resetsAt * 1000 }] : []),
         account.quota, now,
       ) : undefined;
-      return yield* deny(`This native subscription profile has no remaining permitted usage under its current usage limit.${nextReset ? ` Next observed reset: ${new Date(nextReset).toISOString()}.` : ""} Select an eligible profile for a new session.`, nextReset ? { resetAt: new Date(nextReset).toISOString() } : {});
+      return yield* deny(`This native subscription profile has no remaining permitted usage under its current usage limit.${nextReset ? ` Next observed reset: ${DateTime.formatIso(DateTime.makeUnsafe(nextReset))}.` : ""} Select an eligible profile for a new session.`, nextReset ? { resetAt: DateTime.formatIso(DateTime.makeUnsafe(nextReset)) } : {});
     }
     if (!account || account.authenticated !== true || account.authError || ["blocked", "auth-required", "active", "stale"].includes(account.status) || (account.status === "exhausted" && !fundedSession)
       || ((account.status === "unknown" || account.quota.freshness !== "fresh") && (account.quota.window !== null || account.quota.weekly !== null || account.quota.observedAt !== null)))

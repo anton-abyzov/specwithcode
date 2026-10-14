@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import { describe, it, expect } from "vite-plus/test";
 import { ProviderInstanceId, type ManualCodexCreditIntent } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
@@ -10,7 +11,7 @@ const intent: ManualCodexCreditIntent = {
   type: "human-submit-existing-credits",
   ...selection,
   expectedQuotaPoolId: `codex:sha256:${"a".repeat(64)}`,
-  observedAt: new Date(now).toISOString(),
+  observedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
 };
 function state() {
   return {

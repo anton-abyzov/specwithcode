@@ -1,4 +1,6 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native filesystem checks verify the deployable updater files rather than an Effect service mock.
 import * as NodeFS from "node:fs";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native path resolves independent deployment fixture files.
 import * as NodePath from "node:path";
 import { assert, it } from "@effect/vitest";
 

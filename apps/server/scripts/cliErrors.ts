@@ -58,3 +58,12 @@ export class ServerCliExecutableImportError extends Schema.TaggedError<ServerCli
     return `${this.bundlePath} imports file-backed packages that a single-executable cannot resolve: ${this.specifiers.join(", ")}. Load them through createRequire instead.`;
   }
 }
+
+export class ServerCliUnresolvedImportError extends Schema.TaggedError<ServerCliUnresolvedImportError>()(
+  "ServerCliUnresolvedImportError",
+  { file: Schema.String, specifiers: Schema.Array(Schema.String) },
+) {
+  override get message(): string {
+    return `Studio bundle retains unresolved workspace imports in ${this.file}: ${this.specifiers.join(", ")}`;
+  }
+}

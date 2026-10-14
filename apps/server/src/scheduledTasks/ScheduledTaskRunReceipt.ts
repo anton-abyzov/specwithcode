@@ -54,7 +54,7 @@ export const reserveRun = Effect.fn("ScheduledTaskService.reserveRun")(function*
     )
     .pipe(
       Effect.mapError((cause) =>
-        cause instanceof ScheduledTaskError
+        Schema.is(ScheduledTaskError)(cause)
           ? cause
           : taskError("Could not admit routine run.", { taskId: task.id, cause }),
       ),

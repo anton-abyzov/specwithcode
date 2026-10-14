@@ -63,7 +63,7 @@ const fixture = Effect.fn("startupRegistryAdapterFixture")(function* (
   const runtimeInputs: AcpAdapterV2RuntimeInput[] = [];
   const adapter = makeAcpRegistryAdapterV2({
     instanceId,
-    settings: Schema.decodeSync(AcpRegistrySettings)({ agentId }),
+    settings: yield* Schema.decodeEffect(AcpRegistrySettings)({ agentId }),
     environment: {},
     childProcessSpawner: spawner,
     crypto: yield* Crypto.Crypto,

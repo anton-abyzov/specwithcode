@@ -49,4 +49,4 @@ export interface ProviderInstanceRegistryMutatorShape {
 export class ProviderInstanceRegistryMutator extends Context.Service<
   ProviderInstanceRegistryMutator,
   ProviderInstanceRegistryMutatorShape
->()("studio/provider/ProviderInstanceRegistryMutator") {}
+>()("specweave-studio/provider/ProviderInstanceRegistryMutator") {}

@@ -140,7 +140,7 @@ export class ScheduledTaskService extends Context.Service<
       request: WebhookTriggerRequest,
     ) => Effect.Effect<WebhookTriggerResult, ScheduledTaskError>;
   }
->()("studio/scheduledTasks/ScheduledTaskService") {}
+>()("specweave-studio/scheduledTasks/ScheduledTaskService") {}
 
 export const layer = Layer.effect(
   ScheduledTaskService,

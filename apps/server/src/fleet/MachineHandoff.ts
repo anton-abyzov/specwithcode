@@ -1,4 +1,5 @@
-import * as NodeCrypto from "node:crypto";
+import { stringifyJson } from "../json.ts";
+import { sha256 } from "../nodeCrypto.ts";
 import {
   CommandId,
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
@@ -101,18 +102,18 @@ function canonical(value: unknown): string {
   if (value !== null && typeof value === "object")
     return `{${Object.entries(value)
       .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-      .map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`)
+      .map(([key, item]) => `${stringifyJson(key)}:${canonical(item)}`)
       .join(",")}}`;
   return JSON.stringify(value);
 }
 export function machineHandoffDigest(value: Omit<MachineHandoffBundle, "digest">): string {
-  return NodeCrypto.createHash("sha256").update(canonical(value)).digest("hex");
+  return sha256([canonical(value)], "hex");
 }
 function checkBundle(bundle: MachineHandoffBundle): void {
   if (!Schema.is(MachineHandoffBundle)(bundle)) throw new MachineHandoffError({ code: "invalid" });
   const { digest, ...content } = bundle;
   if (machineHandoffDigest(content) !== digest) throw new MachineHandoffError({ code: "invalid" });
-  if (Buffer.byteLength(JSON.stringify(bundle)) > MACHINE_HANDOFF_MAX_BYTES)
+  if (Buffer.byteLength(stringifyJson(bundle)) > MACHINE_HANDOFF_MAX_BYTES)
     throw new MachineHandoffError({ code: "too_large" });
 }
 
@@ -126,7 +127,7 @@ export class MachineHandoff extends Context.Service<
       input: MachineHandoffReceiveInput,
     ) => Effect.Effect<MachineHandoffReceiveResult, MachineHandoffError>;
   }
->()("studio/fleet/MachineHandoff") {}
+>()("specweave-studio/fleet/MachineHandoff") {}
 
 const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
@@ -289,11 +290,11 @@ const make = Effect.gen(function* () {
         const segments = new Map<string, MachineHandoffContext["threads"][number]>();
         for (const thread of earlier?.context.threads ?? [])
           segments.set(
-            JSON.stringify([thread.environmentId ?? earlier?.sourceEnvironmentId, thread.threadId]),
+            stringifyJson([thread.environmentId ?? earlier?.sourceEnvironmentId, thread.threadId]),
             thread,
           );
         for (const thread of threads)
-          segments.set(JSON.stringify([thread.environmentId, thread.threadId]), thread);
+          segments.set(stringifyJson([thread.environmentId, thread.threadId]), thread);
         const result = {
           goal: metadata.settings.goal,
           instructions: metadata.settings.instructions,
@@ -301,7 +302,7 @@ const make = Effect.gen(function* () {
           threads: [...segments.values()],
         };
         if (
-          Buffer.byteLength(JSON.stringify(result)) > MACHINE_HANDOFF_MAX_BYTES ||
+          Buffer.byteLength(stringifyJson(result)) > MACHINE_HANDOFF_MAX_BYTES ||
           !isHandoffContext(result)
         )
           return yield* new MachineHandoffError({ code: "too_large" });
@@ -459,9 +460,7 @@ const make = Effect.gen(function* () {
             };
             const id =
               current.workspaceSettings?.logicalProject?.id ??
-              `logical:${NodeCrypto.createHash("sha256")
-                .update(JSON.stringify([sourceEnvironmentId, input.projectId]))
-                .digest("hex")}`;
+              `logical:${sha256([stringifyJson([sourceEnvironmentId, input.projectId])], "hex")}`;
             const members = new Map(
               (current.workspaceSettings?.logicalProject?.members ?? []).map((m) => [
                 logicalProjectMemberKey(m),
@@ -510,7 +509,7 @@ const make = Effect.gen(function* () {
             saved = {
               bundle,
               publication: "unpublished",
-              contextBytes: Buffer.byteLength(JSON.stringify(retained)),
+              contextBytes: Buffer.byteLength(stringifyJson(retained)),
               messageCount: retained.threads.reduce((sum, t) => sum + t.messages.length, 0),
             };
             yield* store.write(`source-${input.operationId}`, saved);
@@ -616,7 +615,7 @@ const make = Effect.gen(function* () {
                     };
               if (!isPreviewMetadata(value) || !validManifest(value.manifest))
                 throw new MachineHandoffError({ code: "invalid" });
-              if (Buffer.byteLength(JSON.stringify(value)) > MACHINE_HANDOFF_MAX_BYTES)
+              if (Buffer.byteLength(stringifyJson(value)) > MACHINE_HANDOFF_MAX_BYTES)
                 throw new MachineHandoffError({ code: "too_large" });
               return value;
             },
@@ -843,7 +842,7 @@ const make = Effect.gen(function* () {
           );
           const contextPath = yield* store.retainContext(
             `context-${input.operationId}`,
-            JSON.stringify(input.bundle, null, 2),
+            stringifyJson(input.bundle, null, 2),
           );
           // Joining a standalone registration preserves its history and fences its retained coordinator.
           // Existing historical bindings keep their original successor; the active segment has the newest epoch.

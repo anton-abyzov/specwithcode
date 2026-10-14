@@ -21,7 +21,8 @@ import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 
 export interface ProviderAuthController {
   /** Equal keys mean these instances share credentials on this environment. */
-  readonly credentialBinding?: { readonly owner: "provider" | "specweave-studio"; readonly key: string };
+  readonly credentialBinding?: { readonly owner: "provider" | "specweave-studio"; readonly key: string;
+  };
   readonly reconnectProfile?: (
     methodId: string,
   ) => Effect.Effect<ChatGptReconnectProfile | null, ProviderSetupError>;
@@ -106,7 +107,7 @@ export class ProviderAuthService extends Context.Service<
       input: ProviderAuthTarget & { readonly text: string; readonly hasAttachments: boolean },
     ) => Effect.Effect<boolean, ProviderSetupError>;
   }
->()("studio/provider/ProviderAuthService") {}
+>()("specweave-studio/provider/ProviderAuthService") {}
 
 export const makeProviderAuthService = Effect.gen(function* () {
   const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;

@@ -1,12 +1,19 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 import { ProjectEnvironmentSettings, projectRepositoryIdentity } from "./projectEnvironment.ts";
+import { clientRpcRequiredScopes } from "./clientRpcPermissions.ts";
+import { WS_METHODS } from "./rpc.ts";
 import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   ProjectWorkspaceSettings,
 } from "./projectWorkspace.ts";
 
 describe("project environment", () => {
+  it("requires orchestration operate access for the import mutation", () => {
+    expect(clientRpcRequiredScopes(WS_METHODS.projectsEnvironmentImport, {})).toEqual([
+      "orchestration:operate",
+    ]);
+  });
   it("decodes legacy settings without assigning a provider or repository", () => {
     const {
       kind: _kind,
@@ -17,13 +24,22 @@ describe("project environment", () => {
       DEFAULT_PROJECT_WORKSPACE_SETTINGS,
     );
   });
-  it("matches credential-free transport aliases while preserving repository case", () => {
+  it("matches transport aliases, GitHub casing and default ports while preserving other hosts' case", () => {
     expect(projectRepositoryIdentity("https://github.com/Org/Repo.git")).toBe(
-      "github.com/Org/Repo",
+      "github.com/org/repo",
     );
-    expect(projectRepositoryIdentity("git@github.com:Org/Repo.git")).toBe("github.com/Org/Repo");
+    expect(projectRepositoryIdentity("git@github.com:Org/Repo.git")).toBe("github.com/org/repo");
     expect(projectRepositoryIdentity("ssh://git@github.com:22/Org/Repo")).toBe(
-      "github.com/Org/Repo",
+      "github.com/org/repo",
+    );
+    expect(projectRepositoryIdentity("https://GitHub.com:443/Org/Repo.GIT")).toBe(
+      "github.com/org/repo",
+    );
+    expect(projectRepositoryIdentity("ssh://git@GitHub.com:2222/Org/Repo.GIT")).toBe(
+      "github.com:2222/org/repo",
+    );
+    expect(projectRepositoryIdentity("ssh://git@git.example:2222/Org/Repo.GIT")).toBe(
+      "git.example:2222/Org/Repo",
     );
   });
   it.each([
@@ -58,5 +74,15 @@ describe("project environment", () => {
         repositories: [a, { ...a, url: "https://github.com/org/other" }],
       }),
     ).toThrow();
+  });
+  it("retains two distinct existing checkouts of the same origin", () => {
+    const repositories = [
+      { id: "main", url: "https://github.com/org/repo", localPath: "/work/main" },
+      { id: "review", url: "git@github.com:org/repo.git", localPath: "/work/review" },
+    ];
+    expect(
+      Schema.decodeUnknownSync(ProjectEnvironmentSettings)({ additionalFolders: [], repositories })
+        .repositories,
+    ).toEqual(repositories);
   });
 });

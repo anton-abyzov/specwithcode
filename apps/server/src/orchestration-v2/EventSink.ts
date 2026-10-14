@@ -185,7 +185,7 @@ export interface EventSinkV2Shape {
 }
 
 export class EventSinkV2 extends Context.Service<EventSinkV2, EventSinkV2Shape>()(
-  "studio/orchestration-v2/EventSink/EventSinkV2",
+  "specweave-studio/orchestration-v2/EventSink/EventSinkV2",
 ) {}
 
 /**

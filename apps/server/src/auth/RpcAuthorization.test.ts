@@ -445,3 +445,38 @@ describe("project plan command authorization", () => {
     }),
   );
 });
+
+it.effect("rejects native config discovery without filesystem read before reading files", () =>
+  Effect.gen(function* () {
+    const method = WS_METHODS.nativeConnectionsRead;
+    expect(requiredScopeForRpcMethod(method)).toBe(AuthFilesystemReadScope);
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof method> => tag !== method,
+      ),
+    );
+    let handled = false;
+    const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          group.toLayerHandler(method, () =>
+            Effect.sync(() => {
+              handled = true;
+              return {
+                observedAt: new Date().toISOString(),
+                sources: [],
+                connections: [],
+                truncated: false,
+                runtime: "unverified" as const,
+              };
+            }),
+          ),
+          RpcAuthorization.layer([AuthOrchestrationReadScope]),
+        ),
+      ),
+    );
+    const error = yield* client[method]({}).pipe(Effect.flip);
+    expect(error._tag).toBe("EnvironmentAuthorizationError");
+    expect(handled).toBe(false);
+  }),
+);

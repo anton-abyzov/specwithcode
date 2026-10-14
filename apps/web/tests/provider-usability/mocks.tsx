@@ -39,9 +39,27 @@ export let providers = recoveryScenario
           ? [provider("gemini_work", "acpRegistry", "Gemini CLI", true)]
           : []),
       ];
+if (scenario === "muse") {
+  providers = [
+    {
+      ...provider("muse_work", "muse", "Muse Code", true),
+      auth: { status: "authenticated", type: "subscription" },
+      models: [
+        { slug: "muse-wonder-1.0", name: "Muse Wonder", isDefault: true },
+        { slug: "muse-wonder-full", name: "Muse Wonder Full" },
+      ],
+    },
+  ];
+}
 export const settings = {
   ...DEFAULT_UNIFIED_SETTINGS,
   providerInstances: {
+    muse_work: {
+      driver: "muse",
+      enabled: true,
+      displayName: "Muse Code",
+      config: { binaryPath: "muse" },
+    },
     "codex-work": { driver: "codex", enabled: true, displayName: "Codex work", config: {} },
     copilot_work: {
       driver: "acpRegistry",
@@ -128,3 +146,9 @@ export const useAtomCommand = (command: unknown) => {
 export const ModelBadge = () => <span>Saved model</span>;
 export const ModelBadgeMark = () => null;
 export const ChatGptSharingControl = () => null;
+
+export const readPreparedConnection = () => {
+  throw new Error("Fixture forbids remote connections");
+};
+export const environmentSession = {};
+export const environmentServerConfigsAtom = Atom.make({});

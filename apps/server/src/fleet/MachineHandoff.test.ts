@@ -6,6 +6,15 @@ import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
+const failureOnly = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(
+    Effect.result,
+    Effect.map((result) => {
+      if (Result.isFailure(result)) return result.failure;
+      throw new Error("Expected request to fail");
+    }),
+  );
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
@@ -94,7 +103,7 @@ describe("MachineHandoff", () => {
       const service = yield* MachineHandoff.MachineHandoff;
       const first = yield* service.prepare(preview);
       h.state.head = "c".repeat(40);
-      const result = yield* Effect.flip(
+      const result = yield* failureOnly(
         service.prepare({ ...preview, publish: true, expectedDigest: first.bundle.digest }),
       );
       expect(result.code).toBe("source_changed");
@@ -205,7 +214,7 @@ describe("MachineHandoff", () => {
         yield* store.write(`destination-${id}`, legacy);
         expect((yield* service.receive(destinationPreview(bundle))).phase).toBe("started");
         expect(
-          (yield* Effect.flip(
+          (yield* failureOnly(
             service.receive({
               ...destinationPreview(bundle),
               sourceThreadId: ThreadId.make("other-thread"),
@@ -216,11 +225,11 @@ describe("MachineHandoff", () => {
           ...bundle,
           context: { ...bundle.context, goal: "Changed retained context" },
         });
-        expect((yield* Effect.flip(service.receive(destinationPreview(bundle)))).code).toBe(
+        expect((yield* failureOnly(service.receive(destinationPreview(bundle)))).code).toBe(
           "conflict",
         );
         yield* store.write(`context-${id}`, { ...bundle, extraInstructions: "Unbound text" });
-        expect((yield* Effect.flip(service.receive(destinationPreview(bundle)))).code).toBe(
+        expect((yield* failureOnly(service.receive(destinationPreview(bundle)))).code).toBe(
           "conflict",
         );
         expect(h.state.starts).toHaveLength(1);
@@ -236,7 +245,7 @@ describe("MachineHandoff", () => {
         ...destinationPreview(bundle),
         mode: "start",
       } as unknown as MachineHandoffReceiveInput;
-      expect((yield* Effect.flip(service.receive(incomplete))).code).toBe("invalid");
+      expect((yield* failureOnly(service.receive(incomplete))).code).toBe("invalid");
       expect(h.state.preflights).toBe(0);
       expect(h.state.starts).toHaveLength(0);
     }).pipe(Effect.provide(h.layer));
@@ -275,7 +284,7 @@ describe("MachineHandoff", () => {
                   ? "other-project"
                   : "other-source",
       } as MachineHandoffReceiveInput;
-      const error = yield* Effect.flip(service.receive(changed));
+      const error = yield* failureOnly(service.receive(changed));
       expect(error.code).toBe(
         field === "operationId" ? "invalid" : field === "projectId" ? "not_found" : "conflict",
       );
@@ -301,7 +310,7 @@ describe("MachineHandoff", () => {
         },
       });
       expect(
-        (yield* Effect.flip(service.receive({ projectId, operationId: id, bundle, mode: "start" })))
+        (yield* failureOnly(service.receive({ projectId, operationId: id, bundle, mode: "start" })))
           .code,
       ).toBe("too_large");
       expect(h.state.preflights).toBe(0);
@@ -314,7 +323,7 @@ describe("MachineHandoff", () => {
       const service = yield* MachineHandoff.MachineHandoff;
       const bundle = imported((yield* service.prepare(preview)).bundle);
       const input = { projectId, operationId: id, bundle, mode: "start" as const };
-      expect((yield* Effect.flip(service.receive(input))).code).toBe("launch_failed");
+      expect((yield* failureOnly(service.receive(input))).code).toBe("launch_failed");
       h.state.launchFailure = false;
       expect((yield* service.receive(input)).phase).toBe("started");
       expect(h.state.creations).toHaveLength(1);
@@ -332,7 +341,7 @@ describe("MachineHandoff", () => {
         context: { ...bundle.context, goal: "Different work" },
       });
       expect(
-        (yield* Effect.flip(
+        (yield* failureOnly(
           service.receive({ projectId, operationId: id, bundle: altered, mode: "start" }),
         )).code,
       ).toBe("conflict");
@@ -347,7 +356,7 @@ describe("MachineHandoff", () => {
     const h = makeHarness(options);
     return Effect.gen(function* () {
       const service = yield* MachineHandoff.MachineHandoff;
-      expect((yield* Effect.flip(service.prepare(preview))).code).toBe(code);
+      expect((yield* failureOnly(service.prepare(preview))).code).toBe(code);
       expect(h.state.pushes).toBe(0);
       expect(h.state.starts).toHaveLength(0);
     }).pipe(Effect.provide(h.layer));
@@ -379,7 +388,7 @@ describe("MachineHandoff", () => {
       const h = makeHarness({ busy: true, busyProject: "another-owner", busyRoot });
       return Effect.gen(function* () {
         const service = yield* MachineHandoff.MachineHandoff;
-        expect((yield* Effect.flip(service.prepare(preview))).code).toBe("busy");
+        expect((yield* failureOnly(service.prepare(preview))).code).toBe("busy");
         expect(h.state.pushes).toBe(0);
       }).pipe(Effect.provide(h.layer));
     },
@@ -400,12 +409,12 @@ describe("MachineHandoff", () => {
     const h = makeHarness();
     return Effect.gen(function* () {
       const service = yield* MachineHandoff.MachineHandoff;
-      expect((yield* Effect.flip(service.prepare({ ...preview, publish: true }))).code).toBe(
+      expect((yield* failureOnly(service.prepare({ ...preview, publish: true }))).code).toBe(
         "conflict",
       );
       yield* service.prepare(preview);
       expect(
-        (yield* Effect.flip(
+        (yield* failureOnly(
           service.prepare({ ...preview, publish: true, expectedDigest: "0".repeat(64) }),
         )).code,
       ).toBe("conflict");
@@ -419,7 +428,7 @@ describe("MachineHandoff", () => {
       const first = yield* service.prepare(preview);
       h.state.text = "A newly requested task";
       expect(
-        (yield* Effect.flip(
+        (yield* failureOnly(
           service.prepare({ ...preview, publish: true, expectedDigest: first.bundle.digest }),
         )).code,
       ).toBe("source_changed");
@@ -436,13 +445,13 @@ describe("MachineHandoff", () => {
         const bundle = imported(source);
         const input = { projectId, operationId: id, bundle, mode: "start" as const };
         h.state.busy = true;
-        expect((yield* Effect.flip(service.receive(input))).code).toBe("busy");
+        expect((yield* failureOnly(service.receive(input))).code).toBe("busy");
         h.state.busy = false;
-        expect((yield* Effect.flip(service.receive({ ...input, bundle: source }))).code).toBe(
+        expect((yield* failureOnly(service.receive({ ...input, bundle: source }))).code).toBe(
           "invalid",
         );
         expect(
-          (yield* Effect.flip(
+          (yield* failureOnly(
             service.receive({ ...input, bundle: { ...bundle, digest: "0".repeat(64) } }),
           )).code,
         ).toBe("invalid");
@@ -458,7 +467,7 @@ describe("MachineHandoff", () => {
       const bundle = imported((yield* service.prepare(preview)).bundle);
       h.state.gitFailure = new HandoffGitError({ stage: "preflight", reason: "identity-mismatch" });
       expect(
-        (yield* Effect.flip(service.receive({ projectId, operationId: id, bundle, mode: "start" })))
+        (yield* failureOnly(service.receive({ projectId, operationId: id, bundle, mode: "start" })))
           .code,
       ).toBe("identity_mismatch");
       expect(h.state.materializations).toBe(0);
@@ -480,7 +489,7 @@ describe("MachineHandoff", () => {
         destinationPreview(bundle),
         { projectId, operationId: id, bundle, mode: "start" as const },
       ]) {
-        const error = yield* Effect.flip(service.receive(input));
+        const error = yield* failureOnly(service.receive(input));
         expect(error.code).toBe("unsafe_path");
         expect(error.message).toContain("symbolic link");
         expect(error.message).not.toContain("remote access");
@@ -505,7 +514,7 @@ describe("MachineHandoff", () => {
       expect(Number((yield* fs.stat(record)).mode) & 0o777).toBe(0o600);
       expect(Number((yield* fs.stat(store.root)).mode) & 0o777).toBe(0o700);
       yield* fs.writeFileString(record, "invalid json");
-      expect((yield* Effect.flip(service.prepare(preview))).code).toBe("storage_failed");
+      expect((yield* failureOnly(service.prepare(preview))).code).toBe("storage_failed");
     }).pipe(Effect.provide(h.layer));
   });
   it.effect(
@@ -519,16 +528,16 @@ describe("MachineHandoff", () => {
         yield* sql`INSERT INTO projection_projects (project_id,title,workspace_root,scripts_json,created_at,updated_at) VALUES ('another-owner','Owner','/source/project','[]','2026-10-13T00:00:00Z','2026-10-13T00:00:00Z')`;
         yield* sql`INSERT INTO orchestration_v2_projection_threads (thread_id,project_id,title,default_provider,runtime_mode,interaction_mode,created_at,updated_at,payload_json) VALUES ('active-thread','another-owner','Owner','codex','full-access','default','2026-10-13T00:00:00Z','2026-10-13T00:00:00Z','{}')`;
         yield* sql`INSERT INTO orchestration_v2_projection_runs (run_id,thread_id,ordinal,provider,status,requested_at,payload_json) VALUES ('active-run','active-thread',1,'codex','running','2026-10-13T00:00:00Z','{}')`;
-        expect((yield* Effect.flip(service.prepare(preview))).code).toBe("busy");
+        expect((yield* failureOnly(service.prepare(preview))).code).toBe("busy");
         yield* sql`UPDATE orchestration_v2_projection_runs SET status='completed'`;
         yield* sql`INSERT INTO orchestration_v2_projection_runtime_requests (runtime_request_id,thread_id,node_id,kind,status,created_at,payload_json) VALUES ('request','active-thread','node','approval','pending','2026-10-13T00:00:00Z','{}')`;
-        expect((yield* Effect.flip(service.prepare(preview))).code).toBe("busy");
+        expect((yield* failureOnly(service.prepare(preview))).code).toBe("busy");
         yield* sql`UPDATE orchestration_v2_projection_runtime_requests SET status='resolved'`;
         yield* sql`INSERT INTO orchestration_v2_effect_outbox (effect_id,command_id,thread_id,effect_type,payload_json,status,attempt_count,available_at,created_at,updated_at) VALUES ('effect','command','active-thread','provider-turn.start','{}','pending',0,'2026-10-13T00:00:00Z','2026-10-13T00:00:00Z','2026-10-13T00:00:00Z')`;
-        expect((yield* Effect.flip(service.prepare(preview))).code).toBe("busy");
+        expect((yield* failureOnly(service.prepare(preview))).code).toBe("busy");
         yield* sql`UPDATE orchestration_v2_effect_outbox SET status='succeeded'`;
         yield* sql`INSERT INTO orchestration_v2_projection_provider_sessions (provider_session_id,thread_id,provider,status,updated_at,payload_json) VALUES ('session','active-thread','codex','running','2026-10-13T00:00:00Z','{}')`;
-        expect((yield* Effect.flip(service.prepare(preview))).code).toBe("busy");
+        expect((yield* failureOnly(service.prepare(preview))).code).toBe("busy");
         yield* sql`UPDATE orchestration_v2_projection_provider_sessions SET status='ready'`;
         expect((yield* service.prepare(preview)).publication).toBe("unpublished");
         expect(h.state.pushes).toBe(0);
@@ -542,7 +551,7 @@ describe("MachineHandoff", () => {
       return Effect.gen(function* () {
         const service = yield* MachineHandoff.MachineHandoff;
         h.state.workerCheckpointFailure = true;
-        expect((yield* Effect.flip(service.prepare(preview))).code).toBe("worker_checkpoint");
+        expect((yield* failureOnly(service.prepare(preview))).code).toBe("worker_checkpoint");
         expect(h.state.pushes).toBe(0);
         h.state.workerCheckpointFailure = false;
         const snapshot = yield* service.prepare(preview);
@@ -560,14 +569,14 @@ describe("MachineHandoff", () => {
       const fs = yield* FileSystem.FileSystem;
       yield* store.write("original", { retained: true });
       yield* fs.symlink(`${store.root}/original`, `${store.root}/linked`);
-      expect((yield* Effect.flip(store.read("linked"))).code).toBe("storage_failed");
+      expect((yield* failureOnly(store.read("linked"))).code).toBe("storage_failed");
       const elsewhere = `${store.root}-elsewhere`;
       yield* fs.makeDirectory(elsewhere);
       yield* fs.symlink(elsewhere, `${store.root}/git`);
-      expect((yield* Effect.flip(store.prepareWorktreeParent)).code).toBe("storage_failed");
+      expect((yield* failureOnly(store.prepareWorktreeParent)).code).toBe("storage_failed");
       yield* fs.remove(store.root, { recursive: true });
       yield* fs.symlink(elsewhere, store.root);
-      expect((yield* Effect.flip(store.write("refused", { retained: true }))).code).toBe(
+      expect((yield* failureOnly(store.write("refused", { retained: true }))).code).toBe(
         "storage_failed",
       );
       expect(yield* fs.exists(`${elsewhere}/refused`)).toBe(false);
@@ -605,7 +614,7 @@ describe("MachineHandoff", () => {
           },
         });
         const first = yield* Effect.gen(function* () {
-          return yield* Effect.flip((yield* MachineHandoff.MachineHandoff).receive(input));
+          return yield* failureOnly((yield* MachineHandoff.MachineHandoff).receive(input));
         }).pipe(
           Effect.provide(Layer.fresh(MachineHandoff.layer)),
           Effect.provideService(MachineHandoffStore.MachineHandoffStore, interruptedStore),
@@ -823,7 +832,7 @@ const recoveryScenario = (
         Effect.provideService(MachineHandoffStore.MachineHandoffStore, interrupted),
         Effect.provideService(ProjectCoordinatorService.ProjectCoordinatorService, coordinator),
       );
-    const first = yield* Effect.flip(receive());
+    const first = yield* failureOnly(receive());
     expect(first.code).toBe(
       eventKind === "none" || eventKind === "rejected" ? "launch_failed" : "storage_failed",
     );
@@ -886,7 +895,7 @@ const recoveryScenario = (
       );
       expect(yield* store.read(`destination-${id}`)).toMatchObject({ receipt: recovered });
     } else {
-      const failure = yield* Effect.flip(receive());
+      const failure = yield* failureOnly(receive());
       expect(failure.code).toBe(
         legacyPrompt &&
           (eventKind === "none" || eventKind === "rejected" || eventKind === "wrong-command")
@@ -969,13 +978,13 @@ describe("exclusive logical coordinator transfer", () => {
       expect(h.projects.get(projectId)?.workspaceSettings?.coordinatorBinding).toBeUndefined();
       h.state.publicationFailure = true;
       const input = { ...preview, publish: true, expectedDigest: first.bundle.digest };
-      expect((yield* Effect.flip(service.prepare(input))).code).toBe("remote_unavailable");
+      expect((yield* failureOnly(service.prepare(input))).code).toBe("remote_unavailable");
       expect(h.state.publicationFenceStates).toEqual(["transferring"]);
       expect(h.projects.get(projectId)?.workspaceSettings?.coordinatorBinding?.state).toBe(
         "transferring",
       );
       expect(
-        (yield* Effect.flip(
+        (yield* failureOnly(
           service.prepare({ ...preview, operationId: "22222222-2222-4222-8222-222222222222" }),
         )).code,
       ).toBe("conflict");
@@ -989,7 +998,7 @@ describe("exclusive logical coordinator transfer", () => {
       ).toEqual(published.bundle);
       const successor = published.bundle.coordinatorBinding!.successor!;
       expect(
-        (yield* Effect.flip(
+        (yield* failureOnly(
           service.prepare({
             ...input,
             acknowledgment: {
@@ -1023,7 +1032,7 @@ describe("exclusive logical coordinator transfer", () => {
         const { digest: _digest, ...content } = { ...valid, ...change };
         const bundle = { ...content, digest: MachineHandoff.machineHandoffDigest(content) };
         expect(
-          (yield* Effect.flip(
+          (yield* failureOnly(
             service.receive({ projectId, operationId: id, mode: "start", bundle }),
           )).code,
         ).toBe("invalid");
@@ -1101,9 +1110,9 @@ it.effect(
       };
       const receive = (value: MachineHandoffBundle) =>
         service.receive({ projectId, operationId: id, mode: "start", bundle: value });
-      expect((yield* Effect.flip(receive(bundle))).code).toBe("conflict");
+      expect((yield* failureOnly(receive(bundle))).code).toBe("conflict");
       expect(
-        (yield* Effect.flip(
+        (yield* failureOnly(
           receive(
             rebind({
               ...bundle.destination!,
@@ -1137,7 +1146,7 @@ it.effect(
           },
         },
       });
-      expect((yield* Effect.flip(receive(accepted))).code).toBe("conflict");
+      expect((yield* failureOnly(receive(accepted))).code).toBe("conflict");
       expect(h.state.starts).toHaveLength(0);
       h.projects.set(projectId, standalone);
       const received = yield* receive(accepted);

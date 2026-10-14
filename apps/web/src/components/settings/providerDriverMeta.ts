@@ -5,6 +5,7 @@ import {
   CodexSettings,
   CursorSettings,
   GrokSettings,
+  MuseSettings,
   OpenCodeSettings,
   PiSettings,
   ProviderDriverKind,
@@ -75,6 +76,22 @@ const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = [
     value: ProviderDriverKind.make("grok"),
     label: "Grok",
     settingsSchema: GrokSettings,
+  },
+  {
+    value: ProviderDriverKind.make("muse"),
+    label: "Muse Code",
+    settingsSchema: MuseSettings,
+    hasDefaultInstance: false,
+    badgeLabel: "Preview",
+    environmentFields: [
+      {
+        name: "META_API_KEY",
+        label: "Meta API key",
+        sensitive: true,
+        description:
+          "Optional pay-as-you-go route. Wonder Full requires native subscription sign-in instead.",
+      },
+    ],
   },
   {
     value: ProviderDriverKind.make("opencode"),

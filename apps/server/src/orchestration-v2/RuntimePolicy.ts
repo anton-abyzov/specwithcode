@@ -58,7 +58,7 @@ export interface RuntimePolicyV2Shape {
 }
 
 export class RuntimePolicyV2 extends Context.Service<RuntimePolicyV2, RuntimePolicyV2Shape>()(
-  "studio/orchestration-v2/RuntimePolicy/RuntimePolicyV2",
+  "specweave-studio/orchestration-v2/RuntimePolicy/RuntimePolicyV2",
 ) {}
 
 /**

@@ -57,7 +57,10 @@ vi.mock("../../studio/fleet", () => ({
   useStudioFleet: () => ({ snapshot: state.fleet, loading: false, failed: false, refresh() {} }),
 }));
 vi.mock("../../state/environments", () => ({
-  useEnvironment: () => ({ serverConfig: { providers: state.providers } }),
+  useEnvironment: () => ({
+    connection: { phase: "connected" },
+    serverConfig: { providers: state.providers },
+  }),
 }));
 vi.mock("../../state/projects", () => ({
   projectEnvironment: { update: "update", delete: "remove" },
@@ -70,6 +73,7 @@ vi.mock("../../studio/projectWorkspace", () => ({
     environmentRead: () => "environment",
     environmentPrepare: "prepare",
     connections: () => "connections",
+    nativeConnections: () => "nativeConnections",
     connectionSave: "connectionSave",
     connectionCheck: "connectionCheck",
     connectionRevoke: "connectionRevoke",
@@ -81,11 +85,13 @@ vi.mock("../../state/use-atom-command", () => ({
 vi.mock("../../state/query", () => ({
   useEnvironmentQuery: (key: string) => ({
     data:
-      key === "environment"
-        ? state.environment
-        : key === "connections"
-          ? { connections: [] }
-          : state.file,
+      key === "nativeConnections"
+        ? null
+        : key === "environment"
+          ? state.environment
+          : key === "connections"
+            ? { connections: [] }
+            : state.file,
     refresh:
       key === "environment" || key === "connections" ? state.environmentRefresh : state.refresh,
     isPending: false,
@@ -771,6 +777,96 @@ describe("project settings and memory", () => {
   });
 });
 
+it("keeps the full folder path in a disclosure separate from project identity", async () => {
+  await render("environment", true, { kind: "code" });
+  const heading = container.querySelector(".project-settings-heading")!;
+  expect(heading.querySelector("p")?.textContent).toBe(project.title);
+  const location = heading.querySelector("details")!;
+  expect(location.hasAttribute("open")).toBe(false);
+  expect(location.querySelector("summary")?.getAttribute("aria-label")).toBe(
+    `Folder location: ${project.workspaceRoot}`,
+  );
+  expect(location.querySelector("code")?.textContent).toBe(project.workspaceRoot);
+  expect(location.querySelector("code")?.tabIndex).toBe(0);
+});
+
+it("keeps folder removal reversible and saves only the remaining environment draft", async () => {
+  await render("environment", true, { kind: "code" });
+  const removeEntries = async () => {
+    for (const label of [
+      "Remove folder /scratch/shared",
+      "Remove repository https://github.com/example/atlas.git",
+    ]) {
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!.click(),
+      );
+    }
+  };
+  await removeEntries();
+  expect(container.textContent).toContain("No additional folders approved.");
+  expect(state.update).not.toHaveBeenCalled();
+  await click("Discard");
+  expect(container.querySelector('[aria-label="Remove folder /scratch/shared"]')).not.toBeNull();
+  expect(
+    container.querySelector(
+      '[aria-label="Remove repository https://github.com/example/atlas.git"]',
+    ),
+  ).not.toBeNull();
+  await removeEntries();
+  await click("Save changes");
+  expect(state.update).toHaveBeenCalledWith(
+    expect.objectContaining({
+      input: expect.objectContaining({
+        workspaceSettings: expect.objectContaining({
+          expectedRevision: 7,
+          environment: { additionalFolders: [], repositories: [] },
+        }),
+      }),
+    }),
+  );
+});
+
+it("preserves an edited instruction and recovery choice when closing is canceled", async () => {
+  await render();
+  await act(async () =>
+    container.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click(),
+  );
+  await click("Memory");
+  await input('textarea[aria-label="Project instructions"]', "Keep the exact project folder.");
+  await click("Close dialog");
+  await click("Keep editing");
+  expect(state.close).not.toHaveBeenCalled();
+  expect(
+    container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Project instructions"]')!
+      .value,
+  ).toBe("Keep the exact project folder.");
+  await click("Save changes");
+  expect(state.update).toHaveBeenCalledWith(
+    expect.objectContaining({
+      input: expect.objectContaining({
+        workspaceSettings: expect.objectContaining({
+          instructions: "Keep the exact project folder.",
+          autoResume: false,
+        }),
+      }),
+    }),
+  );
+});
+
+it.each([
+  ["Pause", "paused"],
+  ["Archive", "archived"],
+] as const)("keeps %s scoped to this project and saved revision", async (label, key) => {
+  await render();
+  await click(label);
+  expect(state.update).toHaveBeenCalledWith({
+    environmentId: "host",
+    input: { projectId: "project", workspaceSettings: { expectedRevision: 7, [key]: true } },
+  });
+  expect(state.saved).toHaveBeenCalledOnce();
+  expect(state.remove).not.toHaveBeenCalled();
+});
+
 describe("canonical project name in workspace settings", () => {
   function bindName(state: "active" | "transferred") {
     Object.assign(project, {
@@ -786,6 +882,7 @@ describe("canonical project name in workspace settings", () => {
     expect(container.querySelector<HTMLInputElement>("#project-settings-name")?.value).toBe(
       "EasyChamp",
     );
+    expect(container.querySelector(".project-settings-heading p")?.textContent).toBe("EasyChamp");
     expect(container.textContent).toContain("Type Atlas to confirm");
     await input("#project-settings-name", "Changed draft");
     await click("Discard");

@@ -20,7 +20,7 @@ export class ResourceAttribution extends Context.Service<
     readonly record: (input: ResourceAttributionRecord) => Effect.Effect<void>;
     readonly snapshot: Effect.Effect<ResourceAttributionSnapshot>;
   }
->()("studio/resourceTelemetry/ResourceAttribution") {}
+>()("specweave-studio/resourceTelemetry/ResourceAttribution") {}
 
 function key(input: Pick<ResourceAttributionRecord, "component" | "operation">): string {
   return `${input.component}\u0000${input.operation}`;

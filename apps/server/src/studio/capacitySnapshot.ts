@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 // @effect-diagnostics nodeBuiltinImport:off -- Pure native-home comparison; no filesystem or credential access.
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -62,8 +63,9 @@ export function nativeQuotaDenied(limits: ServerProviderUsageLimits | undefined,
   if (!limits || (limits.unavailable?.reason === "unsupported" && !limits.nativeDenialRequiresFullRead)) return false;
   const negative = limits.ordinaryUsageAllowed === false || limits.spendControlReached === true
     || (!!limits.rateLimitReachedType && limits.ordinaryUsageAllowed !== true);
-  return negative && (limits.nativeDenialRequiresFullRead === true
-    || freshObservation(limits.nativeAllowanceObservedAt, now) || freshObservation(limits.nativeDenialObservedAt, now));
+  return (
+    negative && (limits.nativeDenialRequiresFullRead === true
+    || freshObservation(limits.nativeAllowanceObservedAt, now) || freshObservation(limits.nativeDenialObservedAt, now)));
 }
 /** Claude get_usage windows can support manual retry, not automatic allowance.
  * Complete, current non-exhausted windows can contradict an expired error, but
@@ -74,8 +76,10 @@ function claudeWindowsPermitManualRetry(limits: ServerProviderUsageLimits | unde
     // A confirmed unsupported lookup is no quota observation. It permits only
     // the expired, wholly unobserved companion-error fallback below. Retained
     // windows or permission history must never be discarded by this exception.
-    return limits.unavailable.reason === "unsupported" && !limits.unavailable.invalidResponse
-      && !hasNativeUsageEvidence(limits) && freshObservation(limits.checkedAt, now);
+    return (
+      limits.unavailable.reason === "unsupported" && !limits.unavailable.invalidResponse
+      && !hasNativeUsageEvidence(limits) && freshObservation(limits.checkedAt, now)
+    );
   }
   if (!limits?.windows.length) return true;
   if (!freshObservation(limits.checkedAt, now) || !freshObservation(limits.nativeAllowanceObservedAt, now)) return false;
@@ -83,7 +87,7 @@ function claudeWindowsPermitManualRetry(limits: ServerProviderUsageLimits | unde
 }
 function iso(value: string | null | undefined): string | null {
   const at = value ? Date.parse(value) : NaN;
-  return Number.isFinite(at) ? new Date(at).toISOString() : null;
+  return Number.isFinite(at) ? DateTime.formatIso(DateTime.makeUnsafe(at)) : null;
 }
 function window(value: unknown): StudioCapacityAccount["quota"]["window"] {
   const decoded = decodeWindow(value);
@@ -106,40 +110,78 @@ export function nativeCapacityBinding(entry: ProviderInstanceConfig | undefined,
   const own = entry.environment?.findLast((variable) => variable.name === (entry.driver === "codex" ? "CODEX_HOME" : "CLAUDE_CONFIG_DIR"));
   if (entry.driver === "claudeAgent") {
     // Setting even the default path changes native Keychain scope. Preserve unset.
-    if (!(config.value.homePath?.trim()) && own === undefined && baseEnv.CLAUDE_CONFIG_DIR === undefined) return "claude-1";
+    if (!config.value.homePath?.trim() && own === undefined && baseEnv.CLAUDE_CONFIG_DIR === undefined) return "claude-1";
     const home = config.value.homePath?.trim() || own?.value || baseEnv.CLAUDE_CONFIG_DIR;
     if (!home) return null;
     for (const n of [2, 3] as const) {
-      if (NodePath.resolve(expandHomePath(home)) === NodePath.join(NodeOS.homedir(), ".local/share/specweave/account-profiles", `claude-${n}`)) return `claude-${n}`;
+      if (NodePath.resolve(expandHomePath(home)) === NodePath.join(NodeOS.homedir(), ".local/share/specweave/account-profiles", `claude-${n}`)
+      )
+        return `claude-${n}`;
     }
     return null;
   }
   if (config.value.shadowHomePath?.trim()) return null;
   const home = config.value.homePath?.trim() || own?.value || baseEnv.CODEX_HOME;
-  if (!home || NodePath.resolve(expandHomePath(home)) === NodePath.join(NodeOS.homedir(), ".codex")) return "codex-1";
+  if (!home || NodePath.resolve(expandHomePath(home)) === NodePath.join(NodeOS.homedir(), ".codex"))
+    return "codex-1";
   for (const n of [2, 3, 4] as const) {
-    if (NodePath.resolve(expandHomePath(home)) === NodePath.join(NodeOS.homedir(), ".local/share/specweave/account-profiles", `codex-${n}`)) return `codex-${n}`;
+    if (
+      NodePath.resolve(expandHomePath(home)) ===
+      NodePath.join(NodeOS.homedir(), ".local/share/specweave/account-profiles", `codex-${n}`)
+    )
+      return `codex-${n}`;
   }
   return null;
 }
 
-export function nativeSnapshotAuthorized(provider: ServerProvider | undefined, now: number): boolean {
-  if (!provider?.enabled || !provider.installed || provider.status !== "ready" || provider.availability === "unavailable" || provider.auth.status !== "authenticated" || !freshObservation(provider.checkedAt, now)) return false;
+export function nativeSnapshotAuthorized(
+  provider: ServerProvider | undefined,
+  now: number,
+): boolean {
+  if (
+    !provider?.enabled ||
+    !provider.installed ||
+    provider.status !== "ready" ||
+    provider.availability === "unavailable" ||
+    provider.auth.status !== "authenticated" ||
+    !freshObservation(provider.checkedAt, now)
+  )
+    return false;
   const type = provider.auth.type?.toLowerCase().replace(/[\s_.-]+/g, "");
   if (provider.driver === "codex") return type === "chatgpt" || type === "chatgptauthtokens";
-  if (provider.driver === "claudeAgent") return !!type && (type === "claudeai" || /^(?:claude)?(?:max(?:5x|20x|5|20)?|pro|team|enterprise)(?:subscription)?$/.test(type));
+  if (provider.driver === "claudeAgent")
+    return (
+      !!type &&
+      (type === "claudeai" ||
+        /^(?:claude)?(?:max(?:5x|20x|5|20)?|pro|team|enterprise)(?:subscription)?$/.test(type))
+    );
   return false;
 }
-export function unavailableCapacity(now: number, error: Exclude<StudioCapacitySnapshot["error"], null>): StudioCapacitySnapshot {
-  return { schemaVersion: 1, observedAt: new Date(now).toISOString(), source: "specweave-switch", scope: "environment-local", available: false, error,
-    quotaPoolIdentity: "unavailable", verifiedQuotaPoolCount: null, accounts: [], policy: null, recommendations: [] };
+export function unavailableCapacity(
+  now: number,
+  error: Exclude<StudioCapacitySnapshot["error"], null>,
+): StudioCapacitySnapshot {
+  return {
+    schemaVersion: 1,
+    observedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
+    source: "specweave-switch",
+    scope: "environment-local",
+    available: false,
+    error,
+    quotaPoolIdentity: "unavailable",
+    verifiedQuotaPoolCount: null,
+    accounts: [],
+    policy: null,
+    recommendations: [],
+  };
 }
 
 /** Complete native reads can replace an older companion observation, never its auth identity. */
 function quotaFromNative(provider: ServerProvider | undefined, now: number) {
   if (provider?.driver !== "codex") return undefined;
   const limits = provider?.usageLimits;
-  if (!limits || !freshObservation(limits.nativeAllowanceObservedAt, now) || limits.unavailable) return undefined;
+  if (!limits || !freshObservation(limits.nativeAllowanceObservedAt, now) || limits.unavailable)
+    return undefined;
   const at = limits.nativeAllowanceObservedAt!;
   const normalized = limits.windows.flatMap((w) => {
     const reset = w.resetsAt ? Date.parse(w.resetsAt) / 1000 : NaN;
@@ -148,85 +190,233 @@ function quotaFromNative(provider: ServerProvider | undefined, now: number) {
     const parts = w.id.split(":");
     const bucketId = parts.length > 1 ? parts[0]! : "codex";
     if (!/^[a-zA-Z0-9_-]{1,64}$/.test(bucketId)) return [];
-    return [{ usedPercent: w.usedPercent, resetsAt, ...(w.windowDurationMins && w.windowDurationMins > 0 ? { windowDurationMins: w.windowDurationMins } : {}),
-      id: parts.length > 1 ? w.id : `codex:${w.id}`, bucketId, appliesToSelection: bucketId === "codex", kind: w.kind }];
+    return [
+      {
+        usedPercent: w.usedPercent,
+        resetsAt,
+        ...(w.windowDurationMins && w.windowDurationMins > 0
+          ? { windowDurationMins: w.windowDurationMins }
+          : {}),
+        id: parts.length > 1 ? w.id : `codex:${w.id}`,
+        bucketId,
+        appliesToSelection: bucketId === "codex",
+        kind: w.kind,
+      },
+    ];
   });
-  const mostUsed = (rows: typeof normalized) => rows.reduce<(typeof normalized)[number] | null>((selected, w) => !selected || w.usedPercent > selected.usedPercent ? w : selected, null);
-  return { window: mostUsed(normalized.filter((w) => w.appliesToSelection && (w.kind === "session" || (w.kind === "other" && w.id.endsWith(":primary"))))),
-    weekly: mostUsed(normalized.filter((w) => w.appliesToSelection && (w.kind === "weekly" || w.kind === "monthly" || (w.kind === "other" && w.id.endsWith(":secondary"))))),
-    windows: normalized.map(({ kind: _kind, ...w }) => w), observedAt: at,
-    expiresAt: new Date(Date.parse(at) + CAPACITY_MAX_AGE_MS).toISOString(), source: "native-app-server" as const,
-    ordinaryUsageAllowed: limits.ordinaryUsageAllowed, spendControlReached: limits.spendControlReached,
-    rateLimitReachedType: limits.rateLimitReachedType, credits: limits.credits, resetCredits: limits.resetCredits };
+  const mostUsed = (rows: typeof normalized) =>
+    rows.reduce<(typeof normalized)[number] | null>(
+      (selected, w) => (!selected || w.usedPercent > selected.usedPercent ? w : selected),
+      null,
+    );
+  return {
+    window: mostUsed(
+      normalized.filter(
+        (w) =>
+          w.appliesToSelection &&
+          (w.kind === "session" || (w.kind === "other" && w.id.endsWith(":primary"))),
+      ),
+    ),
+    weekly: mostUsed(
+      normalized.filter(
+        (w) =>
+          w.appliesToSelection &&
+          (w.kind === "weekly" ||
+            w.kind === "monthly" ||
+            (w.kind === "other" && w.id.endsWith(":secondary"))),
+      ),
+    ),
+    windows: normalized.map(({ kind: _kind, ...w }) => w),
+    observedAt: at,
+    expiresAt: DateTime.formatIso(DateTime.makeUnsafe(Date.parse(at) + CAPACITY_MAX_AGE_MS)),
+    source: "native-app-server" as const,
+    ordinaryUsageAllowed: limits.ordinaryUsageAllowed,
+    spendControlReached: limits.spendControlReached,
+    rateLimitReachedType: limits.rateLimitReachedType,
+    credits: limits.credits,
+    resetCredits: limits.resetCredits,
+  };
 }
 
-export function capacitySnapshot(input: { raw: unknown; settings: ServerSettings; providers: ReadonlyArray<ServerProvider>; baseEnv: NodeJS.ProcessEnv; now: number }): StudioCapacitySnapshot {
+export function capacitySnapshot(input: {
+  raw: unknown;
+  settings: ServerSettings;
+  providers: ReadonlyArray<ServerProvider>;
+  baseEnv: NodeJS.ProcessEnv;
+  now: number;
+}): StudioCapacitySnapshot {
   const raw = decodeRaw(input.raw);
   if (Option.isNone(raw)) return unavailableCapacity(input.now, "switch-invalid-response");
   const ids = new Set<string>();
   for (const account of raw.value.accounts) {
-    if (ids.has(account.id) || !account.id.startsWith(`${account.provider}-`)) return unavailableCapacity(input.now, "switch-invalid-response");
+    if (ids.has(account.id) || !account.id.startsWith(`${account.provider}-`))
+      return unavailableCapacity(input.now, "switch-invalid-response");
     ids.add(account.id);
   }
   const mapped = new Map<string, ServerProvider>();
   for (const provider of input.providers) {
-    const binding = nativeCapacityBinding(nativeConfigForInstance(input.settings, provider.instanceId), input.baseEnv);
-    if (binding && nativeSnapshotAuthorized(provider, input.now) && (provider.driver !== "codex" || (provider.usageLimits?.nativeRouteVerified === true && freshObservation(provider.usageLimits.nativeRouteObservedAt, input.now))) && !mapped.has(binding)) mapped.set(binding, provider);
+    const binding = nativeCapacityBinding(
+      nativeConfigForInstance(input.settings, provider.instanceId),
+      input.baseEnv,
+    );
+    if (
+      binding &&
+      nativeSnapshotAuthorized(provider, input.now) &&
+      (provider.driver !== "codex" ||
+        (provider.usageLimits?.nativeRouteVerified === true &&
+          freshObservation(provider.usageLimits.nativeRouteObservedAt, input.now))) &&
+      !mapped.has(binding)
+    )
+      mapped.set(binding, provider);
   }
   const accounts = raw.value.accounts.map((account): StudioCapacityAccount => {
     const provider = mapped.get(account.id);
     const rawQuota = decodeQuota(account.quota);
     const original = Option.isSome(rawQuota) ? rawQuota.value : undefined;
     const native = quotaFromNative(provider, input.now);
-    const useNative = native && (!original?.observedAt || !Number.isFinite(Date.parse(original.observedAt)) || Date.parse(native.observedAt) > Date.parse(original.observedAt));
+    const useNative =
+      native &&
+      (!original?.observedAt ||
+        !Number.isFinite(Date.parse(original.observedAt)) ||
+        Date.parse(native.observedAt) > Date.parse(original.observedAt));
     const q = useNative ? native : original;
-    const nativeDenialAt = provider?.usageLimits?.nativeDenialObservedAt ?? provider?.usageLimits?.nativeAllowanceObservedAt;
-    const newerNativeDenial = nativeQuotaDenied(provider?.usageLimits, input.now)
-      && (provider?.usageLimits?.nativeDenialRequiresFullRead === true
-        || (!!nativeDenialAt && (!q?.observedAt || Date.parse(nativeDenialAt) >= Date.parse(q.observedAt))));
+    const nativeDenialAt =
+      provider?.usageLimits?.nativeDenialObservedAt ??
+      provider?.usageLimits?.nativeAllowanceObservedAt;
+    const newerNativeDenial =
+      nativeQuotaDenied(provider?.usageLimits, input.now) &&
+      (provider?.usageLimits?.nativeDenialRequiresFullRead === true ||
+        (!!nativeDenialAt &&
+          (!q?.observedAt || Date.parse(nativeDenialAt) >= Date.parse(q.observedAt))));
     const metadataAllowed = q?.source === "native-app-server";
-    const ordinaryUsageAllowed = newerNativeDenial && provider?.usageLimits?.ordinaryUsageAllowed === false ? false
-      : metadataAllowed && typeof q?.ordinaryUsageAllowed === "boolean" ? q.ordinaryUsageAllowed : null;
-    const spendControlReached = newerNativeDenial && provider?.usageLimits?.spendControlReached === true ? true
-      : metadataAllowed && typeof q?.spendControlReached === "boolean" ? q.spendControlReached : null;
-    const reached = newerNativeDenial ? provider?.usageLimits?.rateLimitReachedType : metadataAllowed ? q?.rateLimitReachedType : undefined;
-    const rateLimitReachedType = typeof reached === "string" && /^[a-z_]{1,80}$/.test(reached) ? reached : null;
-    const denied = newerNativeDenial || (metadataAllowed && (("denied" in (q ?? {}) && (q as { denied?: boolean }).denied === true) || ordinaryUsageAllowed === false || spendControlReached === true || (rateLimitReachedType !== null && ordinaryUsageAllowed !== true)));
+    const ordinaryUsageAllowed =
+      newerNativeDenial && provider?.usageLimits?.ordinaryUsageAllowed === false
+        ? false
+        : metadataAllowed && typeof q?.ordinaryUsageAllowed === "boolean"
+          ? q.ordinaryUsageAllowed
+          : null;
+    const spendControlReached =
+      newerNativeDenial && provider?.usageLimits?.spendControlReached === true
+        ? true
+        : metadataAllowed && typeof q?.spendControlReached === "boolean"
+          ? q.spendControlReached
+          : null;
+    const reached = newerNativeDenial
+      ? provider?.usageLimits?.rateLimitReachedType
+      : metadataAllowed
+        ? q?.rateLimitReachedType
+        : undefined;
+    const rateLimitReachedType =
+      typeof reached === "string" && /^[a-z_]{1,80}$/.test(reached) ? reached : null;
+    const denied =
+      newerNativeDenial ||
+      (metadataAllowed &&
+        (("denied" in (q ?? {}) && (q as { denied?: boolean }).denied === true) ||
+          ordinaryUsageAllowed === false ||
+          spendControlReached === true ||
+          (rateLimitReachedType !== null && ordinaryUsageAllowed !== true)));
     const decodedCredits = decodeCredits(metadataAllowed ? q?.credits : undefined);
-    const credits = Option.isSome(decodedCredits) ? decodedCredits.value ?? null : null;
+    const credits = Option.isSome(decodedCredits) ? (decodedCredits.value ?? null) : null;
     const decodedResets = decodeResets(metadataAllowed ? q?.resetCredits : undefined);
-    const resetCredits = Option.isSome(decodedResets) ? decodedResets.value ?? null : null;
+    const resetCredits = Option.isSome(decodedResets) ? (decodedResets.value ?? null) : null;
     const extra = decodeExtraWindows(q?.windows);
     const previousExtra = useNative ? decodeExtraWindows(original?.windows) : Option.none();
-    const extraObservedAt = iso(q?.observedAt), previousObservedAt = iso(original?.observedAt);
-    const windows = [...(Option.isSome(extra) ? extra.value.map((w) => ({ ...w, ...(extraObservedAt ? { observedAt: extraObservedAt } : {}) })) : []),
-      ...(Option.isSome(previousExtra) && previousObservedAt ? previousExtra.value.filter((w) => !w.appliesToSelection && !(Option.isSome(extra) && extra.value.some((current) => current.id === w.id))).map((w) => ({ ...w, observedAt: previousObservedAt })) : [])].slice(0, 32);
+    const extraObservedAt = iso(q?.observedAt),
+      previousObservedAt = iso(original?.observedAt);
+    const windows = [
+      ...(Option.isSome(extra)
+        ? extra.value.map((w) => ({
+            ...w,
+            ...(extraObservedAt ? { observedAt: extraObservedAt } : {}),
+          }))
+        : []),
+      ...(Option.isSome(previousExtra) && previousObservedAt
+        ? previousExtra.value
+            .filter(
+              (w) =>
+                !w.appliesToSelection &&
+                !(Option.isSome(extra) && extra.value.some((current) => current.id === w.id)),
+            )
+            .map((w) => ({ ...w, observedAt: previousObservedAt }))
+        : []),
+    ].slice(0, 32);
     const failureAt = account.lastQuotaErrorAt ? Date.parse(account.lastQuotaErrorAt) : NaN;
     // An old Claude error with no quota observation cannot prove a current
     // limit forever. Fresh native authorization permits a deliberate retry;
     // its capacity stays unknown and cannot enter automatic recommendations.
-    const expiredUnobservedClaudeFailure = provider?.driver === "claudeAgent"
-      && Number.isFinite(failureAt) && failureAt < input.now - CAPACITY_MAX_AGE_MS
-      && q !== undefined && !denied && claudeWindowsPermitManualRetry(provider.usageLimits, input.now)
-      && [q.window, q.weekly, q.observedAt, q.expiresAt, q.source, q.ordinaryUsageAllowed,
-        q.spendControlReached, q.rateLimitReachedType, q.credits, q.resetCredits,
-        "denied" in q ? q.denied : undefined].every((value) => value == null)
-      && (q.windows == null || (Array.isArray(q.windows) && q.windows.length === 0));
-    const newerFailure = !expiredUnobservedClaudeFailure && account.lastQuotaErrorAt !== null && account.lastQuotaErrorAt !== undefined && (!Number.isFinite(failureAt) || !q?.observedAt || failureAt >= Date.parse(q.observedAt));
+    const expiredUnobservedClaudeFailure =
+      provider?.driver === "claudeAgent" &&
+      Number.isFinite(failureAt) &&
+      failureAt < input.now - CAPACITY_MAX_AGE_MS &&
+      q !== undefined &&
+      !denied &&
+      claudeWindowsPermitManualRetry(provider.usageLimits, input.now) &&
+      [
+        q.window,
+        q.weekly,
+        q.observedAt,
+        q.expiresAt,
+        q.source,
+        q.ordinaryUsageAllowed,
+        q.spendControlReached,
+        q.rateLimitReachedType,
+        q.credits,
+        q.resetCredits,
+        "denied" in q ? q.denied : undefined,
+      ].every((value) => value == null) &&
+      (q.windows == null || (Array.isArray(q.windows) && q.windows.length === 0));
+    const newerFailure =
+      !expiredUnobservedClaudeFailure &&
+      account.lastQuotaErrorAt !== null &&
+      account.lastQuotaErrorAt !== undefined &&
+      (!Number.isFinite(failureAt) || !q?.observedAt || failureAt >= Date.parse(q.observedAt));
 
-    const current = window(q?.window), weekly = window(q?.weekly);
-    const observedAt = iso(q?.observedAt), expiresAt = iso(q?.expiresAt);
+    const current = window(q?.window),
+      weekly = window(q?.weekly);
+    const observedAt = iso(q?.observedAt),
+      expiresAt = iso(q?.expiresAt);
     const anyWindow = !!current || !!weekly;
-    const expiryValid = !!observedAt && !!expiresAt && Date.parse(expiresAt) > Date.parse(observedAt) && Date.parse(expiresAt) - Date.parse(observedAt) <= 60 * 60 * 1000;
-    const invalidWindow = [q?.window, q?.weekly].some((rawWindow) => rawWindow != null && (!window(rawWindow) || (window(rawWindow)?.resetsAt == null && ordinaryUsageAllowed !== true)));
-    const stale = (!useNative && account.status === "stale") || (!!observedAt && (!freshObservation(observedAt, input.now) || (!!expiresAt && Date.parse(expiresAt) <= input.now) || [current, weekly, ...windows.filter((w) => w.appliesToSelection)].some((w) => w?.resetsAt != null && w.resetsAt * 1000 <= input.now)));
-    const freshness = (!anyWindow && ordinaryUsageAllowed === null && !denied && !credits && !resetCredits) || !observedAt || !q?.source || !expiryValid || invalidWindow ? "unknown" : stale ? "stale" : "fresh";
+    const expiryValid =
+      !!observedAt &&
+      !!expiresAt &&
+      Date.parse(expiresAt) > Date.parse(observedAt) &&
+      Date.parse(expiresAt) - Date.parse(observedAt) <= 60 * 60 * 1000;
+    const invalidWindow = [q?.window, q?.weekly].some(
+      (rawWindow) =>
+        rawWindow != null &&
+        (!window(rawWindow) ||
+          (window(rawWindow)?.resetsAt == null && ordinaryUsageAllowed !== true)),
+    );
+    const stale =
+      (!useNative && account.status === "stale") ||
+      (!!observedAt &&
+        (!freshObservation(observedAt, input.now) ||
+          (!!expiresAt && Date.parse(expiresAt) <= input.now) ||
+          [current, weekly, ...windows.filter((w) => w.appliesToSelection)].some(
+            (w) => w?.resetsAt != null && w.resetsAt * 1000 <= input.now,
+          )));
+    const freshness =
+      (!anyWindow && ordinaryUsageAllowed === null && !denied && !credits && !resetCredits) ||
+      !observedAt ||
+      !q?.source ||
+      !expiryValid ||
+      invalidWindow
+        ? "unknown"
+        : stale
+          ? "stale"
+          : "fresh";
     const kind = account.authKind?.toLowerCase().replace(/[\s_.-]+/g, "");
     let authError: StudioCapacityAccount["authError"] = null;
     if (account.authError === "profile-isolation-unverified") authError = account.authError;
-    else if (account.authError === "subscription-auth-unverified" || kind === "oauthtoken") authError = "subscription-auth-unverified";
-    else if (kind && ["apikey", "bedrock", "vertex", "foundry"].includes(kind)) authError = "api-auth-not-subscription";
-    else if (account.authenticated === true && kind !== (account.provider === "codex" ? "chatgpt" : "claudeai")) authError = "native-auth-unverified";
+    else if (account.authError === "subscription-auth-unverified" || kind === "oauthtoken")
+      authError = "subscription-auth-unverified";
+    else if (kind && ["apikey", "bedrock", "vertex", "foundry"].includes(kind))
+      authError = "api-auth-not-subscription";
+    else if (
+      account.authenticated === true &&
+      kind !== (account.provider === "codex" ? "chatgpt" : "claudeai")
+    )
+      authError = "native-auth-unverified";
     let status: StudioCapacityAccount["status"] = "unknown";
     if (authError || account.status === "blocked" || account.status === "error") status = "blocked";
     else if (account.status === "auth-required") status = "auth-required";
@@ -235,44 +425,132 @@ export function capacitySnapshot(input: { raw: unknown; settings: ServerSettings
       if (account.status === "active") status = "active";
       else if (denied || newerFailure) status = "exhausted";
       else if (freshness === "fresh" && ordinaryUsageAllowed === true && provider) status = "ready";
-      else if ((account.status === "exhausted" && !expiredUnobservedClaudeFailure) || (freshness === "fresh" && [current, weekly].some((w) => w?.usedPercent === 100))) status = "exhausted";
-      else if (freshness === "stale" || (!useNative && account.status === "stale")) status = "stale";
-      else if (freshness === "fresh" && anyWindow && provider && account.status === "ready") status = "ready";
+      else if (
+        (account.status === "exhausted" && !expiredUnobservedClaudeFailure) ||
+        (freshness === "fresh" && [current, weekly].some((w) => w?.usedPercent === 100))
+      )
+        status = "exhausted";
+      else if (freshness === "stale" || (!useNative && account.status === "stale"))
+        status = "stale";
+      else if (freshness === "fresh" && anyWindow && provider && account.status === "ready")
+        status = "ready";
     }
     const limits = provider?.usageLimits;
-    const poolFresh = !!limits?.quotaPoolId && /^codex:sha256:[a-f0-9]{64}$/.test(limits.quotaPoolId) && freshObservation(limits.quotaPoolObservedAt, input.now) && account.authenticated === true && !authError;
-    return { id: account.id, provider: account.provider, label: `${account.provider === "codex" ? "Codex" : "Claude"} ${account.id.split("-")[1]}`,
-      authenticated: account.authenticated, status, authError,
+    const poolFresh =
+      !!limits?.quotaPoolId &&
+      /^codex:sha256:[a-f0-9]{64}$/.test(limits.quotaPoolId) &&
+      freshObservation(limits.quotaPoolObservedAt, input.now) &&
+      account.authenticated === true &&
+      !authError;
+    return {
+      id: account.id,
+      provider: account.provider,
+      label: `${account.provider === "codex" ? "Codex" : "Claude"} ${account.id.split("-")[1]}`,
+      authenticated: account.authenticated,
+      status,
+      authError,
       providerInstanceId: provider?.instanceId ?? null,
-      quotaPoolId: poolFresh ? limits!.quotaPoolId! : null, quotaPoolObservedAt: poolFresh ? iso(limits!.quotaPoolObservedAt) : null,
-      quota: { window: current, weekly, windows, ordinaryUsageAllowed, spendControlReached, rateLimitReachedType, credits, resetCredits, observedAt, expiresAt, source: q?.source ?? null, freshness } };
+      quotaPoolId: poolFresh ? limits!.quotaPoolId! : null,
+      quotaPoolObservedAt: poolFresh ? iso(limits!.quotaPoolObservedAt) : null,
+      quota: {
+        window: current,
+        weekly,
+        windows,
+        ordinaryUsageAllowed,
+        spendControlReached,
+        rateLimitReachedType,
+        credits,
+        resetCredits,
+        observedAt,
+        expiresAt,
+        source: q?.source ?? null,
+        freshness,
+      },
+    };
   });
-  const policy = { mode: raw.value.policy.mode, preferredProvider: raw.value.policy.preferredProvider ?? null,
-    selectedAccount: raw.value.policy.selectedAccount ?? null };
+  const policy = {
+    mode: raw.value.policy.mode,
+    preferredProvider: raw.value.policy.preferredProvider ?? null,
+    selectedAccount: raw.value.policy.selectedAccount ?? null,
+  };
   const recommendations = (["any", "codex", "claude"] as const).map((provider) => {
-    const eligible = accounts.filter((a) => a.status === "ready" && a.providerInstanceId !== null && (provider === "any" || a.provider === provider)
-      && (!policy.selectedAccount || a.id === policy.selectedAccount) && (!policy.preferredProvider || a.provider === policy.preferredProvider));
+    const eligible = accounts.filter(
+      (a) =>
+        a.status === "ready" &&
+        a.providerInstanceId !== null &&
+        (provider === "any" || a.provider === provider) &&
+        (!policy.selectedAccount || a.id === policy.selectedAccount) &&
+        (!policy.preferredProvider || a.provider === policy.preferredProvider),
+    );
     const selectionWindows = (a: StudioCapacityAccount) => {
       const main = a.quota.windows?.filter((w) => w.appliesToSelection) ?? [];
       return main.length ? main : [a.quota.window, a.quota.weekly].filter((w) => w !== null);
     };
-    const used = (a: StudioCapacityAccount) => Math.max(0, ...selectionWindows(a).map((w) => w.usedPercent));
-    const nextReset = (a: StudioCapacityAccount) => Math.min(...selectionWindows(a).flatMap((w) => w.resetsAt && Number.isFinite(new Date(w.resetsAt * 1000).getTime()) ? [w.resetsAt] : []));
+    const used = (a: StudioCapacityAccount) =>
+      Math.max(0, ...selectionWindows(a).map((w) => w.usedPercent));
+    const nextReset = (a: StudioCapacityAccount) =>
+      Math.min(
+        ...selectionWindows(a).flatMap((w) =>
+          w.resetsAt &&
+          Number.isFinite(
+            DateTime.make(w.resetsAt * 1000).pipe(
+              Option.map(DateTime.toEpochMillis),
+              Option.getOrElse(() => Number.NaN),
+            ),
+          )
+            ? [w.resetsAt]
+            : [],
+        ),
+      );
     const sorted = eligible.toSorted((a, b) => {
-      const delta = policy.mode === "reset-first" ? nextReset(a) - nextReset(b) : policy.mode === "spend-first" ? used(b) - used(a) : used(a) - used(b);
-      return delta || (policy.mode === "reset-first" ? used(b) - used(a) : 0) || a.id.localeCompare(b.id);
+      const delta =
+        policy.mode === "reset-first"
+          ? nextReset(a) - nextReset(b)
+          : policy.mode === "spend-first"
+            ? used(b) - used(a)
+            : used(a) - used(b);
+      return (
+        delta || (policy.mode === "reset-first" ? used(b) - used(a) : 0) || a.id.localeCompare(b.id)
+      );
     });
     const selected = sorted[0];
     const reset = selected ? nextReset(selected) : Number.POSITIVE_INFINITY;
-    const priority = policy.selectedAccount ? "Explicit account preference retained" : policy.mode === "reset-first"
-      ? Number.isFinite(reset) ? `Earliest eligible observed reset: ${new Date(reset * 1000).toISOString()}; equal resets prefer more used quota` : "Eligible native permission; next reset unknown"
-      : policy.mode === "spend-first" ? "Most used eligible quota" : "Least used eligible quota";
-    return { provider, id: selected?.id ?? null, providerInstanceId: selected?.providerInstanceId ?? null,
-      reason: selected ? `${priority}. New session only; existing sessions keep their account and provider.` : "No verified native instance has fresh eligible capacity." };
+    const priority = policy.selectedAccount
+      ? "Explicit account preference retained"
+      : policy.mode === "reset-first"
+        ? Number.isFinite(reset)
+          ? `Earliest eligible observed reset: ${DateTime.formatIso(DateTime.makeUnsafe(reset * 1000))}; equal resets prefer more used quota`
+          : "Eligible native permission; next reset unknown"
+        : policy.mode === "spend-first"
+          ? "Most used eligible quota"
+          : "Least used eligible quota";
+    return {
+      provider,
+      id: selected?.id ?? null,
+      providerInstanceId: selected?.providerInstanceId ?? null,
+      reason: selected
+        ? `${priority}. New session only; existing sessions keep their account and provider.`
+        : "No verified native instance has fresh eligible capacity.",
+    };
   });
   const identified = accounts.filter((a) => a.quotaPoolId !== null);
   const pools = new Set(identified.map((a) => a.quotaPoolId));
-  return { schemaVersion: 1, observedAt: new Date(input.now).toISOString(), source: "specweave-switch", scope: "environment-local", available: true, error: null,
-    quotaPoolIdentity: identified.length === 0 ? "unavailable" : identified.length === accounts.filter((a) => a.authenticated === true).length ? "available" : "partial",
-    verifiedQuotaPoolCount: pools.size || null, accounts, policy, recommendations };
+  return {
+    schemaVersion: 1,
+    observedAt: DateTime.formatIso(DateTime.makeUnsafe(input.now)),
+    source: "specweave-switch",
+    scope: "environment-local",
+    available: true,
+    error: null,
+    quotaPoolIdentity:
+      identified.length === 0
+        ? "unavailable"
+        : identified.length === accounts.filter((a) => a.authenticated === true).length
+          ? "available"
+          : "partial",
+    verifiedQuotaPoolCount: pools.size || null,
+    accounts,
+    policy,
+    recommendations,
+  };
 }

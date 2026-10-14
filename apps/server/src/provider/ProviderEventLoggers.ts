@@ -46,7 +46,7 @@ export class ProviderEventLoggers extends Context.Service<
     readonly native: EventNdjsonLogger.EventNdjsonLogger | undefined;
     readonly canonical: EventNdjsonLogger.EventNdjsonLogger | undefined;
   }
->()("studio/provider/ProviderEventLoggers") {}
+>()("specweave-studio/provider/ProviderEventLoggers") {}
 
 /**
  * Constant value used by tests / boot layers that want to opt out of native

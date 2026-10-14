@@ -1,7 +1,9 @@
+import * as DateTime from "effect/DateTime";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native permissions and symlinks independently exercise the secure fleet-file reader.
 import { chmod, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join } from "./nodePath.ts";
 import {
   AuthAccessWriteScope,
   AuthOrchestrationReadScope,
@@ -41,7 +43,9 @@ const fetcher = (id = "environment-m1") =>
     String(url).endsWith("/pairing-token")
       ? Response.json({
           credential: "one-time-synthetic",
-          expiresAt: new Date(Date.now() + 60000).toISOString(),
+          expiresAt: DateTime.formatIso(
+            DateTime.makeUnsafe(DateTime.toEpochMillis(DateTime.nowUnsafe()) + 60000),
+          ),
         })
       : Response.json(descriptor(id)),
   );

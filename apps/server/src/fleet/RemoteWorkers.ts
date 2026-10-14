@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import {
   EnvironmentId,
   ModelSelection,
@@ -578,7 +579,7 @@ const make = Effect.gen(function* () {
         }).pipe(
           Effect.flatMap(Schema.decodeUnknownEffect(Project)),
           Effect.mapError((error) =>
-            error instanceof OrchestratorMcpFailure
+            Schema.is(OrchestratorMcpFailure)(error)
               ? error
               : failure(
                   "project_unavailable_on_machine",
@@ -655,7 +656,9 @@ const make = Effect.gen(function* () {
       `${machine.label} has no provider offering ${selection.model}. studio_machine_list shows its providers and models.`,
     );
 
-  const isoNow = Effect.map(Clock.currentTimeMillis, (millis) => new Date(millis).toISOString());
+  const isoNow = Effect.map(Clock.currentTimeMillis, (millis) =>
+    DateTime.formatIso(DateTime.makeUnsafe(millis)),
+  );
 
   const writeRow = (
     rowId: string,
@@ -946,7 +949,7 @@ const make = Effect.gen(function* () {
         }).pipe(
           Effect.flatMap(Schema.decodeUnknownEffect(Project)),
           Effect.mapError((error) =>
-            error instanceof OrchestratorMcpFailure
+            Schema.is(OrchestratorMcpFailure)(error)
               ? error
               : failure("invalid_request", "The linked project could not be verified."),
           ),

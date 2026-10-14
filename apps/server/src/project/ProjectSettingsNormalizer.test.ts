@@ -250,12 +250,19 @@ it.effect("saves the project's own defaults with the settings a new project has"
         revision: 1,
         coordinatorModelSelection: codex,
       });
-      assert.deepEqual(yield* readSettings(ids.instructions), {
+      // A project created with settings also carries the fleet identity its
+      // creation assigned; normalizing keeps it untouched.
+      const { logicalProject, coordinatorBinding, ...instructions } = (yield* readSettings(
+        ids.instructions,
+      ))!;
+      assert.deepEqual(instructions, {
         ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
         instructions: "Keep answers short.",
         revision: 2,
         coordinatorModelSelection: sonnet,
       });
+      assert.equal(logicalProject?.title, ids.instructions);
+      assert.deepEqual(coordinatorBinding, { epoch: 0, state: "active" });
     }).pipe(Effect.provide(fixture.layer));
   }),
 );
@@ -379,11 +386,13 @@ it.effect("keeps a project model saved after the startup normalizer reads its sh
       yield* seedLegacyProjects;
       const projects = yield* ProjectService.ProjectService;
       fixture.beforeNextSettingsRead(
-        projects.update({
-          projectId: ids.legacy,
-          commandId: CommandId.make("legacy:concurrent-model"),
-          defaultModelSelection: codex,
-        }).pipe(Effect.asVoid, Effect.orDie),
+        projects
+          .update({
+            projectId: ids.legacy,
+            commandId: CommandId.make("legacy:concurrent-model"),
+            defaultModelSelection: codex,
+          })
+          .pipe(Effect.asVoid, Effect.orDie),
       );
       const summary = yield* Normalizer.normalizeProjectModelDefaults([claudeProvider]);
       assert.deepEqual(yield* defaultOf(ids.legacy), codex);
@@ -414,11 +423,13 @@ it.effect("keeps a model saved while a new project's automatic default is resolv
       const projects = yield* ProjectService.ProjectService;
       const projectId = ProjectId.make("concurrent-create-model");
       fixture.beforeNextSettingsRead(
-        projects.update({
-          projectId,
-          commandId: CommandId.make("fresh:concurrent-model"),
-          defaultModelSelection: codex,
-        }).pipe(Effect.asVoid, Effect.orDie),
+        projects
+          .update({
+            projectId,
+            commandId: CommandId.make("fresh:concurrent-model"),
+            defaultModelSelection: codex,
+          })
+          .pipe(Effect.asVoid, Effect.orDie),
       );
       const created = yield* projects.create({
         projectId,

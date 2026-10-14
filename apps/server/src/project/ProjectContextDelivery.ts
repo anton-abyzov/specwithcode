@@ -1,3 +1,6 @@
+import { parseJson, stringifyJson } from "../json.ts";
+import * as Schema from "effect/Schema";
+import * as DateTime from "effect/DateTime";
 import { ProjectWorkspaceError, type ProjectId, type ThreadId } from "@specweave-studio/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -42,13 +45,13 @@ export class ProjectContextDelivery extends Context.Service<
       threadId: ThreadId,
     ) => Effect.Effect<string, ProjectWorkspaceError>;
   }
->()("studio/project/ProjectContextDelivery") {}
+>()("specweave-studio/project/ProjectContextDelivery") {}
 
 // A stale/corrupt receipt cannot justify omitting context. Recover conservatively.
 function decodeSnapshot(value: string | null): ProjectContextSnapshot | null {
   if (value === null) return null;
   try {
-    const decoded: unknown = JSON.parse(value);
+    const decoded: unknown = parseJson(value);
     return Array.isArray(decoded) &&
       decoded.every(
         (section) =>
@@ -70,7 +73,7 @@ const make = Effect.gen(function* () {
   const workspace = yield* Workspace.ProjectWorkspaceService;
   const failure = (projectId: ProjectId) =>
     Effect.mapError((cause: unknown) =>
-      cause instanceof ProjectWorkspaceError
+      Schema.is(ProjectWorkspaceError)(cause)
         ? cause
         : new ProjectWorkspaceError({ projectId, code: "operation_failed" }),
     );
@@ -82,7 +85,7 @@ const make = Effect.gen(function* () {
           // Runtime process/session IDs and model choice do not identify retained native history.
           // Unknown native identity is conservative: no cross-run receipt reuse.
           const key = contextDigest(
-            JSON.stringify([
+            stringifyJson([
               projectId,
               threadId,
               identity.driver,
@@ -115,7 +118,7 @@ const make = Effect.gen(function* () {
             previous.pending_epoch === epoch &&
             previous.pending_text !== null &&
             decodeSnapshot(previous.pending_json) !== null;
-          const snapshotJson = pendingSameRun ? previous.pending_json! : JSON.stringify(next);
+          const snapshotJson = pendingSameRun ? previous.pending_json! : stringifyJson(next);
           const baseline =
             previous?.accepted_json &&
             previous.accepted_epoch === epoch &&
@@ -126,10 +129,10 @@ const make = Effect.gen(function* () {
             ? previous.pending_text!
             : projectContextDelta(projectId, next, baseline);
           yield* sql`INSERT INTO project_context_deliveries (scope_key,project_id,thread_id,accepted_json,accepted_epoch,pending_run_id,pending_json,pending_epoch,pending_text,updated_at)
-      VALUES (${key},${projectId},${threadId},${previous?.accepted_json ?? null},${previous?.accepted_epoch ?? null},${runId},${snapshotJson},${epoch},${text},${new Date().toISOString()})
+      VALUES (${key},${projectId},${threadId},${previous?.accepted_json ?? null},${previous?.accepted_epoch ?? null},${runId},${snapshotJson},${epoch},${text},${DateTime.formatIso(DateTime.nowUnsafe())})
       ON CONFLICT(scope_key) DO UPDATE SET pending_run_id=excluded.pending_run_id,pending_json=excluded.pending_json,pending_epoch=excluded.pending_epoch,pending_text=excluded.pending_text,updated_at=excluded.updated_at`;
           const accepted =
-            sql`UPDATE project_context_deliveries SET accepted_json=pending_json,accepted_epoch=pending_epoch,pending_run_id=NULL,pending_json=NULL,pending_epoch=NULL,pending_text=NULL,updated_at=${new Date().toISOString()}
+            sql`UPDATE project_context_deliveries SET accepted_json=pending_json,accepted_epoch=pending_epoch,pending_run_id=NULL,pending_json=NULL,pending_epoch=NULL,pending_text=NULL,updated_at=${DateTime.formatIso(DateTime.nowUnsafe())}
       WHERE scope_key=${key} AND pending_run_id=${runId} AND pending_json=${snapshotJson} AND pending_epoch=${epoch}`.pipe(
               Effect.asVoid,
               failure(projectId),

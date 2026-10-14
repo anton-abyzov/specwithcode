@@ -1,3 +1,4 @@
+import { stringifyJson } from "../json.ts";
 import {
   CommandId,
   isProviderAvailable,
@@ -362,7 +363,7 @@ export function providerLimitStep(
         instanceId: current.instanceId,
         model: thread.modelSelection.model,
         expectedQuotaPoolId: limits.quotaPoolId!,
-        observedAt: new Date(nowMs).toISOString(),
+        observedAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs)),
       }),
     };
   }
@@ -695,7 +696,7 @@ export const makeSweep = Effect.gen(function* () {
     if (
       next !== null &&
       next.type === step.type &&
-      JSON.stringify(command(next)) === JSON.stringify(command(step))
+      stringifyJson(command(next)) === stringifyJson(command(step))
     )
       return true;
     yield* Effect.logInfo("orchestration-v2.provider-fallback.step-outdated", {

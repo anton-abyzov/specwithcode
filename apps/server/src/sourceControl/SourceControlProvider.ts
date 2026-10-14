@@ -142,4 +142,4 @@ export class SourceControlProvider extends Context.Service<
       readonly force?: boolean;
     }) => Effect.Effect<void, SourceControlProviderError>;
   }
->()("studio/sourceControl/SourceControlProvider") {}
+>()("specweave-studio/sourceControl/SourceControlProvider") {}

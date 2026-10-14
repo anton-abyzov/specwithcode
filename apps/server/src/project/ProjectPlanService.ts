@@ -1,4 +1,6 @@
-import * as NodeCrypto from "node:crypto";
+import { stringifyJson } from "../json.ts";
+import { sha256 } from "../nodeCrypto.ts";
+import * as DateTime from "effect/DateTime";
 import type { ProjectId } from "@specweave-studio/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -70,7 +72,7 @@ export class ProjectPlanService extends Context.Service<
       input: ProjectPlanVerifyInput,
     ) => Effect.Effect<ProjectPlanSnapshot, ProjectPlanError>;
   }
->()("studio/project/ProjectPlanService") {}
+>()("specweave-studio/project/ProjectPlanService") {}
 
 type StoredPlan = { revision: number; document: PlanDocument };
 const isPlanError = Schema.is(ProjectPlanError);
@@ -82,9 +84,7 @@ const isReleaseInput = Schema.is(ProjectPlanReleaseInput);
 const isReportInput = Schema.is(ProjectPlanReportInput);
 const isVerifyInput = Schema.is(ProjectPlanVerifyInput);
 const taskStateHash = (task: ProjectPlanTask) =>
-  NodeCrypto.createHash("sha256")
-    .update(JSON.stringify({ owner: task.owner, status: task.status, note: task.note }))
-    .digest("hex");
+  sha256([stringifyJson({ owner: task.owner, status: task.status, note: task.note })], "hex");
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const projects = yield* ProjectStore.ProjectStoreV2;
@@ -150,16 +150,27 @@ const make = Effect.gen(function* () {
           ? yield* readExternal({
               projectId,
               workspaceRoot: project.workspaceRoot,
+              approvedFolders: project.workspaceSettings?.environment.additionalFolders ?? [],
               authority: document.authority,
             })
           : null;
+      if (external) {
+        const current = yield* requireProject(projectId);
+        if (
+          current.workspaceRoot !== project.workspaceRoot ||
+          current.workspaceSettings?.revision !== project.workspaceSettings?.revision ||
+          JSON.stringify(current.workspaceSettings?.environment.additionalFolders ?? []) !==
+            JSON.stringify(project.workspaceSettings?.environment.additionalFolders ?? [])
+        )
+          return yield* fail(projectId, "source_invalid");
+      }
       return { projectId, revision, ...document, external };
     });
   const persist = (projectId: ProjectId, previous: StoredPlan, document: PlanDocument) =>
     Effect.gen(function* () {
       if (!withinDocumentLimit(document)) return yield* fail(projectId, "invalid");
       const revision = previous.revision + 1;
-      const value = JSON.stringify(document);
+      const value = stringifyJson(document);
       const rows =
         previous.revision === 0
           ? yield* sql`INSERT INTO project_plans (project_id,revision,document_json) VALUES (${projectId},${revision},${value}) ON CONFLICT(project_id) DO NOTHING RETURNING revision`
@@ -220,7 +231,7 @@ const make = Effect.gen(function* () {
         }
         const changed =
           plan.spec !== definition.spec ||
-          JSON.stringify(plan.criteria) !== JSON.stringify(definition.criteria) ||
+          stringifyJson(plan.criteria) !== stringifyJson(definition.criteria) ||
           plan.tasks.length !== definition.tasks.length ||
           definition.tasks.some(
             (task, i) => !plan.tasks[i] || !equalDefinition(plan.tasks[i]!, task),
@@ -252,10 +263,12 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const { projectId, authority } = input;
         if (!isConfigureInput(input)) return yield* fail(projectId, "invalid");
+        if (authority.kind === "specweave" && !path.isAbsolute(authority.root))
+          return yield* fail(projectId, "source_invalid");
         if (input.actor.kind !== "user") return yield* fail(projectId, "forbidden");
         const stored = yield* load(projectId);
         if (stored.revision !== input.expectedRevision) return yield* fail(projectId, "conflict");
-        if (JSON.stringify(stored.document.authority) === JSON.stringify(authority))
+        if (stringifyJson(stored.document.authority) === stringifyJson(authority))
           return yield* snapshot(projectId, stored);
         if (stored.document.native?.tasks.some((task) => task.owner !== null))
           return yield* fail(projectId, "claimed");
@@ -267,7 +280,14 @@ const make = Effect.gen(function* () {
           !input.discardNative
         )
           return yield* fail(projectId, "conflict");
-        const next = { authority, native: authority.kind === "native" ? emptyNative() : null };
+        const normalizedAuthority =
+          authority.kind === "specweave"
+            ? { ...authority, root: yield* fs.realPath(authority.root) }
+            : authority;
+        const next = {
+          authority: normalizedAuthority,
+          native: authority.kind === "native" ? emptyNative() : null,
+        };
         // Validate the configured source before storing its binding; never silently fall back.
         yield* snapshot(projectId, { revision: stored.revision, document: next });
         return yield* snapshot(projectId, yield* persist(projectId, stored, next));
@@ -361,7 +381,7 @@ const make = Effect.gen(function* () {
             taskId: task.id,
             contentRevision: plan.contentRevision,
             taskStateSha256: taskStateHash(task),
-            startedAt: new Date().toISOString(),
+            startedAt: DateTime.formatIso(DateTime.nowUnsafe()),
             finishedAt: null,
             outcome: "unknown",
             command: task.verification,
@@ -405,7 +425,7 @@ const make = Effect.gen(function* () {
         result._tag === "Success"
           ? {
               ...receipt,
-              finishedAt: new Date().toISOString(),
+              finishedAt: DateTime.formatIso(DateTime.nowUnsafe()),
               exitCode: result.success.code === null ? null : Number(result.success.code),
               stdout: result.success.stdout,
               stderr: result.success.stderr,
@@ -414,16 +434,12 @@ const make = Effect.gen(function* () {
                 : result.success.code === 0
                   ? "passed"
                   : "failed",
-              outputSha256: NodeCrypto.createHash("sha256")
-                .update(result.success.stdout)
-                .update("\0")
-                .update(result.success.stderr)
-                .digest("hex"),
+              outputSha256: sha256([result.success.stdout, "\0", result.success.stderr], "hex"),
               truncated: result.success.stdoutTruncated || result.success.stderrTruncated,
             }
           : {
               ...receipt,
-              finishedAt: new Date().toISOString(),
+              finishedAt: DateTime.formatIso(DateTime.nowUnsafe()),
               outcome: "error",
               stderr: "The verification process could not complete.",
             };

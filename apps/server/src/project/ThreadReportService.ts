@@ -1,3 +1,4 @@
+import * as Schema from "effect/Schema";
 /**
  * Thread reports for the project UI: which reports of a thread are saved and
  * where, saving one on request, and saving a delegated worker's long final
@@ -48,7 +49,7 @@ export class ThreadReportService extends Context.Service<
       readonly text: string;
     }) => Effect.Effect<void>;
   }
->()("studio/project/ThreadReportService") {}
+>()("specweave-studio/project/ThreadReportService") {}
 
 export const make = Effect.gen(function* () {
   const projects = yield* ProjectStore.ProjectStoreV2;
@@ -57,7 +58,7 @@ export const make = Effect.gen(function* () {
   const failure =
     (projectId: ProjectId) =>
     (error: unknown): ProjectLibraryError =>
-      error instanceof ProjectLibraryError
+      Schema.is(ProjectLibraryError)(error)
         ? error
         : error instanceof ProjectLibraryProblem
           ? new ProjectLibraryError({ projectId, code: error.code, detail: error.message })

@@ -2,9 +2,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { HostProcessArguments } from "@specweave-studio/shared/hostProcess";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native fixture files independently verify the Effect release-manifest reader.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
+import { nodePath as NodePath } from "../nodePath.ts";
 import { pathToFileURL } from "node:url";
 
 import {

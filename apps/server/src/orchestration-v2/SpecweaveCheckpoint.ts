@@ -6,7 +6,7 @@
  * context handoff, so the receiving model starts from "what to do next".
  */
 import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
+import { nodePath as NodePath } from "../nodePath.ts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 
@@ -86,7 +86,10 @@ export const readSpecweaveCheckpointPreface = Effect.fn("readSpecweaveCheckpoint
     const note = yield* quiet(fs.readFileString(receipt.docPath));
     if (note === null || note.trim().length === 0) return null;
     const max = input.maxChars ?? SPECWEAVE_CHECKPOINT_PREFACE_MAX_CHARS;
-    const body = note.length <= max ? note.trimEnd() : `${note.slice(0, max).trimEnd()}\n[... note truncated; read ${receipt.docPath}]`;
+    const body =
+      note.length <= max
+        ? note.trimEnd()
+        : `${note.slice(0, max).trimEnd()}\n[... note truncated; read ${receipt.docPath}]`;
     return [
       `SpecWeave checkpoint from the previous session in this worktree (saved ${receipt.savedAt}${receipt.incrementId ? `, increment ${receipt.incrementId}` : ""}). Diff: ${receipt.diffPath}`,
       body,

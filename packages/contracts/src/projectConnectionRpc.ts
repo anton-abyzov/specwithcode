@@ -1,3 +1,8 @@
+import {
+  NativeConnectionsInput,
+  NativeConnectionsSnapshot,
+  NativeConnectionsError,
+} from "./nativeConnections.ts";
 import { Rpc } from "effect/rpc";
 import * as Schema from "effect/Schema";
 import { EnvironmentAuthorizationError } from "./auth.ts";
@@ -11,6 +16,7 @@ import {
   ProjectConnection,
 } from "./projectConnections.ts";
 export const PROJECT_CONNECTION_RPC_METHODS = {
+  nativeConnectionsRead: "connections.nativeRead",
   projectsConnectionsRead: "projects.connectionsRead",
   projectsConnectionSave: "projects.connectionSave",
   projectsConnectionCheck: "projects.connectionCheck",
@@ -18,6 +24,11 @@ export const PROJECT_CONNECTION_RPC_METHODS = {
 } as const;
 const error = Schema.Union([ProjectConnectionError, EnvironmentAuthorizationError]);
 export const projectConnectionRpcs = [
+  Rpc.make(PROJECT_CONNECTION_RPC_METHODS.nativeConnectionsRead, {
+    payload: NativeConnectionsInput,
+    success: NativeConnectionsSnapshot,
+    error: Schema.Union([NativeConnectionsError, EnvironmentAuthorizationError]),
+  }),
   Rpc.make(PROJECT_CONNECTION_RPC_METHODS.projectsConnectionsRead, {
     payload: ProjectConnectionsReadInput,
     success: ProjectConnectionsReadResult,

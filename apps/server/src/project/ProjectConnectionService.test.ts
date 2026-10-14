@@ -1,3 +1,4 @@
+import * as NativeDiscovery from "./connections/NativeConnectionDiscovery.ts";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
@@ -418,6 +419,45 @@ it.effect("deletion purges only that project's connection configuration and call
         assert.equal((yield* service.read({ projectId: id }).pipe(Effect.flip)).code, "not_found");
         assert.equal(f.state.calls.length, 2);
       }),
+    );
+  }).pipe(Effect.provide(storage)),
+);
+
+it.effect("discovers only the registered project root and rejects a missing project", () =>
+  Effect.gen(function* () {
+    yield* harness;
+    const roots: Array<string | undefined> = [];
+    const program = Effect.gen(function* () {
+      const service = yield* Connections.ProjectConnectionService;
+      yield* service.discoverNative({ projectId: id });
+      yield* service.discoverNative({});
+      const failed = yield* service
+        .discoverNative({ projectId: ProjectId.make("missing") })
+        .pipe(Effect.flip);
+      assert.equal(failed.code, "project_not_found");
+      assert.deepEqual(roots, [`/tmp/${id}`, undefined]);
+    });
+    yield* program.pipe(
+      Effect.provide(
+        Connections.layerWithDiscovery.pipe(
+          Layer.provide(
+            Layer.mock(NativeDiscovery.NativeConnectionDiscovery)({
+              read: (root) =>
+                Effect.sync(() => {
+                  roots.push(root);
+                  return {
+                    observedAt: "2026-10-14T00:00:00Z",
+                    connections: [],
+                    sources: [],
+                    truncated: false,
+                    runtime: "unverified" as const,
+                  };
+                }),
+            }),
+          ),
+          Layer.provide(Layer.mock(Transport.ProjectConnectionTransport)({})),
+        ),
+      ),
     );
   }).pipe(Effect.provide(storage)),
 );

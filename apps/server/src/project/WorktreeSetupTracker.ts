@@ -84,7 +84,7 @@ export class WorktreeSetupTracker extends Context.Service<
     /** Emits the current snapshot (or null) first, then every change until unsubscribed. */
     readonly stream: (threadId: ThreadId) => Stream.Stream<WorktreeSetupSnapshot | null>;
   }
->()("studio/project/WorktreeSetupTracker") {}
+>()("specweave-studio/project/WorktreeSetupTracker") {}
 
 const TAIL_LINE_LIMIT = 4;
 

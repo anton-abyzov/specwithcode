@@ -1,3 +1,4 @@
+import { ProjectLocation } from "./ProjectLocation";
 import { useEffect, useId, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import {
@@ -12,6 +13,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { randomUUID } from "../../lib/utils";
 import { CharacterCount } from "../ui/character-count";
+import { ProjectEnvironmentImport } from "./ProjectEnvironmentImport";
 
 type EnvironmentDraft = ProjectWorkspaceReadResult["settings"]["environment"];
 export function ProjectEnvironment({
@@ -51,6 +53,12 @@ export function ProjectEnvironment({
     }),
   );
   const prepare = useAtomCommand(projectWorkspace.environmentPrepare);
+  const previewImport = useAtomCommand(projectWorkspace.environmentImportPreview, {
+    reportFailure: false,
+  });
+  const importWorkspace = useAtomCommand(projectWorkspace.environmentImport, {
+    reportFailure: false,
+  });
   const [url, setUrl] = useState("");
   const [folder, setFolder] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -141,7 +149,9 @@ export function ProjectEnvironment({
         <dt>
           {kind === "personal" ? "Managed project storage" : "Execution folder on this machine"}
         </dt>
-        <dd>{project.workspaceRoot}</dd>
+        <dd>
+          <ProjectLocation path={project.workspaceRoot} />
+        </dd>
         <dt>Execution machine</dt>
         <dd>{project.environmentId}</dd>
       </dl>
@@ -177,7 +187,7 @@ export function ProjectEnvironment({
         </p>
         {value.additionalFolders.map((path) => (
           <div className="project-environment-entry" key={path}>
-            <code>{path}</code>
+            <ProjectLocation path={path} />
             <button
               className="project-control"
               disabled={blocked}
@@ -354,6 +364,44 @@ export function ProjectEnvironment({
           repositories. Existing threads retain their current checkout.
         </p>
       </section>
+      {kind === "code" && (
+        <ProjectEnvironmentImport
+          initialRoot={project.workspaceRoot}
+          revision={revision}
+          disabled={blocked || admissionBlocked || dirty}
+          onBusyChange={onBusyChange}
+          onPreview={async (root) => {
+            const result = await previewImport({
+              environmentId: project.environmentId,
+              input: { projectId: project.id, root },
+            });
+            if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+            return result.value;
+          }}
+          onImport={async (preview) => {
+            const result = await importWorkspace({
+              environmentId: project.environmentId,
+              input: {
+                projectId: project.id,
+                root: preview.root,
+                expectedRevision: preview.revision,
+                fingerprint: preview.fingerprint,
+                commandId: CommandId.make(randomUUID()),
+              },
+            });
+            if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+            onPrepared(result.value.revision, {
+              additionalFolders: result.value.additionalFolders,
+              repositories: result.value.repositories.map(({ id, url, localPath }) => ({
+                id,
+                url,
+                localPath,
+              })),
+            });
+            query.refresh();
+          }}
+        />
+      )}
       {navigationBlocked ? (
         <div>
           <button className="project-text-link" disabled>

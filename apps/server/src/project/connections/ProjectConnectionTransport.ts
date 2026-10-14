@@ -31,7 +31,7 @@ export class ProjectConnectionTransport extends Context.Service<
       input: Target & { tool: ProjectConnectionTool; arguments: Record<string, unknown> },
     ) => Effect.Effect<ProjectConnectionCallResult, ConnectionTransportError>;
   }
->()("studio/project/ProjectConnectionTransport") {}
+>()("specweave-studio/project/connections/ProjectConnectionTransport") {}
 
 const safeError = () => new ConnectionTransportError({ reason: "unavailable" });
 const run = <A>(target: Target, action: (client: Client, signal: AbortSignal) => Promise<A>) =>

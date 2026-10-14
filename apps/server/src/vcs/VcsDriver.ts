@@ -78,4 +78,4 @@ export class VcsDriver extends Context.Service<
       input: ReviewDiffPreviewInput,
     ) => Effect.Effect<ReviewDiffPreviewResult, VcsError>;
   }
->()("studio/vcs/VcsDriver") {}
+>()("specweave-studio/vcs/VcsDriver") {}

@@ -5,6 +5,10 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ThreadId, RuntimeRequestId } from "@specweave-studio/contracts";
 import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import { derivePendingUserInputProgress } from "../../pendingUserInput";
+import {
+  ProjectMessageRoutingContext,
+  type ProjectMessageRouting,
+} from "../../studio/projectMessageRouting";
 import { CoordinatorNativeControls } from "./CoordinatorNativeControls";
 const markdown = vi.hoisted(() => ({ props: null as Record<string, unknown> | null }));
 vi.mock("../ChatMarkdown", () => ({
@@ -158,3 +162,64 @@ it("preserves the coordinator host, scoped thread, and checkout for proposed-pla
     headingLevelOffset: 2,
   });
 });
+
+it("closes only after a previously visible final request resolves", async () => {
+  const close = vi.fn();
+  const routing = { onCoordinatorRequestsResolved: close } as unknown as ProjectMessageRouting;
+  const update = () =>
+    act(async () =>
+      root.render(
+        <ProjectMessageRoutingContext value={routing}>
+          <CoordinatorNativeControls {...props} />
+        </ProjectMessageRoutingContext>,
+      ),
+    );
+  await update();
+  expect(close).not.toHaveBeenCalled();
+  props.approvals = [approval];
+  await update();
+  props.approvals = [];
+  props.respondingApprovals = [approval.requestId];
+  await update();
+  expect(close).not.toHaveBeenCalled();
+  props.respondingApprovals = [];
+  await update();
+  expect(close).toHaveBeenCalledOnce();
+  await update();
+  expect(close).toHaveBeenCalledOnce();
+});
+
+it.each(["loading", "disabled", "error", "remaining", "question", "plan"])(
+  "keeps the review open while %s remains",
+  async (condition) => {
+    const close = vi.fn();
+    const routing = { onCoordinatorRequestsResolved: close } as unknown as ProjectMessageRouting;
+    const update = () =>
+      act(async () =>
+        root.render(
+          <ProjectMessageRoutingContext value={routing}>
+            <CoordinatorNativeControls {...props} />
+          </ProjectMessageRoutingContext>,
+        ),
+      );
+    props.approvals = [approval];
+    await update();
+    props.approvals =
+      condition === "remaining" ? [{ ...approval, requestId: RuntimeRequestId.make("b") }] : [];
+    props.loading = condition === "loading";
+    props.disabled = condition === "disabled";
+    props.error = condition === "error" ? "Response failed" : null;
+    props.respondingQuestions = condition === "question" ? [RuntimeRequestId.make("q")] : [];
+    props.planMarkdown = condition === "plan" ? "Proposed work" : null;
+    await update();
+    expect(close).not.toHaveBeenCalled();
+    props.approvals = [];
+    props.loading = false;
+    props.disabled = false;
+    props.error = null;
+    props.respondingQuestions = [];
+    props.planMarkdown = null;
+    await update();
+    expect(close).toHaveBeenCalledOnce();
+  },
+);

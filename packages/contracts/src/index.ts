@@ -84,3 +84,4 @@ export * from "./machineHandoff.ts";
 
 export * from "./logicalProject.ts";
 export * from "./managedUpdates.ts";
+export * from "./muse.ts";

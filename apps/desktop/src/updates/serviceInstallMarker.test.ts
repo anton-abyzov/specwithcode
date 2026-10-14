@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -11,7 +12,7 @@ const NOW = Date.parse("2026-10-12T12:00:00.000Z");
 const HOME = "/home/m4";
 const MARKER = "/home/m4/updates/install-in-progress.json";
 const RECEIPT = "/home/m4/updates/receipts/update-1.0.7-20261012.json";
-const iso = (ms: number) => new Date(ms).toISOString();
+const iso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
 
 const io = (
   files: Readonly<Record<string, string | ServiceInstallMarkerFile>>,

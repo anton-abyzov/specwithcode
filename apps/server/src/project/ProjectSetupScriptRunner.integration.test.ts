@@ -10,6 +10,7 @@ import {
   type TerminalOpenInput,
 } from "@specweave-studio/contracts";
 import { HostProcessEnvironment, HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native child events and PID tracking emulate terminal chunking and lifecycle independently.
 import { spawn } from "node:child_process";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";

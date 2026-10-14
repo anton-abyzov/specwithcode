@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 import {
   CommandId,
@@ -85,7 +86,7 @@ function snapshot(allowed: boolean, id = "codex") {
     usageLimits: {
       ...base.usageLimits!,
       ordinaryUsageAllowed: allowed,
-      nativeAllowanceObservedAt: new Date().toISOString(),
+      nativeAllowanceObservedAt: DateTime.formatIso(DateTime.nowUnsafe()),
       credits: { hasCredits: true, unlimited: false, balance: "5867.0123456789" },
       resetCredits: { availableCount: 3 },
       windows: [
@@ -94,7 +95,9 @@ function snapshot(allowed: boolean, id = "codex") {
           kind: "weekly",
           label: "Weekly",
           usedPercent: 100,
-          resetsAt: new Date(Date.now() + 3600000).toISOString(),
+          resetsAt: DateTime.formatIso(
+            DateTime.makeUnsafe(DateTime.toEpochMillis(DateTime.nowUnsafe()) + 3600000),
+          ),
         },
       ],
     },
@@ -322,16 +325,25 @@ describe("auxiliary generation uses native admission before provider resolution"
     expect(h.calls.raw).toEqual([]);
     expect(h.calls.links).toBe(0);
   });
-  it.each(["timeout", "unavailable"] as const)("rejects %s workspace route checks before raw generation or link resolution", async (routeFailure) => {
-    const h = await harness({ native: snapshot(true), routeFailure });
-    await expect(Effect.runPromise(h.generation.generateThreadTitle({ cwd, message, modelSelection: h.modelSelection })))
-      .rejects.toMatchObject({ _tag: "TextGenerationError", detail: expect.stringContaining(
-        routeFailure === "timeout" ? "route check timed out" : "route check failed",
-      ) });
-    expect(h.calls.resolve).toBe(0);
-    expect(h.calls.raw).toEqual([]);
-    expect(h.calls.links).toBe(0);
-  });
+  it.each(["timeout", "unavailable"] as const)(
+    "rejects %s workspace route checks before raw generation or link resolution",
+    async (routeFailure) => {
+      const h = await harness({ native: snapshot(true), routeFailure });
+      await expect(
+        Effect.runPromise(
+          h.generation.generateThreadTitle({ cwd, message, modelSelection: h.modelSelection }),
+        ),
+      ).rejects.toMatchObject({
+        _tag: "TextGenerationError",
+        detail: expect.stringContaining(
+          routeFailure === "timeout" ? "route check timed out" : "route check failed",
+        ),
+      });
+      expect(h.calls.resolve).toBe(0);
+      expect(h.calls.raw).toEqual([]);
+      expect(h.calls.links).toBe(0);
+    },
+  );
   it("rejects a workspace route mismatch before resolving title links", async () => {
     const h = await harness({ native: snapshot(true), routeVerified: false });
     await expect(
@@ -459,5 +471,6 @@ it("cannot construct the central service without its required admission dependen
     ),
   );
   // @ts-expect-error The required Capacity service is deliberately absent.
+  // @effect-diagnostics-next-line missingEffectContext:off - negative test of the missing-service failure.
   await expect(Effect.runPromise(missingCapacity)).rejects.toThrow(/Capacity/);
 });

@@ -8,8 +8,11 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native launchd updater bootstrap owns subprocess and filesystem lifecycle outside the service runtime.
 import { execFile } from "node:child_process";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native launchd updater bootstrap owns subprocess and filesystem lifecycle outside the service runtime.
 import * as FS from "node:fs";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native launchd updater bootstrap owns subprocess and filesystem lifecycle outside the service runtime.
 import * as Path from "node:path";
 
 import { parseStudioInstallation } from "../backend/localServiceAttach.ts";
@@ -485,7 +488,7 @@ function run(command: string, args: ReadonlyArray<string>, timeout: number): Pro
 
 function writeJsonAtomic(filePath: string, value: unknown) {
   FS.mkdirSync(Path.dirname(filePath), { recursive: true, mode: 0o700 });
-  const temporary = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  const temporary = `${filePath}.${process.pid}.${DateTime.toEpochMillis(DateTime.nowUnsafe())}.tmp`;
   FS.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
   FS.renameSync(temporary, filePath);
 }

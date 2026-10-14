@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
-import * as NodeFS from "node:fs";
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
+import * as FileSystem from "effect/FileSystem";
+import * as Effect from "effect/Effect";
 import { act } from "react";
 import { describe, expect, it } from "vite-plus/test";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
@@ -108,7 +110,12 @@ describe("project coordinator surface", () => {
     expect(container.textContent).not.toContain("Ship the Atlas importer");
     expect(container.querySelector("button[aria-label='Edit project goal']")).toBeNull();
     // The operator docs describe the same project view.
-    const docs = NodeFS.readFileSync(repoFile("docs/studio/project-orchestration.md"), "utf8");
+    const docPath = await repoFile("docs/studio/project-orchestration.md");
+    const docs = await Effect.runPromise(
+      Effect.flatMap(FileSystem.FileSystem, (fs) => fs.readFileString(docPath)).pipe(
+        Effect.provide(NodeFileSystem.layer),
+      ),
+    );
     expect(docs).not.toMatch(/goal in a strip|strip above the conversation/i);
     expect(docs).toContain("Set or edit it under **Goal** in the project settings");
   });

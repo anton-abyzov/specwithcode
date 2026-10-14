@@ -25,7 +25,7 @@ export class Scheduler extends Context.Service<
      */
     readonly heldMsBetween?: (fromMs: number, toMs: number) => Effect.Effect<number>;
   }
->()("studio/scheduling/Scheduler") {}
+>()("specweave-studio/scheduling/Scheduler") {}
 
 const make = Effect.gen(function* () {
   const sources = yield* Ref.make(new Map<symbol, Effect.Effect<void>>());

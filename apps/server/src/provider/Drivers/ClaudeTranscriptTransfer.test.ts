@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -62,9 +63,15 @@ it.effect("moves the newer transcript back after the other home ran the session"
     yield* transferClaudeTranscript({ fromHome, toHome, sessionId: "sess-1" });
     const inB = path.join(toHome, "projects", SLUG, "sess-1.jsonl");
     yield* fs.writeFileString(inB, '{"type":"user"}\n{"type":"assistant"}\n');
-    const later = new Date(Date.now() + 5_000);
+    const later = DateTime.toDateUtc(
+      DateTime.makeUnsafe(DateTime.toEpochMillis(DateTime.nowUnsafe()) + 5_000),
+    );
     yield* fs.utimes(inB, later, later);
-    const back = yield* transferClaudeTranscript({ fromHome: toHome, toHome: fromHome, sessionId: "sess-1" });
+    const back = yield* transferClaudeTranscript({
+      fromHome: toHome,
+      toHome: fromHome,
+      sessionId: "sess-1",
+    });
     assert.equal(back.status, "copied");
     assert.equal(
       yield* fs.readFileString(path.join(fromHome, "projects", SLUG, "sess-1.jsonl")),
@@ -76,10 +83,9 @@ it.effect("moves the newer transcript back after the other home ran the session"
 it.effect("reports a missing transcript and refuses unsafe session ids", () =>
   Effect.gen(function* () {
     const { fromHome, toHome } = yield* homes;
-    assert.deepEqual(
-      yield* transferClaudeTranscript({ fromHome, toHome, sessionId: "sess-2" }),
-      { status: "missing" },
-    );
+    assert.deepEqual(yield* transferClaudeTranscript({ fromHome, toHome, sessionId: "sess-2" }), {
+      status: "missing",
+    });
     assert.equal(yield* findClaudeTranscript({ home: fromHome, sessionId: "../sess-1" }), null);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

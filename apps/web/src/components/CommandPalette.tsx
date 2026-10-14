@@ -1,5 +1,7 @@
 "use client";
 
+import { ProjectCreationAction } from "./studio/ProjectCreationAction";
+
 import {
   findPersonalAssistant,
   personalAssistantCreationEnvironment,
@@ -3089,7 +3091,7 @@ function OpenCommandPaletteDialog(props: {
     startAddProjectSourceSelection(environmentId);
   };
   const switchNewProjectEnvironment = (environmentId: EnvironmentId) => {
-    folderChoice.reset();
+    if (environmentId !== newProjectFlow?.environmentId) folderChoice.reset();
     setNewProjectFlow((flow) => (flow === null ? flow : { ...flow, environmentId }));
     setAddProjectEnvironmentId(environmentId);
   };
@@ -3505,34 +3507,7 @@ function OpenCommandPaletteDialog(props: {
   ]);
 
   const inputAccessory =
-    newProjectFlow !== null ? (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              variant="outline"
-              size="xs"
-              tabIndex={-1}
-              className="absolute inset-e-2.5 top-1/2 -translate-y-1/2"
-              aria-label="Create (Enter)"
-              disabled={!canSubmitNewProject}
-              onMouseDown={(event) => {
-                event.preventDefault();
-              }}
-              onClick={() => {
-                void submitNewProject();
-              }}
-            />
-          }
-        >
-          <span>{isCreatingNewProject ? "Creating" : "Create"}</span>
-          <KbdGroup className="pointer-events-none -me-0.5">
-            <Kbd>Enter</Kbd>
-          </KbdGroup>
-        </TooltipTrigger>
-        <TooltipPopup side="top">Create (Enter)</TooltipPopup>
-      </Tooltip>
-    ) : addProjectCloneFlow?.step === "repository" ? (
+    newProjectFlow !== null ? null : addProjectCloneFlow?.step === "repository" ? (
       <Tooltip>
         <TooltipTrigger
           render={
@@ -3640,11 +3615,24 @@ function OpenCommandPaletteDialog(props: {
       footerActionLabel={footerActionLabel}
       footerTrailing={footerTrailing}
       inputAccessory={inputAccessory}
+      primaryAction={
+        newProjectFlow !== null ? (
+          <ProjectCreationAction
+            kind={newProjectFlow.kind}
+            hasName={newProjectName.length > 0}
+            hasFolder={folderChoice.path !== null}
+            canCreate={canCreateProject}
+            connected={canCreateProjectInEnvironment(browseEnvironment?.connection.phase)}
+            busy={isCreatingNewProject}
+            onCreate={() => void submitNewProject()}
+          />
+        ) : null
+      }
       inputProps={{
         // The submit button is absolutely positioned over the field, so the
         // inner input must reserve enough room for the full action label.
         className:
-          addProjectCloneFlow?.step === "repository" || newProjectFlow !== null
+          addProjectCloneFlow?.step === "repository"
             ? "*:data-[slot=autocomplete-input]:pe-32!"
             : isBrowsing
               ? browseInputEndPaddingClass({
@@ -3653,6 +3641,13 @@ function OpenCommandPaletteDialog(props: {
                 })
               : undefined,
         placeholder: inputPlaceholder,
+        ...(newProjectFlow !== null
+          ? {
+              "aria-label": "Project name",
+              onClick: clearTypedHighlight,
+              onFocus: clearTypedHighlight,
+            }
+          : {}),
         ...(isSubmenu
           ? {
               startAddon: (

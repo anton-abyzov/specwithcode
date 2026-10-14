@@ -36,7 +36,7 @@ export class UsageLimitAvailability extends Context.Service<
     ) => Effect.Effect<NonNullable<OrchestrationV2LimitAvailability["affinity"]> | null>;
     readonly check: (thread: Projections.ProjectionLimitRecoveryCandidate) => Effect.Effect<Result>;
   }
->()("studio/orchestration-v2/UsageLimitAvailability") {}
+>()("specweave-studio/orchestration-v2/UsageLimitAvailability") {}
 
 const fingerprint = (key: string) => createHash("sha256").update(key).digest("hex");
 const pool = (provider: ServerProvider | undefined) => {
@@ -126,8 +126,8 @@ export const layer = Layer.effect(
           codex: true,
           mayResume: status === "allowed",
           observation: {
-            checkedAt: new Date(at).toISOString(),
-            retryAt: new Date(at + LIMIT_CHECK_INTERVAL_MS).toISOString(),
+            checkedAt: DateTime.formatIso(DateTime.makeUnsafe(at)),
+            retryAt: DateTime.formatIso(DateTime.makeUnsafe(at + LIMIT_CHECK_INTERVAL_MS)),
             threadUpdatedAt: DateTime.formatIso(thread.updatedAt),
             status,
             ...(identity ? { affinity: identity } : {}),

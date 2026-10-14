@@ -10,7 +10,7 @@ describe("managed update destination commands", () => {
     for (const tag of [WS_METHODS.managedUpdatesEnroll, WS_METHODS.managedUpdatesRevoke]) {
       const scopes = clientRpcRequiredScopes(tag, {});
       expect(scopes).toEqual(["access:write", "environment:maintain"]);
-      expect(scopes.every((scope) => AuthStandardClientScopes.includes(scope))).toBe(false);
+      expect(scopes.every((scope) => AuthStandardClientScopes.some((allowed) => allowed === scope))).toBe(false);
     }
     expect(clientRpcRequiredScopes(WS_METHODS.managedUpdatesCheck, {})).toEqual([
       "environment:maintain",

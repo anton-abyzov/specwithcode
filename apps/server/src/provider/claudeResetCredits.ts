@@ -1,3 +1,4 @@
+import { sha256 } from "../nodeCrypto.ts";
 /**
  * Claude banked resets (the CLI's `cedar_ember` program). The CLI reads the
  * grants from the OAuth usage endpoint and claims one against the
@@ -7,8 +8,8 @@
  *
  * @module provider/claudeResetCredits
  */
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Preserve the native Keychain subprocess timeout, bounded output, and exit-code contract.
 import * as NodeChildProcess from "node:child_process";
-import * as NodeCrypto from "node:crypto";
 import * as NodeOS from "node:os";
 import type {
   ProviderConsumeResetCreditOutcome,
@@ -187,9 +188,7 @@ export interface ClaudeLogin {
 export const claudeKeychainService = (keychainConfigDir: string | undefined) =>
   keychainConfigDir === undefined
     ? "Claude Code-credentials"
-    : `Claude Code-credentials-${NodeCrypto.createHash("sha256")
-        .update(keychainConfigDir.normalize("NFC"))
-        .digest("hex")
+    : `Claude Code-credentials-${sha256([keychainConfigDir.normalize("NFC")], "hex")
         .slice(0, 8)}`;
 
 const KEYCHAIN_ITEM_MISSING = 44;
