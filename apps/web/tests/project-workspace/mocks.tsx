@@ -1,6 +1,7 @@
-import { Option } from "effect";
+import { SelectedThreadShell, resolveSelectedThreadShell } from "../../src/state/selectedThreadShell";
+import { Option, DateTime } from "effect";
 import { AsyncResult, Atom } from "effect/reactivity";
-import React, { useState } from "react";
+import React, { useState, useSyncExternalStore, useContext } from "react";
 
 /* Exports of stubbed modules this fixture never exercises: a callable that
    returns itself for any call or property, so module wiring loads. */
@@ -227,7 +228,7 @@ const shell = (id, title, extra = {}) => ({
   modelSelection: { instanceId: "codex", model: "Native Codex worker" },
   ...extra,
 });
-const shells = recovery
+let shells = recovery
   ? [
       shell("coord", "Project coordinator", {
         latestRun: { runId: recoveryFailureId, status: "failed" },
@@ -277,6 +278,24 @@ const shells = recovery
           shell("resolved", "Fix history pagination", { settledOverride: "settled" }),
           shell("archived", "Initial exploration", { archivedAt: "2026-10-08T00:00:00Z" }),
         ];
+const resolutionFixture = new URLSearchParams(window.location.search).has("resolution");
+if (resolutionFixture) shells = [
+  shell("coord", "Project coordinator"),
+  shell("failed-worker", "Failed worker", { createdBy: "agent", runtime: { status: "failed", lastErrorClass: "provider_error" } }),
+  shell("limited-worker", "Limited worker", { createdBy: "agent", runtime: { status: "failed", lastErrorClass: "usage_limit" } }),
+];
+const historyFixture = new URLSearchParams(window.location.search).has("history");
+let historyShells = historyFixture ? [shell("legacy-history", "Completed investigation", {
+  createdBy: "agent", archivedAt: "2026-10-08T00:00:00Z", settledOverride: "settled",
+})] : [];
+const shellListeners = new Set<() => void>();
+const subscribeShells = (listener: () => void) => { shellListeners.add(listener); return () => { shellListeners.delete(listener); }; };
+function settleFixture(ref, settledOverride) {
+  if (!resolutionFixture) return;
+  shells = shells.map((s) => s.id === ref.threadId ? { ...s, settledOverride } : s);
+  shellListeners.forEach((notify) => notify());
+  return { _tag: "Success", value: undefined };
+}
 // `?machines`: the project is also checked out on a second machine, so the coordinator machine is a choice.
 const machineLabels = { host: "M4 Max", m1: "M1" };
 const otherMachineProject = { ...project, id: "project-m1", environmentId: "m1" };
@@ -293,7 +312,7 @@ export const useSettingsProjectGroups = () => [
   },
 ];
 export const useProjects = () => memberProjects;
-export const useThreadShells = () => shells;
+export const useThreadShells = () => useSyncExternalStore(subscribeShells, () => shells);
 export const readThreadShells = () => shells;
 const activityItem = (id, runId, ordinal, type, fields = {}) => ({
   id,
@@ -712,9 +731,17 @@ export const serverEnvironment = {
 };
 export const threadEnvironment = { loadEarlierHistory: "history" };
 export const useThreadActions = () => ({
-  settleThread: () => {},
-  unsettleThread: () => {},
-  unarchiveThread: () => {},
+  settleThread: (ref) => settleFixture(ref, "settled"),
+  unsettleThread: (ref) => settleFixture(ref, "active"),
+  unarchiveThread: (ref) => {
+    const restored = historyShells.find(s => s.id === ref.threadId);
+    if (restored) {
+      historyShells = historyShells.filter(s => s.id !== ref.threadId);
+      shells = [...shells, { ...restored, archivedAt: null }];
+      shellListeners.forEach(notify => notify());
+    }
+    return { _tag: "Success", value: undefined };
+  },
 });
 export const isElectron = false;
 export const useNavigate = () => () => {};
@@ -769,11 +796,14 @@ function ThreadRightPanelFixture({ environmentId, threadId }) {
 }
 export function NativeThreadFixture({ environmentId, threadId }) {
   const routing = useProjectMessageRouting();
+  const selected = useContext(SelectedThreadShell);
+  const live = useThreadShells().find(s => s.environmentId === environmentId && s.id === threadId) ?? null;
+  const readable = resolveSelectedThreadShell({ environmentId, threadId }, live, selected);
   const [prompt, setPrompt] = useState("");
   return (
     <div className="flex flex-col p-5 gap-4">
       <small>Native thread fixture · {threadId}</small>
-      <p>Thread history and provider controls remain independent.</p>
+      {historyFixture ? <p data-history-readable={!!readable}>{readable ? "Saved investigation: the calculator result was verified." : "No active thread"}</p> : <p>Thread history and provider controls remain independent.</p>}
       <ThreadRightPanelFixture environmentId={environmentId} threadId={threadId} />
       <form
         className="mt-auto"
@@ -839,7 +869,15 @@ export function MarkdownFixture({ text, renderContextReference, renderThreadLink
   );
 }
 
-export const useArchivedThreadSnapshots = () => ({ snapshots: [], error: null });
+export const useArchivedThreadSnapshots = () => {
+  const history = useSyncExternalStore(subscribeShells, () => historyShells);
+  return { snapshots: history.length ? [{ environmentId: "host", snapshot: { threads: history.map(s => ({ ...s,
+      createdAt: DateTime.makeUnsafe(s.createdAt ?? s.updatedAt), updatedAt: DateTime.makeUnsafe(s.updatedAt),
+      archivedAt: DateTime.makeUnsafe(s.archivedAt), deletedAt: null, settledAt: null, latestRunId: null,
+      latestUserMessageAt: null, activeProviderThreadId: null, pendingRuntimeRequest: null, status: "idle",
+    })) } }] : [],
+    error: null, isLoading: false, refresh: () => {} };
+};
 
 export const useAssetUrlState = () => ({ _tag: "Loading" });
 export const useAssetUrlRefresh = () => async () => null;

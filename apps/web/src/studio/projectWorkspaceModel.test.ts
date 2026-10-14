@@ -45,7 +45,13 @@ describe("Project thread lifecycle", () => {
       projectThreadGroup(
         thread({ archivedAt: "2026-10-09T00:00:00Z", settledOverride: "settled" }),
       ),
-    ).toBe("Archived");
+    ).toBe("Resolved");
+  });
+  it.each(["usage_limit", "provider_error"])("resolves historical %s failures until reopened", (lastErrorClass) => {
+    const failed = thread({ runtime: { status: "failed", lastErrorClass } as EnvironmentThreadShell["runtime"] });
+    expect(projectThreadGroup(failed)).toBe("Waiting on you");
+    expect(projectThreadGroup({ ...failed, settledOverride: "settled" })).toBe("Resolved");
+    expect(projectThreadGroup({ ...failed, settledOverride: "active" })).toBe("Waiting on you");
   });
   it("prioritizes real attention above resolution and runtime", () => {
     expect(

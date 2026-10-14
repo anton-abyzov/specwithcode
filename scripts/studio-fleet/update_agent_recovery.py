@@ -101,20 +101,24 @@ def check(agent):
     ranked = []
     seen = set()
     installed = ua.version_tuple(agent.inst['version'])
+    current_present = False
     for release in releases:
         if not isinstance(release, dict) or release.get('draft'):
             continue
         version = ua.tag_version(release.get('tag_name'))
-        if version is None or ua.version_tuple(version) <= installed:
+        if version is None or ua.version_tuple(version) < installed:
             continue
         ua._refuse_if(version in seen, 'The release feed contains ambiguous duplicate versions')
         seen.add(version)
-        ranked.append((ua.version_tuple(version), release))
+        if ua.version_tuple(version) == installed:
+            current_present = True
+        else:
+            ranked.append((ua.version_tuple(version), release))
     ranked.sort(key=lambda item: item[0], reverse=True)
     agent.state['checkedAt'] = ua.iso(ua.utcnow())
     if not ranked:
         agent.clear_available()
-        if len(releases) == FEED_LIMIT:
+        if len(releases) == FEED_LIMIT and not current_present:
             raise ua.ManualRequired('Discovery is limited to the newest 30 releases; no newer supported '
                                     'release was found. Check the release feed or upgrade manually.')
         return None

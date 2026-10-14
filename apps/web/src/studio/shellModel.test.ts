@@ -323,14 +323,15 @@ describe("a project's Threads pane", () => {
       ["Waiting on you", ["ask"]],
       ["Working", ["busy"]],
       ["Idle", ["idle-new", "idle-old"]],
-      ["Resolved", ["done"]],
-      ["Archived", ["stored"]],
+      ["Resolved", ["done", "stored"]],
     ]);
   });
-  it("keeps an empty Waiting on you heading and drops other empty ones", () => {
+  it("shows every lifecycle heading even when empty", () => {
     expect(buildThreadPaneGroups([thread()], "activity").map((g) => g.group)).toEqual([
       "Waiting on you",
+      "Working",
       "Idle",
+      "Resolved",
     ]);
   });
   it("sorts inside a heading by the chosen order and narrows by title", () => {
@@ -412,5 +413,16 @@ describe("a project's Threads pane", () => {
     expect(compactAge(ago(21 * 86_400_000), now)).toBe("3w");
     expect(compactAge(ago(90 * 86_400_000), now)).toBe("3mo");
     expect(compactAge("nope", now)).toBe("");
+  });
+});
+
+
+describe("resolved historical failures", () => {
+  it.each(["usage_limit", "provider_error"])("removes %s attention and status wording", (lastErrorClass) => {
+    const resolved = thread({ settledOverride: "settled", runtime: { status: "failed", lastErrorClass } as EnvironmentThreadShell["runtime"] });
+    expect(waitingCount([resolved])).toBe(0);
+    expect(threadTone(resolved)).toBe("resolved");
+    expect(threadStatusWord(resolved)).toBeNull();
+    expect(waitingCount([{ ...resolved, settledOverride: "active" }])).toBe(1);
   });
 });

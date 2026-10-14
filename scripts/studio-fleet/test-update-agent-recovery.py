@@ -101,24 +101,65 @@ class IntermediateRecovery(RecoveryCase):
     def test_no_compatible_chain_explains_the_bounded_feed(self):
         self.fake.add_release('0.4.0', from_sources=(fixture.NEW_COMMIT,))
         self.fake.add_release('0.3.0', from_sources=(fixture.OTHER_COMMIT,))
+        self.fake.releases += [{'tag_name': 'v0.1.4'}] + [
+            {'tag_name': 'v0.0.%d' % number} for number in range(27)]
         self.run_agent()
         self.assertEqual(self.state()['status'], 'manual-required')
         self.assertIn('newest 30 releases', self.state()['message'])
         self.assertEqual(self.apply_calls(), [])
 
-    def test_a_full_feed_without_a_newer_release_is_not_claimed_up_to_date(self):
-        self.fake.releases = [{'tag_name': 'v0.1.4'} for _ in range(30)]
-        self.run_agent()
-        self.assertEqual(self.state()['status'], 'manual-required')
-        self.assertIn('newest 30', self.state()['message'])
+    def test_full_feed_with_current_plain_version_records_a_successful_check(self):
+        for prerelease in (False, True):  # Plain tags count even when GitHub marks a release prerelease.
+            with self.subTest(prerelease=prerelease):
+                self.fake.releases = [{'tag_name': 'v0.0.%d' % number} for number in range(29)] + [
+                    {'tag_name': 'v0.1.4', 'draft': False, 'prerelease': prerelease}]
+                self.config(checkRequestedAt=update_agent.iso(update_agent.utcnow()))
+                state = update_agent.blank_state()
+                state.update(availableVersion='0.2.0', availableTag='v0.2.0', downloadedVersion='0.2.0')
+                self.save_state(state)
+                self.assertEqual(self.run_agent(), 0)
+                state = self.state()
+                self.assertEqual(state['status'], 'up-to-date')
+                self.assertIsNotNone(update_agent.parse_time(state['checkedAt']))
+                self.assertIsNone(state['message'])
+                for key in ('availableVersion', 'availableTag', 'downloadedVersion'):
+                    self.assertIsNone(state[key])
+                requests = len(self.fake.requests)
+                self.run_agent()
+                self.assertEqual(len(self.fake.requests), requests)  # Successful checks keep their hourly cadence.
         self.assertEqual(self.apply_calls(), [])
+        self.assertEqual(self.fake.blob_requests(), [])
+
+    def test_a_full_feed_without_the_current_plain_release_remains_incomplete(self):
+        for unknown in ({'tag_name': 'v0.0.29'}, {'tag_name': 'v0.1.4', 'draft': True},
+                        {'tag_name': 'v0.1.4-beta.1'}, {'tag_name': 'v0.1.4-nightly'}):
+            with self.subTest(unknown=unknown):
+                self.fake.releases = [{'tag_name': 'v0.0.%d' % number} for number in range(29)] + [unknown]
+                self.run_agent()
+                self.assertEqual(self.state()['status'], 'manual-required')
+                self.assertIn('newest 30', self.state()['message'])
+                self.assertIsNone(self.state()['checkedAt'])
+                self.assertEqual(self.apply_calls(), [])
         self.fake.releases.append({'tag_name': 'v0.2.0'})
         self.run_agent()
         self.assertEqual(self.state()['status'], 'error')  # Refuse an unbounded API response.
 
+    def test_duplicate_current_or_newer_versions_do_not_prove_a_complete_feed(self):
+        for version in ('0.1.4', '0.2.0'):
+            with self.subTest(version=version):
+                self.fake.releases = [{'tag_name': 'v0.0.%d' % number} for number in range(28)] + [
+                    {'tag_name': 'v' + version}, {'tag_name': 'v' + version}]
+                self.run_agent()
+                self.assertEqual(self.state()['status'], 'error')
+                self.assertIn('ambiguous duplicate versions', self.state()['message'])
+                self.assertIsNone(self.state()['checkedAt'])
+                self.assertEqual(self.apply_calls(), [])
+
     def test_malformed_or_missing_plan_and_checksum_errors_do_not_skip_to_an_older_release(self):
         newest = self.fake.add_release('0.3.0', from_sources=(fixture.NEW_COMMIT,))['release']
         self.fake.add_release()
+        self.fake.releases += [{'tag_name': 'v0.1.4'}] + [
+            {'tag_name': 'v0.0.%d' % number} for number in range(27)]
         self.config(quietMinutes=0)
         plan = next(asset for asset in newest['assets'] if asset['name'] == update_agent.PLAN_ASSET)
         sums = next(asset for asset in newest['assets'] if asset['name'] == update_agent.SUMS_ASSET)
@@ -157,6 +198,8 @@ class IntermediateRecovery(RecoveryCase):
     def test_corrupt_highest_supported_archive_is_held_not_downgraded(self):
         self.fake.add_release('0.3.0', corrupt_runtime=True)
         self.fake.add_release()
+        self.fake.releases += [{'tag_name': 'v0.1.4'}] + [
+            {'tag_name': 'v0.0.%d' % number} for number in range(27)]
         self.config(quietMinutes=0)
         self.run_agent()
         self.assertEqual(self.state()['availableVersion'], '0.3.0')

@@ -12,6 +12,8 @@ import {
 import type { ScopedProjectRef, ScopedThreadRef, ServerConfig } from "@specweave-studio/contracts";
 import type { EnvironmentId, OrchestrationV2ProjectedTurnItem } from "@specweave-studio/contracts";
 import { Atom } from "effect/reactivity";
+import { useContext } from "react";
+import { SelectedThreadShell, resolveSelectedThreadShell } from "./selectedThreadShell";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom } from "./server";
@@ -112,9 +114,11 @@ export function useProject(ref: ScopedProjectRef | null): EnvironmentProject | n
 }
 
 export function useThreadShell(ref: ScopedThreadRef | null): EnvironmentThreadShell | null {
-  return useAtomValue(
+  const selected = useContext(SelectedThreadShell);
+  const live = useAtomValue(
     ref === null ? EMPTY_THREAD_SHELL_ATOM : environmentThreadShells.threadShellAtom(ref),
   );
+  return resolveSelectedThreadShell(ref, live, selected);
 }
 
 export function useThreadProjection(ref: ScopedThreadRef | null): EnvironmentThread | null {

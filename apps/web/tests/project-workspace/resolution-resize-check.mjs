@@ -1,0 +1,56 @@
+import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import { pathToFileURL } from "node:url";
+const { chromium } = await import(pathToFileURL(process.env.PLAYWRIGHT_MODULE).href);
+const output = process.env.PROJECT_UI_OUTPUT ?? "/tmp/studio-resolution-resize";
+await fs.mkdir(output, { recursive: true });
+const browser = await chromium.launch({ headless: true, executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH });
+try {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  const errors = [];
+  page.on("pageerror", e => errors.push(e.message));
+  await page.goto(`http://127.0.0.1:${process.env.PROJECT_UI_PORT ?? 5799}/?resolution&routed`);
+  const group = name => page.locator(`.sws-thread-group[data-group="${name}"]`);
+  const row = id => page.locator(`.sws-thread-row[data-thread-id="${id}"]`);
+  await row("failed-worker").waitFor();
+  assert.deepEqual(await page.locator(".sws-thread-group").evaluateAll(nodes => nodes.map(n => n.dataset.group)), ["Waiting on you", "Working", "Idle", "Resolved"]);
+  for (const id of ["failed-worker", "limited-worker"]) {
+    await row(id).getByRole("button", { name: "Resolve", exact: true }).click();
+    await group("Resolved").locator(`[data-thread-id="${id}"]`).waitFor();
+    assert.equal(await group("Waiting on you").locator(`[data-thread-id="${id}"]`).count(), 0);
+    assert.equal(await row(id).locator(".sws-thread-status").count(), 0);
+  }
+  assert.match(await page.locator(".sws-threads-head").innerText(), /Nothing is waiting on you/);
+  await page.screenshot({ path: `${output}/resolved.png` });
+  await row("failed-worker").getByRole("button", { name: "Reopen", exact: true }).click();
+  await group("Waiting on you").locator('[data-thread-id="failed-worker"]').waitFor();
+  const panel = page.locator("#project-threads-pane");
+  const divider = page.getByRole("separator", { name: "Resize project panel" });
+  const width = async () => (await panel.boundingBox()).width;
+  const before = await width();
+  const box = await divider.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + 200);
+  await page.mouse.down();
+  await page.mouse.move(box.x - 120, box.y + 200, { steps: 10 });
+  await page.mouse.up();
+  const after = await width();
+  assert.ok(after > before + 100, `${before} -> ${after}`);
+  await page.reload();
+  await divider.waitFor();
+  assert.equal(await width(), after);
+  await page.screenshot({ path: `${output}/resized.png` });
+  await row("failed-worker").locator(".sws-thread-open").click();
+  assert.equal(await width(), after, "opened worker keeps panel width");
+  await page.getByRole("button", { name: "Expand panel", exact: true }).click();
+  assert.equal(await divider.count(), 0);
+  await page.getByRole("button", { name: "Restore panel", exact: true }).click();
+  assert.equal(await width(), after);
+  await page.setViewportSize({ width: 900, height: 900 });
+  await page.waitForFunction(() => document.querySelector('#project-threads-pane').getBoundingClientRect().width <= document.querySelector('.sws-columns').clientWidth - 359);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForFunction(() => !document.querySelector('.sws-project-divider'));
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await page.screenshot({ path: `${output}/mobile.png` });
+  assert.deepEqual(errors, []);
+  await fs.writeFile(`${output}/receipt.json`, JSON.stringify({ headless: true, before, after, checks: ["all groups", "resolve failures and limits", "reopen", "waiting badge", "drag", "reload", "worker", "expand", "clamp", "mobile"], errors }, null, 2));
+} finally { await browser.close(); }

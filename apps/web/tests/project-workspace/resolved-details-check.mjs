@@ -1,0 +1,33 @@
+import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+const { chromium } = await import(process.env.PLAYWRIGHT_MODULE ?? "playwright");
+const output = process.env.PROJECT_UI_OUTPUT ?? "/tmp/studio-resolved-details";
+await fs.mkdir(output, { recursive: true });
+const browser = await chromium.launch({ headless: true, executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH });
+try {
+  const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
+  const errors = [];
+  page.on("pageerror", e => { errors.push(e.message); console.error(e.message); });
+  await page.goto(`http://127.0.0.1:${process.env.PROJECT_UI_PORT ?? 5807}/?resolution&history&routed`);
+  const group = page.locator('.sws-thread-group[data-group="Resolved"]');
+  await group.waitFor();
+  const row = page.locator('[data-thread-id="legacy-history"]');
+  if (!await row.isVisible()) await group.locator('button').first().click();
+  await row.locator('.sws-thread-open').click();
+  const header = page.locator('.sws-thread-head');
+  assert.equal(await header.getByRole('status').innerText(), 'Resolved');
+  await header.getByRole('button', { name: 'Reopen thread', exact: true }).waitFor();
+  assert.equal(await page.locator('[data-history-readable="true"]').count(), 1);
+  assert.equal(await page.getByText('No active thread', { exact: true }).count(), 0);
+  assert.equal(await page.locator('.sws-thread-group[data-group="Archived"]').count(), 0);
+  await page.screenshot({ path: `${output}/resolved-history.png` });
+  await header.getByRole('button', { name: 'Reopen thread', exact: true }).click();
+  await header.getByRole('button', { name: 'Resolve thread', exact: true }).waitFor();
+  assert.equal(await header.getByRole('status').count(), 0);
+  assert.equal(await page.locator('[data-history-readable="true"]').count(), 1);
+  await header.getByRole('button', { name: 'Back to project threads' }).click();
+  await page.locator('.sws-thread-group[data-group="Idle"] [data-thread-id="legacy-history"]').waitFor();
+  await page.screenshot({ path: `${output}/reopened.png` });
+  assert.deepEqual(errors, []);
+  await fs.writeFile(`${output}/receipt.json`, JSON.stringify({ headless: true, checks: ['legacy history in Resolved', 'selected shell outside live index', 'visible status and Reopen', 'clear archive and settlement', 'history retained after reopening'], fixture: 'isolated reactive shells and history; no live backend or provider', errors }, null, 2));
+} finally { await browser.close(); }

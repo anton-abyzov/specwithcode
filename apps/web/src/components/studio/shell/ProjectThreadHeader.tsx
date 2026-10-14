@@ -69,7 +69,7 @@ export function ProjectThreadHeader(props: {
   const menuButton = useRef<HTMLButtonElement>(null);
   const settled = thread.settledOverride === "settled";
   const archived = thread.archivedAt !== null;
-  const resolveLabel = archived ? "Unarchive" : settled ? "Reopen" : "Resolve";
+  const resolveLabel = archived || settled ? "Reopen" : "Resolve";
   const link = resolveThreadCurrentPullRequestLink(thread.pullRequests);
   const prState =
     link?.snapshot?.state === "open" && link.snapshot.isDraft
@@ -165,17 +165,20 @@ export function ProjectThreadHeader(props: {
           ) : null}
         </span>
       </div>
+      {settled || archived ? <span className="sws-chip" role="status">Resolved</span> : null}
       <span ref={props.toolsSlotRef} className="sws-thread-head-tools" />
       <Tip label={`${resolveLabel} thread`}>
         <button
           type="button"
           className="sws-icon-button sws-thread-resolve"
+          style={{ width: "auto", paddingInline: 8, gap: 5, flexShrink: 0 }}
           data-state={settled || archived ? "resolved" : "open"}
           aria-label={`${resolveLabel} thread`}
           disabled={!props.canChange}
           onClick={props.onToggleResolved}
         >
           {settled || archived ? <RotateCcwIcon aria-hidden /> : <CheckCircle2Icon aria-hidden />}
+          <span>{resolveLabel}</span>
         </button>
       </Tip>
       <Tip label="Thread actions">

@@ -156,3 +156,18 @@ describe("an open thread's header", () => {
     expect(container.querySelector(".sws-pane-head")?.classList.contains("drag-region")).toBe(true);
   });
 });
+
+it.each([
+  { archivedAt: "2026-10-14T00:00:00Z", settledOverride: null },
+  { archivedAt: null, settledOverride: "settled" },
+])("shows Resolved and an explicit Reopen action for %j", async (lifecycle) => {
+  await act(() => root.render(<ProjectThreadHeader
+    thread={{ ...thread, ...lifecycle } as EnvironmentThreadShell}
+    subagentCount={0} providerEntry={null} projectCwd="/scratch/atlas"
+    canChange expanded={false} {...handlers}
+  />));
+  expect(container.querySelector('[role="status"]')?.textContent).toBe("Resolved");
+  expect(button("Reopen thread").textContent).toBe("Reopen");
+  await act(async () => button("Reopen thread").click());
+  expect(handlers.onToggleResolved).toHaveBeenCalledOnce();
+});
