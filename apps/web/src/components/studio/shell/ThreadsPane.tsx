@@ -299,7 +299,7 @@ export function ThreadsPane({
                     );
                     const settled = thread.settledOverride === "settled";
                     const archived = thread.archivedAt !== null;
-                    const action = archived ? "Unarchive" : settled ? "Reopen" : "Resolve";
+                    const action = archived || settled ? "Reopen" : "Resolve";
                     const statusWord = threadStatusWord(thread);
                     const showDot = tone === "waiting" || tone === "working" || tone === "failed";
                     const pullRequest = threadPullRequest(thread);

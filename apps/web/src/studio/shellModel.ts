@@ -382,7 +382,7 @@ export type ThreadPaneGroup = {
   readonly threads: readonly EnvironmentThreadShell[];
 };
 
-/** Empty headings stay out, except "Waiting on you": an empty one is good news worth saying. */
+/** Keep the lifecycle discoverable, including empty resolved history. */
 export function buildThreadPaneGroups(
   threads: readonly EnvironmentThreadShell[],
   sortBy: ThreadSort,
@@ -399,7 +399,7 @@ export function buildThreadPaneGroups(
         ? compareByActivity
         : compareChats(sortBy);
   const groups: ThreadPaneGroup[] = [];
-  for (const group of ["Waiting on you", "Working", "Idle", "Resolved", "Archived"] as const) {
+  for (const group of ["Waiting on you", "Working", "Idle", "Resolved"] as const) {
     const rows = threads
       .filter(
         (thread) =>
@@ -407,7 +407,7 @@ export function buildThreadPaneGroups(
           (needle === "" || thread.title.toLowerCase().includes(needle)),
       )
       .sort(compare);
-    if (rows.length > 0 || group === "Waiting on you") groups.push({ group, threads: rows });
+    groups.push({ group, threads: rows });
   }
   return groups;
 }
@@ -442,7 +442,6 @@ export function threadsSummary(
 /** Groups a person has dealt with stay folded until they ask for them. */
 export const THREAD_GROUPS_FOLDED_BY_DEFAULT: readonly ProjectThreadGroup[] = [
   "Resolved",
-  "Archived",
 ];
 
 export type ThreadTone = "waiting" | "working" | "failed" | "resolved" | "idle";
@@ -450,11 +449,11 @@ export type ThreadTone = "waiting" | "working" | "failed" | "resolved" | "idle";
 /** What a row's status dot says; failed is called out so it is not read as a question. */
 export function threadTone(thread: EnvironmentThreadShell): ThreadTone {
   const status = resolveSidebarThreadStatus(thread);
-  if (status === "failed") return "failed";
   const group = projectThreadGroup(thread);
+  if (group === "Resolved") return "resolved";
+  if (status === "failed") return "failed";
   if (group === "Waiting on you") return "waiting";
   if (group === "Working" || threadRuntimeIsActive(thread.runtime)) return "working";
-  if (group === "Resolved" || group === "Archived") return "resolved";
   return "idle";
 }
 
@@ -463,6 +462,7 @@ export function threadTone(thread: EnvironmentThreadShell): ThreadTone {
  * or is busy; a quiet thread says nothing and lets its model speak.
  */
 export function threadStatusWord(thread: EnvironmentThreadShell): string | null {
+  if (threadTone(thread) === "resolved") return null;
   const status = resolveSidebarThreadStatus(thread);
   if (status === "approval") return "Approval requested";
   if (status === "input") return "Answer needed";

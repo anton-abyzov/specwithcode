@@ -39,15 +39,17 @@ After an unsigned swap macOS may ask again for permissions such as Accessibility
 
 ## The Studio service
 
-The service cannot replace itself, so the desktop installs a small agent beside it: `scripts/studio-fleet/update_agent.py` and the modules it imports, `update_agent_reap.py`, `update_agent_cache.py` and `update_request.py`, copied together to `~/.local/share/specweave-studio/updater/` and run by the launchd job `com.specweave.studio.<identity>.updater` every 10 minutes. It reads `<studioHome>/updates/config.json` (written by the desktop) and writes `state.json` (read by Settings). On each pass it:
+The managed service updater defaults to the public `anton-abyzov/specwithcode` release feed. Public releases can be checked and downloaded without signing in to GitHub. An explicit `repository` in `updates/config.json` is preserved, including a private feed that requires its own GitHub access. Updating the helper does not rewrite existing settings or enable opted-out updates. Macs without a config file use the public default on their next pass after the new helper is installed through the supported bootstrap command below.
 
-1. finds the newest release on the chosen track and fetches its `studio-update.json` plan;
+The service cannot replace itself, so the desktop installs a small agent beside it: `scripts/studio-fleet/update_agent.py` and the modules it imports, `update_agent_reap.py`, `update_agent_cache.py`, `update_agent_recovery.py` and `update_request.py`, copied together to `~/.local/share/specweave-studio/updater/` and run by the launchd job `com.specweave.studio.<identity>.updater` every 10 minutes. It reads `<studioHome>/updates/config.json` (written by the desktop) and writes `state.json` (read by Settings). On each pass it:
+
+1. searches the newest 30 releases on the chosen track for the highest newer release whose verified `studio-update.json` supports the installed source;
 2. refuses the release unless the plan lists the installed source commit, so only reviewed upgrade paths run on their own;
 3. downloads the runtime and helper archives and checks them against `SHA256SUMS` and the helper manifest;
 4. waits until two snapshots 10 minutes apart show no running session and no change; an open Studio terminal also counts as busy (an install request retries the snapshot every 10 seconds instead, for 2 minutes, or until `installHoldUntil` for Update now);
 5. runs that release's own `update.py` with the plan's arguments.
 
-A failed install is not retried on its own; Install now retries it.
+An automatic install refused before any restart or installation change can receive at most two retries, after 10 and then 20 minutes, within a 24-hour window. Each retry requires an intact refusal receipt, unchanged installation and fresh quiet checks. Other failed installs remain held for Install now. A verified intermediate upgrade is followed by a new discovery pass; the agent never installs several releases in one loop.
 
 An install request names the version the app showed: the desktop writes `installRequest: {at, version}` beside `installRequestedAt` (same `at`). The agent installs only that version; when it would install another (a newer release found meanwhile), it settles the request with an error asking to choose Update now again. A request the agent has not started within 10 minutes of `at` lapses with an error asking to choose Update now again, and never installs at a later quiet moment. A request written while a pass holds the agent's lock gets one more pass as soon as that pass ends, instead of waiting for the next 10-minute run. A newer request picked up while a pass retries is checked the same way before it is installed. A request without that record, from an older desktop, keeps the earlier behaviour.
 

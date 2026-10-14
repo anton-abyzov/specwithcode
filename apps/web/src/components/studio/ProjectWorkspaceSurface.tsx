@@ -1,3 +1,6 @@
+import { toggleProjectThreadResolution } from "../../studio/projectThreadResolution";
+import { SelectedThreadShell } from "../../state/selectedThreadShell";
+import { ProjectWorkspaceColumns } from "./ProjectWorkspaceColumns";
 import { createCoordinatorSelectionTracker } from "../../studio/coordinatorContinuation";
 import { useCoordinatorModelSave } from "../../studio/coordinatorModelSave";
 import { useProjectCoordinatorDraft } from "../../studio/projectCoordinatorDraft";
@@ -788,14 +791,7 @@ export function ProjectWorkspaceSurface({
     setRetrying: setRetryingCoordinator,
   });
   async function resolve(thread: EnvironmentThreadShell) {
-    const result =
-      thread.archivedAt !== null
-        ? await actions.unarchiveThread(scopeThreadRef(project.environmentId, thread.id), {
-            navigate: false,
-          })
-        : thread.settledOverride === "settled"
-          ? await actions.unsettleThread(scopeThreadRef(project.environmentId, thread.id))
-          : await actions.settleThread(scopeThreadRef(project.environmentId, thread.id));
+    const result = await toggleProjectThreadResolution(thread, actions, archived.refresh);
     if (result?._tag === "Failure") {
       const e = squashAtomCommandFailure(result);
       setError(e instanceof Error ? e.message : "Thread status could not be changed.");
@@ -960,11 +956,7 @@ export function ProjectWorkspaceSurface({
             }
           />
         )}
-        <div
-          className={`project-workspace-columns sws-columns ${selectedThread ? "project-worker-open" : ""}`}
-          data-overview={paneOpen ? "open" : "closed"}
-          data-expanded={paneOpen && paneExpanded ? "true" : undefined}
-        >
+        <ProjectWorkspaceColumns open={paneOpen} expanded={paneExpanded} phone={phone} workerOpen={!!selectedThread}>
           <section
             className="project-coordinator sws-coordinator"
             aria-label="Project coordinator"
@@ -1350,7 +1342,7 @@ export function ProjectWorkspaceSurface({
               data-project-pane="threads"
             >
               {selectedThread ? (
-                <>
+                <SelectedThreadShell value={selectedThread}>
                   <ProjectThreadHeader
                     thread={selectedThread}
                     subagentCount={subagentCount}
@@ -1401,7 +1393,7 @@ export function ProjectWorkspaceSurface({
                       />
                     </div>
                   </ProjectMessageRoutingContext>
-                </>
+                </SelectedThreadShell>
               ) : paneTab === "library" ? (
                 <LibraryPane
                   environmentId={project.environmentId}
@@ -1458,7 +1450,7 @@ export function ProjectWorkspaceSurface({
                               className="project-control"
                               onClick={archived.refresh}
                             >
-                              Retry archived history
+                              Retry resolved history
                             </button>
                           </p>
                         ) : null}
@@ -1470,7 +1462,7 @@ export function ProjectWorkspaceSurface({
               )}
             </aside>
           ) : null}
-        </div>
+        </ProjectWorkspaceColumns>
         {tab && snapshot && (
           <ProjectWorkspaceSettings
             project={project}

@@ -1301,7 +1301,7 @@ describe("project coordinator surface", () => {
     ]);
     // Finished work stays folded until it is asked for.
     expect(groups).toEqual([
-      ["Waiting on you", 1],
+      ["Waiting on you", 1], ["Working", 0],
       ["Idle", 1],
       ["Resolved", 0],
     ]);

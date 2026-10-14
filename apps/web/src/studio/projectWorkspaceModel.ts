@@ -17,24 +17,22 @@ export const PROJECT_THREAD_GROUPS = [
   "Working",
   "Idle",
   "Resolved",
-  "Archived",
 ] as const;
 export type ProjectThreadGroup = (typeof PROJECT_THREAD_GROUPS)[number];
 
 /** Attention and lifecycle remain independent in storage; grouping is only a view. */
 export function projectThreadGroup(thread: EnvironmentThreadShell): ProjectThreadGroup {
-  if (thread.archivedAt !== null) return "Archived";
+  if (thread.archivedAt !== null) return "Resolved";
   const status = resolveSidebarThreadStatus(thread);
   if (
     thread.hasPendingApprovals ||
     thread.hasPendingUserInput ||
-    thread.hasActionableProposedPlan ||
-    status === "limited" ||
-    status === "failed"
+    thread.hasActionableProposedPlan
   )
     return "Waiting on you";
   if (threadRuntimeIsActive(thread.runtime)) return "Working";
   if (thread.settledOverride === "settled") return "Resolved";
+  if (status === "limited" || status === "failed") return "Waiting on you";
   return "Idle";
 }
 

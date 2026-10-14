@@ -133,6 +133,7 @@ def tar_bytes(entries):
 
 class FakeGitHub(object):
     def __init__(self):
+        self.repository = REPO
         self.releases = []
         self.blobs = {}
         self.requests = []
@@ -158,11 +159,11 @@ class FakeGitHub(object):
                 with fake.lock:
                     fake.requests.append(('api', self.path, self.headers.get('Authorization'),
                                           self.headers.get('Accept')))
-                if self.path == '/repos/%s/releases?per_page=30' % REPO:
+                if self.path == '/repos/%s/releases?per_page=30' % fake.repository:
                     if fake.list_status != 200:
                         return self.send(fake.list_status, b'{"message":"Not Found"}')
                     return self.send(200, json.dumps(fake.releases).encode(), [('Content-Type', 'application/json')])
-                match = re.fullmatch(r'/repos/%s/releases/assets/(\d+)' % REPO, self.path)
+                match = re.fullmatch(r'/repos/%s/releases/assets/(\d+)' % fake.repository, self.path)
                 if match and self.headers.get('Accept') == 'application/octet-stream':
                     return self.send(302, b'', [('Location', fake.cdn_url + '/blob/' + match.group(1))])
                 self.send(404)
@@ -1119,6 +1120,8 @@ class PassBehaviour(AgentCase):
         self.assert_no_token_anywhere()
 
     def test_no_token_private_repo_asks_for_gh_login(self):
+        self.fake.repository = 'anton-abyzov/specwithcode'
+        self.config(repository=self.fake.repository)
         os.environ.pop('STUDIO_UPDATE_TOKEN')
         self.fake.list_status = 404
         self.assertEqual(self.run_agent(), 1)

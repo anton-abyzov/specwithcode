@@ -2084,3 +2084,19 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   cursor: default;
   opacity: 0.55;
 }
+
+.sws-project-divider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  z-index: 30;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+  -webkit-app-region: no-drag;
+}
+.sws-project-divider:hover,
+.sws-project-divider:active {
+  background: color-mix(in srgb, var(--primary) 25%, transparent);
+}
