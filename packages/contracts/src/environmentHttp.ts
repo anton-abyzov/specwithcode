@@ -60,6 +60,8 @@ import {
   AuthTokenExchangeRequest,
   AuthSessionState,
   AuthWebSocketTicketResult,
+  AuthWorkerGrantRenewalRequest,
+  AuthWorkerGrantRenewalResult,
   ServerAuthSessionMethod,
 } from "./auth.ts";
 import {
@@ -206,6 +208,19 @@ export class EnvironmentAuthInvalidError extends Schema.TaggedError<EnvironmentA
     return `The environment rejected this client's credentials (${this.reason}).`;
   }
 }
+
+/** These codes describe the supplied grant, never the management credential. */
+export class EnvironmentWorkerGrantInvalidError extends Schema.TaggedError<EnvironmentWorkerGrantInvalidError>()(
+  "EnvironmentWorkerGrantInvalidError",
+  { code: Schema.Literal("grant_invalid"), error: Schema.String },
+  { httpApiStatus: 400 },
+) {}
+
+export class EnvironmentWorkerGrantUnavailableError extends Schema.TaggedError<EnvironmentWorkerGrantUnavailableError>()(
+  "EnvironmentWorkerGrantUnavailableError",
+  { code: Schema.Literals(["grant_missing", "grant_revoked"]), error: Schema.String },
+  { httpApiStatus: 409 },
+) {}
 
 export class EnvironmentScopeRequiredError extends Schema.TaggedError<EnvironmentScopeRequiredError>()(
   "EnvironmentScopeRequiredError",
@@ -522,6 +537,19 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
       headers: OptionalBearerHeaders,
       success: AuthWebSocketTicketResult,
       error: [EnvironmentInternalError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("renewWorkerGrant", "/api/auth/worker-grants/renew", {
+      headers: OptionalBearerHeaders,
+      payload: AuthWorkerGrantRenewalRequest,
+      success: AuthWorkerGrantRenewalResult,
+      error: [
+        EnvironmentScopeRequiredError,
+        EnvironmentInternalError,
+        EnvironmentWorkerGrantInvalidError,
+        EnvironmentWorkerGrantUnavailableError,
+      ],
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(

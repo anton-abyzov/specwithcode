@@ -5,7 +5,9 @@ import * as Deferred from "effect/Deferred";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
-import { ProviderInstanceId } from "@specweave-studio/contracts";
+import * as Schema from "effect/Schema";
+import { ChildProcessSpawner } from "effect/process";
+import { AcpRegistrySettings, ProviderInstanceId } from "@specweave-studio/contracts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 import { applyAcpModelSelection, resetAcpModelSelection } from "./AcpModelSelection.ts";
 import {
@@ -15,6 +17,7 @@ import {
 } from "./AcpRegistryProbe.ts";
 import { acpRegistryLaunchArgs, acpRegistryInstallEnvironment } from "./AcpRegistryLaunchPolicy.ts";
 import { acpTerminalAuthInvocation } from "./AcpTerminalAuthentication.ts";
+import { prepareCopilotStartupModel, resetCopilotStartupModel } from "./CopilotStartupModel.ts";
 
 const fixture = Effect.fn("copilotCompatibilityFixture")(function* (
   scenario: string,
@@ -63,7 +66,197 @@ const fixture = Effect.fn("copilotCompatibilityFixture")(function* (
 const scoped = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
+const startupFixture = Effect.fn("copilotStartupFixture")(function* (
+  scenario: string,
+  model = "claude-opus-5.5",
+  options: { readonly version?: string; readonly resumeSessionId?: string } = {},
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "studio-copilot-startup-" });
+  const log = path.join(cwd, "wire.jsonl");
+  yield* fs.writeFileString(log, "");
+  const spawn = {
+    command: process.execPath,
+    args: [
+      yield* path.fromFileUrl(new URL("./testing/copilot-acp.fixture.mjs", import.meta.url)),
+      "--no-auto-update",
+      "--acp",
+      "--stdio",
+    ],
+    cwd,
+    env: {
+      COPILOT_FIXTURE_SCENARIO: scenario,
+      COPILOT_FIXTURE_LOG: log,
+      COPILOT_FIXTURE_RECORD_LAUNCH: "1",
+      ...(options.version === undefined ? {} : { COPILOT_FIXTURE_VERSION: options.version }),
+    },
+  };
+  const prepared = yield* prepareCopilotStartupModel({
+    settings: Schema.decodeSync(AcpRegistrySettings)({ agentId: "github-copilot-cli" }),
+    resolved: {
+      agent: {
+        id: "github-copilot-cli",
+        name: "Copilot",
+        version: "1.0.97",
+        description: "Fixture",
+        distribution: { npx: { package: "@github/copilot@1.0.97" } },
+      },
+      distribution: "npx",
+      spawn,
+    },
+    model,
+    ...options,
+    spawner,
+  });
+  const native = yield* AcpSessionRuntime.make({
+    cwd,
+    spawn: prepared?.spawn ?? spawn,
+    clientInfo: { name: "startup-fixture", version: "1" },
+    ...(options.resumeSessionId === undefined ? {} : { resumeSessionId: options.resumeSessionId }),
+  });
+  return {
+    runtime: prepared?.acknowledge(native) ?? native,
+    prepared: prepared !== undefined,
+    messages: fs.readFileString(log).pipe(
+      Effect.map((text) =>
+        text
+          .trim()
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => JSON.parse(line)),
+      ),
+    ),
+  };
+});
+
 describe("Copilot ACP compatibility", () => {
+  it.effect(
+    "seeds the exact model in argv before ACP and consumes native startup confirmation once",
+    () =>
+      scoped(
+        Effect.gen(function* () {
+          const { runtime, messages } = yield* startupFixture("startup-model");
+          const started = yield* runtime.start();
+          yield* applyAcpModelSelection(runtime, started, "claude-opus-5.5");
+          const frames = yield* messages;
+          expect(frames.slice(0, 3).map((frame) => frame.method)).toEqual([
+            "process/launch",
+            "process/launch",
+            "process/launch",
+          ]);
+          expect(frames[0].args).toContain("--version");
+          expect(frames[1].args).toContain("--help");
+          expect(frames[2].args).toContain("--model=claude-opus-5.5");
+          expect(frames[2].args).toContain("--no-auto-update");
+          expect(frames.slice(3).map((frame) => frame.method)).toEqual([
+            "initialize",
+            "session/new",
+          ]);
+          expect(started.sessionSetupResult.models?.availableModels).toEqual([
+            { modelId: "auto", name: "Auto" },
+          ]);
+          expect(yield* resetCopilotStartupModel(runtime)).toBe(true);
+          expect((yield* messages).at(-1)).toMatchObject({
+            method: "session/set_model",
+            params: { modelId: "auto" },
+          });
+          const second = yield* applyAcpModelSelection(runtime, started, "claude-opus-5.5").pipe(
+            Effect.result,
+          );
+          expect(second._tag).toBe("Failure");
+          expect((yield* messages).at(-1)).toMatchObject({
+            method: "session/set_model",
+            params: { modelId: "claude-opus-5.5" },
+          });
+        }),
+      ),
+  );
+
+  for (const scenario of [
+    "startup-auto",
+    "startup-mismatch",
+    "startup-reject",
+    "startup-version-change",
+  ]) {
+    it.effect(`fails closed for ${scenario} before model writes or prompts`, () =>
+      scoped(
+        Effect.gen(function* () {
+          const { runtime, messages } = yield* startupFixture(scenario);
+          expect((yield* runtime.start().pipe(Effect.result))._tag).toBe("Failure");
+          expect((yield* messages).map((frame) => frame.method)).not.toContain("session/set_model");
+          expect((yield* messages).map((frame) => frame.method)).not.toContain("session/prompt");
+        }),
+      ),
+    );
+  }
+
+  it.effect("does not treat an absent current model as confirmation", () =>
+    scoped(
+      Effect.gen(function* () {
+        const { runtime, messages } = yield* startupFixture("startup-missing");
+        const started = yield* runtime.start();
+        expect(
+          (yield* applyAcpModelSelection(runtime, started, "claude-opus-5.5").pipe(Effect.result))
+            ._tag,
+        ).toBe("Failure");
+        expect((yield* messages).at(-1)).toMatchObject({
+          method: "session/set_model",
+          params: { modelId: "claude-opus-5.5" },
+        });
+      }),
+    ),
+  );
+
+  it.effect("keeps model text in one literal argv item without shell expansion", () =>
+    scoped(
+      Effect.gen(function* () {
+        const model = "literal-$(printf forbidden); model";
+        const { runtime, messages } = yield* startupFixture("startup-model", model);
+        const started = yield* runtime.start();
+        expect(started.sessionSetupResult.models?.currentModelId).toBe(model);
+        yield* applyAcpModelSelection(runtime, started, model);
+        expect((yield* messages)[2].args).toContain(`--model=${model}`);
+      }),
+    ),
+  );
+
+  it.effect("leaves unverified CLI versions and initial resumed sessions on native selection", () =>
+    scoped(
+      Effect.gen(function* () {
+        const older = yield* startupFixture("startup-model", "claude-opus-5.5", {
+          version: "1.0.95",
+        });
+        expect(older.prepared).toBe(false);
+        yield* older.runtime.start();
+        expect(
+          (yield* older.messages).filter((frame) => frame.method === "process/launch"),
+        ).toHaveLength(2);
+        expect(
+          (yield* older.messages)[1].args.some((arg: string) => arg.startsWith("--model=")),
+        ).toBe(false);
+        const resumed = yield* startupFixture("startup-model", "claude-opus-5.5", {
+          resumeSessionId: "saved-session",
+        });
+        expect(resumed.prepared).toBe(false);
+        yield* resumed.runtime.start();
+        expect(
+          (yield* resumed.messages).filter((frame) => frame.method === "process/launch"),
+        ).toHaveLength(1);
+        expect((yield* resumed.messages).map((frame) => frame.method)).toContain("session/load");
+      }),
+    ),
+  );
+
+  it.effect("rejects a missing --model capability before ACP launch", () =>
+    scoped(
+      Effect.gen(function* () {
+        expect((yield* startupFixture("startup-no-flag").pipe(Effect.result))._tag).toBe("Failure");
+      }),
+    ),
+  );
+
   it.effect("surfaces the captured 1.0.94 auth gate without starting interactive login", () =>
     scoped(
       Effect.gen(function* () {
@@ -157,6 +350,66 @@ describe("Copilot ACP compatibility", () => {
           method: "session/set_model",
           params: { sessionId: "copilot-fixture", modelId: "auto" },
         });
+      }),
+    ),
+  );
+
+  it.effect("forwards an exact custom model through Copilot 1.0.97's auto-only config", () =>
+    scoped(
+      Effect.gen(function* () {
+        const { runtime, messages } = yield* fixture("auto-config");
+        const started = yield* runtime.start();
+        expect(started.initializeResult.agentInfo?.version).toBe("1.0.97");
+        expect(yield* runtime.getConfigOptions).toMatchObject([
+          { id: "model", options: [{ value: "auto" }, { value: "auto" }] },
+          { id: "effort" },
+        ]);
+        expect(yield* applyAcpModelSelection(runtime, started, "claude-opus-5.5")).toBe(
+          "claude-opus-5.5",
+        );
+        expect((yield* messages).at(-1)).toMatchObject({
+          method: "session/set_model",
+          params: { sessionId: "copilot-fixture", modelId: "claude-opus-5.5" },
+        });
+        // Reset is explicit user selection of default, never failure fallback.
+        expect(yield* resetAcpModelSelection(runtime, started)).toBe(true);
+        expect((yield* messages).at(-1)).toMatchObject({
+          method: "session/set_model",
+          params: { sessionId: "copilot-fixture", modelId: "auto" },
+        });
+        expect((yield* messages).map((m) => m.method)).not.toContain("session/set_config_option");
+      }),
+    ),
+  );
+
+  it.effect("preserves native model rejection without retrying Copilot's auto model", () =>
+    scoped(
+      Effect.gen(function* () {
+        const { runtime, messages } = yield* fixture("auto-config");
+        const started = yield* runtime.start();
+        expect(
+          yield* applyAcpModelSelection(runtime, started, "unavailable-model").pipe(Effect.result),
+        ).toMatchObject({
+          _tag: "Failure",
+          failure: { code: -32602, errorMessage: "Requested model is unavailable" },
+        });
+        expect((yield* messages).filter((m) => m.method?.startsWith("session/set"))).toMatchObject([
+          {
+            method: "session/set_model",
+            params: { sessionId: "copilot-fixture", modelId: "unavailable-model" },
+          },
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("preserves current advertised auto without a legacy model RPC", () =>
+    scoped(
+      Effect.gen(function* () {
+        const { runtime, messages } = yield* fixture("auto-config");
+        const started = yield* runtime.start();
+        yield* applyAcpModelSelection(runtime, started, "auto");
+        expect((yield* messages).map((m) => m.method)).toEqual(["initialize", "session/new"]);
       }),
     ),
   );

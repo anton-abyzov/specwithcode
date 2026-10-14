@@ -141,6 +141,8 @@ const ACP_DEFERRED_FINALIZE_DEBOUNCE: Duration.Input = "3000 millis";
 
 export interface AcpAdapterV2RuntimeInput {
   readonly cwd: string;
+  /** Requested model for providers with a verified native startup option. */
+  readonly modelSelection?: ModelSelection;
   /**
    * Policy the session opened with. A runtime-mode change reopens the session,
    * so flavors that encode permissions in the launch command (Grok) read it here.
@@ -253,6 +255,10 @@ export interface AcpAdapterV2Flavor {
     Crypto.Crypto | Scope.Scope
   >;
   readonly resolveModelId?: (selection: ModelSelection) => string | undefined;
+  /** Reset a verified startup model when the user explicitly selects default. */
+  readonly resetModelSelection?: (
+    runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+  ) => Effect.Effect<boolean, EffectAcpErrors.AcpError>;
   /**
    * Replaces the default model application on session setup. Returns the model
    * the session now runs on. Antigravity resolves its provider-default alias
@@ -2084,6 +2090,7 @@ export function makeAcpAdapterV2(
             runtimeGeneration,
             Ref.set(runtimeRestartRequired, true),
           ).pipe(Effect.asVoid);
+        let latestModelSelection = input.modelSelection;
         const makeRuntimeInput = (
           runtimeGeneration: number,
           threadId: ThreadId | null,
@@ -2094,6 +2101,7 @@ export function makeAcpAdapterV2(
           const mcpContext = acpMcpContext(threadId, self);
           return {
             cwd: input.runtimePolicy.cwd ?? process.cwd(),
+            modelSelection: latestModelSelection,
             runtimePolicy: input.runtimePolicy,
             mcpServers: mcpContext.servers,
             acpMcpServers: mcpContext.acpServers,
@@ -6259,7 +6267,8 @@ export function makeAcpAdapterV2(
             const previousModel =
               flavor.resolveModelId?.(previousSelection) ?? previousSelection.model;
             if (!isAgentDefaultModel(previousModel)) {
-              yield* resetAcpModelSelection(runtime, startResult);
+              const reset = yield* flavor.resetModelSelection?.(runtime) ?? Effect.succeed(false);
+              if (!reset) yield* resetAcpModelSelection(runtime, startResult);
             }
           }
           // Same-runtime switches compare against this stored setup, so keep
@@ -6860,6 +6869,7 @@ export function makeAcpAdapterV2(
             // Install the incoming thread policy before load/resume so those
             // requests can never inherit the previously active thread's policy.
             latestRuntimePolicy = turnInput.runtimePolicy;
+            latestModelSelection = turnInput.modelSelection;
             const requestedSessionId = yield* nativeThreadId(driver, turnInput.providerThread);
             const restartAfterInterrupt = yield* restartRuntimeAfterTeardownIfRequired(
               turnInput.threadId,
@@ -7372,6 +7382,7 @@ export function makeAcpAdapterV2(
                 Effect.gen(function* () {
                   yield* awaitRuntimeTeardown();
                   const sessionId = yield* nativeThreadId(driver, threadInput.providerThread);
+                  latestModelSelection = threadInput.modelSelection ?? input.modelSelection;
                   const previousItemIdentityVersion = itemIdentityVersion;
                   useProviderThreadIdentity(threadInput.providerThread);
                   const restorePreviousItemIdentity = Effect.sync(() => {

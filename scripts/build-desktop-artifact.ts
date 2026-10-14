@@ -1153,6 +1153,7 @@ export const MAC_SERVICE_UPDATER_FILES = [
   "update_agent_reap.py",
   "update_agent_cache.py",
   "update_request.py",
+  "update_agent_recovery.py",
 ] as const;
 export const MAC_SERVICE_UPDATER_EXTRA_RESOURCES = [
   {

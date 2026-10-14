@@ -52,14 +52,25 @@ export function ProviderAuthenticationSection({
   const [methodId, setMethodId] = useState("");
   const [draft, setDraft] = useState({ id: "", values: {} as Record<string, string> });
   const [error, setError] = useState<string | null>(null);
+  const [copiedCode, setCopiedCode] = useState("");
   const [pending, setPending] = useState(false);
   const pendingRef = useRef(false);
   const terminalQueue = useRef<ProviderAuthRespondInput[]>([]);
   const terminalSending = useRef(false);
   const auth = query.data;
-  const interaction = auth?.interaction;
   const active =
     auth?.phase === "starting" || auth?.phase === "waiting" || auth?.phase === "verifying";
+  const interaction = active ? auth?.interaction : undefined;
+  const deviceCode = active
+    ? interaction?.type === "deviceCode"
+      ? interaction
+      : interaction?.type === "terminal"
+        ? interaction.deviceCode
+        : undefined
+    : undefined;
+  const deviceCodeKey = deviceCode
+    ? `${environmentId}:${instanceId}:${auth?.flowId}:${deviceCode.userCode}`
+    : "";
   const signedIn =
     provider.auth.status === "authenticated" ||
     (provider.auth.status === "unknown" && auth?.phase === "succeeded");
@@ -79,11 +90,13 @@ export function ProviderAuthenticationSection({
       ? "Starting sign-in…"
       : auth?.phase === "verifying"
         ? "Checking your account…"
-        : interaction?.type === "terminal"
-          ? "Complete sign-in in the terminal below."
-          : interaction?.type === "credentials"
-            ? "Enter your credentials below."
-            : "Finish signing in in your browser."
+        : deviceCode
+          ? `Finish signing in to ${environmentLabel} in your browser.`
+          : interaction?.type === "terminal"
+            ? "Complete sign-in in the terminal below."
+            : interaction?.type === "credentials"
+              ? "Enter your credentials below."
+              : "Finish signing in in your browser."
     : signedIn
       ? "Signed in."
       : isDiscovering
@@ -95,10 +108,11 @@ export function ProviderAuthenticationSection({
   const disabled = readOnly || pending || query.error !== null || isDiscovering;
   const draftId = `${auth?.flowId ?? ""}:${interaction?.id ?? ""}`;
   const values = draft.id === draftId ? draft.values : {};
-  const url =
-    interaction?.type === "browser" || interaction?.type === "deviceCode"
-      ? interaction.url
-      : auth?.authorizationUrl;
+  // A completed, cancelled or expired flow must not expose a stale sign-in link.
+  const url = active
+    ? (deviceCode?.url ??
+      (interaction?.type === "browser" ? interaction.url : auth?.authorizationUrl))
+    : undefined;
 
   async function run(command: () => Promise<AtomCommandResult<unknown, unknown>>) {
     if (pendingRef.current) return false;
@@ -327,12 +341,51 @@ export function ProviderAuthenticationSection({
       error ||
       query.error ? (
         <>
-          {interaction?.type === "deviceCode" ? (
-            <p className="py-2 text-sm text-muted-foreground">
-              Enter code{" "}
-              <code className="select-all font-mono text-foreground">{interaction.userCode}</code>{" "}
-              in your browser.
-            </p>
+          {deviceCode ? (
+            <section
+              aria-label={`Device sign-in for ${environmentLabel}`}
+              className="my-2 grid min-w-0 gap-3 rounded-md border border-border bg-muted/30 p-3 text-sm"
+            >
+              <p className="font-medium">
+                Sign in to {provider.displayName ?? provider.driver} on {environmentLabel}
+              </p>
+              <p className="text-muted-foreground">
+                Open the sign-in page on this device, enter this code, and approve access for the
+                account you want to use on {environmentLabel}.
+              </p>
+              <div className="flex min-w-0 flex-wrap items-center gap-3">
+                <code className="select-all break-all font-mono text-lg font-semibold tracking-wider">
+                  {deviceCode.userCode}
+                </code>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={disabled}
+                  onClick={() => {
+                    void writeTextToClipboard(deviceCode.userCode, "Provider sign-in code")
+                      .then(() => {
+                        setCopiedCode(deviceCodeKey);
+                        setError(null);
+                      })
+                      .catch(() => setError("Could not copy the sign-in code."));
+                  }}
+                >
+                  <CopyIcon />
+                  Copy code
+                </Button>
+                {copiedCode === deviceCodeKey ? (
+                  <span role="status" className="text-xs text-muted-foreground">
+                    Code copied
+                  </span>
+                ) : null}
+              </div>
+              <p className="break-all text-xs text-muted-foreground">{deviceCode.url}</p>
+              {interaction?.type === "terminal" ? (
+                <p className="text-xs text-muted-foreground">
+                  If the provider asks for confirmation, use the sign-in terminal below.
+                </p>
+              ) : null}
+            </section>
           ) : null}
           {interaction?.type === "terminal" ? (
             <div className="py-2">

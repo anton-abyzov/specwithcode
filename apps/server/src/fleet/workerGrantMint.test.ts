@@ -5,9 +5,11 @@ import type { FleetTarget } from "../studioFleet.ts";
 import { fakeMachine, ORIGIN, target } from "./fleetMachine.testkit.ts";
 import {
   mintWorkerGrant,
+  renewWorkerGrant,
   revokeWorkerSessions,
   sessionIdOfToken,
   WorkerGrantMintError,
+  WorkerGrantRenewError,
   workerClientName,
 } from "./workerGrantMint.ts";
 
@@ -28,10 +30,83 @@ const failureReason = async (promise: Promise<unknown>) => {
   try {
     await promise;
   } catch (error) {
-    return error instanceof WorkerGrantMintError ? error.reason : "unexpected";
+    return error instanceof WorkerGrantMintError || error instanceof WorkerGrantRenewError
+      ? error.reason
+      : "unexpected";
   }
   return "resolved";
 };
+
+const tokenFor = (sid: string) =>
+  `${Buffer.from(JSON.stringify({ v: 1, sid })).toString("base64url")}.sig`;
+const renew = (machine: ReturnType<typeof fakeMachine>, selected = target) =>
+  renewWorkerGrant({
+    fetcher: machine.fetcher,
+    target: selected,
+    accessToken: tokenFor("sid-1"),
+    coordinatorEnvironmentId: "env-m4",
+  });
+
+describe("conditional worker grant renewal", () => {
+  it("pins identity before sending credentials and keeps the same session without OAuth mint", async () => {
+    const machine = fakeMachine();
+    const result = await renew(machine);
+    expect(sessionIdOfToken(result.accessToken)).toBe("sid-1");
+    expect(result.resource).toBe(`${ORIGIN}/mcp`);
+    expect(machine.calls.map((call) => new URL(call.url).pathname)).toEqual([
+      "/.well-known/studio/environment",
+      "/.well-known/oauth-protected-resource/mcp",
+      "/api/auth/worker-grants/renew",
+    ]);
+    expect(machine.calls.every((call) => call.redirect === "error")).toBe(true);
+    expect(machine.issued()).toBe(0);
+  });
+
+  it("refuses identity and management scope mismatches before sending credentials", async () => {
+    const machine = fakeMachine({ environmentId: "env-other" });
+    expect(await failureReason(renew(machine))).toBe("identity_mismatch");
+    expect(machine.calls.every((call) => call.authorization === null)).toBe(true);
+    const insufficient = fakeMachine();
+    expect(
+      await failureReason(renew(insufficient, { ...target, scopes: [AuthOrchestrationReadScope] })),
+    ).toBe("pairing_unavailable");
+    expect(insufficient.calls).toHaveLength(0);
+  });
+
+  it.each([
+    { status: 409, code: "grant_revoked", reason: "revoked" },
+    { status: 409, code: "grant_missing", reason: "missing" },
+    { status: 400, code: "grant_invalid", reason: "invalid" },
+    { status: 401, code: "grant_revoked", reason: "pairing_unavailable" },
+    { status: 403, code: "grant_revoked", reason: "pairing_unavailable" },
+    { status: 404, code: "grant_revoked", reason: "unsupported" },
+    { status: 500, code: "grant_revoked", reason: "unreachable" },
+  ])(
+    "distinguishes HTTP $status/$code from authoritative revocation",
+    async ({ status, code, reason }) => {
+      const machine = fakeMachine({ renewalStatus: status, renewalCode: code });
+      expect(await failureReason(renew(machine))).toBe(reason);
+      expect(machine.calls.some((call) => call.url.includes("/oauth/mcp/"))).toBe(false);
+    },
+  );
+
+  it.each([
+    { accessToken: tokenFor("different-session"), expiresAt: "2070-01-01T00:00:00.000Z" },
+    { accessToken: tokenFor("sid-1"), expiresAt: "invalid" },
+    { accessToken: tokenFor("sid-1"), expiresAt: "2020-01-01T00:00:00.000Z" },
+  ])("rejects a malformed or replacement renewal response", async (response) => {
+    const base = fakeMachine();
+    const machine = {
+      ...base,
+      fetcher: (async (input, init) => {
+        if (String(input).endsWith("worker-grants/renew"))
+          return new Response(JSON.stringify(response), { status: 200 });
+        return base.fetcher(input, init);
+      }) as typeof fetch,
+    };
+    expect(await failureReason(renew(machine))).toBe("unreachable");
+  });
+});
 
 describe("worker grant minting", () => {
   it("mints a grant with a management-token pairing code and PKCE", async () => {

@@ -8,7 +8,11 @@ import {
 } from "@specweave-studio/contracts";
 
 import type { FleetTarget } from "../studioFleet.ts";
-import { WORKER_GRANT_REDIRECT_URI, workerClientName } from "./workerGrantMint.ts";
+import {
+  WORKER_GRANT_REDIRECT_URI,
+  workerClientName,
+  sessionIdOfToken,
+} from "./workerGrantMint.ts";
 
 export const ORIGIN = "https://m1.example.ts.net";
 export const target: FleetTarget = {
@@ -42,6 +46,8 @@ export function fakeMachine(
     readonly sessionTokens?: boolean;
     /** A management token without `access:read` gets 403 listing sessions. */
     readonly clientsStatus?: number;
+    readonly renewalStatus?: number;
+    readonly renewalCode?: string;
   } = {},
 ) {
   const calls: Call[] = [];
@@ -49,6 +55,7 @@ export function fakeMachine(
   const revokedPairings: string[] = [];
   const revokedSessions: string[] = [];
   let issued = 0;
+  let renewed = 0;
   const fetcher = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
     const url = new URL(String(input));
     const headers = new Headers(init?.headers);
@@ -158,6 +165,22 @@ export function fakeMachine(
       case "/api/auth/clients/revoke":
         revokedSessions.push(JSON.parse(body ?? "{}").sessionId);
         return json(200, { revoked: true });
+      case "/api/auth/worker-grants/renew": {
+        if (headers.get("authorization") !== "Bearer management-secret") return json(401, {});
+        const request = JSON.parse(body ?? "{}");
+        expect(request.coordinatorEnvironmentId).toBe("env-m4");
+        expect(request.environmentId).toBe("env-m1");
+        if (overrides.renewalStatus !== undefined)
+          return json(overrides.renewalStatus, { code: overrides.renewalCode });
+        const sid = sessionIdOfToken(request.accessToken);
+        if (!sid) return json(400, { code: "grant_invalid" });
+        if (revokedSessions.includes(sid)) return json(409, { code: "grant_revoked" });
+        renewed += 1;
+        return json(200, {
+          accessToken: `${Buffer.from(JSON.stringify({ v: 1, sid, renewal: renewed })).toString("base64url")}.sig`,
+          expiresAt: "2070-01-01T00:00:00.000Z",
+        });
+      }
       default:
         return json(404, {});
     }
@@ -168,5 +191,6 @@ export function fakeMachine(
     revokedPairings,
     revokedSessions,
     issued: () => issued,
+    renewed: () => renewed,
   };
 }

@@ -2,6 +2,10 @@ import {
   authScopeRequiredResponse,
   AuthAccessReadScope,
   AuthAccessWriteScope,
+  AuthOrchestrationReadScope,
+  AuthOrchestrationOperateScope,
+  EnvironmentWorkerGrantInvalidError,
+  EnvironmentWorkerGrantUnavailableError,
   AuthStandardClientScopes,
   AuthGrantScope,
   EnvironmentAuthInvalidError,
@@ -437,6 +441,43 @@ export const layer = HttpApiBuilder.group(
             failEnvironmentInternal("websocket_ticket_issuance_failed", error),
           ),
         ),
+      )
+      .handle(
+        "renewWorkerGrant",
+        Effect.fn("environment.auth.renewWorkerGrant")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* appendCredentialResponseHeaders;
+          yield* requireEnvironmentScope(AuthAccessWriteScope);
+          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          return yield* sessions.renewWorkerGrant(args.payload).pipe(
+            Effect.catchTag(
+              "WorkerGrantRenewalError",
+              (
+                error,
+              ): Effect.Effect<
+                never,
+                EnvironmentWorkerGrantInvalidError | EnvironmentWorkerGrantUnavailableError
+              > =>
+                error.code === "grant_invalid"
+                  ? Effect.fail(
+                      new EnvironmentWorkerGrantInvalidError({
+                        code: error.code,
+                        error: error.message,
+                      }),
+                    )
+                  : Effect.fail(
+                      new EnvironmentWorkerGrantUnavailableError({
+                        code: error.code,
+                        error: error.message,
+                      }),
+                    ),
+            ),
+            Effect.catchIf(Schema.is(SessionStore.SessionCredentialInternalError), (error) =>
+              failEnvironmentInternal("internal_error", error),
+            ),
+          );
+        }),
       )
       .handle(
         "pairingCredential",

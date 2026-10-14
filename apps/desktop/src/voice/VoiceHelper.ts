@@ -15,6 +15,7 @@ export type VoiceHelperReply = {
   readonly error?: string;
   readonly text?: string;
   readonly speech?: string;
+  readonly voices?: readonly { id: string; name: string; language: string; quality: number }[];
 };
 
 type Job = {
@@ -41,6 +42,8 @@ export class VoiceHelperError extends Error {
 }
 
 const HELPER_MESSAGES: Record<string, string> = {
+  "local-recognition-unavailable":
+    "On-device recognition is unavailable for this language on this Mac. Choose a supported system language or type your message.",
   "unsupported-locale": "Speech recognition does not support this language on this Mac.",
   "speech-not-authorized":
     "Speech recognition is turned off for SpecWithCode in System Settings › Privacy & Security.",

@@ -8,14 +8,18 @@ import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
-import { ChildProcessSpawner } from "effect/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { resolveNodeExecutable } from "@specweave-studio/shared/nodeRuntime";
 import type * as AcpSchema from "@specweave-studio/effect-acp/compat";
 
 import * as PtyAdapter from "../../terminal/PtyAdapter.ts";
+import { collectUint8StreamText } from "../../stream/collectUint8StreamText.ts";
 import * as ProviderAuthFlow from "../ProviderAuthFlow.ts";
 import { normalizeAcpRegistryAuthMethods, normalizeAcpRegistryWebUrl } from "./AcpRegistryProbe.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
@@ -25,6 +29,15 @@ import {
   acpTerminalAuthInvocation,
   normalizeAcpTerminalAuthMethod,
 } from "./AcpTerminalAuthentication.ts";
+import {
+  COPILOT_DEVICE_LOGIN_UPDATE_MESSAGE,
+  copilotBrowserNoopArgs,
+  copilotBrowserOverride,
+  copilotDeviceLoginArgs,
+  isCopilotDeviceLogin,
+  readCopilotDeviceCode,
+  supportsCopilotDeviceLogin,
+} from "./CopilotDeviceAuthentication.ts";
 
 type Runtime = Pick<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
@@ -45,6 +58,8 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
   const catalog = yield* AcpRegistrySupport.AcpRegistryCatalog;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const crypto = yield* Crypto.Crypto;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const pty = yield* Effect.serviceOption(PtyAdapter.PtyAdapter);
   const coordinator = yield* Effect.serviceOption(
     AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
@@ -170,9 +185,81 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
         "start",
         "Interactive provider login is unavailable on this environment.",
       );
-    const invocation = acpTerminalAuthInvocation(method, resolved.spawn);
+    let invocation = acpTerminalAuthInvocation(method, resolved.spawn);
     if (invocation === undefined)
       return yield* failure("start", "The agent advertised an invalid terminal sign-in command.");
+    const deviceLogin = isCopilotDeviceLogin(options.settings, method.id);
+    const environment = {
+      ...options.environment,
+      ...resolved.spawn.env,
+      ...(method.type === "terminal" ? method.env : {}),
+    };
+    if (deviceLogin) {
+      const args = copilotDeviceLoginArgs(invocation.args);
+      if (!args) return yield* failure("start", COPILOT_DEVICE_LOGIN_UPDATE_MESSAGE);
+      const runPreflight = (command: string, args: ReadonlyArray<string>) =>
+        Effect.gen(function* () {
+          const child = yield* spawner.spawn(
+            ChildProcess.make(command, args, {
+              cwd: options.cwd,
+              env: environment,
+              stdin: "ignore",
+              shell: false,
+              forceKillAfter: "1 second",
+            }),
+          );
+          yield* Effect.addFinalizer(() =>
+            child.kill({ forceKillAfter: "1 second" }).pipe(Effect.ignore),
+          );
+          const [stdout, stderr, exitCode] = yield* Effect.all(
+            [
+              collectUint8StreamText({ stream: child.stdout, maxBytes: 32_768 }),
+              collectUint8StreamText({ stream: child.stderr, maxBytes: 32_768 }),
+              child.exitCode,
+            ],
+            { concurrency: "unbounded" },
+          );
+          if (Number(exitCode) !== 0 || stdout.truncated || stderr.truncated)
+            return yield* failure("start", COPILOT_DEVICE_LOGIN_UPDATE_MESSAGE);
+          return stdout.text + stderr.text;
+        }).pipe(
+          Effect.scoped,
+          Effect.timeout("10 seconds"),
+          Effect.mapError(() => failure("start", COPILOT_DEVICE_LOGIN_UPDATE_MESSAGE)),
+        );
+      const help = yield* runPreflight(invocation.command, [
+        ...args.filter((arg) => arg !== "--device-code"),
+        "--help",
+      ]);
+      // Inspect the actual selected executable; a command override may differ
+      // from the version in registry metadata.
+      const versionOutput = yield* runPreflight(invocation.command, [
+        ...args.slice(0, args.indexOf("login")),
+        "--version",
+      ]);
+      const version = /(?:^|\s)(\d+\.\d+\.\d+)(?:\s|$)/u.exec(versionOutput)?.[1];
+      if (!version || !supportsCopilotDeviceLogin(version, help))
+        return yield* failure("start", COPILOT_DEVICE_LOGIN_UPDATE_MESSAGE);
+      const node = yield* resolveNodeExecutable("Copilot sign-in", environment).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+        Effect.mapError(() =>
+          failure(
+            "start",
+            "Copilot sign-in requires Node.js on this environment. Install Node.js and retry.",
+          ),
+        ),
+      );
+      // Copilot device login still opens a browser by default. Its argv override
+      // is scoped to this login; the controlling client owns the browser action.
+      environment.ELECTRON_RUN_AS_NODE = "1";
+      environment.COPILOT_DEBUG_BROWSER = copilotBrowserOverride(node);
+      yield* runPreflight(node, [
+        ...copilotBrowserNoopArgs,
+        "https://example.invalid/device-preflight",
+      ]);
+      invocation = { ...invocation, args };
+    }
     const exited = yield* Deferred.make<number>();
     const output = yield* Queue.sliding<string>(64);
     const process = yield* pty.value
@@ -182,11 +269,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
         cwd: options.cwd,
         cols: 80,
         rows: 24,
-        env: {
-          ...options.environment,
-          ...resolved.spawn.env,
-          ...(method.type === "terminal" ? method.env : {}),
-        },
+        env: environment,
       })
       .pipe(
         Effect.mapError((cause) =>
@@ -212,9 +295,16 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
     );
     let transcript = "";
     let outputOffset = 0;
+    let deviceCode: ReturnType<typeof readCopilotDeviceCode>;
     const update = () =>
       context.setInteraction(
-        { type: "terminal", id: "terminal", output: transcript, outputOffset },
+        {
+          type: "terminal",
+          id: "terminal",
+          output: transcript,
+          outputOffset,
+          ...(deviceCode ? { deviceCode } : {}),
+        },
         (response) =>
           response.type === "terminal"
             ? Effect.try({
@@ -232,6 +322,8 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
       Effect.flatMap((data) => {
         outputOffset += data.length;
         transcript = (transcript + data).slice(-16_384);
+        if (deviceLogin)
+          deviceCode = readCopilotDeviceCode(transcript, invocation.args) ?? deviceCode;
         return update();
       }),
       Effect.forever,

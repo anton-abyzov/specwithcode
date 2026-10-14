@@ -1223,42 +1223,13 @@ export const DesktopPreviewRecordingSaveInputSchema = Schema.Struct({
   data: Schema.Uint8Array,
 });
 
-/**
- * Voice calls with the project coordinator (macOS). `microphone` mirrors the
- * system privacy state; `speech` says whether on-device speech is ready.
- */
-export const DesktopVoiceAccessSchema = Schema.Literals([
-  "granted",
-  "denied",
-  "restricted",
-  "not-determined",
-  "unknown",
-]);
-export type DesktopVoiceAccess = typeof DesktopVoiceAccessSchema.Type;
-
-export const DesktopVoiceStatusSchema = Schema.Struct({
-  supported: Schema.Boolean,
-  microphone: DesktopVoiceAccessSchema,
-  /** Why calls cannot run here, when `supported` is false. */
-  reason: Schema.NullOr(Schema.String),
-});
-export type DesktopVoiceStatus = typeof DesktopVoiceStatusSchema.Type;
-
-/** At most about two minutes of 16 kHz 16-bit mono audio per utterance. */
-export const DESKTOP_VOICE_MAX_AUDIO_BYTES = 4 * 1024 * 1024;
-export const DESKTOP_VOICE_MAX_SPOKEN_CHARACTERS = 4_000;
-
-export const DesktopVoiceTranscribeInputSchema = Schema.Struct({
-  audio: Schema.Uint8Array,
-  locale: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(35))),
-});
-
-export const DesktopVoiceSynthesizeInputSchema = Schema.Struct({
-  text: Schema.String.check(
-    Schema.isMinLength(1),
-    Schema.isMaxLength(DESKTOP_VOICE_MAX_SPOKEN_CHARACTERS),
-  ),
-});
+export * from "./desktopVoice.ts";
+import type {
+  DesktopVoiceStatus,
+  DesktopVoicePreferences,
+  DesktopVoicePreferencesInput,
+  DesktopLocalVoice,
+} from "./desktopVoice.ts";
 
 /**
  * A System Settings pane the app can deep-link to. The identifier crosses IPC
@@ -1348,7 +1319,11 @@ export interface DesktopBridge {
   setVoiceCallActive?: (state: { active: boolean }) => Promise<void>;
   /** On-device speech to text for a 16 kHz mono WAV. */
   transcribeVoice?: (input: { audio: Uint8Array; locale?: string }) => Promise<string>;
-  /** On-device text to speech; resolves with a WAV. */
+  getVoicePreferences?: () => Promise<DesktopVoicePreferences>;
+  setVoicePreferences?: (input: DesktopVoicePreferencesInput) => Promise<DesktopVoicePreferences>;
+  listLocalVoices?: () => Promise<readonly DesktopLocalVoice[]>;
+  previewLocalVoice?: (input: { voiceId: string; rate: number }) => Promise<Uint8Array>;
+  /** Local speech by default; optional personal ElevenLabs voice returns encoded audio. */
   synthesizeVoice?: (input: { text: string }) => Promise<Uint8Array>;
   openMicrophoneSettings?: () => Promise<void>;
   onTrackpadScrollEnd?: (listener: () => void) => () => void;

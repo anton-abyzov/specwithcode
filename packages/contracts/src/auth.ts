@@ -3,6 +3,7 @@ import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
 
 import {
   AuthSessionId,
+  EnvironmentId,
   ForwardCompatibleArray,
   ClientSurface,
   ClientWebDeployment,
@@ -315,6 +316,20 @@ export const AuthAccessTokenResult = Schema.Struct({
   scope: TrimmedNonEmptyString,
 });
 export type AuthAccessTokenResult = typeof AuthAccessTokenResult.Type;
+
+/** Management-authenticated renewal of the original revocable worker session. */
+export const AuthWorkerGrantRenewalRequest = Schema.Struct({
+  accessToken: TrimmedNonEmptyString.check(Schema.isMaxLength(8192)),
+  coordinatorEnvironmentId: EnvironmentId,
+  environmentId: EnvironmentId,
+});
+export type AuthWorkerGrantRenewalRequest = typeof AuthWorkerGrantRenewalRequest.Type;
+
+export const AuthWorkerGrantRenewalResult = Schema.Struct({
+  accessToken: TrimmedNonEmptyString,
+  expiresAt: Schema.DateTimeUtc,
+});
+export type AuthWorkerGrantRenewalResult = typeof AuthWorkerGrantRenewalResult.Type;
 
 export const AuthWebSocketTicketResult = Schema.Struct({
   ticket: TrimmedNonEmptyString,

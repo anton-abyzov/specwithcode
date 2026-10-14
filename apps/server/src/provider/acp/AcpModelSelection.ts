@@ -1,15 +1,21 @@
 import * as Effect from "effect/Effect";
+import type { SessionConfigOption } from "@specweave-studio/effect-acp/compat";
 import { AcpRequestError } from "@specweave-studio/effect-acp/errors";
+import { collectSessionConfigOptionValues } from "./AcpRuntimeModel.ts";
 import type { AcpSessionRuntime, AcpSessionRuntimeStartResult } from "./AcpSessionRuntime.ts";
 
 /**
- * Copilot CLI 1.0.95 advertises no model catalog over ACP yet still accepts
- * session/set_model, so a custom model ID is the only way to choose one. It
- * accepts any non-empty ID and reports no effective model; an ID the account
- * cannot use was served by its auto routing on the plan tested.
+ * Copilot CLI 1.0.95 omits its model catalog; 1.0.97 can expose only `auto`.
+ * Forward custom IDs through its legacy model method in these cases. Acceptance
+ * of an ID alone does not establish entitlement or the effective inference model.
  */
 const acceptsUnadvertisedSetModel = (started: AcpSessionRuntimeStartResult) =>
   started.initializeResult.agentInfo?.name === "Copilot";
+
+const isAutoOnlyModelConfig = (option: SessionConfigOption) => {
+  const values = collectSessionConfigOptionValues(option);
+  return values.length > 0 && values.every((value) => value === "auto");
+};
 
 /** Config options are live; legacy model metadata declares session/set_model support. */
 export const applyAcpModelSelection = Effect.fn("applyAcpModelSelection")(function* (
@@ -18,7 +24,15 @@ export const applyAcpModelSelection = Effect.fn("applyAcpModelSelection")(functi
   requestedModel: string,
 ) {
   const options = yield* runtime.getConfigOptions;
-  if (options.some((option) => option.category === "model")) {
+  const modelOption = options.find((option) => option.category === "model");
+  if (
+    modelOption !== undefined &&
+    requestedModel !== "auto" &&
+    acceptsUnadvertisedSetModel(started) &&
+    isAutoOnlyModelConfig(modelOption)
+  ) {
+    yield* runtime.setSessionModel(requestedModel);
+  } else if (modelOption !== undefined) {
     yield* runtime.setModel(requestedModel);
   } else if (started.sessionSetupResult.models != null || acceptsUnadvertisedSetModel(started)) {
     // Let the provider validate custom IDs; its catalog need not be exhaustive.
@@ -46,7 +60,8 @@ export const resetAcpModelSelection = Effect.fn("resetAcpModelSelection")(functi
     return false;
   }
   const options = yield* runtime.getConfigOptions;
-  if (options.some((option) => option.category === "model")) {
+  const modelOption = options.find((option) => option.category === "model");
+  if (modelOption !== undefined && !isAutoOnlyModelConfig(modelOption)) {
     return false;
   }
   yield* runtime.setSessionModel("auto");

@@ -20,7 +20,10 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import type { FleetTarget } from "../studioFleet.ts";
 import * as FleetTargets from "./FleetTargets.ts";
 import {
+  canRenewWorkerGrant,
   mintWorkerGrant,
+  renewWorkerGrant,
+  WorkerGrantRenewError,
   revokeWorkerSessions,
   sessionIdOfToken,
   WorkerGrantMintError,
@@ -29,15 +32,12 @@ import {
 
 /** Renewal starts this long before a grant expires. */
 const RENEW_BEFORE = Duration.days(7);
-/** Renewal needs proof the grant still works: an accepted call this recently. */
-const RENEW_ONLY_IF_ACCEPTED_WITHIN = Duration.hours(24);
 const MINT_INTERVAL = Duration.minutes(1);
-const RENEWAL_INTERVAL = Duration.days(1);
+const RENEWAL_INTERVAL = Duration.minutes(5);
 
 const secretName = (machineId: string) => `fleet-worker-grant-${machineId}`;
 
-const StoredGrant = Schema.Struct({
-  v: Schema.Literal(1),
+const GrantFields = {
   machineId: Schema.String,
   environmentId: Schema.String,
   origin: Schema.String,
@@ -48,7 +48,16 @@ const StoredGrant = Schema.Struct({
   clientLabel: Schema.String,
   mintedAt: Schema.String,
   status: Schema.Literals(["active", "revoked"]),
-});
+};
+const StoredGrant = Schema.Union([
+  Schema.Struct({ ...GrantFields, v: Schema.Literal(1) }),
+  Schema.Struct({
+    ...GrantFields,
+    v: Schema.Literal(2),
+    coordinatorEnvironmentId: Schema.String,
+    ongoingConsent: Schema.Boolean,
+  }),
+]);
 type StoredGrant = typeof StoredGrant.Type;
 const StoredGrantJson = Schema.fromJsonString(StoredGrant);
 const decodeStoredGrant = Schema.decodeUnknownOption(StoredGrantJson);
@@ -124,7 +133,7 @@ const make = Effect.gen(function* () {
   const clientName = workerClientName(localEnvironmentId);
   const lock = yield* KeyedLock.make<string>();
   const lastMint = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
-  const lastAccepted = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
+  const lastRenewal = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
   const problems = yield* Ref.make<ReadonlyMap<string, StudioFleetWorkersProblem>>(new Map());
 
   const loadConfig = targets.load.pipe(
@@ -149,7 +158,11 @@ const make = Effect.gen(function* () {
             (grant) =>
               grant.machineId === target.id &&
               grant.environmentId === target.environmentId &&
-              grant.origin === target.url,
+              grant.origin === target.url &&
+              Number.isFinite(Date.parse(grant.expiresAt)) &&
+              grant.resource === `${target.url}/mcp` &&
+              grant.clientLabel === clientName &&
+              (grant.v === 1 || grant.coordinatorEnvironmentId === localEnvironmentId),
           ),
           Option.getOrUndefined,
         ),
@@ -164,7 +177,9 @@ const make = Effect.gen(function* () {
   const describe = (target: FleetTarget, grant: StoredGrant | undefined, now: number) =>
     Effect.gen(function* () {
       const problem = (yield* Ref.get(problems)).get(target.id) ?? null;
-      const renewable = Boolean(target.managementToken);
+      const renewable =
+        canRenewWorkerGrant(target) &&
+        (grant === undefined || (grant.v === 2 && grant.ongoingConsent));
       if (grant === undefined)
         return {
           status: "not_allowed",
@@ -267,7 +282,9 @@ const make = Effect.gen(function* () {
         return false;
       }
       yield* writeGrant({
-        v: 1,
+        v: 2,
+        coordinatorEnvironmentId: localEnvironmentId,
+        ongoingConsent: canRenewWorkerGrant(target),
         machineId: target.id,
         environmentId: target.environmentId,
         origin: target.url,
@@ -280,8 +297,7 @@ const make = Effect.gen(function* () {
         status: "active",
       });
       yield* setProblem(target.id, null);
-      yield* Ref.update(lastAccepted, (current) => new Map(current).set(target.id, now));
-      // A grant allowed again (or renewed) replaces the old session there.
+      // An explicit Allow replaces the old session there. Renewal retains its ID.
       yield* revokeSessions(target, {
         keepNewest: true,
         sessionIds: heldSessionIds(previous),
@@ -292,6 +308,54 @@ const make = Effect.gen(function* () {
         access,
       });
       return true;
+    });
+
+  /** Called only under the machine lock, with persisted explicit consent. */
+  const renewIfDue = (target: FleetTarget, grant: StoredGrant | undefined) =>
+    Effect.gen(function* () {
+      if (
+        !grant ||
+        grant.v !== 2 ||
+        !grant.ongoingConsent ||
+        grant.status !== "active" ||
+        !canRenewWorkerGrant(target)
+      )
+        return;
+      const now = yield* Clock.currentTimeMillis;
+      const remaining = Date.parse(grant.expiresAt) - now;
+      if (!Number.isFinite(remaining) || remaining >= Duration.toMillis(RENEW_BEFORE)) return;
+      const previous = (yield* Ref.get(lastRenewal)).get(target.id);
+      if (previous !== undefined && now - previous < Duration.toMillis(MINT_INTERVAL)) return;
+      yield* Ref.update(lastRenewal, (current) => new Map(current).set(target.id, now));
+      const renewed = yield* Effect.tryPromise({
+        try: () =>
+          renewWorkerGrant({
+            fetcher: targets.fetch,
+            target,
+            accessToken: grant.accessToken,
+            coordinatorEnvironmentId: localEnvironmentId,
+            now: () => now,
+          }),
+        catch: (error) =>
+          error instanceof WorkerGrantRenewError || error instanceof WorkerGrantMintError
+            ? error
+            : new WorkerGrantRenewError("unreachable"),
+      }).pipe(Effect.result);
+      if (renewed._tag === "Failure") {
+        const reason = renewed.failure.reason;
+        if (reason === "revoked" || reason === "missing" || reason === "invalid") {
+          // An authoritative refusal is sticky. Only a new explicit Allow can replace it.
+          yield* writeGrant({ ...grant, status: "revoked", ongoingConsent: false });
+          yield* setProblem(target.id, null);
+        } else yield* setProblem(target.id, reason);
+        return;
+      }
+      yield* writeGrant({
+        ...grant,
+        accessToken: renewed.success.accessToken,
+        expiresAt: renewed.success.expiresAt,
+      });
+      yield* setProblem(target.id, null);
     });
 
   const allow: FleetWorkerGrants["Service"]["allow"] = (input) =>
@@ -340,18 +404,28 @@ const make = Effect.gen(function* () {
   const credential: FleetWorkerGrants["Service"]["credential"] = (machineId) =>
     Effect.gen(function* () {
       const target = yield* findTarget(machineId);
-      const grant = yield* readGrant(target);
-      if (grant === undefined) return yield* new FleetWorkerGrantError({ reason: "not_allowed" });
-      if (grant.status === "revoked")
-        return yield* new FleetWorkerGrantError({ reason: "revoked" });
-      if (Date.parse(grant.expiresAt) <= (yield* Clock.currentTimeMillis))
-        return yield* new FleetWorkerGrantError({ reason: "expired" });
-      return {
-        target,
-        accessToken: grant.accessToken,
-        access: grant.access,
-        expiresAt: grant.expiresAt,
-      };
+      return yield* lock.withLock(
+        target.id,
+        Effect.gen(function* () {
+          yield* renewIfDue(target, yield* readGrant(target));
+          const grant = yield* readGrant(target);
+          if (grant === undefined)
+            return yield* new FleetWorkerGrantError({ reason: "not_allowed" });
+          if (grant.status === "revoked")
+            return yield* new FleetWorkerGrantError({ reason: "revoked" });
+          if (
+            !Number.isFinite(Date.parse(grant.expiresAt)) ||
+            Date.parse(grant.expiresAt) <= (yield* Clock.currentTimeMillis)
+          )
+            return yield* new FleetWorkerGrantError({ reason: "expired" });
+          return {
+            target,
+            accessToken: grant.accessToken,
+            access: grant.access,
+            expiresAt: grant.expiresAt,
+          };
+        }),
+      );
     });
 
   const reportRejected: FleetWorkerGrants["Service"]["reportRejected"] = (machineId, token) =>
@@ -371,34 +445,27 @@ const make = Effect.gen(function* () {
       );
     }).pipe(Effect.ignore);
 
-  const reportAccepted: FleetWorkerGrants["Service"]["reportAccepted"] = (machineId) =>
-    Clock.currentTimeMillis.pipe(
-      Effect.flatMap((now) =>
-        Ref.update(lastAccepted, (current) => new Map(current).set(machineId, now)),
-      ),
-    );
+  // Retained for callers; recent activity is no longer an authorization signal.
+  const reportAccepted: FleetWorkerGrants["Service"]["reportAccepted"] = () => Effect.void;
 
   const renewDue: FleetWorkerGrants["Service"]["renewDue"] = Effect.gen(function* () {
     const config = yield* loadConfig;
     for (const target of config?.machines ?? []) {
-      if (!target.managementToken) continue;
-      yield* lock.withLock(
-        target.id,
-        Effect.gen(function* () {
-          const grant = yield* readGrant(target);
-          const now = yield* Clock.currentTimeMillis;
-          if (grant === undefined || grant.status !== "active") return;
-          const remaining = Date.parse(grant.expiresAt) - now;
-          if (remaining <= 0 || remaining >= Duration.toMillis(RENEW_BEFORE)) return;
-          const accepted = (yield* Ref.get(lastAccepted)).get(target.id);
-          if (
-            accepted === undefined ||
-            now - accepted > Duration.toMillis(RENEW_ONLY_IF_ACCEPTED_WITHIN)
-          )
-            return;
-          yield* mintAndStore(target, grant.access, undefined);
-        }),
-      );
+      yield* lock
+        .withLock(
+          target.id,
+          Effect.gen(function* () {
+            yield* renewIfDue(target, yield* readGrant(target));
+          }),
+        )
+        .pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("Worker grant renewal failed.", {
+              machineId: target.id,
+              reason: error.reason,
+            }),
+          ),
+        );
     }
   }).pipe(
     Effect.catch((error) =>
@@ -419,12 +486,12 @@ const make = Effect.gen(function* () {
 
 export const layer = Layer.effect(FleetWorkerGrants, make);
 
-/** Renews due grants once a day for as long as the server runs. */
+/** Recovers idle/offline grants in bounded passes, including after server restart. */
 export const layerRenewal = Layer.effectDiscard(
   Effect.gen(function* () {
     const grants = yield* FleetWorkerGrants;
     yield* grants.renewDue.pipe(
-      // A crashed pass must not end the daily repeat.
+      // A crashed pass must not end recovery.
       Effect.catchCause(() => Effect.logWarning("Worker grant renewal pass crashed.")),
       Effect.repeat(Schedule.spaced(RENEWAL_INTERVAL)),
       Effect.forkScoped,
