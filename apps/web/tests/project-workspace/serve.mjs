@@ -7,6 +7,7 @@ const fixture = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const app = NodePath.resolve(fixture, "../..");
 const repo = NodePath.resolve(app, "../..");
 const mocks = NodePath.join(fixture, "mocks.tsx");
+const recoverySettings = NodePath.join(fixture, "recovery-settings.ts");
 const stubs = [
   "lib/archivedThreadsState",
   "assets/assetUrls",
@@ -16,6 +17,9 @@ const stubs = [
   "state/session",
   "state/query",
   "state/use-atom-command",
+  "state/use-atom-query-runner",
+  "state/assets",
+  "lib/attachmentUploadQueue",
   "state/threads",
   "state/projects",
   "state/server",
@@ -36,6 +40,7 @@ const css = (await NodeFSP.readdir(NodePath.join(app, "dist/assets"))).find(
 );
 const server = await createServer({
   configFile: false,
+  cacheDir: process.env.UI_CACHE_DIR ?? NodePath.join(repo, ".cache/project-workspace"),
   root: fixture,
   plugins: [
     {
@@ -52,6 +57,11 @@ const server = await createServer({
             : null;
         if (target === null) return;
         const resolved = target.replace(/\.(tsx?|jsx?)$/, "");
+        if (
+          resolved === NodePath.join(app, "src/hooks/useSettings") &&
+          importer !== recoverySettings
+        )
+          return recoverySettings;
         if (files.has(resolved)) return mocks;
         if (resolved === NodePath.join(app, "src/components/ChatView")) return "\0fixture-thread";
         if (resolved === NodePath.join(app, "src/components/ChatMarkdown"))

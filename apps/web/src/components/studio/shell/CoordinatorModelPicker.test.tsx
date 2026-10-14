@@ -14,6 +14,11 @@ const state = vi.hoisted(() => ({
   refreshCommand: Symbol("refreshProviders"),
 }));
 
+vi.mock("../../../state/assets", () => ({ assetEnvironment: { createUrl: Symbol("asset") } }));
+vi.mock("../../../state/use-atom-query-runner", () => ({
+  useAtomQueryRunner: () => async () => ({ _tag: "Failure" }),
+}));
+
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => state.navigate }));
 
 vi.mock("../../../hooks/useSettings", () => ({ useEnvironmentSettings: () => ({}) }));
@@ -146,10 +151,7 @@ describe("CoordinatorModelPicker provider recovery", () => {
   });
 
   it("keeps a custom instance distinct from the default provider", async () => {
-    state.entries = [
-      entry("codex", true),
-      { ...entry("codex-work", false), driverKind: "codex" },
-    ];
+    state.entries = [entry("codex", true), { ...entry("codex-work", false), driverKind: "codex" }];
     await mount(false, {
       value: { instanceId: "codex-work", model: "gpt-6" } as never,
     });
@@ -480,5 +482,218 @@ describe("CoordinatorModelPicker provider setup", () => {
     await mount(true, { value: saved });
     expect(button("Add or manage providers")).toBeNull();
     expect(state.navigate).not.toHaveBeenCalled();
+  });
+});
+
+describe("CoordinatorModelPicker folder compatibility", () => {
+  it("preserves a saved Copilot selection, explains its Studio limitation and permits an explicit compatible choice", async () => {
+    state.entries = [entry("copilot-work", true), entry("codex", true)];
+    state.entries[0] = { ...state.entries[0], driverKind: "acpRegistry", displayName: "Copilot" };
+    state.options.set("copilot-work", [{ slug: "claude-opus-5.5", name: "Opus" }]);
+    const { onChange } = await mount(false, {
+      value: { instanceId: "copilot-work", model: "claude-opus-5.5" } as never,
+      requiresFolderGrants: true,
+    });
+    expect(container.textContent).toContain(
+      "With the current restricted policy, choose Codex or Claude",
+    );
+    expect(state.pickerProps!.activeInstanceId).toBe("copilot-work");
+    expect(onChange).not.toHaveBeenCalled();
+    const disabledReason = state.pickerProps!.getModelDisabledReason as (
+      id: string,
+      model: string,
+    ) => string | null;
+    expect(disabledReason("copilot-work", "claude-opus-5.5")).toContain("additional folder access");
+    expect(disabledReason("codex", "gpt-6")).toBeNull();
+    await act(async () =>
+      (state.pickerProps!.onInstanceModelChange as (id: string, model: string) => void)(
+        "copilot-work",
+        "claude-opus-5.5",
+      ),
+    );
+    expect(onChange).not.toHaveBeenCalled();
+    await act(async () =>
+      (state.pickerProps!.onInstanceModelChange as (id: string, model: string) => void)(
+        "codex",
+        "gpt-6",
+      ),
+    );
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ instanceId: "codex", model: "gpt-6" });
+    expect(state.refresh).not.toHaveBeenCalled();
+    await mount(false, {
+      value: { instanceId: "codex", model: "gpt-6" } as never,
+      requiresFolderGrants: true,
+    });
+    expect(container.textContent).toContain(
+      "Additional folders are available with Codex and Claude.",
+    );
+    expect(container.textContent).not.toContain("Choose one for the coordinator");
+    expect(
+      (state.pickerProps!.getModelDisabledReason as (id: string, model: string) => string | null)(
+        "codex",
+        "gpt-6",
+      ),
+    ).toBeNull();
+  });
+
+  it("keeps Copilot available when no additional folder grants are required", async () => {
+    state.entries = [{ ...entry("copilot-work", true), driverKind: "acpRegistry" }];
+    state.options.set("copilot-work", [{ slug: "claude-opus-5.5", name: "Opus" }]);
+    await mount(false, {
+      value: { instanceId: "copilot-work", model: "claude-opus-5.5" } as never,
+    });
+    expect(container.querySelector("[data-coordinator-folder-guidance]")).toBeNull();
+    expect(
+      (state.pickerProps!.getModelDisabledReason as (id: string, model: string) => string | null)(
+        "copilot-work",
+        "claude-opus-5.5",
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("coordinator ACP folder policy", () => {
+  it("keeps the saved Copilot coordinator selectable under its existing full-access policy", async () => {
+    state.entries = [{ ...entry("copilot-work", true), driverKind: "acpRegistry" }];
+    state.options.set("copilot-work", [{ slug: "claude-opus-5.5", name: "Opus" }]);
+    const { onChange } = await mount(false, {
+      value: { instanceId: "copilot-work", model: "claude-opus-5.5" } as never,
+      requiresFolderGrants: true,
+      folderPolicy: { runtimeMode: "full-access", interactionMode: "default" },
+    });
+    expect(
+      (state.pickerProps!.getModelDisabledReason as (id: string, model: string) => string | null)(
+        "copilot-work",
+        "claude-opus-5.5",
+      ),
+    ).toBeNull();
+    expect(container.textContent).toContain("existing full-access permissions");
+    expect(container.textContent).not.toContain("choose Codex or Claude");
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { runtimeMode: "approval-required", interactionMode: "default" },
+    { runtimeMode: "auto-accept-edits", interactionMode: "default" },
+    { runtimeMode: "full-access", interactionMode: "plan" },
+  ] as const)(
+    "retains restricted folder guidance for $runtimeMode/$interactionMode without modifying policy",
+    async (folderPolicy) => {
+      state.entries = [
+        { ...entry("copilot-work", true), driverKind: "acpRegistry" },
+        entry("codex", true),
+      ];
+      state.options.set("copilot-work", [{ slug: "claude-opus-5.5", name: "Opus" }]);
+      const { onChange } = await mount(false, {
+        value: { instanceId: "copilot-work", model: "claude-opus-5.5" } as never,
+        requiresFolderGrants: true,
+        folderPolicy,
+      });
+      expect(
+        (state.pickerProps!.getModelDisabledReason as (id: string, model: string) => string | null)(
+          "copilot-work",
+          "claude-opus-5.5",
+        ),
+      ).toContain("current restricted policy");
+      expect(onChange).not.toHaveBeenCalled();
+    },
+  );
+});
+
+import { DEFAULT_SERVER_SETTINGS, ProjectId } from "@specweave-studio/contracts";
+import { useProjectCoordinatorModelControls } from "../useProjectCoordinatorRecovery";
+
+async function mountProjectPolicy(
+  runtimeMode: "full-access" | "approval-required",
+  shellPolicy?: {
+    runtimeMode: "full-access" | "approval-required";
+    interactionMode: "default" | "plan";
+  },
+) {
+  state.entries = [{ ...entry("copilot-work", true), driverKind: "acpRegistry" }];
+  state.options.set("copilot-work", [{ slug: "claude-opus-5.5", name: "Opus" }]);
+  let compatibility: string | null = null;
+  function Fixture() {
+    const result = useProjectCoordinatorModelControls({
+      project: {
+        id: "policy-project" as never,
+        environmentId: "env" as never,
+        workspaceRoot: "/project",
+      },
+      environmentSettings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        defaultRuntimeMode: "approval-required",
+        projectSettingsOverrides: {
+          [ProjectId.make("policy-project")]: { defaultRuntimeMode: runtimeMode },
+        },
+      },
+      folderSettings: { additionalFolders: ["/extra"], repositories: [] },
+      coordinator: shellPolicy,
+      providers: [{ instanceId: "copilot-work", driver: "acpRegistry" }] as never,
+      model: { instanceId: "copilot-work", model: "claude-opus-5.5" } as never,
+      canOperate: true,
+      connected: true,
+      revision: 1,
+      loading: false,
+      saving: false,
+      retrying: false,
+      onChange: () => {},
+      onOpenSettings: () => {},
+    });
+    compatibility = result.compatibility;
+    return result.controls;
+  }
+  await act(async () => root.render(<Fixture />));
+  return compatibility;
+}
+
+describe("project coordinator actual policy precedence", () => {
+  it("uses project-scoped startup settings only when no coordinator exists", async () => {
+    expect(await mountProjectPolicy("full-access")).toBeNull();
+    expect(container.textContent).toContain("existing full-access permissions");
+    expect(await mountProjectPolicy("approval-required")).toContain("current restricted policy");
+  });
+
+  it("keeps the actual full-access coordinator valid even after defaults become restricted", async () => {
+    expect(
+      await mountProjectPolicy("approval-required", {
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      }),
+    ).toBeNull();
+  });
+
+  it.each([
+    { runtimeMode: "approval-required", interactionMode: "default" },
+    { runtimeMode: "full-access", interactionMode: "plan" },
+  ] as const)(
+    "does not widen an existing $runtimeMode/$interactionMode coordinator when defaults allow full access",
+    async (shellPolicy) => {
+      expect(await mountProjectPolicy("full-access", shellPolicy)).toContain(
+        "current restricted policy",
+      );
+    },
+  );
+
+  it("rejects an ACP catalog whose supported modes omit full access", async () => {
+    state.entries = [
+      {
+        ...entry("copilot-work", true),
+        driverKind: "acpRegistry",
+        snapshot: { supportedRuntimeModes: ["approval-required"] },
+      },
+    ];
+    state.options.set("copilot-work", [{ slug: "claude-opus-5.5", name: "Opus" }]);
+    await mount(false, {
+      value: { instanceId: "copilot-work", model: "claude-opus-5.5" } as never,
+      requiresFolderGrants: true,
+      folderPolicy: { runtimeMode: "full-access", interactionMode: "default" },
+    });
+    expect(
+      (state.pickerProps!.getModelDisabledReason as (id: string, model: string) => string | null)(
+        "copilot-work",
+        "claude-opus-5.5",
+      ),
+    ).toContain("current restricted policy");
   });
 });

@@ -356,8 +356,8 @@ export function StudioFleetRoster({
                 aria-label={machine.label}
               >
                 <div className="flex items-start gap-3">
-                  <span className="rounded-lg border border-border/60 bg-muted/50 p-2">
-                    <LaptopIcon className="size-5 text-foreground/75" />
+                  <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted/50">
+                    <LaptopIcon aria-hidden className="size-5 shrink-0 text-foreground/75" />
                   </span>
                   <div className="min-w-0">
                     <h3 className="truncate text-sm font-semibold">{machine.label}</h3>

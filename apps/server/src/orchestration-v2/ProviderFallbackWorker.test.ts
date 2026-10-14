@@ -1,5 +1,7 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+  ProjectId,
   type OrchestrationV2ServerCommand,
   ProviderInstanceId,
   RunId,
@@ -10,12 +12,14 @@ import { it as itEffect } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
 import { describe, expect, it } from "vite-plus/test";
 
 import * as Instances from "../provider/ProviderInstanceRegistry.ts";
 import * as Providers from "../provider/ProviderRegistry.ts";
 import * as Settings from "../serverSettings.ts";
+import * as Projects from "../project/ProjectService.ts";
 import { provider } from "../studio/fixtures.ts";
 import {
   API_CREDIT_IDLE_RETURN_MS,
@@ -38,12 +42,34 @@ const resetsAt = "2026-10-09T14:00:00.000Z";
 const claudeId = ProviderInstanceId.make("claudeAgent");
 const codexId = ProviderInstanceId.make("codex");
 const apiId = ProviderInstanceId.make("claudeApi");
+const legacyProject = {
+  id: ProjectId.make("legacy"),
+  title: "Legacy project",
+  workspaceRoot: "/project",
+  defaultModelSelection: null,
+  workspaceSettings: DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+  scripts: [],
+  createdAt: "2026-10-09T00:00:00Z",
+  updatedAt: "2026-10-09T00:00:00Z",
+  deletedAt: null,
+};
 
 function withUsage(base: ServerProvider, usedPercent: number): ServerProvider {
   return {
     ...base,
-    models: [{ slug: "default-model", name: "Default", isCustom: false, isDefault: true, capabilities: null }],
-    usageLimits: { ...base.usageLimits!, windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent, resetsAt }] },
+    models: [
+      {
+        slug: "default-model",
+        name: "Default",
+        isCustom: false,
+        isDefault: true,
+        capabilities: null,
+      },
+    ],
+    usageLimits: {
+      ...base.usageLimits!,
+      windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent, resetsAt }],
+    },
   };
 }
 
@@ -82,9 +108,30 @@ describe("providerFallbackCommand", () => {
   it("waits under the threshold, during a turn, and for other rules", () => {
     const claudeOk = withUsage(provider(claudeId, "claudeAgent", now), 80);
     expect(providerFallbackCommand(idle, [claudeOk, codexFree], rule, now)).toBeNull();
-    expect(providerFallbackCommand({ ...idle, activeRunId: RunId.make("r2") }, [claudeFull, codexFree], rule, now)).toBeNull();
-    expect(providerFallbackCommand(idle, [claudeFull, codexFree], { ...rule, providerLimitAction: "ask" }, now)).toBeNull();
-    expect(providerFallbackCommand(idle, [claudeFull, codexFree], { ...rule, providerLimitSwitchAtPercent: null }, now)).toBeNull();
+    expect(
+      providerFallbackCommand(
+        { ...idle, activeRunId: RunId.make("r2") },
+        [claudeFull, codexFree],
+        rule,
+        now,
+      ),
+    ).toBeNull();
+    expect(
+      providerFallbackCommand(
+        idle,
+        [claudeFull, codexFree],
+        { ...rule, providerLimitAction: "ask" },
+        now,
+      ),
+    ).toBeNull();
+    expect(
+      providerFallbackCommand(
+        idle,
+        [claudeFull, codexFree],
+        { ...rule, providerLimitSwitchAtPercent: null },
+        now,
+      ),
+    ).toBeNull();
   });
 
   it("does not switch early when the full window resets within the wait", () => {
@@ -92,12 +139,27 @@ describe("providerFallbackCommand", () => {
       ...claudeFull,
       usageLimits: {
         ...claudeFull.usageLimits!,
-        windows: [{ id: "five_hour", kind: "session" as const, label: "Session", usedPercent: 96, resetsAt: new Date(now + 20 * 60_000).toISOString() }],
+        windows: [
+          {
+            id: "five_hour",
+            kind: "session" as const,
+            label: "Session",
+            usedPercent: 96,
+            resetsAt: new Date(now + 20 * 60_000).toISOString(),
+          },
+        ],
       },
     };
     const waiting = { ...rule, providerLimitWaitUnderMinutes: 30 };
     expect(providerFallbackCommand(idle, [soon, codexFree], waiting, now)).toBeNull();
-    expect(providerFallbackCommand(idle, [soon, codexFree], { ...waiting, providerLimitWaitUnderMinutes: 0 }, now)).toMatchObject({
+    expect(
+      providerFallbackCommand(
+        idle,
+        [soon, codexFree],
+        { ...waiting, providerLimitWaitUnderMinutes: 0 },
+        now,
+      ),
+    ).toMatchObject({
       type: "thread.model-selection.set",
     });
   });
@@ -110,8 +172,17 @@ describe("providerFallbackCommand", () => {
   it("continues a stopped turn even with no early threshold", () => {
     const limited = { ...idle, status: "failed" as const, lastErrorClass: "usage_limit" as const };
     expect(
-      providerFallbackCommand(limited, [claudeFull, codexFree], { ...rule, providerLimitSwitchAtPercent: null }, now),
-    ).toMatchObject({ type: "message.dispatch", manualContinuationOfRunId: "r1", modelSelection: { instanceId: codexId } });
+      providerFallbackCommand(
+        limited,
+        [claudeFull, codexFree],
+        { ...rule, providerLimitSwitchAtPercent: null },
+        now,
+      ),
+    ).toMatchObject({
+      type: "message.dispatch",
+      manualContinuationOfRunId: "r1",
+      modelSelection: { instanceId: codexId },
+    });
   });
 });
 
@@ -121,9 +192,16 @@ describe("providerLimitStep", () => {
   const limited = { ...idle, status: "failed" as const, lastErrorClass: "usage_limit" as const };
   const banked = {
     ...claudeFull,
-    usageLimits: { ...claudeFull.usageLimits!, resetCredits: { availableCount: 2, nextCreditId: "grant_a" } },
+    usageLimits: {
+      ...claudeFull.usageLimits!,
+      resetCredits: { availableCount: 2, nextCreditId: "grant_a" },
+    },
   };
-  const codexLimited = { ...limited, providerInstanceId: codexId, modelSelection: { instanceId: codexId, model: "gpt-6" } };
+  const codexLimited = {
+    ...limited,
+    providerInstanceId: codexId,
+    modelSelection: { instanceId: codexId, model: "gpt-6" },
+  };
   const codexWithCredits = {
     ...withUsage(provider(codexId, "codex", now), 100),
     usageLimits: {
@@ -137,21 +215,44 @@ describe("providerLimitStep", () => {
 
   it("redeems a banked reset before anything else, once per stopped run", () => {
     const rule2 = { ...rule, providerLimitRedeemResets: true };
-    const step = providerLimitStep(limited, [banked, codexFree], rule2, now, { resetAttempted: false });
+    const step = providerLimitStep(limited, [banked, codexFree], rule2, now, {
+      resetAttempted: false,
+    });
     expect(step).toMatchObject({
       type: "redeem-reset",
       instanceId: claudeId,
-      continuation: { type: "message.dispatch", commandId: "limit-reset:t1:r1", manualContinuationOfRunId: "r1", modelSelection: { instanceId: claudeId } },
+      continuation: {
+        type: "message.dispatch",
+        commandId: "limit-reset:t1:r1",
+        manualContinuationOfRunId: "r1",
+        modelSelection: { instanceId: claudeId },
+      },
     });
-    expect(providerLimitStep(limited, [banked, codexFree], rule2, now, { resetAttempted: true })).toMatchObject({ type: "switch" });
-    expect(providerLimitStep(limited, [claudeFull, codexFree], rule2, now, { resetAttempted: false })).toMatchObject({ type: "switch" });
-    expect(providerLimitStep(limited, [banked, codexFree], { ...rule2, providerLimitAction: "wait" }, now, { resetAttempted: false })).toBeNull();
-    expect(providerLimitStep(idle, [banked, codexFree], rule2, now, { resetAttempted: false })).toBeNull();
+    expect(
+      providerLimitStep(limited, [banked, codexFree], rule2, now, { resetAttempted: true }),
+    ).toMatchObject({ type: "switch" });
+    expect(
+      providerLimitStep(limited, [claudeFull, codexFree], rule2, now, { resetAttempted: false }),
+    ).toMatchObject({ type: "switch" });
+    expect(
+      providerLimitStep(
+        limited,
+        [banked, codexFree],
+        { ...rule2, providerLimitAction: "wait" },
+        now,
+        { resetAttempted: false },
+      ),
+    ).toBeNull();
+    expect(
+      providerLimitStep(idle, [banked, codexFree], rule2, now, { resetAttempted: false }),
+    ).toBeNull();
   });
 
   it("continues a limited Codex turn on paid credits only when the project allows it", () => {
     const spend = { ...rule, providerLimitAction: "ask" as const, providerLimitSpendCredits: true };
-    const step = providerLimitStep(codexLimited, [codexWithCredits], spend, now, { resetAttempted: false });
+    const step = providerLimitStep(codexLimited, [codexWithCredits], spend, now, {
+      resetAttempted: false,
+    });
     expect(step).toMatchObject({
       type: "spend-credits",
       command: {
@@ -167,25 +268,90 @@ describe("providerLimitStep", () => {
         },
       },
     });
-    expect(providerLimitStep(codexLimited, [codexWithCredits], { ...spend, providerLimitSpendCredits: false }, now, { resetAttempted: false })).toBeNull();
-    const empty = { ...codexWithCredits, usageLimits: { ...codexWithCredits.usageLimits, credits: { hasCredits: true, unlimited: false, balance: "0" } } };
-    expect(providerLimitStep(codexLimited, [empty], spend, now, { resetAttempted: false })).toBeNull();
-    const capped = { ...codexWithCredits, usageLimits: { ...codexWithCredits.usageLimits, spendControlReached: true } };
-    expect(providerLimitStep(codexLimited, [capped], spend, now, { resetAttempted: false })).toBeNull();
-    expect(providerLimitStep(codexLimited, [codexWithCredits], spend, now, { resetAttempted: false, simulated: true })).toBeNull();
+    expect(
+      providerLimitStep(
+        codexLimited,
+        [codexWithCredits],
+        { ...spend, providerLimitSpendCredits: false },
+        now,
+        { resetAttempted: false },
+      ),
+    ).toBeNull();
+    const empty = {
+      ...codexWithCredits,
+      usageLimits: {
+        ...codexWithCredits.usageLimits,
+        credits: { hasCredits: true, unlimited: false, balance: "0" },
+      },
+    };
+    expect(
+      providerLimitStep(codexLimited, [empty], spend, now, { resetAttempted: false }),
+    ).toBeNull();
+    const capped = {
+      ...codexWithCredits,
+      usageLimits: { ...codexWithCredits.usageLimits, spendControlReached: true },
+    };
+    expect(
+      providerLimitStep(codexLimited, [capped], spend, now, { resetAttempted: false }),
+    ).toBeNull();
+    expect(
+      providerLimitStep(codexLimited, [codexWithCredits], spend, now, {
+        resetAttempted: false,
+        simulated: true,
+      }),
+    ).toBeNull();
   });
 
   it("waits for a reset within the project's wait instead of redeeming, spending or switching", () => {
     const at = (minutes: number) => new Date(now + minutes * 60_000).toISOString();
-    const waiting = { ...rule, providerLimitWaitUnderMinutes: 30, providerLimitRedeemResets: true, providerLimitSpendCredits: true };
+    const waiting = {
+      ...rule,
+      providerLimitWaitUnderMinutes: 30,
+      providerLimitRedeemResets: true,
+      providerLimitSpendCredits: true,
+    };
     const soon = { ...limited, usageLimitResetAt: at(20) };
-    expect(providerLimitStep(soon, [banked, codexFree], waiting, now, { resetAttempted: false })).toBeNull();
+    expect(
+      providerLimitStep(soon, [banked, codexFree], waiting, now, { resetAttempted: false }),
+    ).toBeNull();
     expect(providerFallbackCommand(soon, [claudeFull, codexFree], waiting, now)).toBeNull();
-    expect(providerLimitStep({ ...codexLimited, usageLimitResetAt: at(20) }, [codexWithCredits], waiting, now, { resetAttempted: false })).toBeNull();
+    expect(
+      providerLimitStep(
+        { ...codexLimited, usageLimitResetAt: at(20) },
+        [codexWithCredits],
+        waiting,
+        now,
+        { resetAttempted: false },
+      ),
+    ).toBeNull();
     // Too far to wait for, or the resume at the reset did not happen: the rule acts.
-    expect(providerLimitStep({ ...limited, usageLimitResetAt: at(45) }, [banked, codexFree], waiting, now, { resetAttempted: false })).toMatchObject({ type: "redeem-reset" });
-    expect(providerLimitStep({ ...limited, usageLimitResetAt: at(-11) }, [claudeFull, codexFree], waiting, now, { resetAttempted: false })).toMatchObject({ type: "switch" });
-    expect(providerLimitStep(soon, [claudeFull, codexFree], { ...waiting, providerLimitWaitUnderMinutes: 0 }, now, { resetAttempted: false })).toMatchObject({ type: "switch" });
+    expect(
+      providerLimitStep(
+        { ...limited, usageLimitResetAt: at(45) },
+        [banked, codexFree],
+        waiting,
+        now,
+        { resetAttempted: false },
+      ),
+    ).toMatchObject({ type: "redeem-reset" });
+    expect(
+      providerLimitStep(
+        { ...limited, usageLimitResetAt: at(-11) },
+        [claudeFull, codexFree],
+        waiting,
+        now,
+        { resetAttempted: false },
+      ),
+    ).toMatchObject({ type: "switch" });
+    expect(
+      providerLimitStep(
+        soon,
+        [claudeFull, codexFree],
+        { ...waiting, providerLimitWaitUnderMinutes: 0 },
+        now,
+        { resetAttempted: false },
+      ),
+    ).toMatchObject({ type: "switch" });
   });
 });
 
@@ -207,7 +373,9 @@ describe("Claude API credits", () => {
   const allow = { ...rule, providerLimitUseApiCredits: true };
 
   it("continues a limited subscription turn on the API-key instance before the fallback", () => {
-    const step = providerLimitStep(limited, [claudeFull, codexFree, api], allow, now, { resetAttempted: false });
+    const step = providerLimitStep(limited, [claudeFull, codexFree, api], allow, now, {
+      resetAttempted: false,
+    });
     expect(step).toMatchObject({
       type: "api-credits",
       instanceId: claudeId,
@@ -223,12 +391,25 @@ describe("Claude API credits", () => {
 
   it("only takes an instance with its own Anthropic key that lists the thread's model", () => {
     const step = (candidate: ServerProvider) =>
-      providerLimitStep(limited, [claudeFull, candidate], { ...allow, providerLimitAction: "ask" }, now, { resetAttempted: false });
+      providerLimitStep(
+        limited,
+        [claudeFull, candidate],
+        { ...allow, providerLimitAction: "ask" },
+        now,
+        { resetAttempted: false },
+      );
     expect(step(api)).toMatchObject({ type: "api-credits" });
     // A router or proxy token is billed somewhere else.
     expect(step({ ...api, auth: { status: "authenticated", type: "apiKey" } })).toBeNull();
     // Never a dearer or cheaper model than the thread was on.
-    expect(step({ ...api, models: [{ slug: "haiku", name: "Haiku", isCustom: false, isDefault: true, capabilities: null }] })).toBeNull();
+    expect(
+      step({
+        ...api,
+        models: [
+          { slug: "haiku", name: "Haiku", isCustom: false, isDefault: true, capabilities: null },
+        ],
+      }),
+    ).toBeNull();
     expect(step({ ...api, enabled: false })).toBeNull();
   });
 
@@ -242,60 +423,133 @@ describe("Claude API credits", () => {
     const at = (ms: number) => DateTime.makeUnsafe(ms);
     const unnamed = { ...limited, usageLimitResetAt: null };
     expect(step(unnamed)).toBeNull();
-    expect(step({ ...unnamed, latestRunCompletedAt: at(now - 60_000) })).toMatchObject({ type: "api-credits" });
+    expect(step({ ...unnamed, latestRunCompletedAt: at(now - 60_000) })).toMatchObject({
+      type: "api-credits",
+    });
     expect(step({ ...unnamed, latestRunCompletedAt: at(now - 6 * 60 * 60_000) })).toBeNull();
-    expect(limitStopIsCurrent({ ...unnamed, latestRunCompletedAt: at(now - 60_000) }, now)).toBe(true);
+    expect(limitStopIsCurrent({ ...unnamed, latestRunCompletedAt: at(now - 60_000) }, now)).toBe(
+      true,
+    );
     expect(step({ ...limited, snoozedUntil: at(now + 60_000) })).toBeNull();
-    expect(step({ ...limited, snoozedUntil: at(now - 60_000) })).toMatchObject({ type: "api-credits" });
+    expect(step({ ...limited, snoozedUntil: at(now - 60_000) })).toMatchObject({
+      type: "api-credits",
+    });
     // "Snooze limited threads" snoozes every stop until its reset; that is not a person's choice.
     const policy = { runId: RunId.make("r1"), resetAt: resetsAt, autoResume: false, snooze: true };
-    const untilReset = { ...limited, snoozedUntil: at(Date.parse(resetsAt)), limitRecovery: policy as never };
+    const untilReset = {
+      ...limited,
+      snoozedUntil: at(Date.parse(resetsAt)),
+      limitRecovery: policy as never,
+    };
     const withPolicy = (thread: Parameters<typeof providerLimitStep>[0]) =>
-      providerLimitStep(thread, providers, { ...ask, snoozeLimitedThreads: true }, now, { resetAttempted: false });
+      providerLimitStep(thread, providers, { ...ask, snoozeLimitedThreads: true }, now, {
+        resetAttempted: false,
+      });
     expect(withPolicy(untilReset)).toMatchObject({ type: "api-credits" });
     expect(withPolicy({ ...untilReset, snoozedUntil: at(Date.parse(resetsAt) + 1) })).toBeNull();
     // Without that setting the same snooze is a person's "Snooze until reset".
     expect(step(untilReset)).toBeNull();
-    expect(step({ ...limited, lastError: "Simulated usage limit (STUDIO_SIMULATE_USAGE_LIMIT)." })).toBeNull();
+    expect(
+      step({ ...limited, lastError: "Simulated usage limit (STUDIO_SIMULATE_USAGE_LIMIT)." }),
+    ).toBeNull();
   });
 
   it("never redeems or spends credits on a simulated stop after the variable is unset", () => {
-    const simulatedStop = { ...limited, lastError: "Simulated usage limit (STUDIO_SIMULATE_USAGE_LIMIT)." };
-    const banked = { ...claudeFull, usageLimits: { ...claudeFull.usageLimits!, resetCredits: { availableCount: 2 } } };
-    const redeem = { ...rule, providerLimitAction: "ask" as const, providerLimitRedeemResets: true };
-    expect(providerLimitStep(limited, [banked], redeem, now, { resetAttempted: false })).toMatchObject({ type: "redeem-reset" });
-    expect(providerLimitStep(simulatedStop, [banked], redeem, now, { resetAttempted: false })).toBeNull();
+    const simulatedStop = {
+      ...limited,
+      lastError: "Simulated usage limit (STUDIO_SIMULATE_USAGE_LIMIT).",
+    };
+    const banked = {
+      ...claudeFull,
+      usageLimits: { ...claudeFull.usageLimits!, resetCredits: { availableCount: 2 } },
+    };
+    const redeem = {
+      ...rule,
+      providerLimitAction: "ask" as const,
+      providerLimitRedeemResets: true,
+    };
+    expect(
+      providerLimitStep(limited, [banked], redeem, now, { resetAttempted: false }),
+    ).toMatchObject({ type: "redeem-reset" });
+    expect(
+      providerLimitStep(simulatedStop, [banked], redeem, now, { resetAttempted: false }),
+    ).toBeNull();
   });
 
   it("stays off without the rule, without an API-key instance, once tried, and while simulated", () => {
     const providers = [claudeFull, codexFree, api];
-    expect(providerLimitStep(limited, providers, rule, now, { resetAttempted: false })).toMatchObject({ type: "switch" });
-    expect(providerLimitStep(limited, [claudeFull, codexFree], allow, now, { resetAttempted: false })).toMatchObject({ type: "switch" });
-    expect(providerLimitStep(limited, providers, allow, now, { resetAttempted: false, apiCreditsAttempted: true })).toMatchObject({ type: "switch" });
-    expect(providerLimitStep(limited, providers, allow, now, { resetAttempted: false, simulated: true })).toMatchObject({ type: "switch" });
-    expect(providerLimitStep(limited, providers, { ...allow, providerLimitAction: "wait" }, now, { resetAttempted: false })).toBeNull();
+    expect(
+      providerLimitStep(limited, providers, rule, now, { resetAttempted: false }),
+    ).toMatchObject({ type: "switch" });
+    expect(
+      providerLimitStep(limited, [claudeFull, codexFree], allow, now, { resetAttempted: false }),
+    ).toMatchObject({ type: "switch" });
+    expect(
+      providerLimitStep(limited, providers, allow, now, {
+        resetAttempted: false,
+        apiCreditsAttempted: true,
+      }),
+    ).toMatchObject({ type: "switch" });
+    expect(
+      providerLimitStep(limited, providers, allow, now, { resetAttempted: false, simulated: true }),
+    ).toMatchObject({ type: "switch" });
+    expect(
+      providerLimitStep(limited, providers, { ...allow, providerLimitAction: "wait" }, now, {
+        resetAttempted: false,
+      }),
+    ).toBeNull();
   });
 
   it("never falls back to an instance billed per token as any ready provider", () => {
-    const open = { ...rule, providerLimitFallbackModelSelection: null, defaultModelSelection: null };
-    expect(providerLimitStep(limited, [claudeFull, api], open, now, { resetAttempted: false })).toBeNull();
+    const open = {
+      ...rule,
+      providerLimitFallbackModelSelection: null,
+      defaultModelSelection: null,
+    };
+    expect(
+      providerLimitStep(limited, [claudeFull, api], open, now, { resetAttempted: false }),
+    ).toBeNull();
     const bedrock = { ...api, auth: { status: "authenticated" as const, type: "bedrock" } };
-    expect(providerLimitStep(limited, [claudeFull, bedrock], open, now, { resetAttempted: false })).toBeNull();
+    expect(
+      providerLimitStep(limited, [claudeFull, bedrock], open, now, { resetAttempted: false }),
+    ).toBeNull();
     // Nor is a Bedrock thread a subscription thread to move onto the key.
-    const onBedrock = { ...limited, providerInstanceId: apiId, modelSelection: { instanceId: apiId, model: "opus" } };
+    const onBedrock = {
+      ...limited,
+      providerInstanceId: apiId,
+      modelSelection: { instanceId: apiId, model: "opus" },
+    };
     const key = { ...api, instanceId: ProviderInstanceId.make("claudeKey") };
-    expect(providerLimitStep(onBedrock, [bedrock, key], { ...allow, providerLimitAction: "ask" }, now, { resetAttempted: false })).toBeNull();
+    expect(
+      providerLimitStep(onBedrock, [bedrock, key], { ...allow, providerLimitAction: "ask" }, now, {
+        resetAttempted: false,
+      }),
+    ).toBeNull();
   });
 
-  const onApi = { ...idle, providerInstanceId: apiId, modelSelection: { instanceId: apiId, model: "opus" }, latestRunId: RunId.make("r3") };
-  const run = (id: string, ordinal: number, instanceId: ProviderInstanceId, userMessageId: string) => ({
+  const onApi = {
+    ...idle,
+    providerInstanceId: apiId,
+    modelSelection: { instanceId: apiId, model: "opus" },
+    latestRunId: RunId.make("r3"),
+  };
+  const run = (
+    id: string,
+    ordinal: number,
+    instanceId: ProviderInstanceId,
+    userMessageId: string,
+  ) => ({
     id: RunId.make(id),
     ordinal,
     providerInstanceId: instanceId,
     modelSelection: { instanceId, model: "opus" },
     userMessageId: userMessageId as never,
   });
-  const moved = [run("r1", 1, claudeId, "m1"), run("r2", 2, apiId, "limit-api:t1:r1"), run("r3", 3, apiId, "m3")];
+  const moved = [
+    run("r1", 1, claudeId, "m1"),
+    run("r2", 2, apiId, "limit-api:t1:r1"),
+    run("r3", 3, apiId, "m3"),
+  ];
 
   it("finds the subscription run the rule continued, and nothing for a thread a person moved", () => {
     expect(apiCreditOrigin(onApi, moved)).toEqual({
@@ -304,12 +558,23 @@ describe("Claude API credits", () => {
       modelSelection: { instanceId: claudeId, model: "opus" },
       resetAt: null,
     });
-    expect(apiCreditOrigin(onApi, [run("r1", 1, claudeId, "m1"), run("r2", 2, apiId, "m2")])).toBeNull();
+    expect(
+      apiCreditOrigin(onApi, [run("r1", 1, claudeId, "m1"), run("r2", 2, apiId, "m2")]),
+    ).toBeNull();
     // A continuation that stopped and was continued again still leads to the subscription.
     const chained = [...moved.slice(0, 2), run("r3", 3, apiId, "limit-api:t1:r2")];
-    expect(apiCreditOrigin(onApi, chained)).toMatchObject({ stoppedRunId: "r1", continuedByRunId: "r3" });
+    expect(apiCreditOrigin(onApi, chained)).toMatchObject({
+      stoppedRunId: "r1",
+      continuedByRunId: "r3",
+    });
     // A run elsewhere since the move means a person chose where the thread runs.
-    expect(apiCreditOrigin(onApi, [...moved.slice(0, 2), run("r3", 3, codexId, "m3"), run("r4", 4, apiId, "m4")])).toBeNull();
+    expect(
+      apiCreditOrigin(onApi, [
+        ...moved.slice(0, 2),
+        run("r3", 3, codexId, "m3"),
+        run("r4", 4, apiId, "m4"),
+      ]),
+    ).toBeNull();
   });
 
   const claudeOpen = withUsage(provider(claudeId, "claudeAgent", now), 4);
@@ -325,19 +590,36 @@ describe("Claude API credits", () => {
     expect(apiCreditReturnCommand(onApi, origin, [claudeOpen, api], now)).toEqual(back);
     expect(apiCreditReturnCommand(onApi, origin, [claudeFull, api], now)).toBeNull();
     // The window reset since the last read.
-    expect(apiCreditReturnCommand(onApi, origin, [claudeFull, api], Date.parse(resetsAt) + 1)).not.toBeNull();
+    expect(
+      apiCreditReturnCommand(onApi, origin, [claudeFull, api], Date.parse(resetsAt) + 1),
+    ).not.toBeNull();
     const unread = { ...claudeOpen, usageLimits: undefined };
     expect(apiCreditReturnCommand(onApi, origin, [unread, api], now)).toBeNull();
-    expect(apiCreditReturnCommand({ ...onApi, providerInstanceId: claudeId }, origin, [claudeOpen, api], now)).toBeNull();
+    expect(
+      apiCreditReturnCommand(
+        { ...onApi, providerInstanceId: claudeId },
+        origin,
+        [claudeOpen, api],
+        now,
+      ),
+    ).toBeNull();
   });
 
   it("goes back when the stopped run's limit has reset, whatever the cached read says", () => {
     const origin = { ...apiCreditOrigin(onApi, moved)!, resetAt: resetsAt };
-    const denied = { ...claudeFull, usageLimits: { ...claudeFull.usageLimits!, windows: [], ordinaryUsageAllowed: false } };
+    const denied = {
+      ...claudeFull,
+      usageLimits: { ...claudeFull.usageLimits!, windows: [], ordinaryUsageAllowed: false },
+    };
     expect(apiCreditReturnCommand(onApi, origin, [denied, api], now)).toBeNull();
-    expect(apiCreditReturnCommand(onApi, origin, [denied, api], Date.parse(resetsAt))).toEqual(back);
+    expect(apiCreditReturnCommand(onApi, origin, [denied, api], Date.parse(resetsAt))).toEqual(
+      back,
+    );
     // A known reset time is waited for, however long the thread sits idle.
-    const idleLong = { ...onApi, latestRunCompletedAt: DateTime.makeUnsafe(now - 2 * API_CREDIT_IDLE_RETURN_MS) };
+    const idleLong = {
+      ...onApi,
+      latestRunCompletedAt: DateTime.makeUnsafe(now - 2 * API_CREDIT_IDLE_RETURN_MS),
+    };
     expect(apiCreditReturnCommand(idleLong, origin, [denied, api], now)).toBeNull();
   });
 
@@ -345,14 +627,22 @@ describe("Claude API credits", () => {
     const origin = apiCreditOrigin(onApi, moved)!;
     const unread = { ...claudeFull, usageLimits: undefined };
     const at = (ms: number) => ({ ...onApi, latestRunCompletedAt: DateTime.makeUnsafe(ms) });
-    expect(apiCreditReturnCommand(at(now - API_CREDIT_IDLE_RETURN_MS + 1), origin, [unread, api], now)).toBeNull();
-    expect(apiCreditReturnCommand(at(now - API_CREDIT_IDLE_RETURN_MS), origin, [unread, api], now)).toEqual(back);
+    expect(
+      apiCreditReturnCommand(at(now - API_CREDIT_IDLE_RETURN_MS + 1), origin, [unread, api], now),
+    ).toBeNull();
+    expect(
+      apiCreditReturnCommand(at(now - API_CREDIT_IDLE_RETURN_MS), origin, [unread, api], now),
+    ).toEqual(back);
   });
 
   it("goes back at once when the rule is off, and numbers a retried command", () => {
     const origin = apiCreditOrigin(onApi, moved)!;
-    expect(apiCreditReturnCommand(onApi, origin, [claudeFull, api], now, { ruleOn: false })).toEqual(back);
-    expect(apiCreditReturnCommand(onApi, origin, [claudeFull, api], now, { ruleOn: false, attempt: 2 })).toMatchObject({
+    expect(
+      apiCreditReturnCommand(onApi, origin, [claudeFull, api], now, { ruleOn: false }),
+    ).toEqual(back);
+    expect(
+      apiCreditReturnCommand(onApi, origin, [claudeFull, api], now, { ruleOn: false, attempt: 2 }),
+    ).toMatchObject({
       commandId: "limit-api-return:t1:r2:2",
     });
   });
@@ -360,8 +650,10 @@ describe("Claude API credits", () => {
   it("stays while the thread works, hosts background work, or has no subscription to return to", () => {
     const origin = apiCreditOrigin(onApi, moved)!;
     const off = { ruleOn: false };
-    const stays = (thread: Parameters<typeof apiCreditReturnCommand>[0], providers: ReadonlyArray<ServerProvider> = [claudeOpen, api]) =>
-      expect(apiCreditReturnCommand(thread, origin, providers, now, off)).toBeNull();
+    const stays = (
+      thread: Parameters<typeof apiCreditReturnCommand>[0],
+      providers: ReadonlyArray<ServerProvider> = [claudeOpen, api],
+    ) => expect(apiCreditReturnCommand(thread, origin, providers, now, off)).toBeNull();
     stays({ ...onApi, activeRunId: RunId.make("r4") });
     stays({ ...onApi, activityRunStatus: "waiting" });
     stays({ ...onApi, pendingBackgroundTasks: [{ taskId: "bash-1", kind: "command" }] as never });
@@ -372,7 +664,12 @@ describe("Claude API credits", () => {
     // Studio's own pull request watch does not live in the provider session.
     expect(
       apiCreditReturnCommand(
-        { ...onApi, pendingBackgroundTasks: [{ taskId: "pull-request-watch:o/r#1", kind: "monitor" }] as never },
+        {
+          ...onApi,
+          pendingBackgroundTasks: [
+            { taskId: "pull-request-watch:o/r#1", kind: "monitor" },
+          ] as never,
+        },
         origin,
         [claudeOpen, api],
         now,
@@ -383,9 +680,23 @@ describe("Claude API credits", () => {
 
   it("reads the reset time from the stopped run's usage-limit failure", () => {
     const error = (runId: string, cls: string, resetAt?: string) =>
-      ({ type: "error", runId, failure: { class: cls, message: "x", code: null, retryable: false, resetAt } }) as never;
-    expect(limitResetAt(RunId.make("r1"), [error("r1", "usage_limit", resetsAt), error("r0", "usage_limit", "2027-01-01T00:00:00.000Z")])).toBe(resetsAt);
-    expect(limitResetAt(RunId.make("r1"), [error("r1", "overloaded", resetsAt), error("r1", "usage_limit")])).toBeNull();
+      ({
+        type: "error",
+        runId,
+        failure: { class: cls, message: "x", code: null, retryable: false, resetAt },
+      }) as never;
+    expect(
+      limitResetAt(RunId.make("r1"), [
+        error("r1", "usage_limit", resetsAt),
+        error("r0", "usage_limit", "2027-01-01T00:00:00.000Z"),
+      ]),
+    ).toBe(resetsAt);
+    expect(
+      limitResetAt(RunId.make("r1"), [
+        error("r1", "overloaded", resetsAt),
+        error("r1", "usage_limit"),
+      ]),
+    ).toBeNull();
   });
 });
 
@@ -399,16 +710,34 @@ describe("reachedLimitWindow", () => {
     expect(reachedLimitWindow({ ...claude, usageLimits: undefined }, now)).toBeNull();
   });
   it("trusts an explicit denial of ordinary usage, not a stopped run", () => {
-    const denied = { ...withUsage(claude, 60), usageLimits: { ...withUsage(claude, 60).usageLimits!, ordinaryUsageAllowed: false } };
+    const denied = {
+      ...withUsage(claude, 60),
+      usageLimits: { ...withUsage(claude, 60).usageLimits!, ordinaryUsageAllowed: false },
+    };
     expect(reachedLimitWindow(denied, now)).toBe(resetsAt);
-    const failedProbe = { ...withUsage(claude, 100), usageLimits: { ...withUsage(claude, 100).usageLimits!, unavailable: { reason: "probeFailed" as const } } };
+    const failedProbe = {
+      ...withUsage(claude, 100),
+      usageLimits: {
+        ...withUsage(claude, 100).usageLimits!,
+        unavailable: { reason: "probeFailed" as const },
+      },
+    };
     expect(reachedLimitWindow(failedProbe, now)).toBeNull();
   });
 });
 
 describe("sweep redeem path", () => {
-  const limited = { ...idle, status: "failed" as const, lastErrorClass: "usage_limit" as const, projectId: null };
-  const settings = { ...DEFAULT_SERVER_SETTINGS, providerLimitRedeemResets: true, providerLimitAction: "ask" as const };
+  const limited = {
+    ...idle,
+    status: "failed" as const,
+    lastErrorClass: "usage_limit" as const,
+    projectId: null,
+  };
+  const settings = {
+    ...DEFAULT_SERVER_SETTINGS,
+    providerLimitRedeemResets: true,
+    providerLimitAction: "ask" as const,
+  };
   const banked = (usedPercent: number): ServerProvider => {
     const base = withUsage(provider(claudeId, "claudeAgent", now), usedPercent);
     return { ...base, usageLimits: { ...base.usageLimits!, resetCredits: { availableCount: 2 } } };
@@ -422,29 +751,45 @@ describe("sweep redeem path", () => {
     /** What changed on the thread between the sweep's snapshot and the claim. */
     now?: Record<string, unknown>;
   }) {
-    const state = { run: 0, consumed: 0, refreshed: 0, fresh: input.fresh, dispatched: [] as OrchestrationV2ServerCommand[] };
+    const state = {
+      run: 0,
+      consumed: 0,
+      refreshed: 0,
+      fresh: input.fresh,
+      dispatched: [] as OrchestrationV2ServerCommand[],
+    };
     const deps = Layer.mergeAll(
+      Layer.mock(Projects.ProjectService)({
+        getById: () => Effect.succeed(Option.some(legacyProject)),
+      }),
       Layer.mock(Settings.ServerSettingsService)({ getSettings: Effect.succeed(settings) }),
       Layer.mock(Providers.ProviderRegistry)({
         getProviders: Effect.succeed([input.cached]),
-        refreshInstance: () => Effect.sync(() => (state.refreshed += 1, [state.fresh])),
+        refreshInstance: () => Effect.sync(() => ((state.refreshed += 1), [state.fresh])),
       }),
       Layer.mock(Instances.ProviderInstanceRegistry)({
         getInstance: () =>
           Effect.succeed({
             enabled: true,
-            consumeResetCredit: () => Effect.sync(() => (state.consumed += 1, "reset" as const)),
+            consumeResetCredit: () => Effect.sync(() => ((state.consumed += 1), "reset" as const)),
           } as never),
       }),
       Layer.mock(ProjectionStore.ProjectionStoreV2)({
         getShellSnapshot: () =>
-          Effect.succeed({ threads: [{ ...limited, latestRunId: RunId.make(`r${state.run}`) }] } as never),
+          Effect.succeed({
+            threads: [{ ...limited, latestRunId: RunId.make(`r${state.run}`) }],
+          } as never),
         getThreadShell: () =>
-          Effect.succeed({ ...limited, latestRunId: RunId.make(`r${state.run}`), ...input.now } as never),
+          Effect.succeed({
+            ...limited,
+            latestRunId: RunId.make(`r${state.run}`),
+            ...input.now,
+          } as never),
         getThreadRecords: () => Effect.fail(new Error("no records")) as never,
       }),
       Layer.mock(ThreadManagement.ThreadManagementService)({
-        dispatch: (command) => Effect.sync(() => (state.dispatched.push(command), { sequence: 1, storedEvents: [] })),
+        dispatch: (command) =>
+          Effect.sync(() => (state.dispatched.push(command), { sequence: 1, storedEvents: [] })),
       }),
     );
     const sweeps = Effect.gen(function* () {
@@ -491,7 +836,10 @@ describe("sweep redeem path", () => {
     Effect.gen(function* () {
       yield* TestClock.adjust("1 minute");
       // A new snapshot time, the old usage read: what a timed-out usage call publishes.
-      const kept = { ...banked(100), usageLimits: { ...banked(100).usageLimits!, checkedAt: "1970-01-01T00:00:10.000Z" } };
+      const kept = {
+        ...banked(100),
+        usageLimits: { ...banked(100).usageLimits!, checkedAt: "1970-01-01T00:00:10.000Z" },
+      };
       const { state, sweep } = yield* harness({ cached: banked(100), fresh: kept });
       for (let i = 0; i < 5; i++) {
         yield* sweep();
@@ -508,7 +856,10 @@ describe("sweep redeem path", () => {
     Effect.gen(function* () {
       yield* TestClock.adjust("1 minute");
       // The usage read worked, the banked-reset lookup did not.
-      const { state, sweep } = yield* harness({ cached: banked(100), fresh: withUsage(provider(claudeId, "claudeAgent", now), 100) });
+      const { state, sweep } = yield* harness({
+        cached: banked(100),
+        fresh: withUsage(provider(claudeId, "claudeAgent", now), 100),
+      });
       yield* sweep();
       expect(state.consumed).toBe(0);
       state.fresh = banked(100);
@@ -522,7 +873,11 @@ describe("sweep redeem path", () => {
   itEffect.effect("never redeems for a thread settled since the sweep's snapshot", () =>
     Effect.gen(function* () {
       yield* TestClock.adjust("1 minute");
-      const { state, sweep } = yield* harness({ cached: banked(100), fresh: banked(100), now: { settledOverride: "settled" } });
+      const { state, sweep } = yield* harness({
+        cached: banked(100),
+        fresh: banked(100),
+        now: { settledOverride: "settled" },
+      });
       yield* sweep();
       expect(state.consumed).toBe(0);
       expect(state.dispatched).toEqual([]);
@@ -549,8 +904,13 @@ describe("sweep API credit path", () => {
     usageLimitResetAt: resetsAt,
     projectId: null,
   };
-  const ruleOn = { ...DEFAULT_SERVER_SETTINGS, providerLimitUseApiCredits: true, providerLimitAction: "ask" as const };
-  const claude = (usedPercent: number) => withUsage(provider(claudeId, "claudeAgent", now), usedPercent);
+  const ruleOn = {
+    ...DEFAULT_SERVER_SETTINGS,
+    providerLimitUseApiCredits: true,
+    providerLimitAction: "ask" as const,
+  };
+  const claude = (usedPercent: number) =>
+    withUsage(provider(claudeId, "claudeAgent", now), usedPercent);
   const api: ServerProvider = {
     ...withUsage(provider(apiId, "claudeAgent", now), 0),
     models: [{ slug: "opus", name: "Opus", isCustom: false, isDefault: true, capabilities: null }],
@@ -564,10 +924,22 @@ describe("sweep API credit path", () => {
     modelSelection: { instanceId: apiId, model: "opus" },
     latestRunId: RunId.make("r2"),
   };
-  const stopped = { id: "r1", ordinal: 1, providerInstanceId: claudeId, modelSelection: { instanceId: claudeId, model: "opus" }, userMessageId: "m1" };
+  const stopped = {
+    id: "r1",
+    ordinal: 1,
+    providerInstanceId: claudeId,
+    modelSelection: { instanceId: claudeId, model: "opus" },
+    userMessageId: "m1",
+  };
   const moved = [
     stopped,
-    { id: "r2", ordinal: 2, providerInstanceId: apiId, modelSelection: { instanceId: apiId, model: "opus" }, userMessageId: "limit-api:t1:r1" },
+    {
+      id: "r2",
+      ordinal: 2,
+      providerInstanceId: apiId,
+      modelSelection: { instanceId: apiId, model: "opus" },
+      userMessageId: "limit-api:t1:r1",
+    },
   ];
   const returned = {
     type: "thread.model-selection.set",
@@ -601,7 +973,12 @@ describe("sweep API credit path", () => {
       dispatched: [] as OrchestrationV2ServerCommand[],
     };
     const deps = Layer.mergeAll(
-      Layer.mock(Settings.ServerSettingsService)({ getSettings: Effect.succeed(input.settings ?? ruleOn) }),
+      Layer.mock(Projects.ProjectService)({
+        getById: () => Effect.succeed(Option.some(legacyProject)),
+      }),
+      Layer.mock(Settings.ServerSettingsService)({
+        getSettings: Effect.succeed(input.settings ?? ruleOn),
+      }),
       Layer.mock(Providers.ProviderRegistry)({
         getProviders: Effect.succeed([input.cached, api]),
       }),
@@ -609,7 +986,9 @@ describe("sweep API credit path", () => {
         getInstance: () =>
           Effect.succeed({
             enabled: true,
-            readUsageLimitsNow: Effect.sync(() => (state.refreshed += 1, state.fresh?.usageLimits)),
+            readUsageLimitsNow: Effect.sync(
+              () => ((state.refreshed += 1), state.fresh?.usageLimits),
+            ),
           } as never),
       }),
       Layer.mock(ProjectionStore.ProjectionStoreV2)({
@@ -650,7 +1029,11 @@ describe("sweep API credit path", () => {
       yield* sweep();
       expect(state.refreshed).toBe(1);
       expect(state.dispatched).toMatchObject([
-        { commandId: "limit-api:t1:r1", manualContinuationOfRunId: "r1", modelSelection: { instanceId: apiId, model: "opus" } },
+        {
+          commandId: "limit-api:t1:r1",
+          manualContinuationOfRunId: "r1",
+          modelSelection: { instanceId: apiId, model: "opus" },
+        },
       ]);
       yield* TestClock.adjust("31 seconds");
       yield* sweep();
@@ -681,90 +1064,125 @@ describe("sweep API credit path", () => {
     },
   };
 
-  itEffect.effect("fires on a real stop, where the published limits keep the denial under its old time", () =>
-    Effect.gen(function* () {
-      yield* TestClock.adjust("1 minute");
-      const read = { ...claude(100).usageLimits!, checkedAt: "1970-01-01T00:01:00.000Z" };
-      // The premise: a successful read that still shows the limit leaves the denial published as it was.
-      expect(
-        resolveUsageLimitsAfterProbe({ driver: claude(100).driver, published: denial.usageLimits, probed: read }),
-      ).toBe(denial.usageLimits);
-      const { state, sweep } = yield* harness({ cached: denial, fresh: { ...claude(100), usageLimits: read } });
-      yield* sweep();
-      expect(state.dispatched).toMatchObject([{ commandId: "limit-api:t1:r1", modelSelection: { instanceId: apiId } }]);
-    }),
-  );
-
-  itEffect.effect("spends nothing when the read shows room although a denial is still published", () =>
-    Effect.gen(function* () {
-      yield* TestClock.adjust("1 minute");
-      const { state, sweep } = yield* harness({ cached: denial, fresh: claude(40) });
-      yield* sweep();
-      expect(state.refreshed).toBe(1);
-      expect(state.dispatched).toEqual([]);
-    }),
-  );
-
-  itEffect.effect("spends nothing on a usage read that failed, and tries the read again a few times", () =>
-    Effect.gen(function* () {
-      yield* TestClock.adjust("1 minute");
-      // The read fails; the registry goes on publishing the limit it had.
-      const { state, sweep } = yield* harness({ cached: claude(100), fresh: claude(100) });
-      state.fresh = undefined;
-      for (let i = 0; i < 5; i++) {
+  itEffect.effect(
+    "fires on a real stop, where the published limits keep the denial under its old time",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.adjust("1 minute");
+        const read = { ...claude(100).usageLimits!, checkedAt: "1970-01-01T00:01:00.000Z" };
+        // The premise: a successful read that still shows the limit leaves the denial published as it was.
+        expect(
+          resolveUsageLimitsAfterProbe({
+            driver: claude(100).driver,
+            published: denial.usageLimits,
+            probed: read,
+          }),
+        ).toBe(denial.usageLimits);
+        const { state, sweep } = yield* harness({
+          cached: denial,
+          fresh: { ...claude(100), usageLimits: read },
+        });
         yield* sweep();
+        expect(state.dispatched).toMatchObject([
+          { commandId: "limit-api:t1:r1", modelSelection: { instanceId: apiId } },
+        ]);
+      }),
+  );
+
+  itEffect.effect(
+    "spends nothing when the read shows room although a denial is still published",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.adjust("1 minute");
+        const { state, sweep } = yield* harness({ cached: denial, fresh: claude(40) });
+        yield* sweep();
+        expect(state.refreshed).toBe(1);
+        expect(state.dispatched).toEqual([]);
+      }),
+  );
+
+  itEffect.effect(
+    "spends nothing on a usage read that failed, and tries the read again a few times",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.adjust("1 minute");
+        // The read fails; the registry goes on publishing the limit it had.
+        const { state, sweep } = yield* harness({ cached: claude(100), fresh: claude(100) });
+        state.fresh = undefined;
+        for (let i = 0; i < 5; i++) {
+          yield* sweep();
+          yield* TestClock.adjust("31 seconds");
+        }
+        expect(state.refreshed).toBe(3);
+        expect(state.dispatched).toEqual([]);
+        const failed = yield* harness({
+          cached: claude(100),
+          fresh: {
+            ...claude(100),
+            usageLimits: { ...claude(100).usageLimits!, unavailable: { reason: "probeFailed" } },
+          },
+        });
+        yield* failed.sweep();
+        expect(failed.state.dispatched).toEqual([]);
+        // The read comes back on the next sweep: the stop is still served.
+        failed.state.fresh = claude(100);
         yield* TestClock.adjust("31 seconds");
-      }
-      expect(state.refreshed).toBe(3);
-      expect(state.dispatched).toEqual([]);
-      const failed = yield* harness({
-        cached: claude(100),
-        fresh: { ...claude(100), usageLimits: { ...claude(100).usageLimits!, unavailable: { reason: "probeFailed" } } },
-      });
-      yield* failed.sweep();
-      expect(failed.state.dispatched).toEqual([]);
-      // The read comes back on the next sweep: the stop is still served.
-      failed.state.fresh = claude(100);
-      yield* TestClock.adjust("31 seconds");
-      yield* failed.sweep();
-      expect(failed.state.dispatched).toMatchObject([{ commandId: "limit-api:t1:r1" }]);
-    }),
+        yield* failed.sweep();
+        expect(failed.state.dispatched).toMatchObject([{ commandId: "limit-api:t1:r1" }]);
+      }),
   );
 
   itEffect.effect("reads the account once per sweep for all its stopped threads", () =>
     Effect.gen(function* () {
       yield* TestClock.adjust("1 minute");
       const second = { ...limited, id: ThreadId.make("t2") };
-      const { state, sweep } = yield* harness({ cached: claude(100), fresh: claude(100), threads: [limited, second] });
+      const { state, sweep } = yield* harness({
+        cached: claude(100),
+        fresh: claude(100),
+        threads: [limited, second],
+      });
       yield* sweep();
       expect(state.refreshed).toBe(1);
-      expect(state.dispatched.map((command) => command.commandId)).toEqual(["limit-api:t1:r1", "limit-api:t2:r1"]);
+      expect(state.dispatched.map((command) => command.commandId)).toEqual([
+        "limit-api:t1:r1",
+        "limit-api:t2:r1",
+      ]);
     }),
   );
 
-  itEffect.effect("spends nothing for a thread snoozed, settled or moved since the sweep's snapshot", () =>
-    Effect.gen(function* () {
-      yield* TestClock.adjust("1 minute");
-      for (const now of [
-        { snoozedUntil: DateTime.makeUnsafe("2026-10-09T13:00:00.000Z") },
-        { settledOverride: "settled" },
-        { modelSelection: { instanceId: claudeId, model: "haiku" } },
-        { status: "running", activeRunId: "r9" },
-      ]) {
-        const { state, sweep } = yield* harness({ cached: claude(100), fresh: claude(100), now });
-        yield* sweep();
-        expect(state.refreshed).toBe(1);
-        expect(state.dispatched).toEqual([]);
-      }
-    }),
+  itEffect.effect(
+    "spends nothing for a thread snoozed, settled or moved since the sweep's snapshot",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.adjust("1 minute");
+        for (const now of [
+          { snoozedUntil: DateTime.makeUnsafe("2026-10-09T13:00:00.000Z") },
+          { settledOverride: "settled" },
+          { modelSelection: { instanceId: claudeId, model: "haiku" } },
+          { status: "running", activeRunId: "r9" },
+        ]) {
+          const { state, sweep } = yield* harness({ cached: claude(100), fresh: claude(100), now });
+          yield* sweep();
+          expect(state.refreshed).toBe(1);
+          expect(state.dispatched).toEqual([]);
+        }
+      }),
   );
 
   itEffect.effect("spends nothing for a stop that happened on another instance", () =>
     Effect.gen(function* () {
       yield* TestClock.adjust("1 minute");
       // The key instance's own run failed with a rate limit, then the thread was moved to the subscription.
-      const runs = [...moved.slice(0, 1), { ...moved[1]!, id: "r1x" }, { ...moved[1]!, id: "r1", ordinal: 3 }];
-      const { state, sweep } = yield* harness({ cached: claude(100), fresh: claude(100), runs: runs.slice(2) });
+      const runs = [
+        ...moved.slice(0, 1),
+        { ...moved[1]!, id: "r1x" },
+        { ...moved[1]!, id: "r1", ordinal: 3 },
+      ];
+      const { state, sweep } = yield* harness({
+        cached: claude(100),
+        fresh: claude(100),
+        runs: runs.slice(2),
+      });
       yield* sweep();
       expect(state.refreshed).toBe(0);
       expect(state.dispatched).toEqual([]);
@@ -788,7 +1206,12 @@ describe("sweep API credit path", () => {
   itEffect.effect("moves the thread back once the subscription has usage again", () =>
     Effect.gen(function* () {
       yield* TestClock.adjust("1 minute");
-      const { state, sweep } = yield* harness({ cached: claude(5), fresh: claude(5), thread: onApi, runs: moved });
+      const { state, sweep } = yield* harness({
+        cached: claude(5),
+        fresh: claude(5),
+        thread: onApi,
+        runs: moved,
+      });
       yield* sweep();
       yield* TestClock.adjust("31 seconds");
       yield* sweep();
@@ -802,9 +1225,25 @@ describe("sweep API credit path", () => {
     Effect.gen(function* () {
       yield* TestClock.adjust("1 minute");
       const turnItems = [
-        { type: "error", runId: "r1", failure: { class: "usage_limit", message: "x", code: null, retryable: false, resetAt: resetsAt } },
+        {
+          type: "error",
+          runId: "r1",
+          failure: {
+            class: "usage_limit",
+            message: "x",
+            code: null,
+            retryable: false,
+            resetAt: resetsAt,
+          },
+        },
       ];
-      const { state, sweep } = yield* harness({ cached: claude(100), fresh: claude(100), thread: onApi, runs: moved, turnItems });
+      const { state, sweep } = yield* harness({
+        cached: claude(100),
+        fresh: claude(100),
+        thread: onApi,
+        runs: moved,
+        turnItems,
+      });
       yield* sweep();
       expect(state.dispatched).toEqual([]);
     }),
@@ -825,69 +1264,95 @@ describe("sweep API credit path", () => {
     }),
   );
 
-  itEffect.effect("retries a rejected way back under a new command id, a bounded number of times", () =>
-    Effect.gen(function* () {
-      yield* TestClock.adjust("1 minute");
-      const { state, sweep } = yield* harness({ cached: claude(5), fresh: claude(5), thread: onApi, runs: moved });
-      state.failDispatch = true;
-      yield* sweep();
-      yield* TestClock.adjust("31 seconds");
-      yield* sweep();
-      expect(state.attempted).toEqual(["limit-api-return:t1:r2", "limit-api-return:t1:r2:1"]);
-      state.failDispatch = false;
-      yield* TestClock.adjust("31 seconds");
-      yield* sweep();
-      expect(state.dispatched).toMatchObject([{ commandId: "limit-api-return:t1:r2:2" }]);
-      yield* TestClock.adjust("31 seconds");
-      yield* sweep();
-      expect(state.attempted).toHaveLength(3);
-      // An id the orchestrator rejected before a restart is skipped without using up a try.
-      const replayed = yield* harness({ cached: claude(5), fresh: claude(5), thread: onApi, runs: moved });
-      replayed.state.failWith = { _tag: "OrchestratorCommandPreviouslyRejectedError" };
-      for (let i = 0; i < 7; i++) {
+  itEffect.effect(
+    "retries a rejected way back under a new command id, a bounded number of times",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.adjust("1 minute");
+        const { state, sweep } = yield* harness({
+          cached: claude(5),
+          fresh: claude(5),
+          thread: onApi,
+          runs: moved,
+        });
+        state.failDispatch = true;
+        yield* sweep();
+        yield* TestClock.adjust("31 seconds");
+        yield* sweep();
+        expect(state.attempted).toEqual(["limit-api-return:t1:r2", "limit-api-return:t1:r2:1"]);
+        state.failDispatch = false;
+        yield* TestClock.adjust("31 seconds");
+        yield* sweep();
+        expect(state.dispatched).toMatchObject([{ commandId: "limit-api-return:t1:r2:2" }]);
+        yield* TestClock.adjust("31 seconds");
+        yield* sweep();
+        expect(state.attempted).toHaveLength(3);
+        // An id the orchestrator rejected before a restart is skipped without using up a try.
+        const replayed = yield* harness({
+          cached: claude(5),
+          fresh: claude(5),
+          thread: onApi,
+          runs: moved,
+        });
+        replayed.state.failWith = { _tag: "OrchestratorCommandPreviouslyRejectedError" };
+        for (let i = 0; i < 7; i++) {
+          yield* TestClock.adjust("31 seconds");
+          yield* replayed.sweep();
+        }
+        replayed.state.failWith = undefined;
         yield* TestClock.adjust("31 seconds");
         yield* replayed.sweep();
-      }
-      replayed.state.failWith = undefined;
-      yield* TestClock.adjust("31 seconds");
-      yield* replayed.sweep();
-      expect(replayed.state.dispatched).toMatchObject([{ commandId: "limit-api-return:t1:r2:7" }]);
-      // A way back that keeps failing rests after five tries, then tries again.
-      const failing = yield* harness({ cached: claude(5), fresh: claude(5), thread: onApi, runs: moved });
-      failing.state.failDispatch = true;
-      for (let i = 0; i < 7; i++) {
-        yield* TestClock.adjust("31 seconds");
+        expect(replayed.state.dispatched).toMatchObject([
+          { commandId: "limit-api-return:t1:r2:7" },
+        ]);
+        // A way back that keeps failing rests after five tries, then tries again.
+        const failing = yield* harness({
+          cached: claude(5),
+          fresh: claude(5),
+          thread: onApi,
+          runs: moved,
+        });
+        failing.state.failDispatch = true;
+        for (let i = 0; i < 7; i++) {
+          yield* TestClock.adjust("31 seconds");
+          yield* failing.sweep();
+        }
+        expect(failing.state.attempted).toHaveLength(5);
+        yield* TestClock.adjust("31 minutes");
         yield* failing.sweep();
-      }
-      expect(failing.state.attempted).toHaveLength(5);
-      yield* TestClock.adjust("31 minutes");
-      yield* failing.sweep();
-      expect(failing.state.attempted).toHaveLength(6);
-    }),
+        expect(failing.state.attempted).toHaveLength(6);
+      }),
   );
 
   itEffect.effect("leaves a thread on the key instance while a message is queued for it", () =>
     Effect.gen(function* () {
       yield* TestClock.adjust("1 minute");
       const queued = { ...moved[1]!, id: "q3", ordinal: 3, userMessageId: "m3", status: "queued" };
-      const { state, sweep } = yield* harness({ cached: claude(5), fresh: claude(5), thread: onApi, runs: [...moved, queued] });
+      const { state, sweep } = yield* harness({
+        cached: claude(5),
+        fresh: claude(5),
+        thread: onApi,
+        runs: [...moved, queued],
+      });
       yield* sweep();
       expect(state.attempted).toEqual([]);
     }),
   );
 
-  itEffect.effect("leaves a thread on the key instance when a turn started since the snapshot", () =>
-    Effect.gen(function* () {
-      yield* TestClock.adjust("1 minute");
-      const { state, sweep } = yield* harness({
-        cached: claude(5),
-        fresh: claude(5),
-        thread: onApi,
-        runs: moved,
-        now: { activeRunId: "r3", latestRunId: "r3" },
-      });
-      yield* sweep();
-      expect(state.attempted).toEqual([]);
-    }),
+  itEffect.effect(
+    "leaves a thread on the key instance when a turn started since the snapshot",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.adjust("1 minute");
+        const { state, sweep } = yield* harness({
+          cached: claude(5),
+          fresh: claude(5),
+          thread: onApi,
+          runs: moved,
+          now: { activeRunId: "r3", latestRunId: "r3" },
+        });
+        yield* sweep();
+        expect(state.attempted).toEqual([]);
+      }),
   );
 });

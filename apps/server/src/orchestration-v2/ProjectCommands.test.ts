@@ -96,7 +96,7 @@ describe("planProjectCommand", () => {
     assert.deepInclude(event.payload, { scripts: [], defaultModelSelection: null });
   });
 
-  it("only treats metadata updates as explicit model defaults", () => {
+  it("records explicit model defaults through metadata updates", () => {
     const selection: ModelSelection = {
       instanceId: ProviderInstanceId.make("codex"),
       model: "gpt-5.6-sol",
@@ -106,6 +106,29 @@ describe("planProjectCommand", () => {
       payloadOf(update({ defaultModelSelection: selection })).defaultModelSelection,
       selection,
     );
+  });
+
+  it("carries an internal worker seed, including options, in the creation event", () => {
+    const selection: ModelSelection = {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-6-astra",
+      options: [{ id: "reasoningEffort", value: "high" }],
+    };
+    for (const initialWorkerModelSelection of [selection, null]) {
+      const event = Result.getOrThrow(
+        plan({
+          type: "project.create",
+          commandId: CommandId.make("cmd-create-internal-worker"),
+          projectId,
+          title: "Handoff",
+          workspaceRoot: "/tmp/handoff",
+          initialWorkerModelSelection,
+        }),
+      );
+      assert.equal(event.type, "project.created");
+      if (event.type !== "project.created") assert.fail("Expected the creation event");
+      assert.deepEqual(event.payload.defaultModelSelection, initialWorkerModelSelection);
+    }
   });
 
   it("carries every edited field and omits the rest", () => {

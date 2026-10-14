@@ -13,7 +13,14 @@ import {
   ProjectId,
   ThreadId,
 } from "./baseSchemas.ts";
-import { ChatAttachment } from "./chatAttachment.ts";
+import {
+  ChatAttachment,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  PROVIDER_SEND_TURN_MAX_IMAGES,
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  PROVIDER_SEND_TURN_MAX_TOTAL_IMAGE_BYTES,
+  PROVIDER_SEND_TURN_MAX_FILE_BYTES,
+} from "./chatAttachment.ts";
 import { ModelSelection } from "./modelSelection.ts";
 
 // Sized for memory brought over from another tool: a long-lived project keeps
@@ -145,9 +152,16 @@ export class ProjectWorkspaceError extends Schema.TaggedError<ProjectWorkspaceEr
       "not_found",
       "conflict",
       "invalid",
+      "empty_message",
+      "invalid_attachments",
+      "attachment_unavailable",
+      "attachment_limit",
+      "invalid_coordinator",
+      "invalid_source_thread",
       "paused",
       "archived",
       "model_required",
+      "unsupported_provider",
       "busy",
       "operation_failed",
     ]),
@@ -160,9 +174,21 @@ export class ProjectWorkspaceError extends Schema.TaggedError<ProjectWorkspaceEr
       conflict: "This project changed elsewhere. Reload before saving.",
       invalid:
         "The project memory name or content is invalid, or the project is at its memory limit (256 KiB per file, 16 MiB and 4,096 files per project).",
+      empty_message: "Enter a message or attach a file before sending to the coordinator.",
+      invalid_attachments:
+        "These attachments cannot be sent. Attach the files again, then retry your message.",
+      attachment_unavailable:
+        "These uploaded files have expired or cannot be read. Restore or attach them again, then retry your message.",
+      attachment_limit: `The attachments exceed message limits. Use up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files, including ${PROVIDER_SEND_TURN_MAX_IMAGES} images (${PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / 1_048_576} MiB each, ${PROVIDER_SEND_TURN_MAX_TOTAL_IMAGE_BYTES / 1_048_576} MiB total), and ${PROVIDER_SEND_TURN_MAX_FILE_BYTES / 1_048_576} MiB per file. Reduce the count or size and retry.`,
+      invalid_coordinator:
+        "This project's coordinator thread is no longer available. Reload the project before sending.",
+      invalid_source_thread:
+        "The selected worker is no longer available in this project. Choose a current project thread before sending.",
       paused: "This project is paused. Resume it before starting work.",
       archived: "This project is archived. Restore it before starting work.",
       model_required: "Choose a coordinator model or a default project model first.",
+      unsupported_provider:
+        "This provider cannot use additional project folders under the current permissions. Use Codex or Claude, or an ACP provider already running with Full access and no restrictive sandbox or approval override.",
       busy: "Finish or stop active project work before deleting the project.",
       operation_failed: "The project operation failed. Reload and try again.",
     };

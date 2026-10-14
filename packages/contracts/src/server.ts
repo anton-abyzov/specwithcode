@@ -314,6 +314,9 @@ export const isProviderTextGenerationCapable = (snapshot: ServerProvider): boole
   snapshot.supportsTextGeneration !== false;
 
 export const ServerObservability = Schema.Struct({
+  // Older hosts omit these; absence means unknown, never assumed opt-out.
+  productUsageEnabled: Schema.optionalKey(Schema.Boolean),
+  productUsageDestinationConfigured: Schema.optionalKey(Schema.Boolean),
   logsDirectoryPath: TrimmedNonEmptyString,
   localTracingEnabled: Schema.Boolean,
   otlpTracesUrl: Schema.optional(TrimmedNonEmptyString),

@@ -2,6 +2,7 @@ import {
   DEFAULT_PROJECT_ENVIRONMENT,
   type Project,
   ProjectEnvironmentError,
+  fullAccessAcpProjectFolders,
   type ProjectId,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
@@ -60,9 +61,11 @@ export const makeEnvironmentRuntime = Effect.gen(function* () {
           ...(input.runtimePolicy.cwd === resolved.workspaceRoot ? [] : [resolved.workspaceRoot]),
           ...resolved.additionalFolders,
         ];
+        const unrestrictedAcp =
+          session.driver === "acpRegistry" && fullAccessAcpProjectFolders(input.runtimePolicy);
         if (
           directories.length > 0 &&
-          ((session.driver !== "codex" && session.driver !== "claudeAgent") ||
+          ((session.driver !== "codex" && session.driver !== "claudeAgent" && !unrestrictedAcp) ||
             (session.driver === "codex" &&
               typeof input.runtimePolicy.sandboxPolicy === "object" &&
               input.runtimePolicy.sandboxPolicy !== null &&
@@ -73,7 +76,17 @@ export const makeEnvironmentRuntime = Effect.gen(function* () {
             projectId: project.id,
             code: "unsupported_provider",
           });
-        const next = { ...input, projectAdditionalDirectories: directories };
+        const next = {
+          ...input,
+          projectAdditionalDirectories: directories,
+          message:
+            unrestrictedAcp && directories.length > 0
+              ? {
+                  ...input.message,
+                  text: `Approved project folders (paths only; existing permissions apply): ${JSON.stringify(directories)}\n\n${input.message.text}`,
+                }
+              : input.message,
+        };
         return yield* compact && session.compactThread
           ? session.compactThread(next)
           : session.startTurn(next);

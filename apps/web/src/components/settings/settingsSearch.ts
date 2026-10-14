@@ -15,6 +15,7 @@ export type SettingsPath =
   | "/settings/projects"
   | "/settings/skills"
   | "/settings/general"
+  | "/settings/privacy"
   | "/settings/agents"
   | "/settings/appearance"
   | "/settings/keybindings"
@@ -95,6 +96,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/projects": "Project",
   "/settings/skills": "Skills",
   "/settings/general": "General",
+  "/settings/privacy": "Data & privacy",
   "/settings/agents": "Agents",
   "/settings/appearance": "Appearance",
   "/settings/keybindings": "Keybindings",
@@ -144,6 +146,24 @@ const KEYBINDING_SEARCH_ITEMS = STATIC_KEYBINDING_COMMANDS.toSorted((left, right
  * that may not be mounted point at their nearest stable section instead.
  */
 export const SETTINGS_SEARCH_ITEMS = [
+  {
+    id: "privacy-data",
+    title: "Your data",
+    to: "/settings/privacy",
+    searchTerms: ["privacy local chats files providers logs storage"],
+  },
+  {
+    id: "privacy-collection",
+    title: "Product improvement and diagnostics",
+    to: "/settings/privacy",
+    searchTerms: ["telemetry analytics consent opt out data collection PostHog"],
+  },
+  {
+    id: "privacy-report",
+    title: "Diagnostics report",
+    to: "/settings/privacy",
+    searchTerms: ["support feedback export download preview share logs redacted"],
+  },
   {
     id: "agent-instructions",
     title: "Agent instructions",
@@ -1047,6 +1067,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/mods": null,
   "/settings/messaging": null,
   "/settings/google": null,
+  "/settings/privacy": null,
   "/settings/connections": "connections",
   "/settings/scheduled-tasks": null,
   "/settings/archived": "project-defaults",

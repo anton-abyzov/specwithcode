@@ -323,7 +323,7 @@ export function DraftMachinePicker(props: Props) {
                     disabled={Boolean(reason) || pending || locked}
                     onClick={() => chooseMachine(environment.environmentId)}
                   >
-                    <LaptopIcon aria-hidden />
+                    <LaptopIcon aria-hidden className="size-4 shrink-0" />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate">{environment.label}</span>
                       <span className="block text-xs text-muted-foreground">

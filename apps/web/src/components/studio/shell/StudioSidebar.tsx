@@ -51,7 +51,10 @@ import {
 import { isTerminalFocused } from "../../../lib/terminalFocus";
 import { isModelPickerOpen } from "../../../modelPickerVisibility";
 import { resolveAdjacentThreadId } from "../../Sidebar.logic";
-import type { SidebarProjectSnapshot } from "../../../sidebarProjectGrouping";
+import type {
+  SidebarProjectGroupMember,
+  SidebarProjectSnapshot,
+} from "../../../sidebarProjectGrouping";
 import { useServerConfigs, useThreadShells } from "../../../state/entities";
 import { usePrimaryEnvironmentId } from "../../../state/environments";
 import { projectEnvironment } from "../../../state/projects";
@@ -190,7 +193,7 @@ export default function StudioSidebar() {
   }, [projectGroups]);
   // The checkout each project page shows, as the page itself picks it.
   const displayedCheckouts = useMemo(() => {
-    const map = new Map<string, { readonly environmentId: string; readonly id: string }>();
+    const map = new Map<string, SidebarProjectGroupMember>();
     for (const group of projectGroups) {
       if (group.projectKey === activeProjectKey && checkoutKey) {
         const exact = group.memberProjects.find(
@@ -431,7 +434,7 @@ export default function StudioSidebar() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: `Could not ${archived ? "archive" : "restore"} ${group.displayName}`,
+            title: `Could not ${archived ? "archive" : "restore"} ${displayedCheckouts.get(group.projectKey)?.title ?? group.displayName}`,
             description: cause instanceof Error ? cause.message : "Try again in a moment.",
           }),
         );
@@ -516,6 +519,7 @@ export default function StudioSidebar() {
                   <ProjectRow
                     key={group.projectKey}
                     group={group}
+                    displayedProject={displayedCheckouts.get(group.projectKey)}
                     archived={isArchivedGroup(group, scratchRootFor)}
                     waiting={waitingByProject.get(group.projectKey) ?? 0}
                     current={group.projectKey === activeProjectKey}
@@ -572,6 +576,7 @@ export default function StudioSidebar() {
                       <ProjectRow
                         key={group.projectKey}
                         group={group}
+                        displayedProject={displayedCheckouts.get(group.projectKey)}
                         archived
                         waiting={waitingByProject.get(group.projectKey) ?? 0}
                         current={false}
@@ -763,6 +768,7 @@ export default function StudioSidebar() {
 /** One project in the Projects list, with its Archive or Restore action. */
 function ProjectRow(props: {
   group: SidebarProjectSnapshot;
+  displayedProject: SidebarProjectGroupMember | undefined;
   archived: boolean;
   waiting: number;
   current: boolean;
@@ -770,6 +776,10 @@ function ProjectRow(props: {
   onArchive: (archived: boolean) => void;
 }) {
   const { group, archived, waiting } = props;
+  // The group keeps repository identity; its visible name and icon belong to
+  // the checkout the workspace opens, including an explicit remote checkout.
+  const project = props.displayedProject ?? group;
+  const displayName = props.displayedProject?.title ?? group.displayName;
   const personal = group.memberProjects.some(
     (member) => member.workspaceSettings?.kind === "personal",
   );
@@ -779,19 +789,24 @@ function ProjectRow(props: {
         side="right"
         label={
           personal
-            ? `${group.displayName} · ${PERSONAL_ASSISTANT_LABEL}: ${PERSONAL_ASSISTANT_DESCRIPTION}`
-            : `${group.displayName} · ${group.workspaceRoot}${archived ? " · Archived" : ""}`
+            ? `${displayName} · ${PERSONAL_ASSISTANT_LABEL}: ${PERSONAL_ASSISTANT_DESCRIPTION}`
+            : `${displayName} · ${project.workspaceRoot}${archived ? " · Archived" : ""}`
         }
       >
         <Link
           to="/projects/$projectKey"
           params={{ projectKey: group.projectKey }}
+          search={
+            props.displayedProject
+              ? { checkout: coordinatorMachineKey(props.displayedProject) }
+              : {}
+          }
           className="sws-side-row"
           aria-current={props.current ? "page" : undefined}
           onClick={props.onOpen}
         >
-          <ProjectFavicon project={group} className="size-[18px] shrink-0" />
-          <span className="sws-side-row-label">{group.displayName}</span>
+          <ProjectFavicon project={project} className="size-[18px] shrink-0" />
+          <span className="sws-side-row-label">{displayName}</span>
           {archived ? <span className="sws-side-row-hint">Archived</span> : null}
           {waiting > 0 ? (
             <span className="sws-count sws-count-waiting">
@@ -807,7 +822,7 @@ function ProjectRow(props: {
             <button
               type="button"
               className="sws-icon-button sws-chat-menu"
-              aria-label={`Actions for ${group.displayName}`}
+              aria-label={`Actions for ${displayName}`}
             />
           }
         >

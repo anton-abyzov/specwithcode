@@ -3,6 +3,7 @@ import { useCoordinatorModelSave } from "../../studio/coordinatorModelSave";
 import { useProjectCoordinatorDraft } from "../../studio/projectCoordinatorDraft";
 import { useProjectCoordinatorComposer } from "../../studio/projectCoordinatorComposer";
 import { ProjectCoordinatorDetails } from "./ProjectCoordinatorDetails";
+import { ProjectMachineHandoff } from "./ProjectMachineHandoff";
 import { ProjectPlan } from "./ProjectPlan";
 import { TimelineDetailMenu } from "../chat/TimelineDetailMenu";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -89,6 +90,7 @@ import { coordinatorTurnFailure, sentStarterIds } from "../../studio/coordinator
 import { ProjectMessageRoutingContext } from "../../studio/projectMessageRouting";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { SidebarInset } from "../ui/sidebar";
+import { Button } from "../ui/button";
 import { isElectron } from "../../env";
 import { canOpenProjectWindowFor, openProjectWindow } from "../../lib/projectWindow";
 import ChatView from "../ChatView";
@@ -102,7 +104,11 @@ import {
   useCoordinatorAttachments,
 } from "./shell/CoordinatorAttachments";
 import { fileAttachmentStagingLimit } from "../chat/composerAttachmentFiles";
-import { CoordinatorModelPicker } from "./shell/CoordinatorModelPicker";
+import { coordinatorRetryMessage, coordinatorRetryFingerprint } from "./coordinatorRecovery";
+import {
+  useProjectCoordinatorRecovery,
+  useProjectCoordinatorModelControls,
+} from "./useProjectCoordinatorRecovery";
 import { useCoordinatorModelsLoading } from "./shell/useCoordinatorModelsLoading";
 import { ProjectUsageIndicator } from "./shell/ProjectUsageIndicator";
 import { useProviderEntries } from "./shell/ModelBadge";
@@ -242,6 +248,12 @@ export function ProjectWorkspaceSurface({
   const [tab, setTab] = useState<ProjectSettingsTab | null>(null);
   const [planOpen, setPlanOpen] = useState(false);
   const [coordinatorDetailsOpen, setCoordinatorDetailsOpen] = useState(false);
+  const [machineHandoffOpen, setMachineHandoffOpen] = useState(false);
+  const [retryingCoordinator, setRetryingCoordinator] = useState(false);
+  const [coordinatorActivityRunId, setCoordinatorActivityRunId] = useState<string | null>(null);
+  const [coordinatorReviewView, setCoordinatorReviewView] = useState<"requests" | "activity">(
+    "requests",
+  );
   const {
     prompt,
     setPrompt,
@@ -317,7 +329,6 @@ export function ProjectWorkspaceSurface({
     threadsLoaded,
     onShowCoordinator: showCoordinator,
   });
-  // The panel's thread steps aside for the main conversation.
   const openCoordinator = useCallback(() => {
     setCoordinatorDetailsOpen(false);
     setSelected(null);
@@ -440,16 +451,23 @@ export function ProjectWorkspaceSurface({
     onSaved: () => setNotice("Coordinator model saved for this project."),
     onSettled: refreshSnapshot,
   });
-  const coordinatorModelControls = (
-    <CoordinatorModelPicker
-      environmentId={project.environmentId}
-      value={model ?? null}
-      disabled={!canOperate || !connected || revision === null || (query.isPending && !snapshot)}
-      saving={savingModel}
-      onChange={(selection) => void saveCoordinatorModel(selection)}
-      onOpenSettings={() => setTab("general")}
-    />
-  );
+  const { compatibility: modelCompatibility, controls: coordinatorModelControls } =
+    useProjectCoordinatorModelControls({
+      project,
+      environmentSettings: hostSettings,
+      folderSettings: liveSettings?.environment ?? snapshot?.settings.environment,
+      coordinator,
+      providers: hostProviders,
+      model,
+      canOperate,
+      connected,
+      revision,
+      loading: query.isPending && !snapshot,
+      saving: savingModel,
+      retrying: retryingCoordinator,
+      onChange: (selection) => void saveCoordinatorModel(selection),
+      onOpenSettings: () => setTab("general"),
+    });
   const threadOpen = selectedThread !== null;
   const threadBusy = selectedThread ? threadTone(selectedThread) === "working" : false;
   const leaveThread = useCallback(() => {
@@ -490,12 +508,12 @@ export function ProjectWorkspaceSurface({
       document.querySelector<HTMLTextAreaElement>("#project-prompt")?.focus(),
     );
   }, [phone, setOverviewOpen, setSelected]);
-  // The button and the shortcut are one control: with a thread open, hiding the pane leaves it.
   const toggleOverview = useCallback(() => {
     if (threadOpen || overviewOpen) hideOverview();
     else setOverviewOpen(true);
   }, [hideOverview, overviewOpen, threadOpen, setOverviewOpen]);
   useEffect(() => {
+    if (coordinatorDetailsOpen) return;
     // A dialog or menu owns the keyboard while it is open. It closes itself on the
     // same key press, so look before it has the chance to.
     let overlayOwnsKey = false;
@@ -606,6 +624,7 @@ export function ProjectWorkspaceSurface({
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [
+    coordinatorDetailsOpen,
     askCoordinator,
     keybindings,
     leaveThread,
@@ -620,20 +639,26 @@ export function ProjectWorkspaceSurface({
       text: string,
       sourceThreadId?: ThreadId,
       attachments?: ReadonlyArray<ChatAttachment>,
+      onConfirmed?: () => void,
+      retryIdentity?: readonly [string | null, string],
     ) => {
-      if (inFlight.current)
+      const ownsRetryFlight = retryIdentity !== undefined;
+      if (inFlight.current && !ownsRetryFlight)
         throw new Error("Another project message is being confirmed. Your draft is preserved.");
       if (blocked) throw new Error(blocked);
+      if (modelCompatibility) throw new Error(modelCompatibility);
       if (!model && !coordinatorId) throw new Error(missingModelMessage(modelsLoading));
       inFlight.current = true;
       setSending(true);
       setError(null);
       setNotice(null);
-      const commandId = receipt.forPrompt(
-        JSON.stringify([project.id, text, sourceThreadId ?? null, attachments ?? []]),
-        () => randomUUID(),
-      );
+      const keyParts = [project.id, text, sourceThreadId ?? null, attachments ?? []];
       try {
+        const commandId = receipt.forPrompt(
+          coordinatorRetryFingerprint(JSON.stringify(keyParts), retryIdentity),
+          () => randomUUID(),
+          ownsRetryFlight,
+        );
         const result = await runAfterSave(() =>
           sendCommand({
             environmentId: project.environmentId,
@@ -648,22 +673,22 @@ export function ProjectWorkspaceSurface({
         );
         if (result._tag === "Failure") {
           const e = squashAtomCommandFailure(result);
-          throw new Error(
-            e instanceof Error
-              ? e.message
-              : "Delivery was not confirmed. Retry preserves the same request identity.",
-          );
+          throw e instanceof Error
+            ? e
+            : new Error("Delivery was not confirmed. Retry preserves the same request identity.");
         }
+        onConfirmed?.();
         receipt.acknowledge(commandId);
         query.refresh();
         setNotice(sourceThreadId ? SENT_WITH_CONTEXT_NOTICE : QUEUED_NOTICE);
       } finally {
-        inFlight.current = false;
+        if (!ownsRetryFlight) inFlight.current = false;
         setSending(false);
       }
     },
     [
       blocked,
+      modelCompatibility,
       model,
       modelsLoading,
       coordinatorId,
@@ -675,7 +700,6 @@ export function ProjectWorkspaceSurface({
       query.refresh,
     ],
   );
-  // A voice call speaks through the same send path and listens to the same conversation.
   const coordinatorMessages = coordinatorThread?.projection.messages;
   const coordinatorRuns = coordinatorThread?.projection.runs;
   const failedRunId = coordinatorFailure?.runId ?? null;
@@ -713,6 +737,7 @@ export function ProjectWorkspaceSurface({
   // One rule for the Send button and the Enter key.
   const sendDisabled =
     Boolean(blocked) ||
+    Boolean(modelCompatibility) ||
     (!model && !coordinatorId) ||
     savingModel ||
     sending ||
@@ -745,6 +770,23 @@ export function ProjectWorkspaceSurface({
       composer.setSubmitting(false);
     }
   }
+  const retryMessage = coordinatorRetryMessage(coordinatorThread?.projection.messages ?? []);
+  const retryCoordinator = useProjectCoordinatorRecovery({
+    message: retryMessage,
+    projectId: project.id,
+    failureRunId: coordinatorFailure?.runId ?? null,
+    coordinatorId,
+    environmentId: project.environmentId,
+    uploadsSupported,
+    canRetry: !sending && !preparing && !savingModel && !blocked && !modelCompatibility,
+    nativeBusy: coordinatorWorking,
+    flight: inFlight,
+    composer,
+    revision: () => continuationSelection.revision(),
+    send: routingSend,
+    reportError: setError,
+    setRetrying: setRetryingCoordinator,
+  });
   async function resolve(thread: EnvironmentThreadShell) {
     const result =
       thread.archivedAt !== null
@@ -823,9 +865,20 @@ export function ProjectWorkspaceSurface({
   const attention = coordinatorAttention(coordinator ?? null);
   const openCoordinatorPage = useCallback(() => {
     if (!coordinatorId) return;
+    setCoordinatorReviewView("requests");
     setCoordinatorDetailsOpen(true);
     if (phone) setOverviewOpen(false);
   }, [coordinatorId, phone, setOverviewOpen]);
+  const openCoordinatorActivity = useCallback(
+    (runId: string) => {
+      if (!coordinatorId) return;
+      setCoordinatorActivityRunId(runId);
+      setCoordinatorReviewView("activity");
+      setCoordinatorDetailsOpen(true);
+    },
+    [coordinatorId],
+  );
+
   const waiting = waitingCount(workers);
   const openLink = useOpenLink(null);
   const pullRequests = collectProjectPullRequests(
@@ -1030,6 +1083,8 @@ export function ProjectWorkspaceSurface({
                 environmentId={project.environmentId}
                 threadId={coordinatorId}
                 error={error}
+                view={coordinatorReviewView}
+                runId={coordinatorReviewView === "activity" ? coordinatorActivityRunId : null}
                 routing={{
                   coordinatorModelControls,
                   saveCoordinatorModel,
@@ -1043,14 +1098,14 @@ export function ProjectWorkspaceSurface({
                 onClose={() => setCoordinatorDetailsOpen(false)}
               />
             ) : null}
-            <div className={coordinatorDetailsOpen ? "hidden" : "contents"}>
+            <div className="contents">
               <h2 className="sr-only">Coordinator</h2>
               {query.error && (
                 <p className="project-notice sws-pane-notice" role="alert">
                   {query.error}{" "}
-                  <button type="button" className="project-control" onClick={query.refresh}>
+                  <Button variant="outline" size="xs" onClick={query.refresh}>
                     Retry
-                  </button>
+                  </Button>
                 </p>
               )}
               {coordinatorId ? (
@@ -1065,7 +1120,18 @@ export function ProjectWorkspaceSurface({
                   onOpenPullRequest={(url) => void openLink(url).catch(() => undefined)}
                   attention={attention}
                   onOpenCoordinatorPage={openCoordinatorPage}
+                  onOpenCoordinatorActivity={openCoordinatorActivity}
                   failure={coordinatorFailure}
+                  onRetry={retryCoordinator}
+                  retrying={retryingCoordinator}
+                  retryDisabled={
+                    Boolean(blocked) ||
+                    Boolean(modelCompatibility) ||
+                    sending ||
+                    preparing ||
+                    savingModel ||
+                    retryMessage === null
+                  }
                   progress={coordinatorWork}
                   empty={welcome}
                 />
@@ -1212,7 +1278,7 @@ export function ProjectWorkspaceSurface({
                     {coordinator && coordinatorTone ? (
                       <Tip
                         label={
-                          attention
+                          attention && attention.reason !== "failed"
                             ? `${attention.message} Review here`
                             : "Coordinator status. Show its latest message"
                         }
@@ -1221,13 +1287,21 @@ export function ProjectWorkspaceSurface({
                           type="button"
                           className="sws-state"
                           data-tone={coordinatorTone}
-                          data-opens={attention ? "coordinator-review" : "conversation"}
-                          onClick={attention ? openCoordinatorPage : openCoordinator}
+                          data-opens={
+                            attention && attention.reason !== "failed"
+                              ? "coordinator-review"
+                              : "conversation"
+                          }
+                          onClick={
+                            attention && attention.reason !== "failed"
+                              ? openCoordinatorPage
+                              : openCoordinator
+                          }
                         >
                           <span className="sws-dot" data-tone={coordinatorTone} aria-hidden />
                           {THREAD_TONE_LABELS[coordinatorTone]}
                           <span className="sr-only">
-                            {attention
+                            {attention && attention.reason !== "failed"
                               ? `, ${attention.action.toLowerCase()} here`
                               : ", show the coordinator's latest message"}
                           </span>
@@ -1242,6 +1316,12 @@ export function ProjectWorkspaceSurface({
                       savedMachineMissing={savedMachineMissing}
                       onChoose={onCheckout}
                     />
+                    <ProjectMachineHandoff
+                      key={`${project.environmentId}:${project.id}`}
+                      project={project}
+                      coordinatorId={mainCoordinatorId}
+                      onOpenChange={setMachineHandoffOpen}
+                    />
                     <ProjectUsageIndicator
                       onOpenProjectUsage={() => setTab("usage")}
                       projectEnvironmentId={project.environmentId}
@@ -1250,13 +1330,13 @@ export function ProjectWorkspaceSurface({
                   </span>
                   {coordinatorModelControls}
                   {coordinatorFallback ? (
-                    <span
-                      className="sws-model-fallback"
-                      role="status"
-                      title={`Saved model: ${coordinatorFallback.saved.full}. The coordinator goes back to it once its usage has room.`}
+                    <Tip
+                      label={`Saved model: ${coordinatorFallback.saved.full}. The coordinator goes back to it once its usage has room.`}
                     >
-                      On {coordinatorFallback.now.full}
-                    </span>
+                      <span className="sws-model-fallback" role="status">
+                        On {coordinatorFallback.now.full}
+                      </span>
+                    </Tip>
                   ) : null}
                 </div>
               </form>
@@ -1315,6 +1395,7 @@ export function ProjectWorkspaceSurface({
                         threadId={selectedThread.id}
                         routeKind="server"
                         layoutMode="embedded"
+                        suspendShortcuts={coordinatorDetailsOpen || machineHandoffOpen}
                         embeddedHeaderToolsTarget={threadToolsSlot}
                         reserveTitleBarControlInset={false}
                       />

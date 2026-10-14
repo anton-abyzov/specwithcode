@@ -183,11 +183,15 @@ export function createScopedProjectSendReceipt(
 }
 
 /** Retry an uncertain response with the same ID; remove only a confirmed receipt. */
+const MAX_PROJECT_SEND_RECEIPT_CHARS = 2_000_000;
 export function createProjectSendReceipt(persistence?: ReceiptPersistence) {
   const pending = new Map<string, string>();
+  let restorationFailed = false;
   try {
     const raw = persistence?.storage.getItem(persistence.key);
-    if (raw && raw.length <= 2_000_000) {
+    if (raw !== undefined && raw !== null && raw.length > MAX_PROJECT_SEND_RECEIPT_CHARS)
+      restorationFailed = true;
+    else if (raw !== undefined && raw !== null) {
       const data: unknown = JSON.parse(raw);
       if (
         typeof data === "object" &&
@@ -206,32 +210,58 @@ export function createProjectSendReceipt(persistence?: ReceiptPersistence) {
             /^[A-Za-z0-9_-]{1,128}$/.test(entry[1])
           )
             pending.set(entry[0], entry[1]);
+          else restorationFailed = true;
         }
-      }
+      } else restorationFailed = true;
     }
   } catch {
+    restorationFailed = true;
     /* Corrupt or unavailable storage must not break the workspace. */
   }
-  function persist() {
-    if (!persistence) return;
-    try {
-      if (pending.size)
-        persistence.storage.setItem(
-          persistence.key,
-          JSON.stringify({ version: 1, pending: [...pending] }),
+  function persist(requireDurable = false) {
+    // Best-effort sends stay in memory; never destroy an unreadable accepted-command record.
+    if (restorationFailed) return;
+    const unavailable = () =>
+      new Error(
+        "Retry needs browser session storage to preserve its command identity. Your original message and files are preserved.",
+      );
+    if (!persistence) {
+      if (requireDurable) throw unavailable();
+      return;
+    }
+    const saved = pending.size ? JSON.stringify({ version: 1, pending: [...pending] }) : null;
+    if (saved !== null && saved.length > MAX_PROJECT_SEND_RECEIPT_CHARS) {
+      if (requireDurable)
+        throw new Error(
+          "Retry command history is full. Review coordinator history before retrying. Your original message and files are preserved.",
         );
-      else persistence.storage.removeItem(persistence.key);
+      return;
+    }
+    try {
+      if (saved !== null) {
+        persistence.storage.setItem(persistence.key, saved);
+        if (requireDurable && persistence.storage.getItem(persistence.key) !== saved)
+          throw unavailable();
+      } else persistence.storage.removeItem(persistence.key);
     } catch {
+      if (requireDurable) throw unavailable();
       /* Keep the in-memory receipt if the browser rejects storage. */
     }
   }
   return {
-    forPrompt(key: string, allocate: () => string) {
+    forPrompt(key: string, allocate: () => string, requireDurable = false) {
+      if (requireDurable && restorationFailed)
+        throw new Error(
+          "The saved retry command receipt cannot be restored safely. Review coordinator history before retrying. Your original message and files are preserved.",
+        );
       const existing = pending.get(key);
-      if (existing) return existing;
+      if (existing) {
+        if (requireDurable) persist(true);
+        return existing;
+      }
       const commandId = allocate();
       pending.set(key, commandId);
-      persist();
+      persist(requireDurable);
       return commandId;
     },
     acknowledge(commandId: string) {
