@@ -65,3 +65,7 @@ as another SpecWithCode and could be launched by bundle id. See [releasing](./re
 
 Generic uses of the word "Studio" for parts that keep their own names, such as "Studio Connect",
 "Studio home" and "Studio Mods", were left as they are.
+
+## Default storage for new installations
+
+New desktop and server installations default to `~/.specwithcode`. An explicit `STUDIO_HOME` continues to win. A legacy standalone profile with direct `~/.specweave-studio/userdata` or `dev` keeps precedence. Otherwise an existing `~/.specwithcode` root wins: installing a managed service under a legacy identity child must not hide branded standalone history. If only the legacy root exists, it remains the default. Managed service descriptors and their explicit paths are unchanged. This change does not move active stores, saved project paths, encrypted secrets, or other checkouts. New project and clone destinations are chosen explicitly and are independent of app storage.

@@ -81,3 +81,73 @@ describe("ComposerPendingApprovalPanel", () => {
     expect(markup).toContain(detail);
   });
 });
+
+describe("file approval details", () => {
+  const approval = {
+    requestId: RuntimeRequestId.make("edit-request"),
+    requestKind: "file-change" as const,
+    createdAt: "2026-10-14T00:00:00Z",
+    responseCapability: "live" as const,
+    detail: "Changed files",
+    fileChange: { fileName: `/workspace/${"deep folder/".repeat(20)}value.cjs` },
+  };
+  it("shows the full path and honest missing-preview state without guessing a native exit", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerPendingApprovalPanel approval={approval} pendingCount={1} />,
+    );
+    expect(markup).toContain(approval.fileChange.fileName);
+    expect(markup).toContain("Preview unavailable");
+    expect(markup).not.toContain("Provider process is gone");
+    expect(markup).toContain('aria-label="File path"');
+    expect(markup).toContain('tabindex="0"');
+  });
+  it("renders only actual supplied patch text, escaping markup", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerPendingApprovalPanel
+        approval={{
+          ...approval,
+          fileChange: { ...approval.fileChange, diffStr: "-old\n+<script>bad</script>" },
+        }}
+        pendingCount={1}
+      />,
+    );
+    expect(markup).toContain("-old\n+&lt;script&gt;bad&lt;/script&gt;");
+    expect(markup).not.toContain("Preview unavailable");
+    expect(markup).toContain('aria-label="Supplied patch"');
+  });
+  it("keeps structured paths and their supplied patches paired", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerPendingApprovalPanel
+        approval={{
+          ...approval,
+          fileChange: {
+            fileName: "2 files",
+            changes: [
+              {
+                operation: "move",
+                path: "/workspace/new.cjs",
+                oldPath: "/workspace/old.cjs",
+                diffStr: "-before\n+after",
+              },
+              { operation: "update", path: "/workspace/next.cjs" },
+            ],
+          },
+        }}
+        pendingCount={1}
+      />,
+    );
+    expect(markup).toContain("/workspace/old.cjs");
+    expect(markup).toContain("/workspace/new.cjs");
+    expect(markup).toContain("/workspace/next.cjs");
+    expect(markup).toContain("-before\n+after");
+    expect(markup.match(/Preview unavailable/g)).toHaveLength(1);
+  });
+  it("retains the original prompt and missing preview when details cannot be correlated", () => {
+    const { fileChange: _, ...withoutFile } = approval;
+    const markup = renderToStaticMarkup(
+      <ComposerPendingApprovalPanel approval={withoutFile} pendingCount={1} />,
+    );
+    expect(markup).toContain("Changed files");
+    expect(markup).toContain("Preview unavailable");
+  });
+});

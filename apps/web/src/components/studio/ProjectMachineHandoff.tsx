@@ -7,12 +7,13 @@ import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
   AuthSettingsWriteScope,
+  logicalProjectTitle,
   repositoryGroupingKeyOf,
   type MachineHandoffPrepareResult,
   type MachineHandoffReceiveResult,
   type MachineHandoffBundle,
   type ProjectId,
-  type ThreadId,
+  ThreadId,
 } from "@specweave-studio/contracts";
 import { useEnvironments } from "../../state/environments";
 import { useProjects } from "../../state/entities";
@@ -28,6 +29,8 @@ import { randomUUID } from "../../lib/utils";
 import { derivePhysicalProjectKeyFromPath } from "../../logicalProject";
 import { MachineHandoffButton, MachineHandoffDialog } from "./MachineHandoffDialog";
 import { Tip } from "./shell/Tip";
+import { HandoffFolderPicker } from "./HandoffFolderPicker";
+import { isProjectFolder } from "../../studio/projectMachineFolders";
 
 function previewInput(projectId: ProjectId, bundle: MachineHandoffBundle) {
   return {
@@ -39,6 +42,9 @@ function previewInput(projectId: ProjectId, bundle: MachineHandoffBundle) {
     sourceProjectId: bundle.sourceProjectId,
     sourceThreadId: bundle.sourceThreadId,
     digest: bundle.digest,
+    ...(bundle.logicalProject ? { logicalProject: bundle.logicalProject } : {}),
+    ...(bundle.coordinatorBinding ? { coordinatorBinding: bundle.coordinatorBinding } : {}),
+    ...(bundle.destination ? { destination: bundle.destination } : {}),
   };
 }
 
@@ -46,10 +52,12 @@ export function ProjectMachineHandoff({
   project,
   coordinatorId,
   onOpenChange,
+  requestedTarget = null,
 }: {
   readonly project: EnvironmentProject;
   readonly coordinatorId: ThreadId | null;
   readonly onOpenChange?: (open: boolean) => void;
+  readonly requestedTarget?: string | null;
 }) {
   const { environments } = useEnvironments();
   const projects = useProjects();
@@ -89,6 +97,7 @@ export function ProjectMachineHandoff({
         (item) =>
           item.environmentId !== project.environmentId &&
           !item.workspaceSettings?.archived &&
+          isProjectFolder(item.workspaceRoot, item.id) &&
           item.repositoryIdentity != null &&
           repositoryGroupingKeyOf(item.repositoryIdentity) === repositoryKey,
       ),
@@ -98,6 +107,7 @@ export function ProjectMachineHandoff({
     const environment = environments.find((entry) => entry.environmentId === item.environmentId);
     return {
       key: `${item.environmentId}:${item.id}`,
+      environmentId: item.environmentId,
       label: environment?.label ?? "Machine",
       folder: item.workspaceRoot,
       unavailable:
@@ -118,7 +128,34 @@ export function ProjectMachineHandoff({
     canOperate.has(project.environmentId) &&
     canGit.has(project.environmentId) &&
     canWrite.has(project.environmentId);
+  useEffect(() => {
+    if (!requestedTarget) return;
+    setSelected(requestedTarget);
+    setSnapshot(null);
+    setReceipt(null);
+    setConsent(false);
+    setPhase("choose");
+    setError(null);
+    changeOpen(true);
+  }, [requestedTarget]);
   const target = candidates.find((item) => `${item.environmentId}:${item.id}` === selected);
+  const destinationPlan = target
+    ? {
+        environmentId: target.environmentId,
+        projectId: target.id,
+        executionMode: "project-folder" as const,
+        coordinatorThreadId:
+          target.workspaceSettings?.coordinatorThreadId ??
+          ThreadId.make(`project-coordinator:${target.id}`),
+        ...(target.workspaceSettings?.logicalProject
+          ? { logicalProjectId: target.workspaceSettings.logicalProject.id }
+          : {}),
+        ...(target.workspaceSettings?.logicalProject?.id !==
+          project.workspaceSettings?.logicalProject?.id || !target.workspaceSettings?.logicalProject
+          ? { joinExistingProject: true }
+          : {}),
+      }
+    : undefined;
   const showError = (cause: unknown) =>
     setError(
       cause instanceof Error ? cause.message : "The handoff could not finish. Retry this handoff.",
@@ -128,6 +165,44 @@ export function ProjectMachineHandoff({
       localStorage.removeItem(storageKey);
     } catch {
       /* A retained retry pointer safely resolves to the completed server receipt. */
+    }
+  };
+
+  const complete = async (completed: MachineHandoffReceiveResult, bundle: MachineHandoffBundle) => {
+    if (!target || !completed.coordinatorThreadId)
+      throw new Error("The destination coordinator receipt is incomplete.");
+    // The source remains fenced until it has durably acknowledged this exact destination.
+    if (bundle.logicalProject) {
+      const acknowledged = await prepare({
+        environmentId: project.environmentId,
+        input: {
+          projectId: project.id,
+          sourceThreadId: coordinatorId!,
+          operationId: bundle.manifest.operationId,
+          publish: true,
+          expectedDigest: bundle.digest,
+          destination: bundle.destination ?? destinationPlan!,
+          acknowledgment: {
+            operationId: bundle.manifest.operationId,
+            environmentId: target.environmentId,
+            projectId: completed.projectId,
+            coordinatorThreadId: completed.coordinatorThreadId,
+            digest: bundle.digest,
+          },
+        },
+      });
+      if (acknowledged._tag === "Failure") throw squashAtomCommandFailure(acknowledged);
+    }
+    setReceipt(completed);
+    setPhase("complete");
+    forgetCompleted();
+    if (requestedTarget && completed.logicalProject) {
+      await navigate({
+        to: "/projects/$projectKey",
+        params: { projectKey: `logical-project:${completed.logicalProject.id}` },
+        search: projectWorkspaceSearch(null),
+      });
+      changeOpen(false);
     }
   };
 
@@ -142,26 +217,66 @@ export function ProjectMachineHandoff({
       const operationId = pending?.targetKey === selected ? pending.operationId : randomUUID();
       // Persist before either RPC: an ambiguous response retries the same operation.
       localStorage.setItem(storageKey, JSON.stringify({ operationId, targetKey: selected }));
-      const prepared = await prepare({
+      let prepared = await prepare({
         environmentId: project.environmentId,
         input: {
           projectId: project.id,
           sourceThreadId: coordinatorId!,
           operationId,
           publish: false,
+          ...(pending?.targetKey === selected ? {} : { destination: destinationPlan! }),
         },
       });
+      if (prepared._tag === "Failure" && pending?.targetKey === selected) {
+        const failure = squashAtomCommandFailure(prepared);
+        if (
+          failure &&
+          typeof failure === "object" &&
+          "code" in failure &&
+          failure.code === "invalid"
+        ) {
+          // The pointer precedes the RPC; a disconnect may have left no source record.
+          // Same operation, explicit target: the server refuses replacing any existing plan.
+          prepared = await prepare({
+            environmentId: project.environmentId,
+            input: {
+              projectId: project.id,
+              sourceThreadId: coordinatorId!,
+              operationId,
+              publish: false,
+              destination: destinationPlan!,
+            },
+          });
+        }
+      }
       if (prepared._tag === "Failure") throw squashAtomCommandFailure(prepared);
+      if (prepared.value.bundle.destination?.executionMode !== "project-folder") {
+        setCanRestart(prepared.value.publication === "unpublished" && !!pending);
+        throw new Error(
+          pending
+            ? "This earlier handoff uses a temporary checkout. Restart an unpublished preview to use the saved folder; recover a published handoff from its retained transfer."
+            : "Update the source machine to support handoff into saved project folders.",
+        );
+      }
+      if (
+        prepared.value.bundle.destination.environmentId !== target.environmentId ||
+        prepared.value.bundle.destination.projectId !== target.id
+      )
+        throw new Error(
+          "The retained handoff targets a different folder. Recover that transfer first.",
+        );
       const checked = await receive({
         environmentId: target.environmentId,
         input: previewInput(target.id, prepared.value.bundle),
       });
       if (checked._tag === "Failure") throw squashAtomCommandFailure(checked);
+      if (checked.value.executionMode !== "project-folder")
+        throw new Error(
+          "Update the destination machine to support handoff into saved project folders.",
+        );
       setSnapshot(prepared.value);
       if (checked.value.phase === "started" && checked.value.coordinatorThreadId) {
-        setReceipt(checked.value);
-        setPhase("complete");
-        forgetCompleted();
+        await complete(checked.value, prepared.value.bundle);
       } else setPhase("review");
     } catch (cause) {
       showError(cause);
@@ -185,10 +300,12 @@ export function ProjectMachineHandoff({
         input: previewInput(target.id, snapshot.bundle),
       });
       if (checked._tag === "Failure") throw squashAtomCommandFailure(checked);
+      if (checked.value.executionMode !== "project-folder")
+        throw new Error(
+          "Update the destination machine to support handoff into saved project folders.",
+        );
       if (checked.value.phase === "started" && checked.value.coordinatorThreadId) {
-        setReceipt(checked.value);
-        setPhase("complete");
-        forgetCompleted();
+        await complete(checked.value, snapshot.bundle);
         return;
       }
       const published = await prepare({
@@ -198,6 +315,7 @@ export function ProjectMachineHandoff({
           sourceThreadId: coordinatorId!,
           operationId,
           publish: true,
+          destination: snapshot.bundle.destination ?? destinationPlan!,
           expectedDigest: snapshot.bundle.digest,
         },
       });
@@ -213,6 +331,7 @@ export function ProjectMachineHandoff({
           setCanRestart(true);
         throw failure;
       }
+      setSnapshot(published.value);
       const started = await receive({
         environmentId: target.environmentId,
         input: {
@@ -227,9 +346,7 @@ export function ProjectMachineHandoff({
         throw new Error(
           "The checkpoint is retained, but the coordinator has not started. Retry this handoff.",
         );
-      setReceipt(started.value);
-      setPhase("complete");
-      forgetCompleted();
+      await complete(started.value, published.value.bundle);
     } catch (cause) {
       showError(cause);
       setPhase("review");
@@ -270,10 +387,37 @@ export function ProjectMachineHandoff({
         open={open}
         onOpenChange={changeOpen}
         sourceLabel={source?.label ?? "This machine"}
-        projectTitle={project.title}
+        projectTitle={logicalProjectTitle(project)}
         destinations={destinations}
         selected={selected}
         onSelect={setSelected}
+        folderPicker={
+          phase === "choose" ? (
+            <HandoffFolderPicker
+              title={logicalProjectTitle(project)}
+              existingFolders={projects}
+              machines={environments
+                .filter((e) => e.environmentId !== project.environmentId)
+                .map((e) => ({
+                  id: e.environmentId,
+                  label: e.label,
+                  unavailable:
+                    e.connection.phase !== "connected"
+                      ? "Connect first"
+                      : !canOperate.has(e.environmentId) ||
+                          !canGit.has(e.environmentId) ||
+                          !canWrite.has(e.environmentId) ||
+                          !canConfigure.has(e.environmentId)
+                        ? "Permission required"
+                        : null,
+                }))}
+              onSaved={(environmentId, projectId) => {
+                setSelected(`${environmentId}:${projectId}`);
+                setError(null);
+              }}
+            />
+          ) : undefined
+        }
         preview={
           snapshot
             ? {
@@ -299,12 +443,14 @@ export function ProjectMachineHandoff({
           void navigate({
             to: "/projects/$projectKey",
             params: {
-              projectKey: derivePhysicalProjectKeyFromPath(
-                target.environmentId,
-                receipt.workspacePath,
-              ),
+              projectKey: receipt.logicalProject
+                ? `logical-project:${receipt.logicalProject.id}`
+                : derivePhysicalProjectKeyFromPath(target.environmentId, receipt.workspacePath),
             },
-            search: projectWorkspaceSearch(null, `${target.environmentId}:${receipt.projectId}`),
+            search: projectWorkspaceSearch(
+              null,
+              receipt.logicalProject ? null : `${target.environmentId}:${receipt.projectId}`,
+            ),
           })
             .then(() => changeOpen(false))
             .catch(showError);

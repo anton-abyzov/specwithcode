@@ -3,6 +3,9 @@
 import copy
 import json
 import pathlib
+import os
+import pwd
+import types
 import plistlib
 import shlex
 import sqlite3
@@ -119,6 +122,7 @@ class CoherentAuthRead(unittest.TestCase):
 
     def test_public_snapshot_api_keeps_auth_private_and_uses_the_same_wal_snapshot(self):
         own = self.state.parent
+        uid, user = os.getuid(), pwd.getpwuid(os.getuid()).pw_name
         node = self.home / 'tools/node22'
         node.parent.mkdir()
         node.write_bytes(b'synthetic-node-never-executed')
@@ -134,7 +138,7 @@ class CoherentAuthRead(unittest.TestCase):
         wrapper = self.home / '.local/bin/specweave-studio'
         wrapper.parent.mkdir(parents=True)
         prefix = ['/usr/bin/env', '-i', 'HOME=' + str(self.home),
-                  'PATH=' + runtime_path(self.home, node),
+                  'PATH=' + runtime_path(self.home, node), 'USER=' + user, 'LOGNAME=' + user,
                   'STUDIO_HOME=' + str(own), 'STUDIO_PORT=8319', 'STUDIO_HOST=127.0.0.1',
                   'STUDIO_MODE=web', 'STUDIO_NO_BROWSER=true', 'STUDIO_ENABLE_HOSTED_SERVICES=false',
                   str(node), str(release / 'bin.mjs')]
@@ -146,8 +150,8 @@ class CoherentAuthRead(unittest.TestCase):
         plist.parent.mkdir(parents=True)
         plist.write_bytes(plistlib.dumps({'Label': label, 'ProgramArguments': ['/usr/bin/caffeinate', '-s', str(launcher)],
             'WorkingDirectory': str(own), 'StandardOutPath': str(own / 'stdout.log'), 'StandardErrorPath': str(own / 'stderr.log')}))
-        (own / 'installation.json').write_text(json.dumps({'identity': 'm3', 'studioHome': str(own),
-            'stateDir': str(self.state), 'cliWrapper': str(wrapper), 'service': {'label': label, 'domain': 'gui/501'},
+        (own / 'installation.json').write_text(json.dumps({'identity': 'm3', 'studioHome': str(own), 'uid': uid, 'user': user,
+            'stateDir': str(self.state), 'cliWrapper': str(wrapper), 'service': {'installed': True, 'label': label, 'domain': 'gui/' + str(uid)},
             'port': 8319, 'host': '127.0.0.1', 'node': str(node), 'release': str(release),
             'archiveSha256': 'b' * 64, 'sourceCommit': 'a' * 40, 'cookieName': 'synthetic-cookie'}))
         (self.state / 'settings.json').write_text('{}')
@@ -157,7 +161,7 @@ class CoherentAuthRead(unittest.TestCase):
         def transport(command, **kwargs):
             if command == [str(node), '--version']:
                 return b'v22.20.0'
-            if command == ['/bin/launchctl', 'print', 'gui/501/' + label]:
+            if command == ['/bin/launchctl', 'print', 'gui/' + str(uid) + '/' + label]:
                 return 'pid = 100\nstate = running\npath = ' + str(plist)
             if command == ['/bin/ps', '-p', '100', '-o', 'command=']:
                 return str(node) + ' ' + str(release / 'bin.mjs')
@@ -170,7 +174,7 @@ class CoherentAuthRead(unittest.TestCase):
 
         baseline = update.rows_snapshot(self.state)
         full_baseline = continuity.read_database(self.state, baseline)
-        with patch.object(pathlib.Path, 'home', return_value=self.home), patch.object(update.os, 'getuid', return_value=501), \
+        with patch.object(pathlib.Path, 'home', return_value=self.home), patch.object(pwd, 'getpwuid', return_value=types.SimpleNamespace(pw_name=user, pw_dir=str(self.home))), \
              patch.object(update, 'run', side_effect=transport), patch.object(update, 'listeners', side_effect=lambda p: [100] if p == 8319 else []), \
              patch.object(update, 'capture_quiescence', return_value={'synthetic': 'idle'}), \
              patch.object(update, 'read_auth_sessions_in_transaction', side_effect=concurrent_commit):

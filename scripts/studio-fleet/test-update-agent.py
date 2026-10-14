@@ -95,6 +95,7 @@ receipt = json.loads(path.read_text())
 receipt['version'] = control.get('newVersion', '0.2.0')
 receipt['sourceCommit'] = control.get('newCommit', 'b' * 40)
 receipt['archiveSha256'] = args.sha256
+receipt['release'] = str(home / '.local/share/specweave-studio/releases' / args.sha256[:20])
 path.write_text(json.dumps(receipt))
 if control.get('applyFailAfterSwitch'):
     pathlib.Path(args.output).write_text(json.dumps({'result': 'update-failed', 'rollback': 'held-for-safe-review'}))
@@ -242,6 +243,11 @@ class AgentCase(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.home = pathlib.Path(temporary.name).resolve()
+        owner = update_agent.installation_descriptor.pwd.getpwuid(os.getuid())
+        patcher = mock.patch.object(update_agent.installation_descriptor.pwd, 'getpwuid',
+                                    return_value=type('Account', (), {'pw_dir': str(self.home), 'pw_name': owner.pw_name})())
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.own = self.home / '.specweave-studio' / 'm4'
         self.own.mkdir(parents=True)
         self.updates = self.own / 'updates'
@@ -278,8 +284,10 @@ class AgentCase(unittest.TestCase):
     def write_installation(self, version, commit):
         receipt = {'schemaVersion': 1, 'identity': 'm4', 'studioHome': str(self.own),
                    'stateDir': str(self.own / 'userdata'), 'version': version, 'sourceCommit': commit,
-                   'archiveSha256': 'd' * 64, 'release': str(self.home / 'release'), 'node': '/usr/bin/node',
-                   'port': 8319, 'service': {'label': 'com.specweave.studio.m4', 'domain': 'gui/501'}}
+                   'archiveSha256': 'd' * 64, 'release': str(self.home / '.local/share/specweave-studio/releases' / ('d' * 20)), 'node': '/usr/bin/node',
+                   'uid': os.getuid(), 'user': update_agent.installation_descriptor.pwd.getpwuid(os.getuid()).pw_name,
+                   'cliWrapper': str(self.home / '.local/bin/specweave-studio'), 'host': '127.0.0.1',
+                   'port': 8319, 'service': {'installed': True, 'label': 'com.specweave.studio.m4', 'domain': 'gui/' + str(os.getuid())}}
         (self.own / 'installation.json').write_text(json.dumps(receipt))
 
     def config(self, **values):
@@ -1321,7 +1329,15 @@ class LaunchAgent(AgentCase):
         self.assertEqual([call[0] for call in calls], ['print'])
 
     def run_installed(self, script):
-        return subprocess.run([sys.executable, '-B', str(script), '--identity', 'm4', '--home', str(self.home),
+        runner = '''import os,pathlib,pwd,runpy,sys,types
+account = pwd.getpwuid(os.getuid())
+pwd.getpwuid = lambda uid: types.SimpleNamespace(pw_name=account.pw_name, pw_dir=str(pathlib.Path.cwd()))
+script = sys.argv.pop(1)
+sys.path.insert(0, str(pathlib.Path(script).parent))
+sys.argv[0] = script
+runpy.run_path(script, run_name='__main__')
+'''
+        return subprocess.run([sys.executable, '-B', '-c', runner, str(script), '--identity', 'm4', '--home', str(self.home),
                                '--status'], cwd=str(self.home), capture_output=True, text=True, timeout=60)
 
     def test_the_installed_agent_imports_its_modules_from_where_it_was_installed(self):
@@ -1353,10 +1369,10 @@ class LaunchAgent(AgentCase):
         local = sorted(path.stem for path in HERE.glob('*.py'))
         source = (HERE / 'update_agent.py').read_text()
         imported = sorted(set(re.findall(r'^import ([a-z_]+)', source, re.M)) & set(local))
-        build = (HERE.parent / 'build-desktop-artifact.ts').read_text()
+        build = (HERE.parent / 'lib/studio-service-updater.ts').read_text()
         shipped = re.search(r'MAC_SERVICE_UPDATER_FILES = \[([^\]]*)\]', build).group(1)
-        self.assertEqual(sorted(re.findall(r'"([a-z_]+)\.py"', shipped)), sorted(['update_agent'] + imported))
-        self.assertEqual(imported, ['update_agent_cache', 'update_agent_reap', 'update_agent_recovery', 'update_request'])
+        self.assertEqual(sorted(re.findall(r'"([a-z_]+)\.py"', shipped)), sorted(['update_agent', 'managed_updates'] + imported))
+        self.assertEqual(imported, ['installation_descriptor', 'update_agent_cache', 'update_agent_reap', 'update_agent_recovery', 'update_request'])
 
     def hold_lock_and_install(self):
         holder = os.open(str(self.updates / 'agent.lock'), os.O_RDWR | os.O_CREAT, 0o600)

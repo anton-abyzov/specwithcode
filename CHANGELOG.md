@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- A project keeps one identity, name and coordinator window across machine handoffs, with threads from its explicitly linked machines and readable earlier coordinator history. Requests retain their recorded machine and model.
+- Coordinator transfers fence the source before starting the destination and retain recovery after interrupted responses. Offline hosts and native session continuity limits are visible. Existing independent projects are not automatically merged.
+- Project names such as EasyChamp remain consistent in the sidebar, coordinator, settings and handoff review. Renames target the active owner, including when settings are scoped to an older machine.
+
 ## 1.0.8 — Coordinator recovery and project navigation
 
 - Project entry, worker links, new-chat shortcuts and checkout changes keep the coordinator in the main pane and open workers beside it. Coordinator and worker model choices remain independent.

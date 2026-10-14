@@ -320,6 +320,23 @@ describe("DesktopWindow project windows", () => {
     }).pipe(Effect.provide(harness.layer));
   });
 
+  it.effect("reuses a legacy project window after handoff canonicalizes its route", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const desktopWindow = yield* openMain;
+      const legacy = yield* desktopWindow.openProjectWindow({ projectKey: "atlas" });
+      const canonical = "logical-project:one";
+      harness.created[1]?.navigateTo(
+        `studio-dev://app/#/projects/${encodeURIComponent(canonical)}?thread=worker&threadEnvironment=m1`,
+      );
+      const current = yield* desktopWindow.openProjectWindow({ projectKey: canonical });
+      assert.equal(current, legacy);
+      assert.equal(harness.created.length, 2);
+      assert.equal(harness.created[1]?.raw.loadURL.mock.calls.length, 1);
+      assert.equal(yield* desktopWindow.openProjectWindow({ projectKey: canonical }), legacy);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
   it.effect("encodes project keys that contain path and fragment characters", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

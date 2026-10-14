@@ -1,4 +1,9 @@
-import { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ThreadId,
+  DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+} from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { EnvironmentProject } from "./models.ts";
@@ -421,5 +426,87 @@ describe("buildProjectGroups", () => {
     });
     expect(groups).toHaveLength(1);
     expect(groups[0]?.members.map((member) => member.project.id)).toEqual(["winner", "sibling"]);
+  });
+});
+
+describe("explicit domain project identity", () => {
+  const refs = ["m4", "m1", "m3"].map((host) => ({
+    environmentId: EnvironmentId.make(host),
+    projectId: ProjectId.make(host),
+    coordinatorThreadId: ThreadId.make(`project-coordinator:${host}`),
+  }));
+  const domain = {
+    id: "project:one",
+    title: "One SpecWeave",
+    coordinatorId: "coordinator:one",
+    members: refs,
+  };
+  const projects = refs.map((ref, index) =>
+    makeProject(ref.projectId, `/${ref.environmentId}/checkout`, {
+      environmentId: ref.environmentId,
+      workspaceSettings: {
+        ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+        logicalProject: domain,
+        coordinatorBinding: { epoch: index, state: index === 2 ? "active" : "transferred" },
+      },
+    }),
+  );
+  it("keeps one stable project and every binding even with separate grouping", () => {
+    const groups = buildProjectGroups({ projects, settings: settings("separate") });
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.key).toBe("logical-project:project:one");
+    expect(groups[0]?.label).toBe("One SpecWeave");
+    expect(groups[0]?.memberProjectRefs).toHaveLength(3);
+  });
+  it("retains unavailable member references and keeps an unrelated same-repository project separate", () => {
+    const unrelated = makeProject("unrelated", "/unrelated", {
+      workspaceSettings: {
+        ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+        logicalProject: { ...domain, id: "another", members: [] },
+      },
+    });
+    const groups = buildProjectGroups({
+      projects: [projects[0]!, unrelated],
+      settings: settings("repository"),
+    });
+    expect(groups).toHaveLength(2);
+    expect(
+      groups.find((group) => group.key === "logical-project:project:one")?.memberProjectRefs,
+    ).toHaveLength(3);
+  });
+  it("retains distinct bindings sharing a checkout and unions stale membership manifests", () => {
+    const old = {
+      ...projects[0]!,
+      workspaceSettings: {
+        ...projects[0]!.workspaceSettings!,
+        logicalProject: { ...domain, members: [refs[0]!] },
+      },
+    };
+    const sameCheckout = {
+      ...projects[1]!,
+      environmentId: old.environmentId,
+      workspaceRoot: old.workspaceRoot,
+    };
+    const groups = buildProjectGroups({
+      projects: [sameCheckout, old],
+      settings: settings("separate"),
+    });
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.members).toHaveLength(2);
+    expect(groups[0]?.memberProjectRefs.some((ref) => ref.environmentId === "m3")).toBe(true);
+  });
+  it("absorbs only an explicitly listed legacy registration", () => {
+    const legacy = makeProject("m1", "/legacy", {
+      environmentId: EnvironmentId.make("m1"),
+      repositoryIdentity: null,
+    });
+    const groups = buildProjectGroups({
+      projects: [projects[0]!, legacy, makeProject("unrelated", "/other")],
+      settings: settings("separate"),
+    });
+    expect(groups).toHaveLength(2);
+    expect(
+      groups.find((group) => group.key === "logical-project:project:one")?.members,
+    ).toHaveLength(2);
   });
 });

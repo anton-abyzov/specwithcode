@@ -31,7 +31,7 @@ def parse_processes(value):
         assert len(fields) == 9, 'Invalid process inventory'
         assert all(re.fullmatch(r'\d+', item) for item in fields[:2]), 'Invalid process identity'
         # macOS ps renders the built-in nobody account as -2. It is valid in
-        # the machine inventory; the owned root and supervisor still require 501.
+        # the machine inventory; the owned root and supervisor must match the installing UID.
         assert re.fullmatch(r'(?:\d+|-2)', fields[2]), 'Invalid process owner'
         pid, parent, uid = map(int, fields[:3])
         started = ' '.join(fields[3:8])
@@ -243,7 +243,7 @@ def _identity(process):
 
 def _capture(pid, uid, executable, supervisor_argv, process_reader, argv_reader, executable_reader=None):
     """The verified tree plus the server-browser processes found in it (kept private)."""
-    assert uid == 501 and isinstance(pid, int) and not isinstance(pid, bool) and pid > 0
+    assert type(uid) is int and uid > 0 and isinstance(pid, int) and not isinstance(pid, bool) and pid > 0
     assert executable.startswith('/') and supervisor_argv[:2] == ['/usr/bin/caffeinate', '-s'] and len(supervisor_argv) == 3
     assert supervisor_argv[2].startswith('/'), 'Supervisor launch path must be absolute'
     home = studio_home_of(supervisor_argv)
@@ -497,7 +497,7 @@ def reap_descendants(pid, uid, executable, supervisor_argv, *, process_reader=No
     clock = clock or time.monotonic
     sleeper = sleeper or time.sleep
     guard = guard or (lambda: None)
-    assert uid == 501 and isinstance(pid, int) and not isinstance(pid, bool) and pid > 1
+    assert type(uid) is int and uid > 0 and isinstance(pid, int) and not isinstance(pid, bool) and pid > 1
     home = studio_home_of(supervisor_argv)
     started = clock()
     report = {} if report is None else report

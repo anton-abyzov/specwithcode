@@ -52,6 +52,8 @@ The local service listens on `http://127.0.0.1:8319/` and keeps its data in `~/.
 
 Projects keep their coordinator in the main pane, with workers beside it. For short replies, use **Settings → Agents → Response style → Concise**. If the coordinator's model is unavailable, open its model picker to **Check again**, choose another model, or open setup for that machine; checking availability does not resend your message.
 
+The unreleased [project handoff model](docs/studio/logical-projects.md) keeps one named project and coordinator window across explicitly linked machines. Threads retain their execution machine and recorded model; earlier coordinator segments remain readable. Handoffs start a fresh provider session, and unreachable machines can have history that is temporarily unavailable. Existing independent projects require explicit association.
+
 ## Privacy
 
 Folders, sessions and project data stay on your machine. Telemetry and the hosted relay are off by default. Model calls go to the providers you choose, as they would from your terminal. See [security boundaries](docs/studio/security.md) and [telemetry](docs/user/telemetry.md).

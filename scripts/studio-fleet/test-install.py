@@ -19,7 +19,7 @@ INSTALL = pathlib.Path(__file__).with_name('install.py')
 class InstallerIntegrityTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='studio-installer-test-')
-        self.root = pathlib.Path(self.temp.name)
+        self.root = pathlib.Path(self.temp.name).resolve()
         self.home = self.root / 'home'
         self.home.mkdir()
         self.archive = self.root / 'studio.tar.gz'
@@ -55,7 +55,9 @@ class InstallerIntegrityTests(unittest.TestCase):
     def install(self, digest, extra_args=(), mock_service=False):
         env = {'HOME': str(self.home), 'PATH': '/usr/bin:/bin', 'LANG': 'en_US.UTF-8'}
         # Service-path fixtures may write a fake plist, but never contact launchd.
-        runner = '''import runpy,subprocess,sys
+        runner = '''import runpy,subprocess,sys,os,pwd,types
+account = pwd.getpwuid(os.getuid())
+pwd.getpwuid = lambda uid: types.SimpleNamespace(pw_name=account.pw_name, pw_dir=os.environ["HOME"])
 original = subprocess.run
 def run(command, *args, **kwargs):
     if command[0] == '/bin/launchctl':
@@ -70,7 +72,7 @@ runpy.run_path(install, run_name='__main__')
 '''
         prefix = [sys.executable, '-B', '-c', runner] if mock_service else [sys.executable, '-B']
         return subprocess.run([*prefix, str(INSTALL), '--archive', str(self.archive),
-                               '--sha256', digest, '--node', str(NODE), '--identity', 'stage',
+                               '--sha256', digest, '--node', str(NODE), '--identity', 'm4' if mock_service else 'stage',
                                '--port', '19320', *extra_args], capture_output=True, text=True, env=env)
 
     def inventory(self, root):
@@ -233,7 +235,7 @@ runpy.run_path(install, run_name='__main__')
                 link.symlink_to(protected, target_is_directory=True)
                 result = self.install(digest)
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn('Studio root has a symlink ancestor', result.stderr)
+                self.assertIn('symlink ancestor', result.stderr)
                 self.assertEqual(original.read_text(), 'preserved fixture')
                 self.assertEqual(sorted(path.name for path in protected.iterdir()), ['original.txt'])
                 link.unlink()
@@ -262,7 +264,7 @@ runpy.run_path(install, run_name='__main__')
         digest = self.bundle()
         for relative, flags in [('.local/bin/specweave-studio', ('--install-cli',)),
                                 ('.local/bin/specwithcode', ('--install-cli',)),
-                                ('Library/LaunchAgents/com.specweave.studio.stage.plist', ('--service',))]:
+                                ('Library/LaunchAgents/com.specweave.studio.m4.plist', ('--service',))]:
             with self.subTest(destination=relative):
                 self.redirected_destination(relative, '.codex', digest, flags)
 
@@ -295,8 +297,8 @@ runpy.run_path(install, run_name='__main__')
         self.assertEqual(result.returncode, 0, result.stderr)
         receipt = json.loads(result.stdout)
         self.assertTrue((self.home / '.local/bin/specweave-studio').is_file())
-        self.assertTrue((self.home / 'Library/LaunchAgents/com.specweave.studio.stage.plist').is_file())
-        self.assertTrue((self.home / '.specweave-studio/stage/installation.json').is_file())
+        self.assertTrue((self.home / 'Library/LaunchAgents/com.specweave.studio.m4.plist').is_file())
+        self.assertTrue((self.home / '.specweave-studio/m4/installation.json').is_file())
         self.assertEqual(receipt['service']['domain'], 'gui/' + str(os.getuid()))
         self.assertEqual(result.stderr.count('MOCK_LAUNCHCTL:bootstrap'), 1)
 

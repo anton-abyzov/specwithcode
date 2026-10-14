@@ -35,6 +35,10 @@ export const ComposerPendingApprovalPanel = memo(function ComposerPendingApprova
             ? "Permission request"
             : "File change";
 
+  const fileChange = approval.requestKind === "file-change" ? approval.fileChange : undefined;
+  const scrollableDetail =
+    "block max-h-40 w-full min-w-0 overflow-auto whitespace-pre font-mono text-xs text-foreground [scrollbar-width:thin] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70";
+
   return (
     <span
       aria-label={fallbackLabel}
@@ -63,6 +67,52 @@ export const ComposerPendingApprovalPanel = memo(function ComposerPendingApprova
           ? "Provider process is gone — interrupt or restart the run to respond."
           : approval.detail || fallbackLabel}
       </Detail>
+      {fileChange ? (
+        <code
+          aria-label="File path"
+          className={cn(scrollableDetail, "whitespace-pre-wrap break-all")}
+          tabIndex={0}
+        >
+          {fileChange.fileName}
+        </code>
+      ) : null}
+      {fileChange?.diffStr ? (
+        <code aria-label="Supplied patch" className={scrollableDetail} tabIndex={0}>
+          {fileChange.diffStr}
+        </code>
+      ) : null}
+      {fileChange?.changes?.map((change, index) => (
+        <span className="flex w-full min-w-0 flex-col gap-1" key={index}>
+          {change.oldPath ? (
+            <code
+              aria-label="Previous file path"
+              className={cn(scrollableDetail, "whitespace-pre-wrap break-all")}
+              tabIndex={0}
+            >
+              {change.oldPath}
+            </code>
+          ) : null}
+          <code
+            aria-label="File path"
+            className={cn(scrollableDetail, "whitespace-pre-wrap break-all")}
+            tabIndex={0}
+          >
+            {change.path}
+          </code>
+          {change.diffStr ? (
+            <code aria-label="Supplied patch" className={scrollableDetail} tabIndex={0}>
+              {change.diffStr}
+            </code>
+          ) : (
+            <span className="text-xs text-muted-foreground">Preview unavailable</span>
+          )}
+        </span>
+      ))}
+      {approval.requestKind === "file-change" &&
+      !fileChange?.diffStr &&
+      !fileChange?.changes?.length ? (
+        <span className="text-xs text-muted-foreground">Preview unavailable</span>
+      ) : null}
     </span>
   );
 });

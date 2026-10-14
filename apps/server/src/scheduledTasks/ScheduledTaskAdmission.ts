@@ -1,4 +1,8 @@
-import type { ScheduledTask } from "@specweave-studio/contracts";
+import {
+  projectExecutionIsFenced,
+  type ProjectWorkspaceSettings,
+  type ScheduledTask,
+} from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -22,9 +26,11 @@ export const assertTaskAdmission = Effect.fn("ScheduledTaskService.assertAdmissi
     return yield* taskError("Routine project was deleted or is unavailable.", { taskId: task.id });
   const policy = (
     project.value as ProjectStore.ProjectRow & {
-      readonly workspaceSettings?: { readonly paused: boolean; readonly archived: boolean } | null;
+      readonly workspaceSettings?: ProjectWorkspaceSettings | null;
     }
   ).workspaceSettings;
+  if (projectExecutionIsFenced(policy, task.projectId, task.threadId))
+    return yield* taskError("Routine coordinator has handed off ownership.", { taskId: task.id });
   if (policy?.paused || policy?.archived)
     return yield* taskError(`Routine project is ${policy.archived ? "archived" : "paused"}.`, {
       taskId: task.id,

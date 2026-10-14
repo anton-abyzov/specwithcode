@@ -1,5 +1,7 @@
+import { useProjectThreadInventory } from "../../studio/useProjectThreadInventory";
+import { ProjectExecutionHistory, ProjectThreadAvailability } from "./ProjectExecutionHistory";
+import { ProjectHandoffRecovery } from "./ProjectHandoffRecovery";
 import { toggleProjectThreadResolution } from "../../studio/projectThreadResolution";
-import { SelectedThreadShell } from "../../state/selectedThreadShell";
 import { ProjectWorkspaceColumns } from "./ProjectWorkspaceColumns";
 import { createCoordinatorSelectionTracker } from "../../studio/coordinatorContinuation";
 import { useCoordinatorModelSave } from "../../studio/coordinatorModelSave";
@@ -28,6 +30,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
   CommandId,
+  logicalProjectTitle,
   type ChatAttachment,
   type ProjectStarterSuggestion,
   type ThreadId,
@@ -38,17 +41,11 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@specweave-studio/client-runtime/state/shell";
-import { presentThreadShell } from "@specweave-studio/client-runtime/state/shell";
-import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import { resolveCoordinatorModelSelection } from "@specweave-studio/shared/coordinatorDefault";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
-import {
-  useAllEnvironmentShellsBootstrapped,
-  useThreadShells,
-  useThreadProjection,
-} from "../../state/entities";
+import { useAllEnvironmentShellsBootstrapped, useThreadProjection } from "../../state/entities";
 import { useEnvironment, usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentScope } from "../../state/session";
 import { useEnvironmentQuery } from "../../state/query";
@@ -74,7 +71,6 @@ import {
 import {
   createScopedProjectSendReceipt,
   projectAdmissionReason,
-  projectThreads,
 } from "../../studio/projectWorkspaceModel";
 import { modelLabel, THREAD_TONE_LABELS, threadTone, waitingCount } from "../../studio/shellModel";
 import {
@@ -90,13 +86,11 @@ import { RemoteWorkerCards } from "./RemoteWorkerCards";
 import { useProjectRemoteWorkers } from "../../studio/fleet";
 import { visibleRemoteWorkers } from "../../studio/remoteWorkerCards";
 import { coordinatorTurnFailure, sentStarterIds } from "../../studio/coordinatorTurnState";
-import { ProjectMessageRoutingContext } from "../../studio/projectMessageRouting";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { SidebarInset } from "../ui/sidebar";
 import { Button } from "../ui/button";
 import { isElectron } from "../../env";
 import { canOpenProjectWindowFor, openProjectWindow } from "../../lib/projectWindow";
-import ChatView from "../ChatView";
 import { ProjectWorkspaceSettings, type ProjectSettingsTab } from "./ProjectWorkspaceSettings";
 import {
   coordinatorAttachAccept,
@@ -129,7 +123,6 @@ import { ThreadsPane } from "./shell/ThreadsPane";
 import { LibraryPane } from "./shell/LibraryPane";
 import { PullRequestsPane } from "./shell/PullRequestsPane";
 import { ScheduledPane } from "./shell/ScheduledPane";
-import { ProjectThreadHeader } from "./shell/ProjectThreadHeader";
 import type { ProjectPaneBarProps } from "./shell/ProjectPaneBar";
 import {
   collectProjectPullRequests,
@@ -139,7 +132,7 @@ import {
 } from "../../studio/projectPaneModel";
 import { isSidebarSubagentThread } from "../Sidebar.logic";
 import { useOpenLink } from "../../browser/useOpenLink";
-import { ProjectRoutedReplies } from "./ProjectRoutedReplies";
+import { ProjectWorkerPane } from "./ProjectWorkerPane";
 import { coordinatorProgress } from "../../studio/coordinatorProgress";
 import { Tip } from "./shell/Tip";
 import { useCoordinatorVoiceAsk, useVoiceCall, VoiceCallBar, VoiceCallButton } from "./VoiceCall";
@@ -183,6 +176,8 @@ export function ProjectWorkspaceSurface({
   savedMachineMissing,
   onCheckout,
   selected,
+  selectedEnvironmentId = null,
+  ownershipProblem = null,
   setSelected,
 }: {
   project: EnvironmentProject;
@@ -196,8 +191,11 @@ export function ProjectWorkspaceSurface({
   /** Saves the checkout whose machine runs this project's coordinator; null until saved choices load. */
   onCheckout: ((key: string) => void) | null;
   selected: ThreadId | null;
+  selectedEnvironmentId?: string | null;
+  ownershipProblem?: string | null;
   setSelected: SelectProjectThread;
 }) {
+  const projectTitle = logicalProjectTitle(project);
   const environment = useEnvironment(project.environmentId);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const canOperate = useEnvironmentScope(project.environmentId, AuthOrchestrationOperateScope);
@@ -217,25 +215,14 @@ export function ProjectWorkspaceSurface({
   // The project shell names the coordinator before the workspace read answers; the
   // panel needs it at once, so a link to the coordinator never lands there.
   const mainCoordinatorId = coordinatorId ?? project.workspaceSettings?.coordinatorThreadId ?? null;
-  const liveShells = useThreadShells();
-  const archived = useArchivedThreadSnapshots([project.environmentId]);
+  const { executionScopes, archived, shells, workers } = useProjectThreadInventory(
+    project,
+    iconCheckouts,
+    mainCoordinatorId,
+  );
   const remoteWorkerCount = visibleRemoteWorkers(
     useProjectRemoteWorkers(project.environmentId, project.id).workers,
   ).length;
-  const shells = useMemo(() => {
-    const rows = new Map<string, EnvironmentThreadShell>();
-    for (const entry of archived.snapshots)
-      for (const thread of entry.snapshot.threads) {
-        const row = presentThreadShell(entry.environmentId, thread);
-        rows.set(`${row.environmentId}:${row.id}`, row);
-      }
-    for (const row of liveShells) rows.set(`${row.environmentId}:${row.id}`, row);
-    return [...rows.values()];
-  }, [liveShells, archived.snapshots]);
-  const workers = useMemo(
-    () => projectThreads(shells, project.environmentId, project.id, mainCoordinatorId),
-    [shells, project.environmentId, project.id, mainCoordinatorId],
-  );
   const environmentThreads = useMemo(
     () => shells.filter((thread) => thread.environmentId === project.environmentId),
     [shells, project.environmentId],
@@ -245,13 +232,25 @@ export function ProjectWorkspaceSurface({
       environmentId: project.environmentId,
       projectId: project.id,
       coordinatorThreadId: mainCoordinatorId,
+      ...(project.workspaceSettings?.logicalProject ? { members: executionScopes } : {}),
     }),
-    [project.environmentId, project.id, mainCoordinatorId],
+    [
+      project.environmentId,
+      project.id,
+      project.workspaceSettings?.logicalProject,
+      mainCoordinatorId,
+      executionScopes,
+    ],
   );
   const [tab, setTab] = useState<ProjectSettingsTab | null>(null);
   const [planOpen, setPlanOpen] = useState(false);
   const [coordinatorDetailsOpen, setCoordinatorDetailsOpen] = useState(false);
   const [machineHandoffOpen, setMachineHandoffOpen] = useState(false);
+  const [handoffTarget, setHandoffTarget] = useState<string | null>(null);
+  const handoffOpenChange = useCallback((open: boolean) => {
+    setMachineHandoffOpen(open);
+    if (!open) setHandoffTarget(null);
+  }, []);
   const [retryingCoordinator, setRetryingCoordinator] = useState(false);
   const [coordinatorActivityRunId, setCoordinatorActivityRunId] = useState<string | null>(null);
   const [coordinatorReviewView, setCoordinatorReviewView] = useState<"requests" | "activity">(
@@ -326,6 +325,7 @@ export function ProjectWorkspaceSurface({
     shells,
     scope: paneScope,
     selected,
+    selectedEnvironmentId,
     setSelected,
     setOverviewOpen,
     lastOpened,
@@ -364,7 +364,8 @@ export function ProjectWorkspaceSurface({
   const sendCommand = useAtomCommand(projectWorkspace.send, { reportFailure: false });
   const navigate = useNavigate();
   const connected = environment?.connection.phase === "connected";
-  const blocked = projectAdmissionReason(snapshot?.settings ?? null, connected, canOperate);
+  const blocked =
+    ownershipProblem ?? projectAdmissionReason(snapshot?.settings ?? null, connected, canOperate);
   const coordinator = shells.find(
     (t) => t.id === coordinatorId && t.environmentId === project.environmentId,
   );
@@ -935,7 +936,7 @@ export function ProjectWorkspaceSurface({
         <br />
         {snapshot?.settings.kind === "personal"
           ? `Excited to get started as your ${PERSONAL_ASSISTANT_LABEL.toLowerCase()}. Here are a few ways to begin.`
-          : `Excited to get started on ${project.title}. Here are a few ways to begin.`}
+          : `Excited to get started on ${projectTitle}. Here are a few ways to begin.`}
       </p>
       {quickStarts}
     </div>
@@ -979,11 +980,11 @@ export function ProjectWorkspaceSurface({
                 <Tip
                   label={
                     snapshot?.settings.kind === "personal"
-                      ? `${project.title} · ${PERSONAL_ASSISTANT_LABEL}`
+                      ? `${projectTitle} · ${PERSONAL_ASSISTANT_LABEL}`
                       : project.workspaceRoot
                   }
                 >
-                  <h1>{project.title}</h1>
+                  <h1>{projectTitle}</h1>
                 </Tip>
                 {snapshot?.settings.kind === "personal" ? (
                   <Tip label={PERSONAL_ASSISTANT_DESCRIPTION}>
@@ -1060,7 +1061,7 @@ export function ProjectWorkspaceSurface({
                     </MenuItem>
                     {canOpenProjectWindowFor(projectKey) ? (
                       <MenuItem
-                        onClick={() => void openProjectWindow({ projectKey, title: project.title })}
+                        onClick={() => void openProjectWindow({ projectKey, title: projectTitle })}
                       >
                         <AppWindowIcon aria-hidden />
                         Open in new window
@@ -1100,11 +1101,19 @@ export function ProjectWorkspaceSurface({
                   </Button>
                 </p>
               )}
+              <ProjectHandoffRecovery scopes={executionScopes} members={iconCheckouts} />
+              <ProjectExecutionHistory
+                project={project}
+                members={iconCheckouts}
+                scopes={executionScopes}
+              />
               {coordinatorId ? (
                 <CoordinatorConversation
                   project={project}
                   coordinatorId={coordinatorId}
-                  workers={workers}
+                  workers={workers.filter(
+                    (thread) => thread.environmentId === project.environmentId,
+                  )}
                   environmentThreads={environmentThreads}
                   onOpenThread={openThread}
                   canChange={canWriteSourceControl && connected}
@@ -1306,13 +1315,22 @@ export function ProjectWorkspaceSurface({
                       current={`${project.environmentId}:${project.id}`}
                       checkouts={checkouts}
                       savedMachineMissing={savedMachineMissing}
-                      onChoose={onCheckout}
+                      onChoose={
+                        onCheckout
+                          ? (key) => {
+                              if (key === `${project.environmentId}:${project.id}`) return;
+                              if (mainCoordinatorId) setHandoffTarget(key);
+                              else onCheckout(key);
+                            }
+                          : null
+                      }
                     />
                     <ProjectMachineHandoff
                       key={`${project.environmentId}:${project.id}`}
                       project={project}
                       coordinatorId={mainCoordinatorId}
-                      onOpenChange={setMachineHandoffOpen}
+                      requestedTarget={handoffTarget}
+                      onOpenChange={handoffOpenChange}
                     />
                     <ProjectUsageIndicator
                       onOpenProjectUsage={() => setTab("usage")}
@@ -1342,58 +1360,36 @@ export function ProjectWorkspaceSurface({
               data-project-pane="threads"
             >
               {selectedThread ? (
-                <SelectedThreadShell value={selectedThread}>
-                  <ProjectThreadHeader
-                    thread={selectedThread}
-                    subagentCount={subagentCount}
-                    providerEntry={
-                      providerEntries.get(selectedThread.modelSelection.instanceId) ?? null
-                    }
-                    projectCwd={project.workspaceRoot}
-                    canChange={canOperate && connected}
-                    expanded={paneExpanded}
-                    onBack={leaveThread}
-                    onToggleResolved={() => void resolve(selectedThread)}
-                    onToggleExpanded={() => setPaneExpanded((value) => !value)}
-                    onClose={hideOverview}
-                    onOpenPullRequest={(url) => void openLink(url).catch(() => undefined)}
-                    toolsSlotRef={setThreadToolsSlot}
-                  />
-                  <div className="project-route-note">
-                    Replies pass through the coordinator with this thread as context.
-                  </div>
-                  {/* The panel never holds the coordinator: the main column shows it. */}
-                  {coordinatorId ? (
-                    <ProjectRoutedReplies
-                      project={project}
-                      coordinatorId={coordinatorId}
-                      thread={selectedThread}
-                      onOpenCoordinator={openCoordinator}
-                    />
-                  ) : null}
-                  <ProjectMessageRoutingContext
-                    value={{
-                      coordinatorThreadId: coordinatorId,
-                      send: (text, attachments) =>
-                        routingSend(text, selectedThread.id, attachments),
-                      openCoordinator,
-                      openThread: openThreadInPane,
-                    }}
-                  >
-                    <div className="project-native-thread">
-                      <ChatView
-                        key={`${project.environmentId}:${selectedThread.id}`}
-                        environmentId={project.environmentId}
-                        threadId={selectedThread.id}
-                        routeKind="server"
-                        layoutMode="embedded"
-                        suspendShortcuts={coordinatorDetailsOpen || machineHandoffOpen}
-                        embeddedHeaderToolsTarget={threadToolsSlot}
-                        reserveTitleBarControlInset={false}
-                      />
-                    </div>
-                  </ProjectMessageRoutingContext>
-                </SelectedThreadShell>
+                <ProjectWorkerPane
+                  project={project}
+                  thread={selectedThread}
+                  coordinatorId={coordinatorId}
+                  openCoordinator={openCoordinator}
+                  openThread={openThreadInPane}
+                  send={routingSend}
+                  suspendShortcuts={coordinatorDetailsOpen || machineHandoffOpen}
+                  toolsSlot={threadToolsSlot}
+                  header={{
+                    thread: selectedThread,
+                    subagentCount,
+                    providerEntry:
+                      selectedThread.environmentId === project.environmentId
+                        ? (providerEntries.get(selectedThread.modelSelection.instanceId) ?? null)
+                        : null,
+                    projectCwd: project.workspaceRoot,
+                    canChange:
+                      canOperate &&
+                      connected &&
+                      selectedThread.environmentId === project.environmentId,
+                    expanded: paneExpanded,
+                    onBack: leaveThread,
+                    onToggleResolved: () => void resolve(selectedThread),
+                    onToggleExpanded: () => setPaneExpanded((value) => !value),
+                    onClose: hideOverview,
+                    onOpenPullRequest: (url) => void openLink(url).catch(() => undefined),
+                    toolsSlotRef: setThreadToolsSlot,
+                  }}
+                />
               ) : paneTab === "library" ? (
                 <LibraryPane
                   environmentId={project.environmentId}
@@ -1431,31 +1427,43 @@ export function ProjectWorkspaceSurface({
                   onQueryChange={setFindQuery}
                   onOpen={openThread}
                   onToggleResolved={(thread) => void resolve(thread)}
+                  canChangeThread={(thread) =>
+                    thread.environmentId === project.environmentId && canOperate && connected
+                  }
+                  machineLabels={
+                    new Map(
+                      iconCheckouts.map((member) => [
+                        member.environmentId,
+                        checkouts.find(
+                          (checkout) => checkout.key === `${member.environmentId}:${member.id}`,
+                        )?.machine ?? member.environmentId,
+                      ]),
+                    )
+                  }
                   starters={workers.length === 0 ? starterList : null}
                   remoteWorkerCount={remoteWorkerCount}
                   notice={
-                    remoteWorkerCount > 0 || archived.error ? (
-                      <>
-                        {remoteWorkerCount > 0 ? (
-                          <RemoteWorkerCards
-                            environmentId={project.environmentId}
-                            projectId={project.id}
-                          />
-                        ) : null}
-                        {archived.error ? (
-                          <p className="project-notice" role="alert">
-                            Archived threads could not be loaded.{" "}
-                            <button
-                              type="button"
-                              className="project-control"
-                              onClick={archived.refresh}
-                            >
-                              Retry resolved history
-                            </button>
-                          </p>
-                        ) : null}
-                      </>
-                    ) : null
+                    <>
+                      <ProjectThreadAvailability scopes={executionScopes} />
+                      {remoteWorkerCount > 0 ? (
+                        <RemoteWorkerCards
+                          environmentId={project.environmentId}
+                          projectId={project.id}
+                        />
+                      ) : null}
+                      {archived.error ? (
+                        <p className="project-notice" role="alert">
+                          Archived threads could not be loaded.{" "}
+                          <button
+                            type="button"
+                            className="project-control"
+                            onClick={archived.refresh}
+                          >
+                            Retry resolved history
+                          </button>
+                        </p>
+                      ) : null}
+                    </>
                   }
                   bar={paneBar}
                 />

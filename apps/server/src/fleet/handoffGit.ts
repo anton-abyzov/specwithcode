@@ -21,7 +21,11 @@ import {
 } from "./handoffGitTypes.ts";
 
 type Stage = HandoffGitError["stage"];
-type ManifestInput = { readonly workspaceRoot: string; readonly manifest: HandoffGitManifest };
+type ManifestInput = {
+  readonly workspaceRoot: string;
+  readonly manifest: HandoffGitManifest;
+  readonly resumeProjectFolder?: boolean;
+};
 
 export class HandoffGit extends Context.Service<
   HandoffGit,
@@ -44,7 +48,10 @@ export class HandoffGit extends Context.Service<
     ) => Effect.Effect<HandoffGitManifest, HandoffGitError>;
     /** workspaceRoot must come from a registered project; worktreeParent is server-owned configuration. */
     readonly materialize: (
-      input: ManifestInput & { readonly worktreeParent: string },
+      input: ManifestInput & {
+        readonly worktreeParent: string;
+        readonly useProjectFolder?: boolean;
+      },
     ) => Effect.Effect<HandoffGitMaterialization, HandoffGitError>;
   }
 >()("studio/fleet/HandoffGit") {}
@@ -216,15 +223,29 @@ const make = Effect.gen(function* () {
     cwd: string,
     stage: Stage,
     requireInitialized = true,
+    appliedGitlinks: ReadonlyMap<string, string> = new Map(),
   ) {
-    if (
-      yield* text(
-        cwd,
-        ["status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none"],
-        stage,
+    const status = (yield* git(
+      cwd,
+      ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"],
+      stage,
+    )).stdout;
+    for (const entry of status.split("\0").filter(Boolean)) {
+      const relative = entry.slice(3);
+      const incoming = appliedGitlinks.get(relative);
+      // Only the exact unstaged gitlink mismatch created by our earlier parent FF is recoverable.
+      if (!entry.startsWith(" M ") || !incoming) return yield* blocked(stage, "dirty-repository");
+      const indexed = yield* text(cwd, ["ls-files", "--stage", "--", relative], stage);
+      if (indexed !== `160000 ${incoming} 0\t${relative}`)
+        return yield* blocked(stage, "dirty-repository");
+      const nested = path.join(cwd, relative);
+      if (
+        (yield* git(nested, ["merge-base", "--is-ancestor", "HEAD", incoming], stage, true))
+          .code !== 0
       )
-    )
-      return yield* blocked(stage, "dirty-repository");
+        return yield* blocked(stage, "diverged-repository");
+      // Each declared nested repository is checked separately before any mutation.
+    }
     const entries = (yield* git(cwd, ["ls-files", "--stage", "-z"], stage)).stdout.split("\0");
     for (const entry of entries) {
       if (entry.startsWith("120000 ")) {
@@ -308,7 +329,21 @@ const make = Effect.gen(function* () {
       const cwd = yield* resolveRepository(input.workspaceRoot, repository.relativePath, stage);
       if ((yield* identity(cwd, stage)) !== repository.identity)
         return yield* blocked(stage, "identity-mismatch");
-      yield* clean(cwd, stage);
+      const appliedGitlinks = new Map<string, string>();
+      if (
+        input.resumeProjectFolder &&
+        (yield* text(cwd, ["rev-parse", "HEAD"], stage)) === repository.head
+      ) {
+        const prefix = repository.relativePath === "." ? "" : `${repository.relativePath}/`;
+        for (const child of input.manifest.repositories) {
+          if (
+            child.relativePath !== repository.relativePath &&
+            child.relativePath.startsWith(prefix)
+          )
+            appliedGitlinks.set(child.relativePath.slice(prefix.length), child.head);
+        }
+      }
+      yield* clean(cwd, stage, true, appliedGitlinks);
       const upstream = yield* git(cwd, ["rev-parse", "--verify", "@{upstream}"], stage, true);
       if (upstream.code === 0) yield* compareAncestry(cwd, upstream.stdout.trim(), stage, false);
       yield* compareAncestry(cwd, repository.head, stage, true);
@@ -499,7 +534,16 @@ const make = Effect.gen(function* () {
     lock.withPermit(
       Effect.gen(function* () {
         const stage = "materialize" as const;
-        yield* preflightAt(input, stage);
+        const resuming =
+          input.useProjectFolder &&
+          (yield* io(
+            fs.exists(
+              path.join(input.worktreeParent, input.manifest.operationId, "git-operation.json"),
+            ),
+            stage,
+          ));
+        const checkedInput = { ...input, resumeProjectFolder: !!resuming };
+        yield* preflightAt(checkedInput, stage);
         yield* realDirectory(input.worktreeParent, stage);
         if (
           input.worktreeParent === input.workspaceRoot ||
@@ -520,6 +564,7 @@ const make = Effect.gen(function* () {
         const receipt = JSON.stringify({
           version: 1,
           manifestSha256,
+          ...(input.useProjectFolder ? { executionMode: "project-folder" } : {}),
           registeredRoot: input.workspaceRoot,
           manifest: input.manifest,
         });
@@ -565,7 +610,53 @@ const make = Effect.gen(function* () {
             return yield* blocked(stage, "remote-ref-mismatch");
           yield* compareAncestry(cwd, repository.head, stage, false);
         }
-        yield* preflightAt(input, stage);
+        yield* preflightAt(checkedInput, stage);
+        if (input.useProjectFolder) {
+          // Validate every repository before updating any branch. Never discard local commits.
+          for (const repository of input.manifest.repositories) {
+            const cwd = yield* resolveRepository(
+              input.workspaceRoot,
+              repository.relativePath,
+              stage,
+            );
+            if (
+              (yield* git(
+                cwd,
+                ["merge-base", "--is-ancestor", "HEAD", repository.head],
+                stage,
+                true,
+              )).code !== 0
+            )
+              return yield* blocked(stage, "diverged-repository");
+          }
+          const repositories: Array<HandoffGitRepository & { readonly worktreePath: string }> = [];
+          // Advance the root before nested repositories, then validate the complete umbrella.
+          for (const repository of input.manifest.repositories) {
+            const cwd = yield* resolveRepository(
+              input.workspaceRoot,
+              repository.relativePath,
+              stage,
+            );
+            if ((yield* text(cwd, ["rev-parse", "HEAD"], stage)) !== repository.head) {
+              yield* clean(cwd, stage, false);
+              yield* git(
+                cwd,
+                ["merge", "--ff-only", "--no-edit", "--no-overwrite-ignore", repository.head],
+                stage,
+              );
+            }
+            if ((yield* text(cwd, ["rev-parse", "HEAD"], stage)) !== repository.head)
+              return yield* blocked(stage, "worktree-conflict");
+            repositories.push({ ...repository, worktreePath: cwd });
+          }
+          for (const repository of repositories) yield* clean(repository.worktreePath, stage);
+          return {
+            operationId: input.manifest.operationId,
+            workspaceRoot: input.workspaceRoot,
+            manifestSha256,
+            repositories,
+          };
+        }
         const repositories: Array<HandoffGitRepository & { readonly worktreePath: string }> = [];
         for (const repository of input.manifest.repositories) {
           const cwd = yield* resolveRepository(input.workspaceRoot, repository.relativePath, stage);

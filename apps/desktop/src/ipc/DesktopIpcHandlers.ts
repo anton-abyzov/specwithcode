@@ -6,6 +6,7 @@ import { installNotificationBadge } from "./methods/notificationBadge.ts";
 import { installThreadNotifications } from "./methods/threadNotifications.ts";
 import { installKeepAwake } from "./methods/keepAwake.ts";
 import { installServiceUpdates } from "./methods/serviceUpdates.ts";
+import { requestManagedUpdateConsent } from "./methods/managedUpdates.ts";
 import { getClientSettings, setClientSettings } from "./methods/clientSettings.ts";
 import {
   clearConnectionCatalog,
@@ -90,6 +91,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* installKeepAwake();
   yield* installVoice();
   yield* installServiceUpdates();
+  yield* ipc.handle(requestManagedUpdateConsent);
   yield* PreviewIpc.installPreviewEventForwarding();
 
   yield* ipc.handle(AppActivationIpc.setReady);

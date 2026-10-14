@@ -556,12 +556,18 @@ export function makeServiceUpdateController(input: {
   readonly platform: NodeJS.Platform;
   readonly agentScriptPath: () => string | null;
   readonly uid?: () => number;
+  /** Null means no service is attached. Omission is retained for legacy isolated callers. */
+  readonly attachedStudioHome?: string | null;
 }): ServiceUpdateController {
-  const uid = input.uid ?? (() => process.getuid?.() ?? 501);
-  const installation = () =>
-    input.platform === "darwin"
-      ? (findManagedServiceInstallations(input.homeDirectory)[0] ?? null)
-      : null;
+  const uid = input.uid ?? (() => process.getuid?.() ?? -1);
+  const installation = () => {
+    if (input.platform !== "darwin" || input.attachedStudioHome === null) return null;
+    const candidates = findManagedServiceInstallations(input.homeDirectory).filter(
+      (candidate) =>
+        input.attachedStudioHome === undefined || candidate.studioHome === input.attachedStudioHome,
+    );
+    return candidates.length === 1 ? candidates[0]! : null;
+  };
   const updatesDir = (target: ManagedServiceInstallation) =>
     Path.join(target.studioHome, "updates");
 

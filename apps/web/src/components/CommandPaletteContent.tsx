@@ -15,7 +15,7 @@ type CommandPaletteContentProps = Omit<ComponentProps<typeof Command>, "children
    * How tall the results panel may grow: the palette's list, a taller file list, or the whole
    * dialog body (for modes that lay out their own status and empty states).
    */
-  readonly panelSize?: "list" | "tall-list" | "fill";
+  readonly panelSize?: "list" | "tall-list" | "fill" | "form";
   readonly showBackHint?: boolean;
   readonly testId?: string;
 };
@@ -47,7 +47,11 @@ export function CommandPaletteContent({
   }, []);
 
   return (
-    <div className="contents" data-testid={testId}>
+    <div
+      className="contents"
+      data-testid={testId}
+      data-command-form={panelSize === "form" ? "" : undefined}
+    >
       <Command {...commandProps}>
         <div className="relative">
           <CommandInput {...inputProps} ref={inputRef} />
@@ -55,11 +59,13 @@ export function CommandPaletteContent({
         </div>
         <CommandPanel
           className={
-            panelSize === "fill"
-              ? "flex min-h-0 flex-1 flex-col"
-              : panelSize === "tall-list"
-                ? "max-h-[min(34rem,76vh)]"
-                : "max-h-[min(28rem,70vh)]"
+            panelSize === "form"
+              ? "min-h-0 flex-1 overflow-y-auto"
+              : panelSize === "fill"
+                ? "flex min-h-0 flex-1 flex-col"
+                : panelSize === "tall-list"
+                  ? "max-h-[min(34rem,76vh)]"
+                  : "max-h-[min(28rem,70vh)]"
           }
         >
           {children}

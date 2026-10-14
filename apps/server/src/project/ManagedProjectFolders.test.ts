@@ -580,7 +580,7 @@ it.effect("removes the folder when the repository cannot be made", () =>
 );
 
 it.effect(
-  "creates isolated Personal folders without invoking Git, even with no Git installed",
+  "reuses one Personal assistant for concurrent requests without invoking Git",
   () =>
     withScratch(
       () =>
@@ -593,7 +593,9 @@ it.effect(
             [0, 1].map(() => folders.createNamedProject({ name: "Personal", kind: "personal" })),
             { concurrency: 2 },
           );
-          assert.notEqual(created[0]!.workspaceRoot, created[1]!.workspaceRoot);
+          assert.equal(created[0]!.workspaceRoot, created[1]!.workspaceRoot);
+          assert.equal(created[0]!.projectId, created[1]!.projectId);
+          assert.equal((yield* projects.snapshot).projects.length, 1);
           for (const result of created) {
             assert.isUndefined(result.commitError);
             assert.isFalse(yield* fs.exists(path.join(result.workspaceRoot, ".git")));
@@ -612,4 +614,62 @@ it.effect(
         }),
       },
     ),
+);
+
+it.effect("creates in the chosen parent and preserves existing folders on collision", () =>
+  withScratch(({ baseDir }) =>
+    withGitEnv(
+      TEST_IDENTITY,
+      Effect.gen(function* () {
+        const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const parentPath = path.join(baseDir, "chosen");
+        yield* fs.makeDirectory(path.join(parentPath, "example"), { recursive: true });
+        yield* fs.writeFileString(path.join(parentPath, "example", "keep.txt"), "untouched");
+        const result = yield* folders.createNamedProject({ name: "Example", parentPath });
+        assert.equal(result.workspaceRoot, path.join(parentPath, "example-2"));
+        assert.equal(
+          yield* fs.readFileString(path.join(parentPath, "example", "keep.txt")),
+          "untouched",
+        );
+        assert.equal(
+          yield* gitOutput(result.workspaceRoot, ["log", "--format=%s"]),
+          "Initial commit",
+        );
+      }),
+    ),
+  ),
+);
+it.effect("rejects relative, missing and file parents without creating them", () =>
+  withScratch(({ baseDir }) =>
+    Effect.gen(function* () {
+      const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const file = path.join(baseDir, "keep.txt");
+      yield* fs.writeFileString(file, "untouched");
+      for (const parentPath of ["relative", "~/Projects", path.join(baseDir, "missing"), file]) {
+        const result = yield* folders
+          .createNamedProject({ name: "Example", parentPath })
+          .pipe(Effect.result);
+        assert.equal(result._tag, "Failure");
+      }
+      assert.isFalse(yield* fs.exists(path.join(baseDir, "missing")));
+      assert.equal(yield* fs.readFileString(file), "untouched");
+    }),
+  ),
+);
+it.effect("keeps Personal storage managed even when a parent is supplied", () =>
+  withScratch(() =>
+    Effect.gen(function* () {
+      const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+      const result = yield* folders.createNamedProject({
+        name: "Personal",
+        kind: "personal",
+        parentPath: "/nonexistent-parent",
+      });
+      assert.isTrue(result.workspaceRoot.startsWith(folders.namedProjectsRoot + "/"));
+    }),
+  ),
 );

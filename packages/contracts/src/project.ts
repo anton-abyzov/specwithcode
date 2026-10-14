@@ -548,6 +548,8 @@ export type ProjectEnsureScratchResult = typeof ProjectEnsureScratchResult.Type;
 
 /** A project started from just a name, in a new folder the server makes. */
 export const ProjectCreateNewInput = Schema.Struct({
+  /** Existing parent on the destination machine; omitted by legacy clients. */
+  parentPath: Schema.optional(TrimmedNonEmptyString),
   kind: Schema.optional(Schema.Literals(["code", "personal"])),
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
 });

@@ -61,7 +61,7 @@ function radio(key: string) {
   const element = [...document.querySelectorAll<HTMLElement>('[role="radio"]')].find(
     (node) =>
       node.getAttribute("data-slot") === "radio" &&
-      node.closest("label")?.textContent?.includes(key),
+      node.closest('[data-slot="handoff-machine"]')?.textContent?.includes(key),
   );
   if (!element) throw new Error(`Missing machine ${key}`);
   return element;

@@ -4,7 +4,9 @@ if not __debug__:
     raise RuntimeError('Optimized Python is unsupported for owned-service safety checks')
 
 import argparse
+import contextlib
 import datetime
+import errno
 import hashlib
 import json
 import os
@@ -24,7 +26,7 @@ import traceback
 import urllib.error
 import urllib.request
 import uuid
-from launcher import (CLI_ALIAS, cli_alias_state, is_studio_wrapper, migrate_runtime_path, render_cli,
+from launcher import (cli_alias_state, is_studio_wrapper, migrate_runtime_path, render_cli,
                       render_legacy_cli, render_unnamed_cli, swap_cli_alias)
 from release_policy import validate_manifest, validate_package, validate_upgrade
 from auth_heartbeat import (bind_auth, encoded, prove_restart_heartbeat,
@@ -34,8 +36,9 @@ from quiescence import (VANISHED_READS, capture_quiescence, assert_quiescence, q
                         reap_descendants)
 from release_retention import prune_releases
 import database_continuity as continuity
+import managed_updates
 
-IDENTITIES = {'m4', 'm1', 'm3'}
+from installation_descriptor import InstallationDescriptor, cli_paths, current_owner, installation_lock, owned_path, validate_identity, web_session_policy
 ENV_KEYS = {'HOME', 'USER', 'LOGNAME', 'PATH', 'LANG', 'TMPDIR', 'STUDIO_HOME',
             'STUDIO_HOST', 'STUDIO_PORT', 'STUDIO_MODE', 'STUDIO_NO_BROWSER',
             'STUDIO_LOG_LEVEL', 'STUDIO_ENABLE_HOSTED_SERVICES', 'STUDIO_DEV_ALLOWED_ORIGINS',
@@ -46,13 +49,7 @@ def digest(value):
     return hashlib.sha256(value).hexdigest()
 
 def safe_path(path, home):
-    assert path.is_relative_to(home) if hasattr(path, 'is_relative_to') else home in path.parents, \
-        'An owned path is outside the home folder'
-    ancestor = home
-    for part in path.relative_to(home).parts:
-        ancestor = ancestor / part
-        assert not ancestor.is_symlink(), 'Owned path has a symlink ancestor'
-    return path
+    return owned_path(path, home)
 
 def run(command, timeout=10, **kwargs):
     value = subprocess.run(command, capture_output=True, timeout=timeout, **kwargs)
@@ -411,22 +408,12 @@ def service_owns_listener(other_listeners, root_pid, processes):
 def _service(identity):
     """The verified installation and its running service: receipt, LaunchAgent, launcher,
     runtime record, port owner and executable. Reads no database."""
-    assert identity in IDENTITIES and os.getuid() == 501, 'Updates run only as the installing user'
-    home = pathlib.Path.home().resolve()
-    own = safe_path(home / '.specweave-studio' / identity, home)
-    installation = own / 'installation.json'
+    validate_identity(identity)
+    owner = InstallationDescriptor(identity, require_policy=False)
+    home, own, installation = owner.home, owner.own, owner.installation
     receipt = json.loads(installation.read_text())
-    label = 'com.specweave.studio.' + identity
-    plist = safe_path(home / 'Library/LaunchAgents' / (label + '.plist'), home)
-    wrapper = safe_path(home / '.local/bin/specweave-studio', home)
-    launcher = own / 'launch.sh'
-    assert receipt['identity'] == identity and receipt['studioHome'] == str(own), \
-        'The installation receipt describes another Studio'
-    assert receipt['stateDir'] == str(own / 'userdata') and receipt['cliWrapper'] == str(wrapper), \
-        'The installation receipt names other state or launcher paths'
-    assert receipt['service']['label'] == label and receipt['service']['domain'] == 'gui/501', \
-        'The installation receipt names another service'
-    assert receipt['port'] == 8319 and receipt['host'] == '127.0.0.1', 'The installation receipt names another address'
+    owner = InstallationDescriptor.from_receipt(identity, receipt, home=home)
+    label, plist, wrapper, launcher, port = owner.label, owner.plist, owner.wrapper, owner.launcher, owner.port
     node = pathlib.Path(receipt['node'])
     assert node.is_absolute() and node.is_file() and run([str(node), '--version']).strip() == b'v22.20.0', \
         'The Node.js runtime is missing or is not v22.20.0'
@@ -449,29 +436,30 @@ def _service(identity):
     index = tokens.index(str(node))
     environment = dict(token.split('=', 1) for token in tokens[3:index])
     assert len(environment) == index - 3 and set(environment).issubset(ENV_KEYS), 'The service launcher sets unexpected variables'
-    assert environment['STUDIO_HOME'] == str(own) and environment['STUDIO_PORT'] == '8319', 'The service launcher does not match the installation'
+    assert environment.get('USER') == environment.get('LOGNAME') == owner.user, 'Launcher names another OS user'
+    assert environment['STUDIO_HOME'] == str(own) and environment['STUDIO_PORT'] == str(port), 'The service launcher does not match the installation'
     assert environment['STUDIO_HOST'] == '127.0.0.1' and environment['STUDIO_MODE'] == 'web', 'The service launcher does not match the installation'
     assert environment['STUDIO_NO_BROWSER'] == 'true' and environment['STUDIO_ENABLE_HOSTED_SERVICES'] == 'false', \
         'The service launcher does not match the installation'
-    assert tokens[index:] == [str(node), str(release / 'bin.mjs'), 'start', '--no-browser', '--host', '127.0.0.1', '--port', '8319', '--base-dir', str(own), '--mode', 'web'], \
+    assert tokens[index:] == [str(node), str(release / 'bin.mjs'), 'start', '--no-browser', '--host', '127.0.0.1', '--port', str(port), '--base-dir', str(own), '--mode', 'web'], \
         'The service launcher does not match the installation'
     prefix = tokens[1:index + 2]
     migrate_runtime_path(prefix, home, node)  # Reject missing/custom paths even for a read-only prestate.
     # Any wrapper format a Studio release wrote; an update rewrites it in the current one.
     assert wrapper.read_text() in {render_legacy_cli(prefix), render_unnamed_cli(prefix), render_cli(prefix)}, \
         'The specweave-studio command does not match the installation'
-    live = run(['/bin/launchctl', 'print', 'gui/501/' + label], text=True)
+    live = run(['/bin/launchctl', 'print', owner.domain + '/' + label], text=True)
     pid = re.search(r'^\s*pid = (\d+)\s*$', live, re.M)
     assert pid and re.search(r'^\s*state = running\s*$', live, re.M) and 'path = ' + str(plist) in live, \
         'The Studio service is not running'
     runtime = json.loads((own / 'userdata/server-runtime.json').read_text())
-    assert runtime['pid'] == int(pid.group(1)) and runtime['host'] == '127.0.0.1' and runtime['port'] == 8319, \
+    assert runtime['pid'] == int(pid.group(1)) and runtime['host'] == '127.0.0.1' and runtime['port'] == port, \
         'The running service does not match its runtime record'
-    assert listeners(8319) == [runtime['pid']], 'Port belongs to another process'
+    assert listeners(port) == [runtime['pid']], 'Port belongs to another process'
     command = run(['/bin/ps', '-p', str(runtime['pid']), '-o', 'command='], text=True)
     assert str(node) in command and str(release / 'bin.mjs') in command, 'Running executable does not match the owned release'
     return {'home': home, 'own': own, 'installation': installation, 'receipt': receipt, 'label': label, 'plist': plist,
-            'wrapper': wrapper, 'launcher': launcher, 'content': content, 'node': node, 'runtime': runtime}
+            'wrapper': wrapper, 'launcher': launcher, 'content': content, 'node': node, 'runtime': runtime, 'owner': owner}
 
 SERVICE_KEYS = ('home', 'own', 'installation', 'receipt', 'label', 'plist', 'wrapper', 'launcher', 'content', 'node', 'runtime')
 
@@ -485,13 +473,13 @@ def _snapshot(identity, include_auth, since=None):
         assert path.is_file() and not path.is_symlink(), 'A protected Studio file is missing or is a link'
     file_hashes = {name: digest(path.read_bytes()) for name, path in protected.items()}
     rows, auth, carried, database = _read_state(own / 'userdata', include_auth, since, True)
-    other = {str(port): listeners(port) for port in OTHER_SERVICE_PORTS}
-    proof = {'schemaVersion': 1, 'identity': identity, 'uid': 501, 'serviceLabel': label, 'servicePid': runtime['pid'],
+    other = {str(port): listeners(port) for port in OTHER_SERVICE_PORTS if port != receipt['port']}
+    proof = {'schemaVersion': 1, 'identity': identity, 'uid': service['owner'].uid, 'port': receipt['port'], 'webSessionPolicy': service['owner'].policy, 'serviceLabel': label, 'servicePid': runtime['pid'],
             'archiveSha256': receipt['archiveSha256'], 'artifactSourceCommit': receipt['sourceCommit'],
             'fileHashes': file_hashes,
             'rows': rows, 'databaseCapture': database, 'otherListeners': other, 'otherListenersOwned': service_owns_listener(other, runtime['pid'], read_processes()),
             'cookieName': receipt['cookieName'],
-            'processQuiescence': capture_quiescence(runtime['pid'], 501, str(node), content['ProgramArguments']),
+            'processQuiescence': capture_quiescence(runtime['pid'], service['owner'].uid, str(node), content['ProgramArguments']),
             'observedAt': datetime.datetime.now(datetime.timezone.utc).isoformat()}
     return proof, auth, carried
 
@@ -545,7 +533,7 @@ def reap(identity, request, report=None):
     pid = service['runtime']['pid']
     report['servicePid'] = pid
     assert_held(service, request)
-    reap_descendants(pid, 501, str(service['node']), service['content']['ProgramArguments'], report=report,
+    reap_descendants(pid, service['owner'].uid, str(service['node']), service['content']['ProgramArguments'], report=report,
                      guard=lambda: assert_held(service, request))
     report.update(result='reaped', observedAt=datetime.datetime.now(datetime.timezone.utc).isoformat())
     return dict(report)
@@ -601,7 +589,7 @@ def typed_auth_rows(auth):
 def typed_auth_rows_hash(auth):
     return digest(('studio-migration-auth-typed-v1\n' + '\n'.join(typed_auth_rows(auth))).encode())
 
-def verify_migration_heartbeat_witness(before, after, witness, current_auth, *, identity, state=None):
+def verify_migration_heartbeat_witness(before, after, witness, current_auth, *, identity, state=None, web_session_policy=None):
     """Recheck actual migration snapshots and type-bound complete private auth.
 
     Appended logs require a fresh, coherent read of the trusted database at `state`.
@@ -621,14 +609,14 @@ def verify_migration_heartbeat_witness(before, after, witness, current_auth, *, 
     assert typed_auth_rows_hash(current_auth) == typed['afterSha256'], 'Current auth cell values or types changed'
     heartbeat = {key: value for key, value in witness.items() if key != 'migrationTypedAuth'}
     verify_restart_witness(before, auth_comparison(before, after), heartbeat,
-                           current_auth, identity=identity)
+                           current_auth, identity=identity, web_session_policy=web_session_policy)
     original = restore_witness(current_auth, heartbeat, before)
     assert typed_auth_rows_hash(original) == typed['beforeSha256'], 'Reconstructed auth cell values or types changed'
     assert_migration_preserved(before, auth_comparison(after, before), carried)
     return witness
 
 def prove_migration_preserved(before, after, original_auth, current_auth, restart_started_at,
-                              observed_after_at, *, identity, allow_existing_browser_heartbeat, carried=None):
+                              observed_after_at, *, identity, allow_existing_browser_heartbeat, carried=None, web_session_policy=None):
     """Prove auth independently, then permit only the existing projection migrations.
 
     Complete private auth cells are bound to both public snapshots. A comparison copy
@@ -659,7 +647,7 @@ def prove_migration_preserved(before, after, original_auth, current_auth, restar
         # heartbeat prover checks every auth cell, identity, schema and timestamp.
         auth_after = auth_comparison(before, after)
         heartbeat = prove_restart_heartbeat(before, auth_after, original_auth, current_auth,
-                                           restart_started_at, observed_after_at, identity=identity)
+                                           restart_started_at, observed_after_at, identity=identity, web_session_policy=web_session_policy)
         assert heartbeat is not None, 'Changed auth requires a complete heartbeat witness'
         heartbeat = {**heartbeat, 'migrationTypedAuth': {
             'schemaVersion': 1, 'beforeSha256': typed_auth_rows_hash(original_auth),
@@ -722,7 +710,7 @@ def backup_state(own, commit):
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
     root = safe_path(home / '.specweave-studio' / 'backups', home)
     root.mkdir(mode=0o700, exist_ok=True)
-    target_dir = root / ('pre-%s-%s' % (re.sub('[^a-f0-9]', '', str(commit))[:12] or 'unknown', stamp))
+    target_dir = root / ('pre-%s-%s-%s' % (re.sub('[^a-f0-9]', '', str(commit))[:12] or 'unknown', stamp, uuid.uuid4().hex))
     target_dir.mkdir(mode=0o700)
     target = target_dir / 'statev2.sqlite'
     source = sqlite3.connect('file:' + str(own / 'userdata' / 'statev2.sqlite') + '?mode=ro', uri=True)
@@ -751,10 +739,10 @@ def restore_state(backup, own):
     finally:
         if staged.exists(): staged.unlink()
 
-def wait_for_stopped(pid, timeout=30):
+def wait_for_stopped(pid, timeout=30, *, port=8319):
     for attempt in range(int(timeout / 0.5)):
         alive = subprocess.run(['/bin/kill', '-0', str(pid)], capture_output=True, timeout=5).returncode == 0
-        if not alive and listeners(8319) == []: return
+        if not alive and listeners(port) == []: return
         time.sleep(0.5)
     raise AssertionError('Owned service did not stop for the state restore')
 
@@ -776,6 +764,8 @@ def assert_prestate(expected, actual, carried=None):
         else:
             same = expected[key] == actual[key]
         assert same, 'Guarded prestate changed: ' + key
+    for key in ('port', 'webSessionPolicy'):
+        assert expected.get(key) == actual.get(key), 'Guarded prestate changed: ' + key
     # A prestate is taken by the same updater that applies it; both carry the capture.
     assert ('databaseCapture' in expected) == ('databaseCapture' in actual), 'Complete database proof missing'
     if 'databaseCapture' in expected:
@@ -878,12 +868,34 @@ def publish_release(staged, destination):
         release_verified(destination)
         assert (destination / 'studio-manifest.json').read_bytes() == (staged / 'studio-manifest.json').read_bytes(), 'Previously staged release differs from the verified archive'
     else:
-        shutil.move(str(staged), destination)
+        try:
+            staged.rename(destination)  # Atomic directory publication; never nest into a racing winner.
+        except OSError as error:
+            if error.errno not in (errno.EEXIST, errno.ENOTEMPTY):
+                raise
+            release_verified(destination)
+            assert (destination / 'studio-manifest.json').read_bytes() == (staged / 'studio-manifest.json').read_bytes(), 'Concurrently published release differs from the verified archive'
     return manifest
 
 def apply(identity, expected, archive, archive_sha, output, *, allow_existing_browser_heartbeat=False,
+          allow_project_migrations=False, remote_authorization=None):
+    validate_identity(identity)
+    web_session_policy(identity, expected.get('webSessionPolicy'))
+    owner = current_owner()
+    # The fresh prestate and every write, rollback and prune occur while this home's
+    # release store is exclusive, including against fresh installations of another ID.
+    with installation_lock(owner['home']):
+        guard = (contextlib.nullcontext() if remote_authorization is None else
+                 managed_updates.remote_apply_guard(identity, remote_authorization))
+        with guard:
+            return _apply(identity, expected, archive, archive_sha, output,
+                          allow_existing_browser_heartbeat=allow_existing_browser_heartbeat,
+                          allow_project_migrations=allow_project_migrations)
+
+def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_browser_heartbeat=False,
           allow_project_migrations=False):
-    assert not allow_existing_browser_heartbeat or identity in {'m4', 'm1', 'm3'}, 'Restart heartbeat exception requires M4 cookie or paired-worker relay WEB session'
+    validate_identity(identity)
+    web_session_policy(identity, expected.get('webSessionPolicy'))
     started = time.monotonic()
     def budget_left():
         left = READY_BY_SECONDS_FROM_START - MIN_READINESS_SECONDS - (time.monotonic() - started)
@@ -900,7 +912,11 @@ def apply(identity, expected, archive, archive_sha, output, *, allow_existing_br
     own = home / '.specweave-studio' / identity
     old_bytes = {name: (own / name).read_bytes() for name in ['installation.json', 'launch.sh']}
     receipt = json.loads(old_bytes['installation.json'])
-    wrapper = home / '.local/bin/specweave-studio'
+    port = before.get('port', receipt.get('port', 8319))
+    domain = 'gui/' + str(before['uid'])
+    policy = web_session_policy(identity, receipt.get('webSessionPolicy'))
+    assert before.get('webSessionPolicy', policy) == policy, 'Web session policy changed'
+    wrapper, alias = cli_paths(home, identity)
     old_wrapper = wrapper.read_bytes()
     old_release = receipt['release']
     old_tokens = shlex.split(old_bytes['launch.sh'].decode().splitlines()[4])[1:]
@@ -963,7 +979,7 @@ def apply(identity, expected, archive, archive_sha, output, *, allow_existing_br
     # any Studio release wrote, which may name an older release). Ownership is checked again
     # on the very entry replaced (swap_cli_alias), so a link or another tool's file that
     # appears meanwhile stays untouched; the update still proceeds.
-    alias = safe_path(home / '.local/bin', home) / CLI_ALIAS
+    safe_path(alias.parent, home)
     known_wrappers = {old_wrapper, new_bytes['wrapper']}
     def studio_alias(value):
         return value in known_wrappers or is_studio_wrapper(value, home)
@@ -1012,7 +1028,7 @@ def apply(identity, expected, archive, archive_sha, output, *, allow_existing_br
         if 'databaseCapture' in before:
             assert_capture_carried(before['databaseCapture'], current_database, before['rows'], current_rows,
                                    current_carried, message='Complete database changed before restart')
-        live = run(['/bin/launchctl', 'print', 'gui/501/' + before['serviceLabel']], text=True)
+        live = run(['/bin/launchctl', 'print', domain + '/' + before['serviceLabel']], text=True)
         assert re.search(r'^\s*pid = ' + str(before['servicePid']) + r'\s*$', live, re.M)
         progress['phase'] = 'restart-requested'
         restart_started_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -1038,7 +1054,7 @@ def apply(identity, expected, archive, archive_sha, output, *, allow_existing_br
         # again) stays idle for the readiness and rollback snapshots.
         write_install_gate(own, home)
         restart_requested = True
-        run(['/bin/launchctl', 'kickstart', '-k', 'gui/501/' + before['serviceLabel']])
+        run(['/bin/launchctl', 'kickstart', '-k', domain + '/' + before['serviceLabel']])
         # One reading can take a minute when the process inventory times out and retries, so
         # the loop is bounded by time, not attempts: the rollback must finish well inside the
         # update agent's APPLY_TIMEOUT (900 s), which kills the helper outright.
@@ -1068,7 +1084,7 @@ def apply(identity, expected, archive, archive_sha, output, *, allow_existing_br
                 before['rows'], after['rows'], original_auth, current_auth,
                 restart_started_at, after['observedAt'], identity=identity,
                 allow_existing_browser_heartbeat=allow_existing_browser_heartbeat,
-                carried=after_carried)
+                carried=after_carried, web_session_policy=policy)
             if 'databaseCapture' in before:
                 assert 'databaseCapture' in after, 'Complete database proof missing after restart'
                 assert_migration_typed_cells(before['databaseCapture'], after['databaseCapture'],
@@ -1092,7 +1108,7 @@ def apply(identity, expected, archive, archive_sha, output, *, allow_existing_br
             else:
                 heartbeat_after = after['rows']
             heartbeat = prove_restart_heartbeat(before['rows'], heartbeat_after, original_auth, current_auth,
-                                                restart_started_at, after['observedAt'], identity=identity)
+                                                restart_started_at, after['observedAt'], identity=identity, web_session_policy=policy)
         else:
             # Rows the old service appended before it stopped, or the new one appended since,
             # carry forward; auth stays byte-exact here (heartbeats need their own proof).
@@ -1170,12 +1186,12 @@ def apply(identity, expected, archive, archive_sha, output, *, allow_existing_br
                     # A rejected kickstart may leave the exact original process alive. Restore
                     # only our pointers; this path never restarts or stops that process.
                     runtime = json.loads((own / 'userdata/server-runtime.json').read_text())
-                    assert runtime['pid'] == before['servicePid'] and runtime['host'] == '127.0.0.1' and runtime['port'] == 8319
-                    live = run(['/bin/launchctl', 'print', 'gui/501/' + before['serviceLabel']], text=True)
+                    assert runtime['pid'] == before['servicePid'] and runtime['host'] == '127.0.0.1' and runtime['port'] == port
+                    live = run(['/bin/launchctl', 'print', domain + '/' + before['serviceLabel']], text=True)
                     assert re.search(r'^\s*pid = ' + str(before['servicePid']) + r'\s*$', live, re.M) and 'path = ' + str(plist) in live
                     command = run(['/bin/ps', '-p', str(before['servicePid']), '-o', 'command='], text=True)
                     assert receipt['node'] in command and old_release + '/bin.mjs' in command
-                    assert listeners(8319) == [before['servicePid']]
+                    assert listeners(port) == [before['servicePid']]
                     owned = None
             else:
                 owned = None  # Restore our CAS-owned pointers without stopping the existing process.
@@ -1208,7 +1224,7 @@ def apply(identity, expected, archive, archive_sha, output, *, allow_existing_br
                 failure['rollback'] = 'held-new-release-rollback-checks-failed'
                 output.write_text(json.dumps(failure, indent=2) + '\n')
                 rows_snapshot(own / 'userdata')
-                live = run(['/bin/launchctl', 'print', 'gui/501/' + before['serviceLabel']], text=True)
+                live = run(['/bin/launchctl', 'print', domain + '/' + before['serviceLabel']], text=True)
                 assert re.search(r'^\s*pid = ' + str(owned['servicePid']) + r'\s*$', live, re.M)
                 assert digest(plist.read_bytes()) == before['fileHashes']['plist'], 'Verified LaunchAgent changed before rollback'
                 rollback_browser_stop = {}
@@ -1223,17 +1239,17 @@ def apply(identity, expected, archive, archive_sha, output, *, allow_existing_br
                 assert state_backup is not None and state_backup.is_file(), 'No state backup to roll back to'
                 # The old release never starts on the migrated database: stop, restore the
                 # pre-update copy, and only then point at the old release and start it.
-                domain_label = 'gui/501/' + before['serviceLabel']
+                domain_label = domain + '/' + before['serviceLabel']
                 failure['rollback'] = 'held-new-release-stopping'
                 output.write_text(json.dumps(failure, indent=2) + '\n')
                 run(['/bin/launchctl', 'bootout', domain_label], timeout=60)
                 try:
-                    wait_for_stopped(owned['servicePid'])
+                    wait_for_stopped(owned['servicePid'], port=port)
                     restore_state(state_backup, own)
                 except BaseException:
                     # Keep the new release with the database it migrated rather than mixing
                     # them; its pointers were never switched.
-                    run(['/bin/launchctl', 'bootstrap', 'gui/501', str(plist)], timeout=60)
+                    run(['/bin/launchctl', 'bootstrap', domain, str(plist)], timeout=60)
                     failure['rollback'] = 'held-new-release-state-restore-failed'
                     output.write_text(json.dumps(failure, indent=2) + '\n')
                     raise
@@ -1253,11 +1269,11 @@ def apply(identity, expected, archive, archive_sha, output, *, allow_existing_br
                     except OSError:
                         failure['pointers'] = 'mixed-see-backup'
                     finally:
-                        run(['/bin/launchctl', 'bootstrap', 'gui/501', str(plist)], timeout=60)
+                        run(['/bin/launchctl', 'bootstrap', domain, str(plist)], timeout=60)
                     failure['rollback'] = 'held-new-release-pointer-restore-failed'
                     output.write_text(json.dumps(failure, indent=2) + '\n')
                     raise
-                run(['/bin/launchctl', 'bootstrap', 'gui/501', str(plist)], timeout=60)
+                run(['/bin/launchctl', 'bootstrap', domain, str(plist)], timeout=60)
                 failure['rollback'] = 'restored-runtime-pointers-and-state'
                 failure['stateDeltaRetained'] = False
             else:
@@ -1377,7 +1393,7 @@ def refusal_line(identity, error):
 def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser()
-    parser.add_argument('--identity', choices=sorted(IDENTITIES), required=True)
+    parser.add_argument('--identity', required=True)
     parser.add_argument('--snapshot', type=pathlib.Path)
     parser.add_argument('--reap', type=pathlib.Path, help='Stop the processes left beneath the service; write the record here')
     parser.add_argument('--request', help='With --reap: the forced install request (installRequestedAt) it serves')
@@ -1388,7 +1404,7 @@ def main():
     parser.add_argument('--allow-project-migrations', action='store_true',
                         help="Accept the new release's migrations: added tables and rebuilt projections, nothing lost")
     parser.add_argument('--allow-existing-browser-heartbeat', action='store_true',
-                        help='Prove one existing M4 WEB-cookie or paired-worker WEB-relay-bearer reconnect during the owned restart')
+                        help='Prove bounded existing web and desktop reconnects under the installation web-session policy')
     args = parser.parse_args()
     if args.reap:
         assert not args.snapshot and not args.prestate and args.request and not os.path.lexists(str(args.reap))

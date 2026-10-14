@@ -173,15 +173,21 @@ def reverse_later_capture(capture, original_auth):
     return value
 
 
-def verify_update_database(update, final, state, *, allow_existing_browser_heartbeat=False, later_witness=None):
+def verify_update_database(update, final, state, *, allow_existing_browser_heartbeat=False, later_witness=None, web_session_policy=None):
     """Recompute a saved non-migration update proof on the owning host. Return no private cells.
 
     Migrated updates are rejected here; they are checked by update.assert_migration_preserved.
     """
-    from auth_heartbeat import restore_timestamp, restore_witness, verify_restart_witness
+    from auth_heartbeat import restore_timestamp, restore_witness, verify_restart_witness, session_policy
     before, after = update['before'], update['after']
     identity = before['identity']
-    assert identity in {'m4', 'm1', 'm3'} and after['identity'] == final['identity'] == identity
+    session_policy(identity, web_session_policy)
+    web_session_policy = web_session_policy or {'m4': 'browser-cookie', 'm1': 'worker-relay', 'm3': 'worker-relay'}.get(identity)
+    assert after['identity'] == final['identity'] == identity
+    for value in (before, after, final):
+        assert value.get('webSessionPolicy', web_session_policy) == web_session_policy, 'Database proof web session policy differs'
+        if identity not in {'m4', 'm1', 'm3'}:
+            assert value.get('webSessionPolicy') == web_session_policy, 'Generic database proof requires bound policy'
     assert final['artifactSourceCommit'] == after['artifactSourceCommit']
     assert final['archiveSha256'] == after['archiveSha256']
     assert all('databaseCapture' in value for value in (before, after, final)), 'Complete database proof missing'
@@ -202,7 +208,7 @@ def verify_update_database(update, final, state, *, allow_existing_browser_heart
         assert allow_existing_browser_heartbeat, 'Restart heartbeat acceptance requires explicit opt-in'
         assert update['restartStartedAt'] == heartbeat['restartStartedAt']
         assert after['observedAt'] == heartbeat['observedAfterAt']
-        verified_heartbeat = verify_restart_witness(before['rows'], after['rows'], heartbeat, current_auth, identity=identity)
+        verified_heartbeat = verify_restart_witness(before['rows'], after['rows'], heartbeat, current_auth, identity=identity, web_session_policy=web_session_policy)
         original_auth = restore_witness(current_auth, heartbeat, before['rows'])
         expected_kind = 'verified-existing-browser-heartbeat'
     else:

@@ -1,3 +1,5 @@
+import { LogicalProject, ProjectCoordinatorBinding } from "./logicalProject.ts";
+import { ModelSelection } from "./modelSelection.ts";
 import * as Schema from "effect/Schema";
 import { EnvironmentId, ProjectId, ThreadId } from "./baseSchemas.ts";
 
@@ -22,6 +24,23 @@ export const MachineHandoffManifest = Schema.Struct({
   ),
 });
 export type MachineHandoffManifest = typeof MachineHandoffManifest.Type;
+export const MachineHandoffDestination = Schema.Struct({
+  environmentId: EnvironmentId,
+  projectId: ProjectId,
+  coordinatorThreadId: Schema.optional(ThreadId),
+  logicalProjectId: Schema.optional(bounded(512)),
+  /** A preview may describe this plan; only explicitly accepted start performs the join. */
+  joinExistingProject: Schema.optional(Schema.Boolean),
+  /** Execute in the explicitly selected registered folder; omitted preserves legacy transfers. */
+  executionMode: Schema.optional(Schema.Literal("project-folder")),
+});
+export const MachineHandoffAcknowledgment = Schema.Struct({
+  operationId: MachineHandoffOperationId,
+  environmentId: EnvironmentId,
+  projectId: ProjectId,
+  coordinatorThreadId: ThreadId,
+  digest: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/)),
+});
 export const MachineHandoffContext = Schema.Struct({
   goal: bounded(8_000),
   instructions: bounded(16_000),
@@ -30,6 +49,9 @@ export const MachineHandoffContext = Schema.Struct({
   ),
   threads: Schema.Array(
     Schema.Struct({
+      environmentId: Schema.optional(EnvironmentId),
+      projectId: Schema.optional(ProjectId),
+      modelSelection: Schema.optional(ModelSelection),
       threadId: ThreadId,
       title: bounded(1000),
       branch: Schema.NullOr(bounded(1024)),
@@ -41,13 +63,21 @@ export const MachineHandoffContext = Schema.Struct({
           role: Schema.Literals(["user", "assistant"]),
           text: bounded(MACHINE_HANDOFF_MAX_BYTES),
           createdAt: bounded(64),
+          runId: Schema.optional(bounded(512)),
+          modelSelection: Schema.optional(ModelSelection),
         }),
       ).check(Schema.isMaxLength(2000)),
     }),
   ).check(Schema.isMaxLength(100)),
 });
 export type MachineHandoffContext = typeof MachineHandoffContext.Type;
+const logicalTransferFields = {
+  logicalProject: Schema.optional(LogicalProject),
+  coordinatorBinding: Schema.optional(ProjectCoordinatorBinding),
+  destination: Schema.optional(MachineHandoffDestination),
+};
 export const MachineHandoffBundle = Schema.Struct({
+  ...logicalTransferFields,
   manifest: MachineHandoffManifest,
   sourceEnvironmentId: EnvironmentId,
   sourceProjectId: ProjectId,
@@ -58,6 +88,8 @@ export const MachineHandoffBundle = Schema.Struct({
 });
 export type MachineHandoffBundle = typeof MachineHandoffBundle.Type;
 export const MachineHandoffPrepareInput = Schema.Struct({
+  destination: Schema.optional(MachineHandoffDestination),
+  acknowledgment: Schema.optional(MachineHandoffAcknowledgment),
   projectId: ProjectId,
   sourceThreadId: Schema.optional(ThreadId),
   operationId: MachineHandoffOperationId,
@@ -74,6 +106,7 @@ export const MachineHandoffPrepareResult = Schema.Struct({
 export type MachineHandoffPrepareResult = typeof MachineHandoffPrepareResult.Type;
 /** Destination checks need checkpoint identities, never the retained conversation. */
 export const MachineHandoffPreviewMetadata = Schema.Struct({
+  ...logicalTransferFields,
   manifest: MachineHandoffManifest,
   sourceEnvironmentId: EnvironmentId,
   sourceProjectId: ProjectId,
@@ -100,6 +133,10 @@ export const MachineHandoffReceiveInput = Schema.Union([
 ]);
 export type MachineHandoffReceiveInput = typeof MachineHandoffReceiveInput.Type;
 export const MachineHandoffReceiveResult = Schema.Struct({
+  executionMode: Schema.optional(Schema.Literal("project-folder")),
+  environmentId: Schema.optional(EnvironmentId),
+  logicalProject: Schema.optional(LogicalProject),
+  coordinatorBinding: Schema.optional(ProjectCoordinatorBinding),
   operationId: MachineHandoffOperationId,
   phase: Schema.Literals(["ready", "started"]),
   projectId: ProjectId,

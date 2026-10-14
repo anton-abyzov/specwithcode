@@ -190,6 +190,7 @@ beforeEach(() => {
   for (const value of Object.values(state)) if (typeof value === "function") value.mockReset();
   state.update.mockResolvedValue({ _tag: "Success", value: {} });
   state.fleet = null;
+  delete (project as { workspaceSettings?: unknown }).workspaceSettings;
   state.prepare.mockResolvedValue({
     _tag: "Success",
     value: { ...state.environment, revision: 8 },
@@ -767,5 +768,63 @@ describe("project settings and memory", () => {
         el.textContent?.includes("Manage project icon"),
       ),
     ).toBe(true);
+  });
+});
+
+describe("canonical project name in workspace settings", () => {
+  function bindName(state: "active" | "transferred") {
+    Object.assign(project, {
+      workspaceSettings: {
+        logicalProject: { id: "easychamp", title: "EasyChamp", coordinatorId: "one", members: [] },
+        coordinatorBinding: { epoch: 1, state },
+      },
+    });
+  }
+  it("displays and discards to the canonical name while deletion still requires the physical project name", async () => {
+    bindName("active");
+    await render();
+    expect(container.querySelector<HTMLInputElement>("#project-settings-name")?.value).toBe(
+      "EasyChamp",
+    );
+    expect(container.textContent).toContain("Type Atlas to confirm");
+    await input("#project-settings-name", "Changed draft");
+    await click("Discard");
+    expect(container.querySelector<HTMLInputElement>("#project-settings-name")?.value).toBe(
+      "EasyChamp",
+    );
+    await input('[aria-label="Confirm project deletion"]', "EasyChamp");
+    const deletion = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent === "Delete project and threads",
+    )!;
+    expect(deletion.disabled).toBe(true);
+    await input('[aria-label="Confirm project deletion"]', "Atlas");
+    await click("Delete project and threads");
+    expect(state.remove).toHaveBeenCalledWith({
+      environmentId: "host",
+      input: { projectId: "project", force: true, confirmationTitle: "Atlas" },
+    });
+  });
+  it("rejects a predecessor name edit and keeps its draft without reporting success", async () => {
+    bindName("transferred");
+    await render();
+    await input("#project-settings-name", "New EasyChamp");
+    await click("Save changes");
+    expect(container.textContent).toContain("Open the active coordinator to rename this project");
+    expect(state.update).not.toHaveBeenCalled();
+    expect(state.saved).not.toHaveBeenCalled();
+    expect(container.querySelector<HTMLInputElement>("#project-settings-name")?.value).toBe(
+      "New EasyChamp",
+    );
+  });
+  it("does not rename a physical predecessor implicitly when saving its other settings", async () => {
+    bindName("transferred");
+    await render();
+    await setLabel("Goal", "Preserved source goal");
+    await click("Save changes");
+    expect(state.update).toHaveBeenCalledOnce();
+    expect(state.update.mock.calls[0]?.[0].input).not.toHaveProperty("title");
+    expect(state.update.mock.calls[0]?.[0].input.workspaceSettings.goal).toBe(
+      "Preserved source goal",
+    );
   });
 });

@@ -1026,8 +1026,15 @@ export const make = Effect.gen(function* () {
   ): Effect.fn.Return<Electron.BrowserWindow, DesktopWindowError> {
     const { projectKey } = input;
     const url = getDesktopProjectWindowUrl(environment.isDevelopment, projectKey);
-    const existing = projectWindows.get(projectKey);
+    const existing =
+      projectWindows.get(projectKey) ??
+      [...new Set(projectWindows.values())].find(
+        (window) => !window.isDestroyed() && isProjectWindowOnUrl(window.webContents.getURL(), url),
+      );
     if (existing !== undefined && !existing.isDestroyed()) {
+      // A first handoff can replace a legacy route with its canonical domain key.
+      // Keep the existing native window and its old alias alive; no history is closed.
+      projectWindows.set(projectKey, existing);
       // The project may have been renamed since the window opened.
       if (input.title !== undefined) {
         windowTitleSetters.get(existing.id)?.(
@@ -1050,7 +1057,7 @@ export const make = Effect.gen(function* () {
 
     const persistedSettings = yield* desktopSettings.get;
     const saved = DesktopAppSettings.findProjectWindowState(persistedSettings, projectKey);
-    const openProjectWindowCount = [...projectWindows.values()].filter(
+    const openProjectWindowCount = [...new Set(projectWindows.values())].filter(
       (window) => !window.isDestroyed(),
     ).length;
     const main = yield* electronWindow.main;
@@ -1077,7 +1084,8 @@ export const make = Effect.gen(function* () {
     });
     projectWindows.set(projectKey, window);
     window.once("closed", () => {
-      if (projectWindows.get(projectKey) === window) projectWindows.delete(projectKey);
+      for (const [alias, candidate] of projectWindows)
+        if (candidate === window) projectWindows.delete(alias);
     });
     yield* electronWindow.registerSecondary(window);
     yield* logWindowInfo("project window created");

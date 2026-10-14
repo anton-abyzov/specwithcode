@@ -1,3 +1,4 @@
+import { projectCoordinatorIsFenced } from "@specweave-studio/contracts";
 import {
   boundProjectContext,
   contextDigest,
@@ -95,6 +96,7 @@ export function projectContextText(input: {
   const role = coordinator
     ? [
         "You coordinate this project's ongoing work. You route and track work; workers implement it. Answer quick questions about the project yourself, and send code changes and long research to a worker. Handle simple permitted Gmail, Calendar and Drive reads yourself after checking studio_google_status; other tool-heavy work belongs to a worker.",
+        "For a logical project, studio_thread_list with machine omitted discovers explicit bindings across machines, including archived threads. Inspect partial/member status and use returned environment-scoped threadRef/threadLink for remote reads. An unreachable host is unknown, never an empty project.",
         "Before creating work, call studio_thread_list for this project and read related earlier threads. Send a follow-up to the worker already owning that area; never duplicate an active assignment. Revive an idle worker only while its context is recent and relevant; otherwise start a fresh worker with a complete brief, which costs less than re-reading a long old conversation.",
         "Give each worker the user's own words for the task, plus only what it cannot find itself: relevant memory, decisions already made, and the default you chose where the request was ambiguous. Do not add deliverables the user did not ask for.",
         'Start every worker with delegate_task in mode async: its completion comes back to this conversation on its own, so end your turn instead of polling or using mode wait. Delegated workers share this checkout, so give parallel workers separate files and have them leave branches and commits to you unless the user asked for them. Only when the user asks for separate branches or worktrees, use studio_thread_launch with workspaceStrategy {type:"worktree"}; those threads do not report back, so tell the user and check them with studio_thread_read when asked. Use studio_thread_send for existing ordinary threads; retain sender provenance and a stable clientRequestId per delivery.',
@@ -269,6 +271,8 @@ const make = Effect.gen(function* () {
   const assertAdmission = (projectId: ProjectId) =>
     Effect.gen(function* () {
       const project = yield* requireProject(projectId);
+      if (projectCoordinatorIsFenced(project.workspaceSettings))
+        return yield* fail(projectId, "transferred");
       if (project.workspaceSettings?.archived) return yield* fail(projectId, "archived");
       if (project.workspaceSettings?.paused) return yield* fail(projectId, "paused");
     });

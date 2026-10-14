@@ -9,7 +9,6 @@ import {
   type OrchestrationV2Run,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
-  type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
   OrchestratorMcpFailure,
   type OrchestratorMcpCapabilitiesResult,
@@ -38,7 +37,6 @@ import {
   type OrchestratorMcpThreadInterruptInput,
   type OrchestratorMcpThreadInterruptResult,
   type OrchestratorMcpThreadListInput,
-  type OrchestratorMcpThreadListItem,
   type OrchestratorMcpThreadListResult,
   type OrchestratorMcpThreadReadInput,
   type OrchestratorMcpThreadReadResult,
@@ -82,6 +80,7 @@ import {
 } from "../orchestration-v2/DispatchModeLimit.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import { listProjectThreadInventory, threadSettlement } from "./OrchestratorMcpThreadList.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import {
@@ -105,7 +104,6 @@ const TASK_WAKE_EVENTS = [
 ] as const;
 /** A person answers the card, so a slower poll is plenty. */
 const SECRET_REQUEST_POLL_INTERVAL_MS = 500;
-const DEFAULT_THREAD_LIST_LIMIT = 50;
 const DEFAULT_THREAD_READ_LIMIT = 50;
 const DEFAULT_THREAD_RUN_LIMIT = 10;
 const DEFAULT_THREAD_ITEM_MAX_CHARS = 20_000;
@@ -606,39 +604,6 @@ function taskPrompt(input: OrchestratorMcpDelegateTaskInput): string {
   return input.role === undefined || input.role === "general"
     ? input.task
     : `Act as the ${input.role} sub-agent for this task.\n\n${input.task}`;
-}
-
-function threadSettlement(
-  thread: Pick<OrchestrationV2ThreadShell, "settledOverride" | "settledAt">,
-): Pick<OrchestratorMcpThreadListItem, "settled" | "settledAt"> {
-  const settled = thread.settledOverride === "settled";
-  return {
-    settled,
-    settledAt: settled && thread.settledAt !== null ? DateTime.formatIso(thread.settledAt) : null,
-  };
-}
-
-function listItemFromShell(shell: OrchestrationV2ThreadShell): OrchestratorMcpThreadListItem {
-  return {
-    threadId: shell.id,
-    title: shell.title,
-    threadLink: formatStudioThreadLink(shell.id, shell.title),
-    createdBy: shell.createdBy,
-    creationSource: shell.creationSource,
-    status: shell.activityRunStatus ?? shell.status,
-    latestRunId: shell.latestRunId,
-    providerInstanceId: shell.modelSelection.instanceId,
-    model: shell.modelSelection.model,
-    runtimeMode: shell.runtimeMode,
-    interactionMode: shell.interactionMode,
-    linkedPullRequest: shell.linkedPullRequest ?? null,
-    ...threadSettlement(shell),
-    parentThreadId: shell.lineage.parentThreadId,
-    relationshipToParent: shell.lineage.relationshipToParent,
-    itemCount: shell.visibleItemCount,
-    createdAt: DateTime.formatIso(shell.createdAt),
-    updatedAt: DateTime.formatIso(shell.updatedAt),
-  };
 }
 
 function threadDetail(
@@ -2261,43 +2226,12 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const { parent } = yield* loadCaller(scope);
         const projectId = yield* resolveProjectTarget(parent, input.projectId);
-        const projectThreads = yield* threadManagement
-          .listProjectThreads({
-            projectId,
-            includeSubagents: input.includeSubagents !== false,
-          })
-          .pipe(
-            Effect.mapError((error) =>
-              failure("orchestration_error", `Unable to list threads: ${errorMessage(error)}`),
-            ),
-          );
-        const statuses = input.statuses === undefined ? null : new Set(input.statuses);
-        const titleContains = input.titleContains?.toLocaleLowerCase();
-        const filtered = projectThreads
-          .filter(
-            (thread) =>
-              statuses === null || statuses.has(thread.activityRunStatus ?? thread.status),
-          )
-          .filter(
-            (thread) =>
-              input.settled === undefined || threadSettlement(thread).settled === input.settled,
-          )
-          .filter(
-            (thread) =>
-              titleContains === undefined ||
-              thread.title.toLocaleLowerCase().includes(titleContains),
-          );
-        const cursor = input.cursor ?? 0;
-        const limit = input.limit ?? DEFAULT_THREAD_LIST_LIMIT;
-        const page = filtered.slice(cursor, cursor + limit);
-        const nextCursor = cursor + page.length < filtered.length ? cursor + page.length : null;
-        return {
+        return yield* listProjectThreadInventory({
+          threadManagement,
           projectId,
           currentThreadId: parent?.thread.id ?? null,
-          threads: page.map(listItemFromShell),
-          nextCursor,
-          total: filtered.length,
-        } satisfies OrchestratorMcpThreadListResult;
+          input,
+        });
       }),
     readThread: (scope, input) =>
       Effect.gen(function* () {

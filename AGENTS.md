@@ -5,7 +5,7 @@ Studio is an independent private workbench for native coding agents. SpecWeave o
 ## Isolation and ownership
 
 - Production runs use Node 22.20. Build tools may require a separately scoped Node 24 runtime; report that distinction. Never change shared toolchains or provider installs to fix a build.
-- CLI: specweave-studio. Default loopback port: 8319. Private home: ~/.specweave-studio. Runtime options use `STUDIO_*` only; environment variables inherited from the upstream product are ignored and must never select an original install/store.
+- CLI: specweave-studio. Default loopback port: 8319. Private home: ~/.specwithcode for new installs; true legacy standalone ~/.specweave-studio/userdata or dev keeps precedence, otherwise an existing branded root survives managed identity installation; legacy-only roots and explicit STUDIO_HOME remain supported. Runtime options use `STUDIO_*` only; environment variables inherited from the upstream product are ignored and must never select an original install/store.
 - Check active owners, branch, increment and ledger before claiming work. Preserve native sessions, services, schedules and dirty worktrees. Idle-looking metadata does not authorize takeover.
 - Never point test servers at live stores, symlink credential folders, copy OAuth tokens or start provider turns while importing history. Use a new private test home and scratch repository; omit credentials, pending work and auth sessions from any explicitly authorized snapshot.
 - Stop only the exact PID you spawned or an exact newly owned launchd service after verifying its identity. Never pattern-stop providers, apps or dev servers.
@@ -47,6 +47,8 @@ Use Node 22.20.0 explicitly and the isolated pnpm 11.10.0 toolchain. Paths below
 | Check                                               | Verified command                                                                                                                                            |
 | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Headless isolated workspace/settings verification   | `node scripts/studio-workspaces/verify.mjs /absolute/owned/report-dir` (Node22; optional `STUDIO_TEST_CHROMIUM` points to an installed headless executable) |
+| Logical project behavior and focused coverage       | `node scripts/studio-logical-projects/check.mjs /absolute/owned/coverage-dir` |
+| Logical project headless three-server verification  | `node scripts/studio-logical-projects/verify.mjs /absolute/owned/report-dir` (build web and server first; isolated synthetic stores, disabled providers) |
 | Headless provider picker fixture                    | `node node_modules/vite-plus/bin/vp build --config apps/web/tests/provider-usability/vite.config.ts` (Node24), then `node scripts/studio-verify/provider-usability.mjs` (Node22; optional `STUDIO_CHROMIUM_EXECUTABLE`) |
 | Web supported typecheck                             | `node node_modules/typescript/bin/tsc --noEmit --project apps/web/tsconfig.json`                                                                            |
 | Server supported typecheck                          | `node node_modules/typescript/bin/tsc --noEmit --project apps/server/tsconfig.json`                                                                         |

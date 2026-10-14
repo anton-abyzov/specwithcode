@@ -1,3 +1,4 @@
+import { logicalCoordinator } from "../../../studio/projectDomain";
 /**
  * The default sidebar: projects on top, then a separate Chats section. A project
  * row opens its orchestrator, and the threads a project owns are reached from
@@ -195,6 +196,11 @@ export default function StudioSidebar() {
   const displayedCheckouts = useMemo(() => {
     const map = new Map<string, SidebarProjectGroupMember>();
     for (const group of projectGroups) {
+      const ownership = logicalCoordinator(group.memberProjects);
+      if (ownership) {
+        if (ownership.member) map.set(group.projectKey, ownership.member);
+        continue;
+      }
       if (group.projectKey === activeProjectKey && checkoutKey) {
         const exact = group.memberProjects.find(
           (member) => coordinatorMachineKey(member) === checkoutKey,
@@ -258,7 +264,10 @@ export default function StudioSidebar() {
   const { listed: listedProjects, archived: archivedProjects } = useMemo(
     () =>
       partitionProjectGroups(
-        projectGroups,
+        projectGroups.filter(
+          (group) =>
+            !group.memberProjects.some((member) => member.workspaceSettings?.kind === "personal"),
+        ),
         scratchRootFor,
         activeProjectKey,
         (projectKey) => (waitingByProject.get(projectKey) ?? 0) > 0,
@@ -490,12 +499,28 @@ export default function StudioSidebar() {
               <LayoutGridIcon aria-hidden />
               <span className="sws-side-row-label">Overview</span>
             </Link>
+            {
+              <Tip side="right" label={PERSONAL_ASSISTANT_DESCRIPTION}>
+                <button
+                  type="button"
+                  className="sws-side-row sws-side-row-quiet"
+                  onClick={() => {
+                    closeMobile();
+                    openCommandPalette({ open: "new-assistant" });
+                  }}
+                >
+                  <ConciergeBellIcon aria-hidden />
+                  <span className="sws-side-row-label">{PERSONAL_ASSISTANT_LABEL}</span>
+                  {hasAssistant ? null : <span className="sws-side-row-hint">Set up</span>}
+                </button>
+              </Tip>
+            }
           </div>
 
           <div className="sws-side-section" role="group" aria-labelledby="sws-side-projects">
             <div className="sws-side-heading">
               <h2 id="sws-side-projects">Projects</h2>
-              <Tip label="New project or assistant">
+              <Tip label="New project">
                 <button
                   type="button"
                   className="sws-icon-button"
@@ -510,9 +535,7 @@ export default function StudioSidebar() {
               </Tip>
             </div>
             {listedProjects.length === 0 && archivedProjects.length === 0 ? (
-              <p className="sws-side-empty">
-                No projects yet. Add a folder or a personal assistant.
-              </p>
+              <p className="sws-side-empty">No projects yet. Create one or open a folder.</p>
             ) : (
               <ul className="sws-side-list">
                 {visibleProjects.map((group) => (
@@ -528,22 +551,6 @@ export default function StudioSidebar() {
                   />
                 ))}
               </ul>
-            )}
-            {hasAssistant ? null : (
-              <Tip side="right" label={PERSONAL_ASSISTANT_DESCRIPTION}>
-                <button
-                  type="button"
-                  className="sws-side-row sws-side-row-quiet"
-                  onClick={() => {
-                    closeMobile();
-                    openCommandPalette({ open: "new-assistant" });
-                  }}
-                >
-                  <ConciergeBellIcon aria-hidden />
-                  <span className="sws-side-row-label">{PERSONAL_ASSISTANT_LABEL}</span>
-                  <span className="sws-side-row-hint">Set up</span>
-                </button>
-              </Tip>
             )}
             {hiddenProjects > 0 || (showAllProjects && projectGroups.length > PROJECT_PAGE + 1) ? (
               <button
@@ -779,7 +786,11 @@ function ProjectRow(props: {
   // The group keeps repository identity; its visible name and icon belong to
   // the checkout the workspace opens, including an explicit remote checkout.
   const project = props.displayedProject ?? group;
-  const displayName = props.displayedProject?.title ?? group.displayName;
+  const displayName = group.memberProjects.some(
+    (member) => member.workspaceSettings?.logicalProject,
+  )
+    ? group.displayName
+    : (props.displayedProject?.title ?? group.displayName);
   const personal = group.memberProjects.some(
     (member) => member.workspaceSettings?.kind === "personal",
   );
@@ -797,7 +808,7 @@ function ProjectRow(props: {
           to="/projects/$projectKey"
           params={{ projectKey: group.projectKey }}
           search={
-            props.displayedProject
+            props.displayedProject && !props.displayedProject.workspaceSettings?.logicalProject
               ? { checkout: coordinatorMachineKey(props.displayedProject) }
               : {}
           }

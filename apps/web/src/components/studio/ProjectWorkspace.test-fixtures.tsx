@@ -1,0 +1,720 @@
+// @vitest-environment jsdom
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, expect, vi } from "vite-plus/test";
+import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
+vi.mock("../../state/queries", () => ({
+  useTurnItemDetail: () => ({ data: undefined, isPending: false, error: null }),
+}));
+
+// Keep exported fixture mock signatures portable in composite TypeScript declarations.
+type FixtureProcedure = (...args: any[]) => any;
+const state = vi.hoisted(() => ({
+  send: vi.fn<FixtureProcedure>(),
+  nativeContinue: vi.fn(async (_kind: string, _selection: unknown) => {}),
+  nativeError: null as string | null,
+  openLink: vi.fn(async () => undefined),
+  openMenu: vi.fn(async () => undefined),
+  refresh: vi.fn<FixtureProcedure>(),
+  settle: vi.fn<FixtureProcedure>(),
+  navigate: vi.fn<FixtureProcedure>(),
+  /** The thread the stand-in chat's "Open related thread" button opens. */
+  relatedThreadId: "worker",
+  /** The routing value the stand-in chat last saw. */
+  routing: null as import("../../studio/projectMessageRouting").ProjectMessageRouting | null,
+  canOperate: true,
+  /** What a worker's saved-report query returns. */
+  threadReports: null as Record<string, unknown> | null,
+  /** null: the same answer as canOperate. */
+  canWriteSourceControl: null as boolean | null,
+  connected: true,
+  projectLoaded: true,
+  shellsBootstrapped: true,
+  primaryRegistered: true,
+  messages: [] as Array<{
+    id: string;
+    text: string;
+    role: string;
+    createdBy: string;
+    senderThreadId?: string;
+    delegatedCompletion?: { taskIds: string[] };
+    runId?: string | null;
+    createdAt?: unknown;
+    updatedAt?: unknown;
+    streaming: boolean;
+    attachments: import("@specweave-studio/contracts").ChatAttachment[];
+  }>,
+  attachments: [] as import("@specweave-studio/contracts").ChatAttachment[],
+  /** The coordinator thread's runs and turn items, which its live progress line reads. */
+  runs: [] as Array<{ id: string; ordinal: number; status: string; requestedAt: string }>,
+  turnItems: [] as Array<{
+    runId: string;
+    ordinal: number;
+    type: string;
+    status: string;
+    toolName?: string;
+  }>,
+  coordinatorId: "coord" as string | null,
+  coordinatorModel: { instanceId: "claude-native", model: "coordinator-model" } as {
+    instanceId: string;
+    model: string;
+  } | null,
+  shells: [] as EnvironmentThreadShell[],
+  /** The source control status every thread card reads. */
+  git: null as Record<string, unknown> | null,
+  pullRequestRequests: [] as unknown[],
+  /** What the card's own deadline finds: still pending (true) or already acted on. */
+  expireResult: false,
+  detailsPanelsShown: [] as unknown[],
+  goal: "",
+  starters: null as {
+    suggestions: import("@specweave-studio/contracts").ProjectStarterSuggestion[];
+    hasWorkspace: boolean;
+  } | null,
+  startersPending: false,
+  /** The workspace read has not answered yet. */
+  projectReadPending: false,
+  startersError: null as string | null,
+  starterReads: 0,
+  providers: [] as unknown[],
+  /** The host has not sent its configuration (and so its providers) yet. */
+  serverConfigPending: false,
+  phone: false,
+  /** Touch is the primary pointer (a phone or tablet), not a mouse or trackpad. */
+  coarse: false,
+  sendShortcut: "enter",
+  uploadsSupported: true,
+  uploadFails: false,
+  uploadsStarted: [] as string[],
+  uploadsReleased: [] as string[],
+  uploads: {} as Record<string, unknown>,
+  uploadGate: null as Promise<void> | null,
+  maxFileBytes: (50 * 1024 * 1024) as number | null,
+  /** Stands in for HEIC conversion and shrinking, which jsdom cannot decode. */
+  prepareImage: vi.fn<FixtureProcedure>(),
+  /** Other machines' checkouts of the project. */
+  otherCheckouts: [] as Array<{ id: string; environmentId: string; workspaceRoot: string }>,
+  recoveryHosts: [] as string[],
+  savedMachines: {} as Record<string, string>,
+  project: {
+    id: "project",
+    environmentId: "host",
+    title: "Atlas",
+    workspaceRoot: "/scratch/atlas",
+    defaultModelSelection: { instanceId: "codex-native", model: "worker-model" },
+  },
+}));
+vi.mock("../../studio/useThreadCardGitStatus", () => ({
+  useThreadCardGitStatus: () => state.git,
+}));
+vi.mock("../../studio/threadPullRequestRequests", () => ({
+  PULL_REQUEST_REQUEST_TTL_MS: 15_000,
+  PULL_REQUEST_REQUEST_EXPIRED_REASON: "Nothing answered.",
+  requestThreadPullRequest: (ref: unknown) => {
+    state.pullRequestRequests.push(ref);
+    return 1;
+  },
+  expireThreadPullRequest: () => state.expireResult,
+  showThreadDetailsPanel: (ref: unknown) => state.detailsPanelsShown.push(ref),
+}));
+vi.mock("./ProjectIconEditor", () => ({
+  ProjectIconButton: () => null,
+}));
+vi.mock("../settings/useSettingsProjectGroups", () => ({
+  useSettingsProjectGroups: () => [
+    { projectKey: "atlas", memberProjects: [state.project, ...state.otherCheckouts] },
+  ],
+}));
+vi.mock("../../lib/archivedThreadsState", () => ({
+  useArchivedThreadSnapshots: () => ({ snapshots: [], error: null }),
+}));
+vi.mock("../../state/entities", () => ({
+  useAllEnvironmentShellsBootstrapped: () => state.shellsBootstrapped,
+  useProjects: () => (state.projectLoaded ? [state.project, ...state.otherCheckouts] : []),
+  useThreadShells: () => state.shells,
+  readThreadShells: () => state.shells,
+  useThreadProjection: () => ({
+    projection: { messages: state.messages, runs: state.runs, turnItems: state.turnItems },
+  }),
+  useThreadHistory: () => ({ hasMoreHistory: false }),
+  useThreadStatus: () => "ready",
+}));
+vi.mock("../../state/environments", () => ({
+  useEnvironments: () => ({
+    isReady: true,
+    environments: [
+      ...state.recoveryHosts.map((environmentId) => ({
+        environmentId,
+        label: environmentId,
+        connection: { phase: "connected" },
+      })),
+      {
+        environmentId: "host",
+        label: "Test host",
+        connection: { phase: state.connected ? "connected" : "disconnected" },
+      },
+    ],
+  }),
+  usePrimaryEnvironmentId: () => (state.primaryRegistered ? "primary" : null),
+  useEnvironment: () => ({
+    label: "Test host",
+    connection: { phase: state.connected ? "connected" : "disconnected" },
+    serverConfig: state.serverConfigPending
+      ? undefined
+      : {
+          providers: state.providers,
+          environment: {
+            capabilities: {
+              attachmentUploads: state.uploadsSupported,
+              ...(state.maxFileBytes === null
+                ? {}
+                : { fileAttachments: { maxUploadBytes: state.maxFileBytes } }),
+            },
+          },
+        },
+  }),
+}));
+vi.mock("../../lib/attachmentUploadQueue", () => ({
+  useAttachmentUploadStore: (select: (store: { uploadsByImageId: object }) => unknown) =>
+    select({ uploadsByImageId: state.uploads }),
+  // Like the queue: nothing starts without the right to send, and a second start is a no-op.
+  startAttachmentUpload: ({ image }: { image: { id: string } }) => {
+    if (!state.canOperate || state.uploadsStarted.includes(image.id)) return;
+    state.uploadsStarted.push(image.id);
+  },
+  awaitAttachmentUploads: async () => {
+    await state.uploadGate;
+  },
+  getUploadedAttachments: ({
+    images,
+  }: {
+    images: Array<{ type: string; id: string; name: string; mimeType: string; sizeBytes: number }>;
+  }) =>
+    state.uploadFails || images.some((image) => !state.uploadsStarted.includes(image.id))
+      ? null
+      : images.map((image, index) => ({
+          type: image.type,
+          id: `pending-${index}`,
+          name: image.name,
+          mimeType: image.mimeType,
+          sizeBytes: image.sizeBytes,
+        })),
+  releaseDraftAttachment: (image: { id: string }) => {
+    state.uploadsReleased.push(image.id);
+  },
+}));
+vi.mock("../../lib/imageCompression", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/imageCompression")>()),
+  prepareImageForAttachment: (file: File, maxBytes: number) => state.prepareImage(file, maxBytes),
+}));
+vi.mock("../chat/ExpandedImageDialog", () => ({
+  ExpandedImageDialog: ({
+    preview,
+    onClose,
+  }: {
+    preview: { images: Array<{ name: string; src: string | null }>; index: number };
+    onClose: () => void;
+  }) => (
+    <div data-lightbox data-index={preview.index}>
+      {preview.images.map((image) => image.name).join(",")}
+      <button type="button" onClick={onClose}>
+        Close preview
+      </button>
+    </div>
+  ),
+}));
+vi.mock("../files/AttachmentFilePreview", () => ({
+  AttachmentFilePreview: (props: { name: string; file?: Blob | null }) => (
+    <div data-file-preview={props.name}>{props.file ? "local bytes" : "no bytes"}</div>
+  ),
+}));
+vi.mock("../../state/session", () => ({
+  useEnvironmentsWithScope: () => new Set(state.canOperate ? ["host", ...state.recoveryHosts] : []),
+  useEnvironmentScope: (_environmentId: string, scope: string) =>
+    scope === "source-control:write"
+      ? (state.canWriteSourceControl ?? state.canOperate)
+      : state.canOperate,
+}));
+vi.mock("../../state/query", () => ({
+  useEnvironmentQuery: (query: { starters?: true; reports?: true } | null) => {
+    if (query === null)
+      return { data: null, isPending: false, error: null, refresh: vi.fn<FixtureProcedure>() };
+    if (query.reports) {
+      return { data: state.threadReports, isPending: false, error: null, refresh: state.refresh };
+    }
+    if (query.starters) {
+      state.starterReads += 1;
+      return {
+        data: state.starters,
+        isPending: state.startersPending,
+        error: state.startersError,
+        refresh: vi.fn<FixtureProcedure>(),
+      };
+    }
+    return projectRead();
+  },
+}));
+const projectRead = vi.hoisted(() => () => ({
+  data: state.projectReadPending
+    ? undefined
+    : {
+        settings: {
+          revision: 1,
+          goal: state.goal,
+          instructions: "",
+          coordinatorThreadId: state.coordinatorId,
+          coordinatorModelSelection: state.coordinatorModel,
+          paused: false,
+          archived: false,
+          autoResume: true,
+        },
+        memory: { files: [], totalBytes: 0 },
+      },
+  isPending: state.projectReadPending,
+  refresh: state.refresh,
+}));
+vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => state.send }));
+vi.mock("../../state/assets", () => ({ assetEnvironment: { createUrl: {} } }));
+vi.mock("../../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => async () => ({ _tag: "Failure" }) }));
+vi.mock("../../state/threads", () => ({ threadEnvironment: { loadEarlierHistory: {} } }));
+vi.mock("../../hooks/useThreadActions", () => ({
+  useThreadActions: () => ({
+    settleThread: state.settle,
+    unsettleThread: state.settle,
+    unarchiveThread: state.settle,
+  }),
+}));
+vi.mock("../../studio/projectWorkspace", () => ({
+  projectWorkspace: {
+    read: () => ({}),
+    send: {},
+    starterSuggestions: () => ({ starters: true }),
+    threadReports: () => ({ reports: true }),
+    threadReportSave: {},
+  },
+}));
+vi.mock("@specweave-studio/client-runtime/state/runtime", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  squashAtomCommandFailure: (r: { error: Error }) => r.error,
+}));
+vi.mock("../../hooks/useThreadActionMenu", () => ({
+  useThreadActionMenu: () => ({ openMenu: state.openMenu }),
+}));
+vi.mock("../../browser/useOpenLink", () => ({ useOpenLink: () => state.openLink }));
+vi.mock("../../env", () => ({ isElectron: false }));
+vi.mock("@effect/atom-react", () => ({ useAtomValue: () => [] }));
+vi.mock("../../state/filesystem", () => ({
+  filesystemEnvironment: { browse: (input: unknown) => input },
+  useFilesystemReadAccess: () => ({ canReadFiles: false, isPending: false, error: null }),
+}));
+vi.mock("../../state/server", () => ({ primaryServerKeybindingsAtom: {} }));
+vi.mock("../../state/projects", () => ({ projectEnvironment: { update: {} } }));
+vi.mock("../ProjectFavicon", () => ({ ProjectFavicon: () => null }));
+vi.mock("../../hooks/useMediaQuery", () => ({
+  // Width queries answer with the phone layout; a touch-pointer query answers with the
+  // on-screen keyboard, at any width.
+  useMediaQuery: (query: unknown) =>
+    typeof query === "string" && query.includes("pointer: coarse") ? state.coarse : state.phone,
+}));
+vi.mock("../../hooks/useSettings", () => ({
+  useClientSettings: (
+    select: (settings: {
+      sendShortcut: string;
+      projectCoordinatorMachines: Record<string, string>;
+    }) => unknown,
+  ) =>
+    select({ sendShortcut: state.sendShortcut, projectCoordinatorMachines: state.savedMachines }),
+  useClientSettingsHydrationStatus: () => "ready",
+  useUpdateClientSettings:
+    () => (patch: { projectCoordinatorMachines?: Record<string, string> }) => {
+      if (patch.projectCoordinatorMachines) state.savedMachines = patch.projectCoordinatorMachines;
+    },
+}));
+vi.mock("./shell/CoordinatorModelPicker", () => ({
+  CoordinatorModelPicker: ({
+    value,
+    disabled,
+    onChange,
+  }: {
+    value: { instanceId: string; model: string } | null;
+    disabled: boolean;
+    onChange: (value: { instanceId: string; model: string }) => void;
+  }) => (
+    <button
+      data-coordinator-model
+      data-disabled={disabled ? "true" : "false"}
+      onClick={() => onChange({ instanceId: "codex-native", model: "picked-model" })}
+    >
+      {value?.model ?? "none"}
+    </button>
+  ),
+}));
+vi.mock("./shell/ProjectUsageIndicator", () => ({
+  ProjectUsageIndicator: ({ onOpenProjectUsage }: { onOpenProjectUsage: () => void }) => (
+    <button data-usage-indicator onClick={onOpenProjectUsage}>
+      usage
+    </button>
+  ),
+}));
+vi.mock("./shell/ModelBadge", () => ({
+  ModelBadge: ({ model }: { model: string }) => <span data-model-badge>{model}</span>,
+  useProviderEntries: () => new Map(),
+  useProviderEntriesByEnvironment: () => new Map(),
+}));
+vi.mock("@tanstack/react-router", () => ({
+  useNavigate: () => state.navigate,
+  Link: ({ children, ...p }: React.PropsWithChildren) => <a {...p}>{children}</a>,
+}));
+vi.mock("../WorkspacePageHeader", () => ({
+  WorkspacePageHeader: ({ children }: React.PropsWithChildren) => <header>{children}</header>,
+}));
+vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn<FixtureProcedure>() } }));
+vi.mock("../ui/sidebar", () => ({
+  SidebarInset: ({ children, ...p }: React.PropsWithChildren) => (
+    <section {...p}>{children}</section>
+  ),
+}));
+vi.mock("../ChatMarkdown", async () => {
+  const { parseStudioThreadHref } = await import("../../studio/studioThreadLinks");
+  // Plain text, except thread links, which go through the caller like the real renderer.
+  return {
+    default: ({
+      text,
+      renderContextReference,
+      renderThreadLink,
+    }: {
+      text: string;
+      renderContextReference?: (reference: {
+        kind: string;
+        contextId: string;
+        label: string;
+      }) => React.ReactNode;
+      renderThreadLink?: (link: {
+        candidates: readonly string[];
+        label: string;
+      }) => React.ReactNode | null;
+    }) => (
+      <p>
+        {text
+          .split(/(\[[^\]]+\]\((?:studio-context:\/\/v1\/thread\/|studio:\/\/thread\/)[^)]+\))/)
+          .map((part, index) => {
+            const context = /^\[([^\]]+)\]\(studio-context:\/\/v1\/thread\/([^)]+)\)$/.exec(part);
+            if (context && renderContextReference)
+              return (
+                <span key={index}>
+                  {renderContextReference({
+                    kind: "thread",
+                    contextId: decodeURIComponent(context[2]!),
+                    label: context[1]!,
+                  })}
+                </span>
+              );
+            const thread = /^\[([^\]]+)\]\((studio:\/\/thread\/[^)]+)\)$/.exec(part);
+            const candidates = thread ? parseStudioThreadHref(thread[2]!) : null;
+            if (thread && candidates)
+              return (
+                <span key={index}>
+                  {renderThreadLink?.({ candidates, label: thread[1]! }) ?? (
+                    <span data-fallback-thread-link={candidates[0]}>{thread[1]}</span>
+                  )}
+                </span>
+              );
+            return part;
+          })}
+      </p>
+    ),
+  };
+});
+vi.mock("./ProjectWorkspaceAttachments", () => ({
+  ProjectWorkspaceAttachments: ({
+    attachments,
+  }: {
+    attachments: import("@specweave-studio/contracts").ChatAttachment[];
+  }) => (
+    <div data-message-attachments>
+      {attachments.map((a) => (
+        <span key={a.id}>{a.name}</span>
+      ))}
+    </div>
+  ),
+}));
+vi.mock("./ProjectWorkspaceSettings", () => ({ ProjectWorkspaceSettings: () => null }));
+vi.mock("./RemoteWorkerCards", () => ({ RemoteWorkerCards: () => null }));
+vi.mock("../../studio/fleet", () => ({
+  useProjectRemoteWorkers: () => ({ workers: [], available: false, refresh: () => {} }),
+}));
+vi.mock("./shell/LibraryPane", () => ({ LibraryPane: () => <p>Library pane</p> }));
+vi.mock("../ChatView", async () => {
+  const { useProjectMessageRouting, routeProjectComposerSend } =
+    await import("../../studio/projectMessageRouting");
+  const { continueWithProjectModel } = await import("../../studio/coordinatorContinuation");
+  const { useOpenThread } = await import("../../hooks/useOpenThread");
+  return {
+    default: ({
+      threadId,
+      reviewOnly,
+      suspendShortcuts,
+    }: {
+      threadId: string;
+      reviewOnly?: boolean;
+      suspendShortcuts?: boolean;
+    }) => {
+      const routing = useProjectMessageRouting();
+      state.routing = routing;
+      const { openThread } = useOpenThread();
+      return (
+        <section
+          data-native-thread={threadId}
+          data-native-review={reviewOnly ? "" : undefined}
+          data-native-suspend={suspendShortcuts ? "" : undefined}
+        >
+          {!reviewOnly && routing?.coordinatorModelControls}
+          {["Resume", "Plan"].map((kind) => (
+            <button
+              key={kind}
+              onClick={() =>
+                void continueWithProjectModel(routing, undefined, (selection) =>
+                  state.nativeContinue(kind, selection),
+                ).catch((error) => {
+                  state.nativeError = error.message;
+                })
+              }
+            >
+              {kind} native
+            </button>
+          ))}
+          <button
+            onClick={() =>
+              void openThread({
+                environmentId: "host" as never,
+                threadId: state.relatedThreadId as never,
+              })
+            }
+          >
+            Open related thread
+          </button>
+          <button
+            onClick={() =>
+              void routeProjectComposerSend(routing, {
+                prompt: "Continue this worker",
+                hasOtherContent: false,
+                nativeInput: false,
+                prepareAttachments: async () => state.attachments,
+                clear: () => {},
+                reportError: () => {},
+              })
+            }
+          >
+            Reply in selected thread
+          </button>
+        </section>
+      );
+    },
+  };
+});
+import { ProjectWorkspace } from "./ProjectWorkspace";
+import { enqueueProjectCoordinatorDraft } from "../../studio/projectCoordinatorDraft";
+import { getProjectCoordinatorComposer } from "../../studio/projectCoordinatorComposer";
+let root: Root, container: HTMLDivElement;
+function shell(
+  id: string,
+  overrides: Partial<EnvironmentThreadShell> = {},
+): EnvironmentThreadShell {
+  return {
+    id,
+    environmentId: "host",
+    projectId: "project",
+    title: `Thread ${id}`,
+    createdBy: "agent",
+    runtime: null,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    hasActionableProposedPlan: false,
+    settledOverride: null,
+    lineage: { relationshipToParent: null },
+    pullRequests: [],
+    archivedAt: null,
+    deletedAt: null,
+    updatedAt: "2026-10-09T01:00:00Z",
+    modelSelection: {
+      instanceId: id === "coord" ? "claude-native" : "codex-native",
+      model: "chosen-model",
+    },
+    ...overrides,
+  } as EnvironmentThreadShell;
+}
+beforeEach(() => {
+  (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
+  Element.prototype.scrollIntoView = vi.fn<FixtureProcedure>();
+  const composer = getProjectCoordinatorComposer("host", "project");
+  composer.setPrompt("");
+  composer.setAttachments([]);
+  composer.setPreparing([]);
+  composer.setProblem(null);
+  composer.setSubmitting(false);
+  composer.outgoing.clear();
+  state.attachments = [];
+  state.messages = [];
+  state.threadReports = null;
+  state.runs = [];
+  state.turnItems = [];
+  state.send.mockReset();
+  state.navigate.mockReset();
+  state.relatedThreadId = "worker";
+  state.send.mockResolvedValue({ _tag: "Success", value: { threadId: "coord", created: false } });
+  state.settle.mockReset();
+  state.refresh.mockReset();
+  localStorage.clear();
+  state.coordinatorId = "coord";
+  state.coordinatorModel = { instanceId: "claude-native", model: "coordinator-model" };
+  state.goal = "";
+  state.git = null;
+  state.pullRequestRequests = [];
+  state.expireResult = false;
+  state.canWriteSourceControl = null;
+  state.detailsPanelsShown = [];
+  state.openLink.mockClear();
+  state.starters = null;
+  state.startersPending = false;
+  state.projectReadPending = false;
+  state.startersError = null;
+  state.starterReads = 0;
+  state.providers = [];
+  state.serverConfigPending = false;
+  state.project.defaultModelSelection = { instanceId: "codex-native", model: "worker-model" };
+  state.otherCheckouts = [];
+  state.recoveryHosts = [];
+  state.savedMachines = {};
+  state.nativeError = null;
+  sessionStorage.clear();
+  state.connected = true;
+  state.canOperate = true;
+  state.projectLoaded = true;
+  state.shellsBootstrapped = true;
+  state.primaryRegistered = true;
+  state.phone = false;
+  state.coarse = false;
+  state.sendShortcut = "enter";
+  state.uploadsSupported = true;
+  state.uploadFails = false;
+  state.uploadsStarted = [];
+  state.uploadsReleased = [];
+  state.uploads = {};
+  state.uploadGate = null;
+  state.maxFileBytes = 50 * 1024 * 1024;
+  state.prepareImage.mockReset();
+  state.prepareImage.mockImplementation(async (file: File) =>
+    /\.hei[cf]$/i.test(file.name)
+      ? {
+          ok: true,
+          recompressed: true,
+          file: new File(["jpeg"], file.name.replace(/\.hei[cf]$/i, ".jpg"), {
+            type: "image/jpeg",
+          }),
+        }
+      : file.size <= 10 * 1024 * 1024
+        ? { ok: true, recompressed: false, file }
+        : { ok: false, reason: "too-large" },
+  );
+  // jsdom has neither; each test gets fresh ones.
+  URL.createObjectURL = vi.fn(() => "blob:preview");
+  URL.revokeObjectURL = vi.fn<FixtureProcedure>();
+  state.shells = [
+    shell("coord"),
+    shell("worker"),
+    shell("foreign", { projectId: "another" as EnvironmentThreadShell["projectId"] }),
+  ];
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+});
+afterEach(async () => {
+  await act(async () => root.unmount());
+  container.remove();
+  delete window.desktopBridge;
+});
+/** A file in the repository, found from wherever the test runner started. */
+function repoFile(relative: string): string {
+  let directory = process.cwd();
+  while (!NodeFS.existsSync(NodePath.join(directory, relative))) {
+    const parent = NodePath.dirname(directory);
+    if (parent === directory) throw new Error(`${relative} not found above ${process.cwd()}`);
+    directory = parent;
+  }
+  return NodePath.join(directory, relative);
+}
+async function render() {
+  await act(async () => root.render(<ProjectWorkspace projectKey="atlas" />));
+}
+async function openFirstThread() {
+  const row = container.querySelector<HTMLButtonElement>(".sws-thread-open");
+  expect(row).not.toBeNull();
+  await act(async () => row!.click());
+}
+async function press(init: KeyboardEventInit) {
+  await act(async () => {
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }),
+    );
+  });
+}
+async function click(text: string) {
+  const b = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === text);
+  expect(b).toBeDefined();
+  await act(async () => b!.click());
+}
+async function prompt(value: string) {
+  const input = container.querySelector<HTMLTextAreaElement>("#project-prompt")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
+      input,
+      value,
+    );
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+async function paste(files: File[], type = "paste", items: unknown[] = [], text = "") {
+  const input = container.querySelector<HTMLTextAreaElement>("#project-prompt")!;
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(event, type === "paste" ? "clipboardData" : "dataTransfer", {
+    value: { files, items, types: ["Files"], getData: () => text },
+  });
+  await act(async () => {
+    input.dispatchEvent(event);
+  });
+  return event;
+}
+const png = (name = "shot.png", type = "image/png") => new File(["x"], name, { type });
+const sized = (name: string, bytes: number) => {
+  const file = png(name);
+  Object.defineProperty(file, "size", { value: bytes });
+  return file;
+};
+const sendButton = () =>
+  container.querySelector<HTMLButtonElement>("[aria-label='Send to coordinator']")!;
+const alertText = () => container.querySelector(".sws-composer [role='alert']")?.textContent ?? "";
+function recreateRoot() {
+  root = createRoot(container);
+}
+
+export {
+  state,
+  projectRead,
+  root,
+  container,
+  shell,
+  repoFile,
+  render,
+  openFirstThread,
+  press,
+  click,
+  prompt,
+  paste,
+  png,
+  sized,
+  sendButton,
+  alertText,
+  recreateRoot,
+};

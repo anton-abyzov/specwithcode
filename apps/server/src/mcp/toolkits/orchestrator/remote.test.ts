@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
+import * as ProjectService from "../../../project/ProjectService.ts";
 import * as RemoteWorkers from "../../../fleet/RemoteWorkers.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -212,6 +213,7 @@ const setup = (
         }),
     }),
     Layer.mock(ThreadMetadataMcpService.ThreadMetadataMcpService)({}),
+    Layer.mock(ProjectService.ProjectService)({}),
   );
   const call = (tool: string, params: Record<string, unknown>) =>
     OrchestratorToolkit.pipe(

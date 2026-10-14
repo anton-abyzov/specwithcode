@@ -1,3 +1,4 @@
+import { studioDefaultHome } from "@specweave-studio/shared/studioIdentity";
 import * as Option from "effect/Option";
 
 export type JoinPath = (first: string, ...segments: string[]) => string;
@@ -16,7 +17,7 @@ export function resolveDesktopBaseDir(input: {
   readonly studioHome: Option.Option<string>;
 }): string {
   return Option.getOrElse(normalizeConfiguredBaseDir(input.studioHome), () =>
-    input.joinPath(input.homeDirectory, ".specweave-studio"),
+    studioDefaultHome(input.homeDirectory),
   );
 }
 

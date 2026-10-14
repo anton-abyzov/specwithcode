@@ -1,6 +1,6 @@
 import { useComposerMenuState } from "../chat/useComposerMenuState";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
-import { AuthOrchestrationOperateScope } from "@specweave-studio/contracts";
+import { AuthOrchestrationOperateScope, logicalProjectTitle } from "@specweave-studio/contracts";
 import { useEnvironmentsWithScope, readEnvironmentScope } from "../../state/session";
 import {
   isAtomCommandInterrupted,
@@ -24,7 +24,7 @@ import {
   type SidebarProjectSnapshot,
 } from "../../sidebarProjectGrouping";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
-import { useThreadShells } from "../../state/entities";
+import { readProjects, useThreadShells } from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Alert, AlertDescription } from "../ui/alert";
@@ -41,6 +41,7 @@ import { ProjectIconPicker, useLatestIconSave } from "./ProjectIconPicker";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { projectGroupTitleNeedsUpdate } from "./ProjectSettingsPanel.logic";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
+import { logicalCoordinator } from "../../studio/projectDomain";
 
 function memberKey(member: { environmentId: string; id: string }): string {
   return `${member.environmentId}:${member.id}`;
@@ -144,6 +145,7 @@ export function ProjectSettingsPanel({
     <ProjectDetail
       key={`${selected.projectKey}:${environmentId ?? "all"}:${checkoutKey ?? "all"}`}
       group={scopedGroup}
+      domainMembers={selected.memberProjects}
       hasOtherMembers={members.length < selected.memberProjects.length}
     />
   );
@@ -151,9 +153,11 @@ export function ProjectSettingsPanel({
 
 function ProjectDetail({
   group,
+  domainMembers,
   hasOtherMembers,
 }: {
   group: SidebarProjectSnapshot;
+  domainMembers: readonly SidebarProjectGroupMember[];
   hasOtherMembers: boolean;
 }) {
   const navigate = useNavigate({ from: "/settings" });
@@ -168,6 +172,23 @@ function ProjectDetail({
   const canEditGroup = group.memberProjects.every((member) =>
     editableIds.has(member.environmentId),
   );
+  // A checkout filter only scopes physical settings; the logical name belongs to its active owner.
+  const ownership = logicalCoordinator(domainMembers);
+  const nameOwner = ownership?.member;
+  const nameEditableIds = useEnvironmentsWithScope(domainMembers, AuthOrchestrationOperateScope);
+  const nameEnvironment = nameOwner ? environmentById.get(nameOwner.environmentId) : undefined;
+  const nameProblem = ownership
+    ? (ownership.problem ??
+      (!nameOwner
+        ? "The active coordinator is unavailable. Reconnect its machine to rename this project."
+        : nameEnvironment?.connection.phase !== "connected" || !nameEnvironment.serverConfig
+          ? `Connect ${nameOwner.environmentLabel ?? "the active coordinator machine"} to rename this project.`
+          : !nameEditableIds.has(nameOwner.environmentId)
+            ? "The active coordinator connection needs permission to rename this project."
+            : null))
+    : null;
+  const canEditName = ownership ? nameProblem === null : canEditGroup;
+  const displayName = nameOwner ? logicalProjectTitle(nameOwner) : group.displayName;
   const representative =
     group.memberProjects.find(
       (member) => environmentById.get(member.environmentId)?.serverConfig != null,
@@ -231,12 +252,14 @@ function ProjectDetail({
         title: string;
         faviconPath: string | null;
         projectIcon: ProjectIconOverride | null;
+        workspaceSettings: { expectedRevision: number };
       }>,
       failureTitle: string,
+      members: ReadonlyArray<SidebarProjectGroupMember> = group.memberProjects,
     ): Promise<AtomCommandResult<void, unknown>> => {
-      const denied = checkProjectAccess(group.memberProjects, failureTitle);
+      const denied = checkProjectAccess(members, failureTitle);
       if (denied) return denied;
-      const unavailable = group.memberProjects.find((member) => {
+      const unavailable = members.find((member) => {
         const environment = environmentById.get(member.environmentId);
         return environment?.connection.phase !== "connected" || !environment.serverConfig;
       });
@@ -248,7 +271,7 @@ function ProjectDetail({
         reportFailure(failureTitle, result);
         return result;
       }
-      for (const member of group.memberProjects) {
+      for (const member of members) {
         const revoked = checkProjectAccess([member], failureTitle);
         if (revoked) return revoked;
         const result = mapAtomCommandResult(
@@ -262,7 +285,7 @@ function ProjectDetail({
           // A partial fan-out is possible: earlier members already took the
           // write. Name the environment so the user knows where it stopped.
           reportFailure(
-            group.memberProjects.length > 1
+            members.length > 1
               ? `${failureTitle} on ${member.environmentLabel ?? "the current environment"}`
               : failureTitle,
             result,
@@ -284,16 +307,68 @@ function ProjectDetail({
       }
       if (
         !projectGroupTitleNeedsUpdate(
-          group.memberProjects.map((member) => member.title),
+          ownership ? [displayName] : group.memberProjects.map((member) => member.title),
           title,
           wasEdited,
         )
       ) {
         return;
       }
+      if (ownership) {
+        if (nameProblem || !nameOwner) {
+          reportFailure(
+            "Failed to rename project",
+            AsyncResult.failure(
+              Cause.fail(new Error(nameProblem ?? "The active coordinator is unavailable.")),
+            ),
+          );
+          return;
+        }
+        const currentOwner = logicalCoordinator(
+          readProjects().filter(
+            (member) =>
+              member.workspaceSettings?.logicalProject?.id ===
+              nameOwner.workspaceSettings?.logicalProject?.id,
+          ),
+        );
+        if (
+          !currentOwner?.member ||
+          currentOwner.problem ||
+          memberKey(currentOwner.member) !== memberKey(nameOwner) ||
+          currentOwner.member.workspaceSettings?.coordinatorBinding?.epoch !==
+            nameOwner.workspaceSettings?.coordinatorBinding?.epoch
+        ) {
+          reportFailure(
+            "Failed to rename project",
+            AsyncResult.failure(
+              Cause.fail(
+                new Error(
+                  currentOwner?.problem ??
+                    "Coordinator ownership changed. Reopen project settings before renaming.",
+                ),
+              ),
+            ),
+          );
+          return;
+        }
+        await updateAllMembers(
+          { title, workspaceSettings: { expectedRevision: nameOwner.workspaceSettings!.revision } },
+          "Failed to rename project",
+          [nameOwner],
+        );
+        return;
+      }
       await updateAllMembers({ title }, "Failed to rename project");
     },
-    [group.memberProjects, updateAllMembers],
+    [
+      group.memberProjects,
+      updateAllMembers,
+      ownership,
+      nameOwner,
+      nameProblem,
+      displayName,
+      reportFailure,
+    ],
   );
 
   // ----- project icon -----
@@ -416,6 +491,11 @@ function ProjectDetail({
                 : "This connection cannot change this project."}
             </p>
           ) : null}
+          {nameProblem ? (
+            <p className="px-3 py-2 text-sm text-muted-foreground" role="alert">
+              {nameProblem}
+            </p>
+          ) : null}
           <SettingsRow
             title="Name and icon"
             description="Shown for this project group in the sidebar and thread lists."
@@ -444,11 +524,11 @@ function ProjectDetail({
                   />
                 </InputGroupAddon>
                 <InputGroupInput
-                  key={`${group.projectKey}:${group.displayName}`}
+                  key={`${group.projectKey}:${displayName}`}
                   size="sm"
                   aria-label="Project name"
-                  disabled={!canEditGroup}
-                  defaultValue={group.displayName}
+                  disabled={!canEditName}
+                  defaultValue={displayName}
                   onChange={() => {
                     projectNameEditedRef.current = true;
                   }}

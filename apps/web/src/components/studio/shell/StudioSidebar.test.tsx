@@ -511,7 +511,7 @@ describe("projects and chats sidebar", () => {
     await render();
     expect(container.textContent).toContain("No chats match this filter.");
   });
-  it("offers a personal assistant until one exists, and opens its name step", async () => {
+  it("keeps one personal assistant entry outside projects before and after setup", async () => {
     const opened: unknown[] = [];
     const listen = (event: Event) => opened.push((event as CustomEvent).detail);
     window.addEventListener("studio:open-command-palette", listen);
@@ -536,7 +536,9 @@ describe("projects and chats sidebar", () => {
       [...container.querySelectorAll("button")].some((b) =>
         b.textContent?.startsWith("Personal assistant"),
       ),
-    ).toBe(false);
+    ).toBe(true);
+    expect(container.querySelector('[aria-labelledby="sws-side-projects"]')?.textContent).not.toContain("Aide");
+    expect(container.querySelector('[aria-labelledby="sws-side-projects"]')?.textContent).not.toContain("Personal assistant");
     window.removeEventListener("studio:open-command-palette", listen);
   });
   it("starts an independent chat even when several projects are available", async () => {

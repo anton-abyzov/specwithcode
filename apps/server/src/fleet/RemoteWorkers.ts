@@ -8,7 +8,7 @@ import {
   type OrchestratorMcpMachineListResult,
   type OrchestratorMcpMachineProvider,
   type OrchestratorMcpMachineRef,
-  type Project,
+  Project,
   ProjectId,
   type ProjectWorkerMachine,
   type ProviderInteractionMode,
@@ -43,6 +43,9 @@ import {
   clampRuntimeMode,
   grantMachineStatus,
   matchRemoteProject,
+  isLogicalProjectBinding,
+  logicalProjectBindingMatch,
+  matchLogicalRemoteProject,
   type RemoteProjectMatch,
   translateModel,
 } from "./remoteWorkerMatching.ts";
@@ -462,11 +465,16 @@ const make = Effect.gen(function* () {
     // The saved project only counts on the machine it was saved for.
     const sameMachine =
       configured?.machineId === machine.id && configured.environmentId === machine.environmentId;
-    return matchRemoteProject({
-      local: project,
-      remote: remoteProjects,
-      projectId: explicit ?? (sameMachine ? (configured.projectId ?? undefined) : undefined),
-    });
+    const projectId = explicit ?? (sameMachine ? (configured.projectId ?? undefined) : undefined);
+    const logical = project.workspaceSettings?.logicalProject;
+    return logical != null
+      ? matchLogicalRemoteProject({
+          logical,
+          environmentId: machine.environmentId,
+          remote: remoteProjects,
+          projectId,
+        })
+      : matchRemoteProject({ local: project, remote: remoteProjects, projectId });
   };
 
   const listMachines: RemoteWorkersShape["listMachines"] = ({ projectId, probe: probing }) =>
@@ -538,6 +546,54 @@ const make = Effect.gen(function* () {
     explicit: ProjectId | undefined,
   ) =>
     Effect.gen(function* () {
+      const logical = project.workspaceSettings?.logicalProject;
+      if (logical != null) {
+        const configured = project.workspaceSettings?.workerMachine;
+        const sameMachine =
+          configured?.machineId === machine.id &&
+          configured.environmentId === machine.environmentId;
+        const selected = logicalProjectBindingMatch({
+          logical,
+          environmentId: machine.environmentId,
+          projectId: explicit ?? (sameMachine ? (configured.projectId ?? undefined) : undefined),
+        });
+        if (selected.match === "ambiguous")
+          return yield* failure(
+            "project_ambiguous_on_machine",
+            `${machine.label}: ${selected.reason}`,
+          );
+        if (selected.match === "none" || selected.projectId === undefined)
+          return yield* failure(
+            "project_unavailable_on_machine",
+            `${machine.label}: ${selected.reason}`,
+          );
+        const member = logical.members.find(
+          (binding) =>
+            binding.environmentId === machine.environmentId &&
+            binding.projectId === selected.projectId,
+        )!;
+        // A fresh exact read avoids stale probe caches and the paginated project-list cap.
+        const linked = yield* call(machine, "studio_project_read", {
+          projectId: member.projectId,
+        }).pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(Project)),
+          Effect.mapError((error) =>
+            error instanceof OrchestratorMcpFailure
+              ? error
+              : failure(
+                  "project_unavailable_on_machine",
+                  "The destination project could not be verified.",
+                ),
+          ),
+        );
+        if (!isLogicalProjectBinding(linked, logical, member))
+          return yield* failure(
+            "project_unavailable_on_machine",
+            "The destination project no longer belongs to this logical project.",
+          );
+        const capabilities = yield* call(machine, "orchestrator_capabilities", {});
+        return { projectId: member.projectId, providers: readProviders(capabilities) };
+      }
       const probed = yield* probe(machine).pipe(
         Effect.mapError((error) => remoteFailure(machine, error)),
       );
@@ -868,6 +924,40 @@ const make = Effect.gen(function* () {
       const project = yield* localProject(localProjectId);
       if (project === undefined)
         return yield* failure("invalid_request", "The project was not found.");
+      const logical = project.workspaceSettings?.logicalProject;
+      if (logical != null) {
+        const bindings = [
+          ...new Map(
+            logical.members
+              .filter((member) => member.environmentId === machine.environmentId)
+              .map((member) => [member.projectId, member]),
+          ).values(),
+        ];
+        if (bindings.length !== 1)
+          return yield* failure(
+            "invalid_request",
+            bindings.length === 0
+              ? "This logical project has no binding on that machine. Pass an explicit projectId."
+              : "This logical project has multiple bindings on that machine. Use the default federated inventory or pass an explicit projectId.",
+          );
+        const member = bindings[0]!;
+        const linked = yield* call(machine, "studio_project_read", {
+          projectId: member.projectId,
+        }).pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(Project)),
+          Effect.mapError((error) =>
+            error instanceof OrchestratorMcpFailure
+              ? error
+              : failure("invalid_request", "The linked project could not be verified."),
+          ),
+        );
+        if (!isLogicalProjectBinding(linked, logical, member))
+          return yield* failure(
+            "invalid_request",
+            "The linked project no longer belongs to this logical project.",
+          );
+        return member.projectId;
+      }
       return (yield* remoteProjectId(machine, project, undefined)).projectId;
     });
 

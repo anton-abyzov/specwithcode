@@ -94,7 +94,9 @@ const startupFixture = Effect.fn("copilotStartupFixture")(function* (
     },
   };
   const prepared = yield* prepareCopilotStartupModel({
-    settings: Schema.decodeSync(AcpRegistrySettings)({ agentId: "github-copilot-cli" }),
+    settings: yield* Schema.decodeUnknownEffect(AcpRegistrySettings)({
+      agentId: "github-copilot-cli",
+    }),
     resolved: {
       agent: {
         id: "github-copilot-cli",
@@ -187,6 +189,61 @@ describe("Copilot ACP compatibility", () => {
           expect((yield* runtime.start().pipe(Effect.result))._tag).toBe("Failure");
           expect((yield* messages).map((frame) => frame.method)).not.toContain("session/set_model");
           expect((yield* messages).map((frame) => frame.method)).not.toContain("session/prompt");
+        }),
+      ),
+    );
+  }
+
+  it.effect("negotiates an advertised exact model after initial Auto before prompting", () =>
+    scoped(
+      Effect.gen(function* () {
+        const { runtime, messages } = yield* startupFixture("startup-negotiate");
+        const started = yield* runtime.start();
+        yield* applyAcpModelSelection(runtime, started, "claude-opus-5.5");
+        yield* runtime.prompt({ prompt: [{ type: "text", text: "Fixture only" }] });
+        const calls = (yield* messages).filter((frame) => frame.method.startsWith("session/"));
+        expect(calls.map((frame) => frame.method)).toEqual([
+          "session/new",
+          "session/set_config_option",
+          "session/prompt",
+        ]);
+        expect(calls[1].params).toMatchObject({ value: "claude-opus-5.5" });
+      }),
+    ),
+  );
+
+  it.effect("negotiated model to default to model performs real native config changes", () =>
+    scoped(
+      Effect.gen(function* () {
+        const { runtime, messages } = yield* startupFixture("startup-negotiate");
+        const started = yield* runtime.start();
+        yield* applyAcpModelSelection(runtime, started, "claude-opus-5.5");
+        expect(yield* resetCopilotStartupModel(runtime)).toBe(true);
+        yield* applyAcpModelSelection(runtime, started, "claude-opus-5.5");
+        yield* runtime.prompt({ prompt: [{ type: "text", text: "Fixture only" }] });
+        const calls = (yield* messages).filter(
+          (frame) => frame.method === "session/set_config_option",
+        );
+        expect(calls.map((frame) => frame.params.value)).toEqual([
+          "claude-opus-5.5",
+          "auto",
+          "claude-opus-5.5",
+        ]);
+        expect((yield* messages).map((frame) => frame.method)).not.toContain("session/set_model");
+      }),
+    ),
+  );
+
+  for (const suffix of ["denied", "auto", "wrong", "empty"]) {
+    it.effect(`refuses negotiation ${suffix} before a prompt`, () =>
+      scoped(
+        Effect.gen(function* () {
+          const { runtime, messages } = yield* startupFixture(`startup-negotiate-${suffix}`);
+          expect((yield* runtime.start().pipe(Effect.result))._tag).toBe("Failure");
+          const calls = (yield* messages).map((frame) => frame.method);
+          expect(calls.filter((method) => method === "session/set_config_option")).toHaveLength(1);
+          expect(calls).not.toContain("session/set_model");
+          expect(calls).not.toContain("session/prompt");
         }),
       ),
     );

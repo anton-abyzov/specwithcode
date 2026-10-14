@@ -442,10 +442,10 @@ class ApplyRecovery(unittest.TestCase):
  def restore_state(self,backup,own):
   if self.scenario=='restore-failed':raise OSError('restore failed')
   self.restores.append(backup.read_bytes())
- def wait_for_stopped(self,pid):self.stops.append(pid)
+ def wait_for_stopped(self,pid,*,port=8319):self.stops.append(pid)
  def execute(self,allow_existing_browser_heartbeat=False,allow_project_migrations=False):
   self.stdout=io.StringIO()
-  with patch.object(update,'backup_state',side_effect=self.backup_state),patch.object(update,'restore_state',side_effect=self.restore_state),patch.object(update,'wait_for_stopped',side_effect=self.wait_for_stopped),patch.object(pathlib.Path,'home',return_value=self.home),patch.object(update,'snapshot',side_effect=self.snapshot),patch.object(update,'snapshot_with_auth',side_effect=self.snapshot_with_auth),patch.object(update,'snapshot_since',side_effect=self.snapshot_since),patch.object(update,'rows_snapshot',side_effect=self.rows_snapshot),patch.object(update,'rows_since',side_effect=self.rows_since),patch.object(update,'run',side_effect=self.transport),patch.object(update,'listeners',return_value=[100]),patch.object(update,'assert_quiescence',side_effect=self.quiescence_guard),patch.object(update.time,'sleep',side_effect=lambda seconds:self.clock.__setitem__(0,self.clock[0]+seconds)),patch.object(update.time,'monotonic',side_effect=lambda:self.clock[0]),contextlib.redirect_stdout(self.stdout):
+  with patch.object(update,'current_owner',return_value={'home':self.home}),patch.object(update,'backup_state',side_effect=self.backup_state),patch.object(update,'restore_state',side_effect=self.restore_state),patch.object(update,'wait_for_stopped',side_effect=self.wait_for_stopped),patch.object(pathlib.Path,'home',return_value=self.home),patch.object(update,'snapshot',side_effect=self.snapshot),patch.object(update,'snapshot_with_auth',side_effect=self.snapshot_with_auth),patch.object(update,'snapshot_since',side_effect=self.snapshot_since),patch.object(update,'rows_snapshot',side_effect=self.rows_snapshot),patch.object(update,'rows_since',side_effect=self.rows_since),patch.object(update,'run',side_effect=self.transport),patch.object(update,'listeners',return_value=[100]),patch.object(update,'assert_quiescence',side_effect=self.quiescence_guard),patch.object(update.time,'sleep',side_effect=lambda seconds:self.clock.__setitem__(0,self.clock[0]+seconds)),patch.object(update.time,'monotonic',side_effect=lambda:self.clock[0]),contextlib.redirect_stdout(self.stdout):
    update.apply('m4',self.before,self.archive,self.sha,self.output,allow_existing_browser_heartbeat=allow_existing_browser_heartbeat,allow_project_migrations=allow_project_migrations)
  def quiescence_guard(self,expected,node,argv,report=None):
   self.assertEqual(node,self.node);self.assertEqual(argv,['/usr/bin/caffeinate','-s',str(self.own/'launch.sh')])
@@ -1426,7 +1426,7 @@ class StateSafety(unittest.TestCase):
    home=pathlib.Path(temporary).resolve();own=home/'.specweave-studio/m4';(own/'userdata').mkdir(parents=True)
    db=sqlite3.connect(str(own/'userdata/statev2.sqlite'));db.execute('PRAGMA journal_mode=WAL');db.execute('CREATE TABLE t(v)');db.execute("INSERT INTO t VALUES ('before')");db.commit()
    with patch.object(pathlib.Path,'home',return_value=home):backup=update.backup_state(own,'c8aeea9b0123456789')
-   self.assertRegex(str(backup.parent.name),r'^pre-c8aeea9b0123-\d{8}T\d{6}Z$');self.assertEqual(backup.stat().st_mode & 0o777,0o600)
+   self.assertRegex(str(backup.parent.name),r'^pre-c8aeea9b0123-\d{8}T\d{6}Z-[a-f0-9]{32}$');self.assertEqual(backup.stat().st_mode & 0o777,0o600)
    db.execute('CREATE TABLE project_memory(v)');db.execute("UPDATE t SET v='migrated'");db.commit();db.close()
    update.restore_state(backup,own)
    check=sqlite3.connect(str(own/'userdata/statev2.sqlite'))

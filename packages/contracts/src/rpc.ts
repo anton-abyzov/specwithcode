@@ -1,3 +1,8 @@
+import {
+  MANAGED_UPDATES_RPC_METHODS,
+  managedUpdatesRpcs,
+  legacyServerUpdateRpcs,
+} from "./managedUpdatesRpc.ts";
 import { MACHINE_HANDOFF_RPC_METHODS, machineHandoffRpcs } from "./machineHandoffRpc.ts";
 import { PROJECT_CONNECTION_RPC_METHODS, projectConnectionRpcs } from "./projectConnectionRpc.ts";
 import { PROJECT_WORKSPACE_RPC_METHODS, projectWorkspaceRpcs } from "./projectWorkspaceRpc.ts";
@@ -54,11 +59,7 @@ import {
   AcpRegistrySetProviderResult,
 } from "./acpRegistry.ts";
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
-import {
-  ServerPrepareServiceUpdateError,
-  ServerPrepareServiceUpdateInput,
-  ServerPrepareServiceUpdateResult,
-} from "./serviceUpdatePreparation.ts";
+import {} from "./serviceUpdatePreparation.ts";
 import {
   AuthAccessStreamError,
   AuthAccessStreamEvent,
@@ -297,7 +298,6 @@ import {
 import {} from "./previewAutomation.ts";
 import {
   ServerConfigStreamEvent,
-  DesktopUpdateCommitInput,
   ServerConfig,
   ServerProviderUpdateError,
   ServerProviderUpdateInput,
@@ -305,10 +305,6 @@ import {
   ServerRemoveKeybindingInput,
   ServerRemoveKeybindingResult,
   ServerProviderUpdatedPayload,
-  ServerSelfUpdateError,
-  ServerSelfUpdateInput,
-  ServerSelfUpdateProgressEvent,
-  ServerSelfUpdateResult,
   ServerTraceDiagnosticsResult,
   ServerProcessDiagnosticsResult,
   ServerProcessResourceHistoryInput,
@@ -376,6 +372,7 @@ import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
 export const WS_METHODS = {
   ...PROJECT_WORKSPACE_RPC_METHODS,
   ...MACHINE_HANDOFF_RPC_METHODS,
+  ...MANAGED_UPDATES_RPC_METHODS,
   ...PROJECT_CONNECTION_RPC_METHODS,
   // Project registry methods
   projectsList: "projects.list",
@@ -614,12 +611,6 @@ const WsServerRemoveKeybindingRpc = Rpc.make(WS_METHODS.serverRemoveKeybinding, 
   error: Schema.Union([KeybindingsConfigError, EnvironmentAuthorizationError]),
 });
 
-const WsServerPrepareServiceUpdateRpc = Rpc.make(WS_METHODS.serverPrepareServiceUpdate, {
-  payload: ServerPrepareServiceUpdateInput,
-  success: ServerPrepareServiceUpdateResult,
-  error: Schema.Union([ServerPrepareServiceUpdateError, EnvironmentAuthorizationError]),
-});
-
 const WsServerProbeRpc = Rpc.make(WS_METHODS.serverProbe, {
   payload: Schema.Struct({}),
   success: Schema.Struct({}),
@@ -750,25 +741,6 @@ const WsProviderInstallRemoveRpc = Rpc.make(WS_METHODS.providerInstallRemove, {
   payload: ProviderSetupInput,
   success: ProviderInstallState,
   error: ProviderSetupRpcError,
-});
-
-const WsServerUpdateServerRpc = Rpc.make(WS_METHODS.serverUpdateServer, {
-  payload: ServerSelfUpdateInput,
-  success: ServerSelfUpdateResult,
-  error: Schema.Union([ServerSelfUpdateError, EnvironmentAuthorizationError]),
-});
-
-const WsServerUpdateServerWithProgressRpc = Rpc.make(WS_METHODS.serverUpdateServerWithProgress, {
-  payload: ServerSelfUpdateInput,
-  success: ServerSelfUpdateProgressEvent,
-  error: Schema.Union([ServerSelfUpdateError, EnvironmentAuthorizationError]),
-  stream: true,
-});
-
-const WsServerCommitDesktopUpdateRpc = Rpc.make(WS_METHODS.serverCommitDesktopUpdate, {
-  payload: DesktopUpdateCommitInput,
-  success: ServerSelfUpdateResult,
-  error: Schema.Union([ServerSelfUpdateError, EnvironmentAuthorizationError]),
 });
 
 const WsServerGetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
@@ -1933,10 +1905,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsProviderInstallCancelRpc,
   WsProviderInstallSubscribeRpc,
   WsProviderInstallRemoveRpc,
-  WsServerUpdateServerRpc,
-  WsServerUpdateServerWithProgressRpc,
-  WsServerCommitDesktopUpdateRpc,
-  WsServerPrepareServiceUpdateRpc,
   WsServerUpsertKeybindingRpc,
   WsServerRemoveKeybindingRpc,
   WsServerGetSettingsRpc,
@@ -2040,6 +2008,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsMutateRpc,
   ...projectWorkspaceRpcs,
   ...machineHandoffRpcs,
+  ...managedUpdatesRpcs,
+  ...legacyServerUpdateRpcs,
   ...projectConnectionRpcs,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,

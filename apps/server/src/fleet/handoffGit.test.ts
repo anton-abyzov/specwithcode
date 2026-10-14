@@ -153,6 +153,8 @@ function localObjectExists(cwd: string, head: string) {
 }
 const calls: Array<ProcessRunner.ProcessRunInput> = [];
 let gitTraceFile: string | undefined;
+let failMergeAt = 0;
+let mergeCalls = 0;
 let failWorktreeAt = 0;
 let worktreeCalls = 0;
 let failPushAt = 0;
@@ -165,6 +167,18 @@ const observedRunner = Layer.effect(
       run: (input) =>
         Effect.gen(function* () {
           calls.push(input);
+          if (
+            input.args.includes("merge") &&
+            input.args.includes("--ff-only") &&
+            ++mergeCalls === failMergeAt
+          )
+            return yield* Effect.fail(
+              new ProcessRunner.ProcessSpawnError({
+                command: "git",
+                argumentCount: input.args.length,
+                cause: new Error("interrupted umbrella FF"),
+              }),
+            );
           if (input.args.includes("push") && ++pushCalls === failPushAt) {
             return yield* Effect.fail(
               new ProcessRunner.ProcessSpawnError({
@@ -219,6 +233,8 @@ afterEach(() => {
   for (const directory of temporary.splice(0))
     NodeFS.rmSync(directory, { recursive: true, force: true });
   calls.length = 0;
+  failMergeAt = 0;
+  mergeCalls = 0;
   failWorktreeAt = 0;
   worktreeCalls = 0;
   failPushAt = 0;
@@ -977,3 +993,109 @@ describe("worker checkpoint guard", () => {
       }),
   );
 });
+
+for (const submodule of [false, true]) {
+  it.effect(
+    `advances the chosen umbrella folder in place and retries without new checkouts (submodule=${submodule})`,
+    () =>
+      Effect.gen(function* () {
+        const f = fixture(submodule);
+        changeCode(f);
+        const manifest = yield* inspect(f.source);
+        yield* publish(f.source, manifest);
+        const apply = () =>
+          run((service) =>
+            service.materialize({
+              workspaceRoot: f.destination,
+              worktreeParent: f.outputs,
+              manifest,
+              useProjectFolder: true,
+            }),
+          );
+        const result = yield* apply();
+        expect(result.workspaceRoot).toBe(f.destination);
+        expect(git(f.destination, "branch", "--show-current")).toBe("main");
+        expect(git(f.destination, "rev-parse", "HEAD")).toBe(git(f.source, "rev-parse", "HEAD"));
+        expect(git(f.destinationNested, "rev-parse", "HEAD")).toBe(
+          git(f.sourceNested, "rev-parse", "HEAD"),
+        );
+        expect(NodeFS.existsSync(NodePath.join(f.outputs, operationId, "workspace"))).toBe(false);
+        expect((yield* apply()).workspaceRoot).toBe(f.destination);
+      }),
+  );
+}
+
+it.effect("refuses an ahead destination without discarding its local commit", () =>
+  Effect.gen(function* () {
+    const f = fixture();
+    const manifest = yield* inspect(f.source);
+    yield* publish(f.source, manifest);
+    write(NodePath.join(f.destination, "local.txt"), "local work");
+    commit(f.destination);
+    const before = snapshot(f.destination);
+    const result = yield* run((service) =>
+      service.materialize({
+        workspaceRoot: f.destination,
+        worktreeParent: f.outputs,
+        manifest,
+        useProjectFolder: true,
+      }),
+    ).pipe(Effect.flip);
+    expect(result).toMatchObject({ reason: "diverged-repository" });
+    expect(snapshot(f.destination)).toEqual(before);
+  }),
+);
+
+it.effect("preserves an ignored local file when incoming code starts tracking its path", () =>
+  Effect.gen(function* () {
+    const f = fixture();
+    const excludes = NodePath.join(f.outputs, "excludes");
+    write(excludes, "local.txt\n");
+    git(f.destination, "config", "core.excludesfile", excludes);
+    write(NodePath.join(f.destination, "local.txt"), "unique local content");
+    write(NodePath.join(f.source, "local.txt"), "incoming code");
+    commit(f.source);
+    const manifest = yield* inspect(f.source);
+    yield* publish(f.source, manifest);
+    const before = git(f.destination, "rev-parse", "HEAD");
+    yield* run((service) =>
+      service.materialize({
+        workspaceRoot: f.destination,
+        worktreeParent: f.outputs,
+        manifest,
+        useProjectFolder: true,
+      }),
+    ).pipe(Effect.flip);
+    expect(NodeFS.readFileSync(NodePath.join(f.destination, "local.txt"), "utf8")).toBe(
+      "unique local content",
+    );
+    expect(git(f.destination, "rev-parse", "HEAD")).toBe(before);
+  }),
+);
+it.effect(
+  "recovers interrupted umbrella FF with an applied gitlink, but refuses intervening child edits",
+  () =>
+    Effect.gen(function* () {
+      const f = fixture(true);
+      changeCode(f);
+      const manifest = yield* inspect(f.source);
+      yield* publish(f.source, manifest);
+      const apply = () =>
+        run((service) =>
+          service.materialize({
+            workspaceRoot: f.destination,
+            worktreeParent: f.outputs,
+            manifest,
+            useProjectFolder: true,
+          }),
+        );
+      failMergeAt = 2;
+      yield* apply().pipe(Effect.flip);
+      expect(git(f.destination, "rev-parse", "HEAD")).toBe(git(f.source, "rev-parse", "HEAD"));
+      write(NodePath.join(f.destinationNested, "feature.ts"), "intervening user work");
+      expect(yield* apply().pipe(Effect.flip)).toMatchObject({ reason: "dirty-repository" });
+      git(f.destinationNested, "restore", "feature.ts");
+      expect((yield* apply()).workspaceRoot).toBe(f.destination);
+      expect(git(f.destination, "status", "--porcelain")).toBe("");
+    }),
+);

@@ -1,5 +1,6 @@
 import { ArrowRightIcon, CheckIcon, LaptopIcon } from "lucide-react";
-import type { ComponentProps } from "react";
+import type { ComponentProps, ReactNode } from "react";
+import { groupMachineFolders } from "../../studio/projectMachineFolders";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
@@ -16,6 +17,7 @@ import {
 
 export interface HandoffDestination {
   readonly key: string;
+  readonly environmentId?: string;
   readonly label: string;
   readonly folder: string;
   readonly unavailable: string | null;
@@ -60,7 +62,9 @@ export function MachineHandoffDialog({
   onContinue,
   onOpenDestination,
   onRestart,
+  folderPicker,
 }: {
+  readonly folderPicker?: ReactNode;
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly sourceLabel: string;
@@ -119,49 +123,60 @@ export function MachineHandoffDialog({
                       Add this project on another connected machine to hand off work.
                     </p>
                   ) : (
-                    destinations.map((destination) => (
-                      <label
-                        key={destination.key}
-                        data-slot="handoff-destination"
-                        className={`grid min-w-0 grid-cols-[1.125rem_1rem_minmax(0,1fr)] items-start gap-x-3 rounded-lg border p-3 transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring has-[:focus-visible]:ring-offset-2 has-[:focus-visible]:ring-offset-background ${
-                          selected === destination.key
-                            ? "border-primary bg-accent/40"
-                            : "border-border"
-                        } ${destination.unavailable ? "cursor-not-allowed opacity-60" : busy || preview !== null ? "cursor-default" : "cursor-pointer hover:bg-accent/40"}`}
-                      >
-                        <span className="flex h-5 items-center justify-center">
-                          <Radio
-                            value={destination.key}
-                            disabled={destination.unavailable !== null}
-                          />
-                        </span>
-                        <span
-                          data-slot="handoff-destination-icon"
-                          className="flex h-5 items-center justify-center"
-                        >
-                          <LaptopIcon className="size-4 shrink-0" aria-hidden />
-                        </span>
-                        <span className="min-w-0 text-sm leading-5">
-                          <span
-                            data-slot="handoff-destination-label"
-                            className="block wrap-anywhere font-medium"
+                    groupMachineFolders(destinations).map((machine) => (
+                      <div key={machine.key} className="space-y-2" data-slot="handoff-machine">
+                        <div className="mt-2 flex items-center gap-2 text-sm font-medium">
+                          <LaptopIcon className="size-4" aria-hidden />
+                          {machine.label}
+                        </div>
+                        {machine.folders.map((destination) => (
+                          <label
+                            key={destination.key}
+                            data-slot="handoff-destination"
+                            className={`grid min-w-0 grid-cols-[1.125rem_1rem_minmax(0,1fr)] items-start gap-x-3 rounded-lg border p-3 transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring has-[:focus-visible]:ring-offset-2 has-[:focus-visible]:ring-offset-background ${
+                              selected === destination.key
+                                ? "border-primary bg-accent/40"
+                                : "border-border"
+                            } ${destination.unavailable ? "cursor-not-allowed opacity-60" : busy || preview !== null ? "cursor-default" : "cursor-pointer hover:bg-accent/40"}`}
                           >
-                            {destination.label}
-                          </span>
-                          <span className="block break-all text-xs text-muted-foreground">
-                            {destination.folder}
-                          </span>
-                          {destination.unavailable && (
-                            <span className="mt-1 block wrap-anywhere text-xs">
-                              {destination.unavailable}
+                            <span className="flex h-5 items-center justify-center">
+                              <Radio
+                                value={destination.key}
+                                disabled={destination.unavailable !== null}
+                              />
                             </span>
-                          )}
-                        </span>
-                      </label>
+                            <span
+                              data-slot="handoff-destination-icon"
+                              className="flex h-5 items-center justify-center"
+                            >
+                              <LaptopIcon className="size-4 shrink-0" aria-hidden />
+                            </span>
+                            <span className="min-w-0 text-sm leading-5">
+                              <span
+                                data-slot="handoff-destination-label"
+                                className="block wrap-anywhere font-medium"
+                              >
+                                {machine.folders.length > 1
+                                  ? "Project folder"
+                                  : "Saved project folder"}
+                              </span>
+                              <span className="block break-all text-xs text-muted-foreground">
+                                {destination.folder}
+                              </span>
+                              {destination.unavailable && (
+                                <span className="mt-1 block wrap-anywhere text-xs">
+                                  {destination.unavailable}
+                                </span>
+                              )}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
                     ))
                   )}
                 </RadioGroup>
               </fieldset>
+              {folderPicker}
               {preview ? (
                 <div className="space-y-3 text-sm">
                   <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-start gap-2 font-medium">
@@ -174,8 +189,14 @@ export function MachineHandoffDialog({
                   <p className="text-muted-foreground">
                     {preview.repositories.length}{" "}
                     {preview.repositories.length === 1 ? "repository" : "repositories"},{" "}
-                    {preview.messageCount} retained messages. The destination gets an isolated
-                    checkout and a fresh coordinator.
+                    {preview.messageCount} retained messages. Code advances in the selected project
+                    folder. The coordinator continues there with this project’s context and retained
+                    history.
+                  </p>
+                  <p className="text-muted-foreground">
+                    Retained messages, project context and committed Git state continue. Native
+                    provider sessions, live processes, credentials and uncommitted files are not
+                    moved. Offline machines may have newer history that is unavailable.
                   </p>
                   <details className="rounded-lg border p-3">
                     <summary className="cursor-pointer font-medium">Code checkpoint</summary>
@@ -203,7 +224,8 @@ export function MachineHandoffDialog({
                     </span>
                     <span className="min-w-0 wrap-anywhere leading-5">
                       Publish these commits to their configured Git remotes and send the project
-                      context to {target?.label}.
+                      context to {target?.label}. Join the selected destination to this project,
+                      retaining its history and replacing its coordinator with this continuation.
                     </span>
                   </label>
                 </div>

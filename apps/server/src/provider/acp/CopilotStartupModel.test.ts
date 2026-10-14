@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import {
   acknowledgeCopilotStartupModel,
+  negotiateCopilotStartupModel,
   confirmCopilotStartupModel,
   isCopilotStartupModelCandidate,
   resetCopilotStartupModel,
@@ -135,6 +136,199 @@ describe("Copilot startup model", () => {
           Effect.result,
         );
         expect(result._tag).toBe("Failure");
+      }),
+    );
+  }
+
+  it.effect("accepts only exact returned and live native model acknowledgement", () =>
+    Effect.gen(function* () {
+      const option = (value: string, id = "model") => ({
+        id,
+        category: "model" as const,
+        name: "Model",
+        type: "select" as const,
+        currentValue: value,
+        options: [
+          { value: "auto", name: "Auto" },
+          { value: selected, name: "Opus" },
+        ],
+      });
+      for (const shape of [
+        "exact",
+        "empty",
+        "auto",
+        "other",
+        "ambiguous",
+        "stale-live",
+        "different-id",
+      ] as const) {
+        let live = [option("auto")];
+        let calls = 0;
+        const runtime = {
+          getConfigOptions: Effect.sync(() => live),
+          setConfigOption: () =>
+            Effect.sync(() => {
+              calls++;
+              live = [option(shape === "stale-live" ? "auto" : selected)];
+              return {
+                configOptions:
+                  shape === "empty"
+                    ? []
+                    : shape === "ambiguous"
+                      ? [option(selected), option("auto", "other")]
+                      : [
+                          option(
+                            shape === "auto" ? "auto" : shape === "other" ? "other" : selected,
+                            shape === "different-id" ? "rotated" : "model",
+                          ),
+                        ],
+              };
+            }),
+        };
+        const result = yield* negotiateCopilotStartupModel(runtime, started("auto"), selected).pipe(
+          Effect.result,
+        );
+        expect(result._tag).toBe(shape === "exact" ? "Success" : "Failure");
+        expect(calls).toBe(1);
+      }
+    }),
+  );
+
+  it.effect("does not negotiate absent, ambiguous, unadvertised or changed native identity", () =>
+    Effect.gen(function* () {
+      const option = {
+        id: "model",
+        category: "model" as const,
+        name: "Model",
+        type: "select" as const,
+        currentValue: "auto",
+        options: [{ value: "auto", name: "Auto" }],
+      };
+      for (const options of [[], [option], [option, option]]) {
+        let calls = 0;
+        const runtime = {
+          getConfigOptions: Effect.succeed(options),
+          setConfigOption: () =>
+            Effect.sync(() => {
+              calls++;
+              return { configOptions: [] };
+            }),
+        };
+        const result = yield* negotiateCopilotStartupModel(runtime, started("auto"), selected).pipe(
+          Effect.result,
+        );
+        expect(result._tag).toBe("Failure");
+        expect(calls).toBe(0);
+      }
+      for (const agentInfo of [
+        { name: "Copilot", version: "1.0.98" },
+        { name: "Lookalike", version: "1.0.97" },
+      ]) {
+        let calls = 0;
+        const initial = { ...started("auto"), initializeResult: { protocolVersion: 1, agentInfo } };
+        const runtime = {
+          getConfigOptions: Effect.succeed([
+            { ...option, options: [{ value: selected, name: "Opus" }] },
+          ]),
+          setConfigOption: () =>
+            Effect.sync(() => {
+              calls++;
+              return { configOptions: [] };
+            }),
+        };
+        expect(
+          (yield* negotiateCopilotStartupModel(runtime, initial, selected).pipe(Effect.result))
+            ._tag,
+        ).toBe("Failure");
+        expect(calls).toBe(0);
+      }
+    }),
+  );
+
+  for (const activation of ["loadSession", "resumeSession", "forkSession"] as const) {
+    it.effect(`keeps legacy reset after negotiated session ${activation}`, () =>
+      Effect.gen(function* () {
+        const option = (value: string) => ({
+          id: "model",
+          category: "model" as const,
+          name: "Model",
+          type: "select" as const,
+          currentValue: value,
+          options: [
+            { value: "auto", name: "Auto" },
+            { value: selected, name: "Opus" },
+          ],
+        });
+        let live = [option("auto")];
+        const { runtime, calls } = nativeRuntime(started("auto"));
+        const activate = () =>
+          Effect.sync(() => {
+            live = [];
+            return started("auto");
+          });
+        const configured = {
+          ...runtime,
+          getConfigOptions: Effect.sync(() => live),
+          setConfigOption: (_id: string, value: string | boolean) =>
+            Effect.sync(() => {
+              live = [option(String(value))];
+              return { configOptions: live };
+            }),
+          loadSession: activate,
+          resumeSession: activate,
+          forkSession: activate,
+        };
+        const wrapped = acknowledgeCopilotStartupModel(configured, selected);
+        yield* wrapped.start();
+        yield* wrapped.setModel(selected);
+        yield* wrapped[activation]("other-session");
+        expect(yield* resetCopilotStartupModel(wrapped)).toBe(true);
+        expect(calls).toEqual(["legacy:auto"]);
+      }),
+    );
+  }
+
+  for (const activation of ["loadSession", "resumeSession", "forkSession"] as const) {
+    it.effect(`preserves negotiated reset when ${activation} is rejected`, () =>
+      Effect.gen(function* () {
+        const option = (value: string) => ({
+          id: "model",
+          category: "model" as const,
+          name: "Model",
+          type: "select" as const,
+          currentValue: value,
+          options: [
+            { value: "auto", name: "Auto" },
+            { value: selected, name: "Opus" },
+          ],
+        });
+        let live = [option("auto")];
+        const configCalls: string[] = [];
+        const { runtime, calls } = nativeRuntime(started("auto"));
+        const reject = () =>
+          Effect.fail(new AcpRequestError({ code: -32602, errorMessage: "Rejected activation" }));
+        const configured = {
+          ...runtime,
+          getConfigOptions: Effect.sync(() => live),
+          setConfigOption: (_id: string, value: string | boolean) =>
+            Effect.sync(() => {
+              configCalls.push(String(value));
+              live = [option(String(value))];
+              return { configOptions: live };
+            }),
+          loadSession: reject,
+          resumeSession: reject,
+          forkSession: reject,
+        };
+        const wrapped = acknowledgeCopilotStartupModel(configured, selected);
+        yield* wrapped.start();
+        yield* wrapped.setModel(selected);
+        expect((yield* wrapped[activation]("other-session").pipe(Effect.result))._tag).toBe(
+          "Failure",
+        );
+        expect(yield* resetCopilotStartupModel(wrapped)).toBe(true);
+        expect(configCalls).toEqual([selected, "auto"]);
+        expect(calls).toEqual([]);
       }),
     );
   }

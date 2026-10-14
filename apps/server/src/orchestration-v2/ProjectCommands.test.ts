@@ -1,6 +1,8 @@
 import { assert, describe, it } from "@effect/vitest";
 import {
   CommandId,
+  DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+  type ProjectWorkspacePatch,
   EventId,
   ProjectId,
   ProviderInstanceId,
@@ -295,5 +297,158 @@ describe("project settings revision rejection", () => {
     const decoded = Option.getOrThrow(decodeProjectCommandRejection(encoded));
     assert.equal(decoded._tag, "ProjectSettingsRevisionConflictError");
     assert.include(decoded.message, "Reload before saving");
+  });
+});
+
+describe("durable logical coordinator ownership", () => {
+  const logicalProject = {
+    id: "logical:source",
+    title: "Project",
+    coordinatorId: "coordinator:source",
+    members: [],
+  };
+  const coordinatorBinding = { epoch: 2, state: "transferring" as const, operationId: "transfer" };
+  const settings = {
+    ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+    revision: 7,
+    logicalProject,
+    coordinatorBinding,
+  };
+  const command = {
+    type: "project.meta.update" as const,
+    commandId: CommandId.make("ownership"),
+    projectId,
+  };
+  it("preserves the fence through unpause and forged public metadata", () => {
+    const event = payloadOf(
+      plan(
+        {
+          ...command,
+          workspaceSettings: {
+            expectedRevision: 7,
+            paused: false,
+            logicalProject: { ...logicalProject, id: "forged" },
+            coordinatorBinding: { epoch: 9, state: "active" },
+          } as ProjectWorkspacePatch,
+        },
+        { project: row({ workspaceSettings: settings }) },
+      ),
+    );
+    assert.deepInclude(event.workspaceSettings, {
+      logicalProject,
+      coordinatorBinding,
+      revision: 8,
+      paused: false,
+    });
+  });
+  it("renames the active domain identity while retaining immutable membership", () => {
+    const event = payloadOf(
+      plan(
+        { ...command, title: "Renamed" },
+        {
+          project: row({
+            workspaceSettings: {
+              ...settings,
+              coordinatorBinding: { epoch: 2, state: "active" },
+            },
+          }),
+        },
+      ),
+    );
+    assert.deepInclude(event.workspaceSettings, {
+      logicalProject: { ...logicalProject, title: "Renamed" },
+    });
+    const historical = payloadOf(
+      plan({ ...command, title: "Old history" }, { project: row({ workspaceSettings: settings }) }),
+    );
+    assert.isUndefined(historical.workspaceSettings);
+  });
+  it("rejects stale revisions, epoch jumps and fence resets", () => {
+    for (const patch of [
+      { expectedRevision: 6 },
+      { coordinatorBinding: { ...coordinatorBinding, epoch: 3 } },
+      { coordinatorBinding: { ...coordinatorBinding, state: "active" as const } },
+      { coordinatorBinding: { ...coordinatorBinding, operationId: "other" } },
+    ]) {
+      failureOf(
+        plan(
+          {
+            ...command,
+            ownership: { expectedRevision: 7, logicalProject, coordinatorBinding, ...patch },
+          },
+          { project: row({ workspaceSettings: settings }) },
+        ),
+      );
+    }
+  });
+  it("reactivates a saved folder only for a verified newer incoming transfer", () => {
+    const predecessor = {
+      environmentId: "m1" as never,
+      projectId: "remote" as never,
+      coordinatorThreadId: "remote-coordinator" as never,
+    };
+    const incoming = {
+      expectedRevision: 7,
+      logicalProject: { ...logicalProject, members: [predecessor] },
+      coordinatorBinding: {
+        epoch: 3,
+        state: "active" as const,
+        operationId: "return",
+        predecessor,
+      },
+    };
+    const target = {
+      ...settings,
+      coordinatorBinding: { ...coordinatorBinding, state: "transferred" as const },
+    };
+    failureOf(
+      plan({ ...command, ownership: incoming }, { project: row({ workspaceSettings: target }) }),
+    );
+    const event = payloadOf(
+      plan(
+        { ...command, ownership: { ...incoming, acceptedHandoffOperationId: "return" } },
+        { project: row({ workspaceSettings: target }) },
+      ),
+    );
+    assert.deepInclude(event.workspaceSettings, {
+      coordinatorBinding: incoming.coordinatorBinding,
+    });
+    failureOf(
+      plan(
+        { ...command, ownership: { ...incoming, acceptedHandoffOperationId: "wrong" } },
+        { project: row({ workspaceSettings: target }) },
+      ),
+    );
+    failureOf(
+      plan(
+        {
+          ...command,
+          ownership: {
+            ...incoming,
+            acceptedHandoffOperationId: "return",
+            coordinatorBinding: { ...incoming.coordinatorBinding, epoch: 2 },
+          },
+        },
+        { project: row({ workspaceSettings: target }) },
+      ),
+    );
+  });
+  it("requires exact standalone identity consent to join a target project", () => {
+    const target = { ...settings, coordinatorBinding: { epoch: 0, state: "active" as const } };
+    const ownership = {
+      expectedRevision: 7,
+      logicalProject: { ...logicalProject, id: "logical:new" },
+      coordinatorBinding: { epoch: 0, state: "transferred" as const, operationId: "transfer" },
+    };
+    failureOf(plan({ ...command, ownership }, { project: row({ workspaceSettings: target }) }));
+    payloadOf(
+      plan(
+        {
+          ...command,
+          ownership: { ...ownership, joinExpectedLogicalProjectId: logicalProject.id },
+        },
+        { project: row({ workspaceSettings: target }) },
+      ),
+    );
   });
 });

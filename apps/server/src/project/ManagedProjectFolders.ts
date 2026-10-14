@@ -29,6 +29,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import * as ServerConfig from "../config.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
@@ -115,7 +116,7 @@ export class ManagedProjectFolders extends Context.Service<
     /** The folder that holds projects started from just a name. */
     readonly namedProjectsRoot: string;
     /**
-     * Starts a project from just a name: claims `<namedProjectsRoot>/<slug>`
+     * Starts a project: claims `<parentPath ?? namedProjectsRoot>/<slug>`
      * (adding `-2`, `-3`, ... when taken), makes it a Git repository with a
      * README, an icon, and a first commit, then creates the project. Personal
      * projects claim a private managed folder without invoking Git. A failed
@@ -123,7 +124,11 @@ export class ManagedProjectFolders extends Context.Service<
      * why in `commitError`. The folder is removed when the create fails or is
      * cancelled before the project exists, never once another project owns it.
      */
-    readonly createNamedProject: (input: { readonly name: string; readonly kind?: "code" | "personal" | undefined }) => Effect.Effect<
+    readonly createNamedProject: (input: {
+      readonly name: string;
+      readonly parentPath?: string | undefined;
+      readonly kind?: "code" | "personal" | undefined;
+    }) => Effect.Effect<
       {
         readonly projectId: ProjectId;
         readonly workspaceRoot: string;
@@ -234,6 +239,7 @@ const make = Effect.gen(function* () {
   const git = yield* GitVcsDriver.GitVcsDriver;
   const projects = yield* ProjectService.ProjectService;
   const crypto = yield* Crypto.Crypto;
+  const assistantLock = yield* Semaphore.make(1);
 
   /**
    * Claims the first free folder among `folderFor(1)`, `folderFor(2)`, ...,
@@ -376,39 +382,52 @@ const make = Effect.gen(function* () {
     );
   });
 
-  // Projects started from just a name live beside Scratch and worktrees, away
-  // from folders the user organizes by hand. A nested repository is fine here
-  // (unlike Scratch) because each project gets its own `git init`.
+  // Personal and legacy name-only requests retain managed storage. Code
+  // projects can explicitly choose an existing parent on this machine.
   const namedProjectsRoot = path.resolve(config.baseDir, "projects");
 
   const claimNamedFolder = Effect.fn("ManagedProjectFolders.claimNamedFolder")(function* (
     name: string,
+    parentPath?: string,
   ) {
-    yield* fileSystem
-      .makeDirectory(namedProjectsRoot, { recursive: true })
-      .pipe(
-        Effect.mapError(
-          (cause) => new NamedProjectFolderError({ folder: namedProjectsRoot, cause }),
-        ),
-      );
+    const root = parentPath ?? namedProjectsRoot;
+    if (parentPath !== undefined) {
+      if (!path.isAbsolute(parentPath)) {
+        return yield* new NamedProjectFolderError({
+          folder: root,
+          cause: "Choose an absolute parent folder on this machine.",
+        });
+      }
+      const info = yield* fileSystem
+        .stat(root)
+        .pipe(Effect.mapError((cause) => new NamedProjectFolderError({ folder: root, cause })));
+      if (info.type !== "Directory") {
+        return yield* new NamedProjectFolderError({
+          folder: root,
+          cause: "The parent must be an existing directory.",
+        });
+      }
+    } else
+      yield* fileSystem
+        .makeDirectory(namedProjectsRoot, { recursive: true })
+        .pipe(
+          Effect.mapError(
+            (cause) => new NamedProjectFolderError({ folder: namedProjectsRoot, cause }),
+          ),
+        );
     const folderName = newProjectFolderName(name);
     const claimed = yield* claimFreeFolder(
       (attempt) =>
         Effect.succeed(
           attempt > MAX_NAMED_FOLDER_ATTEMPTS
             ? Option.none()
-            : Option.some(
-                path.join(
-                  namedProjectsRoot,
-                  attempt === 1 ? folderName : `${folderName}-${attempt}`,
-                ),
-              ),
+            : Option.some(path.join(root, attempt === 1 ? folderName : `${folderName}-${attempt}`)),
         ),
       (folder, cause) => new NamedProjectFolderError({ folder, cause }),
     );
     if (Option.isSome(claimed)) return claimed.value;
     return yield* new NamedProjectFolderError({
-      folder: path.join(namedProjectsRoot, folderName),
+      folder: path.join(root, folderName),
       cause: `Every folder name for "${folderName}" is taken.`,
     });
   });
@@ -461,14 +480,29 @@ const make = Effect.gen(function* () {
   const createNamedProject: ManagedProjectFolders["Service"]["createNamedProject"] = Effect.fn(
     "ManagedProjectFolders.createNamedProject",
   )(function* (input) {
-    const workspaceRoot = yield* claimNamedFolder(input.name);
+    if (input.kind === "personal") {
+      const snapshot = yield* projects.snapshot.pipe(
+        Effect.mapError(
+          (cause) => new NamedProjectCreateError({ workspaceRoot: namedProjectsRoot, cause }),
+        ),
+      );
+      const existing = snapshot.projects.find(
+        (project) => project.workspaceSettings?.kind === "personal",
+      );
+      if (existing) return { projectId: existing.id, workspaceRoot: existing.workspaceRoot };
+    }
+    const workspaceRoot = yield* claimNamedFolder(
+      input.name,
+      input.kind === "personal" ? undefined : input.parentPath,
+    );
     const removeFolder = fileSystem.remove(workspaceRoot, { recursive: true }).pipe(Effect.ignore);
     // Until the create is dispatched nothing else can use the folder, so any
     // exit but success removes it, an interrupt included.
     const prepared = yield* Effect.all([
       (input.kind === "personal"
         ? Effect.succeed(undefined)
-        : scaffoldRepository(workspaceRoot, input.name)).pipe(
+        : scaffoldRepository(workspaceRoot, input.name)
+      ).pipe(
         Effect.mapError((cause) => new NamedProjectFolderError({ folder: workspaceRoot, cause })),
       ),
       crypto.randomUUIDv4.pipe(
@@ -523,7 +557,10 @@ const make = Effect.gen(function* () {
     ensureScratchProject,
     folderForThread,
     namedProjectsRoot,
-    createNamedProject,
+    createNamedProject: (input) =>
+      input.kind === "personal"
+        ? assistantLock.withPermits(1)(createNamedProject(input))
+        : createNamedProject(input),
   });
 });
 

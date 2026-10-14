@@ -7,6 +7,8 @@ import {
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
   DEFAULT_SERVER_SETTINGS,
+  DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+  ThreadId,
   EnvironmentId,
   ProjectId,
   ProviderDriverKind,
@@ -25,6 +27,7 @@ import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { Project } from "../../types";
+import { toastManager } from "../ui/toast";
 
 type SessionResult = AsyncResult.AsyncResult<AuthSessionState, Error>;
 const state = vi.hoisted(() => ({
@@ -38,7 +41,7 @@ const state = vi.hoisted(() => ({
       (request: {
         environmentId: EnvironmentId;
         input: UpdateProjectInput;
-      }) => Promise<AsyncResult.Success<void>>
+      }) => Promise<AsyncResult.Success<void> | AsyncResult.Failure<void, Error>>
     >(),
   delete:
     vi.fn<
@@ -74,6 +77,7 @@ vi.mock("~/state/environments", () => ({
   usePrimaryEnvironmentId: () => primaryId,
 }));
 vi.mock("~/state/entities", () => ({
+  readProjects: () => state.projects,
   useProjects: () => state.projects,
   useThreadShells: () => [],
 }));
@@ -251,6 +255,7 @@ beforeEach(() => {
   state.sessions.clear();
   for (const id of [primaryId, remoteId])
     state.sessions.set(id, Atom.make<SessionResult>(writable()).pipe(Atom.keepAlive));
+  for (const environment of environments) environment.connection.phase = "connected";
   state.projects = [primaryId, remoteId].map((environmentId) => ({
     id: ProjectId.make(`project-${environmentId}`),
     environmentId,
@@ -318,11 +323,11 @@ function group() {
   })[0]!;
 }
 
-async function mountPanel() {
+async function mountPanel(environmentId: EnvironmentId | null = null) {
   await act(() => {
     renderer = create(
       <RegistryContext.Provider value={state.registry!}>
-        <ProjectSettingsPanel projectKey={group().projectKey} />
+        <ProjectSettingsPanel projectKey={group().projectKey} environmentId={environmentId} />
       </RegistryContext.Provider>,
     );
   });
@@ -484,6 +489,155 @@ describe("project settings permissions", () => {
         name.props.onBlur({ currentTarget: { value: "Renamed" } });
       });
       expect(state.update).toHaveBeenCalledTimes(allowed ? 2 : 0);
+    },
+  );
+});
+
+describe("logical project name ownership", () => {
+  function bindEasyChamp() {
+    const members = state.projects.map((project) => ({
+      environmentId: project.environmentId,
+      projectId: project.id,
+      coordinatorThreadId: ThreadId.make(`project-coordinator:${project.id}`),
+    }));
+    state.projects = state.projects.map((project, index) => ({
+      ...project,
+      title: index ? "EasyChamp handoff folder" : "Original EasyChamp folder",
+      workspaceSettings: {
+        ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+        logicalProject: {
+          id: "easychamp",
+          title: "EasyChamp",
+          coordinatorId: "easychamp-coordinator",
+          members,
+        },
+        coordinatorBinding: {
+          epoch: index,
+          state: index ? "active" : "transferred",
+          ...(index ? { predecessor: members[0]! } : {}),
+        },
+      },
+    }));
+  }
+  it("renames only the active owner from predecessor-scoped settings, without requiring predecessor write access", async () => {
+    bindEasyChamp();
+    await grant(primaryId, AsyncResult.success(session([])));
+    const root = await mountPanel(primaryId);
+    const name = root.findByProps({ "aria-label": "Project name" });
+    expect(name.props.defaultValue).toBe("EasyChamp");
+    expect(name.props.disabled).toBe(false);
+    await act(async () => {
+      name.props.onChange();
+      name.props.onBlur({ currentTarget: { value: "EasyChamp Sports" } });
+    });
+    expect(state.update).toHaveBeenCalledExactlyOnceWith({
+      environmentId: remoteId,
+      input: {
+        projectId: ProjectId.make("project-remote"),
+        title: "EasyChamp Sports",
+        workspaceSettings: { expectedRevision: 0 },
+      },
+    });
+    expect(state.projects[0]?.title).toBe("Original EasyChamp folder");
+  });
+  it("rejects a stale rename handler after ownership moves, without writing either physical name", async () => {
+    bindEasyChamp();
+    const root = await mountPanel(primaryId);
+    const name = root.findByProps({ "aria-label": "Project name" });
+    state.projects = state.projects.map((project) => ({
+      ...project,
+      workspaceSettings: {
+        ...project.workspaceSettings!,
+        coordinatorBinding: {
+          epoch: 2,
+          state: project.environmentId === primaryId ? "active" : "transferred",
+        },
+      },
+    }));
+    await act(async () => {
+      name.props.onChange();
+      name.props.onBlur({ currentTarget: { value: "EasyChamp Sports" } });
+    });
+    expect(state.update).not.toHaveBeenCalled();
+    expect(state.projects.map((project) => project.title)).toEqual([
+      "Original EasyChamp folder",
+      "EasyChamp handoff folder",
+    ]);
+    expect(toastManager.add).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        type: "error",
+        description: "Coordinator ownership changed. Reopen project settings before renaming.",
+      }),
+    );
+  });
+  it("binds a rename to the owner's revision and surfaces rejection if handoff wins the race", async () => {
+    bindEasyChamp();
+    state.projects[1] = {
+      ...state.projects[1]!,
+      workspaceSettings: { ...state.projects[1]!.workspaceSettings!, revision: 7 },
+    };
+    state.update.mockResolvedValueOnce(
+      AsyncResult.failure(Cause.fail(new Error("Project settings changed during handoff."))),
+    );
+    const root = await mountPanel(primaryId);
+    const name = root.findByProps({ "aria-label": "Project name" });
+    await act(async () => {
+      name.props.onChange();
+      name.props.onBlur({ currentTarget: { value: "EasyChamp Sports" } });
+    });
+    expect(state.update).toHaveBeenCalledExactlyOnceWith({
+      environmentId: remoteId,
+      input: {
+        projectId: ProjectId.make("project-remote"),
+        title: "EasyChamp Sports",
+        workspaceSettings: { expectedRevision: 7 },
+      },
+    });
+    expect(state.projects.map((project) => project.title)).toEqual([
+      "Original EasyChamp folder",
+      "EasyChamp handoff folder",
+    ]);
+    expect(toastManager.add).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        type: "error",
+        description: "Project settings changed during handoff.",
+      }),
+    );
+  });
+  it.each(["offline", "unknown", "conflicting", "denied", "transferring"] as const)(
+    "refuses a logical rename when the active owner is %s",
+    async (condition) => {
+      bindEasyChamp();
+      if (condition === "offline") environments[1]!.connection.phase = "disconnected";
+      if (condition === "unknown") state.projects = state.projects.slice(0, 1);
+      if (condition === "conflicting")
+        state.projects[0] = {
+          ...state.projects[0]!,
+          workspaceSettings: {
+            ...state.projects[0]!.workspaceSettings!,
+            coordinatorBinding: { epoch: 1, state: "active" },
+          },
+        };
+      if (condition === "denied") await grant(remoteId, AsyncResult.success(session([])));
+      if (condition === "transferring")
+        state.projects[1] = {
+          ...state.projects[1]!,
+          workspaceSettings: {
+            ...state.projects[1]!.workspaceSettings!,
+            coordinatorBinding: { epoch: 1, state: "transferring" },
+          },
+        };
+      const root = await mountPanel(primaryId);
+      const name = root.findByProps({ "aria-label": "Project name" });
+      expect(name.props.disabled).toBe(true);
+      expect(root.findAllByProps({ role: "alert" }).length).toBeGreaterThan(0);
+      // A stale blur callback must enforce the same admission as the disabled field.
+      await act(async () => {
+        name.props.onChange();
+        name.props.onBlur({ currentTarget: { value: "Do not claim success" } });
+      });
+      expect(state.update).not.toHaveBeenCalled();
+      expect(state.projects[0]?.title).toBe("Original EasyChamp folder");
     },
   );
 });

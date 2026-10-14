@@ -1,6 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+  EnvironmentId,
+  type LogicalProject,
   type ModelSelection,
   ProjectId,
   ProviderInstanceId,
@@ -26,6 +28,208 @@ import {
 } from "./remoteWorkers.testkit.ts";
 
 describe("RemoteWorkers", () => {
+  it.live(
+    "launches canonical workers only into fresh verified admitted bindings, including transferred source projects",
+    () => {
+      const logical: LogicalProject = {
+        id: "canonical-project",
+        title: "App",
+        coordinatorId: "coordinator-lineage",
+        members: [
+          {
+            environmentId: M1.environmentId,
+            projectId: ProjectId.make("remote-project"),
+            coordinatorThreadId: ThreadId.make("source-coordinator"),
+          },
+        ],
+      };
+      let linked = {
+        ...remoteProject,
+        workspaceSettings: {
+          ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+          logicalProject: logical,
+          coordinatorThreadId: ThreadId.make("source-coordinator"),
+          coordinatorBinding: { state: "transferred" as const, epoch: 0 },
+        },
+      };
+      const { world, remote, layer } = setup({ studio_project_read: () => ({ result: linked }) });
+      world.local.current = project({
+        workspaceSettings: { ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, logicalProject: logical },
+      });
+      return Effect.gen(function* () {
+        yield* allow();
+        const workers = yield* RemoteWorkers.RemoteWorkers;
+        const result = yield* workers.launch(launchInput({ localProject: world.local.current }));
+        expect(result.projectId).toBe("remote-project");
+        expect(remote.toolCalls.some((call) => call.name === "studio_project_list")).toBe(false);
+        expect(
+          remote.toolCalls.find((call) => call.name === "studio_thread_launch")?.args.projectId,
+        ).toBe("remote-project");
+        // A stale successful probe or previous launch must never authorize a later detached project.
+        linked = {
+          ...linked,
+          workspaceSettings: {
+            ...linked.workspaceSettings,
+            logicalProject: { ...logical, id: "now-unrelated" },
+          },
+        };
+        expect(
+          (yield* workers
+            .launch(launchInput({ commandId: "second", localProject: world.local.current }))
+            .pipe(Effect.flip)).code,
+        ).toBe("project_unavailable_on_machine");
+        expect(
+          remote.toolCalls.filter((call) => call.name === "studio_thread_launch"),
+        ).toHaveLength(1);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "never falls back to a repository match or an unadmitted explicit project for canonical launches",
+    () => {
+      const logical: LogicalProject = {
+        id: "canonical-project",
+        title: "App",
+        coordinatorId: "coordinator-lineage",
+        members: [],
+      };
+      const { world, remote, layer } = setup();
+      world.local.current = project({
+        workspaceSettings: {
+          ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+          logicalProject: logical,
+          workerMachine: {
+            machineId: M1.id,
+            environmentId: M1.environmentId,
+            projectId: ProjectId.make("remote-project"),
+          },
+        },
+      });
+      return Effect.gen(function* () {
+        yield* allow();
+        const workers = yield* RemoteWorkers.RemoteWorkers;
+        for (const explicit of [undefined, ProjectId.make("remote-project")]) {
+          const error = yield* workers
+            .launch(launchInput({ localProject: world.local.current, machineProjectId: explicit }))
+            .pipe(Effect.flip);
+          expect(error.code).toBe("project_unavailable_on_machine");
+          expect(error.message).toContain("execution binding");
+        }
+        const machines = yield* workers.listMachines({
+          projectId: world.local.current.id,
+          probe: true,
+        });
+        expect(machines.machines[0]?.project?.match).toBe("none");
+        expect(remote.toolCalls.some((call) => call.name === "studio_thread_launch")).toBe(false);
+        expect(yield* rows).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("rejects ambiguous canonical launches before any destination project is selected", () => {
+    const logical: LogicalProject = {
+      id: "canonical-project",
+      title: "App",
+      coordinatorId: "coordinator-lineage",
+      members: ["old", "new"].map((id) => ({
+        environmentId: M1.environmentId,
+        projectId: ProjectId.make(id),
+        coordinatorThreadId: ThreadId.make(`coordinator-${id}`),
+      })),
+    };
+    const { world, remote, layer } = setup();
+    world.local.current = project({
+      workspaceSettings: { ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, logicalProject: logical },
+    });
+    return Effect.gen(function* () {
+      yield* allow();
+      const workers = yield* RemoteWorkers.RemoteWorkers;
+      expect(
+        (yield* workers
+          .launch(launchInput({ localProject: world.local.current }))
+          .pipe(Effect.flip)).code,
+      ).toBe("project_ambiguous_on_machine");
+      expect(remote.toolCalls).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("resolves a logical project's explicit binding without repository heuristics", () => {
+    const logical: LogicalProject = {
+      id: "canonical-project",
+      title: "App",
+      coordinatorId: "coordinator-lineage",
+      members: [
+        {
+          environmentId: EnvironmentId.make("env-m1"),
+          projectId: ProjectId.make("remote-project"),
+          coordinatorThreadId: ThreadId.make("remote-coordinator"),
+        },
+      ],
+    };
+    const { world, remote, layer } = setup({
+      studio_project_read: () => ({
+        result: {
+          ...remoteProject,
+          workspaceSettings: { ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, logicalProject: logical },
+        },
+      }),
+    });
+    world.local.current = project({
+      workspaceSettings: { ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, logicalProject: logical },
+    });
+    return Effect.gen(function* () {
+      yield* allow();
+      const workers = yield* RemoteWorkers.RemoteWorkers;
+      expect(
+        yield* workers.remoteProjectFor({ machine: M1, localProjectId: world.local.current.id }),
+      ).toBe("remote-project");
+      expect(remote.toolCalls.map((call) => call.name)).toEqual(["studio_project_read"]);
+      world.local.current = project({
+        workspaceSettings: {
+          ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+          logicalProject: { ...logical, members: [] },
+        },
+      });
+      expect(
+        (yield* workers
+          .remoteProjectFor({ machine: M1, localProjectId: world.local.current.id })
+          .pipe(Effect.flip)).code,
+      ).toBe("invalid_request");
+      // The same repository is present remotely, but cannot repair an absent canonical binding.
+      expect(remote.toolCalls.map((call) => call.name)).toEqual(["studio_project_read"]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "refuses ambiguous logical bindings instead of choosing a same-repository project",
+    () => {
+      const logical: LogicalProject = {
+        id: "canonical-project",
+        title: "App",
+        coordinatorId: "coordinator-lineage",
+        members: ["old", "new"].map((id) => ({
+          environmentId: EnvironmentId.make("env-m1"),
+          projectId: ProjectId.make(id),
+          coordinatorThreadId: ThreadId.make(`coordinator-${id}`),
+        })),
+      };
+      const { world, remote, layer } = setup();
+      world.local.current = project({
+        workspaceSettings: { ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, logicalProject: logical },
+      });
+      return Effect.gen(function* () {
+        const workers = yield* RemoteWorkers.RemoteWorkers;
+        expect(
+          (yield* workers
+            .remoteProjectFor({ machine: M1, localProjectId: world.local.current.id })
+            .pipe(Effect.flip)).code,
+        ).toBe("invalid_request");
+        expect(remote.toolCalls).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.live("lists machines with their grant, providers and the matching project", () => {
     const { layer } = setup();
     return Effect.gen(function* () {

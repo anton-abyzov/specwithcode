@@ -13,7 +13,6 @@ const machine: CommandPaletteActionItem = {
 const input = () => ({
   kind: "personal" as const,
   busy: false,
-  selectKind: vi.fn(),
   machines: [{ item: machine, selected: true }],
   github: { description: "Private repository", checked: true, toggle: vi.fn() },
   addExisting: vi.fn(),
@@ -31,21 +30,11 @@ describe("project creation choices", () => {
     expect(groups.some((g) => g.value === "new-project-options")).toBe(true);
     expect(groups.flatMap((g) => g.items).every((i) => i.disabled)).toBe(true);
   });
-  it("names the personal kind Personal assistant and lets assistant or agent find it", () => {
-    const item = projectCreationGroups(input())[0]!.items.find(
-      (i) => i.value === "new-project:kind:personal",
-    )! as CommandPaletteActionItem;
-    expect(item.title).toBe("Personal assistant");
-    expect(item.searchTerms).toEqual(expect.arrayContaining(["assistant", "agent"]));
-  });
-  it("exposes Personal selection without silently creating a project", async () => {
-    const args = input();
-    const item = projectCreationGroups(args)[0]!.items.find(
-      (i) => i.value === "new-project:kind:personal",
-    )! as CommandPaletteActionItem;
-    await item.run();
-    expect(args.selectKind).toHaveBeenCalledWith("personal");
-    expect(args.github.toggle).not.toHaveBeenCalled();
-    expect(args.addExisting).not.toHaveBeenCalled();
+  it("never offers project types or a second assistant", () => {
+    for (const kind of ["code", "personal"] as const) {
+      const groups = projectCreationGroups({ ...input(), kind });
+      expect(groups.some((group) => group.label === "Project type")).toBe(false);
+      expect(groups.flatMap((group) => group.items).some((item) => item.value.includes(":kind:"))).toBe(false);
+    }
   });
 });

@@ -13,6 +13,7 @@ import { EMPTY_ENVIRONMENT_THREAD_STATE, type EnvironmentThreadState } from "./t
 import {
   createQuestionHistoryProjector,
   derivePendingThreadRequests,
+  pendingRequestTurnItems,
   type PendingThreadRequests,
 } from "./threadRequests.ts";
 import { arrayElementsEqual, parseThreadKey, threadKey } from "./entities.ts";
@@ -130,12 +131,15 @@ export function createEnvironmentThreadDetailAtoms<E>(
     ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-worktree:${key}`)),
   );
   const pendingRequestsAtomFamily = Atom.family((key: string) => {
-    let previous: Pick<OrchestrationV2ThreadProjection, "runtimeRequests" | "turnItems"> | null =
-      null;
+    const ref = parseThreadKey(key);
+    let previous: Pick<
+      OrchestrationV2ThreadProjection,
+      "thread" | "runtimeRequests" | "turnItems"
+    > | null = null;
     let value: PendingThreadRequests | null = null;
     return Atom.make((get) => {
       const projection = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
-      if (projection === null) {
+      if (projection === null || projection.thread.id !== ref.threadId) {
         previous = null;
         value = null;
         return value;
@@ -143,21 +147,14 @@ export function createEnvironmentThreadDetailAtoms<E>(
       const runtimeRequests = projection.runtimeRequests.filter(
         (request) => request.status === "pending",
       );
-      const ids = new Set(runtimeRequests.map((request) => request.id));
-      const turnItems =
-        ids.size === 0
-          ? []
-          : projection.turnItems.filter(
-              (item) =>
-                (item.type === "approval_request" || item.type === "user_input_request") &&
-                ids.has(item.requestId),
-            );
+      const turnItems = pendingRequestTurnItems(projection);
       if (
         previous === null ||
+        previous.thread.id !== projection.thread.id ||
         !arrayElementsEqual(previous.runtimeRequests, runtimeRequests) ||
         !arrayElementsEqual(previous.turnItems, turnItems)
       ) {
-        previous = { runtimeRequests, turnItems };
+        previous = { thread: projection.thread, runtimeRequests, turnItems };
         value = derivePendingThreadRequests(previous);
       }
       return value;
