@@ -62,6 +62,14 @@ export const ProviderAuthInteraction = Schema.Union([
     id: SetupOperationId,
     output: Schema.String.check(Schema.isMaxLength(16_384)),
     outputOffset: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+    // Keep native prompts available (for example, keychain consent) while the
+    // controlling client presents a device authorization link outside the PTY.
+    deviceCode: Schema.optionalKey(
+      Schema.Struct({
+        url: TrimmedNonEmptyString.check(Schema.isMaxLength(16_384)),
+        userCode: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+      }),
+    ),
   }),
   Schema.Struct({
     type: Schema.Literal("credentials"),

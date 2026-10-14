@@ -19,6 +19,7 @@ struct Request: Decodable {
   let locale: String?
   let text: String?
   let voice: String?
+  let rate: Float?
 }
 
 struct HelperError: Error {
@@ -111,7 +112,10 @@ func transcribeWithRecognizer(url: URL, localeId: String) async throws -> String
   }
   let request = SFSpeechURLRecognitionRequest(url: url)
   request.shouldReportPartialResults = false
-  if recognizer.supportsOnDeviceRecognition { request.requiresOnDeviceRecognition = true }
+  guard recognizer.supportsOnDeviceRecognition else {
+    throw HelperError(message: "local-recognition-unavailable")
+  }
+  request.requiresOnDeviceRecognition = true
   return try await withCheckedThrowingContinuation { continuation in
     var finished = false
     recognizer.recognitionTask(with: request) { result, error in
@@ -159,6 +163,13 @@ func bestVoice(language: String) -> AVSpeechSynthesisVoice? {
   let ranked = candidates.sorted { left, right in
     if left.quality != right.quality { return left.quality.rawValue > right.quality.rawValue }
     if (left.language == language) != (right.language == language) { return left.language == language }
+    func naturalRank(_ voice: AVSpeechSynthesisVoice) -> Int {
+      if voice.identifier.contains("siri.natural") { return 3 }
+      if voice.identifier.contains("com.apple.voice.") && !voice.identifier.contains("super-compact") { return 2 }
+      if voice.identifier.contains("com.apple.voice.") { return 1 }
+      return 0
+    }
+    if naturalRank(left) != naturalRank(right) { return naturalRank(left) > naturalRank(right) }
     return left.name < right.name
   }
   return ranked.first ?? AVSpeechSynthesisVoice(language: language)
@@ -170,13 +181,17 @@ final class SpeechWriter: NSObject, AVSpeechSynthesizerDelegate {
   private var continuation: CheckedContinuation<Void, Error>?
   private var writeError: Error?
 
-  func write(text: String, voice: String?, to url: URL) async throws {
+  func write(text: String, voice: String?, rate: Float?, to url: URL) async throws {
     let utterance = AVSpeechUtterance(string: text)
     if let voice, let selected = AVSpeechSynthesisVoice(identifier: voice) {
       utterance.voice = selected
     } else {
       utterance.voice = bestVoice(language: AVSpeechSynthesisVoice.currentLanguageCode())
     }
+    // A slightly calmer conversational pace, without altering pitch or the recorded waveform.
+    utterance.rate = min(0.6, max(0.35, rate ?? 0.47))
+    utterance.preUtteranceDelay = 0.08
+    utterance.postUtteranceDelay = 0.12
     try? FileManager.default.removeItem(at: url)
     try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
       self.continuation = continuation
@@ -223,6 +238,14 @@ func handle(_ request: Request) async {
         "speech": speechStatusName(SFSpeechRecognizer.authorizationStatus()),
         "engine": engineName(),
       ])
+    case "voices":
+      let voices = AVSpeechSynthesisVoice.speechVoices().filter { voice in
+        if #available(macOS 14.0, *) { return voice.voiceTraits.isDisjoint(with: [.isNoveltyVoice, .isPersonalVoice]) }
+        return true
+      }.map { voice -> [String: Any] in
+        ["id": voice.identifier, "name": voice.name, "language": voice.language, "quality": voice.quality.rawValue]
+      }
+      reply(["id": request.id, "ok": true, "voices": voices])
     case "authorize":
       let status = await requestSpeechAuthorization()
       reply(["id": request.id, "ok": true, "speech": speechStatusName(status), "engine": engineName()])
@@ -239,7 +262,7 @@ func handle(_ request: Request) async {
       guard let path = request.path, let text = request.text else {
         throw HelperError(message: "missing-text")
       }
-      try await SpeechWriter().write(text: text, voice: request.voice, to: URL(fileURLWithPath: path))
+      try await SpeechWriter().write(text: text, voice: request.voice, rate: request.rate, to: URL(fileURLWithPath: path))
       reply(["id": request.id, "ok": true])
     default:
       throw HelperError(message: "unknown-op")

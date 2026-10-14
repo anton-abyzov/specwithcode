@@ -1,3 +1,7 @@
+export const VOICE_GET_PREFERENCES_CHANNEL = "desktop:voice-get-preferences";
+export const VOICE_SET_PREFERENCES_CHANNEL = "desktop:voice-set-preferences";
+export const VOICE_LIST_LOCAL_CHANNEL = "desktop:voice-list-local";
+export const VOICE_PREVIEW_LOCAL_CHANNEL = "desktop:voice-preview-local";
 export const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 export const SET_NOTIFICATION_BADGE_CHANNEL = "desktop:set-notification-badge";
 export const SET_KEEP_AWAKE_CHANNEL = "desktop:set-keep-awake";

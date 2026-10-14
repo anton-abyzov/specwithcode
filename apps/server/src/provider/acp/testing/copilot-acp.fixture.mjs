@@ -2,6 +2,27 @@
 import { createInterface } from "node:readline";
 import { appendFileSync, writeFileSync } from "node:fs";
 const scenario = process.env.COPILOT_FIXTURE_SCENARIO;
+const startup = scenario?.startsWith("startup-");
+const cliArgs = process.argv.slice(2);
+const startupModel = cliArgs.find((arg) => arg.startsWith("--model="))?.slice(8);
+if (process.env.COPILOT_FIXTURE_RECORD_LAUNCH === "1") {
+  appendFileSync(
+    process.env.COPILOT_FIXTURE_LOG,
+    JSON.stringify({ method: "process/launch", args: cliArgs }) + "\n",
+  );
+}
+if (cliArgs.includes("--version")) {
+  process.stdout.write(`GitHub Copilot CLI ${process.env.COPILOT_FIXTURE_VERSION ?? "1.0.97"}.\n`);
+  process.exit(0);
+}
+if (cliArgs.includes("--help")) {
+  process.stdout.write(
+    scenario === "startup-no-flag"
+      ? "Usage: copilot\n"
+      : "Usage: copilot\n  --model <model> Select model\n",
+  );
+  process.exit(0);
+}
 const models = {
   currentModelId: "claude-opus-5.5",
   availableModels: [
@@ -9,6 +30,15 @@ const models = {
     { modelId: "grok-4.7", name: "Grok 4.7" },
   ],
 };
+if (startup) {
+  models.currentModelId =
+    scenario === "startup-auto"
+      ? "auto"
+      : scenario === "startup-mismatch"
+        ? "other-model"
+        : (startupModel ?? "auto");
+  models.availableModels = [{ modelId: "auto", name: "Auto" }];
+}
 const modelOption = (id = "model-1", currentValue = models.currentModelId) => ({
   id,
   category: "model",
@@ -34,13 +64,29 @@ const effort = {
     { value: "low", name: "Low" },
   ],
 };
-let configOptions = scenario === "config" ? [modelOption(), effort] : [];
+const autoOnlyConfig = scenario === "auto-config";
+let configOptions =
+  scenario === "config"
+    ? [modelOption(), effort]
+    : autoOnlyConfig
+      ? [
+          {
+            ...modelOption("model", "auto"),
+            options: [
+              { value: "auto", name: "Auto" },
+              { value: "auto", name: "Auto" },
+            ],
+          },
+          effort,
+        ]
+      : [];
 let pendingPrompt;
 const send = (data) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...data }) + "\n");
 const answer = (id, result) => send({ id, result });
 const setup = () => ({
   ...(scenario === "legacy" ? { models } : {}),
-  ...(scenario === "config" ? { configOptions } : {}),
+  ...(startup && scenario !== "startup-missing" ? { models } : {}),
+  ...(scenario === "config" || autoOnlyConfig ? { configOptions } : {}),
 });
 for await (const line of createInterface({ input: process.stdin })) {
   const message = JSON.parse(line);
@@ -53,7 +99,12 @@ for await (const line of createInterface({ input: process.stdin })) {
       agentInfo: {
         name: process.env.COPILOT_FIXTURE_AGENT_NAME ?? "Copilot",
         title: "Copilot",
-        version: "1.0.94",
+        version:
+          scenario === "startup-version-change"
+            ? "1.0.98"
+            : startup || autoOnlyConfig
+              ? "1.0.97"
+              : "1.0.94",
       },
       agentCapabilities: {
         loadSession: true,
@@ -77,10 +128,26 @@ for await (const line of createInterface({ input: process.stdin })) {
       ],
     });
   } else if (method === "session/new") {
-    if (scenario === "auth")
+    if (scenario === "startup-reject")
+      send({ id, error: { code: -32602, message: "Requested startup model is unavailable" } });
+    else if (scenario === "auth")
       send({ id, error: { code: -32000, message: "Authentication required" } });
     else answer(id, { sessionId: "copilot-fixture", ...setup() });
   } else if (method === "session/set_model") {
+    if (startup && params.modelId !== "auto") {
+      send({
+        id,
+        error: {
+          code: -32602,
+          message: `Invalid modelId '${params.modelId}': not one of this session's models.`,
+        },
+      });
+      continue;
+    }
+    if (autoOnlyConfig && params.modelId === "unavailable-model") {
+      send({ id, error: { code: -32602, message: "Requested model is unavailable" } });
+      continue;
+    }
     models.currentModelId = params.modelId;
     answer(id, {});
   } else if (method === "session/set_config_option") {
@@ -95,6 +162,10 @@ for await (const line of createInterface({ input: process.stdin })) {
     answer(id, { configOptions });
   } else if (method === "session/load") answer(id, setup());
   else if (method === "session/prompt") {
+    if (startup) {
+      answer(id, { stopReason: "end_turn" });
+      continue;
+    }
     pendingPrompt = id;
     send({
       method: "session/update",

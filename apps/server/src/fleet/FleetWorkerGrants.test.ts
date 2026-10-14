@@ -7,6 +7,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as Option from "effect/Option";
 import { TestClock } from "effect/testing";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -56,6 +57,17 @@ const makeLayer = (input: {
 
 const setNow = (millis: number) => TestClock.setTime(millis);
 
+const changeStoredGrant = (patch: Record<string, unknown>) =>
+  Effect.gen(function* () {
+    const secrets = yield* ServerSecretStore.ServerSecretStore;
+    const bytes = Option.getOrThrow(yield* secrets.get("fleet-worker-grant-m1"));
+    const original = JSON.parse(new TextDecoder().decode(bytes));
+    yield* secrets.set(
+      "fleet-worker-grant-m1",
+      new TextEncoder().encode(JSON.stringify({ ...original, ...patch })),
+    );
+  });
+
 /** The other machine's client list throws like a dropped connection while `down`. */
 const unreachableClients = (machine: ReturnType<typeof fakeMachine>, state: { down: boolean }) => ({
   ...machine,
@@ -67,6 +79,197 @@ const unreachableClients = (machine: ReturnType<typeof fakeMachine>, state: { do
 });
 
 describe("FleetWorkerGrants", () => {
+  it.effect.each([
+    { name: "legacy grant", patch: { v: 1 }, expected: "expired" },
+    { name: "missing ongoing consent", patch: { ongoingConsent: false }, expected: "expired" },
+    { name: "local revocation", patch: { status: "revoked" }, expected: "revoked" },
+    {
+      name: "different coordinator",
+      patch: { coordinatorEnvironmentId: "another" },
+      expected: "not_allowed",
+    },
+    { name: "different destination", patch: { environmentId: "another" }, expected: "not_allowed" },
+    {
+      name: "different origin",
+      patch: { origin: "https://another.example" },
+      expected: "not_allowed",
+    },
+    {
+      name: "different resource",
+      patch: { resource: "https://another.example/mcp" },
+      expected: "not_allowed",
+    },
+  ])("does not recover $name", ({ patch, expected }) => {
+    const machine = fakeMachine({ sessionTokens: true });
+    return Effect.gen(function* () {
+      yield* setNow(NOW);
+      const grants = yield* FleetWorkerGrants.FleetWorkerGrants;
+      yield* grants.allow({ machineId: "m1", access: "auto" });
+      yield* changeStoredGrant(patch);
+      yield* setNow(NOW + Duration.toMillis(Duration.days(31)));
+      yield* grants.renewDue;
+      expect((yield* grants.credential("m1").pipe(Effect.flip)).reason).toBe(expected);
+      expect(machine.renewed()).toBe(0);
+      expect(machine.issued()).toBe(1);
+      expect(machine.calls.some((call) => call.url.endsWith("worker-grants/renew"))).toBe(false);
+    }).pipe(Effect.provide(makeLayer({ machine })));
+  });
+
+  it.effect.each([
+    { renewalStatus: 409, renewalCode: "grant_revoked" },
+    { renewalStatus: 409, renewalCode: "grant_missing" },
+    { renewalStatus: 400, renewalCode: "grant_invalid" },
+  ])("keeps destination refusal $renewalCode sticky without reminting", (override) => {
+    const machine = fakeMachine({ sessionTokens: true, ...override });
+    return Effect.gen(function* () {
+      yield* setNow(NOW);
+      const grants = yield* FleetWorkerGrants.FleetWorkerGrants;
+      yield* grants.allow({ machineId: "m1", access: "approval-required" });
+      yield* setNow(NOW + Duration.toMillis(Duration.days(31)));
+      yield* grants.renewDue;
+      expect((yield* grants.status("m1")).status).toBe("revoked");
+      yield* setNow(NOW + Duration.toMillis(Duration.days(32)));
+      yield* grants.renewDue;
+      expect((yield* grants.credential("m1").pipe(Effect.flip)).reason).toBe("revoked");
+      expect(machine.calls.filter((call) => call.url.endsWith("worker-grants/renew"))).toHaveLength(
+        1,
+      );
+      expect(machine.issued()).toBe(1);
+    }).pipe(Effect.provide(makeLayer({ machine })));
+  });
+
+  it.effect.each([401, 403, 404, 503])(
+    "backs off after recovery HTTP %s without destroying consent",
+    (status) => {
+      const base = fakeMachine({ sessionTokens: true });
+      let unavailable = true;
+      let attempts = 0;
+      const machine = {
+        ...base,
+        fetcher: (async (input, init) => {
+          if (String(input).endsWith("worker-grants/renew")) {
+            attempts++;
+            if (unavailable) return new Response("{}", { status });
+          }
+          return base.fetcher(input, init);
+        }) as typeof fetch,
+      };
+      return Effect.gen(function* () {
+        yield* setNow(NOW);
+        const grants = yield* FleetWorkerGrants.FleetWorkerGrants;
+        yield* grants.allow({ machineId: "m1", access: "auto" });
+        yield* setNow(NOW + Duration.toMillis(Duration.days(31)));
+        yield* grants.renewDue;
+        expect((yield* grants.credential("m1").pipe(Effect.flip)).reason).toBe("expired");
+        yield* grants.renewDue;
+        expect(attempts).toBe(1);
+        unavailable = false;
+        yield* TestClock.adjust(Duration.seconds(61));
+        const credential = yield* grants.credential("m1");
+        expect(credential.access).toBe("auto");
+        expect(attempts).toBe(2);
+        expect(base.issued()).toBe(1);
+        expect((yield* grants.status("m1")).problem).toBeNull();
+      }).pipe(Effect.provide(makeLayer({ machine })));
+    },
+  );
+
+  it.effect(
+    "local stop concurrent with renewal removes consent and revokes the same session",
+    () => {
+      const base = fakeMachine({ sessionTokens: true });
+      let arrived!: () => void;
+      let release!: () => void;
+      const started = new Promise<void>((resolve) => {
+        arrived = resolve;
+      });
+      const continueRenewal = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const machine = {
+        ...base,
+        fetcher: (async (input, init) => {
+          if (String(input).endsWith("worker-grants/renew")) {
+            arrived();
+            await continueRenewal;
+          }
+          return base.fetcher(input, init);
+        }) as typeof fetch,
+      };
+      return Effect.gen(function* () {
+        yield* setNow(NOW);
+        const grants = yield* FleetWorkerGrants.FleetWorkerGrants;
+        yield* grants.allow({ machineId: "m1", access: "auto" });
+        yield* setNow(NOW + Duration.toMillis(Duration.days(31)));
+        yield* Effect.all(
+          [
+            grants.renewDue,
+            Effect.promise(() => started).pipe(
+              Effect.tap(() => Effect.sync(release)),
+              Effect.andThen(grants.stop("m1")),
+            ),
+          ],
+          { concurrency: "unbounded" },
+        );
+        expect((yield* grants.status("m1")).status).toBe("not_allowed");
+        expect(base.revokedSessions).toContain("sid-1");
+        yield* TestClock.adjust(Duration.minutes(2));
+        yield* grants.renewDue;
+        expect(base.issued()).toBe(1);
+        expect(base.renewed()).toBe(1);
+      }).pipe(Effect.provide(makeLayer({ machine })));
+    },
+  );
+
+  it.effect(
+    "recovers an explicitly allowed offline machine after expiry and coordinator restart",
+    () => {
+      const base = fakeMachine({ sessionTokens: true });
+      let offline = false;
+      const machine = {
+        ...base,
+        fetcher: (async (input, init) => {
+          if (offline) throw new TypeError("offline");
+          return base.fetcher(input, init);
+        }) as typeof fetch,
+      };
+      return Effect.gen(function* () {
+        yield* setNow(NOW);
+        const grants = yield* FleetWorkerGrants.FleetWorkerGrants;
+        yield* grants.allow({ machineId: "m1", access: "auto" });
+        offline = true;
+        yield* setNow(NOW + Duration.toMillis(Duration.days(31)));
+        yield* grants.renewDue;
+        expect((yield* grants.status("m1")).status).toBe("expired");
+        const config = yield* ServerConfig.ServerConfig;
+        const restarted = Layer.fresh(FleetWorkerGrants.layer).pipe(
+          Layer.provide(
+            Layer.succeed(FleetTargets.FleetTargets, {
+              load: Effect.succeed({ version: 1 as const, machines: [target] }),
+              fetch: machine.fetcher,
+            }),
+          ),
+          Layer.provide(ServerSecretStore.layer),
+          Layer.provide(
+            Layer.mock(ServerEnvironment.ServerEnvironment)({
+              getEnvironmentId: Effect.succeed(EnvironmentId.make("env-m4")),
+            }),
+          ),
+          Layer.provide(ServerConfig.layer(config)),
+          Layer.provide(NodeServices.layer),
+        );
+        offline = false;
+        yield* Effect.gen(function* () {
+          const recovered = yield* FleetWorkerGrants.FleetWorkerGrants;
+          yield* recovered.renewDue;
+          expect((yield* recovered.status("m1")).status).toBe("allowed");
+          expect((yield* recovered.credential("m1")).access).toBe("auto");
+          expect(base.issued()).toBe(1);
+        }).pipe(Effect.provide(restarted));
+      }).pipe(Effect.provide(makeLayer({ machine })));
+    },
+  );
+
   it.effect("allows workers, stores the grant privately and never logs the token", () => {
     const machine = fakeMachine();
     const logs: string[] = [];
@@ -154,30 +357,27 @@ describe("FleetWorkerGrants", () => {
     }).pipe(Effect.provide(makeLayer({ machine })));
   });
 
-  it.effect("renews only within a week of expiry and only after a recent accepted call", () => {
-    const machine = fakeMachine();
-    return Effect.gen(function* () {
-      yield* setNow(NOW);
-      const grants = yield* FleetWorkerGrants.FleetWorkerGrants;
-      yield* grants.allow({ machineId: "m1", access: "auto" });
-      // Ten days left: not due.
-      yield* setNow(Date.parse("2026-11-01T00:00:00.000Z"));
-      yield* grants.reportAccepted("m1");
-      yield* grants.renewDue;
-      expect(machine.issued()).toBe(1);
-      // Four days left, but the last accepted call was two days ago.
-      yield* setNow(Date.parse("2026-11-07T00:00:00.000Z"));
-      yield* grants.renewDue;
-      expect(machine.issued()).toBe(1);
-      // Accepted within the day: renewed, and the old session revoked there.
-      yield* grants.reportAccepted("m1");
-      yield* TestClock.adjust(Duration.hours(1));
-      yield* grants.renewDue;
-      expect(machine.issued()).toBe(2);
-      expect((yield* grants.credential("m1")).accessToken).toBe("mcp-token-auto-2");
-      expect(machine.revokedSessions).toContain("old");
-    }).pipe(Effect.provide(makeLayer({ machine })));
-  });
+  it.effect(
+    "renews due consent without recent activity and retains the same remote session",
+    () => {
+      const machine = fakeMachine({ sessionTokens: true });
+      return Effect.gen(function* () {
+        yield* setNow(NOW);
+        const grants = yield* FleetWorkerGrants.FleetWorkerGrants;
+        yield* grants.allow({ machineId: "m1", access: "auto" });
+        yield* setNow(Date.parse("2026-11-01T00:00:00.000Z"));
+        yield* grants.renewDue;
+        expect(machine.renewed()).toBe(0);
+        yield* setNow(Date.parse("2026-11-07T00:00:00.000Z"));
+        const revokedBefore = [...machine.revokedSessions];
+        yield* grants.renewDue;
+        expect(machine.renewed()).toBe(1);
+        expect(machine.issued()).toBe(1);
+        expect(machine.revokedSessions).toEqual(revokedBefore);
+        expect((yield* grants.credential("m1")).accessToken).toContain(".sig");
+      }).pipe(Effect.provide(makeLayer({ machine })));
+    },
+  );
 
   it.effect("shows a grant without a management token as expiring in its last week", () => {
     const machine = fakeMachine();
@@ -314,9 +514,9 @@ describe("FleetWorkerGrants", () => {
     }).pipe(Effect.provide(makeLayer({ machine })));
   });
 
-  it.effect("a renewal pass survives a machine that drops off mid-revoke", () => {
+  it.effect("renewal does not rely on listing or revoking old remote sessions", () => {
     const state = { down: false };
-    const machine = unreachableClients(fakeMachine(), state);
+    const machine = unreachableClients(fakeMachine({ sessionTokens: true }), state);
     return Effect.gen(function* () {
       yield* setNow(NOW);
       const grants = yield* FleetWorkerGrants.FleetWorkerGrants;

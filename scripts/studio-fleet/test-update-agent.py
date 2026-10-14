@@ -64,6 +64,9 @@ if args.snapshot:
     value = {'schemaVersion': 1, 'servicePid': control.get('pid', 4242),
              'rows': {'counts': control.get('counts', {'projection_threads': 3}), 'hashes': {}, 'nativeWorkIdle': True},
              'observedAt': datetime.datetime.now(datetime.timezone.utc).isoformat()}
+    installed = json.loads((home / '.specweave-studio' / args.identity / 'installation.json').read_text())
+    value.update(identity=args.identity, serviceLabel=installed['service']['label'],
+                 artifactSourceCommit=installed['sourceCommit'], archiveSha256=installed['archiveSha256'])
     pathlib.Path(args.snapshot).write_text(json.dumps(value))
     print(json.dumps({'result': 'snapshotted'}))
     sys.exit(0)
@@ -91,12 +94,14 @@ path = home / '.specweave-studio' / args.identity / 'installation.json'
 receipt = json.loads(path.read_text())
 receipt['version'] = control.get('newVersion', '0.2.0')
 receipt['sourceCommit'] = control.get('newCommit', 'b' * 40)
+receipt['archiveSha256'] = args.sha256
 path.write_text(json.dumps(receipt))
 if control.get('applyFailAfterSwitch'):
     pathlib.Path(args.output).write_text(json.dumps({'result': 'update-failed', 'rollback': 'held-for-safe-review'}))
     sys.exit(1)
 pathlib.Path(args.output).write_text(json.dumps({'phase': 'verified', 'preservedRowsAuthAndIdentity': True,
-                                               'originalServicesPreserved': True, 'cookie': 'helper-private-receipt'}))
+    'originalServicesPreserved': True, 'onlyKnownOwnedServiceRestarted': True, 'cookie': 'helper-private-receipt',
+    'before': prestate, 'after': dict(prestate, artifactSourceCommit=receipt['sourceCommit'], archiveSha256=args.sha256)}))
 print('helper-private-output-should-not-be-logged')
 '''
 
@@ -534,7 +539,7 @@ class PassBehaviour(AgentCase):
         state = self.state()
         self.assertEqual(state['status'], 'manual-required')
         self.assertIn('manual upgrade', state['message'])
-        self.assertEqual(len(self.fake.blob_requests()), 1)  # Only the plan was fetched.
+        self.assertEqual(len(self.fake.blob_requests()), 2)  # Plan and checksum bindings; no archives.
 
     def test_disallowed_arg_and_entrypoint_are_rejected_before_downloading(self):
         def bad_arg(plan):
@@ -712,7 +717,7 @@ class PassBehaviour(AgentCase):
         self.assertEqual(len(state['availableNotes']), 4000)
         self.assertEqual(state['availablePublishedAt'], '2026-10-01T00:00:00Z')
         self.assertIsNone(state['downloadedVersion'])
-        self.assertEqual(len(self.fake.blob_requests()), 1)  # Plan only.
+        self.assertEqual(len(self.fake.blob_requests()), 2)  # Plan and checksum bindings; no archives.
 
     def test_stable_channel_takes_a_plain_version_flagged_prerelease(self):
         self.fake.add_release(prerelease=True)
@@ -1002,7 +1007,12 @@ class PassBehaviour(AgentCase):
 
         # update.py writes these verification fields; result=updated is stdout only.
         verified = json.dumps({'phase': 'verified', 'preservedRowsAuthAndIdentity': True,
-                               'originalServicesPreserved': True})
+            'originalServicesPreserved': True, 'onlyKnownOwnedServiceRestarted': True,
+            'before': {'schemaVersion': 1, 'identity': 'm4', 'serviceLabel': 'com.specweave.studio.m4',
+                       'artifactSourceCommit': OLD_COMMIT},
+            'after': {'schemaVersion': 1, 'identity': 'm4', 'serviceLabel': 'com.specweave.studio.m4',
+                      'artifactSourceCommit': NEW_COMMIT,
+                      'archiveSha256': json.loads((self.own / 'installation.json').read_text())['archiveSha256']}})
         receipt.write_text(verified)
         self.assertEqual(self.run_agent(), 0)
         self.assertEqual(self.state()['status'], 'up-to-date')
@@ -1343,7 +1353,7 @@ class LaunchAgent(AgentCase):
         build = (HERE.parent / 'build-desktop-artifact.ts').read_text()
         shipped = re.search(r'MAC_SERVICE_UPDATER_FILES = \[([^\]]*)\]', build).group(1)
         self.assertEqual(sorted(re.findall(r'"([a-z_]+)\.py"', shipped)), sorted(['update_agent'] + imported))
-        self.assertEqual(imported, ['update_agent_cache', 'update_agent_reap', 'update_request'])
+        self.assertEqual(imported, ['update_agent_cache', 'update_agent_reap', 'update_agent_recovery', 'update_request'])
 
     def hold_lock_and_install(self):
         holder = os.open(str(self.updates / 'agent.lock'), os.O_RDWR | os.O_CREAT, 0o600)

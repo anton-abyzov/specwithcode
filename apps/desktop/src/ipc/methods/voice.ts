@@ -7,6 +7,10 @@ import * as NodeCrypto from "node:crypto";
 
 import {
   DESKTOP_VOICE_MAX_AUDIO_BYTES,
+  DesktopVoicePreferencesSchema,
+  DesktopVoicePreferencesInputSchema,
+  DesktopLocalVoiceSchema,
+  DesktopLocalVoicePreviewSchema,
   DesktopVoiceStatusSchema,
   DesktopVoiceSynthesizeInputSchema,
   DesktopVoiceTranscribeInputSchema,
@@ -18,11 +22,19 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
+import {
+  synthesizeElevenLabsVoice,
+} from "../../voice/elevenLabsVoice.ts";
+import { VoicePreferencesStore } from "../../voice/voicePreferences.ts";
 import { VoiceHelper, VoiceHelperError } from "../../voice/VoiceHelper.ts";
 import { allowMediaPermission, MICROPHONE_SETTINGS_URL } from "../../voice/voicePermission.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import {
   VOICE_GET_STATUS_CHANNEL,
+  VOICE_GET_PREFERENCES_CHANNEL,
+  VOICE_SET_PREFERENCES_CHANNEL,
+  VOICE_LIST_LOCAL_CHANNEL,
+  VOICE_PREVIEW_LOCAL_CHANNEL,
   VOICE_OPEN_MICROPHONE_SETTINGS_CHANNEL,
   VOICE_REQUEST_ACCESS_CHANNEL,
   VOICE_SET_CALL_ACTIVE_CHANNEL,
@@ -113,7 +125,12 @@ export const installVoice = Effect.fn("desktop.ipc.installVoice")(function* () {
   const ipc = yield* DesktopIpc.DesktopIpc;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const isMac = environment.platform === "darwin";
+  const preferences = new VoicePreferencesStore(
+    NodePath.join(environment.stateDir, "voice-preferences.json"),
+    Electron.safeStorage,
+  );
   const activeCalls = new Set<number>();
+  const speechRequests = new Map<number, AbortController>();
   const watched = new Set<number>();
   let helper: VoiceHelper | null = null;
   let helperPath: Promise<string | null> | null = null;
@@ -143,6 +160,64 @@ export const installVoice = Effect.fn("desktop.ipc.installVoice")(function* () {
     }
   };
 
+  yield* ipc.handle(
+    DesktopIpc.makeIpcMethod({
+      channel: VOICE_GET_PREFERENCES_CHANNEL,
+      payload: Schema.Void,
+      result: DesktopVoicePreferencesSchema,
+      handler: () => Effect.promise(() => preferences.get()),
+    }),
+  );
+  yield* ipc.handle(
+    DesktopIpc.makeIpcMethod({
+      channel: VOICE_SET_PREFERENCES_CHANNEL,
+      payload: DesktopVoicePreferencesInputSchema,
+      result: DesktopVoicePreferencesSchema,
+      handler: (input) => Effect.promise(() => preferences.set(input)),
+    }),
+  );
+  yield* ipc.handle(
+    DesktopIpc.makeIpcMethod({
+      channel: VOICE_LIST_LOCAL_CHANNEL,
+      payload: Schema.Void,
+      result: Schema.Array(DesktopLocalVoiceSchema),
+      handler: () =>
+        Effect.promise(async () =>
+          isMac ? ((await (await getHelper()).request({ op: "voices" })).voices ?? []) : [],
+        ),
+    }),
+  );
+  yield* ipc.handle(
+    DesktopIpc.makeIpcMethod({
+      channel: VOICE_PREVIEW_LOCAL_CHANNEL,
+      payload: DesktopLocalVoicePreviewSchema,
+      result: VoiceAudioResult,
+      handler: ({ voiceId, rate }) =>
+        Effect.promise(async () => {
+          if (!isMac) return { ok: false as const, error: "Local voice preview needs macOS." };
+          try {
+            const voice = await getHelper();
+            const audio = await withTempFile("wav", async (path) => {
+              await voice.request({
+                op: "speak",
+                text: "Hello. I am ready when you are. We can review your projects, or start something new.",
+                voice: voiceId || undefined,
+                rate,
+                path,
+              });
+              return new Uint8Array(await NodeFSP.readFile(path));
+            });
+            return { ok: true as const, audio };
+          } catch {
+            return {
+              ok: false as const,
+              error: "Could not preview this local voice. Try Automatic.",
+            };
+          }
+        }),
+    }),
+  );
+
   const status = (): DesktopVoiceStatus =>
     isMac
       ? { supported: true, microphone: microphoneAccess(), reason: null }
@@ -154,6 +229,8 @@ export const installVoice = Effect.fn("desktop.ipc.installVoice")(function* () {
 
   const endCall = (senderId: number) => {
     activeCalls.delete(senderId);
+    speechRequests.get(senderId)?.abort();
+    speechRequests.delete(senderId);
     if (activeCalls.size === 0) helper?.stop();
   };
 
@@ -284,18 +361,42 @@ export const installVoice = Effect.fn("desktop.ipc.installVoice")(function* () {
           if (event === undefined || !activeCalls.has(event.sender.id)) {
             return { ok: false as const, error: "No voice call is active in this window." };
           }
+          const senderId = event.sender.id;
+          speechRequests.get(senderId)?.abort();
+          const request = new AbortController();
+          speechRequests.set(senderId, request);
           try {
+            const settings = await preferences.speechConfig();
+            if (request.signal.aborted) return { ok: false as const, error: "Voice call ended." };
+            const cloudVoice = settings.cloud;
+            if (cloudVoice) {
+              const audio = await synthesizeElevenLabsVoice(text, cloudVoice, request.signal);
+              if (request.signal.aborted) return { ok: false as const, error: "Voice call ended." };
+              return { ok: true as const, audio };
+            }
             const voice = await getHelper();
+            if (request.signal.aborted) return { ok: false as const, error: "Voice call ended." };
             const audio = await withTempFile("wav", async (path) => {
-              await voice.request({ op: "speak", text, path });
+              if (request.signal.aborted) throw new Error("Voice call ended.");
+              await voice.request({
+                op: "speak",
+                text,
+                path,
+                voice: settings.localVoiceId || undefined,
+                rate: settings.rate,
+              });
               return new Uint8Array(await NodeFSP.readFile(path));
             });
-            return { ok: true as const, audio };
+            return request.signal.aborted
+              ? { ok: false as const, error: "Voice call ended." }
+              : { ok: true as const, audio };
           } catch (error) {
             return {
               ok: false as const,
               error: messageOf(error, "Could not read the reply aloud."),
             };
+          } finally {
+            if (speechRequests.get(senderId) === request) speechRequests.delete(senderId);
           }
         }),
     }),
@@ -317,6 +418,8 @@ export const installVoice = Effect.fn("desktop.ipc.installVoice")(function* () {
   yield* Effect.addFinalizer(() =>
     Effect.promise(async () => {
       helper?.stop();
+      for (const request of speechRequests.values()) request.abort();
+      speechRequests.clear();
       activeCalls.clear();
       Electron.session.defaultSession.setPermissionRequestHandler(null);
       if (workDir) {

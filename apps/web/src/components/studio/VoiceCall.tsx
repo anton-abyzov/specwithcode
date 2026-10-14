@@ -1,4 +1,12 @@
-import { MicIcon, MicOffIcon, PhoneIcon, PhoneOffIcon } from "lucide-react";
+import {
+  MicIcon,
+  MicOffIcon,
+  PhoneIcon,
+  PhoneOffIcon,
+  SquareIcon,
+  XIcon,
+  SettingsIcon,
+} from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import {
@@ -22,6 +30,7 @@ import {
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import { Tip } from "./shell/Tip";
+import { VoiceSettings } from "./VoiceSettings";
 
 type VoiceBridge = Required<
   Pick<
@@ -299,6 +308,7 @@ export function VoiceCallButton({ call, disabled }: { call: VoiceCall; disabled:
           {call.active ? <PhoneOffIcon aria-hidden /> : <PhoneIcon aria-hidden />}
         </button>
       </Tip>
+      <VoiceSettings disabled={call.active} />
       <AlertDialog
         open={call.consentOpen}
         onOpenChange={(open) => {
@@ -314,8 +324,9 @@ export function VoiceCallButton({ call, disabled }: { call: VoiceCall; disabled:
             </AlertDialogDescription>
             <AlertDialogDescription>
               What you say is turned into text on this Mac and sent as your message, so it shows in
-              the conversation like anything you type. No audio is uploaded or saved. macOS will ask
-              once for microphone access.
+              the conversation like anything you type. Microphone audio stays on this Mac. When
+              ElevenLabs is configured, reply text is sent to ElevenLabs to generate the selected
+              voice; otherwise replies use macOS speech. macOS will ask once for microphone access.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -338,13 +349,27 @@ export function VoiceCallBar({ call }: { call: VoiceCall }) {
         <p className="sws-voice-call-text">{state.error}</p>
         <span className="sws-voice-call-actions">
           {call.microphoneBlocked ? (
-            <Button size="sm" variant="outline" onClick={call.openMicrophoneSettings}>
-              Open System Settings
-            </Button>
+            <Tip label="Open microphone settings">
+              <button
+                type="button"
+                className="sws-icon-button"
+                aria-label="Open microphone settings"
+                onClick={call.openMicrophoneSettings}
+              >
+                <SettingsIcon aria-hidden />
+              </button>
+            </Tip>
           ) : null}
-          <Button size="sm" variant="ghost" onClick={call.dismiss}>
-            Dismiss
-          </Button>
+          <Tip label="Dismiss error">
+            <button
+              type="button"
+              className="sws-icon-button"
+              aria-label="Dismiss voice call error"
+              onClick={call.dismiss}
+            >
+              <XIcon aria-hidden />
+            </button>
+          </Tip>
         </span>
       </div>
     );
@@ -379,9 +404,16 @@ export function VoiceCallBar({ call }: { call: VoiceCall }) {
       </span>
       <span className="sws-voice-call-actions">
         {state.phase === "speaking" ? (
-          <Button size="sm" variant="ghost" onClick={call.interrupt}>
-            Stop
-          </Button>
+          <Tip label="Stop speaking and listen">
+            <button
+              type="button"
+              className="sws-icon-button"
+              aria-label="Stop speaking and listen"
+              onClick={call.interrupt}
+            >
+              <SquareIcon aria-hidden />
+            </button>
+          </Tip>
         ) : null}
         <Tip label={state.muted ? "Unmute" : "Mute"}>
           <button

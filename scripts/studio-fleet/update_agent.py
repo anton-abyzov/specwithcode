@@ -36,6 +36,7 @@ sys.dont_write_bytecode = True  # Never write __pycache__ into the signed app bu
 import update_agent_reap as reaper  # noqa: E402  Update now's fallback; installed beside this file.
 import update_agent_cache as cache  # noqa: E402  Shipped beside this file.
 import update_request  # noqa: E402  Shipped beside this file.
+import update_agent_recovery as recovery  # noqa: E402  Shipped beside this file.
 
 AGENT_VERSION = 1
 IDENTITIES = ('m4', 'm1', 'm3')
@@ -113,7 +114,7 @@ DEFAULT_CONFIG = {'schemaVersion': 1, 'checkAutomatically': True, 'downloadInBac
 STATE_KEYS = ('schemaVersion', 'agentVersion', 'status', 'installedVersion', 'installedSourceCommit',
               'availableVersion', 'availableTag', 'availableNotes', 'availablePublishedAt',
               'downloadedVersion', 'checkedAt', 'quietSince', 'message', 'lastInstall',
-              'handledInstallRequestAt', 'handledCheckRequestAt', 'updatedAt')
+              'handledInstallRequestAt', 'handledCheckRequestAt', 'updatedAt', 'automaticRetry')
 
 _REDACT = set()  # In-memory only: values scrubbed from any text the agent emits.
 
@@ -513,7 +514,7 @@ def load_state(path, home):
         return state
     for key in STATE_KEYS:
         value = raw.get(key)
-        if key == 'lastInstall':
+        if key in ('lastInstall', 'automaticRetry'):
             state[key] = value if isinstance(value, dict) else None
         elif key in ('schemaVersion', 'agentVersion'):
             continue
@@ -802,90 +803,10 @@ class Agent(object):
         return self.updates / 'downloads' / version
 
     def check(self):
-        repository = self.config['repository']
-        try:
-            body = self.fetch_bytes('%s/repos/%s/releases?per_page=30' % (self.api_base(), repository),
-                                    'application/vnd.github+json', LIMITS['list'])
-        except HttpFailure as error:
-            if error.code in (401, 403, 404) and not self.token():
-                raise AgentError(SIGN_IN) from None
-            if error.code in (401, 403, 404):
-                raise AgentError('GitHub refused access to %s releases (HTTP %d). Check that `gh auth login` '
-                                 'can read the repository.' % (repository, error.code)) from None
-            raise AgentError('Checking %s releases failed (HTTP %d)' % (repository, error.code)) from None
-        try:
-            releases = json.loads(body.decode('utf-8'))
-        except (UnicodeDecodeError, ValueError):
-            raise AgentError('GitHub returned an unreadable releases response') from None
-        installed = version_tuple(self.inst['version'])
-        release = select_release(releases, self.config['channel'], installed)
-        self.state['checkedAt'] = iso(utcnow())
-        if release is None:
-            self.clear_available()
-            return None
-        version = tag_version(release['tag_name'])
-        notes = release.get('body') if isinstance(release.get('body'), str) else None
-        published = release.get('published_at') if isinstance(release.get('published_at'), str) else None
-        if self.state.get('availableVersion') != version:
-            self.state['downloadedVersion'] = None
-        self.state.update({'availableVersion': version, 'availableTag': release['tag_name'],
-                           'availableNotes': notes[:NOTES_LIMIT] if notes else None,
-                           'availablePublishedAt': published[:64] if published else None})
-        assets = {}
-        for asset in release.get('assets') or []:
-            if isinstance(asset, dict) and _safe_name(asset.get('name')) and type(asset.get('id')) is int:
-                size = asset.get('size')
-                assets[asset['name']] = {'id': asset['id'], 'size': size if type(size) is int else None}
-        meta = {'schemaVersion': 1, 'tag': release['tag_name'], 'version': version, 'assets': assets,
-                'plan': None, 'planSha256': None, 'args': None, 'manual': None, 'rejected': None,
-                'checkedAt': self.state['checkedAt']}
-        directory = ensure_dir(self.release_dir(version), self.home)
-        if PLAN_ASSET not in assets:
-            meta['manual'] = 'Studio %s needs a manual upgrade: the release has no update plan.' % version
-        else:
-            try:
-                plan_bytes = self.fetch_bytes(self.asset_url(assets[PLAN_ASSET]), 'application/octet-stream',
-                                              LIMITS[PLAN_ASSET])
-            except HttpFailure as error:
-                raise AgentError('Downloading %s failed (HTTP %d)' % (PLAN_ASSET, error.code)) from None
-            try:
-                try:
-                    plan = json.loads(plan_bytes.decode('utf-8'))
-                except (UnicodeDecodeError, ValueError):
-                    raise AgentError('Update plan was rejected: not valid JSON') from None
-                validate_plan(plan, version)
-                if version_tuple(plan['version']) <= installed:
-                    raise AgentError('Update plan was rejected: version is not newer than the installation')
-                for name in (plan['service']['runtime']['asset'], plan['service']['helpers']['asset'], SUMS_ASSET):
-                    if name not in assets:
-                        raise AgentError('Release %s is missing %s' % (release['tag_name'], name))
-                meta['args'] = select_upgrade(plan, self.inst['sourceCommit'])
-                meta['plan'] = plan
-                meta['planSha256'] = sha256_bytes(plan_bytes)
-                atomic_write(directory / PLAN_ASSET, plan_bytes, self.home)
-            except ManualRequired as error:
-                meta['manual'] = error.message
-            except AgentError as error:
-                meta['rejected'] = 'Release %s: %s' % (release['tag_name'], error.message)
-        write_json(directory / 'release.json', meta, self.home)
-        return meta
+        return recovery.check(self)
 
     def load_release(self, version):
-        if version_tuple(version) is None:
-            return None
-        path = self.release_dir(version) / 'release.json'
-        try:
-            meta = read_json(path, self.home) if path.is_file() else None
-        except AgentError:
-            return None
-        if not isinstance(meta, dict) or meta.get('version') != version or not isinstance(meta.get('assets'), dict):
-            return None
-        if meta.get('plan') is not None:
-            try:
-                validate_plan(meta['plan'], version)
-            except AgentError:
-                return None
-        return meta
+        return recovery.load_release(self, version)
 
     # -- download and verify
 
@@ -896,7 +817,8 @@ class Agent(object):
             return None
         try:
             verified = read_json(path, self.home)
-            if not isinstance(verified, dict) or verified.get('version') != meta['version'] \
+            if not isinstance(verified, dict) or not recovery.verified_matches(self, meta, verified) \
+                    or verified.get('version') != meta['version'] \
                     or verified.get('planSha256') != meta['planSha256'] \
                     or not isinstance(verified['helpers']['files'], dict) \
                     or not HEX64.fullmatch(verified['runtime']['sha256']) \
@@ -943,7 +865,8 @@ class Agent(object):
         verified = {'schemaVersion': 1, 'version': version, 'tag': meta['tag'], 'planSha256': meta['planSha256'],
                     'runtime': {'asset': runtime['asset'], 'sha256': runtime['sha256']},
                     'helpers': {'root': helpers['root'], 'sha256': helpers['sha256'], 'files': files},
-                    'entrypoint': ENTRYPOINT, 'args': meta['args'], 'verifiedAt': iso(utcnow())}
+                    'entrypoint': ENTRYPOINT, 'args': meta['args'], 'verifiedAt': iso(utcnow()),
+                    'binding': meta['binding'], 'sourceCommit': plan['sourceCommit']}
         write_json(directory / 'verified.json', verified, self.home)
         remove_path(directory / 'rejected.json', self.home)
         return verified
@@ -1068,6 +991,8 @@ class Agent(object):
                     remove_path(baseline_path, self.home)
                 self.state['quietSince'] = None
                 retry_by = self.retry_deadline(started) if install_request else started
+                if refused[0] != 'waiting-for-quiet':
+                    self.state['automaticRetry'] = None
                 if refused[0] != 'waiting-for-quiet' or utcnow() + datetime.timedelta(seconds=RETRY_SECONDS) >= retry_by:
                     return self.finish(*refused)
                 self.set_status(refused[0], '%s (attempt %d)' % (refused[1], attempt))
@@ -1077,7 +1002,8 @@ class Agent(object):
                 if (ended := self.withdrawn(version)):
                     return self.finish(*ended)
                 continue
-            if install_request and (ended := self.withdrawn(version)):
+            ended = self.withdrawn(version) if install_request else recovery.automatic_withdrawn(self, verified)
+            if ended:
                 remove_path(newest, self.home)
                 return self.finish(*ended)
             if install_request:
@@ -1126,12 +1052,21 @@ class Agent(object):
         if os.path.lexists(str(baseline_path)):
             remove_path(baseline_path, self.home)
         self.state['quietSince'] = None
+        before = recovery.installation_fingerprint(self) if not install_request else None
+        if install_request: self.state['automaticRetry'] = None  # Explicit requests start fresh.
         handled = self.state['handledInstallRequestAt']
         if install_request: self.state['handledInstallRequestAt'] = self.config['installRequestedAt']  # noqa: E701
-        write_json(self.marker_path, {'version': version, 'receipt': str(receipt), 'at': iso(utcnow())}, self.home)
+        write_json(self.marker_path, {'version': version, 'receipt': str(receipt), 'at': iso(utcnow()),
+                                      'sourceCommit': verified['sourceCommit'],
+                                      'previousSourceCommit': verified['binding']['installedSourceCommit']}, self.home)
         self.set_status('installing', 'Installing Studio %s' % version)
-        if install_request and (ended := self.withdrawn(version)):  # A cancel that raced the status write above.
+        ended = self.withdrawn(version) if install_request else recovery.automatic_withdrawn(self, verified)
+        if ended:  # A settings change that raced the status write above.
             return remove_path(self.marker_path, self.home) or self.finish(*ended)
+        if not recovery.current_installation_matches(self, verified):
+            remove_path(self.marker_path, self.home)
+            self.state['checkedAt'] = None
+            return self.finish('error', 'The installation changed during preparation; a new update check is required.')
         args = ['--identity', self.identity, '--prestate', kept, '--archive', runtime,
                 '--sha256', verified['runtime']['sha256'], '--output', receipt] + list(verified['args'])
         pass_fds = (self.lock_fd,) if self.lock_fd is not None else ()
@@ -1142,7 +1077,12 @@ class Agent(object):
             remove_path(self.marker_path, self.home)
             self.state['handledInstallRequestAt'] = handled  # Still pending until an attempt completes.
             return None
-        status, message = self.complete_install(version, receipt, outcome)
+        status, message = self.complete_install(version, receipt, outcome, verified['sourceCommit'],
+                                                verified['binding']['installedSourceCommit'])
+        if not install_request and outcome == 'failed':
+            recovery.record_refusal(self, verified, receipt, before)
+        elif outcome != 'ok':
+            self.state['automaticRetry'] = None
         return self.finish(status, message)
 
     def refused_before_restart(self, receipt, version):
@@ -1158,7 +1098,7 @@ class Agent(object):
                 and value.get('pointers') in ('unchanged', 'previous-release') and inst['version'] != version
                 and not any(key in value for key in ('restartStartedAt', 'rollbackError', 'stateBackup')))
 
-    def complete_install(self, version, receipt, outcome):
+    def complete_install(self, version, receipt, outcome, expected_source=None, previous_source=None):
         try:
             inst = load_installation(self.home, self.identity)
         except AgentError:
@@ -1170,12 +1110,17 @@ class Agent(object):
         if outcome != 'timeout' and os.path.lexists(str(self.marker_path)):
             remove_path(self.marker_path, self.home)  # A timed-out helper runs on; a later pass settles it.
         now = iso(utcnow())
-        if outcome == 'ok' and inst is not None and inst['version'] == version:
+        if outcome == 'ok' and inst is not None and inst['version'] == version \
+                and (expected_source is None or inst['sourceCommit'] == expected_source) \
+                and recovery.completion_proof(self, receipt, expected_source, previous_source):
             self.state['lastInstall'] = {'version': version, 'at': now, 'result': 'updated', 'receipt': str(receipt)}
             self.clear_available()
+            self.state['checkedAt'] = None  # Discover the next verified hop on a later pass.
+            self.state['automaticRetry'] = None
             self.cleanup_versions(version_tuple(inst['version']))
             return 'installed', 'Studio %s is installed' % version
-        self.state['lastInstall'] = {'version': version, 'at': now, 'result': 'failed', 'receipt': str(receipt)}
+        self.state['lastInstall'] = {'version': version, 'at': now, 'result': 'failed', 'receipt': str(receipt),
+                                    'sourceCommit': expected_source, 'previousSourceCommit': previous_source}
         current = inst['version'] if inst is not None else 'its previous version'
         if outcome == 'failed':
             self.ensure_failure_receipt(version, receipt, current)
@@ -1207,14 +1152,8 @@ class Agent(object):
         """A recorded failure clears only when its helper receipt verifies completion."""
         if last.get('result') != 'failed':
             return False
-        try:
-            receipt = read_json(owned(pathlib.Path(last['receipt']), self.home), self.home)
-            return not (receipt.get('phase') == 'verified'
-                        and receipt.get('preservedRowsAuthAndIdentity') is True
-                        and receipt.get('originalServicesPreserved') is True
-                        and receipt.get('result') != 'update-failed')
-        except (AgentError, OSError, KeyError, TypeError, AttributeError):
-            return True
+        return not recovery.completion_proof(self, last.get('receipt'), last.get('sourceCommit'),
+                                              last.get('previousSourceCommit'))
 
     def cleanup_versions(self, installed):
         for parent in (self.updates / 'downloads', self.updates / 'helpers'):
@@ -1235,7 +1174,8 @@ class Agent(object):
             return None
         version = marker['version']
         outcome = 'ok' if self.inst['version'] == version else 'interrupted'
-        return self.complete_install(version, marker.get('receipt'), outcome)
+        return self.complete_install(version, marker.get('receipt'), outcome, marker.get('sourceCommit'),
+                                     marker.get('previousSourceCommit'))
 
     def rotate_log(self):
         path = self.updates / 'agent.log'
@@ -1250,6 +1190,9 @@ class Agent(object):
 
     def run_pass(self):
         state, config = self.state, self.config
+        if state.get('installedSourceCommit') not in (None, self.inst['sourceCommit']):
+            state['checkedAt'] = None
+            state['automaticRetry'] = None
         state['installedVersion'] = self.inst['version']
         state['installedSourceCommit'] = self.inst['sourceCommit']
         installed = version_tuple(self.inst['version'])
@@ -1284,9 +1227,9 @@ class Agent(object):
                 meta = self.check()
                 fresh = True
             except AgentError as error:
-                if not (meta and meta.get('plan') and self.load_verified(meta)):
-                    return self.finish(error.status, error.message)
-                # The network failed but a verified download is ready: keep going with it.
+                state['checkedAt'] = None  # Failed discovery must not authorize cached fallback next pass.
+                state['automaticRetry'] = None
+                return self.finish(error.status, error.message)
         last = state.get('lastInstall') or {}  # The version can switch before the helper's checks fail.
         if meta is None:
             if install_request:
@@ -1317,6 +1260,7 @@ class Agent(object):
                 verified = self.download_and_verify(meta)
             except AgentError as error:
                 self.reject(version, error.message)
+                state['automaticRetry'] = None
                 if install_request:
                     state['handledInstallRequestAt'] = config['installRequestedAt']
                 return self.finish('error', error.message)
@@ -1325,8 +1269,10 @@ class Agent(object):
         state['downloadedVersion'] = version
         if not (config['installAutomatically'] or install_request):
             return self.finish('downloaded', None)
-        if not install_request and last.get('version') == version and last.get('result') == 'failed':
-            return self.finish('error', 'Studio %s did not install automatically; choose Install now to retry.' % version)
+        if not install_request and last.get('result') == 'failed' and not recovery.verified_transition(self, last):
+            held = recovery.automatic_retry(self, verified)
+            if held:
+                return self.finish('error', held)
         return self.quiet_then_install(verified, install_request)
 
 # ---------------------------------------------------------------- entry points
@@ -1362,8 +1308,10 @@ def run_once(home, identity, test_mode, out):
                 agent.inst = load_installation(home, identity)
                 code = agent.run_pass()
             except AgentError as error:
+                agent.state['automaticRetry'] = None
                 code = agent.finish(error.status, error.message)
             except Exception as error:  # Never let a traceback (with possible values) reach the log.
+                agent.state['automaticRetry'] = None
                 code = agent.finish('error', 'Unexpected updater failure (%s)' % type(error).__name__)
             if not (again and update_request.arrived(agent, lambda: load_config(updates, home))):
                 return code
@@ -1406,7 +1354,7 @@ def install_launch_agent(home, identity, out):
         target_dir = ensure_dir(home / '.local' / 'share' / 'specweave-studio' / 'updater', home)
         os.chmod(str(target_dir), 0o700)
         files = [(owned(target_dir / os.path.basename(name), home), pathlib.Path(os.path.abspath(name)).read_bytes())
-                 for name in (update_request.__file__, __file__)]  # Modules first: a new script needs them.
+                 for name in (update_request.__file__, recovery.__file__, __file__)]  # Modules first: a new script needs them.
 
         def same(path, data):
             return path.is_file() and not path.is_symlink() and read_owned(path, home, 8 << 20) == data

@@ -30,6 +30,10 @@ import {
 import * as AcpRegistrySupport from "../../provider/acp/AcpRegistrySupport.ts";
 import * as AcpRegistryRuntimeCoordinator from "../../provider/acp/AcpRegistryRuntimeCoordinator.ts";
 import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
+import {
+  prepareCopilotStartupModel,
+  resetCopilotStartupModel,
+} from "../../provider/acp/CopilotStartupModel.ts";
 import { makeAcpNativeLoggerFactory } from "../../provider/acp/AcpNativeLogging.ts";
 import * as ProviderEventLoggers from "../../provider/ProviderEventLoggers.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
@@ -146,7 +150,7 @@ function makeAcpRegistryRuntime(options: AcpRegistryAdapterV2Options) {
     Crypto.Crypto | Scope.Scope
   > =>
     Effect.gen(function* () {
-      const { processEnvironment, ...runtimeInput } = input;
+      const { processEnvironment, modelSelection, ...runtimeInput } = input;
       const resolved = yield* options.resolver
         .resolve(options.settings, input.cwd, options.environment)
         .pipe(
@@ -158,15 +162,23 @@ function makeAcpRegistryRuntime(options: AcpRegistryAdapterV2Options) {
               }),
           ),
         );
+      const startupModel = yield* prepareCopilotStartupModel({
+        settings: options.settings,
+        resolved,
+        model: modelSelection?.model,
+        ...(input.resumeSessionId === undefined ? {} : { resumeSessionId: input.resumeSessionId }),
+        spawner: options.childProcessSpawner,
+      });
+      const spawn = startupModel?.spawn ?? resolved.spawn;
       const context = yield* Layer.build(
         AcpSessionRuntime.layer({
           ...runtimeInput,
           spawn:
             processEnvironment === undefined
-              ? resolved.spawn
+              ? spawn
               : {
-                  ...resolved.spawn,
-                  env: { ...resolved.spawn.env, ...processEnvironment },
+                  ...spawn,
+                  env: { ...spawn.env, ...processEnvironment },
                 },
           ...(options.settings.authMethodId ? { authMethodId: options.settings.authMethodId } : {}),
         }).pipe(
@@ -175,9 +187,10 @@ function makeAcpRegistryRuntime(options: AcpRegistryAdapterV2Options) {
           ),
         ),
       );
-      return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
+      const runtime = yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
         Effect.provide(context),
       );
+      return startupModel?.acknowledge(runtime) ?? runtime;
     });
 }
 
@@ -208,6 +221,7 @@ export function makeAcpRegistryAdapterV2(options: AcpRegistryAdapterV2Options) {
         }
       : {}),
     makeRuntime: options.makeRuntime ?? makeAcpRegistryRuntime(options),
+    resetModelSelection: resetCopilotStartupModel,
     ...(runtimeCoordinator === undefined
       ? {}
       : {

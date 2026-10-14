@@ -1,5 +1,6 @@
 import * as NodeCrypto from "node:crypto";
 import {
+  AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
 } from "@specweave-studio/contracts";
@@ -286,6 +287,60 @@ export async function mintWorkerGrant(input: {
     if (pairing.id !== undefined) await revokePairing(input.fetcher, input.target, pairing.id);
     throw error;
   }
+}
+
+export const canRenewWorkerGrant = (target: FleetTarget) =>
+  Boolean(target.managementToken) &&
+  [AuthAccessWriteScope, ...WORKER_GRANT_SCOPES].every((scope) => target.scopes.includes(scope));
+
+export class WorkerGrantRenewError extends Error {
+  readonly reason: WorkerGrantFailureReason | "revoked" | "missing" | "invalid";
+  constructor(reason: WorkerGrantFailureReason | "revoked" | "missing" | "invalid") {
+    super("The existing worker grant could not be renewed.");
+    this.reason = reason;
+  }
+}
+
+/** Extends the same destination session. Never exchanges a pairing code or mints a replacement. */
+export async function renewWorkerGrant(input: {
+  readonly fetcher: FleetFetch;
+  readonly target: FleetTarget;
+  readonly accessToken: string;
+  readonly coordinatorEnvironmentId: string;
+  readonly now?: () => number;
+}): Promise<MintedWorkerGrant> {
+  const { fetcher, target } = input;
+  if (!canRenewWorkerGrant(target)) throw new WorkerGrantRenewError("pairing_unavailable");
+  const sessionId = sessionIdOfToken(input.accessToken);
+  if (!sessionId) throw new WorkerGrantRenewError("invalid");
+  const resource = await verifyMachine(fetcher, target);
+  const answer = await request(fetcher, `${target.url}/api/auth/worker-grants/renew`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${target.managementToken}` },
+    json: {
+      accessToken: input.accessToken,
+      coordinatorEnvironmentId: input.coordinatorEnvironmentId,
+      environmentId: target.environmentId,
+    },
+  });
+  const code = isRecord(answer.body) ? answer.body.code : undefined;
+  if (answer.status === 409 && code === "grant_revoked") throw new WorkerGrantRenewError("revoked");
+  if (answer.status === 409 && code === "grant_missing") throw new WorkerGrantRenewError("missing");
+  if (answer.status === 400 && code === "grant_invalid") throw new WorkerGrantRenewError("invalid");
+  if (answer.status === 404) throw new WorkerGrantRenewError("unsupported");
+  if (answer.status === 401 || answer.status === 403)
+    throw new WorkerGrantRenewError("pairing_unavailable");
+  if (
+    answer.status !== 200 ||
+    !isRecord(answer.body) ||
+    !isText(answer.body.accessToken) ||
+    !isText(answer.body.expiresAt, 64) ||
+    !Number.isFinite(Date.parse(answer.body.expiresAt)) ||
+    Date.parse(answer.body.expiresAt) <= (input.now ?? Date.now)() ||
+    sessionIdOfToken(answer.body.accessToken) !== sessionId
+  )
+    throw new WorkerGrantRenewError("unreachable");
+  return { accessToken: answer.body.accessToken, expiresAt: answer.body.expiresAt, resource };
 }
 
 /** The label a worker grant is minted under on the other machine, as its client list shows it. */

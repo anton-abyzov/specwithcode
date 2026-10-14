@@ -375,6 +375,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       (match) => `${match[1]}.py`,
     );
     assert.include(siblings, "update_agent_cache.py");
+    assert.include(siblings, "update_agent_recovery.py");
     assert.deepStrictEqual([...MAC_SERVICE_UPDATER_FILES], ["update_agent.py", ...siblings]);
     for (const file of MAC_SERVICE_UPDATER_FILES) {
       assert.isTrue(NodeFS.statSync(NodePath.join(fleet, file)).isFile(), file);

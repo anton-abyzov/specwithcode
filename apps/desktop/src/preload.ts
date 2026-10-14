@@ -131,6 +131,15 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   setNotificationBadge: (badge) =>
     ipcRenderer.invoke(IpcChannels.SET_NOTIFICATION_BADGE_CHANNEL, badge),
   setKeepAwake: (state) => ipcRenderer.invoke(IpcChannels.SET_KEEP_AWAKE_CHANNEL, state),
+  getVoicePreferences: () => ipcRenderer.invoke(IpcChannels.VOICE_GET_PREFERENCES_CHANNEL),
+  setVoicePreferences: (input) =>
+    ipcRenderer.invoke(IpcChannels.VOICE_SET_PREFERENCES_CHANNEL, input),
+  listLocalVoices: () => ipcRenderer.invoke(IpcChannels.VOICE_LIST_LOCAL_CHANNEL),
+  previewLocalVoice: async (input) => {
+    const result = await ipcRenderer.invoke(IpcChannels.VOICE_PREVIEW_LOCAL_CHANNEL, input);
+    if (!result.ok) throw new Error(result.error);
+    return result.audio;
+  },
   getVoiceStatus: () => ipcRenderer.invoke(IpcChannels.VOICE_GET_STATUS_CHANNEL),
   requestVoiceAccess: () => ipcRenderer.invoke(IpcChannels.VOICE_REQUEST_ACCESS_CHANNEL),
   setVoiceCallActive: (state) =>

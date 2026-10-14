@@ -63,6 +63,18 @@ export const CreateReplacingActiveAuthSessionInput = Schema.Struct({
 export type CreateReplacingActiveAuthSessionInput =
   typeof CreateReplacingActiveAuthSessionInput.Type;
 
+/** Exact original identity; renewal can only extend this existing revocation anchor. */
+export const RenewWorkerAuthSessionInput = Schema.Struct({
+  sessionId: AuthSessionId,
+  subject: Schema.Literal("mcp-client"),
+  method: Schema.Literal("bearer-access-token"),
+  scopes: AuthEnvironmentScopes,
+  label: Schema.String,
+  issuedAt: Schema.DateTimeUtcFromString,
+  expiresAt: Schema.DateTimeUtcFromString,
+});
+export type RenewWorkerAuthSessionInput = typeof RenewWorkerAuthSessionInput.Type;
+
 export const GetAuthSessionByIdInput = Schema.Struct({
   sessionId: AuthSessionId,
 });
@@ -111,6 +123,9 @@ export class AuthSessionRepository extends Context.Service<
     readonly createIfAbsent: (
       input: CreateAuthSessionInput,
     ) => Effect.Effect<void, AuthSessionRepositoryError>;
+    readonly renewWorker: (
+      input: RenewWorkerAuthSessionInput,
+    ) => Effect.Effect<boolean, AuthSessionRepositoryError>;
     readonly getById: (
       input: GetAuthSessionByIdInput,
     ) => Effect.Effect<Option.Option<AuthSessionRecord>, AuthSessionRepositoryError>;
@@ -293,6 +308,23 @@ export const make = Effect.gen(function* () {
       `,
   });
 
+  const renewWorkerSessionRows = SqlSchema.findAll({
+    Request: RenewWorkerAuthSessionInput,
+    Result: Schema.Struct({ sessionId: AuthSessionId }),
+    execute: (input) => sql`
+      UPDATE auth_sessions
+      SET expires_at = ${input.expiresAt}
+      WHERE session_id = ${input.sessionId}
+        AND subject = ${input.subject}
+        AND method = ${input.method}
+        AND scopes = ${JSON.stringify(input.scopes)}
+        AND client_label = ${input.label}
+        AND issued_at = ${input.issuedAt}
+        AND revoked_at IS NULL
+      RETURNING session_id AS "sessionId"
+    `,
+  });
+
   const listActiveSessionRows = SqlSchema.findAll({
     Request: ListActiveAuthSessionsInput,
     Result: AuthSessionRawDbRow,
@@ -416,6 +448,18 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const renewWorker: AuthSessionRepository["Service"]["renewWorker"] = (input) =>
+    renewWorkerSessionRows(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "AuthSessionRepository.renewWorker:query",
+          "AuthSessionRepository.renewWorker:encodeRequest",
+          { sessionId: input.sessionId },
+        ),
+      ),
+      Effect.map((rows) => rows.length === 1),
+    );
+
   const getById: AuthSessionRepository["Service"]["getById"] = (input) =>
     getSessionRowById(input).pipe(
       Effect.mapError(
@@ -517,6 +561,7 @@ export const make = Effect.gen(function* () {
     create,
     createReplacingActive,
     createIfAbsent,
+    renewWorker,
     getById,
     listActive,
     revoke,

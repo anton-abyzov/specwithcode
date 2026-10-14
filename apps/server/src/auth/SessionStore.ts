@@ -1,5 +1,9 @@
 import {
   AuthSessionId,
+  AuthOrchestrationReadScope,
+  AuthOrchestrationOperateScope,
+  type AuthWorkerGrantRenewalRequest,
+  type AuthWorkerGrantRenewalResult,
   AuthAdministrativeScopes,
   AuthStandardClientScopes,
   AuthEnvironmentScopes,
@@ -19,6 +23,7 @@ import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
 
@@ -365,6 +370,15 @@ export const SessionCredentialError = Schema.Union([
 ]);
 export type SessionCredentialError = typeof SessionCredentialError.Type;
 
+export class WorkerGrantRenewalError extends Schema.TaggedError<WorkerGrantRenewalError>()(
+  "WorkerGrantRenewalError",
+  { code: Schema.Literals(["grant_invalid", "grant_missing", "grant_revoked"]) },
+) {
+  override get message(): string {
+    return "The original worker grant cannot be renewed.";
+  }
+}
+
 export class SessionStore extends Context.Service<
   SessionStore,
   {
@@ -386,6 +400,12 @@ export class SessionStore extends Context.Service<
       /** Replace only this session, of the same method, in the issuance transaction. */
       readonly replaceSessionId?: AuthSessionId;
     }) => Effect.Effect<IssuedSession, SessionCredentialInternalError>;
+    readonly renewWorkerGrant: (
+      input: AuthWorkerGrantRenewalRequest,
+    ) => Effect.Effect<
+      AuthWorkerGrantRenewalResult,
+      WorkerGrantRenewalError | SessionCredentialInternalError
+    >;
     readonly verify: (token: string) => Effect.Effect<VerifiedSession, SessionCredentialError>;
     readonly issueWebSocketToken: (
       sessionId: AuthSessionId,
@@ -495,6 +515,7 @@ export const make = Effect.gen(function* () {
   const signingSecret = yield* secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32);
   const connectedSessionsRef = yield* Ref.make(new Map<AuthSessionId, number>());
   const changesPubSub = yield* PubSub.unbounded<SessionCredentialChange>();
+  const credentialChangesLock = yield* Semaphore.make(1);
   const cookieInput = {
     mode: serverConfig.mode,
     port: serverConfig.port,
@@ -537,11 +558,16 @@ export const make = Effect.gen(function* () {
       clientSession,
     }).pipe(Effect.asVoid);
 
-  const emitRemoved = (sessionId: AuthSessionId) =>
+  const publishRemoved = (sessionId: AuthSessionId) =>
     PubSub.publish(changesPubSub, {
       type: "clientRemoved",
       sessionId,
     }).pipe(Effect.asVoid);
+
+  // A revoke may commit while renewal is reloading a row. Its removal event
+  // must follow that reload's publication, so a stale snapshot cannot win.
+  const emitRemoved = (sessionId: AuthSessionId) =>
+    credentialChangesLock.withPermits(1)(publishRemoved(sessionId));
 
   const loadActiveSession = (sessionId: AuthSessionId) =>
     Effect.gen(function* () {
@@ -859,6 +885,115 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  // This path accepts expiry only for renewal. Normal verify() remains strict.
+  const renewWorkerGrant: SessionStore["Service"]["renewWorkerGrant"] = Effect.fn(
+    "SessionStore.renewWorkerGrant",
+  )(function* (input) {
+    const invalid = () => new WorkerGrantRenewalError({ code: "grant_invalid" });
+    const label = `SpecWithCode workers · ${input.coordinatorEnvironmentId}`;
+    if (input.environmentId !== cookieInput.environmentId || label.length > 100) {
+      return yield* invalid();
+    }
+    const [payload, signature, extra] = input.accessToken.split(".");
+    if (
+      !payload ||
+      !signature ||
+      extra !== undefined ||
+      !timingSafeEqualBase64Url(signature, signPayload(payload, signingSecret))
+    ) {
+      return yield* invalid();
+    }
+    const claims = yield* decodeSessionClaims(base64UrlDecodeUtf8(payload)).pipe(
+      Effect.mapError(invalid),
+    );
+    const issuedAt = DateTime.make(claims.iat);
+    if (
+      claims.sub !== "mcp-client" ||
+      claims.method !== "bearer-access-token" ||
+      claims.jkt !== undefined ||
+      claims.rtc === undefined ||
+      claims.scopes.length !== 2 ||
+      !claims.scopes.includes(AuthOrchestrationReadScope) ||
+      !claims.scopes.includes(AuthOrchestrationOperateScope) ||
+      !Number.isFinite(claims.iat) ||
+      !Number.isFinite(claims.exp) ||
+      Option.isNone(issuedAt) ||
+      Option.isNone(DateTime.make(claims.exp)) ||
+      claims.exp <= claims.iat
+    ) {
+      return yield* invalid();
+    }
+    const getOriginal = () =>
+      authSessions.getById({ sessionId: claims.sid }).pipe(
+        Effect.mapError(
+          (cause) => new SessionCredentialVerificationError({ sessionId: claims.sid, cause }),
+        ),
+        Effect.flatMap((row) =>
+          Option.isNone(row)
+            ? Effect.fail(new WorkerGrantRenewalError({ code: "grant_missing" }))
+            : row.value.revokedAt !== null
+              ? Effect.fail(new WorkerGrantRenewalError({ code: "grant_revoked" }))
+              : Effect.succeed(row.value),
+        ),
+      );
+    const original = yield* getOriginal();
+    if (
+      original.subject !== claims.sub ||
+      original.method !== claims.method ||
+      original.client.label !== label ||
+      original.issuedAt.epochMilliseconds !== claims.iat ||
+      original.scopes.length !== claims.scopes.length ||
+      original.scopes.some((scope, index) => scope !== claims.scopes[index])
+    ) {
+      return yield* invalid();
+    }
+    const now = yield* DateTime.now;
+    const expiresAt = DateTime.toUtc(
+      DateTime.add(now, { milliseconds: Duration.toMillis(DEFAULT_SESSION_TTL) }),
+    );
+    const encodedPayload = yield* encodeClaims({
+      ...claims,
+      exp: expiresAt.epochMilliseconds,
+    }).pipe(
+      Effect.map(base64UrlEncode),
+      Effect.mapError((cause) => new SessionCredentialIssueError({ sessionId: claims.sid, cause })),
+    );
+    // One conditional UPDATE serializes against revoke: never insert, replace or clear a tombstone.
+    const renewed = yield* authSessions
+      .renewWorker({
+        sessionId: claims.sid,
+        subject: "mcp-client",
+        method: "bearer-access-token",
+        scopes: claims.scopes,
+        label,
+        issuedAt: DateTime.toUtc(issuedAt.value),
+        expiresAt,
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) => new SessionCredentialIssueError({ sessionId: claims.sid, cause }),
+        ),
+      );
+    if (!renewed) {
+      yield* getOriginal();
+      return yield* invalid();
+    }
+    yield* credentialChangesLock.withPermits(1)(
+      loadActiveSession(claims.sid).pipe(
+        Effect.mapError(
+          (cause) => new SessionCredentialVerificationError({ sessionId: claims.sid, cause }),
+        ),
+        Effect.flatMap((active) =>
+          Option.isSome(active) ? emitUpsert(active.value) : publishRemoved(claims.sid),
+        ),
+      ),
+    );
+    return {
+      accessToken: `${encodedPayload}.${signPayload(encodedPayload, signingSecret)}`,
+      expiresAt,
+    };
+  });
+
   const encodeWsClaims = Schema.encodeEffect(Schema.fromJsonString(WebSocketClaims));
   const issueWebSocketToken: SessionStore["Service"]["issueWebSocketToken"] = Effect.fn(
     "SessionStore.issueWebSocketToken",
@@ -1052,6 +1187,7 @@ export const make = Effect.gen(function* () {
     legacyCookieName,
     issue,
     verify,
+    renewWorkerGrant,
     issueWebSocketToken,
     verifyWebSocketToken,
     listActive,

@@ -263,12 +263,16 @@ class InstallNow(AgentCase):
                                 cwd=str(installed), env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 timeout=60)
         self.assertEqual(result.stdout.decode().strip(), str(sibling), result.stderr.decode())
-        # A missing sibling is restored by the next install, before the agent is replaced.
+        # Missing modules are restored before replacing the agent, including the new recovery policy.
+        recovery = installed / 'update_agent_recovery.py'
+        self.assertEqual(recovery.read_bytes(), (HERE / recovery.name).read_bytes())
+        recovery.unlink()
         sibling.unlink()
         with mock.patch.object(update_agent, 'launchctl', return_value=0), \
                 mock.patch.object(update_agent, 'current_uid', return_value=501):
             self.assertEqual(self.run_agent('--install-launch-agent'), 0)
         self.assertTrue(sibling.is_file())
+        self.assertEqual(recovery.read_bytes(), (HERE / recovery.name).read_bytes())
 
 
 class BoundRequest(AgentCase):
