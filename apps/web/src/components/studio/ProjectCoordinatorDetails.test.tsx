@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import * as DateTime from "effect/DateTime";
@@ -9,6 +9,7 @@ import { ProjectCoordinatorDetails } from "./ProjectCoordinatorDetails";
 const native = vi.hoisted(() => ({
   props: null as Record<string, unknown> | null,
   answer: vi.fn(),
+  unmount: vi.fn(),
   items: [] as unknown[],
   detail: vi.fn(() => ({ data: undefined as unknown, isPending: false, error: null })),
 }));
@@ -27,6 +28,7 @@ vi.mock("../../state/entities", () => ({
 vi.mock("../ChatView", () => ({
   default: (props: Record<string, unknown>) => {
     native.props = props;
+    useEffect(() => () => native.unmount(props.threadId), []);
     return <button onClick={native.answer}>Answer native question</button>;
   },
 }));
@@ -164,4 +166,21 @@ it("fetches withheld tool output lazily using the exact host, thread, item, and 
     revision: "2026-10-13T12:00:00.000Z",
   });
   expect(item.querySelector('[aria-label="Output"]')!.textContent).toBe("Complete file content");
+});
+
+it("remounts request controls when the coordinator scope changes", async () => {
+  await mount();
+  await act(async () =>
+    root.render(
+      <ProjectCoordinatorDetails
+        environmentId={"host" as never}
+        threadId={"another-coord" as never}
+        routing={{ ...routing, coordinatorThreadId: "another-coord" as never }}
+        onClose={() => root.render(null)}
+      />,
+    ),
+  );
+  expect(native.unmount).toHaveBeenCalledExactlyOnceWith("coord");
+  expect(native.props?.threadId).toBe("another-coord");
+  expect(document.querySelector('[role="dialog"]')).not.toBeNull();
 });

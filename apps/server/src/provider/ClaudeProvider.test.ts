@@ -117,7 +117,7 @@ const checkNative = (
     );
     const { models, ...capabilities } = { ...nativeCapabilities, ...input.capabilities };
     return yield* checkClaudeProviderStatus(
-      Schema.decodeSync(ClaudeSettings)({
+      yield* Schema.decodeEffect(ClaudeSettings)({
         binaryPath: "/synthetic/provider/claude",
         homePath: configDir,
       }),

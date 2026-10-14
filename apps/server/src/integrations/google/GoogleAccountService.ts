@@ -163,7 +163,7 @@ export class GoogleAccountService extends Context.Service<
       fileId: string,
     ) => Effect.Effect<unknown, GoogleAccountError>;
   }
->()("studio/integrations/GoogleAccountService") {}
+>()("specweave-studio/integrations/google/GoogleAccountService") {}
 
 interface PendingSignIn {
   readonly state: string;

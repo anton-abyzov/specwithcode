@@ -78,7 +78,7 @@ export class PreviewAutomationBroker extends Context.Service<
       request: PreviewAutomationInvokeInput,
     ) => Effect.Effect<A, PreviewAutomationError>;
   }
->()("studio/mcp/PreviewAutomationBroker") {}
+>()("specweave-studio/mcp/PreviewAutomationBroker") {}
 
 interface ClientConnection {
   readonly clientId: string;

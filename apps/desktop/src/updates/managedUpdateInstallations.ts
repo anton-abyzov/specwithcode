@@ -163,7 +163,7 @@ export function findManagedUpdateInstallations(
   return found;
 }
 
-/** Exact attached service only: discovery order and display labels are never identity. */
+/** Select a candidate only; live fleet ownership is checked separately before consent. */
 export function selectAttachedManagedInstallation(
   installations: ReadonlyArray<ManagedLocalInstallation>,
   service: AttachedLocalService,
@@ -178,7 +178,8 @@ export function selectAttachedManagedInstallation(
     installation === undefined ||
     target.environmentId !== service.descriptor.environmentId ||
     service.descriptor.platform.os !== "darwin" ||
-    !service.runtime.serviceManaged ||
+    !Number.isInteger(service.runtime.pid) ||
+    service.runtime.pid <= 0 ||
     service.runtime.port !== installation.port ||
     service.runtime.origin !== `http://127.0.0.1:${installation.port}` ||
     service.httpBaseUrl.origin !== service.runtime.origin ||
@@ -190,6 +191,100 @@ export function selectAttachedManagedInstallation(
   )
     throw new ManagedUpdateError({ code: "binding-changed" });
   return installation;
+}
+
+/** Read bounded owned metadata, never credentials or the account database. */
+function readOwnedManagedMetadata(
+  path: string,
+  owner: ManagedInstallationOwner,
+  limit: number,
+): string {
+  if (!isOwnedManagedPath(path, owner)) throw new ManagedUpdateError({ code: "binding-changed" });
+  const fd = FS.openSync(
+    path,
+    FS.constants.O_RDONLY | FS.constants.O_NOFOLLOW | FS.constants.O_NONBLOCK,
+  );
+  try {
+    const info = FS.fstatSync(fd);
+    if (
+      !info.isFile() ||
+      info.uid !== owner.uid ||
+      info.nlink !== 1 ||
+      (info.mode & 0o022) !== 0 ||
+      info.size > limit
+    )
+      throw new ManagedUpdateError({ code: "binding-changed" });
+    const bytes = Buffer.alloc(limit + 1);
+    const count = FS.readSync(fd, bytes, 0, bytes.length, 0);
+    if (count > limit) throw new ManagedUpdateError({ code: "binding-changed" });
+    return bytes.toString("utf8", 0, count);
+  } finally {
+    FS.closeSync(fd);
+  }
+}
+
+/**
+ * Fleet launchd services run bin.mjs directly, so the Node IPC launcher's
+ * serviceManaged flag is unrelated to their ownership. Bind consent to the
+ * current owned runtime, environment and loaded launchd job instead. A cached
+ * desktop attachment from before a service restart must fail closed.
+ */
+export function validateAttachedManagedRuntime(
+  installation: ManagedLocalInstallation,
+  service: AttachedLocalService,
+  owner: ManagedInstallationOwner,
+): void {
+  try {
+    const runtimePath = Path.join(installation.stateDir, "server-runtime.json");
+    const environmentPath = Path.join(installation.stateDir, "environment-id");
+    const readBinding = () => {
+      const runtime = JSON.parse(readOwnedManagedMetadata(runtimePath, owner, 64 * 1024));
+      const environmentId = readOwnedManagedMetadata(environmentPath, owner, 2048).trim();
+      if (
+        runtime.pid !== service.runtime.pid ||
+        runtime.port !== installation.port ||
+        runtime.origin !== service.runtime.origin ||
+        environmentId !== service.descriptor.environmentId
+      )
+        throw new ManagedUpdateError({ code: "binding-changed" });
+      return JSON.stringify([runtime.pid, runtime.port, runtime.origin, environmentId]);
+    };
+    const initial = readBinding();
+    const label = `com.specweave.studio.${installation.installationId}`;
+    const plist = Path.join(owner.homeDirectory, "Library", "LaunchAgents", `${label}.plist`);
+    // The loaded job must refer to this owner's regular, non-linked LaunchAgent.
+    readOwnedManagedMetadata(plist, owner, 64 * 1024);
+    const options: ChildProcess.ExecFileSyncOptionsWithStringEncoding = {
+      encoding: "utf8",
+      timeout: 2500,
+      maxBuffer: 128 * 1024,
+      stdio: ["ignore", "pipe", "pipe"],
+    };
+    const job = ChildProcess.execFileSync(
+      "/bin/launchctl",
+      ["print", `gui/${owner.uid}/${label}`],
+      options,
+    );
+    const pid = /^\s*pid = (\d+)\s*$/m.exec(job);
+    const loadedPath = /^\s*path = (.+)$/m.exec(job)?.[1]?.trim();
+    const uid = ChildProcess.execFileSync(
+      "/bin/ps",
+      ["-p", String(service.runtime.pid), "-o", "uid="],
+      options,
+    ).trim();
+    if (
+      !pid ||
+      Number(pid[1]) !== service.runtime.pid ||
+      !/^\s*state = running\s*$/m.test(job) ||
+      loadedPath !== plist ||
+      uid !== String(owner.uid) ||
+      readBinding() !== initial
+    )
+      throw new ManagedUpdateError({ code: "binding-changed" });
+  } catch {
+    // Do not expose local paths or command stderr to the renderer.
+    throw new ManagedUpdateError({ code: "binding-changed" });
+  }
 }
 
 export interface ManagedUpdateControllerIdentity {

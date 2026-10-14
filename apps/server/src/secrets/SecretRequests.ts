@@ -84,7 +84,7 @@ export class SecretRequests extends Context.Service<
       readonly projectId: ProjectId;
     }) => Effect.Effect<string, SecretRequestError>;
   }
->()("studio/secrets/SecretRequests") {}
+>()("specweave-studio/secrets/SecretRequests") {}
 
 const make = Effect.gen(function* () {
   const store = yield* ServerSecretStore.ServerSecretStore;

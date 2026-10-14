@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
@@ -74,9 +75,9 @@ export async function stdioFixture() {
     }
   };
   const waitUntil = async (predicate: () => Promise<boolean>) => {
-    const deadline = Date.now() + 6_000;
+    const deadline = DateTime.toEpochMillis(DateTime.nowUnsafe()) + 6_000;
     while (!(await predicate())) {
-      if (Date.now() >= deadline) throw new Error("Owned fixture did not reach expected state");
+      if (DateTime.toEpochMillis(DateTime.nowUnsafe()) >= deadline) throw new Error("Owned fixture did not reach expected state");
       await delay(20);
     }
   };

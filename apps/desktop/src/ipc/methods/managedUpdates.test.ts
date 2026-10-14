@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Synthetic receipt and inert helper graph fixtures only.
 import * as FS from "node:fs";
+import * as ChildProcess from "node:child_process";
 import * as OS from "node:os";
 import * as Path from "node:path";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -22,6 +23,13 @@ import {
   resolveManagedUpdateConsentInstallation,
   type ManagedUpdateConsentAdapter,
 } from "./managedUpdates.ts";
+
+vi.mock("node:child_process", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:child_process")>()),
+  execFileSync: vi.fn(() => {
+    throw new Error("Unexpected live process probe in test");
+  }),
+}));
 
 const input = {
   action: "enroll",
@@ -149,6 +157,12 @@ describe("native managed update consent", () => {
     const ownerSpy = vi
       .spyOn(ManagedInstallations, "managedInstallationOwner")
       .mockReturnValue(owner);
+    const processSpy = vi.spyOn(ChildProcess, "execFileSync").mockImplementation((command) => {
+      if (command === "/bin/launchctl")
+        return `state = running\npid = 7\npath = ${Path.join(home, "Library/LaunchAgents/com.specweave.studio.work-mac.plist")}\n`;
+      if (command === "/bin/ps") return `${owner.uid}\n`;
+      throw new Error("unexpected process probe");
+    });
     try {
       const studioHome = Path.join(home, ".specweave-studio/work-mac");
       const release = Path.join(home, ".local/share/specweave-studio/releases", "a".repeat(20));
@@ -187,6 +201,18 @@ describe("native managed update consent", () => {
       };
       const receiptPath = Path.join(studioHome, "installation.json");
       FS.writeFileSync(receiptPath, JSON.stringify(receipt));
+      FS.mkdirSync(receipt.stateDir, { recursive: true, mode: 0o700 });
+      const runtimePath = Path.join(receipt.stateDir, "server-runtime.json");
+      const environmentPath = Path.join(receipt.stateDir, "environment-id");
+      FS.writeFileSync(
+        runtimePath,
+        JSON.stringify({ pid: 7, port: 8320, origin: "http://127.0.0.1:8320" }),
+        { mode: 0o600 },
+      );
+      FS.writeFileSync(environmentPath, "environment-7", { mode: 0o600 });
+      const plist = Path.join(home, "Library/LaunchAgents/com.specweave.studio.work-mac.plist");
+      FS.mkdirSync(Path.dirname(plist), { recursive: true, mode: 0o700 });
+      FS.writeFileSync(plist, "synthetic LaunchAgent", { mode: 0o600 });
       const environment = {
         homeDirectory: home,
         isDevelopment: false,
@@ -195,7 +221,7 @@ describe("native managed update consent", () => {
       } as unknown as DesktopEnvironment.DesktopEnvironment["Service"];
       const attached = {
         baseDir: studioHome,
-        runtime: { pid: 7, port: 8320, origin: "http://127.0.0.1:8320", serviceManaged: true },
+        runtime: { pid: 7, port: 8320, origin: "http://127.0.0.1:8320", serviceManaged: false },
         descriptor: { environmentId: "environment-7", platform: { os: "darwin", arch: "arm64" } },
         httpBaseUrl: new URL("http://127.0.0.1:8320"),
       } as DesktopLocalService.AttachedLocalService;
@@ -207,6 +233,14 @@ describe("native managed update consent", () => {
       const resolve = () => resolveManagedUpdateConsentInstallation(environment, attached, target);
       expect(resolve().helper).toBe(runtimeHelper);
       expect(resolve().installation.release).toBe(release);
+      const runtimeBefore = FS.readFileSync(runtimePath, "utf8");
+      FS.writeFileSync(
+        runtimePath,
+        JSON.stringify({ pid: 8, port: 8320, origin: "http://127.0.0.1:8320" }),
+      );
+      expect(resolve).toThrow(ManagedUpdateError);
+      FS.writeFileSync(runtimePath, runtimeBefore);
+      expect(resolve().helper).toBe(runtimeHelper);
       expect(FS.existsSync(Path.join(home, ".local/share/specweave-studio/updater"))).toBe(false);
       expect(FS.existsSync(Path.join(studioHome, "updates"))).toBe(false);
       expect(FS.readFileSync(receiptPath, "utf8")).toBe(JSON.stringify(receipt));
@@ -221,6 +255,7 @@ describe("native managed update consent", () => {
       FS.writeFileSync(receiptPath, JSON.stringify({ ...receipt, release: Path.dirname(release) }));
       expect(resolve).toThrow(ManagedUpdateError);
     } finally {
+      processSpy.mockRestore();
       ownerSpy.mockRestore();
       FS.rmSync(root, { recursive: true, force: true });
     }

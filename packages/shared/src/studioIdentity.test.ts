@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it } from "vite-plus/test";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native disk fixtures independently verify bootstrap profile-root selection.
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native disk fixtures independently verify bootstrap profile-root selection.
 import { join } from "node:path";
-import { studioDefaultHome, STUDIO_NAME } from "./studioIdentity";
+import { studioDefaultHome, STUDIO_NAME } from "./studioIdentity.ts";
 const homes: string[] = [];
 const home = () => {
   const dir = mkdtempSync(join(tmpdir(), "specwithcode-home-"));

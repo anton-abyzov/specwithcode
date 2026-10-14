@@ -1,4 +1,6 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Synchronous profile-root selection runs before Effect services are constructed.
 import { existsSync } from "node:fs";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Synchronous profile-root selection runs before Effect services are constructed.
 import { join } from "node:path";
 
 export const STUDIO_NAME = "SpecWithCode";

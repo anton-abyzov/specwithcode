@@ -1,0 +1,8 @@
+@import "../../apps/web/src/index.css";
+@source "../../apps/web/src/components/studio";
+@source "./fixture.tsx";
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+}

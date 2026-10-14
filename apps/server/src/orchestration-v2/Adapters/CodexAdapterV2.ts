@@ -718,11 +718,13 @@ export function buildCodexTurnStartParams(input: {
       baseSandboxPolicy?.type === "workspaceWrite" && input.projectAdditionalDirectories?.length
         ? {
             ...baseSandboxPolicy,
-            writableRoots: [...new Set([
-              ...(baseSandboxPolicy.writableRoots ?? []),
-              ...(input.runtimePolicy.cwd ? [input.runtimePolicy.cwd] : []),
-              ...input.projectAdditionalDirectories,
-            ])],
+            writableRoots: [
+              ...new Set([
+                ...(baseSandboxPolicy.writableRoots ?? []),
+                ...(input.runtimePolicy.cwd ? [input.runtimePolicy.cwd] : []),
+                ...input.projectAdditionalDirectories,
+              ]),
+            ],
           }
         : baseSandboxPolicy;
     const selectedEffort = getModelSelectionStringOptionValue(
@@ -1280,7 +1282,7 @@ export interface CodexAppServerClientFactoryShape {
 export class CodexAppServerClientFactory extends Context.Service<
   CodexAppServerClientFactory,
   CodexAppServerClientFactoryShape
->()("studio/orchestration-v2/Adapters/CodexAdapterV2/CodexAppServerClientFactory") {}
+>()("specweave-studio/orchestration-v2/Adapters/CodexAdapterV2/CodexAppServerClientFactory") {}
 
 /**
  * Config overrides sent with every `thread/start`, `thread/resume` and `thread/fork`.
@@ -3439,7 +3441,10 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
 
         const buildFileChangeArtifacts = (
           context: ActiveCodexTurnContext,
-          item: Extract<CodexSchema.V2ItemCompletedNotification__ThreadItem, { type: "fileChange" }>,
+          item: Extract<
+            CodexSchema.V2ItemCompletedNotification__ThreadItem,
+            { type: "fileChange" }
+          >,
         ) =>
           Effect.gen(function* () {
             fileChangeApprovalGuard.record(context.nativeTurnId, item.id, false);
@@ -3500,7 +3505,10 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
 
         const emitFileChangeArtifacts = (
           context: ActiveCodexTurnContext,
-          item: Extract<CodexSchema.V2ItemCompletedNotification__ThreadItem, { type: "fileChange" }>,
+          item: Extract<
+            CodexSchema.V2ItemCompletedNotification__ThreadItem,
+            { type: "fileChange" }
+          >,
         ) =>
           Effect.gen(function* () {
             const artifacts = yield* buildFileChangeArtifacts(context, item);
@@ -4238,16 +4246,32 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
         yield* client.handleServerNotification("thread/goal/updated", (payload) =>
           Effect.gen(function* () {
             goalsByNativeThread.set(payload.threadId, providerGoalFromCodex(payload.goal));
-            const creditActive = (yield* Ref.get(pendingRootTurns)).get(payload.threadId)?.manualCodexCreditIntent !== undefined ||
-              [...(yield* Ref.get(activeTurns)).values()].some((context) => context.providerThread.nativeThreadRef?.nativeId === payload.threadId && context.input.manualCodexCreditIntent !== undefined);
+            const creditActive =
+              (yield* Ref.get(pendingRootTurns)).get(payload.threadId)?.manualCodexCreditIntent !==
+                undefined ||
+              [...(yield* Ref.get(activeTurns)).values()].some(
+                (context) =>
+                  context.providerThread.nativeThreadRef?.nativeId === payload.threadId &&
+                  context.input.manualCodexCreditIntent !== undefined,
+              );
             if (payload.goal.status === "active" && creditActive) {
               // Do not await a response in the serialized notification handler.
-              yield* client.request("thread/goal/set", { threadId: payload.threadId, status: "paused" }).pipe(
-                Effect.tap((paused) => Effect.sync(() => { goalsByNativeThread.set(payload.threadId, providerGoalFromCodex(paused.goal)); })),
-                Effect.andThen(() => emitGoalUpdate(payload.threadId)),
-                Effect.catchCause((cause) => Effect.logError("Could not pause a goal activated during a credit request", { cause })),
-                Effect.forkIn(scope, { startImmediately: true }),
-              );
+              yield* client
+                .request("thread/goal/set", { threadId: payload.threadId, status: "paused" })
+                .pipe(
+                  Effect.tap((paused) =>
+                    Effect.sync(() => {
+                      goalsByNativeThread.set(payload.threadId, providerGoalFromCodex(paused.goal));
+                    }),
+                  ),
+                  Effect.andThen(() => emitGoalUpdate(payload.threadId)),
+                  Effect.catchCause((cause) =>
+                    Effect.logError("Could not pause a goal activated during a credit request", {
+                      cause,
+                    }),
+                  ),
+                  Effect.forkIn(scope, { startImmediately: true }),
+                );
               return;
             }
             yield* emitGoalUpdate(payload.threadId);
@@ -4902,7 +4926,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
 
             const fileChangeRevision = fileChangeApprovalGuard.revision(payload);
             if (fileChangeRevision === null) {
-              return { decision: "decline" } satisfies CodexSchema.FileChangeRequestApprovalResponse;
+              return {
+                decision: "decline",
+              } satisfies CodexSchema.FileChangeRequestApprovalResponse;
             }
 
             const artifacts = yield* buildApprovalRequestArtifacts({
@@ -5995,11 +6021,33 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           Effect.gen(function* () {
             const threadId = yield* getNativeThreadId(turnInput.providerThread);
             if (turnInput.manualCodexCreditIntent !== undefined) {
-              if (adapterOptions.resolveRuntime !== undefined || turnInput.restartContinuationOfRunId !== undefined || /^\s*\/(?:goal|compact)(?:\s|$)/i.test(turnInput.message.text)) return yield* Effect.fail("Credits require one direct native non-goal request.");
+              if (
+                adapterOptions.resolveRuntime !== undefined ||
+                turnInput.restartContinuationOfRunId !== undefined ||
+                /^\s*\/(?:goal|compact)(?:\s|$)/i.test(turnInput.message.text)
+              )
+                return yield* Effect.fail("Credits require one direct native non-goal request.");
               const currentGoal = yield* client.request("thread/goal/get", { threadId });
-              if (currentGoal.goal?.status === "active" || goalsByNativeThread.get(threadId)?.status === "active" || turnInput.providerThread.goal?.status === "active") return yield* Effect.fail("Pause the active goal before submitting one request using credits.");
+              if (
+                currentGoal.goal?.status === "active" ||
+                goalsByNativeThread.get(threadId)?.status === "active" ||
+                turnInput.providerThread.goal?.status === "active"
+              )
+                return yield* Effect.fail(
+                  "Pause the active goal before submitting one request using credits.",
+                );
               const residentAllowance = yield* client.request("account/rateLimits/read", null);
-              if (!residentCreditPermission(turnInput.manualCodexCreditIntent, residentAllowance, yield* Clock.currentTimeMillis, turnInput.modelSelection)) return yield* Effect.fail("The active native session account or credit permission changed. Submit again for the current account.");
+              if (
+                !residentCreditPermission(
+                  turnInput.manualCodexCreditIntent,
+                  residentAllowance,
+                  yield* Clock.currentTimeMillis,
+                  turnInput.modelSelection,
+                )
+              )
+                return yield* Effect.fail(
+                  "The active native session account or credit permission changed. Submit again for the current account.",
+                );
             }
             if (turnInput.projectContext)
               projectContextByNativeThread.set(threadId, turnInput.projectContext);
@@ -6016,7 +6064,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,
               deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
               omitServiceTier: adapterOptions.resolveRuntime !== undefined,
-              ...(turnInput.manualCodexCreditIntent === undefined ? {} : { manualCodexCreditIntent: turnInput.manualCodexCreditIntent }),
+              ...(turnInput.manualCodexCreditIntent === undefined
+                ? {}
+                : { manualCodexCreditIntent: turnInput.manualCodexCreditIntent }),
             });
             const commandContext = turnInput.projectContext?.nativeCommandText;
             const turnStartParams = commandContext
@@ -6325,7 +6375,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             ),
           compactThread: (turnInput) =>
             Effect.gen(function* () {
-              if (turnInput.manualCodexCreditIntent !== undefined) return yield* Effect.fail("Credit submissions cannot compact a native thread.");
+              if (turnInput.manualCodexCreditIntent !== undefined)
+                return yield* Effect.fail("Credit submissions cannot compact a native thread.");
               const threadId = yield* getNativeThreadId(turnInput.providerThread);
               yield* Ref.update(pendingRootTurns, (current) =>
                 new Map(current).set(threadId, turnInput),
@@ -6389,7 +6440,16 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               turnInput.restartContinuationOfRunId === undefined
                 ? parseCodexGoalCommand(turnInput.message.text)
                 : null;
-            if (goalCommand !== null && turnInput.manualCodexCreditIntent !== undefined) return Effect.fail(new ProviderAdapterTurnStartError({ driver: CODEX_PROVIDER, threadId: turnInput.threadId, providerThreadId: turnInput.providerThread.id, runId: turnInput.runId, cause: "Credit submissions cannot start or control goals." }));
+            if (goalCommand !== null && turnInput.manualCodexCreditIntent !== undefined)
+              return Effect.fail(
+                new ProviderAdapterTurnStartError({
+                  driver: CODEX_PROVIDER,
+                  threadId: turnInput.threadId,
+                  providerThreadId: turnInput.providerThread.id,
+                  runId: turnInput.runId,
+                  cause: "Credit submissions cannot start or control goals.",
+                }),
+              );
             if (goalCommand !== null) return runGoalCommand(turnInput, goalCommand);
             return Effect.gen(function* () {
               yield* startNativeTurn(

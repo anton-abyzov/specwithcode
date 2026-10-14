@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 import { ProviderDriverKind, ProviderInstanceId, type ServerProviderUsageWindow, type ServerProviderUsageLimits } from "@specweave-studio/contracts";
 import { HostProcessEnvironment } from "@specweave-studio/shared/hostProcess";
@@ -16,7 +17,7 @@ import { provider, rawAccount, settings } from "./fixtures.ts";
 
 const now = Date.parse("2026-10-09T08:00:00Z");
 const emptyQuota = { window: null, weekly: null, observedAt: null, expiresAt: null, source: null };
-const oldFailure = new Date(now - 2 * 86400000).toISOString();
+const oldFailure = DateTime.formatIso(DateTime.makeUnsafe(now - 2 * 86400000));
 const resolveUsageLimitsAfterProbe = (input: Parameters<typeof resolveProviderUsageLimitsAfterProbe>[0]) =>
   resolveProviderUsageLimitsAfterProbe({ ...input, driver: ProviderDriverKind.make("claudeAgent") });
 const claude = () => provider("claudeAgent", "claudeAgent", now);
@@ -110,8 +111,8 @@ describe("Claude failure observation expiry", () => {
     { unavailable: { reason: "unsupported", invalidResponse: true } },
     { windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent: 0 }] },
     { checkedAt: "invalid" }, { checkedAt: "" },
-    { checkedAt: new Date(now - CAPACITY_MAX_AGE_MS - 1).toISOString() },
-    { checkedAt: new Date(now + 5001).toISOString() },
+    { checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now - CAPACITY_MAX_AGE_MS - 1)) },
+    { checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now + 5001)) },
     { ordinaryUsageAllowed: false }, { ordinaryUsageAllowed: true }, { ordinaryUsageAllowed: null },
     { spendControlReached: true }, { spendControlReached: false },
     { rateLimitReachedType: "usage_limit_reached" },
@@ -126,8 +127,8 @@ describe("Claude failure observation expiry", () => {
 
   it.each([
     { lastQuotaErrorAt: claude().checkedAt },
-    { lastQuotaErrorAt: new Date(now - CAPACITY_MAX_AGE_MS).toISOString() },
-    { lastQuotaErrorAt: new Date(now + 1000).toISOString() },
+    { lastQuotaErrorAt: DateTime.formatIso(DateTime.makeUnsafe(now - CAPACITY_MAX_AGE_MS)) },
+    { lastQuotaErrorAt: DateTime.formatIso(DateTime.makeUnsafe(now + 1000)) },
     { lastQuotaErrorAt: "invalid" }, { lastQuotaErrorAt: undefined },
     { quota: { ...emptyQuota, observedAt: oldFailure } },
     { quota: { ...emptyQuota, source: "native-app-server" } },
@@ -149,7 +150,7 @@ describe("Claude failure observation expiry", () => {
     for (const change of [
       { auth: { status: "unknown" as const } },
       { auth: { status: "authenticated" as const, type: "api-key" } },
-      { checkedAt: new Date(now - CAPACITY_MAX_AGE_MS - 1).toISOString() },
+      { checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now - CAPACITY_MAX_AGE_MS - 1)) },
       { instanceId: ProviderInstanceId.make("claude-other") },
     ]) {
       const native = { ...claude(), usageLimits: unsupported(), ...change };
@@ -193,9 +194,10 @@ describe("Claude failure observation expiry", () => {
   });
 
   it.each([
-    ["fresh", new Date(now - 1000).toISOString()],
-    ["at the validity boundary", new Date(now - CAPACITY_MAX_AGE_MS).toISOString()],
-    ["future", new Date(now + 86400000).toISOString()],
+    ["fresh", DateTime.formatIso(DateTime.makeUnsafe(now - 1000))],
+    ["at the validity boundary",
+      DateTime.formatIso(DateTime.makeUnsafe(now - CAPACITY_MAX_AGE_MS))],
+    ["future", DateTime.formatIso(DateTime.makeUnsafe(now + 86400000))],
     ["malformed", "invalid"],
     ["missing", undefined],
   ])("keeps %s failure evidence blocked", async (_, lastQuotaErrorAt) => {
@@ -206,19 +208,19 @@ describe("Claude failure observation expiry", () => {
   });
 
   it("expires only after the existing observation validity period", () => {
-    const account = { ...record(), lastQuotaErrorAt: new Date(now - CAPACITY_MAX_AGE_MS - 1).toISOString() };
+    const account = { ...record(), lastQuotaErrorAt: DateTime.formatIso(DateTime.makeUnsafe(now - CAPACITY_MAX_AGE_MS - 1)) };
     expect(snapshot(account).accounts[0]?.status).toBe("unknown");
   });
 
   const currentNativeWindows = () => ({
     ...claude(),
     usageLimits: {
-      checkedAt: new Date(now).toISOString(),
-      nativeAllowanceObservedAt: new Date(now).toISOString(),
+      checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
+      nativeAllowanceObservedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
       windows: [
-        { id: "five_hour", kind: "session" as const, label: "Session", usedPercent: 2, resetsAt: new Date(now + 3600000).toISOString() },
-        { id: "seven_day", kind: "weekly" as const, label: "Weekly", usedPercent: 2, resetsAt: new Date(now + 86400000).toISOString() },
-        { id: "seven_day_example", kind: "weekly" as const, label: "Scoped", usedPercent: 3, resetsAt: new Date(now + 86400000).toISOString() },
+        { id: "five_hour", kind: "session" as const, label: "Session", usedPercent: 2, resetsAt: DateTime.formatIso(DateTime.makeUnsafe(now + 3600000)) },
+        { id: "seven_day", kind: "weekly" as const, label: "Weekly", usedPercent: 2, resetsAt: DateTime.formatIso(DateTime.makeUnsafe(now + 86400000)) },
+        { id: "seven_day_example", kind: "weekly" as const, label: "Scoped", usedPercent: 3, resetsAt: DateTime.formatIso(DateTime.makeUnsafe(now + 86400000)) },
       ] as Array<ServerProviderUsageWindow>,
     },
   });
@@ -377,19 +379,19 @@ describe("Claude failure observation expiry", () => {
 
   it.each(["supported", "unsupported"])("fences a streamed rejection from %s usage until a strictly later complete valid native read", async (initial) => {
     const probe = (at: number, utilization: number | null = 0) => claudeUsageResponseToLimits({
-      checkedAt: new Date(at).toISOString(),
+      checkedAt: DateTime.formatIso(DateTime.makeUnsafe(at)),
       response: { rate_limits_available: true, rate_limits: {
         five_hour: { utilization, resets_at: null },
         seven_day: { utilization: 2, resets_at: "2026-10-10T08:00:00Z" },
       } },
     }).limits;
     const healthy = initial === "supported" ? probe(now - 2000) : claudeUsageResponseToLimits({
-      checkedAt: new Date(now - 2000).toISOString(),
+      checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now - 2000)),
       response: { rate_limits_available: false, rate_limits: null },
     }).limits;
     const update = claudeRateLimitEventToUpdate({ status: "rejected", rateLimitType: "five_hour" }, { overageIncluded: undefined });
     expect(update?.ordinaryUsageAllowed).toBe(false);
-    const denied = applyUsageLimitsUpdate({ previous: healthy, update: update!, checkedAt: new Date(now - 1000).toISOString() });
+    const denied = applyUsageLimitsUpdate({ previous: healthy, update: update!, checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now - 1000)) });
     await expect(start(record(), { ...claude(), usageLimits: denied })).rejects.toThrow(/no remaining permitted usage/);
     for (const companion of ["unavailable", "invalid"] as const) {
       await expect(start(record(), { ...claude(), usageLimits: denied }, companion)).rejects.toThrow(/no remaining permitted usage/);
@@ -420,7 +422,7 @@ describe("Claude failure observation expiry", () => {
   });
 
   it.each(["probeFailed", "unsupported"] as const)("retains a Claude refusal beyond cache freshness after %s and positive sparse usage", async (reason) => {
-    const later = now + 20 * 60000, checkedAt = new Date(later).toISOString();
+    const later = now + 20 * 60000, checkedAt = DateTime.formatIso(DateTime.makeUnsafe(later));
     const rejected = claudeRateLimitEventToUpdate({ status: "rejected", rateLimitType: "five_hour" }, { overageIncluded: undefined });
     const denied = applyUsageLimitsUpdate({ previous: currentNativeWindows().usageLimits, update: rejected!, checkedAt: claude().checkedAt });
     const failed = resolveUsageLimitsAfterProbe({ published: denied, probed: { checkedAt, windows: [], unavailable: { reason } } });
@@ -444,7 +446,7 @@ describe("Claude failure observation expiry", () => {
   });
 
   it("does not let a sparse update renew a stale complete read for legacy manual retry", async () => {
-    const later = now + 20 * 60000, checkedAt = new Date(later).toISOString();
+    const later = now + 20 * 60000, checkedAt = DateTime.formatIso(DateTime.makeUnsafe(later));
     const probe = (at: string) => claudeUsageResponseToLimits({ checkedAt: at,
       response: { rate_limits_available: true, rate_limits: {
         five_hour: { utilization: 0, resets_at: null },
@@ -485,8 +487,8 @@ describe("Claude failure observation expiry", () => {
   });
 
   it.each([
-    ["stale", { checkedAt: new Date(now - CAPACITY_MAX_AGE_MS - 1).toISOString() }],
-    ["future", { checkedAt: new Date(now + 86400000).toISOString() }],
+    ["stale", { checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now - CAPACITY_MAX_AGE_MS - 1)) }],
+    ["future", { checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now + 86400000)) }],
     ["malformed time", { checkedAt: "invalid" }],
     ["unavailable", { unavailable: { reason: "probeFailed" as const } }],
   ])("keeps %s native usage from clearing an old failure", async (_, change) => {
@@ -496,7 +498,9 @@ describe("Claude failure observation expiry", () => {
     await expect(start(record(), changed)).rejects.toThrow(/no remaining permitted usage/);
   });
 
-  it.each([undefined, "invalid", new Date(now - CAPACITY_MAX_AGE_MS - 1).toISOString(), new Date(now + 86400000).toISOString()])("requires a fresh complete witness instead of fresh sparse checkedAt: %s", async (nativeAllowanceObservedAt) => {
+  it.each([undefined, "invalid",
+    DateTime.formatIso(DateTime.makeUnsafe(now - CAPACITY_MAX_AGE_MS - 1)),
+    DateTime.formatIso(DateTime.makeUnsafe(now + 86400000))])("requires a fresh complete witness instead of fresh sparse checkedAt: %s", async (nativeAllowanceObservedAt) => {
     const native = currentNativeWindows();
     const changed = { ...native, usageLimits: { ...native.usageLimits, nativeAllowanceObservedAt } };
     expect(snapshot(record(), changed).accounts[0]?.status).toBe("exhausted");
@@ -508,12 +512,12 @@ describe("Claude failure observation expiry", () => {
     ["negative", { usedPercent: -1 }],
     ["over range", { usedPercent: 101 }],
     ["nonfinite", { usedPercent: NaN }],
-    ["expired reset", { resetsAt: new Date(now).toISOString() }],
+    ["expired reset", { resetsAt: DateTime.formatIso(DateTime.makeUnsafe(now)) }],
     ["invalid reset", { resetsAt: "invalid" }],
     ["missing reset", { resetsAt: undefined }],
   ])("preserves denial when any scoped window is %s", (_, change) => {
     const native = currentNativeWindows();
-    native.usageLimits.windows[2] = { ...native.usageLimits.windows[2]!, ...change } as typeof native.usageLimits.windows[number];
+    native.usageLimits.windows[2] = { ...native.usageLimits.windows[2]!, ...change } as (typeof native.usageLimits.windows)[number];
     expect(snapshot(record(), native).accounts[0]?.status).toBe("exhausted");
   });
 
@@ -526,15 +530,15 @@ describe("Claude failure observation expiry", () => {
     const duplicate = currentNativeWindows();
     duplicate.usageLimits.windows.push(duplicate.usageLimits.windows[0]!);
     expect(snapshot(record(), duplicate).accounts[0]?.status).toBe("exhausted");
-    expect(snapshot({ ...record(), lastQuotaErrorAt: new Date(now - 1000).toISOString() }, currentNativeWindows()).accounts[0]?.status).toBe("exhausted");
+    expect(snapshot({ ...record(), lastQuotaErrorAt: DateTime.formatIso(DateTime.makeUnsafe(now - 1000)) }, currentNativeWindows()).accounts[0]?.status).toBe("exhausted");
     expect(snapshot({ ...record(), quota: { ...emptyQuota, source: "native-app-server" } }, currentNativeWindows()).accounts[0]?.status).toBe("exhausted");
   });
 
   it.each([
     { window: { usedPercent: 100, resetsAt: now / 1000 + 3600 } },
     { weekly: { usedPercent: 100, resetsAt: now / 1000 + 86400 } },
-    { observedAt: new Date(now).toISOString() },
-    { expiresAt: new Date(now + 3600000).toISOString() },
+    { observedAt: DateTime.formatIso(DateTime.makeUnsafe(now)) },
+    { expiresAt: DateTime.formatIso(DateTime.makeUnsafe(now + 3600000)) },
     { source: "native-app-server" },
     { windows: [{ id: "primary", usedPercent: 100 }] },
     { source: "native-app-server", ordinaryUsageAllowed: false },
@@ -556,11 +560,11 @@ describe("Claude failure observation expiry", () => {
     const base = claude();
     const native: ReturnType<typeof claude> = { ...base, usageLimits: {
       ...base.usageLimits!,
-      windows: [{ id: "primary", kind: "session", label: "Session", usedPercent: 100, resetsAt: new Date(now + 3600000).toISOString() }],
+      windows: [{ id: "primary", kind: "session", label: "Session", usedPercent: 100, resetsAt: DateTime.formatIso(DateTime.makeUnsafe(now + 3600000)) }],
     } };
     expect(snapshot(record(), native).accounts[0]?.status).toBe("exhausted");
     const denied = { ...native, usageLimits: {
-      ...native.usageLimits!, windows: [], ordinaryUsageAllowed: false, nativeDenialObservedAt: new Date(now).toISOString(),
+      ...native.usageLimits!, windows: [], ordinaryUsageAllowed: false, nativeDenialObservedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
     } };
     expect(snapshot(record(), denied).accounts[0]?.status).toBe("exhausted");
   });
@@ -576,7 +580,7 @@ describe("Claude failure observation expiry", () => {
     expect(snapshot(codex, provider("codex", "codex", now)).accounts[0]?.status).toBe("exhausted");
     for (const native of [
       { ...claude(), auth: { status: "unknown" as const } },
-      { ...claude(), checkedAt: new Date(now - CAPACITY_MAX_AGE_MS - 1).toISOString() },
+      { ...claude(), checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now - CAPACITY_MAX_AGE_MS - 1)) },
     ]) {
       expect(snapshot(record(), native).accounts[0]?.status).toBe("exhausted");
       await expect(start(record(), native)).rejects.toThrow(/authorization is unverified/);

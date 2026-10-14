@@ -23,6 +23,8 @@ Free for every developer and team, MIT licensed, no account. You bring your own 
 
 SpecWithCode is not a cloud service: work runs on the machine you choose and stops when it sleeps.
 
+**Settings → Connections** includes a read-only [MCP connections library](docs/connections-library.md) for Codex and Claude Code on each machine. Project **Environment** adds project declarations and overrides alongside Studio-managed tool grants. Configuration is shown separately from unverified authentication and session availability.
+
 ## Install
 
 1. Download [SpecWithCode-arm64.dmg](https://github.com/anton-abyzov/specwithcode/releases/latest/download/SpecWithCode-arm64.dmg), the latest release (all versions are on [Releases](https://github.com/anton-abyzov/specwithcode/releases)). It runs on Apple silicon Macs with macOS 13 or later. Windows and Intel Macs are not built yet.
@@ -37,6 +39,8 @@ More: [install](docs/user/install.md), [first run](docs/user/welcome-wizard.md),
 To connect Copilot, Grok or Gemini, use **Add or manage providers** in the model picker. [Provider setup](docs/studio/copilot-and-grok.md) explains installation, sign-in and model discovery; a connected usage source only reports quota.
 
 ## Use it
+
+The composer’s access selector also controls a provider’s **Allow All** setting. **Full access** enables it; all other access modes disable it. Agent mode and reasoning remain in the model-options menu. If the provider cannot confirm the permission change, the turn stops with an error.
 
 - **Start a thread**: pick a folder, a provider and a model, and talk to the agent. Plans, approvals, steering, queued turns and git checkpoints work as in the agent's own app.
 - **Start a project** when the work is bigger than one thread: give it a goal and let the coordinator hand tasks to workers. See [project orchestration](docs/studio/project-orchestration.md).

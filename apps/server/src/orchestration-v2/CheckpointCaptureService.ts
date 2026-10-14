@@ -43,7 +43,7 @@ export interface CheckpointCaptureServiceV2Shape {
 export class CheckpointCaptureServiceV2 extends Context.Service<
   CheckpointCaptureServiceV2,
   CheckpointCaptureServiceV2Shape
->()("studio/orchestration-v2/CheckpointCaptureService/CheckpointCaptureServiceV2") {}
+>()("specweave-studio/orchestration-v2/CheckpointCaptureService/CheckpointCaptureServiceV2") {}
 
 export const layer: Layer.Layer<
   CheckpointCaptureServiceV2,

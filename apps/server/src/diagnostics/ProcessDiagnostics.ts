@@ -36,7 +36,7 @@ export class ProcessDiagnostics extends Context.Service<
       readonly signal: ServerProcessSignal;
     }) => Effect.Effect<ServerSignalProcessResult>;
   }
->()("studio/diagnostics/ProcessDiagnostics") {}
+>()("specweave-studio/diagnostics/ProcessDiagnostics") {}
 
 function formatElapsed(runTimeMs: number): string {
   const totalSeconds = Math.max(0, Math.floor(runTimeMs / 1_000));
@@ -127,7 +127,9 @@ export const make = Effect.fn("makeProcessDiagnostics")(function* () {
           pid: input.pid,
           signal: input.signal,
           signaled: false,
-          message: Option.some(`Process ${input.pid} is not a signalable Studio backend descendant.`),
+          message: Option.some(
+            `Process ${input.pid} is not a signalable Studio backend descendant.`,
+          ),
         };
       }
       return yield* Effect.try({

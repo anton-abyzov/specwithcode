@@ -260,6 +260,90 @@ describe("service update progress", () => {
     expect(advanceServiceUpdateProgress(done, serviceWaiting)).toBe(done);
   });
 
+  it.each(["error", "manual-required"] as const)(
+    "keeps a verified installation successful when the next check reports %s",
+    (status) => {
+      const progress = { ...requested, requestedAt: 1_000 };
+      const completed = {
+        ...serviceWaiting,
+        status,
+        installedVersion: progress.targetVersion,
+        availableVersion: null,
+        downloadedVersion: null,
+        updatedAt: new Date(3_000).toISOString(),
+        message: "Release discovery failed",
+        lastInstall: {
+          version: "0.2.5",
+          result: "updated" as const,
+          at: new Date(2_000).toISOString(),
+        },
+      };
+      const done = advanceServiceUpdateProgress(progress, completed, 3_000);
+      expect(done).toMatchObject({ phase: "restarting", message: completed.message });
+      expect(serviceUpdateToast(done, false)).toMatchObject({
+        type: "success",
+        title: "Updated to SpecWithCode 0.2.5",
+        action: null,
+      });
+      expect(serviceUpdateToast(done, false).description).toContain(completed.message);
+      expect(canRetryServiceUpdate(done)).toBe(false);
+      expect(advanceServiceUpdateProgress(done, completed, 4_000)).toBe(done);
+    },
+  );
+
+  it("does not turn missing, stale, invalid, future, failed or mismatched receipts into success", () => {
+    const completed = {
+      ...serviceWaiting,
+      status: "error" as const,
+      installedVersion: "0.2.5",
+      updatedAt: new Date(3_000).toISOString(),
+      message: "Verification failed",
+      lastInstall: {
+        version: "0.2.5",
+        result: "updated" as const,
+        at: new Date(2_000).toISOString(),
+      },
+    };
+    const progress = { ...requested, requestedAt: 1_000 };
+    const invalid = [
+      { ...completed, lastInstall: null },
+      { ...completed, installedVersion: "0.2.4" },
+      { ...completed, lastInstall: { ...completed.lastInstall, result: "failed" as const } },
+      { ...completed, lastInstall: { ...completed.lastInstall, version: "0.2.6" } },
+      ...["invalid", new Date(999).toISOString(), new Date(4_000).toISOString()].map((at) => ({
+        ...completed,
+        lastInstall: { ...completed.lastInstall, at },
+      })),
+      { ...completed, updatedAt: new Date(1_500).toISOString() },
+    ];
+    for (const state of invalid) {
+      expect(advanceServiceUpdateProgress(progress, state, 3_000).phase).toBe("failed");
+    }
+  });
+
+  it("requires a new successful receipt when following an update started in another window", () => {
+    const prior = { version: "0.2.5", result: "updated" as const, at: new Date(500).toISOString() };
+    const adopted = {
+      ...startServiceUpdateProgress({ ...serviceWaiting, lastInstall: prior }),
+      phase: "requesting" as const,
+    };
+    const state = {
+      ...serviceWaiting,
+      installedVersion: "0.2.5",
+      status: "error" as const,
+      updatedAt: new Date(3_000).toISOString(),
+      lastInstall: prior,
+    };
+    expect(advanceServiceUpdateProgress(adopted, state, 3_000).phase).toBe("failed");
+    expect(
+      advanceServiceUpdateProgress(
+        adopted,
+        { ...state, lastInstall: { ...prior, at: new Date(2_000).toISOString() } },
+        3_000,
+      ).phase,
+    ).toBe("restarting");
+  });
+
   it("reports an install that was rolled back or never finishes", () => {
     const installing = advanceServiceUpdateProgress(
       requested,

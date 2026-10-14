@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -28,7 +29,7 @@ function codexAuth(accountId: string, email: string, accessToken: string) {
       refresh_token: "r",
       account_id: accountId,
     },
-    last_refresh: new Date(0).toISOString(),
+    last_refresh: DateTime.formatIso(DateTime.makeUnsafe(0)),
   });
 }
 

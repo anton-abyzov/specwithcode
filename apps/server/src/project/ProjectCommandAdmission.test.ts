@@ -71,7 +71,10 @@ const fixture = Effect.gen(function* () {
     projects,
     projections,
     admission,
-    reject: (_command, cause) => cause,
+    reject: (_command, cause) => {
+      if (cause instanceof Error || typeof cause === "string") return cause;
+      throw new Error("Unexpected admission failure", { cause });
+    },
   });
   return { projects, admission, guard };
 });

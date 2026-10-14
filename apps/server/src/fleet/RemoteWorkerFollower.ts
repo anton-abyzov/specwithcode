@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import {
   CommandId,
   MessageId,
@@ -91,7 +92,7 @@ export class RemoteWorkerFollower extends Context.Service<
     /** Picks rows back up after a restart; run once at boot. */
     readonly resume: Effect.Effect<void>;
   }
->()("studio/fleet/RemoteWorkerFollower") {}
+>()("specweave-studio/fleet/RemoteWorkerFollower") {}
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -122,7 +123,7 @@ const make = Effect.gen(function* () {
     });
 
   const now = Clock.currentTimeMillis;
-  const isoNow = Effect.map(now, (millis) => new Date(millis).toISOString());
+  const isoNow = Effect.map(now, (millis) => DateTime.formatIso(DateTime.makeUnsafe(millis)));
 
   const findRow = (rowId: string) =>
     store.list.pipe(

@@ -12,8 +12,13 @@
  *
  * @module usage/projectFolderSessions
  */
-import * as NodeFSP from "node:fs/promises";
-import * as NodePath from "node:path";
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
+import * as FileSystem from "effect/FileSystem";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+
+const nativeFiles = Effect.runSync(Effect.provide(FileSystem.FileSystem, NodeFileSystem.layer));
+import { nodePath as NodePath } from "../nodePath.ts";
 
 import type {
   ProjectFolderUsage,
@@ -104,17 +109,16 @@ export function grokSessionCwd(filePath: string, sessionsDir: string): string | 
 }
 
 async function readHead(filePath: string, bytes = HEAD_BYTES): Promise<string | null> {
-  let handle: NodeFSP.FileHandle | undefined;
-  try {
-    handle = await NodeFSP.open(filePath, "r");
-    const buffer = Buffer.alloc(bytes);
-    const { bytesRead } = await handle.read(buffer, 0, bytes, 0);
-    return buffer.subarray(0, bytesRead).toString("utf8");
-  } catch {
-    return null;
-  } finally {
-    await handle?.close().catch(() => undefined);
-  }
+  return Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const handle = yield* nativeFiles.open(filePath, { flag: "r" });
+    const buffer = new Uint8Array(bytes);
+    const bytesRead = yield* handle.read(buffer);
+    return Buffer.from(buffer.subarray(0, bytesRead)).toString("utf8");
+  }),
+    ).pipe(Effect.orElseSucceed(() => null)),
+  );
 }
 
 /**
@@ -210,7 +214,7 @@ export async function readCopilotFolderSessions(
 ): Promise<readonly FolderSessionFile[]> {
   let entries: string[];
   try {
-    entries = await NodeFSP.readdir(sessionStateDir);
+    entries = await Effect.runPromise(nativeFiles.readDirectory(sessionStateDir));
   } catch {
     return [];
   }
@@ -218,12 +222,20 @@ export async function readCopilotFolderSessions(
   for (const entry of entries) {
     const filePath = NodePath.join(sessionStateDir, entry, "events.jsonl");
     try {
-      const stats = await NodeFSP.stat(filePath);
-      if (stats.mtimeMs < sinceMs) continue;
+      const stats = await Effect.runPromise(nativeFiles.stat(filePath));
+      if (
+        Option.getOrElse(
+          Option.map(stats.mtime, (time) => time.valueOf()),
+          () => 0,
+        ) < sinceMs
+      )
+        continue;
       const head = await readHead(filePath);
       const startCwd = head === null ? null : parseCopilotEvents(head).cwd;
       if (!inProject(startCwd)) continue;
-      const parsed = parseCopilotEvents(await NodeFSP.readFile(filePath, "utf8"));
+      const parsed = parseCopilotEvents(
+        await Effect.runPromise(nativeFiles.readFileString(filePath)),
+      );
       files.push({ provider: "copilot", path: filePath, records: parsed.records });
     } catch {
       // Missing or unreadable logs are skipped; a folder scan is best effort.

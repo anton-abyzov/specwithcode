@@ -8,6 +8,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Read the native updater helper receipt with the existing synchronous IPC boundary.
 import * as FS from "node:fs";
 
 import * as DesktopConfig from "../../app/DesktopConfig.ts";
@@ -140,7 +141,7 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
   let lastSent = "";
   const publish = Effect.gen(function* () {
     const state = yield* readState;
-    const encoded = JSON.stringify(state);
+    const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(StudioServiceUpdateStateSchema))(state);
     if (encoded === lastSent) return state;
     lastSent = encoded;
     yield* electronWindow.sendAll(IpcChannels.SERVICE_UPDATE_STATE_CHANNEL, state);

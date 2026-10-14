@@ -1,10 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Synthetic owned receipts and helper-child fixtures only.
 import * as FS from "node:fs";
+import * as ChildProcess from "node:child_process";
 import * as OS from "node:os";
 import * as Path from "node:path";
 import { ManagedUpdateError } from "@specweave-studio/contracts";
 import { MAC_SERVICE_UPDATER_FILES } from "../../../../scripts/lib/studio-service-updater.ts";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import type { AttachedLocalService } from "../backend/DesktopLocalService.ts";
 import {
   controllerFromAttachedBearer,
@@ -16,8 +17,16 @@ import {
   parseManagedLocalInstallation,
   selectAttachedManagedInstallation,
   selectManagedUpdateHelper,
+  validateAttachedManagedRuntime,
   type ManagedInstallationOwner,
 } from "./managedUpdateInstallations.ts";
+
+vi.mock("node:child_process", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:child_process")>()),
+  execFileSync: vi.fn(() => {
+    throw new Error("Unexpected live process probe in test");
+  }),
+}));
 
 const owner: ManagedInstallationOwner = {
   uid: 502,
@@ -152,12 +161,25 @@ describe("managed update installation candidates", () => {
       }),
     ).toThrow(ManagedUpdateError);
   });
+  it("accepts a fleet service without the unrelated Node IPC launcher flag", () => {
+    const installation = parse(receipt())!;
+    expect(
+      selectAttachedManagedInstallation(
+        [installation],
+        {
+          ...service(),
+          runtime: { ...service().runtime, serviceManaged: false },
+        },
+        { installationId: "work-mac", environmentId: "environment-7" },
+      ),
+    ).toBe(installation);
+  });
   it("rejects another environment, port, origin, runtime and duplicate installation", () => {
     const installation = parse(receipt())!;
     for (const changed of [
       { ...service(), descriptor: { ...service().descriptor, environmentId: "other" as never } },
       { ...service(), runtime: { ...service().runtime, port: 8319 } },
-      { ...service(), runtime: { ...service().runtime, serviceManaged: false } },
+      { ...service(), runtime: { ...service().runtime, pid: 0 } },
       { ...service(), httpBaseUrl: new URL("http://example.com:8320") },
       { ...service(), httpBaseUrl: new URL("http://127.0.0.1:8320/path") },
     ])
@@ -272,6 +294,132 @@ describe("managed update installation candidates", () => {
       FS.rmSync(root, { recursive: true, force: true });
     }
   });
+});
+
+describe("current fleet launchd binding", () => {
+  function liveFixture() {
+    const home = FS.realpathSync(
+      FS.mkdtempSync(Path.join(OS.userInfo().homedir, ".managed-live-test-")),
+    );
+    const actual = { ...owner, uid: process.getuid!(), homeDirectory: home };
+    const installation = parse(receipt("work-mac", actual), "work-mac", actual)!;
+    const attached = {
+      ...service(),
+      baseDir: installation.studioHome,
+      runtime: { ...service().runtime, serviceManaged: false },
+    };
+    const runtimePath = Path.join(installation.stateDir, "server-runtime.json");
+    const environmentPath = Path.join(installation.stateDir, "environment-id");
+    const plist = Path.join(home, "Library/LaunchAgents/com.specweave.studio.work-mac.plist");
+    FS.mkdirSync(installation.stateDir, { recursive: true, mode: 0o700 });
+    FS.mkdirSync(Path.dirname(plist), { recursive: true, mode: 0o700 });
+    const runtime = { pid: 77, port: 8320, origin: "http://127.0.0.1:8320" };
+    FS.writeFileSync(runtimePath, JSON.stringify(runtime), { mode: 0o600 });
+    FS.writeFileSync(environmentPath, "environment-7\n", { mode: 0o600 });
+    FS.writeFileSync(plist, "synthetic owned LaunchAgent", { mode: 0o600 });
+    const job = `state = running\npid = 77\npath = ${plist}\n`;
+    const run = vi.spyOn(ChildProcess, "execFileSync").mockImplementation((command, args) => {
+      if (
+        command === "/bin/launchctl" &&
+        JSON.stringify(args) ===
+          JSON.stringify(["print", `gui/${actual.uid}/com.specweave.studio.work-mac`])
+      )
+        return job;
+      if (
+        command === "/bin/ps" &&
+        JSON.stringify(args) === JSON.stringify(["-p", "77", "-o", "uid="])
+      )
+        return `${actual.uid}\n`;
+      throw new Error("unexpected process probe");
+    });
+    return {
+      home,
+      actual,
+      installation,
+      attached,
+      runtimePath,
+      environmentPath,
+      plist,
+      runtime,
+      job,
+      run,
+      verify: () => validateAttachedManagedRuntime(installation, attached, actual),
+      close: () => {
+        run.mockRestore();
+        FS.rmSync(home, { recursive: true, force: true });
+      },
+    };
+  }
+  it("accepts an owned live fleet job when the runtime omits the internal launcher flag", () => {
+    const f = liveFixture();
+    try {
+      expect(f.verify).not.toThrow();
+      expect(f.run).toHaveBeenCalledTimes(2);
+    } finally {
+      f.close();
+    }
+  });
+  it.each([
+    { pid: 78 },
+    { port: 8321 },
+    { origin: "http://localhost:8320" },
+    { origin: "http://127.0.0.1:8320/path" },
+    { pid: "77" },
+  ])("rejects a changed current runtime %j before process probes", (change) => {
+    const f = liveFixture();
+    try {
+      FS.writeFileSync(f.runtimePath, JSON.stringify({ ...f.runtime, ...change }));
+      expect(f.verify).toThrow(ManagedUpdateError);
+      expect(f.run).not.toHaveBeenCalled();
+    } finally {
+      f.close();
+    }
+  });
+  it.each(["missing", "symlink", "writable", "oversize", "invalid", "environment"])(
+    "rejects unsafe or changed metadata: %s",
+    (change) => {
+      const f = liveFixture();
+      try {
+        if (change === "missing") FS.unlinkSync(f.runtimePath);
+        if (change === "symlink") {
+          FS.renameSync(f.runtimePath, `${f.runtimePath}.saved`);
+          FS.symlinkSync(`${f.runtimePath}.saved`, f.runtimePath);
+        }
+        if (change === "writable") FS.chmodSync(f.runtimePath, 0o666);
+        if (change === "oversize") FS.writeFileSync(f.runtimePath, "x".repeat(65537));
+        if (change === "invalid") FS.writeFileSync(f.runtimePath, "{");
+        if (change === "environment") FS.writeFileSync(f.environmentPath, "another-environment");
+        expect(f.verify).toThrow(ManagedUpdateError);
+        expect(f.run).not.toHaveBeenCalled();
+      } finally {
+        f.close();
+      }
+    },
+  );
+  it.each(["pid", "stopped", "path", "uid", "error", "race"])(
+    "rejects an unbound running service: %s",
+    (change) => {
+      const f = liveFixture();
+      try {
+        f.run.mockImplementation((command) => {
+          if (change === "error") throw new Error("private diagnostic");
+          if (command === "/bin/launchctl")
+            return change === "pid"
+              ? f.job.replace("pid = 77", "pid = 88")
+              : change === "stopped"
+                ? f.job.replace("running", "waiting")
+                : change === "path"
+                  ? f.job.replace(f.plist, "/tmp/foreign.plist")
+                  : f.job;
+          if (change === "race") FS.writeFileSync(f.environmentPath, "replaced");
+          return `${change === "uid" ? f.actual.uid + 1 : f.actual.uid}\n`;
+        });
+        expect(f.verify).toThrow(ManagedUpdateError);
+      } finally {
+        f.close();
+      }
+    },
+  );
 });
 
 describe("trusted controller metadata and helper wire", () => {

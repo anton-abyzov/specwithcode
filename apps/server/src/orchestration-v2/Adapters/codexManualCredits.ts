@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import {
   manualCreditBindingMatches,
   type ManualCodexCreditIntent,
@@ -18,7 +19,7 @@ export function residentCreditPermission(
   const limits = codexRateLimitsToLimits({
     snapshot: response.rateLimits,
     rateLimitsByLimitId: response.rateLimitsByLimitId,
-    checkedAt: new Date(now).toISOString(),
+    checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
     ...(response.accountId === undefined ? {} : { accountId: response.accountId }),
     ...(response.ordinaryUsageAllowed === undefined
       ? {}

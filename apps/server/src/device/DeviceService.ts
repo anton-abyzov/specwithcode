@@ -156,7 +156,7 @@ export class DeviceService extends Context.Service<
     readonly currentReadiness: (hostId?: DeviceHostId) => Effect.Effect<DeviceReadiness | null>;
     readonly sessionsForThread: (threadId: ThreadId) => Effect.Effect<ReadonlyArray<DeviceSession>>;
   }
->()("studio/device/DeviceService") {}
+>()("specweave-studio/device/DeviceService") {}
 
 interface ServiceState {
   readonly state: DeviceServiceState;

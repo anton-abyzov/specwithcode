@@ -1,6 +1,7 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native CLI-shaped fixture files independently verify folder-session ingestion.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
+import { nodePath as NodePath } from "../nodePath.ts";
 
 import { afterAll, beforeAll, describe, expect, it } from "@effect/vitest";
 

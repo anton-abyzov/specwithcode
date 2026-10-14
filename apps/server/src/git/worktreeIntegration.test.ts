@@ -1,6 +1,8 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Real Git and native index bytes are the independent integration-test oracle.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
+import { nodePath as NodePath } from "../nodePath.ts";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Real Git and native index bytes are the independent integration-test oracle.
 import * as NodeChildProcess from "node:child_process";
 import * as Effect from "effect/Effect";
 import { ChildProcessSpawner } from "effect/process";

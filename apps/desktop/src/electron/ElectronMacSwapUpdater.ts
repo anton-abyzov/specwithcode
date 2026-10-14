@@ -2,9 +2,13 @@ import * as Electron from "electron";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { EventEmitter } from "node:events";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Electron updater events consume Node filesystem and stream handles for atomic bundle staging.
 import * as FS from "node:fs";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Electron updater events consume Node filesystem and stream handles for atomic bundle staging.
 import * as Path from "node:path";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Electron updater events consume Node filesystem and stream handles for atomic bundle staging.
 import { Readable, Transform } from "node:stream";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Electron updater events consume Node filesystem and stream handles for atomic bundle staging.
 import { pipeline } from "node:stream/promises";
 
 import {
@@ -162,6 +166,7 @@ export function makeMacSwapUpdater(
     try {
       startSwap(false);
     } catch (error) {
+      // @effect-diagnostics-next-line globalConsole:off -- will-quit logging must complete synchronously after the Effect runtime shuts down.
       console.warn("[desktop-updater] could not install the update on quit", error);
     }
   });

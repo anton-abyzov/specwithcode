@@ -1,3 +1,4 @@
+import * as Schema from "effect/Schema";
 import * as NetAddress from "effect/net/NetAddress";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -163,6 +164,15 @@ const ExclusiveCapabilities: OrchestrationV2ProviderCapabilities = {
   sessions: {
     ...CodexCapabilities.sessions,
     supportsMultipleProviderThreadsPerSession: false,
+  },
+};
+
+// A provider that fixes its access mode when the session opens.
+const SessionModeCapabilities: OrchestrationV2ProviderCapabilities = {
+  ...CodexCapabilities,
+  sessions: {
+    ...CodexCapabilities.sessions,
+    supportsRuntimeModeSwitchInSession: false,
   },
 };
 
@@ -419,7 +429,10 @@ function makeProviderAdapter(
               ...current,
               resumeCount: current.resumeCount + 1,
             })).pipe(Effect.as(threadInput.providerThread)),
-          startTurn: () => { options.onStartInvocation?.(); return options.startTurn ?? Effect.void; },
+          startTurn: () => {
+            options.onStartInvocation?.();
+            return options.startTurn ?? Effect.void;
+          },
           steerTurn: () => Effect.void,
           interruptTurn: () =>
             Ref.update(state, (current) => ({
@@ -500,7 +513,9 @@ function layerTest(input: {
         ? {}
         : { hangSessionScopeClose: input.hangSessionScopeClose }),
       ...(input.startTurn === undefined ? {} : { startTurn: input.startTurn }),
-      ...(input.onStartInvocation === undefined ? {} : { onStartInvocation: input.onStartInvocation }),
+      ...(input.onStartInvocation === undefined
+        ? {}
+        : { onStartInvocation: input.onStartInvocation }),
       ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
       ...(input.spawnBeforeOpen === undefined ? {} : { spawnBeforeOpen: input.spawnBeforeOpen }),
       ...(input.scopeCloseReached === undefined
@@ -1119,12 +1134,13 @@ it.effect("ProviderSessionManagerV2 opens no new session while an install's gate
 
       const refused = yield* Effect.flip(open);
       assert.equal(refused._tag, "ProviderSessionOpenError");
-      const cause = (refused as ProviderSessionManager.ProviderSessionOpenError).cause;
+      if (!Schema.is(ProviderSessionManager.ProviderSessionOpenError)(refused))
+        throw new Error("Expected ProviderSessionOpenError");
+      const cause = refused.cause;
       assert.instanceOf(cause, ServiceUpdateHold.ServiceUpdateInProgressError);
-      assert.equal(
-        (cause as ServiceUpdateHold.ServiceUpdateInProgressError).message,
-        ServiceUpdateHold.SERVICE_UPDATE_VERIFYING_MESSAGE,
-      );
+      if (!Schema.is(ServiceUpdateHold.ServiceUpdateInProgressError)(cause))
+        throw new Error("Expected ServiceUpdateInProgressError");
+      assert.equal(cause.message, ServiceUpdateHold.SERVICE_UPDATE_VERIFYING_MESSAGE);
       assert.equal((yield* Ref.get(state)).openCount, 0);
 
       yield* gated.clear.pipe(Effect.provide(NodeServices.layer));
@@ -4442,52 +4458,272 @@ it.effect(
     }),
 );
 
+it.effect(
+  "rechecks every reused session turn and never retains one-request credit permission",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const starts = yield* Ref.make(0);
+      const checks: Array<{ instanceId: string; cwd: string | null; options: unknown }> = [];
+      let startInvocations = 0;
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-reused-credit-gate");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+        });
+        const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const reused = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.strictEqual(runtime, reused);
+        const turn = {
+          appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+          threadId,
+          runId,
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+          rootNodeId: idAllocator.derive.rootNode({ runId }),
+          providerThread,
+          message: {
+            createdBy: "user" as const,
+            creationSource: "web" as const,
+            messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+            text: "hello",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy: { ...runtimePolicy, cwd: "/final/destination" },
+        };
+        assert.isTrue(Exit.isFailure(yield* reused.startTurn(turn).pipe(Effect.exit)));
+        assert.strictEqual(yield* Ref.get(starts), 0);
+        assert.strictEqual(startInvocations, 0);
+        const intent = {
+          type: "human-submit-existing-credits" as const,
+          instanceId: modelSelection.instanceId,
+          model: modelSelection.model,
+          expectedQuotaPoolId: `codex:sha256:${"a".repeat(64)}`,
+          observedAt: DateTime.formatIso(DateTime.makeUnsafe(yield* Clock.currentTimeMillis)),
+        };
+        yield* reused.startTurn({ ...turn, manualCodexCreditIntent: intent });
+        assert.strictEqual(yield* Ref.get(starts), 1);
+        assert.isTrue(Exit.isFailure(yield* reused.startTurn(turn).pipe(Effect.exit)));
+        assert.strictEqual(yield* Ref.get(starts), 1);
+        assert.strictEqual(startInvocations, 1);
+        assert.deepEqual(checks, [
+          { instanceId: "codex", cwd: "/final/destination", options: undefined },
+          {
+            instanceId: "codex",
+            cwd: "/final/destination",
+            options: { allowCredits: true, expectedQuotaPoolId: intent.expectedQuotaPoolId },
+          },
+          { instanceId: "codex", cwd: "/final/destination", options: undefined },
+        ]);
+        yield* manager.close(providerSessionId);
+        assert.strictEqual((yield* Ref.get(state)).openCount, 1);
+      });
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            onStartInvocation: () => {
+              startInvocations += 1;
+            },
+            startTurn: Ref.update(starts, (n) => n + 1),
+            capacityLayer: Layer.mock(StudioCapacity.Capacity)({
+              assertNativeStart: (instanceId, cwd, options) => {
+                checks.push({ instanceId, cwd, options });
+                return options?.allowCredits
+                  ? Effect.void
+                  : Effect.fail(
+                      new ProviderSetupError({
+                        instanceId,
+                        operation: "session",
+                        detail: "Included quota denied",
+                      }),
+                    );
+              },
+            }),
+          }),
+        ),
+      );
+    }),
+);
 
-it.effect("rechecks every reused session turn and never retains one-request credit permission", () =>
+it.effect("ProviderSessionManagerV2 replaces an idle session when project permissions change", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
-    const starts = yield* Ref.make(0);
-    const checks: Array<{ instanceId: string; cwd: string | null; options: unknown }> = [];
-    let startInvocations = 0;
-    const effect = Effect.gen(function* () {
+    yield* Effect.gen(function* () {
       const eventSink = yield* EventSink.EventSinkV2;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
-      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
-      const threadId = ThreadId.make("thread-reused-credit-gate");
-      const providerSessionId = yield* idAllocator.allocate.providerSession({ providerInstanceId: modelSelection.instanceId, threadId });
-      const providerThread = makeProviderThread({ idAllocator, threadId, providerSessionId, now });
-      const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
-      yield* eventSink.write({ events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })] });
-      const runtime = yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
-      const reused = yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
-      assert.strictEqual(runtime, reused);
-      const turn = {
-        appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
-        threadId, runId, runOrdinal: 1, providerTurnOrdinal: 1,
-        attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
-        rootNodeId: idAllocator.derive.rootNode({ runId }), providerThread,
-        message: { createdBy: "user" as const, creationSource: "web" as const, messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }), text: "hello", attachments: [] },
-        modelSelection, runtimePolicy: { ...runtimePolicy, cwd: "/final/destination" },
-      };
-      assert.isTrue(Exit.isFailure(yield* reused.startTurn(turn).pipe(Effect.exit)));
-      assert.strictEqual(yield* Ref.get(starts), 0);
-      assert.strictEqual(startInvocations, 0);
-      const intent = { type: "human-submit-existing-credits" as const, instanceId: modelSelection.instanceId, model: modelSelection.model, expectedQuotaPoolId: `codex:sha256:${"a".repeat(64)}`, observedAt: new Date(yield* Clock.currentTimeMillis).toISOString() };
-      yield* reused.startTurn({ ...turn, manualCodexCreditIntent: intent });
-      assert.strictEqual(yield* Ref.get(starts), 1);
-      assert.isTrue(Exit.isFailure(yield* reused.startTurn(turn).pipe(Effect.exit)));
-      assert.strictEqual(yield* Ref.get(starts), 1);
-      assert.strictEqual(startInvocations, 1);
-      assert.deepEqual(checks, [
-        { instanceId: "codex", cwd: "/final/destination", options: undefined },
-        { instanceId: "codex", cwd: "/final/destination", options: { allowCredits: true, expectedQuotaPoolId: intent.expectedQuotaPoolId } },
-        { instanceId: "codex", cwd: "/final/destination", options: undefined },
-      ]);
-      yield* manager.close(providerSessionId);
-      assert.strictEqual((yield* Ref.get(state)).openCount, 1);
-    });
-    yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, onStartInvocation: () => { startInvocations += 1; }, startTurn: Ref.update(starts, (n) => n + 1), capacityLayer: Layer.mock(StudioCapacity.Capacity)({ assertNativeStart: (instanceId, cwd, options) => { checks.push({ instanceId, cwd, options }); return options?.allowCredits ? Effect.void : Effect.fail(new ProviderSetupError({ instanceId, operation: "session", detail: "Included quota denied" })); } }) })));
+      const threadId = ThreadId.make("project-permissions-idle");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+      assert.equal((yield* Ref.get(state)).closeCount, 0);
+      yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy: { ...runtimePolicy, runtimeMode: "approval-required" },
+      });
+      assert.equal((yield* Ref.get(state)).closeCount, 1);
+      assert.equal((yield* Ref.get(state)).openCount, 2);
+      yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy: { ...runtimePolicy, runtimeMode: "approval-required" },
+      });
+      assert.equal((yield* Ref.get(state)).openCount, 2);
+    }).pipe(
+      Effect.provide(
+        layerTest({ state, idleTimeoutMs: 60_000, capabilities: SessionModeCapabilities }),
+      ),
+    );
   }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 keeps a session that switches access mode per turn when project permissions change",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("project-permissions-in-session");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy: { ...runtimePolicy, runtimeMode: "approval-required" },
+        });
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+        assert.equal((yield* Ref.get(state)).openCount, 1);
+      }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 does not interrupt a busy turn when project permissions change",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const startTurnReached = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-stopped-turn-start");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+        const starting = yield* runtime
+          .startTurn({
+            appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+            threadId,
+            runId,
+            runOrdinal: 1,
+            providerTurnOrdinal: 1,
+            attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+            rootNodeId: idAllocator.derive.rootNode({ runId }),
+            providerThread: makeProviderThread({ idAllocator, threadId, providerSessionId, now }),
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+              text: "stopped before the provider accepted it",
+              attachments: [],
+            },
+            modelSelection,
+            runtimePolicy,
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(startTurnReached);
+
+        const changed = yield* Effect.exit(
+          manager.open({
+            threadId,
+            providerSessionId,
+            modelSelection,
+            runtimePolicy: { ...runtimePolicy, runtimeMode: "approval-required" },
+          }),
+        );
+        assert.equal(changed._tag, "Failure");
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+        assert.equal((yield* Ref.get(state)).openCount, 1);
+        yield* Fiber.interrupt(starting);
+        yield* TestClock.adjust("2 seconds");
+        yield* Effect.yieldNow;
+        assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 1000,
+            capabilities: SessionModeCapabilities,
+            startTurn: Deferred.succeed(startTurnReached, undefined).pipe(
+              Effect.andThen(Effect.never),
+            ),
+          }),
+        ),
+      );
+    }),
 );

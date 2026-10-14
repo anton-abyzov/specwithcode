@@ -1751,7 +1751,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.instanceOf(staleWorkspaceUpdate, Orchestrator.OrchestratorDispatchError);
       const projectionAfterStaleWorkspaceUpdate = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(projectionAfterStaleWorkspaceUpdate.thread.branch, "feature/v2");
-      assert.equal(projectionAfterStaleWorkspaceUpdate.thread.worktreePath, "/tmp/studio-v2-worktree");
+      assert.equal(
+        projectionAfterStaleWorkspaceUpdate.thread.worktreePath,
+        "/tmp/studio-v2-worktree",
+      );
       const pullRequestSnapshot = yield* orchestrator.getShellSnapshot();
       const pullRequest = {
         projectId,
@@ -1859,26 +1862,40 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.instanceOf(staleAutoSettle, Orchestrator.OrchestratorDispatchError);
       const beforePinSequence = yield* orchestrator.getThreadEventSequence(threadId);
       yield* orchestrator.dispatch({
-        type: "thread.pin", commandId: CommandId.make("lifecycle-pin-same-ms"), threadId,
+        type: "thread.pin",
+        commandId: CommandId.make("lifecycle-pin-same-ms"),
+        threadId,
       });
       const pinned = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(
         DateTime.toEpochMillis(pinned.thread.updatedAt),
         DateTime.toEpochMillis(preAutoProjection.thread.updatedAt),
       );
-      const pinRace = yield* orchestrator.dispatch({
-        type: "thread.auto-settle", commandId: CommandId.make("lifecycle-auto-pin-race"), threadId,
-        snapshotAt: preAutoProjection.thread.updatedAt, snapshotSequence: beforePinSequence,
-      }).pipe(Effect.flip);
+      const pinRace = yield* orchestrator
+        .dispatch({
+          type: "thread.auto-settle",
+          commandId: CommandId.make("lifecycle-auto-pin-race"),
+          threadId,
+          snapshotAt: preAutoProjection.thread.updatedAt,
+          snapshotSequence: beforePinSequence,
+        })
+        .pipe(Effect.flip);
       assert.instanceOf(pinRace, Orchestrator.OrchestratorDispatchError);
       yield* orchestrator.dispatch({
-        type: "thread.unpin", commandId: CommandId.make("lifecycle-unpin-same-ms"), threadId,
+        type: "thread.unpin",
+        commandId: CommandId.make("lifecycle-unpin-same-ms"),
+        threadId,
       });
       // Even after a pin is removed in the same millisecond, the old decision is stale.
-      const versionRace = yield* orchestrator.dispatch({
-        type: "thread.auto-settle", commandId: CommandId.make("lifecycle-auto-version-race"), threadId,
-        snapshotAt: preAutoProjection.thread.updatedAt, snapshotSequence: beforePinSequence,
-      }).pipe(Effect.flip);
+      const versionRace = yield* orchestrator
+        .dispatch({
+          type: "thread.auto-settle",
+          commandId: CommandId.make("lifecycle-auto-version-race"),
+          threadId,
+          snapshotAt: preAutoProjection.thread.updatedAt,
+          snapshotSequence: beforePinSequence,
+        })
+        .pipe(Effect.flip);
       assert.instanceOf(versionRace, Orchestrator.OrchestratorDispatchError);
       yield* orchestrator.dispatch({
         type: "thread.auto-settle",
@@ -2198,7 +2215,11 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const linked = yield* orchestrator.getThreadShell(threadId);
       assert.deepEqual(
         linked?.pullRequests?.map(({ host, repository, number }) => ({ host, repository, number })),
-        [1, 2].map((number) => ({ host: "github.com", repository: "anton-abyzov/specwithcode", number })),
+        [1, 2].map((number) => ({
+          host: "github.com",
+          repository: "anton-abyzov/specwithcode",
+          number,
+        })),
       );
       yield* orchestrator.dispatch({
         type: "thread.pull-request.unlink",
@@ -2380,7 +2401,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           ...key,
           number,
           watching: true,
-          link: { url: `https://github.com/anton-abyzov/specwithcode/pull/${number}`, source: "agent" },
+          link: {
+            url: `https://github.com/anton-abyzov/specwithcode/pull/${number}`,
+            source: "agent",
+          },
         });
       }
       const before = yield* orchestrator.getThreadShell(threadId);
@@ -2484,7 +2508,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         repository: "anton-abyzov/specwithcode",
         number: 7,
         watching: true,
-        link: { url: "https://github.com/anton-abyzov/specwithcode/pull/7", source: "agent" as const },
+        link: {
+          url: "https://github.com/anton-abyzov/specwithcode/pull/7",
+          source: "agent" as const,
+        },
       };
       const watched = Effect.map(
         orchestrator.getThreadShell(threadId),
@@ -2615,7 +2642,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
               repository: "anton-abyzov/specwithcode",
               number: 9,
               watching: true,
-              link: { url: "https://github.com/anton-abyzov/specwithcode/pull/9", source: "agent" },
+              link: {
+                url: "https://github.com/anton-abyzov/specwithcode/pull/9",
+                source: "agent",
+              },
             });
           });
         for (const threadId of threadIds) yield* watchFrom(threadId);
@@ -2757,7 +2787,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           threadId,
           ...key,
           watching: on,
-          link: { url: "https://github.com/anton-abyzov/specwithcode/pull/11", source: "agent" },
+          link: {
+            url: "https://github.com/anton-abyzov/specwithcode/pull/11",
+            source: "agent",
+          },
         });
       yield* watching(true, "start");
 
@@ -4789,7 +4822,9 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         createdBy: "user",
         creationSource: "web",
       });
-      const [source] = (yield* orchestrator.getThreadProjection(threadId)).runs as [OrchestrationV2Run];
+      const [source] = (yield* orchestrator.getThreadProjection(threadId)).runs as [
+        OrchestrationV2Run,
+      ];
       yield* events.write({
         events: [
           {
@@ -4831,11 +4866,41 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           },
         ],
       });
-      const shell = (yield* orchestrator.getShellSnapshot()).threads.find((thread) => thread.id === threadId)!;
+      const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
+        (thread) => thread.id === threadId,
+      )!;
       const nowMs = DateTime.toEpochMillis(now);
+      // A fallback needs a fresh usage read with room left that lists the model it names.
+      const withUsage = (instanceId: string, usedPercent: number) => {
+        const base = providerSnapshot(instanceId, "codex", nowMs);
+        return {
+          ...base,
+          models: [
+            {
+              slug: "gpt-5.5",
+              name: "GPT-5.5",
+              isCustom: false,
+              isDefault: true,
+              capabilities: null,
+            },
+          ],
+          usageLimits: {
+            ...base.usageLimits!,
+            windows: [
+              {
+                id: "session",
+                kind: "session" as const,
+                label: "Session",
+                usedPercent,
+                resetsAt: DateTime.formatIso(DateTime.add(now, { hours: 1 })),
+              },
+            ],
+          },
+        };
+      };
       const providers = [
-        providerSnapshot(modelSelection.instanceId, "codex", nowMs),
-        providerSnapshot(alternateInstanceId, "codex", nowMs),
+        withUsage(modelSelection.instanceId, 100),
+        withUsage(alternateInstanceId, 10),
       ];
       const rule = {
         providerLimitAction: "switch" as const,
@@ -4843,7 +4908,9 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         providerLimitSwitchAtPercent: 90,
         defaultModelSelection: modelSelection,
       };
-      assert.isNull(providerFallbackCommand(shell, providers, { ...rule, providerLimitAction: "ask" }, nowMs));
+      assert.isNull(
+        providerFallbackCommand(shell, providers, { ...rule, providerLimitAction: "ask" }, nowMs),
+      );
       const command = providerFallbackCommand(shell, providers, rule, nowMs);
       assert.equal(command?.type, "message.dispatch");
       yield* orchestrator.dispatch(command!);
@@ -4856,7 +4923,15 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 2);
     }),
   );
-  it.effect.each(["early", "no-reset", "expired-reset", "cancel-race", "stale", "user-edit", "archive"] as const)("guards native permission recovery: %s", verifyNativeRecovery);
+  it.effect.each([
+    "early",
+    "no-reset",
+    "expired-reset",
+    "cancel-race",
+    "stale",
+    "user-edit",
+    "archive",
+  ] as const)("guards native permission recovery: %s", verifyNativeRecovery);
   it.effect.each(["interrupted", "usage_limit"] as const)(
     "manually resumes an %s run ahead of its queued message only once",
     (reason) =>

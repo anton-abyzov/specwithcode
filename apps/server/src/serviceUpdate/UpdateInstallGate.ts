@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 /**
  * The install gate: a file the update helper keeps while it restarts and verifies the service.
  *
@@ -77,7 +78,8 @@ export function isHelperRunning(pid: number): boolean {
 }
 
 /** When the machine last started (epoch ms); a gate written before then is stale. */
-export const machineBootMs = (): number => Date.now() - NodeOS.uptime() * 1_000;
+export const machineBootMs = (): number =>
+  DateTime.toEpochMillis(DateTime.nowUnsafe()) - NodeOS.uptime() * 1_000;
 
 /**
  * Until when (epoch ms) a gate keeps the service quiet, or null when it no longer does: its

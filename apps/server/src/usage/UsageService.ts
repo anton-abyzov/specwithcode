@@ -176,7 +176,7 @@ export class UsageService extends Context.Service<
       readonly sinceMs: number;
     }) => Effect.Effect<readonly FolderSessionFile[]>;
   }
->()("studio/usage/UsageService") {}
+>()("specweave-studio/usage/UsageService") {}
 
 const EMPTY_PRICING: UsagePricing = {
   status: "unavailable",

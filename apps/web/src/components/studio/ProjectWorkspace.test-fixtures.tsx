@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
-import * as NodeFS from "node:fs";
-import * as NodePath from "node:path";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, vi } from "vite-plus/test";
@@ -277,7 +279,9 @@ const projectRead = vi.hoisted(() => () => ({
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => state.send }));
 vi.mock("../../state/assets", () => ({ assetEnvironment: { createUrl: {} } }));
-vi.mock("../../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => async () => ({ _tag: "Failure" }) }));
+vi.mock("../../state/use-atom-query-runner", () => ({
+  useAtomQueryRunner: () => async () => ({ _tag: "Failure" }),
+}));
 vi.mock("../../state/threads", () => ({ threadEnvironment: { loadEarlierHistory: {} } }));
 vi.mock("../../hooks/useThreadActions", () => ({
   useThreadActions: () => ({
@@ -309,7 +313,10 @@ vi.mock("../../state/filesystem", () => ({
   filesystemEnvironment: { browse: (input: unknown) => input },
   useFilesystemReadAccess: () => ({ canReadFiles: false, isPending: false, error: null }),
 }));
-vi.mock("../../state/server", () => ({ primaryServerKeybindingsAtom: {} }));
+vi.mock("../../state/server", () => ({
+  primaryServerKeybindingsAtom: {},
+  serverEnvironment: { updateSettings: {} },
+}));
 vi.mock("../../state/projects", () => ({ projectEnvironment: { update: {} } }));
 vi.mock("../ProjectFavicon", () => ({ ProjectFavicon: () => null }));
 vi.mock("../../hooks/useMediaQuery", () => ({
@@ -318,20 +325,25 @@ vi.mock("../../hooks/useMediaQuery", () => ({
   useMediaQuery: (query: unknown) =>
     typeof query === "string" && query.includes("pointer: coarse") ? state.coarse : state.phone,
 }));
-vi.mock("../../hooks/useSettings", () => ({
-  useClientSettings: (
-    select: (settings: {
-      sendShortcut: string;
-      projectCoordinatorMachines: Record<string, string>;
-    }) => unknown,
-  ) =>
-    select({ sendShortcut: state.sendShortcut, projectCoordinatorMachines: state.savedMachines }),
-  useClientSettingsHydrationStatus: () => "ready",
-  useUpdateClientSettings:
-    () => (patch: { projectCoordinatorMachines?: Record<string, string> }) => {
-      if (patch.projectCoordinatorMachines) state.savedMachines = patch.projectCoordinatorMachines;
-    },
-}));
+vi.mock("../../hooks/useSettings", async () => {
+  const { DEFAULT_SERVER_SETTINGS } = await import("@specweave-studio/contracts");
+  return {
+    useEnvironmentSettings: () => DEFAULT_SERVER_SETTINGS,
+    useClientSettings: (
+      select: (settings: {
+        sendShortcut: string;
+        projectCoordinatorMachines: Record<string, string>;
+      }) => unknown,
+    ) =>
+      select({ sendShortcut: state.sendShortcut, projectCoordinatorMachines: state.savedMachines }),
+    useClientSettingsHydrationStatus: () => "ready",
+    useUpdateClientSettings:
+      () => (patch: { projectCoordinatorMachines?: Record<string, string> }) => {
+        if (patch.projectCoordinatorMachines)
+          state.savedMachines = patch.projectCoordinatorMachines;
+      },
+  };
+});
 vi.mock("./shell/CoordinatorModelPicker", () => ({
   CoordinatorModelPicker: ({
     value,
@@ -636,15 +648,22 @@ afterEach(async () => {
   delete window.desktopBridge;
 });
 /** A file in the repository, found from wherever the test runner started. */
-function repoFile(relative: string): string {
-  let directory = process.cwd();
-  while (!NodeFS.existsSync(NodePath.join(directory, relative))) {
-    const parent = NodePath.dirname(directory);
-    if (parent === directory) throw new Error(`${relative} not found above ${process.cwd()}`);
-    directory = parent;
-  }
-  return NodePath.join(directory, relative);
+function repoFile(relative: string): Promise<string> {
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      let directory = process.cwd();
+      while (!(yield* fs.exists(path.join(directory, relative)))) {
+        const parent = path.dirname(directory);
+        if (parent === directory) throw new Error(`${relative} not found above ${process.cwd()}`);
+        directory = parent;
+      }
+      return path.join(directory, relative);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 }
+
 async function render() {
   await act(async () => root.render(<ProjectWorkspace projectKey="atlas" />));
 }

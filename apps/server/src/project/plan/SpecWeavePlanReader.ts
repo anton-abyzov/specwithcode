@@ -1,4 +1,6 @@
-import * as NodeCrypto from "node:crypto";
+import * as NodeOs from "node:os";
+import { sha256 } from "../../nodeCrypto.ts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -10,6 +12,7 @@ import {
   type ProjectExternalPlan,
   type ProjectPlanAuthority,
 } from "../../../../../packages/contracts/src/projectPlan.ts";
+import { exposesProtectedLocation } from "../ProjectEnvironmentPaths.ts";
 
 const META_EVENTS = new Set(["note", "session", "handoff", "pickup"]);
 const LedgerEntry = Schema.Struct({
@@ -113,7 +116,8 @@ export function parseSpecWeavePlan(spec: string, ledger: string): ProjectExterna
     since.set(entry.t, Date.parse(entry.at));
   }
   return [...tasks.values()].map((task) =>
-    task.status === "claimed" && Date.now() - (since.get(task.id) ?? 0) > 2 * 3_600_000
+    task.status === "claimed" &&
+    DateTime.toEpochMillis(DateTime.nowUnsafe()) - (since.get(task.id) ?? 0) > 2 * 3_600_000
       ? { ...task, status: "stale" as const }
       : task,
   );
@@ -122,6 +126,7 @@ export function parseSpecWeavePlan(spec: string, ledger: string): ProjectExterna
 export const readSpecWeavePlan = (input: {
   projectId: ProjectId;
   workspaceRoot: string;
+  approvedFolders?: readonly string[];
   authority: Extract<ProjectPlanAuthority, { kind: "specweave" }>;
 }) =>
   Effect.gen(function* () {
@@ -139,7 +144,20 @@ export const readSpecWeavePlan = (input: {
     if (!path.isAbsolute(input.authority.root)) return yield* invalid();
     const projectRoot = yield* fs.realPath(input.workspaceRoot);
     const root = yield* fs.realPath(input.authority.root);
-    if (!inside(projectRoot, root)) return yield* invalid();
+    const grants = input.approvedFolders ?? [];
+    const approved = yield* Effect.forEach(grants, (grant) =>
+      Effect.gen(function* () {
+        const canonical = yield* fs.realPath(grant);
+        if (canonical !== grant || exposesProtectedLocation(canonical, NodeOs.homedir(), path))
+          return yield* invalid();
+        return canonical;
+      }),
+    );
+    if (
+      root !== input.authority.root ||
+      (!inside(projectRoot, root) && !approved.some((grant) => inside(grant, root)))
+    )
+      return yield* invalid();
     const directory = path.join(root, ".specweave", "increments", input.authority.incrementId);
     const read = (file: string, maximum: number) =>
       Effect.scoped(
@@ -161,6 +179,8 @@ export const readSpecWeavePlan = (input: {
             if (next.value.byteLength === 0) break;
           }
           const after = yield* handle.stat;
+          for (const grant of approved)
+            if ((yield* fs.realPath(grant)) !== grant) return yield* invalid();
           if (
             length > maximum ||
             before.size !== after.size ||
@@ -197,11 +217,7 @@ export const readSpecWeavePlan = (input: {
       specPath,
       ledgerPath,
       readOnly: true as const,
-      sourceRevision: NodeCrypto.createHash("sha256")
-        .update(spec)
-        .update("\0")
-        .update(ledger)
-        .digest("hex"),
+      sourceRevision: sha256([spec, "\0", ledger], "hex"),
     };
   }).pipe(
     Effect.timeout("10 seconds"),

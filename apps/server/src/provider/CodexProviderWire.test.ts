@@ -29,14 +29,14 @@ describe("default Codex provider wire snapshot", () => {
       `retains Codex and its exact credits when ordinary usage is ${ordinaryUsageAllowed}`,
       () =>
         Effect.gen(function* () {
-          const settings = Schema.decodeUnknownSync(ServerSettings)({
+          const settings = yield* Schema.decodeUnknownEffect(ServerSettings)({
             providers: { codex: { enabled: true, binaryPath: "fixture-only-codex" } },
             providerInstances: {},
           });
           const entry = deriveProviderInstanceConfigMap(settings)[instanceId];
           expect(entry?.driver).toBe(driverKind);
-          const codexSettings = Schema.decodeUnknownSync(CodexSettings)(entry?.config);
-          const rateLimitsResponse = Schema.decodeUnknownSync(
+          const codexSettings = yield* Schema.decodeUnknownEffect(CodexSettings)(entry?.config);
+          const rateLimitsResponse = yield* Schema.decodeUnknownEffect(
             CodexSchema.V2GetAccountRateLimitsResponse,
           )({
             accountId: "synthetic-native-account",
@@ -86,11 +86,11 @@ describe("default Codex provider wire snapshot", () => {
           // getConfig uses ForwardCompatibleArray; the original eight-digit
           // balance contract dropped the entire correctly identified provider.
           const wire = JSON.parse(JSON.stringify(snapshot));
-          const providers = Schema.decodeUnknownSync(ServerProviders)([wire]);
+          const providers = yield* Schema.decodeUnknownEffect(ServerProviders)([wire]);
           expect(providers).toHaveLength(1);
-          const strict = Schema.decodeUnknownSync(ServerProvider)(wire);
-          const roundtrip = Schema.decodeUnknownSync(ServerProvider)(
-            Schema.encodeSync(ServerProvider)(strict),
+          const strict = yield* Schema.decodeUnknownEffect(ServerProvider)(wire);
+          const roundtrip = yield* Schema.decodeUnknownEffect(ServerProvider)(
+            yield* Schema.encodeEffect(ServerProvider)(strict),
           );
           expect(providers[0]).toEqual(roundtrip);
           expect(roundtrip.instanceId).toBe("codex");

@@ -1,6 +1,8 @@
 import { afterEach, expect, it } from "vite-plus/test";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native fixtures independently verify Electron and installed operating-system behavior.
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native fixtures independently verify Electron and installed operating-system behavior.
 import { join } from "node:path";
 import { VoicePreferencesStore, DEFAULT_VOICE_PREFERENCES } from "./voicePreferences.ts";
 const folders: string[] = [];

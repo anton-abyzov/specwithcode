@@ -1,4 +1,6 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native bootstrap probes launchd before the managed Effect runtime is available.
 import * as NodeChildProcess from "node:child_process";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native bootstrap probes launchd before the managed Effect runtime is available.
 import * as NodeFS from "node:fs";
 
 import {
@@ -152,6 +154,7 @@ const decodeSessionWithUnknownEnums = Schema.decodeUnknownOption(
 const probeDescriptor = (origin: string) =>
   Effect.tryPromise({
     try: async () => {
+      // @effect-diagnostics-next-line globalFetchInEffect:off -- This native bootstrap probe precedes the managed HTTP client and preserves its abort signal.
       const response = await fetch(new URL(WELL_KNOWN_ENVIRONMENT_PATH, origin), {
         signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
       });

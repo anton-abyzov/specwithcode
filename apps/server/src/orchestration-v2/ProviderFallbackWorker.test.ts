@@ -59,7 +59,7 @@ function withUsage(base: ServerProvider, usedPercent: number): ServerProvider {
     ...base,
     models: [
       {
-        slug: "default-model",
+        slug: base.instanceId === codexId ? "gpt-6" : "default-model",
         name: "Default",
         isCustom: false,
         isDefault: true,
@@ -145,7 +145,7 @@ describe("providerFallbackCommand", () => {
             kind: "session" as const,
             label: "Session",
             usedPercent: 96,
-            resetsAt: new Date(now + 20 * 60_000).toISOString(),
+            resetsAt: DateTime.formatIso(DateTime.makeUnsafe(now + 20 * 60_000)),
           },
         ],
       },
@@ -264,7 +264,7 @@ describe("providerLimitStep", () => {
           instanceId: codexId,
           model: "gpt-6",
           expectedQuotaPoolId: codexWithCredits.usageLimits!.quotaPoolId,
-          observedAt: new Date(now).toISOString(),
+          observedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
         },
       },
     });
@@ -303,7 +303,7 @@ describe("providerLimitStep", () => {
   });
 
   it("waits for a reset within the project's wait instead of redeeming, spending or switching", () => {
-    const at = (minutes: number) => new Date(now + minutes * 60_000).toISOString();
+    const at = (minutes: number) => DateTime.formatIso(DateTime.makeUnsafe(now + minutes * 60_000));
     const waiting = {
       ...rule,
       providerLimitWaitUnderMinutes: 30,
@@ -785,7 +785,8 @@ describe("sweep redeem path", () => {
             latestRunId: RunId.make(`r${state.run}`),
             ...input.now,
           } as never),
-        getThreadRecords: () => Effect.fail(new Error("no records")) as never,
+        getThreadRecords: (threadId) =>
+          Effect.fail(new ProjectionStore.ProjectionStoreThreadNotFoundError({ threadId })),
       }),
       Layer.mock(ThreadManagement.ThreadManagementService)({
         dispatch: (command) =>

@@ -55,7 +55,7 @@ export interface ProviderSwitchServiceV2Shape {
 export class ProviderSwitchServiceV2 extends Context.Service<
   ProviderSwitchServiceV2,
   ProviderSwitchServiceV2Shape
->()("studio/orchestration-v2/ProviderSwitchService/ProviderSwitchServiceV2") {}
+>()("specweave-studio/orchestration-v2/ProviderSwitchService/ProviderSwitchServiceV2") {}
 
 // Stopped and errored records stay in session history but can no longer be
 // restarted or released; only live sessions participate in a transition.

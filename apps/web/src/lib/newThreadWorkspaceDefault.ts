@@ -1,6 +1,5 @@
 import { WS_METHODS, type EnvironmentId, type ThreadEnvMode } from "@specweave-studio/contracts";
 import { subscribe } from "@specweave-studio/client-runtime/rpc";
-import type { EnvironmentRegistry } from "@specweave-studio/client-runtime/connection";
 import {
   executeAtomQuery,
   followStreamInEnvironment,
@@ -15,7 +14,7 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 export function observeNewThreadIsRepo(
   environmentId: EnvironmentId,
   cwd: string,
-): Effect.Effect<boolean | undefined, unknown, EnvironmentRegistry.EnvironmentRegistry> {
+) {
   return followStreamInEnvironment(
     environmentId,
     subscribe(WS_METHODS.subscribeVcsStatus, { cwd }),

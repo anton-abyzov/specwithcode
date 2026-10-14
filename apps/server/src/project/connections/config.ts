@@ -1,9 +1,8 @@
-import { createHash } from "node:crypto";
+import { sha256 } from "../../nodeCrypto.ts";
 import { ProjectConnectionConfig, type ProjectConnectionTool } from "@specweave-studio/contracts";
 import * as Schema from "effect/Schema";
 
-export const connectionFingerprint = (value: unknown) =>
-  createHash("sha256").update(JSON.stringify(value)).digest("hex");
+export const connectionFingerprint = (value: unknown) => sha256([JSON.stringify(value)], "hex");
 const secretShape =
   /(?:sk-[a-zA-Z0-9_-]{16,}|gh[pousr]_[a-zA-Z0-9]{20,}|github_pat_[a-zA-Z0-9_]{20,}|Bearer\s+\S+|-----BEGIN [A-Z ]*PRIVATE KEY-----)/gi;
 const secretFlag =

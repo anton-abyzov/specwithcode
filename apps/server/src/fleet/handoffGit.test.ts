@@ -218,7 +218,7 @@ const live = HandoffGit.layer.pipe(
   Layer.provide(observedRunner),
   Layer.provide(NodeServices.layer),
 );
-const run = <A>(f: (service: HandoffGit.HandoffGit["Service"]) => Effect.Effect<A, unknown>) =>
+const run = <A, E>(f: (service: HandoffGit.HandoffGit["Service"]) => Effect.Effect<A, E>) =>
   Effect.service(HandoffGit.HandoffGit).pipe(Effect.flatMap(f), Effect.provide(live));
 const inspect = (workspaceRoot: string) =>
   run((service) => service.inspect({ workspaceRoot, operationId }));

@@ -47,7 +47,7 @@ export interface McpSessionRegistryShape {
 export class McpSessionRegistry extends Context.Service<
   McpSessionRegistry,
   McpSessionRegistryShape
->()("studio/mcp/McpSessionRegistry") {}
+>()("specweave-studio/mcp/McpSessionRegistry") {}
 
 /** Registry credentials always belong to a provider session, so their scope has a thread. */
 interface CredentialRecord {

@@ -355,7 +355,7 @@ export function simulatedUsageLimitInstances(
 export function simulatedUsageLimitFailure(
   instanceId: string,
   env: Readonly<Record<string, string | undefined>> = process.env,
-  nowMs: number = Date.now(),
+  nowMs: number = DateTime.toEpochMillis(DateTime.nowUnsafe()),
 ): OrchestrationV2ProviderFailure | null {
   if (!simulatedUsageLimitInstances(env).includes(instanceId)) return null;
   return makeProviderFailure({
@@ -363,6 +363,6 @@ export function simulatedUsageLimitFailure(
     code: "simulated_usage_limit",
     message: SIMULATED_USAGE_LIMIT_MESSAGE,
     retryable: false,
-    resetAt: new Date(nowMs + 60 * 60 * 1000).toISOString(),
+    resetAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs + 60 * 60 * 1000)),
   });
 }

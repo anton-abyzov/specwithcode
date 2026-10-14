@@ -142,7 +142,7 @@ export class PreviewBrowser extends Context.Service<
     /** The installed headless shell, if any. Never starts or waits on an install. */
     readonly installed: Effect.Effect<Option.Option<string>>;
   }
->()("studio/preview/PreviewBrowser") {}
+>()("specweave-studio/preview/PreviewBrowser") {}
 
 export interface PreviewBrowserOptions {
   readonly baseDir: string;
@@ -312,7 +312,9 @@ export const makePreviewBrowser = Effect.fn("PreviewBrowser.make")(function* (
     },
     Effect.scoped,
     Effect.mapError(
-      wrapFailure("Could not unpack the browser. Check free disk space in Studio's home directory."),
+      wrapFailure(
+        "Could not unpack the browser. Check free disk space in Studio's home directory.",
+      ),
     ),
   );
 

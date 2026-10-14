@@ -91,7 +91,7 @@ export interface CommandReceiptStoreV2Shape {
 export class CommandReceiptStoreV2 extends Context.Service<
   CommandReceiptStoreV2,
   CommandReceiptStoreV2Shape
->()("studio/orchestration-v2/CommandReceiptStore/CommandReceiptStoreV2") {}
+>()("specweave-studio/orchestration-v2/CommandReceiptStore/CommandReceiptStoreV2") {}
 
 /**
  * IMPLEMENTATIONS

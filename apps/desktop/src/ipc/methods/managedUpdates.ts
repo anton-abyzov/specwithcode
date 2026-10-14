@@ -19,6 +19,7 @@ import {
   managedInstallationOwner,
   selectAttachedManagedInstallation,
   selectManagedUpdateHelper,
+  validateAttachedManagedRuntime,
   type LocalManagedUpdateInvocation,
   type ManagedInstallationOwner,
   type ManagedLocalInstallation,
@@ -56,6 +57,7 @@ export const resolveManagedUpdateConsentInstallation: ManagedUpdateConsentAdapte
     service,
     target,
   );
+  validateAttachedManagedRuntime(installation, service, owner);
   const helper = selectManagedUpdateHelper(
     [
       ...environment.resolveResourcePathCandidates("studio-updater/managed_updates.py"),

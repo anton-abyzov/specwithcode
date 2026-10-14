@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CodexSettings, ProviderSessionId, ThreadId, type ServerProviderUsageLimits } from "@specweave-studio/contracts";
 import type * as CodexClient from "@specweave-studio/effect-codex-app-server/client";
@@ -21,7 +22,7 @@ import { makeReplayServerConfig } from "./CodexAdapterV2.testkit.ts";
 // Register the actual adapter callbacks against a transport double. Opening
 // this scope cannot initialize a model, start a turn or touch a native account.
 const observeNotification = (rateLimits: unknown, followups: ReadonlyArray<unknown> = []) => Effect.gen(function* () {
-  const now = Date.now(), originalAt = new Date(now - 1000).toISOString();
+  const now = DateTime.toEpochMillis(DateTime.nowUnsafe()), originalAt = DateTime.formatIso(DateTime.makeUnsafe(now - 1000));
   let limits: ServerProviderUsageLimits = codexRateLimitsToLimits({
     checkedAt: originalAt,
     ordinaryUsageAllowed: true,
@@ -44,7 +45,7 @@ const observeNotification = (rateLimits: unknown, followups: ReadonlyArray<unkno
   yield* Effect.addFinalizer(() => fileSystem.remove(serverConfig.baseDir, { recursive: true }).pipe(Effect.orDie));
   const adapter = CodexAdapterV2.makeCodexAdapterV2({
     instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
-    settings: Schema.decodeSync(CodexSettings)({}),
+    settings: yield* Schema.decodeEffect(CodexSettings)({}),
     environment: {},
     clientFactory: { open: () => Effect.succeed(client) },
     crypto: yield* Crypto.Crypto,
@@ -65,8 +66,8 @@ const observeNotification = (rateLimits: unknown, followups: ReadonlyArray<unkno
   const firstDenialObservedAt = limits.nativeDenialObservedAt;
   for (const update of followups) yield* callback({ rateLimits: update });
   const base = provider("codex", "codex", now);
-  const snapshot = capacitySnapshot({ raw: rawSnapshot(now - 2000), settings, providers: [{ ...base, usageLimits: { ...base.usageLimits!, ...limits } }], baseEnv: {}, now: Date.now() });
-  return { limits, originalAt, firstDenialObservedAt, requests, snapshot, denied: nativeQuotaDenied(limits, Date.now()) };
+  const snapshot = capacitySnapshot({ raw: rawSnapshot(now - 2000), settings, providers: [{ ...base, usageLimits: { ...base.usageLimits!, ...limits } }], baseEnv: {}, now: DateTime.toEpochMillis(DateTime.nowUnsafe()) });
+  return { limits, originalAt, firstDenialObservedAt, requests, snapshot, denied: nativeQuotaDenied(limits, DateTime.toEpochMillis(DateTime.nowUnsafe())) };
 }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)));
 
 describe("Codex adapter native quota denial notification", () => {

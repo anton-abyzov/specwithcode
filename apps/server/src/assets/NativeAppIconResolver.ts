@@ -31,7 +31,7 @@ export class NativeAppIconResolver extends Context.Service<
     /** Returns a cached PNG path for the application, or `null` when no icon is available. */
     readonly resolve: (app: ToolActivityNativeAppReference) => Effect.Effect<string | null>;
   }
->()("studio/assets/NativeAppIconResolver") {}
+>()("specweave-studio/assets/NativeAppIconResolver") {}
 
 function appCacheKey(app: ToolActivityNativeAppReference): string {
   return JSON.stringify(app);

@@ -47,7 +47,7 @@ export class StudioProjectFileLoader extends Context.Service<
      */
     readonly load: (workspaceRoot: string) => Effect.Effect<Option.Option<StudioProjectFile>>;
   }
->()("studio/project/StudioProjectFileLoader") {}
+>()("specweave-studio/project/StudioProjectFileLoader") {}
 
 const logStudioProjectFileLoadError = (error: StudioProjectFileLoadError) =>
   Effect.logWarning(error).pipe(
@@ -64,44 +64,44 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  const load: StudioProjectFileLoader["Service"]["load"] = Effect.fn("StudioProjectFileLoader.load")(
-    function* (workspaceRoot) {
-      const filePath = path.join(workspaceRoot, STUDIO_PROJECT_FILE_NAME);
-      const raw = yield* fileSystem.readFileString(filePath).pipe(
-        Effect.asSome,
-        Effect.catchTags({
-          PlatformError: (error) =>
-            error.reason._tag === "NotFound"
-              ? Effect.succeed(Option.none<string>())
-              : logStudioProjectFileLoadError(
-                  new StudioProjectFileLoadError({
-                    operation: "read",
-                    workspaceRoot,
-                    filePath,
-                    cause: error,
-                  }),
-                ).pipe(Effect.as(Option.none<string>())),
-        }),
-      );
-      if (Option.isNone(raw)) {
-        return Option.none<StudioProjectFile>();
-      }
-      return yield* decodeStudioProjectFileJson(raw.value).pipe(
-        Effect.asSome,
-        Effect.catchTags({
-          SchemaError: (error) =>
-            logStudioProjectFileLoadError(
-              new StudioProjectFileLoadError({
-                operation: "decode",
-                workspaceRoot,
-                filePath,
-                cause: error,
-              }),
-            ).pipe(Effect.as(Option.none<StudioProjectFile>())),
-        }),
-      );
-    },
-  );
+  const load: StudioProjectFileLoader["Service"]["load"] = Effect.fn(
+    "StudioProjectFileLoader.load",
+  )(function* (workspaceRoot) {
+    const filePath = path.join(workspaceRoot, STUDIO_PROJECT_FILE_NAME);
+    const raw = yield* fileSystem.readFileString(filePath).pipe(
+      Effect.asSome,
+      Effect.catchTags({
+        PlatformError: (error) =>
+          error.reason._tag === "NotFound"
+            ? Effect.succeed(Option.none<string>())
+            : logStudioProjectFileLoadError(
+                new StudioProjectFileLoadError({
+                  operation: "read",
+                  workspaceRoot,
+                  filePath,
+                  cause: error,
+                }),
+              ).pipe(Effect.as(Option.none<string>())),
+      }),
+    );
+    if (Option.isNone(raw)) {
+      return Option.none<StudioProjectFile>();
+    }
+    return yield* decodeStudioProjectFileJson(raw.value).pipe(
+      Effect.asSome,
+      Effect.catchTags({
+        SchemaError: (error) =>
+          logStudioProjectFileLoadError(
+            new StudioProjectFileLoadError({
+              operation: "decode",
+              workspaceRoot,
+              filePath,
+              cause: error,
+            }),
+          ).pipe(Effect.as(Option.none<StudioProjectFile>())),
+      }),
+    );
+  });
 
   return StudioProjectFileLoader.of({ load });
 });

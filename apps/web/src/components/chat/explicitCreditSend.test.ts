@@ -1,4 +1,13 @@
-import { readFileSync } from "node:fs";
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
+import * as FileSystem from "effect/FileSystem";
+import * as Effect from "effect/Effect";
+import { fileURLToPath } from "node:url";
+const readSource = (url: URL) =>
+  Effect.runPromise(
+    Effect.flatMap(FileSystem.FileSystem, (fs) => fs.readFileString(fileURLToPath(url))).pipe(
+      Effect.provide(NodeFileSystem.layer),
+    ),
+  );
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { createRequire } from "node:module";
@@ -233,23 +242,22 @@ describe("explicit current credit offer", () => {
 // eligible helper being bypassed at the real button/keyboard or attachment-await boundary.
 const composerSource = ts.createSourceFile(
   "ChatComposer.tsx",
-  readFileSync(new URL("./ChatComposer.tsx", import.meta.url), "utf8"),
+  await readSource(new URL("./ChatComposer.tsx", import.meta.url)),
   ts.ScriptTarget.Latest,
   true,
   ts.ScriptKind.TSX,
 );
 const viewSource = ts.createSourceFile(
   "ChatView.tsx",
-  readFileSync(new URL("../ChatView.tsx", import.meta.url), "utf8"),
+  await readSource(new URL("../ChatView.tsx", import.meta.url)),
   ts.ScriptTarget.Latest,
   true,
   ts.ScriptKind.TSX,
 );
 const runtimeSource = ts.createSourceFile(
   "runtime.ts",
-  readFileSync(
+  await readSource(
     new URL("../../../../../packages/client-runtime/src/state/runtime.ts", import.meta.url),
-    "utf8",
   ),
   ts.ScriptTarget.Latest,
   true,

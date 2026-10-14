@@ -114,7 +114,7 @@ export class TextGeneration extends Context.Service<
       input: ThreadTitleGenerationInput,
     ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
   }
->()("studio/textGeneration/TextGeneration") {}
+>()("specweave-studio/textGeneration/TextGeneration") {}
 
 type TextGenerationOp =
   | "generateCommitMessage"

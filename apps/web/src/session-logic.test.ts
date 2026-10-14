@@ -1315,6 +1315,7 @@ describe("HTML renders in the timeline", () => {
       "work",
       "html-render",
       "work",
+      "turn-fold-end",
       "message",
     ]);
   });

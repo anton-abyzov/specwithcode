@@ -1,4 +1,4 @@
-import * as NodeCrypto from "node:crypto";
+import { sha256 } from "../nodeCrypto.ts";
 import { PROJECT_CONTEXT_CHARACTER_LIMIT } from "@specweave-studio/contracts";
 
 export type ProjectContextSection = {
@@ -7,8 +7,7 @@ export type ProjectContextSection = {
   readonly revision: string;
 };
 export type ProjectContextSnapshot = ReadonlyArray<ProjectContextSection>;
-export const contextDigest = (value: string) =>
-  NodeCrypto.createHash("sha256").update(value).digest("hex");
+export const contextDigest = (value: string) => sha256([value], "hex");
 
 /** UTF-16 bounds never split a Unicode surrogate pair. */
 export function boundProjectContext(value: string, limit: number): string {

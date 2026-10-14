@@ -3,6 +3,9 @@ import {
   ProjectEnvironmentReadResult,
   ProjectEnvironmentPrepareInput,
   ProjectEnvironmentError,
+  ProjectEnvironmentImportPreviewInput,
+  ProjectEnvironmentImportPreview,
+  ProjectEnvironmentImportInput,
 } from "./projectEnvironment.ts";
 import { Rpc } from "effect/rpc";
 import * as Schema from "effect/Schema";
@@ -58,6 +61,8 @@ import {
 export const PROJECT_WORKSPACE_RPC_METHODS = {
   projectsEnvironmentRead: "projects.environmentRead",
   projectsEnvironmentPrepare: "projects.environmentPrepare",
+  projectsEnvironmentImportPreview: "projects.environmentImportPreview",
+  projectsEnvironmentImport: "projects.environmentImport",
   projectsPlanRead: "projects.planRead",
   projectsPlanAuthorityRead: "projects.planAuthorityRead",
   projectsPlanReplace: "projects.planReplace",
@@ -90,6 +95,16 @@ const planChange = {
 };
 const planTask = { ...planChange, taskId: ProjectPlanTaskInput.fields.taskId };
 export const projectWorkspaceRpcs = [
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsEnvironmentImportPreview, {
+    payload: ProjectEnvironmentImportPreviewInput,
+    success: ProjectEnvironmentImportPreview,
+    error: Schema.Union([ProjectEnvironmentError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsEnvironmentImport, {
+    payload: ProjectEnvironmentImportInput,
+    success: ProjectEnvironmentReadResult,
+    error: Schema.Union([ProjectEnvironmentError, EnvironmentAuthorizationError]),
+  }),
   Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsEnvironmentRead, {
     payload: ProjectEnvironmentReadInput,
     success: ProjectEnvironmentReadResult,

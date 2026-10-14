@@ -1,6 +1,9 @@
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as DateTime from "effect/DateTime";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native fixture writes independently exercise the fleet HTTP reader.
 import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join } from "./nodePath.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   AuthSessionId,
@@ -80,7 +83,7 @@ async function api(
     Layer.provide(FleetHttp.layer),
     Layer.provide(
       FleetWorkerGrants.layer.pipe(
-        Layer.provide(FleetTargets.layer),
+        Layer.provide(FleetTargets.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, globalThis.fetch)))),
         Layer.provide(ServerSecretStore.layer),
         Layer.provide(
           Layer.mock(ServerEnvironment.ServerEnvironment)({
@@ -179,7 +182,9 @@ describe("fleet authenticated HTTP", () => {
       String(url).endsWith("/pairing-token")
         ? Response.json({
             credential: "one-time",
-            expiresAt: new Date(Date.now() + 60000).toISOString(),
+            expiresAt: DateTime.formatIso(
+              DateTime.makeUnsafe(DateTime.toEpochMillis(DateTime.nowUnsafe()) + 60000),
+            ),
           })
         : Response.json(descriptor("env-m1")),
     );
@@ -207,7 +212,9 @@ describe("fleet authenticated HTTP", () => {
       String(url).endsWith("/pairing-token")
         ? Response.json({
             credential: "one-time",
-            expiresAt: new Date(Date.now() + 60000).toISOString(),
+            expiresAt: DateTime.formatIso(
+              DateTime.makeUnsafe(DateTime.toEpochMillis(DateTime.nowUnsafe()) + 60000),
+            ),
           })
         : Response.json(descriptor("env-m1")),
     );
@@ -234,7 +241,9 @@ describe("fleet authenticated HTTP", () => {
       String(url).endsWith("/pairing-token")
         ? Response.json({
             credential: "one-time",
-            expiresAt: new Date(Date.now() + 60000).toISOString(),
+            expiresAt: DateTime.formatIso(
+              DateTime.makeUnsafe(DateTime.toEpochMillis(DateTime.nowUnsafe()) + 60000),
+            ),
           })
         : Response.json(descriptor("env-m1")),
     );

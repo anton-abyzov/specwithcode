@@ -184,7 +184,7 @@ export const listFederatedProjectThreads = (input: OrchestratorMcpThreadListInpu
                     .pipe(
                       Effect.flatMap(Schema.decodeUnknownEffect(Project)),
                       Effect.mapError((error) =>
-                        error instanceof OrchestratorMcpFailure
+                        Schema.is(OrchestratorMcpFailure)(error)
                           ? error
                           : failure("The linked project could not be verified."),
                       ),
@@ -205,7 +205,7 @@ export const listFederatedProjectThreads = (input: OrchestratorMcpThreadListInpu
                     workers.proxy({ machine, tool: "studio_thread_list", arguments: page }).pipe(
                       Effect.flatMap(Schema.decodeUnknownEffect(OrchestratorMcpThreadListResult)),
                       Effect.mapError((error) =>
-                        error instanceof OrchestratorMcpFailure
+                        Schema.is(OrchestratorMcpFailure)(error)
                           ? error
                           : failure("The linked thread inventory could not be decoded."),
                       ),

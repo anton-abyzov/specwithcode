@@ -13,7 +13,8 @@ import { ComposerPendingUserInputPanel } from "../chat/ComposerPendingUserInputP
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
 import ChatMarkdown from "../ChatMarkdown";
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
+import { useProjectMessageRouting } from "../../studio/projectMessageRouting";
 
 /** Native decisions only. The project's conversation and message composer stay in place. */
 export function CoordinatorNativeControls({
@@ -71,6 +72,38 @@ export function CoordinatorNativeControls({
 }) {
   const answerId = useId();
   const [implementing, setImplementing] = useState(false);
+  const routing = useProjectMessageRouting();
+  const sawRequests = useRef(false);
+  const resolved = useRef(false);
+  const hasRequests = approvals.length > 0 || questions.length > 0 || Boolean(planMarkdown);
+  const onResolved = routing?.onCoordinatorRequestsResolved;
+  useEffect(() => {
+    if (hasRequests) sawRequests.current = true;
+    if (
+      sawRequests.current &&
+      !resolved.current &&
+      !hasRequests &&
+      !loading &&
+      !disabled &&
+      !error &&
+      !implementing &&
+      respondingApprovals.length === 0 &&
+      respondingQuestions.length === 0 &&
+      onResolved
+    ) {
+      resolved.current = true;
+      onResolved();
+    }
+  }, [
+    hasRequests,
+    loading,
+    disabled,
+    error,
+    implementing,
+    respondingApprovals.length,
+    respondingQuestions.length,
+    onResolved,
+  ]);
   const approval = approvals[0];
   const question = questions[0];
   const questionDisabled =

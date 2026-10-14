@@ -13,7 +13,11 @@ vi.mock("../../state/session", () => ({
   readEnvironmentScope: () => state.allowed,
 }));
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => state.allowed }));
-vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
+vi.mock("@tanstack/react-router", () => ({
+  useNavigate: () => vi.fn(),
+  useLocation: ({ select }: { select: (location: { href: string }) => string }) =>
+    select({ href: "/chat/thread" }),
+}));
 vi.mock("../settings/ScheduledTasksSettings", () => ({
   relativeLabel: () => "later",
   scheduleLabel: () => "daily",

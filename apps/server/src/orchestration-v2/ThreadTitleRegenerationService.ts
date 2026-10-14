@@ -36,7 +36,7 @@ export class ThreadTitleRegenerationService extends Context.Service<
       OrchestratorV2Error | ProjectStore.ProjectStoreV2Error | ServerSettingsError
     >;
   }
->()("studio/orchestration-v2/ThreadTitleRegenerationService") {}
+>()("specweave-studio/orchestration-v2/ThreadTitleRegenerationService") {}
 
 const make = Effect.gen(function* () {
   const threads = yield* ThreadManagementService.ThreadManagementService;

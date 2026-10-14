@@ -25,6 +25,14 @@ import { ProjectModels } from "./ProjectModels";
 import { ProjectMemory } from "./ProjectMemory";
 import { ProjectUsage } from "./ProjectUsage";
 import { ProjectRoutines } from "./ProjectRoutines";
+import {
+  FolderIcon,
+  Settings2Icon,
+  NotebookPenIcon,
+  ChartNoAxesCombinedIcon,
+  Clock3Icon,
+} from "lucide-react";
+import { ProjectLocation } from "./ProjectLocation";
 import { ProjectEnvironment } from "./ProjectEnvironment";
 import { ProjectConnections } from "./ProjectConnections";
 import { useProjectIconEditor } from "./ProjectIconEditor";
@@ -36,6 +44,13 @@ import { SettingsSection } from "../settings/settingsLayout";
 
 export type ProjectSettingsTab = "general" | "memory" | "environment" | "usage" | "routines";
 const tabs = ["general", "memory", "environment", "usage", "routines"] as const;
+const tabIcons = {
+  general: Settings2Icon,
+  memory: NotebookPenIcon,
+  environment: FolderIcon,
+  usage: ChartNoAxesCombinedIcon,
+  routines: Clock3Icon,
+};
 // The usage limit rows edit this project's overrides only; there is no scope picker here.
 const keepProjectScope = () => {};
 export function ProjectWorkspaceSettings({
@@ -220,27 +235,37 @@ export function ProjectWorkspaceSettings({
       >
         <div className="project-surface project-settings-dialog">
           <header className="project-settings-heading">
-            <DialogTitle>Project settings</DialogTitle>
-            <DialogDescription>
-              {projectTitle} ·{" "}
-              {snapshot.settings.kind === "personal"
-                ? PERSONAL_ASSISTANT_LABEL
-                : project.workspaceRoot}
+            <DialogTitle className="text-lg font-semibold tracking-tight">
+              Project settings
+            </DialogTitle>
+            <DialogDescription className="project-settings-identity" title={projectTitle}>
+              {projectTitle}
             </DialogDescription>
+            {snapshot.settings.kind === "personal" ? (
+              <p className="project-muted text-xs">{PERSONAL_ASSISTANT_LABEL}</p>
+            ) : (
+              <ProjectLocation path={project.workspaceRoot} />
+            )}
           </header>
           <div className="project-settings-layout">
             <nav aria-label="Project settings sections">
-              {tabs.map((t) => (
-                <button
-                  className="project-control"
-                  key={t}
-                  aria-current={tab === t ? "page" : undefined}
-                  onClick={() => setTab(t)}
-                >
-                  {t[0]?.toUpperCase()}
-                  {t.slice(1)}
-                </button>
-              ))}
+              {tabs.map((t) => {
+                const Icon = tabIcons[t];
+                return (
+                  <button
+                    className="project-control"
+                    key={t}
+                    aria-current={tab === t ? "page" : undefined}
+                    onClick={() => setTab(t)}
+                  >
+                    <Icon size={16} aria-hidden="true" />
+                    <span>
+                      {t[0]?.toUpperCase()}
+                      {t.slice(1)}
+                    </span>
+                  </button>
+                );
+              })}
             </nav>
             <div className="project-settings-body">
               {!canOperate && (

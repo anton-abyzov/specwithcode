@@ -1,3 +1,4 @@
+import * as ServerSettings from "../serverSettings.ts";
 import { expect, it } from "@effect/vitest";
 import {
   ProjectId,
@@ -70,6 +71,7 @@ it.effect("imports messages once and preserves the provider native resume bindin
             ),
         }),
         Layer.mock(Orchestrator.OrchestratorV2)({
+          withProjectPermissionUpdate: (effect) => effect,
           getThreadRecords: () =>
             imported
               ? Effect.succeed({
@@ -91,6 +93,9 @@ it.effect("imports messages once and preserves the provider native resume bindin
           recordImportedTranscript: (input) => Effect.sync(() => void recorded.push(input)),
         }),
         IdAllocator.layer,
+        ServerSettings.layerTest({
+          projectSettingsOverrides: { [projectId]: { defaultRuntimeMode: "full-access" } },
+        }),
       ),
     ),
   );
@@ -121,6 +126,7 @@ it.effect("imports messages once and preserves the provider native resume bindin
       id: threadId,
       activeProviderThreadId: providerThread?.payload.id,
       historyOrigin: "v1_import",
+      runtimeMode: "full-access",
     });
     expect(providerThread?.payload).toMatchObject({
       appThreadId: threadId,

@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 /** Shared world for RemoteWorkers and RemoteWorkerFollower tests: a fake machine B and this server. */
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -159,7 +160,7 @@ export const setup = (
   const shell = (id: string) => ({
     id: ThreadId.make(id),
     projectId: world.local.current.id,
-    archivedAt: world.caller.archived ? new Date() : null,
+    archivedAt: world.caller.archived ? DateTime.toDateUtc(DateTime.nowUnsafe()) : null,
     deletedAt: null,
   });
   const threads = Layer.mock(ThreadManagementService.ThreadManagementService)({

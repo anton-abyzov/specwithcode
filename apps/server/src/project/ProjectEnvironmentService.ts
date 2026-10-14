@@ -1,8 +1,11 @@
-import { createHash } from "node:crypto";
+import { stringifyJson } from "../json.ts";
+import { sha256 } from "../nodeCrypto.ts";
 import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   ProjectEnvironmentError,
   ProjectEnvironmentPrepareInput,
+  ProjectEnvironmentImportPreviewInput,
+  type ProjectEnvironmentImportPreview,
   projectRepositoryIdentity,
   type ProjectEnvironmentReadResult,
   type ProjectId,
@@ -19,10 +22,15 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ProjectAdmission from "./ProjectAdmission.ts";
 import { resolveProjectEnvironment } from "./ProjectEnvironmentPaths.ts";
+import { previewWorkspaceImport } from "./ProjectEnvironmentImport.ts";
+import { repositoryInspectionEnv } from "./ProjectRepositoryInspection.ts";
 
 export class ProjectEnvironmentService extends Context.Service<
   ProjectEnvironmentService,
   {
+    readonly previewImport: (
+      input: ProjectEnvironmentImportPreviewInput,
+    ) => Effect.Effect<ProjectEnvironmentImportPreview, ProjectEnvironmentError>;
     readonly read: (input: {
       projectId: ProjectId;
     }) => Effect.Effect<ProjectEnvironmentReadResult, ProjectEnvironmentError>;
@@ -30,7 +38,7 @@ export class ProjectEnvironmentService extends Context.Service<
       input: ProjectEnvironmentPrepareInput,
     ) => Effect.Effect<ProjectEnvironmentReadResult, ProjectEnvironmentError>;
   }
->()("studio/project/ProjectEnvironmentService") {}
+>()("specweave-studio/project/ProjectEnvironmentService") {}
 export const make = Effect.gen(function* () {
   const projects = yield* ProjectStore.ProjectStoreV2;
   const runner = yield* ProcessRunner.ProcessRunner;
@@ -72,7 +80,10 @@ export const make = Effect.gen(function* () {
         command: "git",
         args,
         cwd,
-        env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never" },
+        env:
+          args[0] === "clone"
+            ? { ...process.env, GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never" }
+            : repositoryInspectionEnv(),
         timeout: "120 seconds",
         maxOutputBytes: 65536,
       })
@@ -131,9 +142,9 @@ export const make = Effect.gen(function* () {
             return yield* fail(projectId, "conflict");
           const repo = resolved.repositories.find((value) => value.id === input.repositoryId);
           if (!repo) return yield* fail(projectId, "not_found");
-          const fingerprint = createHash("sha256")
-            .update(
-              JSON.stringify([
+          const fingerprint = sha256(
+            [
+              stringifyJson([
                 input.projectId,
                 input.repositoryId,
                 input.expectedRevision,
@@ -142,8 +153,8 @@ export const make = Effect.gen(function* () {
                 repo.url,
                 repo.localPath,
               ]),
-            )
-            .digest("hex");
+            ],
+            "hex");
           const prior = yield* sql<{
             fingerprint: string;
             status: string;
@@ -186,7 +197,7 @@ export const make = Effect.gen(function* () {
             Effect.catch((cause) =>
               Effect.gen(function* () {
                 yield* sql`UPDATE project_environment_preparations SET status='failed',updated_at=CURRENT_TIMESTAMP WHERE project_id=${projectId} AND command_id=${input.commandId}`;
-                return yield* cause instanceof ProjectEnvironmentError
+                return yield* Schema.is(ProjectEnvironmentError)(cause)
                   ? cause
                   : fail(projectId, "preparation_failed");
               }),
@@ -197,12 +208,40 @@ export const make = Effect.gen(function* () {
       )
       .pipe(
         Effect.mapError((cause) =>
-          cause instanceof ProjectEnvironmentError
+          Schema.is(ProjectEnvironmentError)(cause)
             ? cause
             : fail(input.projectId, "preparation_failed"),
         ),
       );
-  return ProjectEnvironmentService.of({ read, prepare });
+  const previewImport: ProjectEnvironmentService["Service"]["previewImport"] = (input) =>
+    admission
+      .withLock(
+        input.projectId,
+        Effect.gen(function* () {
+          const { projectId } = input;
+          if (!Schema.is(ProjectEnvironmentImportPreviewInput)(input))
+            return yield* fail(projectId, "invalid");
+          const found = yield* projects.get(input.projectId);
+          if (Option.isNone(found)) return yield* fail(input.projectId, "not_found");
+          const settings = found.value.workspaceSettings ?? DEFAULT_PROJECT_WORKSPACE_SETTINGS;
+          return yield* previewWorkspaceImport({
+            ...input,
+            workspaceRoot: found.value.workspaceRoot,
+            revision: settings.revision,
+            environment: settings.environment,
+          }).pipe(
+            Effect.provideService(FileSystem.FileSystem, fs),
+            Effect.provideService(Path.Path, path),
+            Effect.provideService(ProcessRunner.ProcessRunner, runner),
+          );
+        }),
+      )
+      .pipe(
+        Effect.mapError((error) =>
+          error instanceof ProjectEnvironmentError ? error : fail(input.projectId, "invalid"),
+        ),
+      );
+  return ProjectEnvironmentService.of({ read, prepare, previewImport });
 });
 export const layer = Layer.effect(ProjectEnvironmentService, make).pipe(
   Layer.provide(ProjectAdmission.layer),

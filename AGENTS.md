@@ -42,10 +42,13 @@ Document changes to user tasks and durable architectural constraints, not copies
 
 ## Commands
 
+Focused ACP permission regression: `node node_modules/vite-plus/bin/vp test run apps/server/src/provider/acp/AcpPermissions.test.ts apps/server/src/provider/acp/AcpPermissions.lifecycle.test.ts apps/web/src/components/chat/unifiedPermissions.test.tsx`. Headless composer check: `node apps/web/tests/unified-permissions/check.mjs` (set `PLAYWRIGHT_MODULE` / `PLAYWRIGHT_EXECUTABLE` for a scoped installed runtime).
+
 Use Node 22.20.0 explicitly and the isolated pnpm 11.10.0 toolchain. Paths below are relative to this repository unless a working directory is specified. Verification of saved receipts requires their retained local evidence; it is not live acceptance or a fresh build.
 
 | Check                                               | Verified command                                                                                                                                            |
 | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Native MCP matrix headless fixture | `node node_modules/vite-plus/bin/vp build --config apps/web/tests/connections-library/vite.config.ts`, then `node scripts/studio-verify/connections-library.mjs` (Node22; synthetic machine data, real matrix components) |
 | Headless isolated workspace/settings verification   | `node scripts/studio-workspaces/verify.mjs /absolute/owned/report-dir` (Node22; optional `STUDIO_TEST_CHROMIUM` points to an installed headless executable) |
 | Logical project behavior and focused coverage       | `node scripts/studio-logical-projects/check.mjs /absolute/owned/coverage-dir` |
 | Logical project headless three-server verification  | `node scripts/studio-logical-projects/verify.mjs /absolute/owned/report-dir` (build web and server first; isolated synthetic stores, disabled providers) |

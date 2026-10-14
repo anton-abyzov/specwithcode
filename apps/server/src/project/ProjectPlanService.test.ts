@@ -586,7 +586,11 @@ it.layer(layer, { excludeTestServices: true })("ProjectPlanService", (it) => {
         assert.deepEqual(metadata, {
           projectId,
           revision: 1,
-          authority: { kind: "specweave", root, incrementId: "0888-example" },
+          authority: {
+            kind: "specweave",
+            root: yield* fs.realPath(root),
+            incrementId: "0888-example",
+          },
         });
         assert.equal(
           (yield* service
@@ -660,6 +664,80 @@ it.layer(layer, { excludeTestServices: true })("ProjectPlanService", (it) => {
       );
       assert.equal((yield* service.read({ projectId })).revision, 0);
     }),
+  );
+  it.effect(
+    "binds a parent planning root only while its canonical folder grant remains active",
+    () =>
+      Effect.gen(function* () {
+        const { service, projectId, root, fs } = yield* fixture("approved-parent");
+        const canonical = yield* fs.realPath(root);
+        const child = `${canonical}/child`;
+        yield* fs.makeDirectory(child);
+        yield* externalFiles(canonical);
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`UPDATE projection_projects SET workspace_root=${child} WHERE project_id=${projectId}`;
+        assert.equal(
+          (yield* bind(service, projectId, canonical).pipe(Effect.flip)).code,
+          "source_invalid",
+        );
+        const settings = {
+          ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+          revision: 1,
+          environment: { additionalFolders: [canonical], repositories: [] },
+        };
+        yield* sql`UPDATE projection_projects SET workspace_settings_json=${JSON.stringify(settings)} WHERE project_id=${projectId}`;
+        const connected = yield* bind(service, projectId, canonical);
+        assert.equal(connected.external!.tasks[0]!.owner, "existing-owner");
+        yield* sql`UPDATE projection_projects SET workspace_settings_json=${JSON.stringify({ ...settings, revision: 2, environment: { additionalFolders: [], repositories: [] } })} WHERE project_id=${projectId}`;
+        assert.equal((yield* service.read({ projectId }).pipe(Effect.flip)).code, "source_invalid");
+        assert.equal((yield* service.readAuthority({ projectId })).authority.kind, "specweave");
+      }),
+  );
+  it.effect(
+    "rejects a replaced primary planning folder even when the project root also moves",
+    () =>
+      Effect.gen(function* () {
+        const { service, projectId, root, fs } = yield* fixture("primary-symlink");
+        const canonical = yield* fs.realPath(root);
+        yield* externalFiles(canonical);
+        yield* bind(service, projectId, canonical);
+        const replacement = `${canonical}-moved`;
+        yield* fs.rename(canonical, replacement);
+        yield* fs.symlink(replacement, canonical);
+        assert.equal((yield* service.read({ projectId }).pipe(Effect.flip)).code, "source_invalid");
+        yield* fs.remove(canonical);
+        yield* fs.rename(replacement, canonical);
+      }),
+  );
+  it.effect(
+    "rejects a replaced external approval and keeps its binding for explicit recovery",
+    () =>
+      Effect.gen(function* () {
+        const { service, projectId, fs } = yield* fixture("approved-symlink");
+        const external = yield* fs
+          .makeTempDirectoryScoped({ prefix: "studio-plan-external-" })
+          .pipe(Effect.flatMap((p) => fs.realPath(p)));
+        yield* externalFiles(external);
+        const sql = yield* SqlClient.SqlClient;
+        const settings = {
+          ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+          environment: { additionalFolders: [external], repositories: [] },
+        };
+        yield* sql`UPDATE projection_projects SET workspace_settings_json=${JSON.stringify(settings)} WHERE project_id=${projectId}`;
+        yield* bind(service, projectId, external);
+        const replacement = `${external}-moved`;
+        yield* fs.rename(external, replacement);
+        yield* fs.symlink(replacement, external);
+        assert.equal((yield* service.read({ projectId }).pipe(Effect.flip)).code, "source_invalid");
+        assert.deepEqual((yield* service.readAuthority({ projectId })).authority, {
+          kind: "specweave",
+          root: external,
+          incrementId: "0888-example",
+        });
+        yield* fs.remove(external);
+        yield* fs.rename(replacement, external);
+        assert.isNotNull((yield* service.read({ projectId })).external);
+      }),
   );
   it.effect(
     "requires explicit native discard and never drops a live claim on authority change",

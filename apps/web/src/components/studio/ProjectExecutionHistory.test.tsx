@@ -10,6 +10,7 @@ const state = vi.hoisted(() => ({
   load: vi.fn(),
   projection: vi.fn(),
   history: { hasMoreHistory: true, loading: false, error: null as string | null },
+  historyListeners: new Set<() => void>(),
   missingHistory: false,
   olderLoaded: false,
 }));
@@ -20,10 +21,18 @@ vi.mock("../../state/environments", () => ({
     environments: [{ environmentId: "m4", label: "M4", connection: { phase: "connected" } }],
   }),
 }));
-vi.mock("../../state/entities", () => ({
-  useThreadProjection: (ref: unknown) => state.projection(ref),
-  useThreadHistory: () => state.history,
-}));
+vi.mock("../../state/entities", async () => {
+  const { useSyncExternalStore } = await import("react");
+  // Subscribes like the real atom does: the history changes without a parent re-render.
+  const subscribe = (listener: () => void) => {
+    state.historyListeners.add(listener);
+    return () => state.historyListeners.delete(listener);
+  };
+  return {
+    useThreadProjection: (ref: unknown) => state.projection(ref),
+    useThreadHistory: () => useSyncExternalStore(subscribe, () => state.history),
+  };
+});
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => state.load }));
 vi.mock("../../state/threads", () => ({ threadEnvironment: { loadEarlierHistory: {} } }));
 const scopes = ["m4", "m1", "m3"].map((environmentId) => ({
@@ -82,6 +91,11 @@ const render = () =>
   act(async () =>
     root.render(<ProjectExecutionHistory project={project} members={[]} scopes={scopes} />),
   );
+const setHistory = (history: typeof state.history) =>
+  act(async () => {
+    state.history = history;
+    for (const listener of state.historyListeners) listener();
+  });
 async function expand(label: string) {
   const details = [...container.querySelectorAll("details")].find((entry) =>
     entry.querySelector("summary")?.textContent?.includes(label),
@@ -121,18 +135,15 @@ it("pages predecessor messages on their original host, blocks duplicate loading,
     environmentId: "m1",
     input: { threadId: "same-coordinator-id" },
   });
-  state.history = { hasMoreHistory: true, loading: true, error: null };
-  await render();
+  await setHistory({ hasMoreHistory: true, loading: true, error: null });
   expect(container.querySelector<HTMLButtonElement>("button")?.disabled).toBe(true);
   await act(async () => container.querySelector<HTMLButtonElement>("button")!.click());
   expect(state.load).toHaveBeenCalledTimes(1);
-  state.history = { hasMoreHistory: true, loading: false, error: "M1 history request failed" };
-  await render();
+  await setHistory({ hasMoreHistory: true, loading: false, error: "M1 history request failed" });
   expect(container.querySelector('[role="alert"]')?.textContent).toBe("M1 history request failed");
   expect(container.textContent).toContain("Original coordinator reply");
   state.olderLoaded = true;
-  state.history = { hasMoreHistory: false, loading: false, error: null };
-  await render();
+  await setHistory({ hasMoreHistory: false, loading: false, error: null });
   expect(container.textContent).toContain("Earlier retained request");
   expect(container.textContent).toContain("M1 · Model not recorded");
   expect(container.querySelector("button")).toBeNull();

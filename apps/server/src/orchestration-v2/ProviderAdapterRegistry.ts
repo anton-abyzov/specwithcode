@@ -68,7 +68,7 @@ export interface ProviderAdapterRegistryV2Shape {
 export class ProviderAdapterRegistryV2 extends Context.Service<
   ProviderAdapterRegistryV2,
   ProviderAdapterRegistryV2Shape
->()("studio/orchestration-v2/ProviderAdapterRegistry/ProviderAdapterRegistryV2") {}
+>()("specweave-studio/orchestration-v2/ProviderAdapterRegistry/ProviderAdapterRegistryV2") {}
 
 /**
  * Production facade over the canonical provider-instance registry. Adapter
@@ -94,15 +94,34 @@ export const layerFromProviderInstanceRegistry: Layer.Layer<
               return new ProviderAdapterRegistryLookupError({ instanceId });
             const adapter = instance.orchestrationAdapter;
             const auth = instance.auth;
-            const nativeGuard = (adapter.driver === "codex" || adapter.driver === "claudeAgent") && Option.isSome(capacity) ? capacity.value : undefined;
+            const nativeGuard =
+              (adapter.driver === "codex" || adapter.driver === "claudeAgent") &&
+              Option.isSome(capacity)
+                ? capacity.value
+                : undefined;
             if (!auth && !nativeGuard) return Effect.succeed(adapter);
             return Effect.succeed({
               ...adapter,
               openSession: (input) => {
                 const open = Effect.gen(function* () {
-                  const options = yield* creditAdmissionOptions(input.manualCodexCreditIntent, input.modelSelection, adapter.driver, yield* Clock.currentTimeMillis);
-                  if (input.manualCodexCreditIntent && !nativeGuard) return yield* new ProviderSetupError({ instanceId, operation: "session", detail: "Fresh native credit admission is unavailable." });
-                  if (nativeGuard) yield* nativeGuard.assertNativeStart(instanceId, input.runtimePolicy.cwd, options);
+                  const options = yield* creditAdmissionOptions(
+                    input.manualCodexCreditIntent,
+                    input.modelSelection,
+                    adapter.driver,
+                    yield* Clock.currentTimeMillis,
+                  );
+                  if (input.manualCodexCreditIntent && !nativeGuard)
+                    return yield* new ProviderSetupError({
+                      instanceId,
+                      operation: "session",
+                      detail: "Fresh native credit admission is unavailable.",
+                    });
+                  if (nativeGuard)
+                    yield* nativeGuard.assertNativeStart(
+                      instanceId,
+                      input.runtimePolicy.cwd,
+                      options,
+                    );
                   const binding = auth?.credentialBinding;
                   const related = binding
                     ? (yield* instances.listInstances).filter(

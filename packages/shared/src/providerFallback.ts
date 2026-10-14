@@ -102,16 +102,53 @@ export function isPerTokenProvider(provider: ServerProvider | undefined): boolea
   return (
     isClaudeApiKeyProvider(provider) ||
     provider?.auth.type === "apiKey" ||
+    provider?.auth.type === "api_key" ||
     provider?.auth.type === "bedrock" ||
     provider?.auth.apiKeyBilling === true
   );
+}
+
+/** Suggestions need a recent successful observation, not merely an installed CLI. */
+export const FALLBACK_USAGE_MAX_AGE_MS = 5 * 60_000;
+export function hasUsableFallbackCapacity(provider: ServerProvider, nowMs: number): boolean {
+  const limits = provider.usageLimits;
+  if (
+    !canTakeTurn(provider) ||
+    provider.auth.status !== "authenticated" ||
+    !limits ||
+    limits.unavailable
+  )
+    return false;
+  const observedAt = Date.parse(limits.nativeAllowanceObservedAt ?? limits.checkedAt);
+  if (
+    !Number.isFinite(observedAt) ||
+    observedAt > nowMs ||
+    nowMs - observedAt > FALLBACK_USAGE_MAX_AGE_MS
+  )
+    return false;
+  const deniedAt = Date.parse(limits.nativeDenialObservedAt ?? "");
+  if (Number.isFinite(deniedAt) && deniedAt >= observedAt) return false;
+  if (
+    limits.windows.some(
+      (window) =>
+        !Number.isFinite(window.usedPercent) ||
+        window.usedPercent < 0 ||
+        (window.usedPercent >= 100 &&
+          window.resetsAt !== undefined &&
+          Date.parse(window.resetsAt) <= nowMs),
+    )
+  )
+    return false;
+  const used = providerUsedPercent(provider, nowMs);
+  // A reset passing is not evidence of renewed allowance. Refresh first.
+  return used !== null && Number.isFinite(used) && used >= 0 && used < 100;
 }
 
 function defaultModel(provider: ServerProvider): string | undefined {
   return (
     provider.models.find((model) => model.isDefault && !model.isCustom)?.slug ??
     provider.models.find((model) => !model.isCustom)?.slug ??
-    provider.models[0]?.slug
+    undefined
   );
 }
 
@@ -150,8 +187,7 @@ export function resolveApiCreditSelection(input: {
  * `anyReady` prefers, in order: another instance of the same driver that
  * lists `currentModel` (another account on the same model, where a Claude
  * transcript is copied across instead of summarised), then any instance of
- * the same driver, then the one with the most headroom left (an unknown
- * read last), then list order. It never picks an instance billed per token
+ * the same driver, then the one with the most verified headroom left, then list order. It never picks an instance billed per token
  * (`isPerTokenProvider`), since its turns cost money: one is used only when
  * the rule or the project's default model names it, or through
  * `resolveApiCreditSelection` when the rule allows API credits.
@@ -173,16 +209,24 @@ export function resolveProviderFallback(input: {
 }): ModelSelection | null {
   const usable = (provider: ServerProvider | undefined): provider is ServerProvider => {
     if (provider === undefined || provider.instanceId === input.currentInstanceId) return false;
-    if (input.limitedInstanceIds?.has(provider.instanceId) || !canTakeTurn(provider)) return false;
+    if (
+      input.limitedInstanceIds?.has(provider.instanceId) ||
+      !hasUsableFallbackCapacity(provider, input.nowMs)
+    )
+      return false;
     const used = providerUsedPercent(provider, input.nowMs);
-    return input.belowPercent == null || used === null || used < input.belowPercent;
+    return used !== null && (input.belowPercent == null || used < input.belowPercent);
   };
   for (const selection of [
     input.rule.providerLimitFallbackModelSelection,
     input.rule.defaultModelSelection,
   ]) {
     if (selection === null) continue;
-    if (usable(input.providers.find((provider) => provider.instanceId === selection.instanceId)))
+    const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
+    if (
+      usable(provider) &&
+      provider.models.some((model) => model.slug === selection.model && !model.isCustom)
+    )
       return selection;
   }
   if (!input.anyReady) return null;
@@ -192,9 +236,8 @@ export function resolveProviderFallback(input: {
   const sameModel = (provider: ServerProvider) =>
     provider.driver === driver &&
     input.currentModel !== undefined &&
-    provider.models.some((model) => model.slug === input.currentModel);
+    provider.models.some((model) => model.slug === input.currentModel && !model.isCustom);
   // Lower is cheaper: the same model elsewhere, the same driver, then headroom.
-  // An unknown read ranks after every known one.
   const rank = (provider: ServerProvider): [number, number] => [
     sameModel(provider) ? 0 : provider.driver === driver ? 1 : 2,
     providerUsedPercent(provider, input.nowMs) ?? 101,

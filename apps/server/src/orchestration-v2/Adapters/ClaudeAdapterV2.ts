@@ -1,3 +1,4 @@
+import { stringifyJson } from "../../json.ts";
 import { makeProjectContextHooks } from "../../project/ProjectContextHooks.ts";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import {
@@ -429,7 +430,7 @@ export interface ClaudeAgentSdkQueryRunnerShape {
 export class ClaudeAgentSdkQueryRunner extends Context.Service<
   ClaudeAgentSdkQueryRunner,
   ClaudeAgentSdkQueryRunnerShape
->()("studio/orchestration-v2/Adapters/ClaudeAdapterV2/ClaudeAgentSdkQueryRunner") {}
+>()("specweave-studio/orchestration-v2/Adapters/ClaudeAdapterV2/ClaudeAgentSdkQueryRunner") {}
 
 export interface ClaudeAgentSdkSessionForkInput {
   readonly sessionId: string;
@@ -1733,7 +1734,7 @@ function requiresClaudeApproval(context: ActiveClaudeTurnContext): boolean {
 }
 
 function claudeRuntimeQueryPolicyKey(policy: ClaudeRuntimeQueryPolicy): string {
-  return JSON.stringify({
+  return stringifyJson({
     permissionMode: policy.permissionMode,
     tools: policy.tools,
     allowedTools: policy.allowedTools,
@@ -1758,7 +1759,7 @@ export function claudeEffectiveQueryPolicyKey(
     readonly subagentPromptFileContents?: string | undefined;
   },
 ): string {
-  return JSON.stringify({
+  return stringifyJson({
     agentInstructions: context?.agentInstructions,
     claudeWorkflowMode: context?.claudeWorkflowMode ?? "on-request",
     responseStyle: context?.responseStyle ?? "concise",
@@ -7291,7 +7292,7 @@ export function makeClaudeAdapterV2(
               ? {}
               : { allowedTools: queryPolicy.allowedTools }),
           });
-          const queryPolicyKey = JSON.stringify([
+          const queryPolicyKey = stringifyJson([
             claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides, {
               ...turnInput.runtimePolicy,
               subagentPromptFileContents,
@@ -7299,7 +7300,7 @@ export function makeClaudeAdapterV2(
             turnInput.projectAdditionalDirectories ?? [],
             claudeInChromeDefault,
           ]);
-          const queryCoreKey = JSON.stringify([
+          const queryCoreKey = stringifyJson([
             claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides),
             turnInput.projectAdditionalDirectories ?? [],
           ]);

@@ -12,6 +12,7 @@
  *
  * @module DeviceSignInRequests
  */
+// @effect-diagnostics-next-line nodeBuiltinImport:off - synchronous sign-in state uses native constant-time comparison, absent from Effect Crypto.
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 
 import type { DeviceSignInPollResult } from "@specweave-studio/contracts/deviceSignIn";

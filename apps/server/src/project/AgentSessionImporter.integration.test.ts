@@ -30,7 +30,7 @@ const codexId = "synthetic-codex-session";
 const claudeId = "01234567-89ab-4cde-8fab-0123456789ab";
 const importedId = ThreadId.make(`import:codex:${codexId}`);
 const now = Date.parse("2026-10-09T12:00:00.000Z");
-const at = new Date(now - 2000).toISOString();
+const at = DateTime.formatIso(DateTime.makeUnsafe(now - 2000));
 const jsonl = (records: unknown[]) =>
   records.map((record) => JSON.stringify(record)).join("\n") + "\n";
 const codexTranscript = (cwd: string) =>
@@ -115,6 +115,7 @@ const facades = Layer.unwrap(
           ),
       }),
       Layer.mock(Orchestrator.OrchestratorV2)({
+        withProjectPermissionUpdate: (effect) => effect,
         getThreadRecords: (id, fields, filter) =>
           projections
             .getThreadRecords(id, fields, filter)

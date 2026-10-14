@@ -89,7 +89,7 @@ export class TelegramChannel extends Context.Service<
     /** Starts the poller and the reply forwarder; both run for the server's lifetime. */
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
   }
->()("studio/channels/TelegramChannel") {}
+>()("specweave-studio/channels/TelegramChannel") {}
 
 /** Remembers the last few ids so one run or request is announced once. */
 const makeRecent = <A>() => {

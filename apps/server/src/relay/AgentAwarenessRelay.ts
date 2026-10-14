@@ -60,7 +60,7 @@ export class AgentAwarenessRelay extends Context.Service<
     readonly requestCatchUp: () => Effect.Effect<void>;
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
   }
->()("studio/relay/AgentAwarenessRelay") {}
+>()("specweave-studio/relay/AgentAwarenessRelay") {}
 
 function eventThreadId(event: OrchestrationV2DomainEvent): ThreadId {
   return event.threadId;
@@ -810,7 +810,9 @@ export const make = Effect.gen(function* () {
           );
           break;
         case "disabled":
-          yield* Effect.logInfo("agent activity publishing disabled by Studio Connect configuration");
+          yield* Effect.logInfo(
+            "agent activity publishing disabled by Studio Connect configuration",
+          );
           break;
         case "enabled":
           yield* Effect.logInfo("agent activity publishing enabled", {

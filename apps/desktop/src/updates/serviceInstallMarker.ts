@@ -1,4 +1,6 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native install-marker discovery runs before the managed service is started.
 import * as NodeFS from "node:fs";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native install-marker discovery runs before the managed service is started.
 import * as NodePath from "node:path";
 
 /**

@@ -1,3 +1,4 @@
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -27,18 +28,19 @@ export class FleetTargets extends Context.Service<
     readonly load: Effect.Effect<FleetConfig | null, FleetConfigReadError>;
     readonly fetch: FleetFetch;
   }
->()("studio/fleet/FleetTargets") {}
+>()("specweave-studio/fleet/FleetTargets") {}
 
 export const layer = Layer.effect(
   FleetTargets,
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
+    const fetch = yield* FetchHttpClient.Fetch;
     return FleetTargets.of({
       load: Effect.tryPromise({
         try: () => readFleetConfig(config.baseDir),
         catch: (cause) => new FleetConfigReadError({ cause }),
       }),
-      fetch: (input, init) => globalThis.fetch(input, init),
+      fetch,
     });
   }),
 );

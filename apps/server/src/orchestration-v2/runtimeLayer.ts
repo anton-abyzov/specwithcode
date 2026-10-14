@@ -1,3 +1,4 @@
+import * as ProjectRuntimeAccess from "../project/ProjectRuntimeAccess.ts";
 import * as MachineHandoff from "../fleet/MachineHandoff.ts";
 import * as MachineHandoffStore from "../fleet/MachineHandoffStore.ts";
 import * as HandoffGit from "../fleet/handoffGit.ts";
@@ -382,6 +383,7 @@ export const layer = Layer.mergeAll(
 );
 
 export const layerProduction = Layer.mergeAll(
+  ProjectRuntimeAccess.layer.pipe(Layer.provide(layerOrchestratorProvided)),
   MachineHandoff.layer.pipe(
     Layer.provide(
       Layer.mergeAll(

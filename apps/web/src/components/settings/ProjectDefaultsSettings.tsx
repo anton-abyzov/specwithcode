@@ -287,7 +287,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             {...searchableSetting("default-permissions")}
             description={
               isProjectScope
-                ? "Permissions for new threads in this project."
+                ? "Permissions for all existing and future chats in this project. Active provider turns finish before restarting. App approvals remain separate."
                 : "Default permissions for new threads. Projects can override them."
             }
             resetAction={

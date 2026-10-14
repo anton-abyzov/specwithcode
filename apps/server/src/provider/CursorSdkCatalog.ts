@@ -33,7 +33,7 @@ export interface CursorSdkCatalogShape {
 }
 
 export class CursorSdkCatalog extends Context.Service<CursorSdkCatalog, CursorSdkCatalogShape>()(
-  "studio/provider/CursorSdkCatalog",
+  "specweave-studio/provider/CursorSdkCatalog",
 ) {}
 
 function isAuthenticationFailure(cause: unknown): boolean {

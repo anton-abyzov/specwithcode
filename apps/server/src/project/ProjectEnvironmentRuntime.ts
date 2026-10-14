@@ -1,3 +1,5 @@
+import { stringifyJson } from "../json.ts";
+import * as Schema from "effect/Schema";
 import {
   DEFAULT_PROJECT_ENVIRONMENT,
   projectExecutionIsFenced,
@@ -22,9 +24,9 @@ import { resolveProjectEnvironment } from "./ProjectEnvironmentPaths.ts";
 export const makeEnvironmentRuntime = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  return (
+  return <E>(
     session: ProviderAdapterV2SessionRuntime,
-    read: (projectId: ProjectId) => Effect.Effect<Option.Option<Project>, unknown>,
+    read: (projectId: ProjectId) => Effect.Effect<Option.Option<Project>, E>,
   ): ProviderAdapterV2SessionRuntime => {
     const start = (input: ProviderAdapterV2TurnInput, compact = false) =>
       Effect.gen(function* () {
@@ -87,7 +89,7 @@ export const makeEnvironmentRuntime = Effect.gen(function* () {
             unrestrictedAcp && directories.length > 0
               ? {
                   ...input.message,
-                  text: `Approved project folders (paths only; existing permissions apply): ${JSON.stringify(directories)}\n\n${input.message.text}`,
+                  text: `Approved project folders (paths only; existing permissions apply): ${stringifyJson(directories)}\n\n${input.message.text}`,
                 }
               : input.message,
         };
@@ -96,7 +98,7 @@ export const makeEnvironmentRuntime = Effect.gen(function* () {
           : session.startTurn(next);
       }).pipe(
         Effect.mapError((cause) =>
-          cause instanceof ProviderAdapterTurnStartError
+          Schema.is(ProviderAdapterTurnStartError)(cause)
             ? cause
             : new ProviderAdapterTurnStartError({
                 driver: session.driver,

@@ -77,7 +77,7 @@ export class GoogleApi extends Context.Service<
       readonly maxBytes: number;
     }) => Effect.Effect<string, GoogleApiError>;
   }
->()("studio/integrations/GoogleApi") {}
+>()("specweave-studio/integrations/google/GoogleApi") {}
 
 const TokenResponse = Schema.Struct({
   access_token: Schema.String,

@@ -139,7 +139,7 @@ export class OrchestrationEventStore extends Context.Service<
       readonly project: (event: ApplicationStoredEvent) => A;
     }) => Stream.Stream<A, OrchestrationEventStoreError>;
   }
->()("studio/persistence/OrchestrationEventStore") {}
+>()("specweave-studio/persistence/OrchestrationEventStore") {}
 
 const encodeProjectIcon = Schema.encodeSync(StoredProjectIcon);
 const decodeProjectEvent = Schema.decodeUnknownEffect(ApplicationProjectEvent);

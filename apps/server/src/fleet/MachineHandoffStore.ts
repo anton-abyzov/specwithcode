@@ -1,3 +1,4 @@
+import { parseJson, stringifyJson } from "../json.ts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -20,7 +21,7 @@ export class MachineHandoffStore extends Context.Service<
       text: string,
     ) => Effect.Effect<string, MachineHandoffError>;
   }
->()("studio/fleet/MachineHandoffStore") {}
+>()("specweave-studio/fleet/MachineHandoffStore") {}
 
 const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -63,7 +64,7 @@ const make = Effect.gen(function* () {
         return yield* new MachineHandoffError({ code: "storage_failed" });
       const text = yield* fs.readFileString(target);
       return yield* Effect.try({
-        try: () => JSON.parse(text) as unknown,
+        try: () => parseJson(text) as unknown,
         catch: () => new MachineHandoffError({ code: "storage_failed" }),
       });
     }).pipe(Effect.mapError(() => new MachineHandoffError({ code: "storage_failed" })));
@@ -79,7 +80,7 @@ const make = Effect.gen(function* () {
       yield* fs.chmod(parent, 0o700);
       return parent;
     }).pipe(Effect.mapError(() => new MachineHandoffError({ code: "storage_failed" }))),
-    write: (key, value) => writeText(key, JSON.stringify(value)),
+    write: (key, value) => writeText(key, stringifyJson(value)),
     retainContext: (key, text) => writeText(key, text).pipe(Effect.as(location(key))),
   });
 });

@@ -1,3 +1,4 @@
+import { stringifyJson } from "../json.ts";
 import { randomUuidV4 } from "../orchestration-v2/RandomUuid.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import {
@@ -62,6 +63,8 @@ export interface ProjectCreateInput extends ProjectCreatePayload {
 }
 
 export interface ProjectUpdateInput extends ProjectUpdatePayload {
+  /** Internal adoption guard: inspection does not authorize rebinding a canonical path. */
+  readonly requireUnchangedEnvironmentPaths?: boolean;
   readonly ownership?: ProjectOwnershipUpdate;
   /** Internal automatic initialization, checked under the project command lock. */
   readonly onlyIfDefaultModelUnset?: boolean;
@@ -140,9 +143,9 @@ export class ProjectRequestDeniedError extends Schema.TaggedError<ProjectRequest
 
 /** Return only reviewed messages; unexpected operational details stay private. */
 export function projectMutationErrorMessage(cause: unknown): string {
-  return cause instanceof ProjectRequestDeniedError ||
-    cause instanceof ProjectNotEmptyError ||
-    cause instanceof ProjectEnvironmentError
+  return Schema.is(ProjectRequestDeniedError)(cause) ||
+    Schema.is(ProjectNotEmptyError)(cause) ||
+    Schema.is(ProjectEnvironmentError)(cause)
     ? cause.message
     : "Failed to mutate project.";
 }
@@ -209,7 +212,7 @@ export class ProjectService extends Context.Service<
       readonly projectIds?: ReadonlyArray<ProjectId>;
     }) => Effect.Effect<ReadonlyArray<OrchestrationProjectShell>, ProjectOperationError>;
   }
->()("studio/project/ProjectService") {}
+>()("specweave-studio/project/ProjectService") {}
 
 export const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -551,9 +554,19 @@ export const make = Effect.gen(function* () {
                 Effect.provideService(Path.Path, path),
               );
       if (
+        input.requireUnchangedEnvironmentPaths &&
+        (workspaceRoot !== previousRoot ||
+          JSON.stringify(environment) !== JSON.stringify(requestedEnvironment))
+      ) {
+        return yield* new ProjectEnvironmentError({
+          projectId: input.projectId,
+          code: "import_changed",
+        });
+      }
+      if (
         workspaceRoot !== previousRoot ||
         (environment !== undefined &&
-          JSON.stringify(environment) !== JSON.stringify(priorEnvironment))
+          stringifyJson(environment) !== stringifyJson(priorEnvironment))
       ) {
         const snapshot = yield* threadProjections.getShellSnapshot().pipe(
           Effect.mapError(
@@ -716,7 +729,7 @@ export const make = Effect.gen(function* () {
           .withLock(thread.id, deleteChildThread(input, thread.id))
           .pipe(
             Effect.mapError((cause) =>
-              cause instanceof ProjectRequestDeniedError
+              Schema.is(ProjectRequestDeniedError)(cause)
                 ? cause
                 : new ProjectOperationError({ operation: "delete-thread", projectId, cause }),
             ),

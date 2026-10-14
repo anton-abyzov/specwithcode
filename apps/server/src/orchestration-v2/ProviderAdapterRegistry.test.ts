@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -79,26 +80,70 @@ const layerTest = ProviderAdapterRegistry.layerFromProviderInstanceRegistry.pipe
   Layer.provide(layerInstanceRegistry),
 );
 
-it.effect("rechecks native capacity at session creation and never launches a rejected profile", () =>
-  Effect.gen(function* () {
-    const launches = yield* Ref.make(0);
-    const gates = yield* Ref.make(0);
-    const guardedAdapter = { ...personalAdapter, openSession: () => Ref.update(launches, (n) => n + 1).pipe(Effect.andThen(Effect.die("rejected native session must not launch"))) };
-    const guardedInstance = makeInstance(personalId, guardedAdapter);
-    const registry = yield* Effect.service(ProviderAdapterRegistry.ProviderAdapterRegistryV2).pipe(Effect.provide(
-      ProviderAdapterRegistry.layerFromProviderInstanceRegistry.pipe(
-        Layer.provide(Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({ getInstance: () => Effect.succeed(guardedInstance) })),
-        Layer.provide(Layer.mock(StudioCapacity.Capacity)({ assertNativeStart: (instanceId, cwd) => { assert.strictEqual(cwd, "/workspace"); return Ref.update(gates, (n) => n + 1).pipe(Effect.andThen(Effect.fail(new ProviderSetupError({ instanceId, operation: "session", detail: "Legacy subscription authorization is unverified." })))); } })),
-      ),
-    ));
-    const adapter = yield* registry.get(personalId);
-    assert.strictEqual(yield* Ref.get(gates), 0);
-    const error = yield* adapter.openSession({ threadId: ThreadId.make("native-capacity-thread"), providerSessionId: ProviderSessionId.make("native-capacity-session"), modelSelection: { instanceId: personalId, model: "test-model" }, runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: "/workspace" } }).pipe(Effect.flip);
-    assert.instanceOf(error, ProviderAdapterOpenSessionError);
-    assert.instanceOf(error.cause, ProviderSetupError);
-    assert.strictEqual(yield* Ref.get(gates), 1);
-    assert.strictEqual(yield* Ref.get(launches), 0);
-  }),
+it.effect(
+  "rechecks native capacity at session creation and never launches a rejected profile",
+  () =>
+    Effect.gen(function* () {
+      const launches = yield* Ref.make(0);
+      const gates = yield* Ref.make(0);
+      const guardedAdapter = {
+        ...personalAdapter,
+        openSession: () =>
+          Ref.update(launches, (n) => n + 1).pipe(
+            Effect.andThen(Effect.die("rejected native session must not launch")),
+          ),
+      };
+      const guardedInstance = makeInstance(personalId, guardedAdapter);
+      const registry = yield* Effect.service(
+        ProviderAdapterRegistry.ProviderAdapterRegistryV2,
+      ).pipe(
+        Effect.provide(
+          ProviderAdapterRegistry.layerFromProviderInstanceRegistry.pipe(
+            Layer.provide(
+              Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+                getInstance: () => Effect.succeed(guardedInstance),
+              }),
+            ),
+            Layer.provide(
+              Layer.mock(StudioCapacity.Capacity)({
+                assertNativeStart: (instanceId, cwd) => {
+                  assert.strictEqual(cwd, "/workspace");
+                  return Ref.update(gates, (n) => n + 1).pipe(
+                    Effect.andThen(
+                      Effect.fail(
+                        new ProviderSetupError({
+                          instanceId,
+                          operation: "session",
+                          detail: "Legacy subscription authorization is unverified.",
+                        }),
+                      ),
+                    ),
+                  );
+                },
+              }),
+            ),
+          ),
+        ),
+      );
+      const adapter = yield* registry.get(personalId);
+      assert.strictEqual(yield* Ref.get(gates), 0);
+      const error = yield* adapter
+        .openSession({
+          threadId: ThreadId.make("native-capacity-thread"),
+          providerSessionId: ProviderSessionId.make("native-capacity-session"),
+          modelSelection: { instanceId: personalId, model: "test-model" },
+          runtimePolicy: {
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: "/workspace",
+          },
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(error, ProviderAdapterOpenSessionError);
+      assert.instanceOf(error.cause, ProviderSetupError);
+      assert.strictEqual(yield* Ref.get(gates), 1);
+      assert.strictEqual(yield* Ref.get(launches), 0);
+    }),
 );
 
 it.effect("routes two configured instances of the same driver independently", () =>
@@ -353,25 +398,60 @@ it.effect("interrupts admitted session startup when a shared peer signs out", ()
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-
 it.effect("maps only an explicit matching request to fresh native credit admission", () =>
   Effect.gen(function* () {
     const checks: Array<unknown> = [];
-    const registry = yield* Effect.service(ProviderAdapterRegistry.ProviderAdapterRegistryV2).pipe(Effect.provide(
-      ProviderAdapterRegistry.layerFromProviderInstanceRegistry.pipe(
-        Layer.provide(layerInstanceRegistry),
-        Layer.provide(Layer.mock(StudioCapacity.Capacity)({ assertNativeStart: (instanceId, cwd, options) => { checks.push({ instanceId, cwd, options }); return Effect.fail(new ProviderSetupError({ instanceId, operation: "session", detail: "Stop after admission observation" })); } })),
+    const registry = yield* Effect.service(ProviderAdapterRegistry.ProviderAdapterRegistryV2).pipe(
+      Effect.provide(
+        ProviderAdapterRegistry.layerFromProviderInstanceRegistry.pipe(
+          Layer.provide(layerInstanceRegistry),
+          Layer.provide(
+            Layer.mock(StudioCapacity.Capacity)({
+              assertNativeStart: (instanceId, cwd, options) => {
+                checks.push({ instanceId, cwd, options });
+                return Effect.fail(
+                  new ProviderSetupError({
+                    instanceId,
+                    operation: "session",
+                    detail: "Stop after admission observation",
+                  }),
+                );
+              },
+            }),
+          ),
+        ),
       ),
-    ));
+    );
     const adapter = yield* registry.get(personalId);
-    const input = { threadId: ThreadId.make("manual-credit"), providerSessionId: ProviderSessionId.make("manual-credit"), modelSelection: { instanceId: personalId, model: "gpt-6.1-sol" }, runtimePolicy: { runtimeMode: "full-access" as const, interactionMode: "default" as const, cwd: "/credit/destination" } };
-    const intent = { type: "human-submit-existing-credits" as const, instanceId: personalId, model: input.modelSelection.model, expectedQuotaPoolId: `codex:sha256:${"b".repeat(64)}`, observedAt: new Date(yield* Clock.currentTimeMillis).toISOString() };
+    const input = {
+      threadId: ThreadId.make("manual-credit"),
+      providerSessionId: ProviderSessionId.make("manual-credit"),
+      modelSelection: { instanceId: personalId, model: "gpt-6.1-sol" },
+      runtimePolicy: {
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        cwd: "/credit/destination",
+      },
+    };
+    const intent = {
+      type: "human-submit-existing-credits" as const,
+      instanceId: personalId,
+      model: input.modelSelection.model,
+      expectedQuotaPoolId: `codex:sha256:${"b".repeat(64)}`,
+      observedAt: DateTime.formatIso(DateTime.makeUnsafe(yield* Clock.currentTimeMillis)),
+    };
     yield* adapter.openSession(input).pipe(Effect.flip);
     yield* adapter.openSession({ ...input, manualCodexCreditIntent: intent }).pipe(Effect.flip);
-    yield* adapter.openSession({ ...input, manualCodexCreditIntent: { ...intent, instanceId: workId } }).pipe(Effect.flip);
+    yield* adapter
+      .openSession({ ...input, manualCodexCreditIntent: { ...intent, instanceId: workId } })
+      .pipe(Effect.flip);
     assert.deepEqual(checks, [
       { instanceId: personalId, cwd: "/credit/destination", options: undefined },
-      { instanceId: personalId, cwd: "/credit/destination", options: { allowCredits: true, expectedQuotaPoolId: intent.expectedQuotaPoolId } },
+      {
+        instanceId: personalId,
+        cwd: "/credit/destination",
+        options: { allowCredits: true, expectedQuotaPoolId: intent.expectedQuotaPoolId },
+      },
     ]);
   }),
 );

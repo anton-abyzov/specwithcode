@@ -1,5 +1,14 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
+const failureOnly = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(
+    Effect.result,
+    Effect.map((result) => {
+      if (Result.isFailure(result)) return result.failure;
+      throw new Error("Expected native request to fail");
+    }),
+  );
 import * as Layer from "effect/Layer";
 
 import { fakeStudioMcp } from "./fakeStudioMcp.testkit.ts";
@@ -102,7 +111,7 @@ describe("RemoteStudioMcpClient", () => {
           tool: "studio_project_delete" as RemoteStudioMcpClient.RemoteTool,
           arguments: {},
         })
-        .pipe(Effect.flip);
+        .pipe(failureOnly);
       expect(error.reason).toBe("refused");
       expect(remote.requests).toEqual([]);
     }).pipe(Effect.provide(layer));
@@ -114,7 +123,7 @@ describe("RemoteStudioMcpClient", () => {
       const client = yield* RemoteStudioMcpClient.RemoteStudioMcpClient;
       const error = yield* client
         .call({ machineId: "m1", tool: "studio_thread_send", arguments: {} })
-        .pipe(Effect.flip);
+        .pipe(failureOnly);
       expect(error.reason).toBe("tool_failure");
       expect(error.remoteMessage).toBe("Thread thread-remote is archived.");
       expect(error.remoteCode).toBe("orchestration_error");
@@ -127,7 +136,7 @@ describe("RemoteStudioMcpClient", () => {
       const client = yield* RemoteStudioMcpClient.RemoteStudioMcpClient;
       const error = yield* client
         .call({ machineId: "m1", tool: "studio_thread_wait", arguments: {} })
-        .pipe(Effect.flip);
+        .pipe(failureOnly);
       expect(error.reason).toBe("unsupported");
     }).pipe(Effect.provide(layer));
   });
@@ -138,7 +147,7 @@ describe("RemoteStudioMcpClient", () => {
       const client = yield* RemoteStudioMcpClient.RemoteStudioMcpClient;
       yield* read(client);
       remote.revoke("token-1");
-      const error = yield* read(client).pipe(Effect.flip);
+      const error = yield* read(client).pipe(failureOnly);
       expect(error.reason).toBe("not_authorized");
       expect(error.grant).toBe("revoked");
       expect(rejected).toEqual(["token-1"]);
@@ -163,7 +172,7 @@ describe("RemoteStudioMcpClient", () => {
     remote.replaceIdentity("env-someone-else");
     return Effect.gen(function* () {
       const client = yield* RemoteStudioMcpClient.RemoteStudioMcpClient;
-      const error = yield* read(client).pipe(Effect.flip);
+      const error = yield* read(client).pipe(failureOnly);
       expect(error.reason).toBe("identity_mismatch");
       expect(remote.requests.every((request) => request.authorization === null)).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -173,7 +182,7 @@ describe("RemoteStudioMcpClient", () => {
     const { remote, layer } = setup({ grant: "not_allowed" });
     return Effect.gen(function* () {
       const client = yield* RemoteStudioMcpClient.RemoteStudioMcpClient;
-      const error = yield* read(client).pipe(Effect.flip);
+      const error = yield* read(client).pipe(failureOnly);
       expect(error.reason).toBe("not_authorized");
       expect(error.grant).toBe("not_allowed");
       expect(remote.requests).toEqual([]);
@@ -186,7 +195,7 @@ describe("RemoteStudioMcpClient", () => {
       const client = yield* RemoteStudioMcpClient.RemoteStudioMcpClient;
       const error = yield* client
         .call({ machineId: "m1", tool: "studio_thread_list", arguments: {}, timeoutMs: 5_000 })
-        .pipe(Effect.flip);
+        .pipe(failureOnly);
       expect(["unreachable", "invalid_response"]).toContain(error.reason);
     }).pipe(Effect.provide(layer));
   });

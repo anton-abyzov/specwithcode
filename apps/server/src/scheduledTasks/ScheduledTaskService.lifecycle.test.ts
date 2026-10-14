@@ -42,7 +42,7 @@ const harness = Effect.gen(function* () {
     sends: 0,
     dispatchGate: Effect.void,
     dispatchStarted: Effect.void,
-    due: Effect.void as Effect.Effect<void, unknown, SqlClient.SqlClient>,
+    due: Effect.void as Effect.Effect<void, never, SqlClient.SqlClient>,
     heldMs: 0,
   };
   const dependencies = () =>
@@ -82,9 +82,10 @@ const harness = Effect.gen(function* () {
       }),
       Layer.mock(SecretRequests.SecretRequests)({}),
       Layer.mock(Scheduler.Scheduler)({
-        register: (_name, work) =>
-          Effect.sync(() => {
-            state.due = work as typeof state.due;
+        register: <E, R>(_name: string, work: Effect.Effect<void, E, R>) =>
+          Effect.gen(function* () {
+            const context = yield* Effect.context<R>();
+            state.due = work.pipe(Effect.provideContext(context), Effect.orDie);
           }),
         heldMsBetween: () => Effect.sync(() => state.heldMs),
       }),

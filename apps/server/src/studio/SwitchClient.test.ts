@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 import { SwitchClient, SwitchFetch, layer } from "./SwitchClient.ts";
 
 const run = <A, E>(effect: Effect.Effect<A, E, SwitchClient>, fake: typeof fetch) => Effect.runPromise(effect.pipe(Effect.provide(layer), Effect.provideService(SwitchFetch, fake)));
@@ -20,7 +21,9 @@ describe("fixed local Switch transport", () => {
     ["oversized response", () => new Response("x".repeat(131073), { headers: { "content-type": "application/json" } }), "switch-invalid-response"],
     ["malformed JSON", () => new Response("{synthetic-private", { headers: { "content-type": "application/json" } }), "switch-invalid-response"],
   ])("sanitizes %s", async (_name, response, category) => {
-    const failure = await run(Effect.flatMap(SwitchClient, (client) => client.read).pipe(Effect.flip), (async () => response()) as typeof fetch);
+    const result = await run(Effect.flatMap(SwitchClient, (client) => client.read).pipe(Effect.result), (async () => response()) as typeof fetch);
+    if (!Result.isFailure(result)) throw new Error("Expected a sanitized failure");
+    const failure = result.failure;
     expect(failure.category).toBe(category);
     expect(JSON.stringify(failure)).not.toContain("synthetic-private");
     expect(failure.message).not.toContain("synthetic");

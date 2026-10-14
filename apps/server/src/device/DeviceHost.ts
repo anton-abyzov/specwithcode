@@ -105,4 +105,4 @@ export class DeviceHost extends Context.Service<
     /** Stops helpers. Devices themselves keep running; the user owns those. */
     readonly stop: Effect.Effect<void>;
   }
->()("studio/device/DeviceHost") {}
+>()("specweave-studio/device/DeviceHost") {}

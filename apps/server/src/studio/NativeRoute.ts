@@ -14,7 +14,7 @@ import { expandHomePath } from "../pathExpansion.ts";
 /** External native metadata boundary, separately replaceable in offline tests. */
 export class NativeRoute extends Context.Service<NativeRoute, {
   readonly verify: (entry: ProviderInstanceConfig, cwd: string | null, baseEnv: NodeJS.ProcessEnv) => Effect.Effect<boolean, CodexNativeRouteCheckError>;
-}>()("studio/capacity/NativeRoute") {}
+}>()("specweave-studio/studio/NativeRoute") {}
 export const layer = Layer.effect(NativeRoute, Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   return NativeRoute.of({ verify: (entry, cwd, baseEnv) => {

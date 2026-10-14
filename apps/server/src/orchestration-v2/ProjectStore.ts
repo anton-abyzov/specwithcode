@@ -101,7 +101,7 @@ export class ProjectStoreV2 extends Context.Service<
       readonly projectIds?: ReadonlyArray<ProjectId>;
     }) => Effect.Effect<ReadonlyArray<OrchestrationProjectShell>, ProjectStoreV2Error>;
   }
->()("studio/orchestration-v2/ProjectStore/ProjectStoreV2") {}
+>()("specweave-studio/orchestration-v2/ProjectStore/ProjectStoreV2") {}
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
@@ -245,8 +245,12 @@ export const make = Effect.gen(function* () {
       if (Option.isNone(existing)) return;
       const row = existing.value;
       if (event.type === "project.deleted") {
-        yield* sql`DELETE FROM project_connections WHERE project_id = ${row.projectId}`.pipe(mapError("apply"));
-        yield* sql`DELETE FROM project_connection_calls WHERE project_id = ${row.projectId}`.pipe(mapError("apply"));
+        yield* sql`DELETE FROM project_connections WHERE project_id = ${row.projectId}`.pipe(
+          mapError("apply"),
+        );
+        yield* sql`DELETE FROM project_connection_calls WHERE project_id = ${row.projectId}`.pipe(
+          mapError("apply"),
+        );
         yield* sql`DELETE FROM project_context_deliveries WHERE project_id = ${row.projectId}`.pipe(
           mapError("apply"),
         );

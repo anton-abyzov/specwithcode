@@ -1,8 +1,8 @@
+import { sha256 } from "../nodeCrypto.ts";
 import * as ProjectAdmission from "../project/ProjectAdmission.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as Option from "effect/Option";
 import * as Orchestrator from "./Orchestrator.ts";
-import * as NodeCrypto from "node:crypto";
 import { assert, it } from "@effect/vitest";
 import {
   ProjectId,
@@ -68,7 +68,7 @@ function candidate(): ProjectionStore.ProjectionLimitRecoveryCandidate {
       explicitArm: true,
       armedAffinity: {
         instanceId: id,
-        continuationKey: NodeCrypto.createHash("sha256").update("private-home").digest("hex"),
+        continuationKey: sha256(["private-home"], "hex"),
         quotaPoolId: `codex:sha256:${"a".repeat(64)}`,
       },
     },
@@ -86,7 +86,7 @@ function snapshot(at: number): ServerProvider {
     ...base,
     usageLimits: {
       ...base.usageLimits!,
-      nativeAllowanceObservedAt: new Date(at).toISOString(),
+      nativeAllowanceObservedAt: DateTime.formatIso(DateTime.makeUnsafe(at)),
       ordinaryUsageAllowed: true,
       spendControlReached: false,
       windows: [{ id: "secondary", kind: "weekly", label: "Weekly", usedPercent: 100 }],
@@ -155,7 +155,11 @@ it.effect.each([
                   ...(scenario === "spend" ? { spendControlReached: true } : {}),
                   ...(scenario === "unknown" ? { ordinaryUsageAllowed: null } : {}),
                   ...(scenario === "stale"
-                    ? { nativeAllowanceObservedAt: new Date(now - 1000).toISOString() }
+                    ? {
+                        nativeAllowanceObservedAt: DateTime.formatIso(
+                          DateTime.makeUnsafe(now - 1000),
+                        ),
+                      }
                     : {}),
                   ...(scenario === "wrong-pool"
                     ? { quotaPoolId: `codex:sha256:${"b".repeat(64)}` }
@@ -327,8 +331,8 @@ it("strips client-forged permission observations and policy-arm markers", () => 
 it("requires fresh proof and preserves cancellation, snooze, CAS and repeated-failure fences", () => {
   const thread = candidate();
   const observation = {
-    checkedAt: new Date(0).toISOString(),
-    retryAt: new Date(300000).toISOString(),
+    checkedAt: DateTime.formatIso(DateTime.makeUnsafe(0)),
+    retryAt: DateTime.formatIso(DateTime.makeUnsafe(300000)),
     status: "allowed" as const,
     threadUpdatedAt: DateTime.formatIso(thread.updatedAt),
     affinity: candidate().limitRecovery!.armedAffinity!,
@@ -495,7 +499,11 @@ it.effect.each([
       let changed = false;
       let projectReads = 0;
       let availabilityChecks = 0;
-      const current = { ...candidate(), latestRunId: RunId.make("failed-run"), limitRecovery: null };
+      const current = {
+        ...candidate(),
+        latestRunId: RunId.make("failed-run"),
+        limitRecovery: null,
+      };
       const commands: OrchestrationV2ServerCommand[] = [];
       const deps = Layer.mergeAll(
         ProjectAdmission.layer,
@@ -773,17 +781,32 @@ it.effect("serializes final project policy and resume dispatch with a competing 
 
 it("arms the resume at reset when the wait rule holds back an automatic switch", () => {
   const nowMs = Date.parse("2026-10-09T12:00:00.000Z");
-  const at = (minutes: number) => ({ usageLimitResetAt: new Date(nowMs + minutes * 60_000).toISOString() });
+  const at = (minutes: number) => ({
+    usageLimitResetAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs + minutes * 60_000)),
+  });
   const rule = { providerLimitAction: "switch", providerLimitWaitUnderMinutes: 30 };
   assert.strictEqual(waitRuleArmsResume(at(20), rule, nowMs), true);
   assert.strictEqual(waitRuleArmsResume(at(45), rule, nowMs), false);
   assert.strictEqual(waitRuleArmsResume({ usageLimitResetAt: null }, rule, nowMs), false);
-  assert.strictEqual(waitRuleArmsResume(at(20), { ...rule, providerLimitWaitUnderMinutes: 0 }, nowMs), false);
-  // Nothing automatic to hold back: the person's own auto-resume choice stands.
-  assert.strictEqual(waitRuleArmsResume(at(20), { ...rule, providerLimitAction: "ask" }, nowMs), false);
-  assert.strictEqual(waitRuleArmsResume(at(20), { ...rule, providerLimitAction: "wait" }, nowMs), false);
   assert.strictEqual(
-    waitRuleArmsResume(at(20), { ...rule, providerLimitAction: "ask", providerLimitRedeemResets: true }, nowMs),
+    waitRuleArmsResume(at(20), { ...rule, providerLimitWaitUnderMinutes: 0 }, nowMs),
+    false,
+  );
+  // Nothing automatic to hold back: the person's own auto-resume choice stands.
+  assert.strictEqual(
+    waitRuleArmsResume(at(20), { ...rule, providerLimitAction: "ask" }, nowMs),
+    false,
+  );
+  assert.strictEqual(
+    waitRuleArmsResume(at(20), { ...rule, providerLimitAction: "wait" }, nowMs),
+    false,
+  );
+  assert.strictEqual(
+    waitRuleArmsResume(
+      at(20),
+      { ...rule, providerLimitAction: "ask", providerLimitRedeemResets: true },
+      nowMs,
+    ),
     true,
   );
 });

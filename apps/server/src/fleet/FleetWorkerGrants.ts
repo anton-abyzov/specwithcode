@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import type {
   StudioFleetWorkerAccess,
   StudioFleetWorkers,
@@ -123,7 +124,7 @@ export class FleetWorkerGrants extends Context.Service<
     /** One renewal pass over every grant that is due. */
     readonly renewDue: Effect.Effect<void>;
   }
->()("studio/fleet/FleetWorkerGrants") {}
+>()("specweave-studio/fleet/FleetWorkerGrants") {}
 
 const make = Effect.gen(function* () {
   const targets = yield* FleetTargets.FleetTargets;
@@ -293,7 +294,7 @@ const make = Effect.gen(function* () {
         expiresAt: minted.success.expiresAt,
         access,
         clientLabel: clientName,
-        mintedAt: new Date(now).toISOString(),
+        mintedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
         status: "active",
       });
       yield* setProblem(target.id, null);

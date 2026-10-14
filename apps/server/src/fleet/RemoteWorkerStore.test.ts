@@ -1,5 +1,6 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native disk reads independently verify atomic persistence, permissions, and corruption handling.
 import * as NodeFS from "node:fs";
-import * as NodePath from "node:path";
+import { nodePath as NodePath } from "../nodePath.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";

@@ -105,6 +105,7 @@ function takeThreadNotificationOpen() {
       if (typeof environmentId !== "string" || typeof threadId !== "string") return;
       const open = { environmentId, threadId };
       if (threadOpenListeners.size === 0) {
+        // @effect-diagnostics-next-line globalDate:off -- Native preload event timestamps share the renderer wall clock.
         bufferedThreadOpen = { target: open, at: Date.now() };
         return;
       }
@@ -177,6 +178,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     // window was still loading.
     const buffered = bufferedThreadOpen;
     bufferedThreadOpen = null;
+    // @effect-diagnostics-next-line globalDate:off -- Native preload event timestamps share the renderer wall clock.
     if (buffered && Date.now() - buffered.at <= BUFFERED_THREAD_OPEN_TTL_MS) {
       listener(buffered.target);
     }

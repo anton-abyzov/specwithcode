@@ -164,6 +164,8 @@ export interface ServiceUpdateProgress {
   readonly requestedAt?: number;
   /** When the agent first reported installing (ms). */
   readonly installingSince?: number;
+  /** Receipt already present before this window started following the install. */
+  readonly previousInstallAt?: string | null;
 }
 
 /**
@@ -235,6 +237,7 @@ export function startServiceUpdateProgress(
   return {
     phase: "stopping",
     targetVersion: serviceState ? serviceUpdateVersion(serviceState) : null,
+    previousInstallAt: serviceState?.lastInstall?.at ?? null,
     blockers: [],
     message: null,
   };
@@ -261,6 +264,36 @@ export function retryServiceUpdateProgress(
   };
 }
 
+/** A later discovery error cannot undo an installation the agent verified. */
+function hasCompletedRequestedInstall(
+  progress: ServiceUpdateProgress,
+  state: StudioServiceUpdateState,
+  now?: number,
+): boolean {
+  const receipt = state.lastInstall;
+  if (
+    progress.targetVersion === null ||
+    state.installedVersion !== progress.targetVersion ||
+    receipt?.version !== progress.targetVersion ||
+    receipt.result !== "updated"
+  )
+    return false;
+
+  const installedAt = Date.parse(receipt.at);
+  if (!Number.isFinite(installedAt) || (now !== undefined && installedAt > now)) return false;
+  // A receipt cannot come from after the agent state that contains it.
+  if (state.updatedAt != null) {
+    const written = updatedAtMs(state);
+    if (written === null || installedAt > written) return false;
+  }
+  if (progress.requestedAt !== undefined) {
+    return Number.isFinite(progress.requestedAt) && installedAt >= progress.requestedAt;
+  }
+  // Adopted holds have no local request time: require a receipt not present
+  // when we began following the update, never an unrelated historical success.
+  return progress.previousInstallAt !== undefined && receipt.at !== progress.previousInstallAt;
+}
+
 /** The progress after the update agent reports `state`. */
 export function advanceServiceUpdateProgress(
   progress: ServiceUpdateProgress,
@@ -274,6 +307,12 @@ export function advanceServiceUpdateProgress(
   const installed = target !== null && state.installedVersion === target;
   if (installed && (state.status === "installed" || state.status === "up-to-date")) {
     return { ...progress, phase: "restarting", message: null };
+  }
+  if (
+    (state.status === "error" || state.status === "manual-required") &&
+    hasCompletedRequestedInstall(progress, state, now)
+  ) {
+    return { ...progress, phase: "restarting", message: state.message };
   }
   // Still the previous attempt's answer: the agent has not run for this one yet.
   if (isStaleServiceAnswer(progress, state, now)) return progress;
@@ -481,7 +520,9 @@ export function serviceUpdateToast(
       return {
         type: "success",
         title: `Updated to ${version}`,
-        description: "Reloading this window…",
+        description: progress.message
+          ? `Installed successfully. The updater also reported: ${progress.message} Reloading this window…`
+          : "Reloading this window…",
         action: null,
         cancel: false,
       };

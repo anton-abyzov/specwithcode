@@ -1,3 +1,11 @@
+import { parseJson, stringifyJson } from "../json.ts";
+import * as DateTime from "effect/DateTime";
+import {
+  NativeConnectionsError,
+  type NativeConnectionsInput,
+  type NativeConnectionsSnapshot,
+} from "@specweave-studio/contracts";
+import * as NativeDiscovery from "./connections/NativeConnectionDiscovery.ts";
 import {
   type ProjectId,
   type ProjectConnection,
@@ -22,6 +30,9 @@ import { connectionFingerprint, validConnectionConfig } from "./connections/conf
 export class ProjectConnectionService extends Context.Service<
   ProjectConnectionService,
   {
+    discoverNative: (
+      input: NativeConnectionsInput,
+    ) => Effect.Effect<NativeConnectionsSnapshot, NativeConnectionsError>;
     read: (input: {
       projectId: ProjectId;
     }) => Effect.Effect<{ connections: readonly ProjectConnection[] }, ProjectConnectionError>;
@@ -38,8 +49,9 @@ export class ProjectConnectionService extends Context.Service<
       input: ProjectConnectionCallInput & { actor: string },
     ) => Effect.Effect<ProjectConnectionCallResult, ProjectConnectionError>;
   }
->()("studio/project/ProjectConnectionService") {}
+>()("specweave-studio/project/ProjectConnectionService") {}
 const make = Effect.gen(function* () {
+  const discovery = yield* NativeDiscovery.NativeConnectionDiscovery;
   const sql = yield* SqlClient.SqlClient;
   const projects = yield* ProjectStore.ProjectStoreV2;
   const admission = yield* ProjectAdmission.ProjectAdmission;
@@ -63,7 +75,7 @@ const make = Effect.gen(function* () {
     sql<{
       data: string;
     }>`SELECT data_json AS data FROM project_connections WHERE project_id=${projectId} ORDER BY connection_id`.pipe(
-      Effect.map((rows) => rows.map((row) => JSON.parse(row.data) as ProjectConnection)),
+      Effect.map((rows) => rows.map((row) => parseJson(row.data) as ProjectConnection)),
     );
   const connection = (input: ProjectConnectionActionInput) =>
     Effect.gen(function* () {
@@ -74,7 +86,7 @@ const make = Effect.gen(function* () {
       return value;
     });
   const persist = (projectId: ProjectId, value: ProjectConnection) =>
-    sql`INSERT INTO project_connections (project_id,connection_id,revision,data_json) VALUES (${projectId},${value.id},${value.revision},${JSON.stringify(value)}) ON CONFLICT(project_id,connection_id) DO UPDATE SET revision=excluded.revision,data_json=excluded.data_json`.pipe(
+    sql`INSERT INTO project_connections (project_id,connection_id,revision,data_json) VALUES (${projectId},${value.id},${value.revision},${stringifyJson(value)}) ON CONFLICT(project_id,connection_id) DO UPDATE SET revision=excluded.revision,data_json=excluded.data_json`.pipe(
       Effect.as(value),
     );
   const configOf = ({
@@ -145,7 +157,7 @@ const make = Effect.gen(function* () {
             return yield* persist(input.projectId, {
               ...current,
               revision: current.revision + 1,
-              checkedAt: new Date().toISOString(),
+              checkedAt: DateTime.formatIso(DateTime.nowUnsafe()),
               status: Option.isSome(discovered) ? "ready" : "unavailable",
               tools,
               allowedTools: same && Option.isSome(discovered) ? current.allowedTools : [],
@@ -183,7 +195,7 @@ const make = Effect.gen(function* () {
           const tool = current.tools.find((t) => t.name === input.tool);
           if (current.status !== "ready" || !tool || !current.allowedTools.includes(input.tool))
             return yield* error(input.projectId, "denied");
-          if (JSON.stringify(input.arguments).length > 65_536)
+          if (stringifyJson(input.arguments).length > 65_536)
             return yield* error(input.projectId, "invalid");
           const fingerprint = connectionFingerprint(input);
           const receipts = yield* sql<{
@@ -195,7 +207,7 @@ const make = Effect.gen(function* () {
             if (receipt.fingerprint !== fingerprint)
               return yield* error(input.projectId, "conflict");
             if (receipt.result === null) return yield* error(input.projectId, "outcome_unknown");
-            return JSON.parse(receipt.result) as ProjectConnectionCallResult;
+            return parseJson(receipt.result) as ProjectConnectionCallResult;
           }
           yield* sql`INSERT INTO project_connection_calls (project_id,command_id,fingerprint) VALUES (${input.projectId},${input.commandId},${fingerprint})`;
           const result = yield* transport
@@ -213,15 +225,27 @@ const make = Effect.gen(function* () {
                 ),
               ),
             );
-          yield* sql`UPDATE project_connection_calls SET result_json=${JSON.stringify(result)} WHERE project_id=${input.projectId} AND command_id=${input.commandId}`.pipe(
+          yield* sql`UPDATE project_connection_calls SET result_json=${stringifyJson(result)} WHERE project_id=${input.projectId} AND command_id=${input.commandId}`.pipe(
             Effect.mapError(() => error(input.projectId, "outcome_unknown")),
           );
           return result;
         }),
       )
       .pipe(safe(input.projectId));
-  return ProjectConnectionService.of({ read, save, check, revoke, call });
+  const discoverNative = (input: NativeConnectionsInput) =>
+    Effect.gen(function* () {
+      if (!input.projectId) return yield* discovery.read();
+      const target = yield* projects
+        .get(input.projectId)
+        .pipe(Effect.mapError(() => new NativeConnectionsError({ code: "unavailable" })));
+      if (Option.isNone(target))
+        return yield* new NativeConnectionsError({ code: "project_not_found" });
+      return yield* discovery.read(target.value.workspaceRoot);
+    });
+  return ProjectConnectionService.of({ read, save, check, revoke, call, discoverNative });
 });
-export const layer = Layer.effect(ProjectConnectionService, make).pipe(
+export const layerWithDiscovery = Layer.effect(ProjectConnectionService, make).pipe(
   Layer.provide(ProjectAdmission.layer),
 );
+
+export const layer = layerWithDiscovery.pipe(Layer.provide(NativeDiscovery.layerHost));

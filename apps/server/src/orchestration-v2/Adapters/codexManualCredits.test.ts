@@ -1,5 +1,6 @@
+import { sha256 } from "../../nodeCrypto.ts";
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
-import { createHash } from "node:crypto";
 import { ProviderInstanceId, type ManualCodexCreditIntent } from "@specweave-studio/contracts";
 import type * as CodexSchema from "@specweave-studio/effect-codex-app-server/schema";
 import { residentCreditPermission } from "./codexManualCredits.ts";
@@ -9,8 +10,8 @@ const intent: ManualCodexCreditIntent = {
   type: "human-submit-existing-credits",
   instanceId: ProviderInstanceId.make("codex"),
   model: "gpt-6.1-sol",
-  expectedQuotaPoolId: `codex:sha256:${createHash("sha256").update("expected-account").digest("hex")}`,
-  observedAt: new Date(now).toISOString(),
+  expectedQuotaPoolId: `codex:sha256:${sha256(["expected-account"], "hex")}`,
+  observedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
 };
 const funded: CodexSchema.V2GetAccountRateLimitsResponse = {
   accountId: "expected-account",

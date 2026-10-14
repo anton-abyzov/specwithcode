@@ -162,7 +162,7 @@ export class GitHubApi extends Context.Service<
       GitHubApiError
     >;
   }
->()("studio/sourceControl/GitHubApi") {}
+>()("specweave-studio/sourceControl/GitHubApi") {}
 
 function normalizeHost(host: string): string {
   return host.trim().toLowerCase();

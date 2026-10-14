@@ -77,7 +77,7 @@ export interface CursorAgentSdkRunnerShape {
 export class CursorAgentSdkRunner extends Context.Service<
   CursorAgentSdkRunner,
   CursorAgentSdkRunnerShape
->()("studio/orchestration-v2/Adapters/CursorAgentSdk/CursorAgentSdkRunner") {}
+>()("specweave-studio/orchestration-v2/Adapters/CursorAgentSdk/CursorAgentSdkRunner") {}
 
 export interface CursorAgentSdkLoggedAgentOptions {
   readonly model?: AgentOptions["model"];

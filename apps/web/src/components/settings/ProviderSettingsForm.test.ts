@@ -8,6 +8,15 @@ import {
 } from "./ProviderSettingsForm";
 
 describe("ProviderSettingsForm helpers", () => {
+  it("offers Muse Code configuration with native Wonder Full guidance", () => {
+    const muse = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("muse")];
+    expect(muse?.label).toBe("Muse Code");
+    expect(muse?.hasDefaultInstance).toBe(false);
+    const fields = deriveProviderSettingsFields(muse!);
+    expect(fields.map((field) => field.key)).toEqual(["binaryPath"]);
+    expect(fields[0]?.description).toContain("Power or Maximum Usage");
+    expect(muse?.environmentFields?.[0]?.description).toContain("pay-as-you-go");
+  });
   it("derives visible provider config fields from the client definition schema", () => {
     const codex = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("codex")];
 

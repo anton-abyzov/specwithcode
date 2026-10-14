@@ -70,7 +70,7 @@ export class UsageLimitSources extends Context.Service<
       id: LocalUsageHubId,
     ) => Effect.Effect<ReadonlyArray<LocalUsageHub>, UsageLimitSourceError>;
   }
->()("studio/usage/UsageLimitSources") {}
+>()("specweave-studio/usage/UsageLimitSources") {}
 
 function sourceLabel(id: string, config: UsageLimitSourceConfig): string {
   if (config.label) return config.label;

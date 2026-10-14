@@ -75,7 +75,7 @@ export class RemoteWorkerStore extends Context.Service<
     /** Drops settled rows untouched for 30 days. */
     readonly prune: (now: number) => Effect.Effect<number, RemoteWorkerStoreError>;
   }
->()("studio/fleet/RemoteWorkerStore") {}
+>()("specweave-studio/fleet/RemoteWorkerStore") {}
 
 const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;

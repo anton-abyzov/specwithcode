@@ -1,3 +1,4 @@
+import { ThreadRuntimeModeSetCommand } from "./threadRuntimeModeCommand.ts";
 import { ManualCodexCreditIntent } from "./manualCodexCredits.ts";
 export {
   ManualCodexCreditIntent,
@@ -2814,12 +2815,7 @@ export const OrchestrationV2Command = Schema.Union([
     requestId: CommandId,
     title: Schema.optional(TrimmedNonEmptyString),
   }),
-  Schema.Struct({
-    type: Schema.Literal("thread.runtime-mode.set"),
-    commandId: CommandId,
-    threadId: ThreadId,
-    runtimeMode: RuntimeMode,
-  }),
+  ThreadRuntimeModeSetCommand,
   Schema.Struct({
     type: Schema.Literal("thread.interaction-mode.set"),
     commandId: CommandId,

@@ -43,7 +43,7 @@ export class DirectEndpoints extends Context.Service<
   {
     readonly resolve: () => Effect.Effect<ReadonlyArray<ServerDirectEndpoint>>;
   }
->()("studio/environment/DirectEndpoints") {}
+>()("specweave-studio/environment/DirectEndpoints") {}
 
 /**
  * Only numeric private-network and tailnet IPv4 addresses are reported. These

@@ -1,3 +1,4 @@
+import { providerThreadLoadKey } from "./ProviderSessionPolicy.ts";
 import * as KeyedLock from "@specweave-studio/shared/KeyedLock";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import {
@@ -220,9 +221,10 @@ export interface ProviderSessionManagerV2Shape {
 export class ProviderSessionManagerV2 extends Context.Service<
   ProviderSessionManagerV2,
   ProviderSessionManagerV2Shape
->()("studio/orchestration-v2/ProviderSessionManager/ProviderSessionManagerV2") {}
+>()("specweave-studio/orchestration-v2/ProviderSessionManager/ProviderSessionManagerV2") {}
 
 interface LiveSessionEntry {
+  readonly runtimeMode: ProviderAdapterV2RuntimePolicy["runtimeMode"];
   readonly attachedThreadIds: ReadonlySet<ThreadId>;
   readonly loadedProviderThreadKeyByThread: ReadonlyMap<ThreadId, string>;
   /**
@@ -306,29 +308,6 @@ function sessionScopedRuntimeRequestThreadId(event: ProviderAdapterV2Event): Thr
     default:
       return undefined;
   }
-}
-
-function providerThreadRuntimeKey(
-  providerThread: Parameters<ProviderAdapterV2SessionRuntime["resumeThread"]>[0]["providerThread"],
-): string {
-  const nativeThreadRef = providerThread.nativeThreadRef;
-  return nativeThreadRef === null
-    ? String(providerThread.id)
-    : `${nativeThreadRef.driver}:${nativeThreadRef.nativeId}`;
-}
-
-function providerThreadLoadKey(input: {
-  readonly providerThread: Parameters<
-    ProviderAdapterV2SessionRuntime["resumeThread"]
-  >[0]["providerThread"];
-  readonly modelSelection?: ModelSelection;
-  readonly runtimePolicy?: ProviderAdapterV2RuntimePolicy;
-}): string {
-  return JSON.stringify({
-    providerThread: providerThreadRuntimeKey(input.providerThread),
-    modelSelection: input.modelSelection ?? null,
-    runtimePolicy: input.runtimePolicy ?? null,
-  });
 }
 
 export const layerWithOptions = (
@@ -1969,7 +1948,39 @@ export const layerWithOptions = (
                 }
               }
               const key = sessionKey(input.providerSessionId);
-              const existing = (yield* Ref.get(sessions)).get(key);
+              let existing = (yield* Ref.get(sessions)).get(key);
+              // A provider that applies the access mode per turn (Codex, OpenCode 2)
+              // takes the new mode on its next turn; only one that fixes it for the
+              // whole session is restarted to pick it up.
+              if (
+                existing &&
+                existing.runtimeMode !== input.runtimePolicy.runtimeMode &&
+                !existing.runtime.providerSession.capabilities.sessions
+                  .supportsRuntimeModeSwitchInSession
+              ) {
+                if (existing.busyTurns.size > 0)
+                  return yield* new ProviderSessionOpenError({
+                    instanceId: input.modelSelection.instanceId,
+                    providerSessionId: input.providerSessionId,
+                    cause:
+                      "Project permissions changed. The active turn must finish before this session can restart.",
+                  });
+                yield* releaseEntry({
+                  providerSessionId: input.providerSessionId,
+                  reason: "manual_shutdown",
+                  detail: "Apply project permissions on the next turn.",
+                  onlyIfIdleGeneration: existing.idleGeneration,
+                  gracefulSubscribers: true,
+                });
+                existing = (yield* Ref.get(sessions)).get(key);
+                if (existing)
+                  return yield* new ProviderSessionOpenError({
+                    instanceId: input.modelSelection.instanceId,
+                    providerSessionId: input.providerSessionId,
+                    cause:
+                      "The provider became busy while applying project permissions. Retry when its turn finishes.",
+                  });
+              }
               if (existing === undefined) {
                 yield* updateHold.refuse("provider-session.open").pipe(
                   Effect.mapError(
@@ -2108,6 +2119,7 @@ export const layerWithOptions = (
               const exposedRuntime = decorateRuntime(runtime, eventSubscribers);
               const now = yield* Clock.currentTimeMillis;
               const entry: LiveSessionEntry = {
+                runtimeMode: input.runtimePolicy.runtimeMode,
                 attachedThreadIds: new Set([input.threadId]),
                 loadedProviderThreadKeyByThread: new Map(),
                 mcpCredentialIdByThread:

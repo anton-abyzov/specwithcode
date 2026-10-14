@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import {
   AuthAccessWriteScope,
   AuthStandardClientScopes,
@@ -158,7 +159,7 @@ export const layer = HttpApiBuilder.group(
             requestId: outcome.requestId,
             pollToken: outcome.pollToken,
             code: outcome.code,
-            expiresAt: new Date(outcome.expiresAt).toISOString(),
+            expiresAt: DateTime.formatIso(DateTime.makeUnsafe(outcome.expiresAt)),
             pollIntervalMs: DEVICE_SIGN_IN_POLL_INTERVAL_MS,
           };
         }),
@@ -183,7 +184,7 @@ export const layer = HttpApiBuilder.group(
             browser: pending.browser,
             os: pending.os,
             address: pending.source,
-            askedAt: new Date(pending.createdAt).toISOString(),
+            askedAt: DateTime.formatIso(DateTime.makeUnsafe(pending.createdAt)),
           };
           if (!payload.confirm) return { status: "found" as const, device };
           // Standard client access, never more than the approver holds: a new

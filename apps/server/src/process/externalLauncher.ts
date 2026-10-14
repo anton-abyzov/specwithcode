@@ -506,7 +506,7 @@ export class ExternalLauncher extends Context.Service<
      */
     readonly launchEditor: (input: LaunchEditorInput) => Effect.Effect<void, ExternalLauncherError>;
   }
->()("studio/process/externalLauncher") {}
+>()("specweave-studio/process/externalLauncher") {}
 
 // ==============================
 // Implementations

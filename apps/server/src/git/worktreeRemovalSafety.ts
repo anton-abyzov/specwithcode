@@ -247,14 +247,14 @@ export const makeWorktreeRemovalGuard = Effect.gen(function* () {
       // Retry only this known transitional state. Release the lease between
       // attempts so the deletion worker/terminal cleanup can finish.
       Effect.retry({
-        while: (error) => error instanceof PendingThreadCleanup,
+        while: (error) => Schema.is(PendingThreadCleanup)(error),
         schedule: Schedule.spaced("250 millis"),
         times: 20,
       }),
       Effect.mapError((cause) =>
-        cause instanceof GitCommandError
+        Schema.is(GitCommandError)(cause)
           ? cause
-          : cause instanceof PendingThreadCleanup
+          : Schema.is(PendingThreadCleanup)(cause)
             ? reject(
                 "Thread cleanup is still running. The worktree was kept; retry after cleanup finishes.",
               )

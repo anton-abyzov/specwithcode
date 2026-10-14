@@ -1,3 +1,4 @@
+import * as ProjectRuntimeAccess from "./project/ProjectRuntimeAccess.ts";
 import {
   makeManagedUpdatesRpc,
   makeLegacyServerUpdateRpc,
@@ -1290,6 +1291,7 @@ const layerWsRpc = (
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const projectRuntimeAccess = yield* ProjectRuntimeAccess.ProjectRuntimeAccess;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -2374,9 +2376,10 @@ const layerWsRpc = (
                 )
               : undefined;
             const nextPatch = { ...patch, ...(deviceHosts ? { deviceHosts } : {}) };
-            const settings = yield* providerInstanceMutation === undefined
-              ? serverSettings.updateSettings(nextPatch)
-              : serverSettings.updateProviderInstance(providerInstanceMutation, nextPatch);
+            const settings = yield* projectRuntimeAccess.updateSettings(
+              nextPatch,
+              providerInstanceMutation,
+            );
             return ServerSettings.redactServerSettingsForClient(settings);
           }),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) => sourceControlDiscovery.discover,
@@ -3130,7 +3133,7 @@ export const WS_RPC_SERVER_OPTIONS = {
   disableFatalDefects: true,
 } as const;
 
-export const layer = Layer.unwrap(
+const inferredWebSocketLayer = Layer.unwrap(
   Effect.gen(function* () {
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
     const serverBrowser = yield* ServerBrowser.ServerBrowser;
@@ -3240,3 +3243,12 @@ export const layer = Layer.unwrap(
     );
   }),
 );
+
+// Materialize the producer's exact channels before other modules compose this
+// large RPC graph. Keep the unannotated initializer checked by Effect diagnostics.
+export interface WebSocketLayer extends Layer.Layer<
+  Layer.Success<typeof inferredWebSocketLayer>,
+  Layer.Error<typeof inferredWebSocketLayer>,
+  Layer.Services<typeof inferredWebSocketLayer>
+> {}
+export const layer: WebSocketLayer = inferredWebSocketLayer;

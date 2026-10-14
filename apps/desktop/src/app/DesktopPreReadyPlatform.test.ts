@@ -43,6 +43,8 @@ vi.mock("electron", () => ({
 }));
 
 vi.mock("node:fs", () => ({
+  // No Studio profile exists yet, so the default home is the branded one.
+  existsSync: () => false,
   readFileSync: () => "{}",
   mkdirSync: mkdirSyncMock,
   writeFileSync: writeFileSyncMock,

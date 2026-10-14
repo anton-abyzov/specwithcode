@@ -1,8 +1,10 @@
+import * as DateTime from "effect/DateTime";
 import {
   DesktopThreadNotificationInputSchema,
   type DesktopThreadNotificationInput,
   type DesktopThreadNotificationTarget,
 } from "@specweave-studio/contracts";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native notification identifiers must retain their existing platform hash format.
 import * as NodeCrypto from "node:crypto";
 
 import * as Electron from "electron";
@@ -72,7 +74,7 @@ const nativeId = (tag: string, sequence: number) =>
  * and every window asks once its preload loads.
  */
 export function makeThreadNotificationCenter(deps: ThreadNotificationCenterDeps) {
-  const now = deps.now ?? (() => Date.now());
+  const now = deps.now ?? (() => DateTime.toEpochMillis(DateTime.nowUnsafe()));
   const shown = new Map<string, NativeThreadNotification>();
   let sequence = 0;
   let pendingOpen: {
@@ -112,6 +114,7 @@ export function makeThreadNotificationCenter(deps: ThreadNotificationCenterDeps)
       return new Promise<boolean>((resolve) => {
         // Some systems never confirm; a notification that did not fail by
         // then is taken as shown.
+        // @effect-diagnostics-next-line globalTimers:off -- The native notification callback owns and cancels this timer on show or failure.
         const timer = setTimeout(() => resolve(true), deps.answerTimeoutMs ?? 3_000);
         notification.onShow(() => {
           clearTimeout(timer);

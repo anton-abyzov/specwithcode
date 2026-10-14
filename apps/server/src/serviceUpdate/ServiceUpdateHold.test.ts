@@ -572,7 +572,7 @@ describe("orchestrator admission while an install's gate is live", () => {
   const projectId = ProjectId.make("project:update-gate");
   const layerDatabase = fixtureProjectDatabase([projectId]);
   // The gate's file is removed through this, as the helper does after verifying.
-  let clearGate: Effect.Effect<void, unknown> = Effect.void;
+  let clearGate: Effect.Effect<void, import("effect/PlatformError").PlatformError> = Effect.void;
   const layerGate = Layer.effect(
     Hold.ServiceUpdateHold,
     Effect.map(makeGatedHold(), (gated) => {

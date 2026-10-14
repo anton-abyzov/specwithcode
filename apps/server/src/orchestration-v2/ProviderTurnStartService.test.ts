@@ -511,7 +511,15 @@ function makeLocalCommandHarness(input: {
         IdAllocator.layer,
         FileSystem.layerNoop({}),
         Layer.mock(GitWorkflow.GitWorkflowService)({}),
-        Layer.mock(ProjectService.ProjectService)({getById:()=>Effect.succeed(Option.some({id:projection.thread.projectId,workspaceRoot:"/tmp/owned-project"} as never))}),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: () =>
+            Effect.succeed(
+              Option.some({
+                id: projection.thread.projectId,
+                workspaceRoot: "/tmp/owned-project",
+              } as never),
+            ),
+        }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getTurnStartContext: () =>
             Effect.succeed({
@@ -541,13 +549,23 @@ function makeLocalCommandHarness(input: {
         }),
         Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({ open }),
         Layer.mock(ProviderAuthService.ProviderAuthService)({ tryHandlePromptCommand }),
-        input.realCreditExecution === true ? RunExecutionService.layer.pipe(Layer.provide(Layer.mergeAll(
-          Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
-          Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
-          IdAllocator.layer,
-          Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({ ingestNormalized: () => Effect.succeed([]) }),
-          ServerSettings.layerTest(),
-        ))) : Layer.mock(RunExecutionService.RunExecutionServiceV2)({ startRootRun }),
+        input.realCreditExecution === true
+          ? RunExecutionService.layer.pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  Layer.mock(CheckpointService.CheckpointServiceV2)({
+                    captureBaseline: () => Effect.void,
+                  }),
+                  Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
+                  IdAllocator.layer,
+                  Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
+                    ingestNormalized: () => Effect.succeed([]),
+                  }),
+                  ServerSettings.layerTest(),
+                ),
+              ),
+            )
+          : Layer.mock(RunExecutionService.RunExecutionServiceV2)({ startRootRun }),
         Layer.mock(RuntimePolicy.RuntimePolicyV2)({
           resolve: () => Effect.succeed({} as never),
         }),
@@ -565,7 +583,11 @@ function makeLocalCommandHarness(input: {
     newInstanceId,
     attemptId,
     projection: () => projection,
-    editProjection: (edit: (value: OrchestrationV2ThreadProjection) => OrchestrationV2ThreadProjection) => { projection = edit(projection); },
+    editProjection: (
+      edit: (value: OrchestrationV2ThreadProjection) => OrchestrationV2ThreadProjection,
+    ) => {
+      projection = edit(projection);
+    },
     start: Effect.gen(function* () {
       yield* (yield* ProviderTurnStart.ProviderTurnStartServiceV2).start({ threadId, runId });
     }).pipe(Effect.provide(layer)),
@@ -615,30 +637,54 @@ effectIt.effect("terminalizes a starting run when its provider session cannot op
 
 effectIt.effect("shows the native admission reason instead of nested session identifiers", () =>
   Effect.gen(function* () {
-    const detail = "The native provider status check failed. Refresh Providers on this machine and try again.";
-    const harness = makeLocalCommandHarness({ text: "Continue", openFailure: new ProviderAdapterOpenSessionError({
-      driver: ProviderDriverKind.make("codex"), providerSessionId: ProviderSessionId.make("shared-fixture"),
-      cause: new ProviderSetupError({ instanceId: ProviderInstanceId.make("codex"), operation: "session", detail }),
-    }) });
+    const detail =
+      "The native provider status check failed. Refresh Providers on this machine and try again.";
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      openFailure: new ProviderAdapterOpenSessionError({
+        driver: ProviderDriverKind.make("codex"),
+        providerSessionId: ProviderSessionId.make("shared-fixture"),
+        cause: new ProviderSetupError({
+          instanceId: ProviderInstanceId.make("codex"),
+          operation: "session",
+          detail,
+        }),
+      }),
+    });
     yield* harness.start;
     expect(harness.startRootRun).not.toHaveBeenCalled();
-    expect(harness.projection().turnItems).toMatchObject([{ type: "error", failure: { message: detail } }]);
+    expect(harness.projection().turnItems).toMatchObject([
+      { type: "error", failure: { message: detail } },
+    ]);
   }),
 );
 
-effectIt.effect("retains typed native quota denial and reset without retrying session creation", () =>
-  Effect.gen(function* () {
-    const resetAt = "2026-10-18T03:58:37.000Z";
-    const detail = "The selected subscription cannot accept new work.";
-    const harness = makeLocalCommandHarness({ text: "Continue", openFailure: new ProviderAdapterOpenSessionError({
-      driver: ProviderDriverKind.make("codex"), providerSessionId: ProviderSessionId.make("shared-fixture"),
-      cause: new ProviderSetupError({ instanceId: ProviderInstanceId.make("codex"), operation: "session", detail, usageLimit: { resetAt } }),
-    }) });
-    yield* harness.startWithRetry;
-    expect(harness.open).toHaveBeenCalledOnce();
-    expect(harness.startRootRun).not.toHaveBeenCalled();
-    expect(harness.projection().turnItems).toMatchObject([{ type: "error", failure: { class: "usage_limit", message: detail, resetAt } }]);
-  }),
+effectIt.effect(
+  "retains typed native quota denial and reset without retrying session creation",
+  () =>
+    Effect.gen(function* () {
+      const resetAt = "2026-10-18T03:58:37.000Z";
+      const detail = "The selected subscription cannot accept new work.";
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        openFailure: new ProviderAdapterOpenSessionError({
+          driver: ProviderDriverKind.make("codex"),
+          providerSessionId: ProviderSessionId.make("shared-fixture"),
+          cause: new ProviderSetupError({
+            instanceId: ProviderInstanceId.make("codex"),
+            operation: "session",
+            detail,
+            usageLimit: { resetAt },
+          }),
+        }),
+      });
+      yield* harness.startWithRetry;
+      expect(harness.open).toHaveBeenCalledOnce();
+      expect(harness.startRootRun).not.toHaveBeenCalled();
+      expect(harness.projection().turnItems).toMatchObject([
+        { type: "error", failure: { class: "usage_limit", message: detail, resetAt } },
+      ]);
+    }),
 );
 
 effectIt.effect("leaves the run starting when a session-open failure will be retried", () =>
@@ -910,72 +956,117 @@ for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {
   );
 }
 
-
 effectIt.effect("validates canonical credit provenance before opening a provider session", () =>
   Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
     for (const rejected of [false, true]) {
-      const harness = makeLocalCommandHarness({ text: "Explain this file", openFailure: new Error("test ends at open") });
-      const intent = { type: "human-submit-existing-credits" as const, instanceId: harness.newInstanceId, model: "gpt-5.4", expectedQuotaPoolId: `codex:sha256:${"a".repeat(64)}`, observedAt: new Date(now).toISOString() };
-      harness.editProjection((projection) => ({ ...projection,
+      const harness = makeLocalCommandHarness({
+        text: "Explain this file",
+        openFailure: new Error("test ends at open"),
+      });
+      const intent = {
+        type: "human-submit-existing-credits" as const,
+        instanceId: harness.newInstanceId,
+        model: "gpt-5.4",
+        expectedQuotaPoolId: `codex:sha256:${"a".repeat(64)}`,
+        observedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
+      };
+      harness.editProjection((projection) => ({
+        ...projection,
         runs: projection.runs.map((run) => ({ ...run, manualCodexCreditIntent: intent })),
-        attempts: projection.attempts.map((attempt) => ({ ...attempt, reason: rejected ? "provider_recovery" : "initial" })),
+        attempts: projection.attempts.map((attempt) => ({
+          ...attempt,
+          reason: rejected ? "provider_recovery" : "initial",
+        })),
       }));
       yield* harness.start;
       if (rejected) expect(harness.open).not.toHaveBeenCalled();
-      else expect(harness.open).toHaveBeenCalledWith(expect.objectContaining({ manualCodexCreditIntent: intent }));
+      else
+        expect(harness.open).toHaveBeenCalledWith(
+          expect.objectContaining({ manualCodexCreditIntent: intent }),
+        );
       expect(harness.startRootRun).not.toHaveBeenCalled();
       expect(harness.projection().runs[0]?.status).toBe("failed");
     }
   }),
 );
 
-
-effectIt.effect("a real turn-start and run-execution transition carries credit intent exactly once", () =>
-  Effect.gen(function* () {
-    const harness = makeLocalCommandHarness({ text: "Explain this file", realCreditExecution: true });
-    const intent = { type: "human-submit-existing-credits" as const, instanceId: harness.newInstanceId, model: "gpt-5.4", expectedQuotaPoolId: `codex:sha256:${"a".repeat(64)}`, observedAt: new Date(yield* Clock.currentTimeMillis).toISOString() };
-    harness.editProjection((projection) => ({ ...projection, runs: projection.runs.map((run) => ({ ...run, manualCodexCreditIntent: intent, queuePosition: null })) }));
-    yield* harness.start;
-    expect(harness.open).toHaveBeenCalledWith(expect.objectContaining({ manualCodexCreditIntent: intent }));
-    expect(harness.nativeStarts).toHaveBeenCalledOnce();
-    expect(harness.nativeStarts).toHaveBeenCalledWith(expect.objectContaining({ manualCodexCreditIntent: intent, runId: harness.projection().runs[0]!.id, attemptId: harness.attemptId }));
-    expect(harness.projection().runs[0]?.status).toBe("running");
-    expect(harness.projection().attempts[0]?.status).toBe("running");
-    // A repeated durable start effect cannot spend the command again.
-    yield* harness.start;
-    expect(harness.nativeStarts).toHaveBeenCalledOnce();
-  }),
+effectIt.effect(
+  "a real turn-start and run-execution transition carries credit intent exactly once",
+  () =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: "Explain this file",
+        realCreditExecution: true,
+      });
+      const intent = {
+        type: "human-submit-existing-credits" as const,
+        instanceId: harness.newInstanceId,
+        model: "gpt-5.4",
+        expectedQuotaPoolId: `codex:sha256:${"a".repeat(64)}`,
+        observedAt: DateTime.formatIso(DateTime.makeUnsafe(yield* Clock.currentTimeMillis)),
+      };
+      harness.editProjection((projection) => ({
+        ...projection,
+        runs: projection.runs.map((run) => ({
+          ...run,
+          manualCodexCreditIntent: intent,
+          queuePosition: null,
+        })),
+      }));
+      yield* harness.start;
+      expect(harness.open).toHaveBeenCalledWith(
+        expect.objectContaining({ manualCodexCreditIntent: intent }),
+      );
+      expect(harness.nativeStarts).toHaveBeenCalledOnce();
+      expect(harness.nativeStarts).toHaveBeenCalledWith(
+        expect.objectContaining({
+          manualCodexCreditIntent: intent,
+          runId: harness.projection().runs[0]!.id,
+          attemptId: harness.attemptId,
+        }),
+      );
+      expect(harness.projection().runs[0]?.status).toBe("running");
+      expect(harness.projection().attempts[0]?.status).toBe("running");
+      // A repeated durable start effect cannot spend the command again.
+      yield* harness.start;
+      expect(harness.nativeStarts).toHaveBeenCalledOnce();
+    }),
 );
 
-
-effectIt.effect("retains layer-provided project context when the turn starts outside the construction context", () =>
-  Effect.gen(function* () {
-    const prepare = vi.fn(() => Effect.succeed({
-      text: "Project goal: GOAL_SHARED\nProject memory: MEMORY_SHARED",
-      accepted: Effect.void,
-    }));
-    const restore = vi.fn(() => Effect.succeed("Current project memory: MEMORY_RESTORED"));
-    const harness = makeLocalCommandHarness({
-      text: "Report the project markers",
-      realCreditExecution: true,
-      projectContext: { prepare, restore },
-    });
-    // The dependency is provided only while constructing the service, as in runtimeLayer.
-    // It is deliberately absent from the caller's Effect environment.
-    yield* harness.start;
-    expect(prepare).toHaveBeenCalledOnce();
-    expect(harness.nativeStarts).toHaveBeenCalledOnce();
-    const input = harness.nativeStarts.mock.calls[0]![0];
-    expect(input.message.text).toContain("GOAL_SHARED");
-    expect(input.message.text).toContain("MEMORY_SHARED");
-    expect(input.message.text).toContain("Report the project markers");
-    expect(prepare).toHaveBeenCalledWith(expect.objectContaining({
-      projectId: harness.projection().thread.projectId,
-      threadId: harness.projection().thread.id,
-      runId: harness.projection().runs[0]!.id,
-      providerInstanceId: harness.newInstanceId,
-    }));
-    expect(yield* input.projectContext!.restore).toBe("Current project memory: MEMORY_RESTORED");
-  }),
+effectIt.effect(
+  "retains layer-provided project context when the turn starts outside the construction context",
+  () =>
+    Effect.gen(function* () {
+      const prepare = vi.fn(() =>
+        Effect.succeed({
+          text: "Project goal: GOAL_SHARED\nProject memory: MEMORY_SHARED",
+          accepted: Effect.void,
+        }),
+      );
+      const restore = vi.fn(() => Effect.succeed("Current project memory: MEMORY_RESTORED"));
+      const harness = makeLocalCommandHarness({
+        text: "Report the project markers",
+        realCreditExecution: true,
+        projectContext: { prepare, restore },
+      });
+      // The dependency is provided only while constructing the service, as in runtimeLayer.
+      // It is deliberately absent from the caller's Effect environment.
+      yield* harness.start;
+      expect(prepare).toHaveBeenCalledOnce();
+      expect(harness.nativeStarts).toHaveBeenCalledOnce();
+      const input = harness.nativeStarts.mock.calls[0]![0];
+      expect(input.message.text).toContain("GOAL_SHARED");
+      expect(input.message.text).toContain("MEMORY_SHARED");
+      expect(input.message.text).toContain("Report the project markers");
+      expect(prepare).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectId: harness.projection().thread.projectId,
+          threadId: harness.projection().thread.id,
+          runId: harness.projection().runs[0]!.id,
+          providerInstanceId: harness.newInstanceId,
+        }),
+      );
+      expect(yield* input.projectContext!.restore).toBe("Current project memory: MEMORY_RESTORED");
+    }),
 );

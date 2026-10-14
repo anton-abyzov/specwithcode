@@ -143,7 +143,7 @@ export class ProviderRegistry extends Context.Service<
      */
     readonly streamChanges: Stream.Stream<ReadonlyArray<ServerProvider>>;
   }
->()("studio/provider/ProviderRegistry") {}
+>()("specweave-studio/provider/ProviderRegistry") {}
 
 const loadProviders = (
   providerSources: ReadonlyArray<ProviderSnapshotSource>,

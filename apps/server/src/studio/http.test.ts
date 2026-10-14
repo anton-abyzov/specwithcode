@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { AuthSessionId, EnvironmentHttpApi, AuthOrchestrationReadScope, AuthOrchestrationOperateScope } from "@specweave-studio/contracts";
@@ -20,16 +21,56 @@ import { unavailableCapacity } from "./capacitySnapshot.ts";
 class StudioTestApi extends HttpApi.make("environment").add(EnvironmentHttpApi.groups.studio) {}
 async function api(scopes: ReadonlyArray<typeof AuthOrchestrationReadScope | typeof AuthOrchestrationOperateScope> = [AuthOrchestrationReadScope, AuthOrchestrationOperateScope], desktop = false) {
   const calls: string[] = [];
-  const snapshot = unavailableCapacity(Date.now(), "switch-unavailable");
+  const snapshot = unavailableCapacity(
+    DateTime.toEpochMillis(DateTime.nowUnsafe()), "switch-unavailable");
   const routes = HttpApiBuilder.layer(StudioTestApi).pipe(Layer.provide(Http.layer), Layer.provide(AuthHttp.layerAuthenticatedAuth),
     Layer.provide(Layer.mock(Auth.EnvironmentAuth)({ authenticateHttpRequest: (request) => request.headers.authorization === "Bearer synthetic-session"
       ? Effect.succeed({ sessionId: AuthSessionId.make("synthetic-session"), subject: "test-native-client", method: "bearer-access-token" as const, scopes })
       : Effect.fail(new Auth.ServerAuthMissingCredentialError({})) })),
-    Layer.provide(Layer.mock(Capacity.Capacity)({ current: Effect.succeed(snapshot), refresh: Effect.sync(() => { calls.push("refresh"); return snapshot; }), policy: (input) => Effect.sync(() => { calls.push(`policy:${input.mode}`); return snapshot; }), select: (input) => Effect.sync(() => { calls.push(`select:${input.id}`); return snapshot; }) })),
-    Layer.provideMerge(Layer.effect(Config.ServerConfig, Effect.map(Config.ServerConfig, (config) => ({ ...config, mode: desktop ? "desktop" as const : "web" as const }))).pipe(Layer.provide(Config.layerTest(process.cwd(), { prefix: "studio-capacity-http-" })))),
-    Layer.provideMerge(HttpPlatform.layer.pipe(Layer.provideMerge(NodeServices.layer), Layer.provideMerge(Etag.layerWeak))), Layer.provide(NodeServices.layer));
+    Layer.provide(Layer.mock(Capacity.Capacity)({ current: Effect.succeed(snapshot), refresh: Effect.sync(() => { calls.push("refresh"); return snapshot; }), policy: (input) => Effect.sync(() => { calls.push(`policy:${input.mode}`);
+            return snapshot;
+          }),
+        select: (input) =>
+          Effect.sync(() => {
+            calls.push(`select:${input.id}`);
+            return snapshot;
+          }),
+      }),
+    ),
+    Layer.provideMerge(
+      Layer.effect(
+        Config.ServerConfig,
+        Effect.map(Config.ServerConfig, (config) => ({
+          ...config,
+          mode: desktop ? ("desktop" as const) : ("web" as const),
+        })),
+      ).pipe(Layer.provide(Config.layerTest(process.cwd(), { prefix: "studio-capacity-http-" }))),
+    ),
+    Layer.provideMerge(
+      HttpPlatform.layer.pipe(
+        Layer.provideMerge(NodeServices.layer),
+        Layer.provideMerge(Etag.layerWeak),
+      ),
+    ),
+    Layer.provide(NodeServices.layer),
+  );
   const { handler, dispose } = HttpRouter.toWebHandler(routes, { disableLogger: true });
-  const request = (path: string, body?: object, headers: Record<string, string> = { authorization: "Bearer synthetic-session", origin: "https://private.example.ts.net", "x-forwarded-proto": "https" }) => handler(new Request(`http://private.example.ts.net${path}`, { method: body === undefined ? "GET" : "POST", headers: { "content-type": "application/json", host: "private.example.ts.net", ...headers }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }));
+  const request = (
+    path: string,
+    body?: object,
+    headers: Record<string, string> = {
+      authorization: "Bearer synthetic-session",
+      origin: "https://private.example.ts.net",
+      "x-forwarded-proto": "https",
+    },
+  ) =>
+    handler(
+      new Request(`http://private.example.ts.net${path}`, {
+        method: body === undefined ? "GET" : "POST",
+        headers: { "content-type": "application/json", host: "private.example.ts.net", ...headers },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      }),
+    );
   return { request, calls, dispose };
 }
 describe("capacity HTTP authorization and CSRF", () => {

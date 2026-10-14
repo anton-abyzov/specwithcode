@@ -296,7 +296,7 @@ export class AcpClient extends Context.Service<
       handler: (payload: A) => Effect.Effect<void, AcpError.AcpError>,
     ) => Effect.Effect<void>;
   }
->()("effect-acp/client/AcpClient") {}
+>()("@specweave-studio/effect-acp/client/AcpClient") {}
 
 interface AcpCoreRequestHandlers {
   requestPermission?: AcpRequestHandler<

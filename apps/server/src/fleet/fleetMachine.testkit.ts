@@ -1,4 +1,6 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native crypto independently verifies the grant writer's PKCE challenge.
 import * as NodeCrypto from "node:crypto";
+import * as DateTime from "effect/DateTime";
 import { expect } from "vite-plus/test";
 import {
   AuthAccessWriteScope,
@@ -96,7 +98,9 @@ export function fakeMachine(
         return json(200, {
           id: "pairing-1",
           credential: "PAIRCODE",
-          expiresAt: new Date(Date.now() + 300_000).toISOString(),
+          expiresAt: DateTime.formatIso(
+            DateTime.makeUnsafe(DateTime.toEpochMillis(DateTime.nowUnsafe()) + 300_000),
+          ),
         });
       }
       case "/api/auth/pairing-links/revoke":

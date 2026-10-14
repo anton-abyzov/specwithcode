@@ -62,6 +62,12 @@ try:
                     page.evaluate("dark => document.documentElement.classList.toggle('dark', dark)", dark)
                     expect(page.locator("#project-prompt")).to_be_visible(timeout=60_000)
                     page.locator("#project-prompt").fill("Preserve this coordinator draft.")
+                    permission = page.get_by_role("combobox", name="Project permissions", exact=True)
+                    expect(permission).to_be_visible()
+                    permission.select_option("full-access")
+                    calls = page.evaluate("window.__projectCalls")
+                    assert any(call.get("args", {}).get("input", {}).get("patch", {}).get("projectSettingsOverrides") for call in calls), "Project permission must save through project settings"
+
                     if scenario == "activity":
                         page.locator("[data-timeline-detail]").click()
                         page.get_by_role("menuitemradio", name="Verbose", exact=False).click()
@@ -104,7 +110,7 @@ try:
                             expect(dialog.get_by_text("Provider process is gone", exact=False)).to_have_count(0)
                         capture("")
                         dialog.get_by_role("button", name="Approve", exact=True).click()
-                        expect(dialog.get_by_role("status")).to_have_text("No requests need your response.")
+                        expect(dialog).not_to_be_visible()
                         data = page.evaluate("window.__coordinatorReviewReceipts.approvals")
                         assert len(data) == 1 and data[0]["threadId"] == "coord" and data[0]["environmentId"] == "host"
                         assert data[0]["requestId"] == ("fixture-edit-approval" if scenario.startswith("file-approval") else "fixture-approval")
@@ -127,7 +133,7 @@ try:
                         picker.set_input_files({"name": "supporting-notes.txt", "mimeType": "text/plain", "buffer": b"Synthetic local fixture notes."})
                         expect(dialog.get_by_text("Ready", exact=True)).to_be_visible()
                         dialog.get_by_role("button", name="Send answer", exact=True).click()
-                        expect(dialog.get_by_role("status")).to_have_text("No requests need your response.")
+                        expect(dialog).not_to_be_visible()
                         data = page.evaluate("window.__coordinatorReviewReceipts")
                         assert data["answers"][0]["requestId"] == "fixture-question"
                         assert data["answers"][0]["answers"]["destination"] == "Project reports"
@@ -147,6 +153,9 @@ try:
                         capture("-output")
                         data = page.evaluate("window.__coordinatorReviewReceipts.outputReads")
                         assert len(data) > 0 and all(entry["itemId"] == "fixture-command" and entry["threadId"] == "coord" for entry in data)
+                    if scenario != "activity":
+                        expect(dialog).not_to_be_visible()
+                        capture("-resolved")
                     page.keyboard.press("Escape")
                     expect(dialog).not_to_be_visible()
                     expect(trigger).to_be_focused()

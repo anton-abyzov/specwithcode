@@ -10,7 +10,10 @@ import * as ProjectUsageService from "../usage/ProjectUsageService.ts";
 import * as ProjectPlanRpc from "./ProjectPlanRpc.ts";
 import * as ProjectSkillsService from "./ProjectSkillsService.ts";
 import * as ThreadReportService from "./ThreadReportService.ts";
+import * as ProjectService from "./ProjectService.ts";
+import { applyWorkspaceImport } from "./ProjectEnvironmentAdoption.ts";
 export const handlers = Effect.gen(function* () {
+  const projects = yield* ProjectService.ProjectService;
   const handoff = yield* MachineHandoff.MachineHandoff;
   const environment = yield* ProjectEnvironmentService.ProjectEnvironmentService;
   const usage = yield* ProjectUsageService.ProjectUsageService;
@@ -26,6 +29,10 @@ export const handlers = Effect.gen(function* () {
     ...(yield* ProjectConnectionRpc.handlers),
     [WS_METHODS.projectsEnvironmentRead]: environment.read,
     [WS_METHODS.projectsEnvironmentPrepare]: environment.prepare,
+    [WS_METHODS.projectsEnvironmentImportPreview]: environment.previewImport,
+    [WS_METHODS.projectsEnvironmentImport]: (
+      input: import("@specweave-studio/contracts").ProjectEnvironmentImportInput,
+    ) => applyWorkspaceImport(environment, projects, input),
     [WS_METHODS.projectsUsageRead]: usage.read,
     [WS_METHODS.projectsSkillsRead]: skills.read,
     [WS_METHODS.projectsWorkspaceRead]: workspace.readWorkspace,

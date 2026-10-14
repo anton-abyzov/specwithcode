@@ -1,3 +1,5 @@
+import { parseJson } from "../json.ts";
+import * as Data from "effect/Data";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
@@ -99,7 +101,7 @@ export class RemoteStudioMcpClient extends Context.Service<
     /** Drops a machine's open session, as after its grant changed. */
     readonly forget: (machineId: string) => Effect.Effect<void>;
   }
->()("studio/fleet/RemoteStudioMcpClient") {}
+>()("specweave-studio/fleet/RemoteStudioMcpClient") {}
 
 /** Counts response bytes and fails the stream past the cap. */
 const capped = (response: Response): Response => {
@@ -129,7 +131,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const parseFailure = (text: string | undefined) => {
   if (text === undefined) return undefined;
   try {
-    const parsed: unknown = JSON.parse(text);
+    const parsed: unknown = parseJson(text);
     return isRecord(parsed) && typeof parsed.code === "string" && typeof parsed.message === "string"
       ? { code: parsed.code.slice(0, 64), message: parsed.message.slice(0, 2_000) }
       : undefined;
@@ -259,6 +261,8 @@ const make = Effect.gen(function* () {
       return { session, credential };
     });
 
+  class NativeCallFailure extends Data.TaggedError("NativeCallFailure")<{ cause: unknown }> {}
+
   const call: RemoteStudioMcpClient["Service"]["call"] = (input) =>
     Effect.gen(function* () {
       if (!(REMOTE_TOOL_ALLOWLIST as ReadonlyArray<string>).includes(input.tool))
@@ -271,10 +275,11 @@ const make = Effect.gen(function* () {
             timeout,
             maxTotalTimeout: timeout,
           }),
-        catch: (cause) => cause,
+        catch: (cause) => new NativeCallFailure({ cause }),
       }).pipe(
-        Effect.catch((cause) =>
+        Effect.catch((failure) =>
           Effect.gen(function* () {
+            const cause = failure.cause;
             // A call that timed out or that the machine answered with an error
             // leaves the session usable for the other calls sharing it. Only a
             // broken transport or a rejected grant closes it.
@@ -318,7 +323,7 @@ const make = Effect.gen(function* () {
       if (result.structuredContent !== undefined) return result.structuredContent;
       if (text === undefined) return yield* new RemoteMcpError({ reason: "invalid_response" });
       return yield* Effect.try({
-        try: () => JSON.parse(text) as unknown,
+        try: () => parseJson(text) as unknown,
         catch: (cause) => new RemoteMcpError({ reason: "invalid_response", cause }),
       });
     });

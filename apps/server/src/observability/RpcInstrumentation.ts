@@ -19,6 +19,7 @@ type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
  * prefix. Adding an RPC to `WsRpcGroup` without a label is a type error.
  */
 const RPC_AGGREGATES = {
+  [WS_METHODS.nativeConnectionsRead]: "projects",
   [WS_METHODS.managedUpdatesStatus]: "server",
   [WS_METHODS.managedUpdatesEnroll]: "server",
   [WS_METHODS.managedUpdatesRevoke]: "server",
@@ -51,6 +52,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.projectsPlanExport]: "projects",
   [WS_METHODS.projectsEnvironmentRead]: "projects",
   [WS_METHODS.projectsEnvironmentPrepare]: "projects",
+  [WS_METHODS.projectsEnvironmentImportPreview]: "projects",
+  [WS_METHODS.projectsEnvironmentImport]: "projects",
   [WS_METHODS.projectsWorkspaceRead]: "projects",
   [WS_METHODS.projectsStarterSuggestions]: "projects",
   [WS_METHODS.projectsConnectionsRead]: "projects",

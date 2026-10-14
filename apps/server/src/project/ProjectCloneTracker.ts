@@ -69,7 +69,7 @@ export class ProjectCloneTracker extends Context.Service<
     /** Emits every tracked clone first, then the full list after each change. */
     readonly stream: Stream.Stream<ReadonlyArray<ProjectCloneSnapshot>>;
   }
->()("studio/project/ProjectCloneTracker") {}
+>()("specweave-studio/project/ProjectCloneTracker") {}
 
 /**
  * Orchestration side effects the caller owns. The tracker never depends on the

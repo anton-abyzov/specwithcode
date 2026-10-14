@@ -1,3 +1,4 @@
+import { NativeConnectionsPanel } from "../connections/NativeConnectionsPanel";
 import { useEffect, useId, useRef, useState } from "react";
 import type {
   EnvironmentId,
@@ -125,7 +126,12 @@ export function ProjectConnections({
   const connections = query.data?.connections ?? [];
   return (
     <section className="project-settings-section project-environment-section">
-      <h2>Connections</h2>
+      <NativeConnectionsPanel
+        key={`${environmentId}:${projectId}`}
+        environmentId={environmentId}
+        projectId={projectId}
+      />
+      <h2>Studio-managed connections</h2>
       <p className="project-muted">
         Project-scoped tools run on this execution machine using its existing sign-in. Credentials
         and provider sessions are not copied between projects.

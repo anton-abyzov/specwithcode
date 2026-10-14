@@ -94,7 +94,7 @@ export class TelegramBotApi extends Context.Service<
       readonly chatId: number;
     }) => Effect.Effect<void, TelegramBotApiError>;
   }
->()("studio/channels/TelegramBotApi") {}
+>()("specweave-studio/channels/TelegramBotApi") {}
 
 const make = Effect.gen(function* () {
   const client = yield* HttpClient.HttpClient;

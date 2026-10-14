@@ -63,4 +63,4 @@ export class PtyAdapter extends Context.Service<
      */
     readonly spawn: (input: PtySpawnInput) => Effect.Effect<PtyProcess, PtySpawnError>;
   }
->()("studio/terminal/PtyAdapter") {}
+>()("specweave-studio/terminal/PtyAdapter") {}

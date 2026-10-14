@@ -1,8 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native subprocess exit, output, and filesystem fixtures verify the shipped CLI boundary.
 import * as NodeChildProcess from "node:child_process";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native subprocess exit, output, and filesystem fixtures verify the shipped CLI boundary.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
+import { nodePath as NodePath } from "../../nodePath.ts";
 import * as NodeURL from "node:url";
 
 const bin = NodeURL.fileURLToPath(new URL("../../bin.ts", import.meta.url));
