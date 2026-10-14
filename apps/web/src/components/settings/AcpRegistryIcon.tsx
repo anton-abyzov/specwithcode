@@ -1,10 +1,12 @@
 import { useEffect, useId, useState } from "react";
 import {
+  isGitHubCopilotIcon,
   resolveOfficialAcpRegistryIconUrl,
   officialAcpRegistryIconUrlForAgentId,
 } from "@specweave-studio/contracts";
 
 import { cn } from "../../lib/utils";
+import { GitHubCopilotIcon } from "../GitHubCopilotIcon";
 import { ACPRegistryIcon } from "../Icons";
 
 const ACP_REGISTRY_ICON_CACHE = "studio-acp-registry-icons-v1";
@@ -70,7 +72,19 @@ export function loadCachedAcpRegistryIcon(iconUrl: string): Promise<Blob> {
   return load;
 }
 
-export function AcpRegistryAgentIcon({
+export function AcpRegistryAgentIcon(props: {
+  readonly icon: string | null;
+  readonly agentId?: string;
+  readonly className?: string;
+  readonly fallbackClassName?: string;
+}) {
+  if (isGitHubCopilotIcon(props.agentId, props.icon)) {
+    return <GitHubCopilotIcon className={cn("size-8 shrink-0", props.className)} />;
+  }
+  return <RemoteAcpRegistryAgentIcon {...props} />;
+}
+
+export function RemoteAcpRegistryAgentIcon({
   icon,
   className,
   fallbackClassName,

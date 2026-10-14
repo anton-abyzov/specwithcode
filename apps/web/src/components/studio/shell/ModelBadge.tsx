@@ -11,7 +11,7 @@ import {
   ProviderInstanceIcon,
   resolveProviderInstanceAcpRegistryIconUrl,
 } from "../../chat/ProviderInstanceIcon";
-import { GitHubIcon } from "../../Icons";
+import { GitHubCopilotIcon } from "../../GitHubCopilotIcon";
 
 const EMPTY_ENTRIES: ReadonlyMap<string, ProviderInstanceEntry> = new Map();
 
@@ -68,10 +68,10 @@ export function ModelBadgeMark(props: {
     iconUrl: props.entry?.acpRegistryIconUrl,
   });
   if (props.provider === "Copilot" && registryIcon === null) {
-    // Copilot has no built-in driver; without the registry's own mark, GitHub's is the one people know.
+    // Keep the provider mark available before the host answers.
     return (
       <span className="sws-model-mark" aria-hidden>
-        <GitHubIcon className="size-3.5" />
+        <GitHubCopilotIcon className="size-3.5" />
       </span>
     );
   }

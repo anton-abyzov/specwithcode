@@ -237,3 +237,24 @@ it("lays its buttons out below the title instead of in a column beside it", () =
   expect(item.title).toBe("Usage limit reached");
   expect(item.actionsLayout).toBe("wrap-below");
 });
+
+it("exposes credit recovery independently of reset and fallback availability", async () => {
+  const item = usageLimitRecoveryBannerItem({
+    ...props,
+    resetAt: null,
+    canCheck: false,
+    credits: {
+      provider: { usageLimits: { credits: { hasCredits: true, balance: "39034.07" } } } as never,
+      context: { allowed: false } as never,
+      onContinue: vi.fn(),
+    },
+    onChange: vi.fn(),
+  });
+  expect(item.title).toBe("Included usage limit reached");
+  await act(() => {
+    renderer = create(<>{item.actions}</>);
+  });
+  expect(button("Continue using credits").props.disabled).toBe(true);
+  expect(JSON.stringify(renderer!.toJSON())).toContain("39,034.07 credits reported available");
+  expect(JSON.stringify(renderer!.toJSON())).toContain("Refresh Providers");
+});

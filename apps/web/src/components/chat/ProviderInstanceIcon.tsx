@@ -95,6 +95,7 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
     >
       {isAcpRegistry ? (
         <AcpRegistryAgentIcon
+          agentId={props.acpRegistryAgentId}
           // The search-tile radius would crop most of the glyph at these
           // inline sizes.
           className={cn("size-5 rounded-none bg-transparent", props.iconClassName)}

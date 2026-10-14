@@ -3,7 +3,11 @@ import { Path, Svg } from "react-native-svg";
 import { View } from "react-native";
 import { providerInstanceInitials } from "@specweave-studio/client-runtime/state/provider-instance-display";
 import { useState } from "react";
-import { resolveOfficialAcpRegistryIconUrl } from "@specweave-studio/contracts";
+import {
+  GITHUB_COPILOT_ICON_PATHS,
+  isGitHubCopilotIcon,
+  resolveOfficialAcpRegistryIconUrl,
+} from "@specweave-studio/contracts";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { AppText as Text } from "./AppText";
 
@@ -36,6 +40,16 @@ function AcpRegistryProviderIcon(props: {
   } | null>(null);
   const currentImage = image?.iconUrl === iconUrl ? image : null;
   const loaded = currentImage?.status === "loaded";
+
+  if (isGitHubCopilotIcon(null, props.iconUrl)) {
+    return (
+      <Svg width={props.size} height={props.size} viewBox="0 0 24 24" fill={props.color}>
+        {GITHUB_COPILOT_ICON_PATHS.map((d, index) => (
+          <Path key={index} d={d} />
+        ))}
+      </Svg>
+    );
+  }
 
   return (
     <View style={{ width: props.size, height: props.size }}>

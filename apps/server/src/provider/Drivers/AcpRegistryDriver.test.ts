@@ -93,6 +93,37 @@ describe("acpRegistrySnapshotReadiness", () => {
     });
   });
 
+  it("keeps Copilot identity when probe metadata names another allowlisted icon", () => {
+    const provider = buildCheckedAcpRegistrySnapshot({
+      ...identity,
+      settings: decodeSettings({ agentId: "github-copilot-cli" }),
+      checkedAt: "2026-10-14T10:00:00.000Z",
+      inspection: {
+        status: "ready",
+        agentId: "github-copilot-cli",
+        version: "1.0.0",
+        distribution: "npx",
+      },
+      probe: {
+        probe: {
+          instanceId: identity.instanceId,
+          ready: true,
+          icon: "https://cdn.agentclientprotocol.com/registry/v1/latest/grok-build.svg",
+          authMethods: [],
+          models: [],
+          currentModelId: null,
+          configOptions: [],
+          sessionManagement: noSessionManagement,
+        },
+        slashCommands: [],
+        skills: [],
+      },
+    });
+    expect(provider.iconUrl).toBe(
+      "https://cdn.agentclientprotocol.com/registry/v1/latest/github-copilot-cli.svg",
+    );
+  });
+
   it("keeps authentication unknown when an agent permits a discovery session before sign-in", () => {
     const snapshot = buildCheckedAcpRegistrySnapshot({
       ...identity,

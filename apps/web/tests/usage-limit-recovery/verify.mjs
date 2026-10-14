@@ -142,6 +142,29 @@ try {
       });
     }
   }
+  for (const width of [320, 768, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(`${origin}/?credits=1&status=none`);
+    await page.getByText("Included usage limit reached", { exact: true }).waitFor();
+    await page.getByText(/39,034.07 credits reported available/).waitFor();
+    await page.getByRole("button", { name: "Continue using credits", exact: true }).click();
+    assert.equal(await page.locator("body").getAttribute("data-credit-continued"), "true");
+    assert.equal(
+      await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
+      false,
+    );
+    await page.screenshot({
+      path: path.join(output, `credit-recovery-${width}.png`),
+      fullPage: true,
+    });
+    await page.goto(`${origin}/?resolved=1`);
+    const resolved = page.locator("[data-resolved-warning]");
+    assert.equal(await resolved.innerText(), "Usage limit resolved — chat continued.");
+    assert.equal(await resolved.getByText(/Retry after/).count(), 0);
+    assert.equal(await page.getByRole("button", { name: "Continue using credits" }).count(), 0);
+    await page.screenshot({ path: path.join(output, `resolved-warning-${width}.png`), fullPage: true });
+    receipt.push({ width, creditContinuation: "passed" });
+  }
   assert.deepEqual(errors, []);
   await fs.writeFile(
     path.join(output, "receipt.json"),
