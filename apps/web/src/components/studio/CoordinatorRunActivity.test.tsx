@@ -4,7 +4,7 @@ import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 import { CoordinatorRunActivity } from "./CoordinatorRunActivity";
 
-it("opens full coordinator output in project details", async () => {
+it("opens tool output from a styled action", async () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const container = document.createElement("div");
   const root = createRoot(container);
@@ -22,7 +22,8 @@ it("opens full coordinator output in project details", async () => {
         />,
       ),
     );
-    expect(container.textContent).toContain("Full output is in coordinator details.");
+    expect(container.querySelector("button")!.textContent).toBe("View tool output");
+    expect(container.querySelector("button")!.dataset.slot).toBe("button");
     await act(async () => container.querySelector("button")!.click());
     expect(open).toHaveBeenCalledOnce();
   } finally {

@@ -228,6 +228,241 @@ describe("Scoped worker references", () => {
   });
 });
 describe("Project admission and retry", () => {
+  it("keeps existing accepted identity after strict overflow then ordinary send and acknowledgement", () => {
+    let saved: string | null = null;
+    const storage = {
+      getItem: () => saved,
+      setItem: (_key: string, value: string) => {
+        saved = value;
+      },
+      removeItem: () => {
+        saved = null;
+      },
+    };
+    const scope = { storage, key: "strict-overflow-then-ordinary" };
+    const receipt = createProjectSendReceipt(scope);
+    const fingerprints = Array.from({ length: 67 }, (_, i) =>
+      JSON.stringify([
+        "coordinator-retry",
+        [`failed-${i}`, `message-${i}`],
+        ["project", "x".repeat(30_000), null, []],
+      ]),
+    );
+    for (let i = 0; i < 66; i++) receipt.forPrompt(fingerprints[i]!, () => `accepted-${i}`, true);
+    const before = storage.getItem()!;
+    expect(before.length).toBeLessThanOrEqual(2_000_000);
+    expect(() => receipt.forPrompt(fingerprints[66]!, () => "never-dispatched", true)).toThrow(
+      /history is full/,
+    );
+    expect(
+      storage.getItem() === before,
+      `Retained ${before.length} chars; saved ${storage.getItem()?.length ?? 0}`,
+    ).toBe(true);
+    const ordinaryRpc = vi.fn();
+    const ordinary = receipt.forPrompt("ordinary-new-message", () => "ordinary-command");
+    ordinaryRpc(ordinary);
+    receipt.acknowledge(ordinary);
+    expect(ordinaryRpc).toHaveBeenCalledExactlyOnceWith("ordinary-command");
+    expect(
+      storage.getItem() === before,
+      `Retained ${before.length} chars; saved ${storage.getItem()?.length ?? 0}`,
+    ).toBe(true);
+    const allocate = vi.fn(() => "duplicate-command");
+    const reloaded = createProjectSendReceipt(scope);
+    expect(reloaded.forPrompt(fingerprints[0]!, allocate, true)).toBe("accepted-0");
+    expect(allocate).not.toHaveBeenCalled();
+    expect(
+      storage.getItem() === before,
+      `Retained ${before.length} chars; saved ${storage.getItem()?.length ?? 0}`,
+    ).toBe(true);
+  });
+
+  it.each(["oversized", "corrupt", "read-failure"])(
+    "keeps unsafe raw history through ordinary send, acknowledgement and reload: %s",
+    (kind) => {
+      const oldFingerprint = kind === "oversized" ? `${"x".repeat(30_000)}:0` : "old-request";
+      const raw =
+        kind === "oversized"
+          ? JSON.stringify({
+              version: 1,
+              pending: Array.from({ length: 67 }, (_, i) => [
+                `${"x".repeat(30_000)}:${i}`,
+                `accepted-${i}`,
+              ]),
+            })
+          : kind === "corrupt"
+            ? "{retained-but-unreadable"
+            : JSON.stringify({ version: 1, pending: [[oldFingerprint, "accepted-command"]] });
+      let saved: string | null = raw;
+      let readUnavailable = kind === "read-failure";
+      const storage = {
+        getItem: () => {
+          if (readUnavailable) throw new Error("read unavailable");
+          return saved;
+        },
+        setItem: vi.fn((_key: string, value: string) => {
+          saved = value;
+        }),
+        removeItem: vi.fn(() => {
+          saved = null;
+        }),
+      };
+      const scope = { storage, key: "unsafe-retained-history" };
+      const receipt = createProjectSendReceipt(scope);
+      const ordinaryRpc = vi.fn();
+      const ordinary = receipt.forPrompt("ordinary-request", () => "ordinary-command");
+      ordinaryRpc(ordinary);
+      receipt.acknowledge(ordinary);
+      expect(ordinaryRpc).toHaveBeenCalledExactlyOnceWith("ordinary-command");
+      expect(saved).toBe(raw);
+      expect(storage.setItem).not.toHaveBeenCalled();
+      expect(storage.removeItem).not.toHaveBeenCalled();
+      const reloaded = createProjectSendReceipt(scope);
+      const allocate = vi.fn(() => "duplicate-command");
+      const retryRpc = vi.fn();
+      expect(() => retryRpc(reloaded.forPrompt(oldFingerprint, allocate, true))).toThrow(
+        /restored safely/,
+      );
+      expect(allocate).not.toHaveBeenCalled();
+      expect(retryRpc).not.toHaveBeenCalled();
+      expect(saved).toBe(raw);
+      expect(storage.setItem).not.toHaveBeenCalled();
+      expect(storage.removeItem).not.toHaveBeenCalled();
+      if (kind === "read-failure") {
+        readUnavailable = false;
+        expect(createProjectSendReceipt(scope).forPrompt(oldFingerprint, allocate, true)).toBe(
+          "accepted-command",
+        );
+        expect(allocate).not.toHaveBeenCalled();
+      }
+    },
+  );
+
+  it("rejects a strict receipt above the reload bound without replacing earlier uncertain commands", () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: vi.fn((key: string, value: string) => {
+        values.set(key, value);
+      }),
+      removeItem: (key: string) => {
+        values.delete(key);
+      },
+    };
+    const receipt = createProjectSendReceipt({ storage, key: "bounded-retry" });
+    const prompt = "x".repeat(30_000);
+    for (let i = 0; i < 66; i++) receipt.forPrompt(`${prompt}:${i}`, () => `uncertain-${i}`, true);
+    const before = values.get("bounded-retry")!;
+    expect(before.length).toBeLessThanOrEqual(2_000_000);
+    const allocate = vi.fn(() => "new-retry-command");
+    const rpc = vi.fn();
+    const retry = () => rpc(receipt.forPrompt(`${prompt}:66`, allocate, true));
+    expect(retry).toThrow(/history.*full|restore.*limit/);
+    expect(rpc).not.toHaveBeenCalled();
+    expect(values.get("bounded-retry")).toBe(before);
+    expect(storage.setItem.mock.calls.every(([, value]) => value.length <= 2_000_000)).toBe(true);
+    const reloaded = createProjectSendReceipt({ storage, key: "bounded-retry" });
+    expect(reloaded.forPrompt(`${prompt}:0`, () => "duplicate", true)).toBe("uncertain-0");
+    receipt.acknowledge("uncertain-0");
+    retry();
+    expect(allocate).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledExactlyOnceWith("new-retry-command");
+    expect(
+      createProjectSendReceipt({ storage, key: "bounded-retry" }).forPrompt(
+        `${prompt}:66`,
+        () => "duplicate",
+        true,
+      ),
+    ).toBe("new-retry-command");
+  });
+
+  it.each([
+    " ".repeat(2_000_001),
+    "{broken",
+    JSON.stringify({ version: 2, pending: [["retry", "accepted-command"]] }),
+    JSON.stringify({ version: 1, pending: [["retry", "unreadable command id"]] }),
+  ])("preserves an unreadable existing receipt and blocks strict dispatch", (raw) => {
+    let saved = raw;
+    const storage = {
+      getItem: () => saved,
+      setItem: vi.fn((_key: string, value: string) => {
+        saved = value;
+      }),
+      removeItem: vi.fn(),
+    };
+    const receipt = createProjectSendReceipt({ storage, key: "unreadable-retry" });
+    const allocate = vi.fn(() => "replacement-command");
+    const rpc = vi.fn();
+    expect(() => rpc(receipt.forPrompt("retry", allocate, true))).toThrow(/restored safely/);
+    expect(allocate).not.toHaveBeenCalled();
+    expect(rpc).not.toHaveBeenCalled();
+    expect(storage.setItem).not.toHaveBeenCalled();
+    expect(saved).toBe(raw);
+    expect(receipt.forPrompt("ordinary", () => "ordinary-command")).toBe("ordinary-command");
+  });
+
+  it("does not overwrite an accepted command after a transient initialization read failure", () => {
+    const original = JSON.stringify({ version: 1, pending: [["retry", "accepted-command"]] });
+    let saved = original;
+    const storage = {
+      getItem: vi
+        .fn()
+        .mockImplementationOnce(() => {
+          throw new Error("read unavailable");
+        })
+        .mockImplementation(() => saved),
+      setItem: vi.fn((_key: string, value: string) => {
+        saved = value;
+      }),
+      removeItem: vi.fn(),
+    };
+    const receipt = createProjectSendReceipt({ storage, key: "temporarily-unreadable" });
+    const allocate = vi.fn(() => "replacement-command");
+    expect(() => receipt.forPrompt("retry", allocate, true)).toThrow(/restored safely/);
+    expect(allocate).not.toHaveBeenCalled();
+    expect(saved).toBe(original);
+    expect(storage.setItem).not.toHaveBeenCalled();
+    expect(
+      createProjectSendReceipt({ storage, key: "temporarily-unreadable" }).forPrompt(
+        "retry",
+        allocate,
+        true,
+      ),
+    ).toBe("accepted-command");
+    expect(allocate).not.toHaveBeenCalled();
+  });
+
+  it("blocks retry RPC when only command storage fails, then durably reuses its cached ID", () => {
+    const values = new Map<string, string>();
+    let commandStorageAvailable = false;
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        if (key === "command-scope" && !commandStorageAvailable) throw new Error("command quota");
+        values.set(key, value);
+      },
+      removeItem: (key: string) => {
+        values.delete(key);
+      },
+    };
+    storage.setItem("recovery-metadata", "valid pending attachment IDs");
+    const receipt = createProjectSendReceipt({ storage, key: "command-scope" });
+    const allocate = vi.fn(() => "durable-retry-command");
+    const rpc = vi.fn();
+    const retry = () => rpc(receipt.forPrompt("retry-fingerprint", allocate, true));
+    expect(retry).toThrow(/session storage/);
+    expect(rpc).not.toHaveBeenCalled();
+    expect(values.has("recovery-metadata")).toBe(true);
+    commandStorageAvailable = true;
+    retry();
+    expect(allocate).toHaveBeenCalledTimes(1);
+    const reloaded = createProjectSendReceipt({ storage, key: "command-scope" });
+    expect(reloaded.forPrompt("retry-fingerprint", () => "duplicate", true)).toBe(
+      "durable-retry-command",
+    );
+    expect(rpc).toHaveBeenCalledExactlyOnceWith("durable-retry-command");
+  });
+
   it("requires a connected authorized active project", () => {
     const settings = { paused: false, archived: false };
     expect(projectAdmissionReason(settings, true, true)).toBeNull();

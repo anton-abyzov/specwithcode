@@ -12,7 +12,7 @@ import { ReportArtifact } from "../chat/ReportArtifact";
 import { CoordinatorRunActivity } from "./CoordinatorRunActivity";
 import { coordinatorConversationView, withFoldedReplies } from "../../studio/coordinatorActivity";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon, RotateCcwIcon, TriangleAlertIcon } from "lucide-react";
 import { type ThreadId } from "@specweave-studio/contracts";
 import type {
   EnvironmentProject,
@@ -43,6 +43,7 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Button, InlineButton } from "../ui/button";
 
 export function CoordinatorConversation({
   project,
@@ -55,7 +56,11 @@ export function CoordinatorConversation({
   onOpenPullRequest,
   attention,
   onOpenCoordinatorPage,
+  onOpenCoordinatorActivity,
   failure,
+  onRetry,
+  retrying,
+  retryDisabled,
   progress,
   empty,
 }: {
@@ -73,8 +78,12 @@ export function CoordinatorConversation({
   attention: CoordinatorAttention | null;
   /** Opens the coordinator's native review controls inside the main pane. */
   onOpenCoordinatorPage: () => void;
+  onOpenCoordinatorActivity: (runId: string) => void;
   /** The coordinator's latest run failed; the host keeps that on the run, not as a message. */
   failure: CoordinatorTurnFailure | null;
+  onRetry: () => void;
+  retrying: boolean;
+  retryDisabled: boolean;
   /** What the coordinator is doing while its turn runs; null when it is idle. */
   progress: CoordinatorProgress | null;
   /** What to say before the first message. */
@@ -179,15 +188,16 @@ export function CoordinatorConversation({
       aria-busy={status === "empty" || status === "synchronizing"}
     >
       {history.hasMoreHistory && (
-        <button
-          className="project-control"
+        <Button
+          variant="outline"
+          size="sm"
           disabled={history.loading}
           onClick={() =>
             void load({ environmentId: project.environmentId, input: { threadId: coordinatorId } })
           }
         >
           {history.loading ? "Loading…" : "Load earlier messages"}
-        </button>
+        </Button>
       )}
       {history.error && <p role="alert">{history.error}</p>}
       {!thread && (
@@ -325,7 +335,7 @@ export function CoordinatorConversation({
             {view.activityByMessageId.has(message.id) ? (
               <CoordinatorRunActivity
                 activity={view.activityByMessageId.get(message.id)!}
-                onOpenCoordinatorPage={onOpenCoordinatorPage}
+                onOpenCoordinatorPage={onOpenCoordinatorActivity}
               />
             ) : null}
           </article>
@@ -336,7 +346,7 @@ export function CoordinatorConversation({
         <CoordinatorRunActivity
           live
           activity={view.liveActivity}
-          onOpenCoordinatorPage={onOpenCoordinatorPage}
+          onOpenCoordinatorPage={onOpenCoordinatorActivity}
         />
       ) : null}
       {working && <CoordinatorWorking progress={progress} />}
@@ -345,19 +355,46 @@ export function CoordinatorConversation({
           <p>
             <strong>{attention.message}</strong>
           </p>
-          <button type="button" className="project-control" onClick={onOpenCoordinatorPage}>
+          <Button variant="outline" size="sm" className="mt-2" onClick={onOpenCoordinatorPage}>
             {attention.action}
-          </button>
+          </Button>
         </div>
       )}
       {failure && (
-        <div className="project-notice" role="alert" data-coordinator-failure="">
-          <p>
-            <strong>The coordinator did not answer.</strong> {failure.message}
-          </p>
-          <button type="button" className="project-control" onClick={onOpenCoordinatorPage}>
-            Review coordinator
-          </button>
+        <div
+          className="rounded-xl border border-destructive/25 bg-destructive/5 p-4 text-sm"
+          role="alert"
+          data-coordinator-failure=""
+        >
+          <div className="flex items-start gap-3">
+            <TriangleAlertIcon className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
+            <div className="min-w-0 flex-1 space-y-3">
+              <div>
+                <p className="font-medium">The coordinator did not answer.</p>
+                <p className="mt-1 leading-relaxed text-muted-foreground">{failure.message}</p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={retryDisabled || retrying}
+                aria-busy={retrying}
+                onClick={onRetry}
+              >
+                <RotateCcwIcon aria-hidden />
+                {retrying ? "Retrying…" : "Retry last message"}
+              </Button>
+              <details className="text-muted-foreground">
+                <summary className="w-fit cursor-pointer rounded-sm text-xs underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring">
+                  Error details
+                </summary>
+                <dl className="mt-2 grid gap-1 text-xs">
+                  <dt className="font-medium">Run</dt>
+                  <dd className="break-all font-mono">{failure.runId}</dd>
+                </dl>
+                <p className="mt-2 whitespace-pre-wrap break-words text-xs">{failure.message}</p>
+              </details>
+            </div>
+          </div>
         </div>
       )}
       <div ref={end} data-coordinator-end="" />
@@ -395,14 +432,9 @@ function MessageThreadLink({
       </span>
     );
   return (
-    <button
-      type="button"
-      className="project-control project-text-link"
-      aria-label={fallbackAriaLabel}
-      onClick={onOpen}
-    >
+    <InlineButton aria-label={fallbackAriaLabel} onClick={onOpen}>
       {fallbackLabel}
-    </button>
+    </InlineButton>
   );
 }
 
@@ -468,8 +500,9 @@ export function CoordinatorMachine({
           render={
             <MenuTrigger
               render={
-                <button
-                  type="button"
+                <Button
+                  variant="ghost-muted"
+                  size="xs"
                   className="project-muted sws-host sws-host-pick"
                   aria-label={`Coordinator runs on ${label}. Choose the machine`}
                 />

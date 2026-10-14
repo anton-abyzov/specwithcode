@@ -1,4 +1,5 @@
 import type { RunActivity } from "~/studio/coordinatorActivity";
+import { Button } from "../ui/button";
 
 /**
  * Verbose detail for one coordinator turn: what it did, step by step. Long
@@ -12,7 +13,7 @@ export function CoordinatorRunActivity({
   activity: RunActivity;
   /** The turn is still running; its steps keep arriving. */
   live?: boolean;
-  onOpenCoordinatorPage: () => void;
+  onOpenCoordinatorPage: (runId: string) => void;
 }) {
   return (
     <details
@@ -37,13 +38,9 @@ export function CoordinatorRunActivity({
           </li>
         ))}
       </ol>
-      <p className="sws-run-activity-note">
-        Full output is in{" "}
-        <button type="button" onClick={onOpenCoordinatorPage}>
-          coordinator details
-        </button>
-        .
-      </p>
+      <Button variant="ghost-muted" size="xs" onClick={() => onOpenCoordinatorPage(activity.runId)}>
+        View tool output
+      </Button>
     </details>
   );
 }

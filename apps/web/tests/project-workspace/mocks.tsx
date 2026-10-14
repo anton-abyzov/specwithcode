@@ -30,6 +30,9 @@ import { parseStudioThreadHref } from "@specweave-studio/shared/studioThreadLink
 import { StudioThreadLink } from "../../src/components/StudioThreadLink";
 import { reportKey } from "@specweave-studio/shared/threadReport";
 // `?fresh` is a project nobody has worked in yet; `?fresh=empty` is one whose folder is empty too.
+const recovery = new URLSearchParams(window.location.search).get("recovery");
+const recoveryFailureId =
+  new URLSearchParams(window.location.search).get("recovery-failure") ?? "run-failed";
 const fresh = new URLSearchParams(window.location.search).get("fresh");
 // `?fresh&failed` adds a coordinator turn the host could not start (a reached usage limit).
 const failedTurn = new URLSearchParams(window.location.search).has("failed");
@@ -75,7 +78,13 @@ const settings = {
   instructions: "Keep decisions brief. Link to the supporting thread.",
   coordinatorThreadId: legacy !== null ? null : "coord",
   coordinatorModelSelection:
-    legacy !== null ? null : { instanceId: "claude", model: "Claude coordinator" },
+    recovery === "incompatible" || recovery === "full-access"
+      ? { instanceId: "github-copilot-cli", model: "claude-opus-5.5" }
+      : recovery
+        ? { instanceId: "codex", model: "gpt-6" }
+        : legacy !== null
+          ? null
+          : { instanceId: "claude", model: "Claude coordinator" },
   paused: false,
   archived: false,
   autoResume: true,
@@ -218,8 +227,22 @@ const shell = (id, title, extra = {}) => ({
   modelSelection: { instanceId: "codex", model: "Native Codex worker" },
   ...extra,
 });
-const shells =
-  legacy !== null
+const shells = recovery
+  ? [
+      shell("coord", "Project coordinator", {
+        latestRun: { runId: recoveryFailureId, status: "failed" },
+        runtime: {
+          lastError:
+            recovery === "full-access"
+              ? "The previous provider session ended before answering. Retry the message."
+              : "This provider cannot enforce additional project folder access. Choose a Codex or Claude coordinator for this project.",
+        },
+        modelSelection: settings.coordinatorModelSelection,
+        runtimeMode: recovery === "full-access" ? "full-access" : "approval-required",
+        interactionMode: "default",
+      }),
+    ]
+  : legacy !== null
     ? []
     : fresh !== null
       ? [
@@ -228,7 +251,7 @@ const shells =
             "Project coordinator",
             failedTurn
               ? {
-                  latestRun: { runId: "run-failed", status: "failed" },
+                  latestRun: { runId: recoveryFailureId, status: "failed" },
                   runtime: {
                     status: "failed",
                     lastError:
@@ -367,75 +390,135 @@ const activityProjection = {
   ],
 };
 export const useThreadProjection = () => ({
-  projection: reportFixture
-    ? reportProjection
-    : activity
-      ? activityProjection
-      : {
-          messages:
-            fresh !== null
-              ? failedTurn
-                ? [
+  projection: recovery
+    ? {
+        messages: [
+          {
+            id: "captured-message",
+            role: "user",
+            createdBy: "user",
+            runId: recoveryFailureId,
+            text: "Have you resolved this?",
+            attachments: [
+              {
+                type: "image",
+                id: "captured-shot",
+                name: "restart.png",
+                mimeType: "image/png",
+                sizeBytes: 3,
+              },
+              {
+                type: "file",
+                id: "captured-notes",
+                name: "notes.txt",
+                mimeType: "text/plain",
+                sizeBytes: 3,
+              },
+            ],
+          },
+        ],
+        runs: [],
+        turnItems: [],
+      }
+    : reportFixture
+      ? reportProjection
+      : activity
+        ? activityProjection
+        : {
+            messages:
+              fresh !== null
+                ? failedTurn
+                  ? [
+                      {
+                        id: "m-failed",
+                        role: "user",
+                        createdBy: "user",
+                        runId: recoveryFailureId,
+                        text: "Reply with OK",
+                        attachments: [],
+                      },
+                    ]
+                  : []
+                : [
                     {
-                      id: "m-failed",
+                      id: "m1",
                       role: "user",
                       createdBy: "user",
-                      runId: "run-failed",
-                      text: "Reply with OK",
+                      text: "Keep the project moving. Show me the work that needs a decision.",
+                      createdAt: "2026-10-09T00:00:00Z",
                       attachments: [],
                     },
-                  ]
-                : []
-              : [
-                  {
-                    id: "m1",
-                    role: "user",
-                    createdBy: "user",
-                    text: "Keep the project moving. Show me the work that needs a decision.",
-                    createdAt: "2026-10-09T00:00:00Z",
-                    attachments: [],
-                  },
-                  {
-                    id: "m2",
-                    role: "assistant",
-                    text: `Started [Consolidate the skills](studio://thread/skills) and [Record the tutorials](studio://thread/${TUTORIALS_ID}). The memory work is running. [Review the landing page](studio://thread/review) needs your decision before we continue. The old [Draft the launch post](studio://thread/thread%3Adelegated-task%3Acommand%253Amcp%253Afixture-0002) worker is no longer here.\n\nOnboarding is ready for another pass; the pagination fix is resolved and retained for future follow-ups.`,
-                    createdAt: "2026-10-09T00:00:04Z",
-                    updatedAt: "2026-10-09T00:00:05Z",
-                    attachments: [],
-                  },
-                ],
-        },
+                    {
+                      id: "m2",
+                      role: "assistant",
+                      text: `Started [Consolidate the skills](studio://thread/skills) and [Record the tutorials](studio://thread/${TUTORIALS_ID}). The memory work is running. [Review the landing page](studio://thread/review) needs your decision before we continue. The old [Draft the launch post](studio://thread/thread%3Adelegated-task%3Acommand%253Amcp%253Afixture-0002) worker is no longer here.\n\nOnboarding is ready for another pass; the pagination fix is resolved and retained for future follow-ups.`,
+                      createdAt: "2026-10-09T00:00:04Z",
+                      updatedAt: "2026-10-09T00:00:05Z",
+                      attachments: [],
+                    },
+                  ],
+          },
 });
 export const useThreadHistory = () => ({ hasMoreHistory: false });
 export const useThreadStatus = () => "ready";
 export const useEnvironment = (environmentId) => ({
   label: memberProjects.length > 1 ? machineLabels[environmentId] : "Development Mac",
   connection: { phase: "connected" },
-  ...(legacy === null || legacy === "loading"
-    ? {}
-    : {
+  ...(recovery
+    ? {
         serverConfig: {
-          environment: { capabilities: {} },
+          settings: { ...DEFAULT_SERVER_SETTINGS, defaultRuntimeMode: "approval-required" },
+          environment: {
+            capabilities: {
+              attachmentUploads: true,
+              fileAttachments: { maxUploadBytes: 50 * 1024 * 1024 },
+            },
+          },
           providers: [
+            fixtureProvider("codex", {
+              models: [{ slug: "gpt-6", name: "GPT-6", isDefault: true }],
+            }),
             fixtureProvider("claudeAgent", {
-              // Right after a restart the host sends its config before Claude's first check.
-              ...(legacy === "checking"
-                ? {
-                    installed: false,
-                    version: null,
-                    status: "warning",
-                    auth: { status: "unknown" },
-                    message: "Claude provider status has not been checked in this session yet.",
-                  }
-                : {}),
-              models: [
-                { slug: "claude-sonnet-5-5", name: "Sonnet 5.5", isCustom: false, isDefault: true },
-                { slug: "claude-opus-5-5", name: "Opus 5.5", isCustom: false },
-              ],
+              models: [{ slug: "claude-opus-5-5", name: "Opus 5.5", isDefault: true }],
+            }),
+            fixtureProvider("acpRegistry", {
+              instanceId: "github-copilot-cli",
+              displayName: "Copilot",
+              models: [{ slug: "claude-opus-5.5", name: "Opus 5.5", isDefault: true }],
             }),
           ],
         },
-      }),
+      }
+    : legacy === null || legacy === "loading"
+      ? {}
+      : {
+          serverConfig: {
+            environment: { capabilities: {} },
+            providers: [
+              fixtureProvider("claudeAgent", {
+                // Right after a restart the host sends its config before Claude's first check.
+                ...(legacy === "checking"
+                  ? {
+                      installed: false,
+                      version: null,
+                      status: "warning",
+                      auth: { status: "unknown" },
+                      message: "Claude provider status has not been checked in this session yet.",
+                    }
+                  : {}),
+                models: [
+                  {
+                    slug: "claude-sonnet-5-5",
+                    name: "Sonnet 5.5",
+                    isCustom: false,
+                    isDefault: true,
+                  },
+                  { slug: "claude-opus-5-5", name: "Opus 5.5", isCustom: false },
+                ],
+              }),
+            ],
+          },
+        }),
 });
 export const useEnvironmentScope = () => true;
 export const useEnvironmentsWithScope = (environments) =>
@@ -894,7 +977,7 @@ export const environmentSession = {
 };
 export const primaryServerSettingsAtom = fixtureAtom("serverSettings", DEFAULT_SERVER_SETTINGS);
 export const readEnvironmentScope = () => true;
-export const readPreparedConnection = () => Option.none();
+export const readPreparedConnection = () => (recovery ? { httpBaseUrl: location.origin } : null);
 export const usePreparedConnection = () => Option.none();
 export const useAllEnvironmentShellsBootstrapped = () => true;
 export const useEnvironments = () => ({
@@ -923,3 +1006,69 @@ export const readEnvironmentSupportsSnooze = fixtureAnything("readEnvironmentSup
 export const readEnvironmentSupportsTitleRegeneration = fixtureAnything(
   "readEnvironmentSupportsTitleRegeneration",
 );
+
+// Coordinator recovery uses production asset resolution and staging logic with host operations faked.
+window.__recoveryUploads = [];
+window.__recoveryAssets = [];
+window.__recoveryReleases = [];
+window.__recoveryPendingReads = [];
+export const assetEnvironment = { createUrl: "recoveryAsset" };
+export const useAtomQueryRunner = () => async (target) => {
+  window.__recoveryAssets.push(target);
+  if (recovery === "missing" && target.input.resource.attachmentId === "captured-notes")
+    return { _tag: "Failure" };
+  const result = {
+    _tag: "Success",
+    value: {
+      relativeUrl: "data:application/octet-stream;base64,YWJj",
+      expiresAt: Date.now() + 60000,
+    },
+  };
+  return recovery === "pending-read"
+    ? new Promise((resolve) => window.__recoveryPendingReads.push(() => resolve(result)))
+    : result;
+};
+export const useAttachmentUploadStore = (select) => select({ uploadsByImageId: {} });
+export const startAttachmentUpload = ({ environmentId, image }) => {
+  window.__recoveryUploads.push({
+    environmentId,
+    id: image.id,
+    type: image.type,
+    name: image.name,
+    sizeBytes: image.file.size,
+  });
+};
+export const awaitAttachmentUploads = async () => {
+  await new Promise((resolve) => setTimeout(resolve, 40));
+};
+export const getUploadedAttachments = ({ images }) =>
+  recovery === "upload-failure"
+    ? null
+    : images.map((image, i) => ({
+        type: image.type,
+        id: `pending-restored-${i}`,
+        name: image.name,
+        mimeType: image.mimeType,
+        sizeBytes: image.sizeBytes,
+      }));
+export const releaseDraftAttachment = (attachment) => window.__recoveryReleases.push(attachment.id);
+export const projectFaviconUrlAtom = () => Atom.make(null);
+export const EMPTY_SERVER_PROVIDERS = [];
+
+export const useEnvironmentSettings = () => ({
+  ...DEFAULT_SERVER_SETTINGS,
+  providers: {
+    ...DEFAULT_SERVER_SETTINGS.providers,
+    codex: { ...DEFAULT_SERVER_SETTINGS.providers.codex, enabled: true },
+    claudeAgent: { ...DEFAULT_SERVER_SETTINGS.providers.claudeAgent, enabled: true },
+  },
+  providerInstances: {
+    codex: { driver: "codex", enabled: true, config: {} },
+    claudeAgent: { driver: "claudeAgent", enabled: true, config: {} },
+    "github-copilot-cli": {
+      driver: "acpRegistry",
+      enabled: true,
+      config: { source: "registry", agentId: "github-copilot-cli" },
+    },
+  },
+});

@@ -41,17 +41,28 @@ export const validate = Effect.fn("ProjectCoordinatorAttachments.validate")(func
   const attachments = input.attachments ?? [];
   // Uploads must come through native staging. A claimed ID is not proof that the user
   // can reuse another project's captured bytes, even if its path exists on this host.
+  if (!input.prompt.trim() && attachments.length === 0) {
+    return yield* new ProjectWorkspaceError({ projectId: input.projectId, code: "empty_message" });
+  }
   if (
-    (!input.prompt.trim() && attachments.length === 0) ||
     attachments.some(
       (a) =>
         (a.type !== "image" && a.type !== "file") || !AttachmentClaims.attachmentIsPendingUpload(a),
     ) ||
     new Set(attachments.map((a) => a.id)).size !== attachments.length
   ) {
-    return yield* new ProjectWorkspaceError({ projectId: input.projectId, code: "invalid" });
+    return yield* new ProjectWorkspaceError({
+      projectId: input.projectId,
+      code: "invalid_attachments",
+    });
   }
-  yield* AttachmentClaims.validateAttachmentLimits(attachments);
+  yield* AttachmentClaims.validateAttachmentLimits(attachments).pipe(
+    Effect.catchTag("AttachmentClaimError", () =>
+      Effect.fail(
+        new ProjectWorkspaceError({ projectId: input.projectId, code: "attachment_limit" }),
+      ),
+    ),
+  );
 });
 
 /** Read the durable command before touching uploads: their staging TTL may have elapsed. */
@@ -80,5 +91,13 @@ export const send = Effect.fn("ProjectCoordinatorAttachments.send")(function* (
   }
   // Intake validates bytes and type, copies under the coordinator's namespace, and
   // releases unreferenced copies after proven rejection. Unknown outcomes retain them.
-  yield* ThreadMessageIntake.sendToThread(input);
+  yield* ThreadMessageIntake.sendToThread(input).pipe(
+    Effect.catchTag("AttachmentClaimError", () =>
+      Effect.fail(
+        // The durable command was checked above. A claim fails before dispatch,
+        // so this distinct code proves there is no accepted send to duplicate.
+        new ProjectWorkspaceError({ projectId: input.projectId, code: "attachment_unavailable" }),
+      ),
+    ),
+  );
 });

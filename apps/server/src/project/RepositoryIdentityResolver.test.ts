@@ -202,6 +202,139 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 
+  it.effect.each(["origin", "upstream"] as const)(
+    "resolves a real local partial-clone with an annotated %s remote",
+    (remoteName) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "studio-repository-identity-partial-clone-",
+        });
+        const source = path.join(root, "source");
+        const clone = path.join(root, "clone");
+        yield* fileSystem.makeDirectory(source);
+        expect((yield* git(source, ["init"])).code).toBe(0);
+        yield* fileSystem.writeFileString(path.join(source, "README.md"), "local fixture\n");
+        expect((yield* git(source, ["add", "README.md"])).code).toBe(0);
+        expect(
+          (yield* git(source, [
+            "-c",
+            "user.name=Studio Test",
+            "-c",
+            "user.email=studio-test@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            "local fixture",
+          ])).code,
+        ).toBe(0);
+        expect((yield* git(source, ["config", "uploadpack.allowFilter", "true"])).code).toBe(0);
+        // --no-local uses upload-pack even for this scratch path, so the clone
+        // really negotiates a blob filter. No network or real fleet config is used.
+        expect(
+          (yield* git(root, [
+            "clone",
+            "--no-local",
+            "--no-checkout",
+            "--filter=blob:none",
+            "--origin",
+            remoteName,
+            source,
+            clone,
+          ])).code,
+        ).toBe(0);
+        expect(
+          (yield* git(clone, ["rev-list", "--objects", "--all", "--missing=print"])).stdout,
+        ).toMatch(/^\?[0-9a-f]{40}$/m);
+        const remoteUrl = "git@github.com:anton-abyzov/specweave-umb.git";
+        expect((yield* git(clone, ["remote", "set-url", remoteName, remoteUrl])).code).toBe(0);
+        expect((yield* git(clone, ["config", `remote.${remoteName}.promisor`])).stdout.trim()).toBe(
+          "true",
+        );
+        const remoteOutput = (yield* git(clone, ["remote", "-v"])).stdout;
+        expect(remoteOutput).toContain(`${remoteName}\t${remoteUrl} (fetch) [blob:none]`);
+
+        const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+        const identity = yield* resolver.resolve(clone);
+        expect(identity?.canonicalKey).toBe("github.com/anton-abyzov/specweave-umb");
+        expect(identity?.locator).toEqual({ source: "git-remote", remoteName, remoteUrl });
+        if (identity?.rootPath === undefined) {
+          throw new Error("Expected resolved repository root path");
+        }
+        expect(NodeFS.realpathSync.native(identity.rootPath)).toBe(
+          NodeFS.realpathSync.native(clone),
+        );
+
+        const otherRemote = remoteName === "origin" ? "upstream" : "origin";
+        expect(
+          (yield* git(clone, ["remote", "add", otherRemote, "git@github.com:acme/other.git"])).code,
+        ).toBe(0);
+        const preferred = yield* resolver.resolve(clone, { refresh: true });
+        expect(preferred?.locator.remoteName).toBe("upstream");
+        expect(preferred?.canonicalKey).toBe(
+          remoteName === "upstream"
+            ? "github.com/anton-abyzov/specweave-umb"
+            : "github.com/acme/other",
+        );
+        expect(preferred?.origin?.canonicalKey).toBe(
+          remoteName === "origin"
+            ? "github.com/anton-abyzov/specweave-umb"
+            : "github.com/acme/other",
+        );
+      }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+  );
+
+  it.effect.each([
+    { suffix: " [tree:0]", valid: true },
+    { suffix: " [blob:limit=1048576]", valid: true },
+    { suffix: " [combine:blob:none+tree:1]", valid: true },
+    { suffix: " [blob:none", valid: false },
+    { suffix: " [blob:none] garbage", valid: false },
+    { suffix: " arbitrary trailing text", valid: false },
+  ])("accepts only complete partial-clone remote annotations: $suffix", ({ suffix, valid }) => {
+    const layerProcessRunner = Layer.succeed(ProcessRunner.ProcessRunner, {
+      run: (input) =>
+        Effect.succeed({
+          stdout: input.args.includes("rev-parse")
+            ? "/repo\n"
+            : [
+                `origin\tgit@github.com:acme/fetch.git (fetch)${suffix}`,
+                "origin\tgit@github.com:acme/push.git (push) [blob:none]",
+                "upstream\tgit@github.com:acme/push-only.git (push)",
+                "missing-url (fetch)",
+                "malformed\tgit@github.com:acme/malformed.git fetch",
+              ].join("\n"),
+          stderr: "",
+          code: ChildProcessSpawner.ExitCode(0),
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          stdoutInvalidUtf8: false,
+          stderrInvalidUtf8: false,
+        }),
+    });
+    const layerResolver = Layer.effect(
+      RepositoryIdentityResolver.RepositoryIdentityResolver,
+      RepositoryIdentityResolver.make(),
+    ).pipe(Layer.provide(layerProcessRunner));
+    return Effect.gen(function* () {
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      const identity = yield* resolver.resolve("/repo");
+      if (valid) {
+        expect(identity?.canonicalKey).toBe("github.com/acme/fetch");
+        expect(identity?.locator).toEqual({
+          source: "git-remote",
+          remoteName: "origin",
+          remoteUrl: "git@github.com:acme/fetch.git",
+        });
+      } else {
+        expect(identity).toBeNull();
+      }
+    }).pipe(Effect.provide(layerResolver));
+  });
+
   it.effect("returns the git top-level root path when resolving from a nested workspace", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -319,7 +452,12 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       });
 
       yield* git(cwd, ["init"]);
-      yield* git(cwd, ["remote", "add", "origin", "git@gitlab.com:StudioTools/platform/studio.git"]);
+      yield* git(cwd, [
+        "remote",
+        "add",
+        "origin",
+        "git@gitlab.com:StudioTools/platform/studio.git",
+      ]);
 
       const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
       const identity = yield* resolver.resolve(cwd);
@@ -388,7 +526,12 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       expect(initialIdentity).not.toBeNull();
       expect(initialIdentity?.canonicalKey).toBe("github.com/studiotools/studio");
 
-      yield* git(cwd, ["remote", "set-url", "origin", "git@github.com:StudioTools/studio-next.git"]);
+      yield* git(cwd, [
+        "remote",
+        "set-url",
+        "origin",
+        "git@github.com:StudioTools/studio-next.git",
+      ]);
 
       const cachedIdentity = yield* resolver.resolve(cwd);
       expect(cachedIdentity).not.toBeNull();

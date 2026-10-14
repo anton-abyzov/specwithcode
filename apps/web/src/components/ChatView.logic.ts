@@ -1,3 +1,8 @@
+import {
+  applyClaudePromptEffortPrefix,
+  resolvePromptInjectedEffort,
+} from "@specweave-studio/shared/model";
+import { getProviderModelCapabilities } from "../providerModels";
 import * as Option from "effect/Option";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import {
@@ -1343,4 +1348,16 @@ export function restorePlanFollowUpComposer(input: {
     prompt: input.snapshot.prompt,
     detectTrigger: true,
   });
+}
+
+export function formatOutgoingPrompt(params: {
+  provider: ProviderDriverKind;
+  model: string | null;
+  models: ReadonlyArray<ServerProvider["models"][number]>;
+  effort: string | null;
+  text: string;
+}): string {
+  const caps = getProviderModelCapabilities(params.models, params.model, params.provider);
+  const promptEffort = resolvePromptInjectedEffort(caps, params.effort);
+  return applyClaudePromptEffortPrefix(params.text, promptEffort);
 }

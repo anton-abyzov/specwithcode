@@ -31,6 +31,10 @@ import * as ProjectWorkspaceService from "./ProjectWorkspaceService.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as CoordinatorAttachments from "./ProjectCoordinatorAttachments.ts";
+import {
+  isProjectModelSelectionCompatible,
+  projectCompatibleProviders,
+} from "./ProjectProviderCompatibility.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -88,11 +92,20 @@ const make = Effect.gen(function* () {
           const existing = yield* threads.getThreadShell(threadId);
           if (existing) {
             if (existing.deletedAt !== null || existing.projectId !== input.projectId)
-              return yield* fail(input.projectId, "invalid");
+              return yield* fail(input.projectId, "invalid_coordinator");
             if (existing.archivedAt !== null) return yield* fail(input.projectId, "archived");
             return { threadId, created: false };
           }
-          const defaults = yield* serverSettings.getSettings;
+          const defaults = resolveProjectSettings(
+            yield* serverSettings.getSettings,
+            input.projectId,
+            project,
+          ).settings;
+          const providers = yield* providerRegistry.getProviders;
+          const runtimePolicy = {
+            runtimeMode: defaults.defaultRuntimeMode,
+            interactionMode: "default",
+          };
           // Nobody chose a model: start on the project's defaults or this host's best
           // signed-in model instead of refusing, in the order the project view shows.
           const modelSelection = resolveCoordinatorModelSelection({
@@ -100,9 +113,24 @@ const make = Effect.gen(function* () {
             projectDefault: project.defaultModelSelection,
             scopedDefault: resolveProjectSettings(defaults, input.projectId, project).settings
               .defaultModelSelection,
-            providers: yield* providerRegistry.getProviders,
+            providers: projectCompatibleProviders({
+              project,
+              providers,
+              cwd: project.workspaceRoot,
+              runtimePolicy,
+            }),
           });
           if (!modelSelection) return yield* fail(input.projectId, "model_required");
+          if (
+            !isProjectModelSelectionCompatible({
+              project,
+              providers,
+              cwd: project.workspaceRoot,
+              selection: modelSelection,
+              runtimePolicy,
+            })
+          )
+            return yield* fail(input.projectId, "unsupported_provider");
           // Persist the reservation before launch. Both IDs survive a lost response or server restart.
           if (settings.coordinatorThreadId === null) {
             const bind = projects.update({
@@ -164,77 +192,102 @@ const make = Effect.gen(function* () {
   ) =>
     Effect.gen(function* () {
       const saved = settings.coordinatorModelSelection;
-      if (saved === null) return null;
       const shell = yield* threads.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null));
-      const project = yield* projects
-        .getById(projectId)
-        .pipe(Effect.orElseSucceed(() => Option.none()));
-      const rule = resolveProjectSettings(
-        yield* serverSettings.getSettings,
-        projectId,
-        Option.getOrUndefined(project),
-      ).settings;
-      const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
-      const limited = new Set<string>(simulatedUsageLimitInstances(yield* ProviderFallbackEnv));
-      if (
-        shell &&
-        shell.status === "failed" &&
-        shell.lastErrorClass === "usage_limit" &&
-        limitStopIsCurrent(shell, nowMs) &&
-        !limitStopWaitsForReset({
-          resetAt: shell.usageLimitResetAt,
-          waitUnderMinutes: rule.providerLimitWaitUnderMinutes,
-          nowMs,
-        })
-      )
-        limited.add(shell.providerInstanceId);
-      // Moved off the saved model: when its last run there failed, which keeps
-      // it off that model until a newer usage read shows room.
-      const savedStoppedAtMs =
-        shell && shell.modelSelection.instanceId !== saved.instanceId
-          ? yield* projections.getThreadRecords(threadId, ["runs"]).pipe(
-              Effect.map(({ runs }) => {
-                let last: (typeof runs)[number] | undefined;
-                for (const run of runs)
-                  if (
-                    run.providerInstanceId === saved.instanceId &&
-                    (!last || run.ordinal > last.ordinal)
-                  )
-                    last = run;
-                return last?.status === "failed" && last.completedAt
-                  ? DateTime.toEpochMillis(last.completedAt)
-                  : null;
-              }),
-              Effect.orElseSucceed(() => null),
-            )
-          : null;
-      const decision = resolveCoordinatorTurnSelection({
-        saved,
-        thread: shell?.modelSelection ?? null,
-        providers: yield* providerRegistry.getProviders,
-        rule,
-        nowMs,
-        limitedInstanceIds: limited,
-        savedStoppedAtMs,
-      });
-      if (decision.reason !== "saved")
-        yield* Effect.logInfo("project.coordinator.turn-model", {
+      const found = yield* projects.getById(projectId);
+      if (Option.isNone(found)) return yield* fail(projectId, "not_found");
+      const project = found.value;
+      const providers = yield* providerRegistry.getProviders;
+      const compatibility = {
+        project,
+        providers,
+        cwd: shell?.worktreePath ?? project.workspaceRoot,
+        ...(shell
+          ? {
+              runtimePolicy: {
+                runtimeMode: shell.runtimeMode,
+                interactionMode: shell.interactionMode,
+              },
+            }
+          : {}),
+      };
+      const selection = yield* Effect.gen(function* () {
+        if (saved === null) return null;
+        const rule = resolveProjectSettings(
+          yield* serverSettings.getSettings,
           projectId,
-          threadId,
-          reason: decision.reason,
-          saved: saved.instanceId,
-          selected: decision.selection.instanceId,
-          model: decision.selection.model,
+          project,
+        ).settings;
+        const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+        const limited = new Set<string>(simulatedUsageLimitInstances(yield* ProviderFallbackEnv));
+        if (
+          shell &&
+          shell.status === "failed" &&
+          shell.lastErrorClass === "usage_limit" &&
+          limitStopIsCurrent(shell, nowMs) &&
+          !limitStopWaitsForReset({
+            resetAt: shell.usageLimitResetAt,
+            waitUnderMinutes: rule.providerLimitWaitUnderMinutes,
+            nowMs,
+          })
+        )
+          limited.add(shell.providerInstanceId);
+        // Moved off the saved model: when its last run there failed, which keeps
+        // it off that model until a newer usage read shows room.
+        const savedStoppedAtMs =
+          shell && shell.modelSelection.instanceId !== saved.instanceId
+            ? yield* projections.getThreadRecords(threadId, ["runs"]).pipe(
+                Effect.map(({ runs }) => {
+                  let last: (typeof runs)[number] | undefined;
+                  for (const run of runs)
+                    if (
+                      run.providerInstanceId === saved.instanceId &&
+                      (!last || run.ordinal > last.ordinal)
+                    )
+                      last = run;
+                  return last?.status === "failed" && last.completedAt
+                    ? DateTime.toEpochMillis(last.completedAt)
+                    : null;
+                }),
+                Effect.orElseSucceed(() => null),
+              )
+            : null;
+        const decision = resolveCoordinatorTurnSelection({
+          saved,
+          thread: shell?.modelSelection ?? null,
+          providers: projectCompatibleProviders(compatibility),
+          rule,
+          nowMs,
+          limitedInstanceIds: limited,
+          savedStoppedAtMs,
         });
-      return decision.selection;
-    }).pipe(Effect.orElseSucceed(() => settings.coordinatorModelSelection));
+        if (decision.reason !== "saved")
+          yield* Effect.logInfo("project.coordinator.turn-model", {
+            projectId,
+            threadId,
+            reason: decision.reason,
+            saved: saved.instanceId,
+            selected: decision.selection.instanceId,
+            model: decision.selection.model,
+          });
+        return decision.selection;
+      }).pipe(Effect.orElseSucceed(() => settings.coordinatorModelSelection));
+      // Read/usage recovery can retain the saved choice. Validate after that
+      // recovery so it never turns an incompatible primary into a send.
+      const effectiveSelection = selection ?? shell?.modelSelection;
+      if (
+        effectiveSelection &&
+        !isProjectModelSelectionCompatible({ ...compatibility, selection: effectiveSelection })
+      )
+        return yield* fail(projectId, "unsupported_provider");
+      return selection;
+    });
   const send = (input: ProjectCoordinatorSendInput) =>
     Effect.gen(function* () {
       yield* CoordinatorAttachments.validate(input);
       if (input.sourceThreadId !== undefined) {
         const source = yield* threads.getThreadShell(input.sourceThreadId);
         if (!source || source.deletedAt !== null || source.projectId !== input.projectId)
-          return yield* fail(input.projectId, "invalid");
+          return yield* fail(input.projectId, "invalid_source_thread");
       }
       const result = yield* ensure(input);
       return yield* admission.withLock(
@@ -243,7 +296,7 @@ const make = Effect.gen(function* () {
           if (input.sourceThreadId !== undefined) {
             const source = yield* threads.getThreadShell(input.sourceThreadId);
             if (!source || source.deletedAt !== null || source.projectId !== input.projectId)
-              return yield* fail(input.projectId, "invalid");
+              return yield* fail(input.projectId, "invalid_source_thread");
           }
           yield* workspace.assertAdmission(input.projectId);
           const settings = (yield* workspace.readWorkspace(input)).settings;

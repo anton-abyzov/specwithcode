@@ -42,9 +42,22 @@ function RoutedProjectWorkspace() {
   }, []);
   return <ProjectWorkspace projectKey="atlas" selectedThreadId={thread} onSelectThread={select} />;
 }
+function RecoveryNavigationFixture() {
+  const [inside, setInside] = useState(true);
+  return (
+    <>
+      <button onClick={() => setInside(!inside)}>
+        {inside ? "Leave project fixture" : "Return to project fixture"}
+      </button>
+      {inside && <ProjectWorkspace projectKey="atlas" />}
+    </>
+  );
+}
 const search = new URLSearchParams(location.search);
 createRoot(document.getElementById("root")!).render(
-  search.has("legacy-delete") ? (
+  search.has("recovery-navigation") ? (
+    <RecoveryNavigationFixture />
+  ) : search.has("legacy-delete") ? (
     <LegacyDeletionFixture />
   ) : search.has("routed") ? (
     <RoutedProjectWorkspace />

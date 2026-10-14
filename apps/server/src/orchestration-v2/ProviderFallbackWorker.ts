@@ -28,11 +28,14 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as ProviderInstances from "../provider/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { projectCompatibleProviders } from "../project/ProjectProviderCompatibility.ts";
+import * as Projects from "../project/ProjectService.ts";
 import { SIMULATED_USAGE_LIMIT_MESSAGE, simulatedUsageLimitInstances } from "./ProviderFailure.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
@@ -65,6 +68,9 @@ type FallbackThread = Pick<
       | "pendingBackgroundTasks"
       | "snoozedUntil"
       | "limitRecovery"
+      | "worktreePath"
+      | "runtimeMode"
+      | "interactionMode"
     >
   >;
 
@@ -548,6 +554,7 @@ export const makeSweep = Effect.gen(function* () {
   const settings = yield* ServerSettings.ServerSettingsService;
   const registry = yield* ProviderRegistry.ProviderRegistry;
   const instances = yield* ProviderInstances.ProviderInstanceRegistry;
+  const projects = yield* Projects.ProjectService;
   const env = yield* ProviderFallbackEnv;
   const lastRunAt = yield* Ref.make(0);
   // A user who switches back keeps their choice: each command is sent once.
@@ -822,6 +829,26 @@ export const makeSweep = Effect.gen(function* () {
     const snapshot = yield* projections.getShellSnapshot({ unsettledOnly: true });
     const reads: Reads = new Map();
     for (const thread of snapshot.threads) {
+      const found = yield* projects
+        .getById(thread.projectId)
+        .pipe(Effect.catchCause(() => Effect.succeed(Option.none())));
+      // Unknown project grants cannot authorize an automatic provider switch.
+      if (Option.isNone(found)) continue;
+      const project = found.value;
+      const providersFor = (current: FallbackThread) =>
+        projectCompatibleProviders({
+          project,
+          providers,
+          cwd: current.worktreePath ?? project?.workspaceRoot,
+          ...(current.runtimeMode === undefined || current.interactionMode === undefined
+            ? {}
+            : {
+                runtimePolicy: {
+                  runtimeMode: current.runtimeMode,
+                  interactionMode: current.interactionMode,
+                },
+              }),
+        });
       const resolved = resolveProjectSettings(preferences, thread.projectId).settings;
       const resetKey = `limit-reset-attempt:${thread.id}:${thread.latestRunId}`;
       const apiAttemptKey = `limit-api-attempt:${thread.id}:${thread.latestRunId}`;
@@ -831,7 +858,7 @@ export const makeSweep = Effect.gen(function* () {
         simulated,
       };
       const stepFor = (current: FallbackThread) =>
-        providerLimitStep(current, providers, resolved, now, options);
+        providerLimitStep(current, providersFor(current), resolved, now, options);
       const step = stepFor(thread);
       if (step === null) {
         // Nothing to continue: a thread the rule moved to API credits goes back
@@ -839,7 +866,7 @@ export const makeSweep = Effect.gen(function* () {
         // the person's choice again.
         const back = yield* apiCreditReturn(
           thread,
-          providers,
+          providersFor(thread),
           now,
           resolved.providerLimitUseApiCredits === true,
         );

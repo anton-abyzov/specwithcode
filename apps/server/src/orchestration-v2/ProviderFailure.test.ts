@@ -1,6 +1,8 @@
 import { assert, it } from "@effect/vitest";
 import {
   NodeId,
+  ProjectEnvironmentError,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSetupError,
@@ -15,6 +17,7 @@ import * as Effect from "effect/Effect";
 
 import {
   makeProviderFailure,
+  providerFailureDiagnostics,
   makeProviderFailureTurnItem,
   MAX_PROVIDER_FAILURE_CODE_LENGTH,
   MAX_PROVIDER_FAILURE_MESSAGE_LENGTH,
@@ -104,12 +107,64 @@ it("preserves actionable handoff errors wrapped by turn startup", () => {
   );
 });
 
+it("explains unsupported project folder grants wrapped by provider startup", () => {
+  const environmentError = new ProjectEnvironmentError({
+    projectId: ProjectId.make("project:folders"),
+    code: "unsupported_provider",
+  });
+  const cause = new ProviderAdapterTurnStartError({
+    driver: ProviderDriverKind.make("acpRegistry"),
+    threadId: ThreadId.make("thread:folders"),
+    providerThreadId: ProviderThreadId.make("provider-thread:folders"),
+    runId: RunId.make("run:folders"),
+    cause: environmentError,
+  });
+  for (const wrapped of [cause, Cause.fail(cause)]) {
+    const failure = makeProviderFailure({ cause: wrapped, class: "provider_error" });
+    assert.include(failure.message, "additional project folders under the current permissions");
+    assert.include(failure.message, "Full access");
+    assert.equal(failure.class, "provider_error");
+  }
+});
+
+it("reconstructs project environment diagnostics without reading supplied text", () => {
+  const projectId = ProjectId.make("project:safe-error");
+  const cause = new ProjectEnvironmentError({ projectId, code: "path_not_approved" });
+  Object.defineProperty(cause, "message", {
+    get() {
+      throw new Error("Private provider text must not be read.");
+    },
+  });
+  const failure = makeProviderFailure({ cause });
+  assert.equal(
+    failure.message,
+    new ProjectEnvironmentError({ projectId, code: "path_not_approved" }).message,
+  );
+  assert.notInclude(failure.message, "private-provider-text");
+});
+
+it("does not trust unknown project environment codes", () => {
+  for (const cause of [
+    { _tag: "ProjectEnvironmentError", projectId: "p", code: "provider-secret" },
+    { _tag: "ProjectEnvironmentError", message: "Private provider text" },
+  ]) {
+    assert.equal(makeProviderFailure({ cause }).message, "Provider turn failed.");
+  }
+});
+
 it("keeps native quota admission typed when an existing session starts its turn", () => {
   const resetAt = "2026-10-18T03:58:37.000Z";
   const cause = new ProviderAdapterTurnStartError({
-    driver: ProviderDriverKind.make("codex"), threadId: ThreadId.make("thread:quota"),
-    providerThreadId: ProviderThreadId.make("provider-thread:quota"), runId: RunId.make("run:quota"),
-    cause: new ProviderSetupError({ instanceId: ProviderInstanceId.make("codex"), operation: "session", detail: "Permission denied", usageLimit: { resetAt } }),
+    driver: ProviderDriverKind.make("codex"),
+    threadId: ThreadId.make("thread:quota"),
+    providerThreadId: ProviderThreadId.make("provider-thread:quota"),
+    runId: RunId.make("run:quota"),
+    cause: new ProviderSetupError({
+      instanceId: ProviderInstanceId.make("codex"),
+      operation: "session",
+      detail: "Permission denied",
+      usageLimit: { resetAt },
+    }),
   });
   for (const wrapped of [cause, Cause.fail(cause)]) {
     const failure = makeProviderFailure({ cause: wrapped, class: "provider_error" });
@@ -117,7 +172,10 @@ it("keeps native quota admission typed when an existing session starts its turn"
     assert.equal(failure.resetAt, resetAt);
     assert.equal(failure.message, "Permission denied");
   }
-  assert.equal(makeProviderFailure({ cause: new Error("usage limit denied"), class: "provider_error" }).class, "provider_error");
+  assert.equal(
+    makeProviderFailure({ cause: new Error("usage limit denied"), class: "provider_error" }).class,
+    "provider_error",
+  );
 });
 
 it("names the setup reason when turn startup fails a native status check", () => {
@@ -129,7 +187,8 @@ it("names the setup reason when turn startup fails a native status check", () =>
     cause: new ProviderSetupError({
       instanceId: ProviderInstanceId.make("claudeAgent"),
       operation: "session",
-      detail: "The native provider status check timed out. Refresh Providers on this machine and try again.",
+      detail:
+        "The native provider status check timed out. Refresh Providers on this machine and try again.",
     }),
   });
   assert.equal(
@@ -253,4 +312,77 @@ it("simulates a usage limit only for the listed provider instances", () => {
   assert.equal(failure?.resetAt, "2026-10-09T13:00:00.000Z");
   assert.equal(simulatedUsageLimitFailure("codex", env, now), null);
   assert.equal(simulatedUsageLimitFailure("claudeAgent", {}, now), null);
+});
+
+it("shows the project folder policy condition instead of a generic provider startup error", () => {
+  const cause = new ProviderAdapterTurnStartError({
+    driver: ProviderDriverKind.make("acpRegistry"),
+    threadId: ThreadId.make("aide"),
+    providerThreadId: ProviderThreadId.make("provider-thread:aide"),
+    runId: RunId.make("run:aide"),
+    cause: new ProjectEnvironmentError({
+      projectId: ProjectId.make("project:aide"),
+      code: "unsupported_provider",
+    }),
+  });
+  for (const wrapped of [cause, Cause.fail(cause)]) {
+    const failure = makeProviderFailure({ cause: wrapped });
+    assert.include(failure.message, "additional project folders under the current permissions");
+    assert.include(failure.message, "Full access");
+    assert.notInclude(failure.message, "could not start this turn");
+  }
+  assert.notInclude(
+    makeProviderFailure({
+      cause: {
+        _tag: "ProjectEnvironmentError",
+        code: "unsupported_provider",
+        message: "private payload",
+      },
+    }).message,
+    "private payload",
+  );
+});
+it("retains curated project folder identity errors through startup wrappers", () => {
+  const error = new ProjectEnvironmentError({
+    projectId: ProjectId.make("p"),
+    code: "path_not_approved",
+  });
+  assert.equal(
+    makeProviderFailure({ cause: { _tag: "ProviderAdapterTurnStartError", cause: error } }).message,
+    error.message,
+  );
+});
+
+it("logs structural startup causes and the curated folder error code without payloads", () => {
+  const environment = new ProjectEnvironmentError({
+    projectId: ProjectId.make("private-project-id"),
+    code: "unsupported_provider",
+  });
+  const wrapped = {
+    _tag: "ProviderAdapterTurnStartError",
+    detail: "Bearer private-token",
+    cause: environment,
+  };
+  assert.deepEqual(providerFailureDiagnostics(Cause.fail(wrapped)), {
+    errorTags: ["ProviderAdapterTurnStartError", "ProjectEnvironmentError"],
+    errorCode: "unsupported_provider",
+  });
+  const raw = {
+    _tag: "secret-provider-tag",
+    cause: new Error("private prompt content"),
+    detail: "private content",
+  };
+  const serialized = JSON.stringify(providerFailureDiagnostics(raw));
+  assert.notInclude(serialized, "secret-provider-tag");
+  assert.notInclude(serialized, "private");
+  raw.cause = raw as unknown as Error;
+  assert.deepEqual(providerFailureDiagnostics(raw), { errorTags: ["UnknownError"] });
+  assert.deepEqual(
+    providerFailureDiagnostics({
+      get _tag() {
+        throw new Error("private getter");
+      },
+    }),
+    { errorTags: [] },
+  );
 });

@@ -87,6 +87,26 @@ export const DEFAULT_PROJECT_ENVIRONMENT: ProjectEnvironmentSettings = {
   additionalFolders: [],
   repositories: [],
 };
+/** ACP folder context preserves existing unrestricted access; it never broadens permissions. */
+export function fullAccessAcpProjectFolders(policy: {
+  readonly runtimeMode: string;
+  readonly interactionMode: string;
+  readonly approvalPolicy?: unknown;
+  readonly sandboxPolicy?: unknown;
+}): boolean {
+  const sandbox = policy.sandboxPolicy;
+  return (
+    policy.runtimeMode === "full-access" &&
+    policy.interactionMode === "default" &&
+    (policy.approvalPolicy === undefined || policy.approvalPolicy === "never") &&
+    (sandbox === undefined ||
+      (typeof sandbox === "object" &&
+        sandbox !== null &&
+        !Array.isArray(sandbox) &&
+        "type" in sandbox &&
+        sandbox.type === "dangerFullAccess"))
+  );
+}
 export const ProjectEnvironmentReadInput = Schema.Struct({ projectId: ProjectId });
 export const ProjectEnvironmentReadResult = Schema.Struct({
   revision: NonNegativeInt,

@@ -10,6 +10,7 @@ import {
   ThreadId,
   type ChatAttachment,
   type OrchestrationV2ConversationMessage,
+  PROVIDER_SEND_TURN_MAX_IMAGES,
 } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -39,6 +40,50 @@ const layer = EventSink.layer.pipe(
     Config.layerTest(process.cwd(), { prefix: "project-coordinator-attachments-" }),
   ),
   Layer.provideMerge(NodeServices.layer),
+);
+
+it.effect("reports attachment limits and expired staging without dispatching", () =>
+  Effect.gen(function* () {
+    const pending = yield* stage();
+    const tooMany = Array.from({ length: PROVIDER_SEND_TURN_MAX_IMAGES + 1 }, () => ({
+      ...pending,
+      id: createPendingAttachmentId(),
+    }));
+    const limited = yield* Attachments.validate({ ...request, attachments: tooMany }).pipe(
+      Effect.flip,
+    );
+    expect(limited.code).toBe("attachment_limit");
+    expect(limited.message).toContain("20 images");
+    expect(limited.message).toContain("Reduce the count or size");
+    const config = yield* Config.ServerConfig;
+    NodeFS.unlinkSync(
+      resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment: pending })!,
+    );
+    let dispatched = 0;
+    const threads = Layer.mock(Threads.ThreadManagementService)({
+      sendToThread: () =>
+        Effect.sync(() => {
+          dispatched++;
+          return {} as Threads.ThreadManagementSendResult;
+        }),
+    });
+    const input = { ...request, attachments: [pending] };
+    const expired = yield* Attachments.send({
+      ...input,
+      threadId,
+      messageId: Attachments.messageId(input),
+      text: input.prompt,
+      mode: "queue",
+      createdBy: "user",
+      creationSource: "web",
+    }).pipe(Effect.flip, Effect.provide(threads));
+    expect(expired).toMatchObject({
+      _tag: "ProjectWorkspaceError",
+      code: "attachment_unavailable",
+    });
+    expect(expired.message).toContain("Restore or attach them again");
+    expect(dispatched).toBe(0);
+  }).pipe(Effect.provide(layer)),
 );
 const stage = Effect.fn("test.stage")(function* (type: "image" | "file" = "image") {
   const config = yield* Config.ServerConfig;
@@ -192,11 +237,16 @@ it.effect("rejects claimed, duplicate, unknown and empty submissions before inta
       },
       { ...request, attachments: [pending, pending] },
       { ...request, attachments: [{ ...pending, type: "future-asset" }] },
-      { ...request, prompt: "  " },
-    ])
-      expect((yield* Attachments.validate(input).pipe(Effect.flip))._tag).toBe(
-        "ProjectWorkspaceError",
-      );
+    ]) {
+      const failure = yield* Attachments.validate(input).pipe(Effect.flip);
+      expect(failure._tag).toBe("ProjectWorkspaceError");
+      expect(failure.code).toBe("invalid_attachments");
+      expect(failure.message).toContain("Attach the files again");
+      expect(failure.message).not.toMatch(/memory|KiB/);
+    }
+    const empty = yield* Attachments.validate({ ...request, prompt: "  " }).pipe(Effect.flip);
+    expect(empty.code).toBe("empty_message");
+    expect(empty.message).toContain("Enter a message");
     yield* Attachments.validate({ ...request, prompt: "", attachments: [pending] });
     expect(Attachments.messageId(request)).toBe(
       `coordinator-send:${projectId}:${request.commandId}`,
