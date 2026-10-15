@@ -87,7 +87,9 @@ function TaskSummary({
       </ComposerBanner.Content>
       <ComposerBanner.Actions>
         <ComposerBanner.Count
-          className={progress.completedSteps >= progress.totalSteps ? "text-success" : undefined}
+          className={
+            progress.completedSteps >= progress.totalSteps ? "text-success-foreground" : undefined
+          }
           data-composer-task-progress="true"
         >
           {progress.completedSteps}/{progress.totalSteps}
@@ -171,10 +173,10 @@ export const ComposerTasksContent = memo(function ComposerTasksContent({
                   className={cn(
                     "h-4",
                     step.status === "completed"
-                      ? "text-success"
+                      ? "text-success-foreground"
                       : step.status === "inProgress"
                         ? "text-primary"
-                        : "text-muted-foreground/40",
+                        : "text-muted-foreground",
                   )}
                 >
                   {step.status === "completed" ? (
@@ -189,10 +191,10 @@ export const ComposerTasksContent = memo(function ComposerTasksContent({
                   className={cn(
                     "block wrap-anywhere",
                     step.status === "completed"
-                      ? "text-muted-foreground/55"
+                      ? "text-muted-foreground"
                       : step.status === "inProgress"
                         ? "text-foreground/90"
-                        : "text-muted-foreground/70",
+                        : "text-muted-foreground",
                   )}
                 >
                   <span className="sr-only">{taskStatusLabels[step.status]}: </span>
@@ -200,7 +202,7 @@ export const ComposerTasksContent = memo(function ComposerTasksContent({
                 </ComposerBanner.Content>
                 <ComposerBanner.Actions>
                   <span
-                    className="w-12 text-right text-3xs/4 text-muted-foreground/45 tabular-nums"
+                    className="w-12 text-right text-3xs/4 text-muted-foreground tabular-nums"
                     data-composer-task-duration="true"
                   >
                     {step.durationMs !== undefined

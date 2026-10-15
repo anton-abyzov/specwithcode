@@ -124,6 +124,27 @@ describe("acpRegistrySnapshotReadiness", () => {
     );
   });
 
+  it.each([
+    ["/usr/local/lib/node_modules/@github/copilot/copilot", "github-copilot-cli", true],
+    ["/usr/local/bin/dsh", "github-copilot-cli", false],
+    ["/usr/local/bin/copilot", "test-agent", false],
+  ] as const)(
+    "brands a local %s as Copilot only for Copilot itself",
+    (commandPath, agentId, copilot) => {
+      const provider = buildCheckedAcpRegistrySnapshot({
+        ...identity,
+        settings: decodeSettings({ source: "local", agentId, commandPath }),
+        checkedAt: "2026-10-15T10:00:00.000Z",
+        inspection: { status: "ready", agentId, version: null, distribution: "local" },
+      });
+      expect(provider.iconUrl).toBe(
+        copilot
+          ? "https://cdn.agentclientprotocol.com/registry/v1/latest/github-copilot-cli.svg"
+          : undefined,
+      );
+    },
+  );
+
   it("keeps authentication unknown when an agent permits a discovery session before sign-in", () => {
     const snapshot = buildCheckedAcpRegistrySnapshot({
       ...identity,

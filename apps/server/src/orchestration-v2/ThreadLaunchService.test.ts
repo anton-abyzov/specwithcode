@@ -102,6 +102,8 @@ interface HarnessOptions {
   readonly createWorktree?: GitWorkflow.GitWorkflowService["Service"]["createWorktree"];
   readonly fetchRemote?: GitWorkflow.GitWorkflowService["Service"]["fetchRemote"];
   readonly hasCommit?: GitWorkflow.GitWorkflowService["Service"]["hasCommit"];
+  readonly localStatus?: GitWorkflow.GitWorkflowService["Service"]["localStatus"];
+  readonly remoteExists?: GitWorkflow.GitWorkflowService["Service"]["remoteExists"];
   readonly renameBranch?: GitWorkflow.GitWorkflowService["Service"]["renameBranch"];
   readonly runSetup?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]["runForThread"];
   readonly generateTitle?: TextGeneration.TextGeneration["Service"]["generateThreadTitle"];
@@ -172,8 +174,13 @@ function makeHarness(options: HarnessOptions = {}) {
       createWorktree,
       renameBranch,
       fetchRemote: options.fetchRemote ?? (() => Effect.void),
-      hasCommit: options.hasCommit ?? (() => Effect.succeed(false)),
-      remoteExists: () => Effect.succeed(true),
+      // Base refs resolve; temporary-branch namespace lookups do not.
+      hasCommit:
+        options.hasCommit ??
+        ((input) => Effect.succeed(!input.refName.startsWith("refs/heads/"))),
+      localStatus:
+        options.localStatus ?? (() => Effect.die("localStatus is not stubbed in this test")),
+      remoteExists: options.remoteExists ?? (() => Effect.succeed(true)),
       remoteBranchExists: () => Effect.succeed(true),
       removeWorktree,
       resolveRemoteTrackingCommit: () =>
@@ -1191,7 +1198,8 @@ it.effect("renames a temporary studio/<hash> branch off the provisioning critica
 it.effect("provisions under studio-<hash> when a plain studio branch blocks studio/*", () =>
   Effect.gen(function* () {
     const harness = makeHarness({
-      hasCommit: (input) => Effect.succeed(input.refName === "refs/heads/studio"),
+      hasCommit: (input) =>
+        Effect.succeed(input.refName === "refs/heads/studio" || input.refName === "main"),
       createWorktree: (input) =>
         Effect.succeed({
           worktree: { path: "/repo-worktrees/temp", refName: input.newRefName, headSha: "abc" },
@@ -1264,6 +1272,7 @@ it.effect.each([
       const harness = makeHarness({
         hasCommit: (input) =>
           Effect.sync(() => {
+            if (input.refName === "main") return true;
             lookups.push(input);
             return input.refName === existingRef;
           }),
@@ -1308,6 +1317,42 @@ it.effect.each([
         assert.equal(harness.generateBranchName.mock.calls.length, 1);
       }).pipe(Effect.provide(harness.layer));
     }),
+);
+
+it.effect("starts from the checked-out branch when the requested base is missing", () =>
+  Effect.gen(function* () {
+    // A new project has only its first branch; a launcher that read a parent
+    // repository asked for `develop`, which `git worktree add` rejects.
+    const harness = makeHarness({
+      remoteExists: () => Effect.succeed(false),
+      hasCommit: (input) => Effect.succeed(input.refName === "refs/heads/main"),
+      localStatus: () => Effect.succeed({ refName: "main" } as never),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      yield* launches.launch(
+        launchInput({
+          command: "command:launch:missing-base",
+          thread: "thread:launch:missing-base",
+          message: "Finish the release",
+          workspace: {
+            type: "worktree",
+            baseRef: "develop",
+            branch: "codex/release",
+            startFromOrigin: true,
+          },
+        }),
+      );
+      yield* waitUntil(() => Effect.sync(() => harness.createWorktree.mock.calls.length === 1));
+      assert.deepEqual(harness.createWorktree.mock.calls[0]?.[0], {
+        cwd: "/repo",
+        refName: "main",
+        newRefName: "codex/release",
+        baseRefName: "main",
+        path: null,
+      });
+    }).pipe(Effect.provide(harness.layer));
+  }),
 );
 
 it.effect("keeps an explicit branch name instead of generating one", () =>

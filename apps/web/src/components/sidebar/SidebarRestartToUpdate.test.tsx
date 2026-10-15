@@ -260,9 +260,64 @@ describe("SidebarRestartToUpdate", () => {
     render();
     expect(label()).toBe("Restart to update");
     await click();
-    expect(calls).toEqual(["installUpdate:0.2.5"]);
+    // Nothing runs, so the restart goes ahead without asking.
+    expect(calls).toEqual(["prepare:false", "installUpdate:0.2.5"]);
+    expect(readConfirmDialogState()).toMatchObject({ status: "idle" });
     expect(label()).toBe("Restarting…");
     expect(state.addToast).not.toHaveBeenCalled();
+  });
+
+  it("warns before an app restart cuts off running jobs", async () => {
+    checked = {
+      idle: false,
+      stoppedThreads: 0,
+      blockers: [blocker("run", 2, "Fix login"), blocker("queued", 1)],
+    };
+    registerConfirmDialogHost();
+    render();
+    await click();
+    const dialog = readConfirmDialogState();
+    expect(dialog).toMatchObject({
+      status: "confirming",
+      confirmLabel: "Restart anyway",
+      cancelLabel: "Install when idle",
+    });
+    expect(dialog.status === "confirming" && dialog.message).toContain(
+      "2 jobs are still running, 1 message is queued in 1 thread",
+    );
+    await act(async () => {
+      respondToConfirmDialog(true);
+    });
+    expect(calls).toEqual(["prepare:false", "installUpdate:0.2.5"]);
+  });
+
+  it("restarts on its own once the work the user let finish is done", async () => {
+    checked = { idle: false, stoppedThreads: 0, blockers: [blocker("run", 1, "Fix login")] };
+    registerConfirmDialogHost();
+    render();
+    await click();
+    await act(async () => {
+      respondToConfirmDialog(false);
+    });
+    expect(calls).toEqual(["prepare:false"]);
+    expect(label()).toBe("Restarts when idle");
+    // Still running at the next check: nothing restarts.
+    await act(async () => {
+      vi.advanceTimersByTime(15_000);
+    });
+    expect(calls).toEqual(["prepare:false", "prepare:false"]);
+    checked = { idle: true, stoppedThreads: 0, blockers: [] };
+    await act(async () => {
+      vi.advanceTimersByTime(15_000);
+    });
+    expect(calls).toEqual([
+      "prepare:false",
+      "prepare:false",
+      "prepare:false",
+      "installUpdate:0.2.5",
+    ]);
+    expect(readConfirmDialogState().status).not.toBe("confirming");
+    expect(label()).toBe("Restarting…");
   });
 
   it("says so when the app is still open a minute after an accepted install", async () => {

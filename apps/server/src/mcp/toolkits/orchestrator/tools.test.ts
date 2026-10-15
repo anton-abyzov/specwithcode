@@ -19,6 +19,10 @@ describe("orchestrator MCP tool guidance", () => {
       OrchestratorToolkit.tools.task_status.description ?? "",
       "relay its outcome in your response style and link the child; do not paste summary verbatim, but quote provider errors, failing tests and security warnings in it exactly",
     );
+    assert.include(
+      OrchestratorToolkit.tools.task_status.description ?? "",
+      "A project coordinator does not relay: the result stays in the worker's thread.",
+    );
     // Detailed may include steps, so the fixed tool text must not forbid them.
     assert.notInclude(DelegateTaskTool.description ?? "", "not a replay of steps");
   });

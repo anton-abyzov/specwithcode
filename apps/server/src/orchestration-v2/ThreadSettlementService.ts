@@ -115,6 +115,8 @@ export function isAutoSettlementCandidate(
   if (thread.pinnedAt != null || thread.autoSettleDisabledAt != null) return false;
   // Blocked-on-you work must never park behind a settled override.
   if (thread.pendingRuntimeRequest !== null) return false;
+  // So must a report that names a blocker: it waits for the reader's answer.
+  if (thread.reportedBlocker) return false;
   // A live run, or background work that will wake the agent, is not
   // staleness. A dev server left running is: the agent is done.
   if (thread.activityRunStatus != null) return false;

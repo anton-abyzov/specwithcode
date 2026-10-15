@@ -22,6 +22,7 @@ const state = vi.hoisted(() => ({
   turnError: false,
   limited: false,
   subagent: false,
+  creationSource: "web" as "web" | "provider" | "mcp",
   createdBy: "user" as "user" | "agent",
   background: [] as Array<{ taskId: string; kind: "command" | "monitor" }>,
   add: vi.fn(
@@ -59,7 +60,7 @@ function mockThreadShell() {
     },
     forkedFrom: null,
     createdBy: state.createdBy,
-    creationSource: "web",
+    creationSource: state.creationSource,
     latestRunId: "run-1",
     activeRunId: null,
     status: state.completedAt
@@ -181,6 +182,7 @@ beforeEach(() => {
     turnError: false,
     limited: false,
     subagent: false,
+    creationSource: "web",
     createdBy: "user",
     background: [],
   });
@@ -204,17 +206,32 @@ afterEach(async () => {
 });
 
 describe("thread notifications", () => {
-  it.each([true, false])("keeps subagents silent with focus=%s", async (focused) => {
+  it.each([true, false])(
+    "keeps provider-native subagents silent with focus=%s",
+    async (focused) => {
+      state.subagent = true;
+      state.creationSource = "provider";
+      state.focused = focused;
+      state.mode = "notifications-and-sound";
+      await render();
+      await complete();
+      state.input = true;
+      await render();
+      expect(state.sound).not.toHaveBeenCalled();
+      expect(state.add).not.toHaveBeenCalled();
+      expect(state.notification).not.toHaveBeenCalled();
+    },
+  );
+
+  it("notifies when a delegated worker finishes", async () => {
     state.subagent = true;
-    state.focused = focused;
+    state.creationSource = "mcp";
     state.mode = "notifications-and-sound";
     await render();
     await complete();
-    state.input = true;
-    await render();
-    expect(state.sound).not.toHaveBeenCalled();
-    expect(state.add).not.toHaveBeenCalled();
-    expect(state.notification).not.toHaveBeenCalled();
+    expect(state.add).toHaveBeenCalledTimes(1);
+    expect(state.add.mock.calls[0]?.[0]?.title).toBe("Thread completed");
+    expect(state.add.mock.calls[0]?.[0]?.description).toBe("Fix the login form");
   });
 
   it("alerts once with system alerts off and opens the completed thread", async () => {

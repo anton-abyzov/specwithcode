@@ -179,7 +179,9 @@ function ProviderUpdateEnvironmentsNotification() {
         actionVariant: "outline",
         data: {
           hideCopyButton: true,
-          leadingIcon: <DownloadIcon aria-hidden="true" className="size-4 text-success" />,
+          leadingIcon: (
+            <DownloadIcon aria-hidden="true" className="size-4 text-success-foreground" />
+          ),
           onClose: dismissPrompt,
         },
       }),

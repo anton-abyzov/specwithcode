@@ -257,7 +257,7 @@ export function VoiceSettings({ disabled = false }: { disabled?: boolean }) {
             </p>
           </div>
           {error ? (
-            <p role="alert" className="text-sm text-destructive">
+            <p role="alert" className="text-sm text-destructive-foreground">
               {error}
             </p>
           ) : null}

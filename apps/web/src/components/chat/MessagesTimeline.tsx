@@ -175,6 +175,8 @@ import { MorphIcon } from "~/components/MorphIcon";
 import { useAssetUrlRefresh, useAssetUrls, useAssetUrlState } from "../../assets/assetUrls";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
+import { textMatchesQuery } from "../find/conversationFind.logic";
+import { useConversationFindQuery } from "../find/conversationFindStore";
 import {
   buildAttachmentVideoAsset,
   buildAttachmentVideoPreview,
@@ -678,7 +680,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const citationThreadRef = useMemo(() => parseScopedThreadKey(routeThreadKey), [routeThreadKey]);
   const openPullRequest = useOpenPrLink(citationThreadRef ?? undefined);
   const expandCitedRun = useCallback(
-    (runId: RunId) => {
+    (runId: RunId, toolActivityGroupId: string | null) => {
+      if (toolActivityGroupId !== null) {
+        // Verbose never folds tool activity, so this always opens.
+        setExpandedWorkGroupIds((current) => new Set([...current, toolActivityGroupId]));
+      }
       // In verbose a toggled run is a closed one.
       setExpandedRunIds((current) => {
         if (timelineDetail === "verbose") {
@@ -1063,7 +1069,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     onManualNavigation,
   });
   const [minimapHasPersistentGutter, setMinimapHasPersistentGutter] = useState(false);
-  const alwaysRender = citationAlwaysRender ?? restoringAlwaysRender;
+  const findQuery = useConversationFindQuery(timelineViewportElement);
+  const findAlwaysRender = useMemo(() => {
+    if (findQuery.length === 0) return undefined;
+    const keys = rows
+      .filter((row) => textMatchesQuery(timelineRowFindText(row), findQuery))
+      .slice(-FIND_MOUNTED_ROW_LIMIT)
+      .map(keyExtractor);
+    return keys.length > 0 ? { keys } : undefined;
+  }, [findQuery, rows]);
+  const alwaysRender = citationAlwaysRender ?? restoringAlwaysRender ?? findAlwaysRender;
   const [minimapHitStripWidth, setMinimapHitStripWidth] = useState(0);
   const [minimapCurrentIndex, setMinimapCurrentIndex] = useState<number | null>(null);
   const handleAnchorReady = useCallback(
@@ -1450,9 +1465,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }
     return (
       <div className="flex h-full items-center justify-center">
-        <p className="text-sm text-muted-foreground/30">
-          Send a message to start the conversation.
-        </p>
+        <p className="text-sm text-muted-foreground">Send a message to start the conversation.</p>
       </div>
     );
   }
@@ -1464,6 +1477,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           ref={setTimelineViewportElement}
           className="relative h-full min-h-0"
           data-assistant-citation-viewport="true"
+          data-conversation-find-scope=""
           // Pinned "Show less" footers ride above the composer that overlays the list's end.
           style={
             {
@@ -1554,7 +1568,7 @@ function TimelineHistoryControl(props: MessagesTimelineHistoryControls) {
             disabled={props.loading}
             aria-label="Load earlier turns"
             onClick={props.onLoadEarlier}
-            className="w-full py-1.5 text-xs text-muted-foreground/60 hover:text-foreground disabled:cursor-default"
+            className="w-full py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:cursor-default"
           >
             {props.loading ? "Loading earlier turns…" : "Load earlier turns"}
           </button>
@@ -1571,6 +1585,20 @@ function TimelineHistoryControl(props: MessagesTimelineHistoryControls) {
 
 function keyExtractor(item: MessagesTimelineRow) {
   return item.id;
+}
+
+/** Rows Cmd+F keeps mounted so their hits can be highlighted; the newest win past the cap. */
+const FIND_MOUNTED_ROW_LIMIT = 200;
+
+function timelineRowFindText(row: MessagesTimelineRow): string {
+  switch (row.kind) {
+    case "message":
+      return row.message.text;
+    case "proposed-plan":
+      return row.proposedPlan.planMarkdown;
+    default:
+      return "";
+  }
 }
 
 function getItemType(item: MessagesTimelineRow) {
@@ -1901,9 +1929,13 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
     row.kind === "work" ||
     row.kind === "work-live" ||
     row.kind === "work-toggle" ||
+    row.kind === "tool-activity" ||
     row.kind === "thinking";
   const isExpandedToolGroupHeader =
-    (row.kind === "work-toggle" || row.kind === "work-live" || row.kind === "thinking") &&
+    (row.kind === "work-toggle" ||
+      row.kind === "work-live" ||
+      row.kind === "tool-activity" ||
+      row.kind === "thinking") &&
     row.expanded === true;
 
   return (
@@ -1928,6 +1960,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
           row.kind === "assistant-meta"
           ? "group/assistant"
           : null,
+        row.withinToolActivity ? "ms-3 border-s border-border/60 ps-3" : null,
       )}
       data-timeline-row-id={row.id}
       data-timeline-row-kind={row.kind}
@@ -1957,6 +1990,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
           ) : null}
           {row.kind === "work-live" ? <LiveWorkEntryTimelineRow row={row} /> : null}
           {row.kind === "work-toggle" ? <WorkGroupToggleTimelineRow row={row} /> : null}
+          {row.kind === "tool-activity" ? <ToolActivityTimelineRow row={row} /> : null}
           {row.kind === "thinking" ? <ThinkingTimelineRow row={row} /> : null}
         </WorkLogBlock>
       ) : null}
@@ -2297,7 +2331,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                     />
                   </button>
                 ) : (
-                  <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-2xs text-muted-foreground/70">
+                  <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-2xs text-muted-foreground">
                     {image.name}
                   </div>
                 )}
@@ -2383,7 +2417,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       row.projectedItem.item.status !== "pending" &&
       row.projectedItem.item.status !== "waiting" ? (
         <div className="me-1 flex items-center gap-1.5">
-          <span className="rounded-full border border-destructive/25 bg-destructive/8 px-1.5 py-0.5 text-3xs font-medium text-destructive">
+          <span className="rounded-full border border-destructive/25 bg-destructive/8 px-1.5 py-0.5 text-3xs font-medium text-destructive-foreground">
             {row.projectedItem.item.status}
           </span>
         </div>
@@ -2581,7 +2615,7 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
         <span>
           {row.label}
           {row.activitySummary ? (
-            <span className="text-muted-foreground/80"> · {row.activitySummary}</span>
+            <span className="text-muted-foreground"> · {row.activitySummary}</span>
           ) : null}
         </span>
         <MorphIcon className="size-3.5" icon={row.expanded ? ChevronDown : ChevronRight} />
@@ -2701,6 +2735,19 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
                 ctx.onToggleWorkEntry(row.id, false);
                 setInline(true);
               }}
+              renderMarkdown={(part) => (
+                <ChatMarkdown
+                  formatDates
+                  text={part}
+                  cwd={ctx.markdownCwd}
+                  threadRef={ctx.threadRef ?? undefined}
+                  isStreaming={false}
+                  skills={ctx.skills}
+                  headingLevelOffset={MESSAGE_HEADING_LEVEL}
+                  onRunShellCommand={ctx.onRunShellCommand}
+                  onImageExpand={ctx.onImageExpand}
+                />
+              )}
             >
               {markdown}
             </ReportArtifact>
@@ -3049,9 +3096,9 @@ function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event"
           <Icon
             className={cn(
               "size-3.5 shrink-0",
-              presentation.tone === "warning" && "text-warning",
-              presentation.tone === "danger" && "text-destructive",
-              presentation.tone === "success" && "text-success",
+              presentation.tone === "warning" && "text-warning-foreground",
+              presentation.tone === "danger" && "text-destructive-foreground",
+              presentation.tone === "success" && "text-success-foreground",
             )}
           />
           <span className="shrink-0 font-medium text-foreground/90">{presentation.label}</span>
@@ -3060,7 +3107,7 @@ function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event"
               className={cn(
                 "shrink-0 rounded-full border px-1.5 py-0.5 font-mono text-3xs",
                 item.status === "failed"
-                  ? "border-destructive/40 text-destructive"
+                  ? "border-destructive/40 text-destructive-foreground"
                   : "border-border/70 text-muted-foreground",
               )}
             >
@@ -3068,7 +3115,7 @@ function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event"
             </span>
           ) : null}
           {presentation.detail ? (
-            <span className="min-w-0 flex-1 truncate text-muted-foreground/65">
+            <span className="min-w-0 flex-1 truncate text-muted-foreground">
               {formatDisplayDates(presentation.detail, ctx.timestampFormat)}
             </span>
           ) : null}
@@ -3077,7 +3124,7 @@ function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event"
               {visibility === "inherited" ? "Inherited" : "Synthetic"}
             </span>
           ) : null}
-          <ChevronDownIcon className="size-3 shrink-0 text-muted-foreground/60 transition-transform group-open:rotate-180" />
+          <ChevronDownIcon className="size-3 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
         </summary>
         <div className="border-t border-border/45 px-3 py-2 ps-8">
           {presentation.detail ? (
@@ -3093,9 +3140,7 @@ function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event"
             </div>
           ) : null}
           {visibility === "inherited" ? (
-            <p className="mt-1 font-mono text-3xs text-muted-foreground/65">
-              From {sourceThreadId}
-            </p>
+            <p className="mt-1 font-mono text-3xs text-muted-foreground">From {sourceThreadId}</p>
           ) : null}
           <div className={presentation.detail ? "mt-2" : undefined}>
             <V2ItemInspector
@@ -3129,9 +3174,9 @@ function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event"
         <Icon
           className={cn(
             "mt-0.5 size-3.5 shrink-0",
-            presentation.tone === "warning" && "text-warning",
-            presentation.tone === "danger" && "text-destructive",
-            presentation.tone === "success" && "text-success",
+            presentation.tone === "warning" && "text-warning-foreground",
+            presentation.tone === "danger" && "text-destructive-foreground",
+            presentation.tone === "success" && "text-success-foreground",
             presentation.tone === "muted" && "text-muted-foreground",
           )}
         />
@@ -3143,7 +3188,7 @@ function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event"
                 className={cn(
                   "rounded-full border px-1.5 py-0.5 font-mono text-3xs",
                   item.status === "failed"
-                    ? "border-destructive/40 text-destructive"
+                    ? "border-destructive/40 text-destructive-foreground"
                     : "border-border/70 text-muted-foreground",
                 )}
               >
@@ -3169,9 +3214,7 @@ function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event"
             </div>
           ) : null}
           {visibility === "inherited" ? (
-            <p className="mt-1 font-mono text-3xs text-muted-foreground/65">
-              From {sourceThreadId}
-            </p>
+            <p className="mt-1 font-mono text-3xs text-muted-foreground">From {sourceThreadId}</p>
           ) : null}
           <div className="mt-2">
             <V2ItemInspector
@@ -3308,7 +3351,9 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
             <span
               className={cn(
                 "block truncate text-3xs text-muted-foreground",
-                summary.active ? "text-info" : summary.failed && "text-destructive",
+                summary.active
+                  ? "text-info-foreground"
+                  : summary.failed && "text-destructive-foreground",
               )}
             >
               {statusSummary}
@@ -3962,6 +4007,74 @@ function WorkGroupToggleTimelineRow({
       createdAt={row.createdAt}
       timestampFormat={ctx.timestampFormat}
       onToggle={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
+    />
+  );
+}
+
+function ToolActivityTimelineRow({
+  row,
+}: {
+  row: Extract<TimelineRow, { kind: "tool-activity" }>;
+}) {
+  const ctx = use(TimelineRowCtx);
+  const title = `Used ${row.toolCount} ${row.toolCount === 1 ? "tool" : "tools"}`;
+  const details = [
+    ...row.categories.map((category) => category.label),
+    ...(row.noteCount > 0 ? [`${row.noteCount} ${row.noteCount === 1 ? "note" : "notes"}`] : []),
+    ...(row.failedCount > 0 ? [`${row.failedCount} failed`] : []),
+  ].join(", ");
+  return (
+    <WorkLogButton
+      aria-label={`${title}: ${details}`}
+      aria-expanded={row.expanded}
+      data-tool-activity={row.groupId}
+      onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
+      icon={
+        <ToolActivityIconView
+          icon={undefined}
+          fallbackName="wrench"
+          className="size-4 shrink-0 stroke-2 text-icon-muted"
+          muted
+        />
+      }
+      label={
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="shrink-0 text-foreground/85">{title}</span>
+          <span className="flex min-w-0 items-center gap-2.5 truncate text-muted-foreground">
+            {row.categories.map((category) => (
+              <span key={category.label} className="inline-flex shrink-0 items-center gap-1">
+                <ToolActivityIconView
+                  icon={undefined}
+                  fallbackName={toolGroupSummaryIconName(category.kind)}
+                  className="size-3.5 shrink-0 text-icon-muted"
+                  muted
+                />
+                {category.label}
+              </span>
+            ))}
+            {row.noteCount > 0 ? (
+              <span className="shrink-0 text-muted-foreground">
+                {row.noteCount} {row.noteCount === 1 ? "note" : "notes"}
+              </span>
+            ) : null}
+          </span>
+          {row.failedCount > 0 ? (
+            <span className="inline-flex shrink-0 items-center gap-0.5 text-tool-error-icon">
+              <XIcon aria-hidden className="size-3" />
+              {row.failedCount} failed
+            </span>
+          ) : null}
+        </span>
+      }
+      trailing={
+        <span className="flex shrink-0 items-center gap-1">
+          <TimelineRowTimestamp createdAt={row.createdAt} timestampFormat={ctx.timestampFormat} />
+          <MorphIcon
+            className="size-3.5 text-muted-foreground"
+            icon={row.expanded ? ChevronDown : ChevronRight}
+          />
+        </span>
+      }
     />
   );
 }
@@ -5245,7 +5358,11 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           <CircleAlertIcon
             className={cn(
               "size-4",
-              resolved ? "text-muted-foreground" : warning ? "text-warning" : "text-destructive",
+              resolved
+                ? "text-muted-foreground"
+                : warning
+                  ? "text-warning-foreground"
+                  : "text-destructive-foreground",
             )}
           />
         }
@@ -5253,7 +5370,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           warning ? (
             <UsageWarningLabel resolved={resolved} resetTime={resetTime} />
           ) : (
-            <span className="text-sm font-medium text-destructive">{workEntry.label}</span>
+            <span className="text-sm font-medium text-destructive-foreground">
+              {workEntry.label}
+            </span>
           )
         }
 
@@ -5386,9 +5505,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
   const iconWrapperClass = cn(
     "flex size-4 items-center justify-center",
     showWarningIndicator
-      ? "text-warning"
+      ? "text-warning-foreground"
       : showDestructiveRowStyle
-        ? "text-destructive"
+        ? "text-destructive-foreground"
         : showFailedIndicator
           ? failedToolIconClassName
           : workEntry.tone === "tool"
@@ -5396,9 +5515,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
             : iconConfig.className,
   );
   const headingClass = showWarningIndicator
-    ? "font-medium text-warning"
+    ? "font-medium text-warning-foreground"
     : showDestructiveRowStyle
-      ? "font-medium text-destructive"
+      ? "font-medium text-destructive-foreground"
       : workLogEntryIsToolLike(workEntry)
         ? "text-secondary-label"
         : "text-foreground/80";

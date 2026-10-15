@@ -4,6 +4,7 @@ import { useEnvironment } from "../../state/environments";
 import {
   projectCoordinatorMessageDisplay,
   projectMessageAuthor,
+  isWorkerCompletionWake,
   projectReportMessageIds,
   projectSystemNotice,
 } from "../../studio/projectCoordinatorMessageDisplay";
@@ -14,8 +15,14 @@ import { shouldCollapseReport } from "../chat/longReport";
 import { ReportArtifact } from "../chat/ReportArtifact";
 import { CoordinatorRunActivity } from "./CoordinatorRunActivity";
 import { coordinatorConversationView, withFoldedReplies } from "../../studio/coordinatorActivity";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDownIcon, RotateCcwIcon, TriangleAlertIcon } from "lucide-react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDownIcon, ChevronRightIcon, RotateCcwIcon, TriangleAlertIcon } from "lucide-react";
+import {
+  coordinatorTurnLayout,
+  formatConversationSeparator,
+} from "../../studio/projectCoordinatorTurns";
+import { formatChatTimestampTooltip, formatShortTimestamp } from "../../timestampFormat";
+import { MessageCopyButton } from "../chat/MessageCopyButton";
 import { type ThreadId } from "@specweave-studio/contracts";
 import type {
   EnvironmentProject,
@@ -101,7 +108,13 @@ export function CoordinatorConversation({
   const status = useThreadStatus(ref);
   const load = useAtomCommand(threadEnvironment.loadEarlierHistory);
   const end = useRef<HTMLDivElement>(null);
-  const messages = thread?.projection.messages ?? [];
+  const allMessages = thread?.projection.messages ?? [];
+  // A worker finishing wakes the coordinator, but the person sees it on the
+  // worker's status and in a notification that opens it, not as a card here.
+  const messages = useMemo(
+    () => allMessages.filter((message) => !isWorkerCompletionWake(message)),
+    [allMessages],
+  );
   const executionEnvironment = useEnvironment(project.environmentId);
   const working = progress !== null && failure === null;
   useEffect(() => {
@@ -109,9 +122,9 @@ export function CoordinatorConversation({
   }, [messages.length, failure?.runId, working]);
   // A thread the coordinator started this turn is announced by a card under its message;
   // a thread that already existed is a link. Both open the thread in the right pane.
-  const reportIds = useMemo(() => projectReportMessageIds(messages), [messages]);
+  const reportIds = useMemo(() => projectReportMessageIds(allMessages), [allMessages]);
   const prepared = messages.map((message) => {
-    const notice = message.createdBy === "user" ? null : projectSystemNotice(message, workers);
+    const notice = message.createdBy === "user" ? null : projectSystemNotice(message);
     const display = projectCoordinatorMessageDisplay(message, project, workers);
     const text = prepareProjectMarkdown(notice ?? display.text, workers, environmentThreads);
     return { message, notice, display, text };
@@ -125,13 +138,31 @@ export function CoordinatorConversation({
       coordinatorConversationView({
         messages: messages.map((message) => ({
           ...message,
-          notice: message.createdBy !== "user" && projectSystemNotice(message, workers) !== null,
+          notice: message.createdBy !== "user" && projectSystemNotice(message) !== null,
         })),
         turnItems: turnItems ?? [],
         runs: runs ?? [],
         detail: timelineDetail,
       }),
     [messages, workers, turnItems, runs, timelineDetail],
+  );
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
+  // Separators, "Worked for" lines and action rows follow the messages that show.
+  const turns = useMemo(
+    () =>
+      coordinatorTurnLayout(
+        messages
+          .filter((message) => !view.hiddenMessageIds.has(message.id))
+          .map((message) => ({
+            id: message.id,
+            role: message.role,
+            createdAt: message.createdAt,
+            updatedAt: message.updatedAt,
+            streaming: message.streaming,
+            notice: message.createdBy !== "user" && projectSystemNotice(message) !== null,
+          })),
+      ),
+    [messages, view],
   );
   const messagesById = useMemo(
     () => new Map(messages.map((message) => [message.id as string, message])),
@@ -189,6 +220,7 @@ export function CoordinatorConversation({
     <div
       className="project-conversation"
       aria-label="Coordinator conversation"
+      data-conversation-find-scope=""
       aria-busy={status === "empty" || status === "synchronizing"}
     >
       {history.hasMoreHistory && (
@@ -227,69 +259,22 @@ export function CoordinatorConversation({
         );
         const renderReference = referenceRenderer(announced);
         const renderThreadLink = threadLinkRenderer(announced);
+        const turn = turns.get(message.id);
+        // A centered time line where the conversation picks up after a pause.
+        const separator = turn?.separatorAt ? (
+          <p className="sws-turn-separator">
+            <time dateTime={turn.separatorAt}>
+              {formatConversationSeparator(turn.separatorAt, (iso) =>
+                formatShortTimestamp(iso, timestampFormat),
+              )}
+            </time>
+          </p>
+        ) : null;
         if (notice !== null)
           return (
-            <div key={message.id} className="project-notice" role="status">
-              <ChatMarkdown
-                formatDates={message.role === "assistant"}
-                text={text}
-                cwd={project.workspaceRoot}
-                threadRef={ref}
-                isStreaming={false}
-                renderContextReference={renderReference}
-                renderThreadLink={renderThreadLink}
-              />
-            </div>
-          );
-        const author = projectMessageAuthor(message);
-        return (
-          <article key={message.id} className={`project-message project-message-${message.role}`}>
-            <h3>{author}</h3>
-            {message.createdBy === "user" || message.role === "assistant" ? (
-              <p className="project-muted" data-request-execution>
-                {requestExecutionLabel(
-                  message,
-                  thread?.projection.runs ?? [],
-                  executionEnvironment?.label ?? project.environmentId,
-                )}
-              </p>
-            ) : null}
-            {author === "Message from a worker" && message.senderThreadId && (
-              <MessageThreadLink
-                thread={workers.find((t) => t.id === message.senderThreadId)}
-                prefix="Sent by"
-                fallbackLabel="View sending thread"
-                onOpen={() => onOpenThread(message.senderThreadId!)}
-              />
-            )}
-            {display.sourceThread && (
-              <MessageThreadLink
-                thread={workers.find((t) => t.id === display.sourceThread!.id)}
-                prefix="From"
-                fallbackLabel={`From ${display.sourceThread.title}`}
-                fallbackAriaLabel={`Open source thread ${display.sourceThread.title}`}
-                onOpen={() => onOpenThread(display.sourceThread!.id)}
-              />
-            )}
-            {author === "Message from a worker" &&
-            reportIds.has(message.id) &&
-            !message.streaming &&
-            shouldCollapseReport(text) ? (
-              <ReportArtifact
-                source={
-                  message.senderThreadId
-                    ? {
-                        environmentId: project.environmentId,
-                        projectId: project.id,
-                        threadId: message.senderThreadId,
-                      }
-                    : null
-                }
-                text={text}
-                fallbackTitle={
-                  workers.find((t) => t.id === message.senderThreadId)?.title ?? "Worker report"
-                }
-              >
+            <Fragment key={message.id}>
+              {separator}
+              <div className="project-inline-notice" role="status">
                 <ChatMarkdown
                   formatDates={message.role === "assistant"}
                   text={text}
@@ -299,59 +284,163 @@ export function CoordinatorConversation({
                   renderContextReference={renderReference}
                   renderThreadLink={renderThreadLink}
                 />
-              </ReportArtifact>
-            ) : (
-              <ProjectMessageBody text={display.text} collapsible={message.role === "user"}>
-                <CollapsibleReport
+              </div>
+            </Fragment>
+          );
+        const author = projectMessageAuthor(message);
+        const runId = message.runId;
+        return (
+          <Fragment key={message.id}>
+            {separator}
+            <article className={`project-message project-message-${message.role}`}>
+              <h3>{author}</h3>
+              {turn?.workedFor ? (
+                // The turn's tool calls live on the coordinator's page, like a folded turn.
+                <button
+                  type="button"
+                  className="sws-turn-summary"
+                  onClick={() =>
+                    runId ? onOpenCoordinatorActivity(runId) : onOpenCoordinatorPage()
+                  }
+                >
+                  <span>{turn.workedFor}</span>
+                  <ChevronRightIcon aria-hidden />
+                </button>
+              ) : null}
+              {message.createdBy === "user" || message.role === "assistant" ? (
+                <p className="project-muted" data-request-execution>
+                  {requestExecutionLabel(
+                    message,
+                    thread?.projection.runs ?? [],
+                    executionEnvironment?.label ?? project.environmentId,
+                  )}
+                </p>
+              ) : null}
+              {author === "Message from a worker" && message.senderThreadId && (
+                <MessageThreadLink
+                  thread={workers.find((t) => t.id === message.senderThreadId)}
+                  prefix="Sent by"
+                  fallbackLabel="View sending thread"
+                  onOpen={() => onOpenThread(message.senderThreadId!)}
+                />
+              )}
+              {display.sourceThread && (
+                <MessageThreadLink
+                  thread={workers.find((t) => t.id === display.sourceThread!.id)}
+                  prefix="From"
+                  fallbackLabel={`From ${display.sourceThread.title}`}
+                  fallbackAriaLabel={`Open source thread ${display.sourceThread.title}`}
+                  onOpen={() => onOpenThread(display.sourceThread!.id)}
+                />
+              )}
+              {author === "Message from a worker" &&
+              reportIds.has(message.id) &&
+              !message.streaming &&
+              shouldCollapseReport(text) ? (
+                <ReportArtifact
+                  source={
+                    message.senderThreadId
+                      ? {
+                          environmentId: project.environmentId,
+                          projectId: project.id,
+                          threadId: message.senderThreadId,
+                        }
+                      : null
+                  }
                   text={text}
-                  streaming={message.streaming}
-                  enabled={message.role !== "user" && reportIds.has(message.id)}
-                  expandLabel="Show full message"
+                  fallbackTitle={
+                    workers.find((t) => t.id === message.senderThreadId)?.title ?? "Worker report"
+                  }
+                  renderMarkdown={(part) => (
+                    <ChatMarkdown
+                      formatDates={message.role === "assistant"}
+                      text={part}
+                      cwd={project.workspaceRoot}
+                      threadRef={ref}
+                      isStreaming={false}
+                      renderContextReference={renderReference}
+                      renderThreadLink={renderThreadLink}
+                    />
+                  )}
                 >
                   <ChatMarkdown
                     formatDates={message.role === "assistant"}
                     text={text}
                     cwd={project.workspaceRoot}
                     threadRef={ref}
-                    isStreaming={message.streaming}
-                    lineBreaks={message.role === "user"}
-                    parseRawHtml={message.role !== "user"}
+                    isStreaming={false}
                     renderContextReference={renderReference}
                     renderThreadLink={renderThreadLink}
                   />
-                </CollapsibleReport>
-              </ProjectMessageBody>
-            )}
-            {announced.length > 0 ? (
-              <ul className="sws-thread-cards" aria-label="Threads started">
-                {announced.map((id) => {
-                  const thread = workers.find((t) => t.id === id)!;
-                  return (
-                    <li key={id}>
-                      <ProjectThreadCard
-                        thread={thread}
-                        projectRoot={project.workspaceRoot}
-                        canChange={canChange}
-                        onOpen={() => onOpenThread(id)}
-                        onCreatePullRequest={() => onCreatePullRequest(thread)}
-                        onOpenPullRequest={onOpenPullRequest}
-                      />
-                    </li>
-                  );
-                })}
-              </ul>
-            ) : null}
-            <ProjectWorkspaceAttachments
-              environmentId={project.environmentId}
-              attachments={attachments}
-            />
-            {view.activityByMessageId.has(message.id) ? (
-              <CoordinatorRunActivity
-                activity={view.activityByMessageId.get(message.id)!}
-                onOpenCoordinatorPage={onOpenCoordinatorActivity}
+                </ReportArtifact>
+              ) : (
+                <ProjectMessageBody text={display.text} collapsible={message.role === "user"}>
+                  <CollapsibleReport
+                    text={text}
+                    streaming={message.streaming}
+                    enabled={message.role !== "user" && reportIds.has(message.id)}
+                    expandLabel="Show full message"
+                  >
+                    <ChatMarkdown
+                      formatDates={message.role === "assistant"}
+                      text={text}
+                      cwd={project.workspaceRoot}
+                      threadRef={ref}
+                      isStreaming={message.streaming}
+                      lineBreaks={message.role === "user"}
+                      parseRawHtml={message.role !== "user"}
+                      renderContextReference={renderReference}
+                      renderThreadLink={renderThreadLink}
+                    />
+                  </CollapsibleReport>
+                </ProjectMessageBody>
+              )}
+              {announced.length > 0 ? (
+                <ul className="sws-thread-cards" aria-label="Threads started">
+                  {announced.map((id) => {
+                    const thread = workers.find((t) => t.id === id)!;
+                    return (
+                      <li key={id}>
+                        <ProjectThreadCard
+                          thread={thread}
+                          projectRoot={project.workspaceRoot}
+                          canChange={canChange}
+                          onOpen={() => onOpenThread(id)}
+                          onCreatePullRequest={() => onCreatePullRequest(thread)}
+                          onOpenPullRequest={onOpenPullRequest}
+                        />
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : null}
+              <ProjectWorkspaceAttachments
+                environmentId={project.environmentId}
+                attachments={attachments}
               />
-            ) : null}
-          </article>
+              {view.activityByMessageId.has(message.id) ? (
+                <CoordinatorRunActivity
+                  activity={view.activityByMessageId.get(message.id)!}
+                  onOpenCoordinatorPage={onOpenCoordinatorActivity}
+                />
+              ) : null}
+              {turn?.endsTurn ? (
+                <div className="sws-turn-actions">
+                  <MessageCopyButton text={text} variant="ghost" size="icon-xs" />
+                  {turn.settledAt ? (
+                    <Tooltip>
+                      <TooltipTrigger render={<time dateTime={turn.settledAt} tabIndex={0} />}>
+                        {formatShortTimestamp(turn.settledAt, timestampFormat)}
+                      </TooltipTrigger>
+                      <TooltipPopup>
+                        {formatChatTimestampTooltip(turn.settledAt, timestampFormat)}
+                      </TooltipPopup>
+                    </Tooltip>
+                  ) : null}
+                </div>
+              ) : null}
+            </article>
+          </Fragment>
         );
       })}
       <RemoteWorkerCards environmentId={project.environmentId} projectId={project.id} />
@@ -380,7 +469,10 @@ export function CoordinatorConversation({
           data-coordinator-failure=""
         >
           <div className="flex items-start gap-3">
-            <TriangleAlertIcon className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
+            <TriangleAlertIcon
+              className="mt-0.5 size-4 shrink-0 text-destructive-foreground"
+              aria-hidden
+            />
             <div className="min-w-0 flex-1 space-y-3">
               <div>
                 <p className="font-medium">The coordinator did not answer.</p>

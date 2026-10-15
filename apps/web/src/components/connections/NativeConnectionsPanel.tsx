@@ -46,7 +46,7 @@ export function NativeConnectionsPanel({
         </Button>
       </div>
       {query.error ? (
-        <p role="alert" className="text-sm text-destructive">
+        <p role="alert" className="text-sm text-destructive-foreground">
           Could not inspect connections. {query.error}
         </p>
       ) : query.data ? (

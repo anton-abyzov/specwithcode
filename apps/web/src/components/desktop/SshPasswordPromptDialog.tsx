@@ -181,7 +181,7 @@ function ActiveSshPasswordPrompt({
                   <span
                     className={
                       isExpired
-                        ? "shrink-0 text-xs font-medium text-destructive"
+                        ? "shrink-0 text-xs font-medium text-destructive-foreground"
                         : "shrink-0 text-xs text-muted-foreground"
                     }
                   >
@@ -200,7 +200,7 @@ function ActiveSshPasswordPrompt({
               />
             </div>
             {visibleResponseError ? (
-              <p className="text-sm text-destructive">{visibleResponseError}</p>
+              <p className="text-sm text-destructive-foreground">{visibleResponseError}</p>
             ) : (
               <p className="text-sm text-muted-foreground">
                 Use SSH keys to avoid repeated password prompts on new SSH sessions.

@@ -5650,7 +5650,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               activeProviderIconClassName: cn(
                 composerProviderState.modelPickerIconClassName,
                 composerControlsCollapsed &&
-                  "fill-muted-foreground/70! text-muted-foreground/70! [&_path]:fill-muted-foreground/70! [&_rect]:fill-muted-foreground/70! [&_[data-opencode-hole]]:fill-transparent!",
+                  "fill-muted-foreground/70! text-muted-foreground! [&_path]:fill-muted-foreground/70! [&_rect]:fill-muted-foreground/70! [&_[data-opencode-hole]]:fill-transparent!",
               ),
             }
           : {})}
@@ -6862,7 +6862,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               aria-hidden={restingControlsVisible ? undefined : true}
               inert={restingControlsVisible ? undefined : true}
               className={cn(
-                "relative flex w-max min-w-0 max-w-full items-center gap-1 font-normal text-muted-foreground/70 [&_button]:text-xs!",
+                "relative flex w-max min-w-0 max-w-full items-center gap-1 font-normal text-muted-foreground [&_button]:text-xs!",
                 !restingControlsVisible && "invisible",
               )}
             >
@@ -7104,7 +7104,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   type="button"
                   data-chat-composer-transition-actions="true"
                   className={cn(
-                    "flex size-8 shrink-0 items-center justify-center rounded-full bg-message-action text-message-action-foreground hover:bg-message-action-hover disabled:opacity-64",
+                    "flex size-8 shrink-0 items-center justify-center rounded-full bg-message-action text-message-action-foreground hover:bg-message-action-hover disabled:opacity-(--disabled-opacity)",
                     explicitCreditOffer !== null && "w-auto gap-1.5 px-3 text-xs",
                   )}
                   disabled={collapsedComposerPrimaryActionDisabled}
@@ -7855,7 +7855,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     aria-hidden={restingControlsVisible ? undefined : true}
                     inert={restingControlsVisible ? undefined : true}
                     className={cn(
-                      "relative flex w-max min-w-0 max-w-full items-center gap-1 text-muted-foreground/70 [&_button]:text-xs!",
+                      "relative flex w-max min-w-0 max-w-full items-center gap-1 text-muted-foreground [&_button]:text-xs!",
                       !restingControlsVisible && "invisible",
                     )}
                   >

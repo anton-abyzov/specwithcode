@@ -118,7 +118,7 @@ export const OrchestratorMcpTargetOptions = Schema.Union([
 ]);
 export type OrchestratorMcpTargetOptions = typeof OrchestratorMcpTargetOptions.Type;
 
-export const OrchestratorMcpTarget = Schema.Struct({
+const OrchestratorMcpTargetFields = {
   providerInstanceId: Schema.optional(
     ProviderInstanceId.annotate({
       description: "Configured provider instance id from orchestrator_capabilities.",
@@ -146,7 +146,26 @@ export const OrchestratorMcpTarget = Schema.Struct({
       description: "Model option selections advertised by orchestrator_capabilities.",
     }),
   ),
-});
+  effort: Schema.optional(
+    TrimmedNonEmptyString.annotate({
+      description:
+        "Reasoning effort the user asked for, e.g. 'low', 'medium', 'high', 'xhigh' (extra high) or 'max'. Mapped to the model's own effort option; when the model lacks that level the nearest one it offers is used, and a model without an effort setting is rejected.",
+    }),
+  ),
+};
+// An unknown key (for example `reasoningEffort`) must fail the call instead
+// of being dropped, or the child silently runs at the default.
+export const OrchestratorMcpTarget = Schema.StructWithRest(
+  Schema.Struct(OrchestratorMcpTargetFields),
+  [Schema.Record(Schema.String, Schema.Unknown)],
+).check(
+  Schema.makeFilter((value) => {
+    const unknown = Object.keys(value).filter((key) => !(key in OrchestratorMcpTargetFields));
+    return unknown.length === 0
+      ? true
+      : `Unknown target key(s): ${unknown.join(", ")}. Use target.effort for reasoning effort and target.options for other model options.`;
+  }),
+);
 export type OrchestratorMcpTarget = typeof OrchestratorMcpTarget.Type;
 
 export const OrchestratorMcpRuntimeMode = Schema.Union([Schema.Literal("inherit"), RuntimeMode]);
@@ -237,6 +256,11 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   latestTerminalResultContextTransferId: Schema.NullOr(ContextTransferId),
   providerInstanceId: ProviderInstanceId,
   model: Schema.NullOr(Schema.String),
+  effort: Schema.optional(
+    Schema.String.annotate({
+      description: "Reasoning effort option the child was started with, when one was set.",
+    }),
+  ),
   summary: Schema.NullOr(Schema.String),
   resultContextTransferId: Schema.NullOr(ContextTransferId),
   waitTimedOut: Schema.Boolean.annotate({
@@ -301,6 +325,11 @@ export const OrchestratorMcpCreatedThread = Schema.Struct({
   creationSource: OrchestrationV2CreationSource,
   providerInstanceId: ProviderInstanceId,
   model: Schema.String,
+  effort: Schema.optional(
+    Schema.String.annotate({
+      description: "Reasoning effort option the thread was started with, when one was set.",
+    }),
+  ),
 });
 export type OrchestratorMcpCreatedThread = typeof OrchestratorMcpCreatedThread.Type;
 
@@ -492,7 +521,13 @@ export type OrchestratorMcpThreadReadResult = typeof OrchestratorMcpThreadReadRe
 export const OrchestratorMcpThreadSendInput = Schema.Struct({
   machine: Schema.optional(OrchestratorMcpMachineTarget),
   threadId: ThreadId,
-  message: OrchestratorMcpPrompt,
+  message: Schema.optional(OrchestratorMcpPrompt),
+  forwardMessageId: Schema.optional(
+    MessageId.annotate({
+      description:
+        "A user message in the calling thread to deliver unchanged, as the user's own words. Pass it instead of message to route a 'User follow-up from selected worker' message; it is the ID that message names.",
+    }),
+  ),
   mode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart"])),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
 });

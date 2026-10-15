@@ -326,7 +326,7 @@ function DiscoveryItemRow({
                 </Badge>
               ) : null}
             </div>
-            <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-xs leading-normal text-muted-foreground/80">
+            <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-xs leading-normal text-muted-foreground">
               {itemSummary({ item, auth, authAccount })}
             </p>
           </div>

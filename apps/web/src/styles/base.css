@@ -241,6 +241,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(studio-m
   --color-input: var(--contrast-input);
   --color-border: var(--contrast-border);
   --color-destructive: var(--destructive);
+  --color-destructive-solid: var(--destructive-solid);
+  --color-destructive-solid-foreground: var(--destructive-solid-foreground);
   --color-accent-foreground: var(--contrast-accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--contrast-muted-foreground);
@@ -617,6 +619,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(studio-m
 }
 
 @layer base {
+  /* Preflight's default placeholder is 50% currentColor, which drops below
+     4.5:1 on light surfaces. */
+  ::placeholder {
+    color: var(--color-placeholder);
+  }
   ::highlight(studio-assistant-citation) {
     background-color: color-mix(
       in oklab,
@@ -626,6 +633,13 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(studio-m
   }
   ::highlight(studio-assistant-citation-comment) {
     background-color: color-mix(in oklab, var(--primary) 45%, transparent);
+  }
+  ::highlight(studio-find) {
+    background-color: color-mix(in oklab, oklch(0.86 0.17 92) 55%, transparent);
+  }
+  ::highlight(studio-find-current) {
+    background-color: oklch(0.78 0.17 62);
+    color: oklch(0.2 0 0);
   }
   :root {
     /* Keep the original SpecWithCode artwork palettes as the defaults. Built-in

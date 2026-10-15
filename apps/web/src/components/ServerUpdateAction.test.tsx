@@ -512,7 +512,7 @@ describe("ServerUpdateProgress", () => {
     // success/warning colors, one duty-cycled pulse on the dot.
     expect(markup).not.toContain("0.0.30");
     expect(markup).not.toContain("Resum");
-    expect(markup).not.toContain("text-success");
+    expect(markup).not.toContain("text-success-foreground");
     expect(markup).not.toContain("text-primary");
     expect(markup).toContain("animate-status-pulse");
     expect(markup).not.toContain("animate-spin");

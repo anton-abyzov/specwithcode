@@ -1235,7 +1235,7 @@ export function ThemeEditorPanel({
             {/* Inline and above the color list: the panel scrolls, and an
                 error parked below every role would go unseen. */}
             {error ? (
-              <p aria-live="polite" className="text-sm text-destructive">
+              <p aria-live="polite" className="text-sm text-destructive-foreground">
                 {error}
               </p>
             ) : null}
@@ -1271,7 +1271,7 @@ export function ThemeEditorPanel({
           </div>
           <div
             aria-hidden
-            className="absolute bottom-0 right-0 z-10 flex size-5 cursor-se-resize touch-none select-none items-end justify-end p-1 text-muted-foreground/70"
+            className="absolute bottom-0 right-0 z-10 flex size-5 cursor-se-resize touch-none select-none items-end justify-end p-1 text-muted-foreground"
             onPointerCancel={endResize}
             onPointerDown={handleResizePointerDown}
             onPointerMove={handleResizePointerMove}

@@ -213,7 +213,7 @@ export function PrivacySettingsPanel() {
             </Button>
             {access.error ? <p className="text-sm text-muted-foreground">{access.error}</p> : null}
             {requested && diagnostics.error ? (
-              <p role="alert" className="text-sm text-destructive">
+              <p role="alert" className="text-sm text-destructive-foreground">
                 Could not prepare the report. Reconnect the environment and try again.
               </p>
             ) : null}

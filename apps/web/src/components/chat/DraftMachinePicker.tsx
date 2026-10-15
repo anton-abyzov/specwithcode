@@ -368,7 +368,7 @@ export function DraftMachinePicker(props: Props) {
             </p>
           )}
           {error && (
-            <p role="alert" className="px-2 py-2 text-sm text-destructive">
+            <p role="alert" className="px-2 py-2 text-sm text-destructive-foreground">
               {error}
             </p>
           )}

@@ -170,6 +170,7 @@ import {
   isWindowsDrivePathHref,
   normalizeMarkdownLinkDestination,
   resolveInlineCodeFileLinkMeta,
+  resolveInlineCodeFileLinks,
   resolveMarkdownFileLinkMeta,
   rewriteMarkdownFileUriHref,
   shouldOpenMarkdownFileLinkInBrowserByDefault,
@@ -178,10 +179,12 @@ import {
 } from "../markdown-links";
 import { isMarkdownFileLinkLabel } from "@specweave-studio/client-runtime/markdown-links";
 import { readLocalApi } from "../localApi";
+import { useExistingFileLinks } from "./chat/useExistingFileLinks";
 import { useAssetUrlRefresh, useAssetUrlState } from "../assets/assetUrls";
 import { cn } from "../lib/utils";
 import { useRemoteOpenResolution, type RemoteOpenMode } from "../remoteOpen";
 import { useRightPanelStore } from "../rightPanelStore";
+import { ReportFileHostContext } from "./chat/reportFileHost";
 import { readThreadShell, useProjects } from "../state/entities";
 import { serverEnvironment } from "../state/server";
 import { shellEnvironment } from "../state/shell";
@@ -833,7 +836,6 @@ function createHighlightCacheKey(code: string, language: string, themeName: Diff
 function estimateHighlightedSize(html: string, code: string): number {
   return Math.max(html.length * 2, code.length * 3);
 }
-
 
 function MarkdownDetails({
   children,
@@ -2076,12 +2078,14 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   }, [onOpen, targetPath]);
 
   const handleOpenInFilePreview = useCallback(() => {
-    if (threadRef && panelPath) {
-      onOpenInPanel(panelPath, line);
-      return;
-    }
+    // An image or video opens in the media viewer, over whatever is on screen;
+    // the files panel shows only its bytes, and behind a modal it is hidden.
     if (onOpenMedia) {
       onOpenMedia();
+      return;
+    }
+    if (threadRef && panelPath) {
+      onOpenInPanel(panelPath, line);
       return;
     }
     handleOpenInEditor();
@@ -2509,6 +2513,31 @@ function useChatMarkdownState({
     },
     [environmentId, openInEditor],
   );
+  // A folder opens in the file manager; where the host cannot open one, its
+  // path is copied so it can still be found.
+  const openFolder = useCallback(
+    async (folderPath: string): Promise<AtomCommandResult<unknown, unknown>> => {
+      if (
+        environmentId !== null &&
+        readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
+      ) {
+        return openInEditor({
+          environmentId,
+          input: { cwd: folderPath, editor: "file-manager" },
+        });
+      }
+      await writeTextToClipboard(folderPath, "folder path");
+      toastManager.add(
+        stackedThreadToast({
+          type: "success",
+          title: "Folder path copied",
+          description: folderPath,
+        }),
+      );
+      return AsyncResult.success(undefined);
+    },
+    [environmentId, openInEditor],
+  );
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
   const markdownFileLinkMetaByHref = useMemo(() => {
     const metaByHref = new Map<
@@ -2526,17 +2555,15 @@ function useChatMarkdownState({
     }
     return metaByHref;
   }, [cwd, imageBaseDir, text]);
-  const inlineCodeFileLinkMetaByText = useMemo(() => {
-    const metaByText = new Map<string, MarkdownFileLinkMeta>();
-    for (const span of extractInlineCodeSpans(text)) {
-      if (metaByText.has(span)) continue;
-      const meta = resolveInlineCodeFileLinkMeta(span, cwd, imageBaseDir ?? cwd);
-      if (meta) {
-        metaByText.set(span, meta);
-      }
-    }
-    return metaByText;
-  }, [cwd, imageBaseDir, text]);
+  const authoredInlineCodeFileLinks = useMemo(
+    () => resolveInlineCodeFileLinks(extractInlineCodeSpans(text), cwd, imageBaseDir ?? cwd),
+    [cwd, imageBaseDir, text],
+  );
+  const inlineCodeFileLinkMetaByText = useExistingFileLinks(
+    authoredInlineCodeFileLinks,
+    environmentId,
+    cwd,
+  );
   const fileLinkParentSuffixByPath = useMemo(() => {
     const filePaths = [
       ...[...markdownFileLinkMetaByHref.values()].map((meta) => meta.filePath),
@@ -2686,6 +2713,9 @@ function useChatMarkdownState({
     },
     [cwd, environmentId, searchProjectEntries],
   );
+  // Inside the report reader (a modal), files open beside the report rather
+  // than in the side panel behind the reader's backdrop.
+  const reportFileHost = use(ReportFileHostContext);
   // A bare filename resolves to the workspace root, which is rarely where the
   // file is, so ask the index before opening. Absolute host paths open as-is.
   const openFileInPanel = useCallback(
@@ -2695,7 +2725,9 @@ function useChatMarkdownState({
       // in flight.
       const isLatestLookup = claimWorkspaceBasenameLookup();
       const openAt = (path: string) =>
-        useRightPanelStore.getState().openFile(threadRef, path, line);
+        reportFileHost
+          ? reportFileHost.open({ threadRef, cwd: cwd ?? "", path, line })
+          : useRightPanelStore.getState().openFile(threadRef, path, line);
       if (!cwd || !needsWorkspaceBasenameLookup(panelPath)) {
         openAt(panelPath);
         return;
@@ -2706,7 +2738,7 @@ function useChatMarkdownState({
         openAt(match ?? panelPath);
       })();
     },
-    [cwd, findWorkspaceBasenameMatch, threadRef],
+    [cwd, findWorkspaceBasenameMatch, reportFileHost, threadRef],
   );
   const revealMarkdownFileInFileManager = useCallback(
     async (fileLinkMeta: MarkdownFileLinkMeta) => {
@@ -2733,16 +2765,24 @@ function useChatMarkdownState({
           `L${fileLinkMeta.line}${fileLinkMeta.column ? `:C${fileLinkMeta.column}` : ""}`,
         );
       }
-      const mediaPath = mediaSource ?? fileLinkMeta.filePath;
+      // A settled candidate path replaces the authored one.
+      const mediaPath = fileLinkMeta.candidates
+        ? fileLinkMeta.filePath
+        : (mediaSource ?? fileLinkMeta.filePath);
+      const isDirectory = fileLinkMeta.directory === true;
       const canPreviewMedia =
+        !isDirectory &&
         mediaMimeTypeFromExtension(
           fileLinkMeta.basename.slice(fileLinkMeta.basename.lastIndexOf(".")),
         ) !== null;
       // Media outside the workspace keeps the expanded preview; other host
       // files (a report in a temp dir) open read-only in the files panel.
-      const panelPath =
-        fileLinkMeta.workspaceRelativePath ??
-        (!canPreviewMedia && isAbsolutePath(fileLinkMeta.filePath) ? fileLinkMeta.filePath : null);
+      const panelPath = isDirectory
+        ? null
+        : (fileLinkMeta.workspaceRelativePath ??
+          (!canPreviewMedia && isAbsolutePath(fileLinkMeta.filePath)
+            ? fileLinkMeta.filePath
+            : null));
 
       return (
         <MarkdownFileLink
@@ -2756,7 +2796,11 @@ function useChatMarkdownState({
           copyMarkdown={copyMarkdown}
           theme={resolvedTheme}
           threadRef={threadRef}
-          {...(canUseShellActions ? { onOpen: openInPreferredEditor } : {})}
+          {...(isDirectory
+            ? { onOpen: openFolder }
+            : canUseShellActions
+              ? { onOpen: openInPreferredEditor }
+              : {})}
           onOpenInPanel={openFileInPanel}
           onOpenMedia={
             threadRef && canPreviewMedia
@@ -2772,6 +2816,8 @@ function useChatMarkdownState({
           revealLabel={revealInFileManagerLabel}
           onOpenInBrowser={
             threadRef &&
+            !isDirectory &&
+            !reportFileHost &&
             canOperatePreview &&
             isPreviewAvailableFor(threadRef.environmentId) &&
             isBrowserPreviewFile(fileLinkMeta.filePath)
@@ -2786,10 +2832,12 @@ function useChatMarkdownState({
       canOperatePreview,
       fileLinkParentSuffixByPath,
       openFileInPanel,
+      openFolder,
       openInPreferredEditor,
       openMarkdownFileInPreview,
       openMarkdownMedia,
       preferredEditorMenuLabel,
+      reportFileHost,
       resolvedTheme,
       revealInFileManagerLabel,
       revealMarkdownFileInFileManager,

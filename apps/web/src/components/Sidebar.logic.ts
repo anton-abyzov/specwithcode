@@ -939,7 +939,7 @@ export function resolveThreadRowClassName(input: {
 
   return cn(
     baseClassName,
-    "text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
+    "text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
   );
 }
 

@@ -270,7 +270,7 @@ export function ToolCodePanel({ label, text: content, language }: ToolPresentati
         </code>
       </pre>
       {copyState === "failed" ? (
-        <p className="px-3 pb-2 font-sans text-xs text-destructive" role="status">
+        <p className="px-3 pb-2 font-sans text-xs text-destructive-foreground" role="status">
           Couldn&apos;t copy. Select the text and copy it manually.
         </p>
       ) : null}

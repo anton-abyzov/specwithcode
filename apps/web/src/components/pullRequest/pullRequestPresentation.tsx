@@ -91,7 +91,7 @@ function reviewDecisionPresentation(decision: PullRequestReviewDecision) {
       return {
         Icon: UserRoundIcon,
         label: "Awaiting review",
-        toneClassName: "text-muted-foreground/60",
+        toneClassName: "text-muted-foreground",
       };
   }
 }
@@ -145,7 +145,7 @@ export function resolvePullRequestConflict(input: {
   }
   return {
     label: input.baseBranch ? `Conflicts with ${input.baseBranch}` : "Has conflicts",
-    toneClassName: "text-destructive",
+    toneClassName: "text-destructive-foreground",
     Icon: PullRequestGlyph.conflicting,
   };
 }
@@ -222,10 +222,14 @@ const CHECK_STATUS_PRESENTATION = {
     Icon: CircleCheckIcon,
     toneClassName: "text-emerald-600 dark:text-emerald-300/90",
   },
-  failure: { label: "Failed", Icon: CircleXIcon, toneClassName: "text-destructive" },
-  cancelled: { label: "Cancelled", Icon: CircleXIcon, toneClassName: "text-destructive" },
-  skipped: { label: "Skipped", Icon: CircleDashedIcon, toneClassName: "text-muted-foreground/70" },
-  neutral: { label: "Neutral", Icon: CircleDashedIcon, toneClassName: "text-muted-foreground/70" },
+  failure: { label: "Failed", Icon: CircleXIcon, toneClassName: "text-destructive-foreground" },
+  cancelled: {
+    label: "Cancelled",
+    Icon: CircleXIcon,
+    toneClassName: "text-destructive-foreground",
+  },
+  skipped: { label: "Skipped", Icon: CircleDashedIcon, toneClassName: "text-muted-foreground" },
+  neutral: { label: "Neutral", Icon: CircleDashedIcon, toneClassName: "text-muted-foreground" },
 } as const satisfies Record<
   PullRequestCheckStatus,
   { label: string; Icon: typeof CircleCheckIcon | typeof Spinner; toneClassName: string }
@@ -270,7 +274,7 @@ const CHECKS_STATE_PRESENTATION = {
   failing: {
     label: "Some checks were not successful",
     Icon: CircleXIcon,
-    toneClassName: "text-destructive",
+    toneClassName: "text-destructive-foreground",
   },
   pending: {
     label: "Some checks haven't completed yet",
@@ -323,7 +327,7 @@ const REVIEW_OUTCOME_PRESENTATION = {
   "changes-requested": {
     label: "Changes requested",
     Icon: CircleXIcon,
-    toneClassName: "text-destructive",
+    toneClassName: "text-destructive-foreground",
     ringClassName: "ring-2 ring-destructive",
     staleRingClassName: "ring-2 ring-[color-mix(in_srgb,var(--destructive)_35%,var(--background))]",
     badgeVariant: "error",
@@ -331,7 +335,7 @@ const REVIEW_OUTCOME_PRESENTATION = {
   dismissed: {
     label: "Review dismissed",
     Icon: CircleDashedIcon,
-    toneClassName: "text-muted-foreground/70",
+    toneClassName: "text-muted-foreground",
     ringClassName: "ring-2 ring-muted-foreground/60",
     staleRingClassName:
       "ring-2 ring-[color-mix(in_srgb,var(--contrast-muted-foreground)_30%,var(--background))]",
@@ -557,7 +561,7 @@ export function PullRequestMetaLine({
           : [
               <span
                 aria-hidden
-                className="shrink-0 text-muted-foreground/50"
+                className="shrink-0 text-muted-foreground"
                 key={separatorKey(segment)}
               >
                 ·

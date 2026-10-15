@@ -33,8 +33,9 @@ describe("Studio orchestration provider instructions", () => {
     );
     assert.include(
       STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
-      "written to a file and referenced by path",
+      "long inventories, tables and logs in a file, referenced by path",
     );
+    assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "Studio marks that thread Blocked");
     assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "do not paste the whole report");
     assert.include(
       STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,

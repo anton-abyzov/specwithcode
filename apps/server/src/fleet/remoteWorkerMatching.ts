@@ -286,7 +286,8 @@ const outcomeOf = (status: string): OrchestrationV2Notification["outcome"] =>
 
 /**
  * The fixed words a coordinator is woken with; nothing from the remote agent
- * is quoted. People see the notification's summary instead of the text.
+ * is quoted. The coordinator conversation hides this wake. People see the
+ * worker's status and a system notification that opens the thread.
  */
 export function remoteWorkerWake(input: RemoteWorkerRef & { readonly status: string }): {
   readonly text: string;

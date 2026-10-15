@@ -104,7 +104,7 @@
   border-top: 1px solid var(--border);
 }
 .sws-hl-provider[data-dim] {
-  opacity: 0.72;
+  opacity: var(--disabled-opacity);
 }
 .sws-hl-provider-name {
   display: flex;
@@ -252,7 +252,7 @@
   display: contents;
 }
 .sws-hl-compact li[data-status="offline"] .sws-hl-compact-cells {
-  opacity: 0.6;
+  opacity: var(--disabled-opacity);
 }
 .sws-hl-compact-name {
   display: inline-flex;
@@ -281,7 +281,7 @@
   color: var(--warning-foreground);
 }
 .sws-hl-compact-cell[data-tone="full"] {
-  color: var(--destructive);
+  color: var(--destructive-foreground);
 }
 .sws-hl-compact-muted {
   color: var(--muted-foreground);

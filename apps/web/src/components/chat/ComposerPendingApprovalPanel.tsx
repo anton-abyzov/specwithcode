@@ -46,7 +46,7 @@ export const ComposerPendingApprovalPanel = memo(function ComposerPendingApprova
       role="group"
     >
       <span className="flex w-full min-w-0 items-center gap-2 text-2xs text-muted-foreground">
-        <span className="shrink-0 font-medium text-warning">{fallbackLabel}</span>
+        <span className="shrink-0 font-medium text-warning-foreground">{fallbackLabel}</span>
         {approval.appName ? <span className="min-w-0 truncate">{approval.appName}</span> : null}
         {pendingCount > 1 ? (
           <span className="ml-auto shrink-0 tabular-nums">1/{pendingCount}</span>

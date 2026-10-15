@@ -1,6 +1,7 @@
 import { logicalCoordinator } from "../../../studio/projectDomain";
 /**
- * The default sidebar: projects on top, then a separate Chats section. A project
+ * The default sidebar: the personal assistant under Overview, then projects, then a
+ * separate Chats section. A project
  * row opens its orchestrator, and the threads a project owns are reached from
  * there; a chat row opens that session. Chats group by date unless the filter
  * menu says otherwise, and the menu's choices are remembered per browser.
@@ -27,6 +28,8 @@ import {
   ConciergeBellIcon,
   LayoutGridIcon,
   MoreHorizontalIcon,
+  PinIcon,
+  PinOffIcon,
   PlusIcon,
   SearchIcon,
   SlidersVerticalIcon,
@@ -67,6 +70,8 @@ import {
   isArchivedGroup,
   membersToToggle,
   partitionProjectGroups,
+  pinProjectsFirst,
+  togglePinnedProject,
 } from "../../../studio/projectListVisibility";
 import {
   coordinatorMachineKey,
@@ -136,6 +141,10 @@ const ChatOptionsSchema = Schema.Struct({
   sortBy: Schema.Literals(CHAT_SORTS),
 });
 type StoredChatOptions = typeof ChatOptionsSchema.Type;
+// Pinned project keys, in the order they were pinned.
+const PINNED_PROJECTS_STORAGE_KEY = "studio:sidebar-pinned-projects:v1";
+const PinnedProjectsSchema = Schema.Array(Schema.String);
+const NO_PINNED_PROJECTS: ReadonlyArray<string> = [];
 const PROJECT_PAGE = 7;
 const CHAT_PAGE = 30;
 
@@ -173,6 +182,14 @@ export default function StudioSidebar() {
     ChatOptionsSchema,
   );
   const options = useMemo(() => parseChatListOptions(storedOptions), [storedOptions]);
+  const [pinnedProjectKeys, setPinnedProjectKeys] = useLocalStorage(
+    PINNED_PROJECTS_STORAGE_KEY,
+    NO_PINNED_PROJECTS,
+    PinnedProjectsSchema,
+  );
+  const pinnedProjects = useMemo(() => new Set(pinnedProjectKeys), [pinnedProjectKeys]);
+  const togglePinned = (projectKey: string) =>
+    setPinnedProjectKeys((keys) => togglePinnedProject(keys, projectKey));
   const [showAllProjects, setShowAllProjects] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const serverConfigs = useServerConfigs();
@@ -261,19 +278,16 @@ export default function StudioSidebar() {
   }, [projectByMember, threadByKey, threads]);
   // The machines' "No project" folders are not projects; archived ones wait below the
   // list unless they are open or have threads waiting on the person.
-  const { listed: listedProjects, archived: archivedProjects } = useMemo(
-    () =>
-      partitionProjectGroups(
-        projectGroups.filter(
-          (group) =>
-            !group.memberProjects.some((member) => member.workspaceSettings?.kind === "personal"),
-        ),
-        scratchRootFor,
-        activeProjectKey,
-        (projectKey) => (waitingByProject.get(projectKey) ?? 0) > 0,
-      ),
-    [activeProjectKey, projectGroups, scratchRootFor, waitingByProject],
-  );
+  // Pinned projects lead the main list.
+  const { listed: listedProjects, archived: archivedProjects } = useMemo(() => {
+    const partition = partitionProjectGroups(
+      projectGroups,
+      scratchRootFor,
+      activeProjectKey,
+      (projectKey) => (waitingByProject.get(projectKey) ?? 0) > 0,
+    );
+    return { ...partition, listed: pinProjectsFirst(partition.listed, pinnedProjectKeys) };
+  }, [activeProjectKey, pinnedProjectKeys, projectGroups, scratchRootFor, waitingByProject]);
   const chatGroupInput = useMemo(
     () => ({
       now,
@@ -451,19 +465,22 @@ export default function StudioSidebar() {
       }
     }
   };
+  // A personal assistant is not a code project: it sits under Overview, ahead of every
+  // project and outside the project paging, so it is always one click away.
+  const assistants = listedProjects.filter(isPersonalGroup);
+  const codeProjects = listedProjects.filter((group) => !isPersonalGroup(group));
   const visibleProjects =
-    showAllProjects || listedProjects.length <= PROJECT_PAGE + 1
-      ? listedProjects
-      : listedProjects.filter(
+    showAllProjects || codeProjects.length <= PROJECT_PAGE + 1
+      ? codeProjects
+      : codeProjects.filter(
           (group, index) =>
             index < PROJECT_PAGE ||
+            pinnedProjects.has(group.projectKey) ||
             group.projectKey === activeProjectKey ||
             (waitingByProject.get(group.projectKey) ?? 0) > 0,
         );
-  const hiddenProjects = listedProjects.length - visibleProjects.length;
-  const hasAssistant = projectGroups.some((group) =>
-    group.memberProjects.some((member) => member.workspaceSettings?.kind === "personal"),
-  );
+  const hiddenProjects = codeProjects.length - visibleProjects.length;
+  const hasAssistant = projectGroups.some(isPersonalGroup);
   const newChatShortcut = shortcutLabelForCommand(keybindings, "chat.new");
   const searchShortcut = shortcutLabelForCommand(keybindings, "commandPalette.toggle");
 
@@ -499,7 +516,22 @@ export default function StudioSidebar() {
               <LayoutGridIcon aria-hidden />
               <span className="sws-side-row-label">Overview</span>
             </Link>
-            {
+            {assistants.length > 0 ? (
+              <ul className="sws-side-list" aria-label={PERSONAL_ASSISTANT_LABEL}>
+                {assistants.map((group) => (
+                  <ProjectRow
+                    key={group.projectKey}
+                    group={group}
+                    displayedProject={displayedCheckouts.get(group.projectKey)}
+                    archived={isArchivedGroup(group, scratchRootFor)}
+                    waiting={waitingByProject.get(group.projectKey) ?? 0}
+                    current={group.projectKey === activeProjectKey}
+                    onOpen={closeMobile}
+                    onArchive={(archived) => void setGroupArchived(group, archived)}
+                  />
+                ))}
+              </ul>
+            ) : hasAssistant ? null : (
               <Tip side="right" label={PERSONAL_ASSISTANT_DESCRIPTION}>
                 <button
                   type="button"
@@ -511,10 +543,10 @@ export default function StudioSidebar() {
                 >
                   <ConciergeBellIcon aria-hidden />
                   <span className="sws-side-row-label">{PERSONAL_ASSISTANT_LABEL}</span>
-                  {hasAssistant ? null : <span className="sws-side-row-hint">Set up</span>}
+                  <span className="sws-side-row-hint">Set up</span>
                 </button>
               </Tip>
-            }
+            )}
           </div>
 
           <div className="sws-side-section" role="group" aria-labelledby="sws-side-projects">
@@ -534,7 +566,7 @@ export default function StudioSidebar() {
                 </button>
               </Tip>
             </div>
-            {listedProjects.length === 0 && archivedProjects.length === 0 ? (
+            {codeProjects.length === 0 && archivedProjects.length === 0 ? (
               <p className="sws-side-empty">No projects yet. Create one or open a folder.</p>
             ) : (
               <ul className="sws-side-list">
@@ -544,15 +576,17 @@ export default function StudioSidebar() {
                     group={group}
                     displayedProject={displayedCheckouts.get(group.projectKey)}
                     archived={isArchivedGroup(group, scratchRootFor)}
+                    pinned={pinnedProjects.has(group.projectKey)}
                     waiting={waitingByProject.get(group.projectKey) ?? 0}
                     current={group.projectKey === activeProjectKey}
                     onOpen={closeMobile}
+                    onPin={() => togglePinned(group.projectKey)}
                     onArchive={(archived) => void setGroupArchived(group, archived)}
                   />
                 ))}
               </ul>
             )}
-            {hiddenProjects > 0 || (showAllProjects && projectGroups.length > PROJECT_PAGE + 1) ? (
+            {hiddenProjects > 0 || (showAllProjects && codeProjects.length > PROJECT_PAGE + 1) ? (
               <button
                 type="button"
                 className="sws-side-more"
@@ -772,17 +806,24 @@ export default function StudioSidebar() {
   );
 }
 
-/** One project in the Projects list, with its Archive or Restore action. */
+function isPersonalGroup(group: SidebarProjectSnapshot): boolean {
+  return group.memberProjects.some((member) => member.workspaceSettings?.kind === "personal");
+}
+
+/** One project in the Projects list, with its Pin and Archive or Restore actions. */
 function ProjectRow(props: {
   group: SidebarProjectSnapshot;
   displayedProject: SidebarProjectGroupMember | undefined;
   archived: boolean;
+  /** Absent in the archived list, which keeps no pinned order. */
+  pinned?: boolean;
   waiting: number;
   current: boolean;
   onOpen: () => void;
+  onPin?: () => void;
   onArchive: (archived: boolean) => void;
 }) {
-  const { group, archived, waiting } = props;
+  const { group, archived, pinned, waiting } = props;
   // The group keeps repository identity; its visible name and icon belong to
   // the checkout the workspace opens, including an explicit remote checkout.
   const project = props.displayedProject ?? group;
@@ -791,11 +832,13 @@ function ProjectRow(props: {
   )
     ? group.displayName
     : (props.displayedProject?.title ?? group.displayName);
-  const personal = group.memberProjects.some(
-    (member) => member.workspaceSettings?.kind === "personal",
-  );
+  const personal = isPersonalGroup(group);
   return (
-    <li className="sws-project-row" data-archived={archived || undefined}>
+    <li
+      className="sws-project-row"
+      data-archived={archived || undefined}
+      data-pinned={pinned || undefined}
+    >
       <Tip
         side="right"
         label={
@@ -819,6 +862,7 @@ function ProjectRow(props: {
           <ProjectFavicon project={project} className="size-[18px] shrink-0" />
           <span className="sws-side-row-label">{displayName}</span>
           {archived ? <span className="sws-side-row-hint">Archived</span> : null}
+          {pinned ? <PinIcon className="sws-side-row-pin" aria-label="Pinned" role="img" /> : null}
           {waiting > 0 ? (
             <span className="sws-count sws-count-waiting">
               {waiting}
@@ -840,6 +884,12 @@ function ProjectRow(props: {
           <MoreHorizontalIcon aria-hidden />
         </MenuTrigger>
         <MenuPopup align="start" side="bottom">
+          {props.onPin ? (
+            <MenuItem onClick={props.onPin}>
+              {pinned ? <PinOffIcon aria-hidden /> : <PinIcon aria-hidden />}
+              {pinned ? "Unpin project" : "Pin project"}
+            </MenuItem>
+          ) : null}
           <MenuItem onClick={() => props.onArchive(!archived)}>
             <ArchiveIcon aria-hidden />
             {archived ? "Restore project" : "Archive project"}

@@ -7,7 +7,7 @@ import {
   type ReactNode,
   type KeyboardEvent,
 } from "react";
-import { ChevronLeftIcon, ChevronRightIcon, XIcon } from "lucide-react";
+import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, XIcon } from "lucide-react";
 import { Image as ImageGlyph, Text as TextGlyph } from "lucide";
 import { Button } from "../ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
@@ -19,6 +19,7 @@ import { OpenMediaLink } from "../media/OpenMediaLink";
 import { MediaActions, type MediaActionSource } from "../media/MediaActions";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import { isContextMenuOpen } from "../../contextMenuFallback";
+import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
 import {
   SnapShotAccessibilityData,
   SnapShotContentsButton,
@@ -40,6 +41,39 @@ function ExpandedMediaFailure({ children }: { children: ReactNode }) {
   return (
     <div role="alert" className={EXPANDED_MEDIA_STATE_CLASS_NAME}>
       {children}
+    </div>
+  );
+}
+
+/** Where a local file lives on its host, so it can be found outside the app too. */
+function MediaFilePath({ path }: { readonly path: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="mt-1 flex max-w-[var(--media-width)] items-center justify-center gap-1.5 text-xs text-white/60">
+      <span className="truncate select-all font-mono" dir="rtl">
+        <bdi>{path}</bdi>
+      </span>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              aria-label="Copy full path"
+              size="icon-micro"
+              variant="overlay"
+              onClick={() => {
+                void writeTextToClipboard(path, "file path").then(() => setCopied(true));
+              }}
+            />
+          }
+        >
+          {copied ? (
+            <CheckIcon className="size-3" aria-hidden="true" />
+          ) : (
+            <CopyIcon className="size-3" aria-hidden="true" />
+          )}
+        </TooltipTrigger>
+        <TooltipPopup side="top">{copied ? "Copied" : "Copy full path"}</TooltipPopup>
+      </Tooltip>
     </div>
   );
 }
@@ -273,6 +307,9 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
                 <SnapShotContentsButton source={item.source} side="top" />
               ) : null}
             </div>
+            {source.reference?.kind === "file" ? (
+              <MediaFilePath key={source.reference.path} path={source.reference.path} />
+            ) : null}
           </div>
         </MediaActions>
         {preview.images.length > 1 && (

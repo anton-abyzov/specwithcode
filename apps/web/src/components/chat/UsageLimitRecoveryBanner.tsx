@@ -257,7 +257,7 @@ function RecoveryActions({
         </p>
       ) : null}
       {error ? (
-        <p role="alert" className="basis-full text-xs text-destructive">
+        <p role="alert" className="basis-full text-xs text-destructive-foreground">
           {error}
         </p>
       ) : null}

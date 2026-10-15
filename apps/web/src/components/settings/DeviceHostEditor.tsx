@@ -169,7 +169,7 @@ export function DeviceHostEditor({
                       <div className="flex items-center justify-between gap-3">
                         <span className="truncate font-medium">{target.label}</span>
                         <span
-                          className={`flex shrink-0 items-center gap-1.5 ${result.status === "failed" ? "text-destructive" : "text-muted-foreground"}`}
+                          className={`flex shrink-0 items-center gap-1.5 ${result.status === "failed" ? "text-destructive-foreground" : "text-muted-foreground"}`}
                         >
                           {result.status === "pending" ? (
                             <>

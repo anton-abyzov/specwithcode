@@ -419,7 +419,7 @@ function ConfigureStep({
           </section>
         </div>
         {targetFeedback ? (
-          <p role="alert" className="mt-3 text-sm text-destructive">
+          <p role="alert" className="mt-3 text-sm text-destructive-foreground">
             {targetFeedback}
           </p>
         ) : null}

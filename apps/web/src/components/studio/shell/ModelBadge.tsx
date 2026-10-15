@@ -89,8 +89,10 @@ export function ModelBadgeMark(props: {
 }
 
 /**
- * Who runs a thread and on which model: the provider's mark, its name and the
- * model, in that order. The mark is decoration; the words carry the meaning.
+ * Who runs a thread and on which model: the harness's mark and name, then the
+ * model, as the composer picker says it ("Copilot · Claude Opus 5.5"). The
+ * harness is named apart from the model's maker, so a Claude model reached
+ * through Copilot never reads as a native Claude Code thread.
  */
 export function ModelBadge(props: {
   entry: ProviderInstanceEntry | null;
@@ -112,6 +114,9 @@ export function ModelBadge(props: {
       ) : (
         <>
           <span className="sws-model-provider">{label.provider}</span>
+          <span className="sws-model-sep" aria-hidden>
+            ·
+          </span>
           <span className="sws-model-name">{label.model}</span>
         </>
       )}

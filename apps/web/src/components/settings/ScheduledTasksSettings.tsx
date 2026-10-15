@@ -157,9 +157,7 @@ function Field({
     <div className="space-y-1.5">
       <Label className="flex items-baseline justify-between" htmlFor={htmlFor}>
         <span>{label}</span>
-        {hint ? (
-          <span className="font-normal text-2xs text-muted-foreground/80">{hint}</span>
-        ) : null}
+        {hint ? <span className="font-normal text-2xs text-muted-foreground">{hint}</span> : null}
       </Label>
       {children}
     </div>
@@ -504,7 +502,9 @@ function ScheduledTaskRow({
           {task.lastRunStatus !== "never" ? (
             <Badge variant={statusVariant(task.lastRunStatus)}>{task.lastRunStatus}</Badge>
           ) : null}
-          {task.lastRunError ? <span className="text-destructive">{task.lastRunError}</span> : null}
+          {task.lastRunError ? (
+            <span className="text-destructive-foreground">{task.lastRunError}</span>
+          ) : null}
         </div>
       }
       control={
@@ -604,7 +604,7 @@ function WebhookDeliveriesDialog({
           <DialogDescription>Recent requests to this task's webhook URL.</DialogDescription>
         </DialogHeader>
         <DialogPanel>
-          {error ? <p className="text-sm text-destructive">{error}</p> : null}
+          {error ? <p className="text-sm text-destructive-foreground">{error}</p> : null}
           {selectedId !== null && selected === null && selectedQuery.error === null ? (
             <p className="text-sm text-muted-foreground" role="status">
               Loading delivery…
@@ -622,7 +622,9 @@ function WebhookDeliveriesDialog({
                   <span className="text-muted-foreground">Signature verified</span>
                 ) : null}
               </div>
-              {selected.error ? <p className="text-sm text-destructive">{selected.error}</p> : null}
+              {selected.error ? (
+                <p className="text-sm text-destructive-foreground">{selected.error}</p>
+              ) : null}
               <DeliveryBlock title="Prompt sent to the agent">
                 {selected.renderedPrompt ?? "No run was started for this request."}
               </DeliveryBlock>
@@ -1011,7 +1013,9 @@ function ScheduledTaskEditorDialog({
         <DialogPanel>
           <fieldset disabled={saving} className="space-y-5">
             {!connected ? (
-              <p className="text-sm text-destructive">Reconnect this environment before saving.</p>
+              <p className="text-sm text-destructive-foreground">
+                Reconnect this environment before saving.
+              </p>
             ) : null}
             <Field label="Runs on" htmlFor="scheduled-task-environment">
               <Select
@@ -1057,12 +1061,12 @@ function ScheduledTaskEditorDialog({
               </Select>
             </Field>
             {tasksQuery.error ? (
-              <p className="text-sm text-destructive" role="status">
+              <p className="text-sm text-destructive-foreground" role="status">
                 {tasksQuery.error}
               </p>
             ) : null}
             {editingTaskMissing ? (
-              <p className="text-xs text-destructive" role="status">
+              <p className="text-xs text-destructive-foreground" role="status">
                 This scheduled task no longer exists.
               </p>
             ) : null}

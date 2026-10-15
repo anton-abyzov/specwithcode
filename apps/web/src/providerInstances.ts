@@ -15,6 +15,7 @@
 import {
   DEFAULT_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
+  isLocalGitHubCopilotCommand,
   resolveProviderInstanceEnabled,
   type ModelSelection,
   type ProviderDriverKind,
@@ -57,6 +58,8 @@ export interface ProviderInstanceEntry {
   readonly acpRegistryAgentId?: string | undefined;
   /** Catalog-advertised icon URL. The renderer still applies the official-CDN allowlist. */
   readonly acpRegistryIconUrl?: string | undefined;
+  /** Where an ACP instance's agent comes from: the user's own command or a Studio-managed install. */
+  readonly acpSource?: "local" | "registry" | undefined;
   readonly continuationGroupKey?: string | undefined;
   readonly enabled: boolean;
   readonly installed: boolean;
@@ -191,7 +194,7 @@ export function applyProviderInstanceSettings(
     Record<string, { readonly enabled?: boolean } | undefined>
   >;
 
-  return entries.map((entry) => {
+  const applied = entries.map((entry) => {
     const explicitInstance = Object.hasOwn(settings.providerInstances, entry.instanceId)
       ? settings.providerInstances[entry.instanceId]
       : undefined;
@@ -210,14 +213,25 @@ export function applyProviderInstanceSettings(
       explicitInstance.config !== null && typeof explicitInstance.config === "object"
         ? (explicitInstance.config as Readonly<Record<string, unknown>>)
         : null;
-    if (config?.source === "local") {
-      return { ...entry, enabled, acpRegistryAgentId: undefined, acpRegistryIconUrl: undefined };
-    }
     const agentId = config?.agentId;
+    if (config?.source === "local") {
+      const copilot = isLocalGitHubCopilotCommand(
+        typeof agentId === "string" ? agentId : null,
+        typeof config.commandPath === "string" ? config.commandPath : null,
+      );
+      return {
+        ...entry,
+        enabled,
+        acpRegistryAgentId: copilot ? GITHUB_COPILOT_AGENT_ID : undefined,
+        acpRegistryIconUrl: undefined,
+        acpSource: "local" as const,
+      };
+    }
     const iconUrl = config?.registryIconUrl;
     return {
       ...entry,
       enabled,
+      acpSource: "registry" as const,
       ...(typeof agentId === "string" && agentId.trim()
         ? { acpRegistryAgentId: agentId.trim() }
         : {}),
@@ -225,6 +239,37 @@ export function applyProviderInstanceSettings(
         ? { acpRegistryIconUrl: iconUrl.trim() }
         : {}),
     };
+  });
+  return labelSharedAcpAgentSources(applied);
+}
+
+const GITHUB_COPILOT_AGENT_ID = "github-copilot-cli";
+const ACP_SOURCE_QUALIFIERS = {
+  local: { label: "your install", present: /\b(?:your|local|install(?:ed)?)\b/iu },
+  registry: { label: "Studio-managed", present: /\bmanaged\b/iu },
+} as const;
+
+/**
+ * Two enabled instances can run the same ACP agent, one from the user's own
+ * install and one Studio manages. Same glyph, near-identical names: say which
+ * is which unless the name already does.
+ */
+function labelSharedAcpAgentSources(
+  entries: ReadonlyArray<ProviderInstanceEntry>,
+): ReadonlyArray<ProviderInstanceEntry> {
+  const sourcesByAgent = new Map<string, Set<string>>();
+  for (const entry of entries) {
+    if (!entry.enabled || !entry.acpRegistryAgentId || !entry.acpSource) continue;
+    const sources = sourcesByAgent.get(entry.acpRegistryAgentId) ?? new Set<string>();
+    sources.add(entry.acpSource);
+    sourcesByAgent.set(entry.acpRegistryAgentId, sources);
+  }
+  return entries.map((entry) => {
+    if (!entry.enabled || !entry.acpRegistryAgentId || !entry.acpSource) return entry;
+    if ((sourcesByAgent.get(entry.acpRegistryAgentId)?.size ?? 0) < 2) return entry;
+    const qualifier = ACP_SOURCE_QUALIFIERS[entry.acpSource];
+    if (qualifier.present.test(entry.displayName)) return entry;
+    return { ...entry, displayName: `${entry.displayName} (${qualifier.label})` };
   });
 }
 

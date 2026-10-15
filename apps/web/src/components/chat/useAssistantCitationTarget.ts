@@ -31,7 +31,8 @@ export function useAssistantCitationTarget({
   viewport: HTMLElement | null;
   historyLoading: boolean;
   loadEarlier: CitationHistoryPage | null;
-  onExpandTurn: (runId: RunId) => void;
+  /** Opens whatever folds hide the cited message: its turn and any tool summary. */
+  onExpandTurn: (runId: RunId, toolActivityGroupId: string | null) => void;
   onManualNavigation: () => void;
 }) {
   const [ready, setReady] = useState<AssistantCitationTarget | null>(null);
@@ -119,7 +120,18 @@ export function useAssistantCitationTarget({
       (row) => row.kind === "message" && row.message.id === navigation.target.citation.messageId,
     );
     if (index < 0) {
-      if (source.message.runId) onExpandTurn(source.message.runId);
+      const toolActivity = rows.find(
+        (row) =>
+          row.kind === "tool-activity" &&
+          !row.expanded &&
+          row.noteMessageIds.includes(source.message.id),
+      );
+      if (source.message.runId) {
+        onExpandTurn(
+          source.message.runId,
+          toolActivity?.kind === "tool-activity" ? toolActivity.groupId : null,
+        );
+      }
       return;
     }
     if (listLoaded && listRef.current) setReady(navigation.target);

@@ -184,7 +184,7 @@ export function DevicePanel(props: {
       {operationError ? (
         <div
           role="alert"
-          className="flex items-start gap-2 border-b bg-destructive/5 px-3 py-2 text-xs text-destructive"
+          className="flex items-start gap-2 border-b bg-destructive/5 px-3 py-2 text-xs text-destructive-foreground"
         >
           <p className="min-w-0 flex-1 whitespace-pre-wrap break-words">{operationError}</p>
           <Button

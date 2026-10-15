@@ -28,6 +28,19 @@ export function isGitHubCopilotIcon(agentId?: string | null, icon?: string | nul
   );
 }
 
+/**
+ * A local command keeps Copilot branding only when it names GitHub's agent and
+ * the executable is Copilot itself, so a repointed command never inherits it.
+ */
+export function isLocalGitHubCopilotCommand(
+  agentId: string | null | undefined,
+  commandPath: string | null | undefined,
+): boolean {
+  if (agentId?.trim() !== "github-copilot-cli") return false;
+  const executable = commandPath?.trim().split(/[\\/]/u).pop()?.toLowerCase() ?? "";
+  return /^copilot(?:\.(?:exe|cmd|bat))?$/u.test(executable);
+}
+
 /** Derives the official Registry icon URL without trusting stored URL metadata. */
 export function officialAcpRegistryIconUrlForAgentId(
   agentId: string | null | undefined,

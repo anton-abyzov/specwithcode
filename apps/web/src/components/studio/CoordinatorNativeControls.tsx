@@ -114,7 +114,7 @@ export function CoordinatorNativeControls({
     <div className="space-y-4" data-coordinator-native-controls="" aria-busy={loading}>
       {error ? (
         <p
-          className="rounded-lg border border-destructive/25 bg-destructive/5 p-3 text-sm text-destructive"
+          className="rounded-lg border border-destructive/25 bg-destructive/5 p-3 text-sm text-destructive-foreground"
           role="alert"
         >
           {error}

@@ -344,7 +344,7 @@ export function showContextMenuFallback<T extends string>(
         const rowBase =
           "flex w-full cursor-default select-none items-center gap-2 rounded-sm px-2 py-1 text-left outline-none transition-colors sm:min-h-7 sm:text-sm min-h-8 text-base";
         button.className = isDisabled
-          ? `${rowBase} pointer-events-none cursor-not-allowed text-muted-foreground opacity-64`
+          ? `${rowBase} pointer-events-none cursor-not-allowed text-muted-foreground opacity-(--disabled-opacity)`
           : isLeafDestructive
             ? `${rowBase} text-destructive-foreground hover:bg-destructive/10 hover:text-destructive-foreground`
             : `${rowBase} text-foreground hover:bg-accent hover:text-accent-foreground`;

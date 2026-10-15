@@ -111,6 +111,12 @@ describe("isAutoSettlementCandidate", () => {
   it("excludes overridden, pinned, blocked, and working threads", () => {
     expect(ThreadSettlementService.isAutoSettlementCandidate(shell(), NOW_MS)).toBe(true);
     expect(
+      ThreadSettlementService.isAutoSettlementCandidate(
+        shell({ reportedBlocker: "Ship today or wait for the signer?" }),
+        NOW_MS,
+      ),
+    ).toBe(false);
+    expect(
       ThreadSettlementService.isAutoSettlementCandidate(shell({ archivedAt: at(-1) }), NOW_MS),
     ).toBe(false);
     expect(

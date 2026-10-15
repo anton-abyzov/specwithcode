@@ -45,7 +45,7 @@ function MobileClientRow({ device }: { readonly device: RelayClientDeviceRecord 
             {mobileClientPlatformLabel(device)}
           </p>
         </div>
-        <p className="shrink-0 text-2xs leading-4 text-muted-foreground/75">
+        <p className="shrink-0 text-2xs leading-4 text-muted-foreground">
           {mobileClientUpdatedAtLabel(device.updatedAt)}
         </p>
       </div>
@@ -56,7 +56,7 @@ function MobileClientRow({ device }: { readonly device: RelayClientDeviceRecord 
         />
         <MobileClientStatusBadge enabled={device.liveActivities.enabled} label="Live Activities" />
       </div>
-      <p className="mt-1.5 text-xs leading-4.5 text-muted-foreground/80">
+      <p className="mt-1.5 text-xs leading-4.5 text-muted-foreground">
         {mobileClientNotificationDetail(device)}
       </p>
     </ClerkUserProfileRow>

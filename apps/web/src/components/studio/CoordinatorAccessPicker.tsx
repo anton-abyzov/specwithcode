@@ -72,7 +72,7 @@ export function CoordinatorAccessPicker({
       {error ? (
         <button
           type="button"
-          className="text-destructive"
+          className="text-destructive-foreground"
           role="alert"
           onClick={() => void change(attemptedMode.current)}
           disabled={pending}

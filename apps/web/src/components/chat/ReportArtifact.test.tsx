@@ -10,7 +10,29 @@ vi.mock("../ui/dialog", () => ({
   DialogDescription: (props: { children: unknown }) => <div>{props.children as never}</div>,
 }));
 
+vi.mock("../files/projectFilesQueryState", () => ({
+  useProjectFileQuery: (_environmentId: string, _cwd: string, path: string) => ({
+    data: { contents: `contents of ${path}` },
+    error: null,
+    isPending: false,
+    isNotFile: false,
+    readError: null,
+    refresh: () => {},
+  }),
+}));
+vi.mock("../files/AttachmentFilePreview", () => ({
+  ReadOnlySourcePreview: (props: { name: string; text: string }) => (
+    <pre data-source={props.name}>{props.text}</pre>
+  ),
+}));
+const openFileInPanel = vi.fn();
+vi.mock("../../rightPanelStore", () => ({
+  useRightPanelStore: { getState: () => ({ openFile: openFileInPanel }) },
+}));
+
+import { use } from "react";
 import { ReportArtifactCard, type ReportSaveState } from "./ReportArtifact";
+import { ReportFileHostContext } from "./reportFileHost";
 
 const REPORT = [
   "# Review cycle 2",
@@ -134,6 +156,98 @@ describe("ReportArtifactCard", () => {
     act(() => button("Show in chat")!.props.onClick());
     expect(onShowInline).toHaveBeenCalledOnce();
     // The reader closes as the report opens in chat.
+    expect(renderer.root.findAll((node) => node.props["data-report-reader"] === "true")).toEqual(
+      [],
+    );
+  });
+  it("reads a labeled report as a document: properties, serif title, lead and sections", () => {
+    const labeled = [
+      "**Outcome:** Thread rows now show the harness first. Native threads read Claude Code.",
+      "",
+      "**Evidence:** commit `d7c074f0b` on `feat/x`. Screenshots at `a.png`. Tests: 262/262 pass.",
+      "",
+      "**Blockers:** none.",
+    ].join("\n");
+    let renderer!: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(
+        <ReportArtifactCard
+          text={labeled}
+          fallbackTitle="Show harness on thread rows"
+          save={save()}
+          renderMarkdown={(part) => <p data-part>{part}</p>}
+        >
+          <p>full body</p>
+        </ReportArtifactCard>,
+      );
+    });
+    const open = renderer.root.findAll(
+      (node) => node.type === "button" && node.props["aria-label"]?.startsWith("Open report"),
+    )[0]!;
+    act(() => open.props.onClick());
+    const json = JSON.stringify(renderer.toJSON());
+    expect(json).not.toContain("full body");
+    expect(json).toContain("Show harness on thread rows");
+    expect(json).toContain(
+      "Thread rows now show the harness first. Native threads read Claude Code.",
+    );
+    expect(json).toContain("Blockers");
+    expect(json).toContain('"None"');
+    const section = renderer.root.findAll(
+      (node) => node.type === "section" && node.props["data-report-section"] === "Evidence",
+    );
+    expect(section).toHaveLength(1);
+    expect(JSON.stringify(section[0]!.findAll((node) => node.type === "p")[0]!.children)).toContain(
+      "- Commit `d7c074f0b` on `feat/x`.\\n- Screenshots at `a.png`.",
+    );
+  });
+  it("opens a linked file beside the report, never behind the reader", () => {
+    const threadRef = { environmentId: "host-1", threadId: "thread-1" } as never;
+    function FileLink(props: { path: string }) {
+      const host = use(ReportFileHostContext);
+      return (
+        <button
+          type="button"
+          data-file-link={props.path}
+          onClick={() => host?.open({ threadRef, cwd: "/repo", path: props.path, line: 3 })}
+        >
+          {props.path}
+        </button>
+      );
+    }
+    let renderer!: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(
+        <ReportArtifactCard
+          text={"**Outcome:** done.\n\n**Evidence:** see the findings. They are long. Read all."}
+          fallbackTitle="Findings"
+          save={null}
+          renderMarkdown={() => <FileLink path="/tmp/rea/cds.css" />}
+        >
+          <p />
+        </ReportArtifactCard>,
+      );
+    });
+    const open = renderer.root.findAll(
+      (node) => node.type === "button" && node.props["aria-label"]?.startsWith("Open report"),
+    )[0]!;
+    act(() => open.props.onClick());
+    const link = renderer.root.findAll(
+      (node) => node.props["data-file-link"] === "/tmp/rea/cds.css",
+    )[0]!;
+    act(() => link.props.onClick());
+    const pane = renderer.root.findAll((node) => node.props["data-report-file-pane"] === "true");
+    expect(pane).toHaveLength(1);
+    expect(JSON.stringify(renderer.toJSON())).toContain("contents of /tmp/rea/cds.css");
+    expect(openFileInPanel).not.toHaveBeenCalled();
+
+    const toPanel = renderer.root.findAll(
+      (node) =>
+        node.type === "button" &&
+        node.findAll((child) => child.children.includes("Open in panel")).length > 0,
+    )[0]!;
+    act(() => toPanel.props.onClick());
+    expect(openFileInPanel).toHaveBeenCalledWith(threadRef, "/tmp/rea/cds.css", 3);
     expect(renderer.root.findAll((node) => node.props["data-report-reader"] === "true")).toEqual(
       [],
     );

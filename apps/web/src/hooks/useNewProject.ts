@@ -28,7 +28,8 @@ function errorMessage(error: unknown): string {
 
 /**
  * Starts a project in the chosen parent folder (or managed storage for Personal
- * and older callers). The server makes a new child folder with a README, an icon, and a first commit; this then
+ * and older callers). The server makes a new child folder with a README, an icon, and a first commit,
+ * or uses the chosen folder as-is when it is already a project; this then
  * opens a new thread draft in it. With `github`, it also publishes the
  * repository as private, without holding up the draft.
  *
@@ -110,20 +111,34 @@ export function useNewProject() {
         return false;
       }
 
-      const { projectId, workspaceRoot, commitError } = result.value;
+      const { projectId, workspaceRoot, commitError, existing } = result.value;
       // Confirm the actual folder, including any collision suffix.
       toastManager.add(
         stackedThreadToast(
-          commitError === undefined
-            ? { type: "success", title: input.kind === "personal" ? "Personal assistant ready" : `Created ${input.name}`, description: workspaceRoot }
-            : {
-                type: "warning",
-                title: `Created ${input.name} without a first commit`,
-                description: `${commitError} The project is in ${workspaceRoot}.`,
-              },
+          existing === true
+            ? {
+                type: "success",
+                title: `Opened ${input.name} in its existing folder`,
+                description: workspaceRoot,
+              }
+            : commitError === undefined
+              ? {
+                  type: "success",
+                  title:
+                    input.kind === "personal"
+                      ? "Personal assistant ready"
+                      : `Created ${input.name}`,
+                  description: workspaceRoot,
+                }
+              : {
+                  type: "warning",
+                  title: `Created ${input.name} without a first commit`,
+                  description: `${commitError} The project is in ${workspaceRoot}.`,
+                },
         ),
       );
-      if (input.kind !== "personal" && input.github) {
+      // An existing folder keeps its own remotes; publishing is for new repositories.
+      if (input.kind !== "personal" && input.github && existing !== true) {
         void publishToGitHub({
           environmentId: input.environmentId,
           workspaceRoot,

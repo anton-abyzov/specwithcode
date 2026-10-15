@@ -481,7 +481,14 @@ const LIVE_ACTIVITY_ROW_ID = "live-activity-row";
 
 export type MessagesTimelineRow = MessagesTimelineRowContent & {
   readonly continuesWorkLog?: boolean;
+  /** Shown inside an open "Used N tools" summary. */
+  readonly withinToolActivity?: boolean;
 };
+
+export interface ToolActivityCategory {
+  kind: ToolGroupSummaryKind;
+  label: string;
+}
 
 type MessagesTimelineRowContent =
   | {
@@ -536,6 +543,20 @@ type MessagesTimelineRowContent =
       toolIcon?: WorkLogEntry["toolIcon"];
       summaryToolIcon?: "browser" | "device" | "studio-code" | "pull-request";
       hasFailure: boolean;
+    }
+  | {
+      /** Folds a stretch of tool groups and the short narration between them. */
+      kind: "tool-activity";
+      id: string;
+      createdAt: string;
+      groupId: string;
+      expanded: boolean;
+      toolCount: number;
+      noteCount: number;
+      /** Narration the closed summary hides, so a citation can open it. */
+      noteMessageIds: string[];
+      failedCount: number;
+      categories: ToolActivityCategory[];
     }
   | {
       kind: "turn-fold";
@@ -1366,6 +1387,9 @@ export function deriveMessagesTimelineRows(input: {
       })
     : new Map<MessageId, number>();
   const nextRows: MessagesTimelineRow[] = [];
+  // Settled tool rows a "Used N tools" summary may fold, with the calls each stands for.
+  const foldableToolEntriesByRowId = new Map<string, ReadonlyArray<WorkLogEntry>>();
+  const foldableToolDetailRowIds = new Set<string>();
   const durationStartByMessageId = computeMessageDurationStart(
     timelineEntries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : [])),
   );
@@ -1670,6 +1694,7 @@ export function deriveMessagesTimelineRows(input: {
           workLogEntryIsToolLike(visibleGroupedEntries[0]!)
         ) {
           const singleEntry = visibleGroupedEntries[0]!;
+          foldableToolEntriesByRowId.set(timelineEntry.id, visibleGroupedEntries);
           nextRows.push({
             kind: "work",
             id: timelineEntry.id,
@@ -1711,7 +1736,11 @@ export function deriveMessagesTimelineRows(input: {
           const summaryToolIcon = usesSingleToolCallLabel
             ? resolveWorkEntryToolPresentation(singleEntry, "completed")?.icon
             : undefined;
-          if (!headerRepeatsItsOnlyTool(expanded, visibleGroupedEntries))
+          if (!headerRepeatsItsOnlyTool(expanded, visibleGroupedEntries)) {
+            foldableToolEntriesByRowId.set(
+              `work-toggle:${timelineEntry.id}`,
+              visibleGroupedEntries,
+            );
             nextRows.push({
               kind: "work-toggle",
               id: `work-toggle:${timelineEntry.id}`,
@@ -1733,10 +1762,15 @@ export function deriveMessagesTimelineRows(input: {
                 latestToolEntry !== undefined &&
                 workEntryDisplayIndicatesToolFailure(latestToolEntry),
             });
+          }
           if (expanded) {
-            nextRows.push(
-              expandedWorkGroupRow(groupId, timelineEntry.createdAt, visibleGroupedEntries),
+            const detailsRow = expandedWorkGroupRow(
+              groupId,
+              timelineEntry.createdAt,
+              visibleGroupedEntries,
             );
+            foldableToolDetailRowIds.add(detailsRow.id);
+            nextRows.push(detailsRow);
           }
         }
       }
@@ -1934,9 +1968,18 @@ export function deriveMessagesTimelineRows(input: {
     }
   }
 
-  const attached = attachTrailingToolGroupsToAssistant(
+  const trailingAttached = attachTrailingToolGroupsToAssistant(
     attachCreatedThreadSummaries(nextRows, timelineEntries),
   );
+  const attached =
+    detail === "verbose"
+      ? trailingAttached
+      : foldToolActivity(trailingAttached, {
+          entriesByRowId: foldableToolEntriesByRowId,
+          detailRowIds: foldableToolDetailRowIds,
+          terminalMessageIds: terminalAssistantMessageIds,
+          isExpanded: (groupId) => isDisclosed(input.expandedWorkGroupIds, groupId, detail),
+        });
   const result =
     detail === "verbose"
       ? attached
@@ -2002,12 +2045,128 @@ export function withTurnFoldEnds(
   return out;
 }
 
+/** Narration this long, or with code, is content rather than a step note. */
+const TOOL_ACTIVITY_NOTE_MAX_LENGTH = 500;
+
+function rowIsToolActivityNote(
+  row: MessagesTimelineRow,
+  terminalMessageIds: ReadonlySet<string>,
+): row is Extract<MessagesTimelineRow, { kind: "message" }> {
+  if (
+    row.kind !== "message" ||
+    terminalMessageIds.has(row.message.id) ||
+    row.message.role !== "assistant" ||
+    row.showAssistantMeta ||
+    row.message.streaming ||
+    (row.message.attachments?.length ?? 0) > 0
+  ) {
+    return false;
+  }
+  const text = row.message.text.trim();
+  return text.length <= TOOL_ACTIVITY_NOTE_MAX_LENGTH && !text.includes("```");
+}
+
+function toolActivityCategories(entries: ReadonlyArray<WorkLogEntry>): ToolActivityCategory[] {
+  const groups = new Map<string, WorkLogEntry[]>();
+  for (const entry of entries) {
+    const key = `${toolGroupSummaryKind([entry])}:${entry.toolSource?.key ?? ""}`;
+    const group = groups.get(key);
+    if (group) group.push(entry);
+    else groups.set(key, [entry]);
+  }
+  return [...groups.values()].map((group) => ({
+    kind: toolGroupSummaryKind(group),
+    label: summarizeToolGroup(group).summary,
+  }));
+}
+
+/**
+ * Settled work in one run often alternates short narration ("Checking the
+ * build") with tool groups. A stretch that starts and ends with tool rows and
+ * holds at least two of them folds into one "Used N tools" row; opening it
+ * shows the original rows, each with its own disclosure. Narration before and
+ * after the stretch, long messages and anything else break it.
+ */
+function foldToolActivity(
+  rows: ReadonlyArray<MessagesTimelineRow>,
+  options: {
+    entriesByRowId: ReadonlyMap<string, ReadonlyArray<WorkLogEntry>>;
+    detailRowIds: ReadonlySet<string>;
+    /** A turn's final reply stays visible even when tool rows follow it. */
+    terminalMessageIds: ReadonlySet<string>;
+    isExpanded: (groupId: string) => boolean;
+  },
+): MessagesTimelineRow[] {
+  const toolRunId = (row: MessagesTimelineRow) =>
+    options.entriesByRowId.get(row.id)?.[0]?.runId ?? null;
+  const isNote = (row: MessagesTimelineRow) =>
+    rowIsToolActivityNote(row, options.terminalMessageIds);
+  const out: MessagesTimelineRow[] = [];
+  let index = 0;
+  while (index < rows.length) {
+    const first = rows[index]!;
+    if (!options.entriesByRowId.has(first.id)) {
+      out.push(first);
+      index += 1;
+      continue;
+    }
+    const runId = toolRunId(first);
+    let cursor = index;
+    let end = index;
+    while (cursor < rows.length) {
+      const row = rows[cursor]!;
+      if (options.entriesByRowId.has(row.id) && toolRunId(row) === runId) {
+        cursor += 1;
+        while (cursor < rows.length && options.detailRowIds.has(rows[cursor]!.id)) cursor += 1;
+        end = cursor;
+        continue;
+      }
+      if (isNote(row) && row.kind === "message" && (row.message.runId ?? null) === runId) {
+        cursor += 1;
+        continue;
+      }
+      break;
+    }
+    const span = rows.slice(index, end);
+    const toolRows = span.filter((row) => options.entriesByRowId.has(row.id));
+    const tools = toolRows
+      .flatMap((row) => options.entriesByRowId.get(row.id)!)
+      .filter((entry) => entry.itemType !== "reasoning");
+    if (toolRows.length < 2 || tools.length < 2) {
+      out.push(...span);
+      index = end;
+      continue;
+    }
+    const notes = span.filter((row) => rowIsToolActivityNote(row, options.terminalMessageIds));
+    const groupId = `tool-activity:${first.id}`;
+    const expanded = options.isExpanded(groupId);
+    out.push({
+      kind: "tool-activity",
+      id: groupId,
+      createdAt: first.createdAt ?? tools[0]!.createdAt,
+      groupId,
+      expanded,
+      toolCount: tools.length,
+      noteCount: notes.length,
+      noteMessageIds: notes.map((row) => row.message.id),
+      failedCount: tools.filter(workEntryDisplayIndicatesToolFailure).length,
+      categories: toolActivityCategories(tools),
+    });
+    if (expanded) {
+      out.push(...span.map((row) => ({ ...row, withinToolActivity: true })));
+    }
+    index = end;
+  }
+  return out;
+}
+
 /** Adjacent work stays one visual list even when virtualization splits its groups. */
 function timelineRowIsWorkLog(row: MessagesTimelineRow | undefined): boolean {
   return (
     row !== undefined &&
     (row.kind === "work" ||
       row.kind === "work-toggle" ||
+      row.kind === "tool-activity" ||
       row.kind === "work-live" ||
       row.kind === "thinking")
   );
@@ -2197,6 +2356,7 @@ export function computeStableMessagesTimelineRows(
 /** Shallow field comparison per row variant — avoids deep equality cost. */
 function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean {
   if (a.kind !== b.kind || a.id !== b.id) return false;
+  if (a.withinToolActivity !== b.withinToolActivity) return false;
 
   switch (a.kind) {
     case "working":
@@ -2226,6 +2386,24 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.label === bf.label &&
         a.activitySummary === bf.activitySummary &&
         a.expanded === bf.expanded
+      );
+    }
+
+    case "tool-activity": {
+      const bt = b as typeof a;
+      return (
+        a.createdAt === bt.createdAt &&
+        a.expanded === bt.expanded &&
+        a.toolCount === bt.toolCount &&
+        a.noteCount === bt.noteCount &&
+        a.noteMessageIds.join() === bt.noteMessageIds.join() &&
+        a.failedCount === bt.failedCount &&
+        a.categories.length === bt.categories.length &&
+        a.categories.every(
+          (category, index) =>
+            category.kind === bt.categories[index]!.kind &&
+            category.label === bt.categories[index]!.label,
+        )
       );
     }
 

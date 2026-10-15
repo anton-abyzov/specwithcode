@@ -17,7 +17,7 @@ describe("unavailable settings", () => {
 
     expect(markup).toContain("Only available in the desktop app.");
     expect(markup).toContain("border-border/60");
-    expect(markup).toContain("[&amp;_h3]:opacity-64");
+    expect(markup).toContain("[&amp;_h3]:opacity-(--disabled-opacity)");
   });
 });
 

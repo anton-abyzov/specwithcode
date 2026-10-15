@@ -285,7 +285,9 @@ export function PullRequestThreadDialog({
             </div>
           ) : null}
 
-          {errorMessage ? <p className="text-destructive text-xs">{errorMessage}</p> : null}
+          {errorMessage ? (
+            <p className="text-destructive-foreground text-xs">{errorMessage}</p>
+          ) : null}
         </DialogPanel>
         <DialogFooter>
           <Button

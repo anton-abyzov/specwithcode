@@ -16,6 +16,7 @@ import type {
 import type { CoordinatorAttachment } from "./shell/CoordinatorAttachments";
 import { isImageAttachment, isFileAttachment } from "../../types";
 import { randomUUID } from "../../lib/utils";
+import { stripWorkerFollowUp } from "../../studio/projectCoordinatorMessageDisplay";
 
 /** The host resolves these paths before enforcing grants; the picker conservatively explains them. */
 export function coordinatorRequiresFolderGrants(
@@ -92,8 +93,7 @@ export function coordinatorRetryPrompt(
     !message.id.startsWith(`coordinator-send:${projectId}:`)
   )
     return message.text;
-  const prefix = `User follow-up from selected worker ${sourceThreadId}. Review that thread and decide whether to reuse it or route elsewhere.\n\n`;
-  return message.text.startsWith(prefix) ? message.text.slice(prefix.length) : message.text;
+  return stripWorkerFollowUp(message.text, sourceThreadId, message.id) ?? message.text;
 }
 
 /** Download through authenticated asset URLs, then mint fresh pending uploads in this host. */

@@ -1524,7 +1524,7 @@ function ImportStep({
         </div>
       </ScrollArea>
       {visibleImportError ? (
-        <p className="mt-3 text-sm text-destructive">{visibleImportError}</p>
+        <p className="mt-3 text-sm text-destructive-foreground">{visibleImportError}</p>
       ) : null}
       <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
         <Button variant="ghost-muted" disabled={isImporting} onClick={finishAfterImport}>

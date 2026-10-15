@@ -91,3 +91,13 @@ describe("thread report helpers", () => {
     expect(reportKeyFromFileName("spec.md")).toBeNull();
   });
 });
+
+describe("reportTitle for labeled reports", () => {
+  it("uses the fallback when the report opens with a labeled part", () => {
+    expect(
+      reportTitle("**Outcome:** Rows show the harness.\n\n**Blockers:** none.", "Harness"),
+    ).toBe("Harness");
+    expect(reportTitle("Outcome: Rows show the harness.", "Harness")).toBe("Harness");
+    expect(reportTitle("Rows show the harness.", "Harness")).toBe("Rows show the harness");
+  });
+});

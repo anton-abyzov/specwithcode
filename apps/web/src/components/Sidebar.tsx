@@ -503,7 +503,7 @@ function SidebarThreadTooltip({
           </div>
         ) : null}
         {branchMismatch ? (
-          <div className="flex min-w-0 items-start gap-2 text-warning">
+          <div className="flex min-w-0 items-start gap-2 text-warning-foreground">
             <CircleAlertIcon aria-hidden className="mt-0.5 size-3 shrink-0 stroke-current" />
             <div className="min-w-0 flex-1 wrap-break-word leading-5">
               You're currently checked out on another branch.
@@ -556,7 +556,9 @@ function SidebarThreadTooltip({
           <div
             className={cn(
               "flex min-w-0 items-center gap-2",
-              thread.runtime.lastErrorClass === "usage_limit" ? "text-warning" : "text-error",
+              thread.runtime.lastErrorClass === "usage_limit"
+                ? "text-warning-foreground"
+                : "text-error-foreground",
             )}
           >
             <CircleAlertIcon className="size-3 shrink-0 stroke-current" />
@@ -1304,7 +1306,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           icon: "working" as const,
           // No shimmer: a label that animates forever is noise in a sidebar
           // full of them (and repaints every vsync on high-refresh displays).
-          className: "text-info",
+          className: "text-info-foreground",
         }
       : status === "waiting"
         ? {
@@ -1330,25 +1332,25 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               ? {
                   label: "Limited",
                   icon: "failed" as const,
-                  className: "text-warning",
+                  className: "text-warning-foreground",
                 }
               : status === "failed"
                 ? {
                     label: "Failed",
                     icon: "failed" as const,
-                    className: "text-error",
+                    className: "text-error-foreground",
                   }
                 : isWoke
                   ? {
                       label: "Woke",
                       icon: "woke" as const,
-                      className: "text-warning",
+                      className: "text-warning-foreground",
                     }
                   : isUnread
                     ? {
                         label: "Done",
                         icon: "done" as const,
-                        className: "text-success",
+                        className: "text-success-foreground",
                       }
                     : null;
   const isWokeStatus = topStatus?.icon === "woke";
@@ -1586,7 +1588,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // content; surface is reserved for interaction (hover, multi-select, route).
   const rowSurfaceClassName = cn(
     "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-md text-left outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-    variantAction === "unsettle" && "[&:not(:hover):not(:focus-within)_*]:text-secondary-label/70",
+    variantAction === "unsettle" && "[&:not(:hover):not(:focus-within)_*]:text-secondary-label",
     props.isActive
       ? "bg-sidebar-row-active text-sidebar-foreground"
       : isSelected || props.sweepAction !== null
@@ -1594,7 +1596,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         : hasUnsentDraft
           ? cn(draftSurfaceClassName, "text-sidebar-foreground")
           : shouldRecede
-            ? "text-sidebar-muted-foreground/75 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+            ? "text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
             : "bg-transparent text-sidebar-foreground hover:bg-sidebar-row-hover",
     // Background work fades as a whole row, status label included, so it
     // takes less attention than rows that need a human (input, approval).
@@ -1686,12 +1688,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             : cn(
                 "truncate group-focus-within/sidebar-row:text-foreground group-hover/sidebar-row:text-foreground",
                 shouldRecede
-                  ? "text-secondary-label/70"
+                  ? "text-secondary-label"
                   : props.isActive || isWoke || status === "input"
                     ? "text-foreground"
                     : isUnread
                       ? "text-muted-foreground"
-                      : "text-secondary-label/70",
+                      : "text-secondary-label",
               ),
           isRegeneratingTitle && "opacity-55",
         )}
@@ -1767,7 +1769,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               type="button"
               aria-label="Unpin thread"
               onClick={handleUnpinClick}
-              className="group/unpin inline-flex cursor-pointer items-center rounded-sm text-muted-foreground/65 outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              className="group/unpin inline-flex cursor-pointer items-center rounded-sm text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
             />
           }
         >
@@ -1785,11 +1787,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         <TooltipPopup>Unpin thread</TooltipPopup>
       </Tooltip>
     ) : (
-      <PinIcon
-        aria-label="Pinned"
-        role="img"
-        className="size-3 shrink-0 text-muted-foreground/65"
-      />
+      <PinIcon aria-label="Pinned" role="img" className="size-3 shrink-0 text-muted-foreground" />
     )
   ) : null;
 
@@ -2168,7 +2166,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               {thread.branch ? (
                 <>
                   <ThreadWorktreeIndicator thread={thread} />
-                  <span className="flex min-w-0 flex-1 text-muted-foreground/40">
+                  <span className="flex min-w-0 flex-1 text-muted-foreground">
                     <MiddleTruncate value={thread.branch} showTitle={false} />
                   </span>
                 </>
@@ -2188,7 +2186,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
               >
                 {isRemote ? (
-                  <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
+                  <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground">
                     <EnvironmentMachineIcon
                       aria-hidden
                       kind={props.environmentMachine}
@@ -2327,7 +2325,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
                 "flex min-h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1 text-left text-sm outline-none",
                 props.isHighlighted || props.isRouteActive
                   ? "bg-sidebar-row-active text-sidebar-foreground"
-                  : "text-sidebar-muted-foreground/75 hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
+                  : "text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
                 isFileDragOver && "ring-1 ring-inset ring-primary/70",
                 isFileDragOver && !props.isRouteActive && "bg-sidebar-row-hover",
               )}
@@ -2340,7 +2338,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
           <span className="flex min-w-0 flex-1 flex-col">
             <span className="flex min-w-0 items-center gap-2.5">
               <span className="min-w-0 flex-1 truncate">{thread.title}</span>
-              <span className="shrink-0 text-xs text-muted-foreground/55 tabular-nums">
+              <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
                 {threadTimeLabel(thread)}
               </span>
             </span>
@@ -5601,7 +5599,7 @@ export default function Sidebar() {
                         <button
                           type="button"
                           onClick={showMoreSettled}
-                          className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground/55 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+                          className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
                         >
                           <PlusIcon aria-hidden className="size-4 shrink-0" />
                           Show {Math.min(hiddenSettledCount, SETTLED_TAIL_PAGE_COUNT)} more
@@ -5622,7 +5620,7 @@ export default function Sidebar() {
             snoozedThreads.length +
             settledThreads.length ===
             0 ? (
-            <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">
+            <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground">
               {projects.length === 0 ? (
                 <>
                   <span>No projects yet</span>

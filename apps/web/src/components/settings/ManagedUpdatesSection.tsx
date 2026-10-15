@@ -221,7 +221,7 @@ export function ManagedUpdatesSection({
         }}
       />
       {failed && (
-        <p role="alert" className="mt-1 text-xs text-destructive">
+        <p role="alert" className="mt-1 text-xs text-destructive-foreground">
           Update request was refused or failed. Refresh status and try again; changed permissions
           require fresh approval.
         </p>

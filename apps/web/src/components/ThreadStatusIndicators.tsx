@@ -807,7 +807,7 @@ export function ThreadWorktreeIndicator({
           />
         }
       >
-        <FolderGit2Icon className="size-3 text-muted-foreground/40" />
+        <FolderGit2Icon className="size-3 text-muted-foreground" />
       </TooltipTrigger>
       <TooltipPopup side="top">{tooltip}</TooltipPopup>
     </Tooltip>
@@ -1031,10 +1031,7 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
               />
             }
           >
-            <EnvironmentMachineIcon
-              kind={remoteMachine}
-              className="size-3 text-muted-foreground/60"
-            />
+            <EnvironmentMachineIcon kind={remoteMachine} className="size-3 text-muted-foreground" />
           </TooltipTrigger>
           <TooltipPopup side="top">{threadEnvironmentLabel}</TooltipPopup>
         </Tooltip>

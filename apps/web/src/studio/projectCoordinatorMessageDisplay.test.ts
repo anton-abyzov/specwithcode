@@ -3,6 +3,7 @@ import { ThreadId } from "@specweave-studio/contracts";
 import {
   projectCoordinatorMessageDisplay,
   projectMessageAuthor,
+  isWorkerCompletionWake,
   projectReportMessageIds,
   projectSystemNotice,
   routedRepliesForThread,
@@ -35,6 +36,23 @@ describe("coordinator follow-up presentation", () => {
       sourceThread: worker,
     });
     expect(stored.text).toBe(prefix + prefix + original);
+  });
+  it("removes the prefix that names the message for forwarding", () => {
+    const named = `User follow-up from selected worker worker, message ${message.id}. Review that thread and decide whether to reuse it or route elsewhere.\n\n`;
+    expect(
+      projectCoordinatorMessageDisplay({ ...message, text: named + original }, project, [worker]),
+    ).toEqual({ text: original, sourceThread: worker });
+    // Another message's ID is not this message's wrapper.
+    expect(
+      projectCoordinatorMessageDisplay(
+        {
+          ...message,
+          text: named.replace(message.id, "coordinator-send:project:other") + original,
+        },
+        project,
+        [worker],
+      ).sourceThread,
+    ).toBeNull();
   });
   it("accepts attachment-bound receipt IDs and preserves whitespace", () => {
     expect(
@@ -88,26 +106,33 @@ describe("coordinator message author", () => {
 });
 
 describe("coordinator system notices", () => {
-  const tip = {
-    id: ThreadId.make("thread:delegated-task:command%3Amcp-1"),
-    title: "Write tip.py CLI",
-  };
-  it("names the worker that reported back instead of showing task_status instructions", () => {
+  it("hides a worker's completion wake; its thread status and a notification announce it", () => {
     expect(
-      projectSystemNotice(
-        { delegatedCompletion: { taskIds: ["node:delegated-task:command%3Amcp-1"] } },
-        [tip],
-      ),
-    ).toBe(`[Write tip.py CLI](studio://thread/${encodeURIComponent(tip.id)}) reported back.`);
+      isWorkerCompletionWake({
+        delegatedCompletion: { taskIds: ["node:delegated-task:command%3Amcp-1"] },
+      }),
+    ).toBe(true);
+    expect(isWorkerCompletionWake({ delegatedCompletion: { taskIds: [] } })).toBe(false);
+    expect(isWorkerCompletionWake({})).toBe(false);
     expect(
-      projectSystemNotice({ delegatedCompletion: { taskIds: ["node:delegated-task:gone"] } }, [
-        tip,
-      ]),
-    ).toBe("A worker reported back.");
+      isWorkerCompletionWake({
+        notification: {
+          summary: "[Fix flaky test](studio://thread/env-m1/t1) on Studio B reported back.",
+        },
+      }),
+    ).toBe(true);
     expect(
-      projectSystemNotice({ notification: { summary: "Background activity updated" } }, []),
-    ).toBe("Background activity updated");
-    expect(projectSystemNotice({}, [tip])).toBeNull();
+      isWorkerCompletionWake({
+        notification: { summary: "Lost contact with [T](studio://thread/e/t) on B." },
+      }),
+    ).toBe(false);
+  });
+
+  it("shows a background notification's summary", () => {
+    expect(projectSystemNotice({ notification: { summary: "Background activity updated" } })).toBe(
+      "Background activity updated",
+    );
+    expect(projectSystemNotice({})).toBeNull();
   });
 });
 

@@ -407,7 +407,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                 <div className="px-2 pt-1.5 pb-1 font-medium text-muted-foreground text-xs">
                   {descriptor.label}
                 </div>
-                <div className="px-2 pb-1.5 text-muted-foreground/80 text-xs">{value}</div>
+                <div className="px-2 pb-1.5 text-muted-foreground text-xs">{value}</div>
               </MenuGroup>
             </div>
           );
@@ -432,7 +432,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                 {descriptor.label}
               </div>
               {ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id ? (
-                <div className="px-2 pb-1.5 text-muted-foreground/80 text-xs">
+                <div className="px-2 pb-1.5 text-muted-foreground text-xs">
                   Your prompt contains &quot;ultrathink&quot; in the text. Remove it to change this
                   option.
                 </div>
@@ -466,7 +466,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                         </span>
                       </span>
                       {option.description ? (
-                        <span className="max-w-56 text-pretty text-muted-foreground/80 text-xs">
+                        <span className="max-w-56 text-pretty text-muted-foreground text-xs">
                           {option.description}
                         </span>
                       ) : null}

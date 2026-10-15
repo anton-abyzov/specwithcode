@@ -366,7 +366,9 @@ function PublishStep({
           onCheckedChange={onPublishAgentActivityChange}
         />
       </div>
-      {operationError ? <p className="text-xs text-destructive">{operationError}</p> : null}
+      {operationError ? (
+        <p className="text-xs text-destructive-foreground">{operationError}</p>
+      ) : null}
     </div>
   );
 }

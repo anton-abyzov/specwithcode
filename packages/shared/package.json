@@ -35,6 +35,10 @@
       "types": "./src/projectFavicon.ts",
       "import": "./src/projectFavicon.ts"
     },
+    "./effortLevel": {
+      "types": "./src/effortLevel.ts",
+      "import": "./src/effortLevel.ts"
+    },
     "./model": {
       "types": "./src/model.ts",
       "import": "./src/model.ts"
@@ -422,6 +426,10 @@
     "./studioIdentity": {
       "types": "./src/studioIdentity.ts",
       "import": "./src/studioIdentity.ts"
+    },
+    "./reportDocument": {
+      "types": "./src/reportDocument.ts",
+      "import": "./src/reportDocument.ts"
     },
     "./threadReport": {
       "types": "./src/threadReport.ts",

@@ -1,10 +1,11 @@
 import { presentThreadShell } from "@specweave-studio/client-runtime/state/models";
 import { useAtomValue } from "@effect/atom-react";
 import { useParams } from "@tanstack/react-router";
-import type {
-  EnvironmentId,
-  OrchestrationV2ThreadShell,
-  ThreadId,
+import {
+  isProviderNativeSubagentThread,
+  type EnvironmentId,
+  type OrchestrationV2ThreadShell,
+  type ThreadId,
 } from "@specweave-studio/contracts";
 import * as Option from "effect/Option";
 import {
@@ -173,7 +174,10 @@ function EnvironmentNotifications({
     }
     const next = new Map<ThreadId, NotificationState>();
     for (const rawThread of threads) {
-      if (rawThread.lineage.relationshipToParent === "subagent") continue;
+      // A provider's own subagents are part of their parent's turn. A worker a
+      // coordinator delegated is its own thread: its status and this alert
+      // tell the user it finished, not the coordinator.
+      if (isProviderNativeSubagentThread(rawThread)) continue;
       const prior = previous.current.get(rawThread.id);
       // The same object cannot produce a new notification.
       if (prior?.raw === rawThread) {

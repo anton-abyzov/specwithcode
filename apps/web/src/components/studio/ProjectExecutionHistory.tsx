@@ -18,26 +18,30 @@ export function ProjectExecutionHistory({
   scopes: readonly ProjectExecutionScope[];
 }) {
   if (!project.workspaceSettings?.logicalProject) return null;
+  // A linked checkout that never ran a coordinator has no history to hand over.
   const predecessors = scopes.filter(
-    (scope) => scope.environmentId !== project.environmentId || scope.projectId !== project.id,
+    (scope) =>
+      scope.coordinatorThreadId &&
+      (scope.environmentId !== project.environmentId || scope.projectId !== project.id),
   );
+  if (predecessors.length === 0) return null;
   return (
     <section className="project-notice" aria-label="Coordinator handoff history">
       <p>
-        One project across machines. Each handoff continues in a fresh native session using retained
-        messages, project context and a committed Git checkpoint.
+        Continued from another machine. This session started fresh with the retained messages,
+        project context and a committed Git checkpoint.
       </p>
+      {predecessors.map((scope) => (
+        <HistorySegment key={`${scope.environmentId}:${scope.projectId}`} scope={scope} />
+      ))}
       <details>
-        <summary>Continuity limits</summary>
+        <summary>What a handoff does not move</summary>
         <p>
-          Native provider sessions, live processes, credentials and uncommitted files are not moved.
+          Native provider sessions, live processes, credentials and uncommitted files stay behind.
           An offline machine may have newer history that is unavailable here. Workers remain on
           their own machines.
         </p>
       </details>
-      {predecessors.map((scope) => (
-        <HistorySegment key={`${scope.environmentId}:${scope.projectId}`} scope={scope} />
-      ))}
     </section>
   );
 }

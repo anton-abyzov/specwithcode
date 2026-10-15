@@ -182,3 +182,16 @@ it("does not invent handoff history for an unlinked legacy project", async () =>
   expect(container.textContent).toBe("");
   expect(state.projection).not.toHaveBeenCalled();
 });
+
+it("stays hidden for a linked project until it has handoff history", async () => {
+  await act(async () =>
+    root.render(
+      <ProjectExecutionHistory
+        project={project}
+        members={[]}
+        scopes={[scopes[0]!, { ...scopes[1]!, coordinatorThreadId: null }]}
+      />,
+    ),
+  );
+  expect(container.textContent).toBe("");
+});

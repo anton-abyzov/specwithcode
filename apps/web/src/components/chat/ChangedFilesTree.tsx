@@ -185,15 +185,15 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
             <ChevronRightIcon
               aria-hidden="true"
               className={cn(
-                "size-3.5 shrink-0 text-muted-foreground/70 transition-transform group-hover:text-foreground/80",
+                "size-3.5 shrink-0 text-muted-foreground transition-transform group-hover:text-foreground/80",
                 isExpanded && "rotate-90",
               )}
             />
             <MorphIcon
-              className="size-3.5 shrink-0 text-muted-foreground/75"
+              className="size-3.5 shrink-0 text-muted-foreground"
               icon={isExpanded ? Folder : FolderClosed}
             />
-            <span className="truncate font-mono text-2xs text-muted-foreground/90 group-hover:text-foreground/90">
+            <span className="truncate font-mono text-2xs text-muted-foreground group-hover:text-foreground/90">
               {node.name}
             </span>
             {hasNonZeroStat(node.stat) && (
@@ -232,7 +232,7 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
           pathValue={node.path}
           kind="file"
           theme={resolvedTheme}
-          className="size-3.5 text-muted-foreground/70"
+          className="size-3.5 text-muted-foreground"
         />
         <span className="flex min-w-0 font-mono text-xs text-foreground/85 group-hover:text-foreground">
           <MiddleTruncate value={node.name} />

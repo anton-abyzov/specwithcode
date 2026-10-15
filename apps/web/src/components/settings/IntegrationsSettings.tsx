@@ -719,7 +719,7 @@ function DeviceIntegrationControls({
           ) : null}
         </div>
         {updateError?.tool === tool ? (
-          <p role="alert" className="text-xs text-destructive">
+          <p role="alert" className="text-xs text-destructive-foreground">
             {updateError.message}
           </p>
         ) : null}
@@ -1274,12 +1274,12 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                 {builtIn ? (
                   // Dimmed here rather than on the table: a wrapper-level dim
                   // stacks with the rename field's and the row menu button's
-                  // own, landing them near 0.41 while every other disabled
-                  // control in the block sits at 0.64.
+                  // own, while every other disabled control in the block
+                  // sits at --disabled-opacity.
                   <span
                     className={cn(
                       "truncate text-sm text-foreground",
-                      profileWritesDisabled && "opacity-64",
+                      profileWritesDisabled && "opacity-(--disabled-opacity)",
                     )}
                   >
                     {profile.name}
@@ -1297,14 +1297,15 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                     onCommit={(next) => renameProfile(profile.id, next)}
                   />
                 )}
-                {/* Dimmed with the rest of the row, whose controls are all disabled. */}
+                {/* Status labels stay at full strength: dimming a filled badge
+                    drops its text below 4.5:1. */}
                 {isDefault ? (
-                  <span className={cn("flex", profileWritesDisabled && "opacity-64")}>
+                  <span className="flex">
                     <Badge>Default</Badge>
                   </span>
                 ) : null}
                 {isAgentProfile ? (
-                  <span className={cn("flex", profileWritesDisabled && "opacity-64")}>
+                  <span className="flex">
                     <Badge variant="outline">Agents</Badge>
                   </span>
                 ) : null}
@@ -1402,7 +1403,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
               open until you close them; server browser tabs close now.
             </AlertDialogDescription>
             {profileRemovalError ? (
-              <p aria-live="polite" className="text-sm text-destructive">
+              <p aria-live="polite" className="text-sm text-destructive-foreground">
                 {profileRemovalError}
               </p>
             ) : null}

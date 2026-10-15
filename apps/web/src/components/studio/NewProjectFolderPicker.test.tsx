@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId } from "@specweave-studio/contracts";
-import { NewProjectFolderPicker } from "./NewProjectFolderPicker";
+import { NewProjectFolderPicker, parentFolderOf } from "./NewProjectFolderPicker";
 import { useProjectFolderChoice } from "../../hooks/useProjectFolderChoice";
 const state = vi.hoisted(() => ({
   allowed: true,
@@ -30,7 +30,10 @@ vi.mock("../../state/query", () => ({
     data: input
       ? {
           parentPath: input.input.partialPath === "~/" ? "/Users/test" : "/Users/test/Projects",
-          entries: [{ name: "Projects", fullPath: "/Users/test/Projects" }],
+          entries: [
+            { name: ".config", fullPath: "/Users/test/.config" },
+            { name: "Projects", fullPath: "/Users/test/Projects" },
+          ],
         }
       : null,
   }),
@@ -43,6 +46,7 @@ beforeEach(() => {
   state.pending = false;
   state.error = null;
   state.requests = [];
+  localStorage.clear();
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -142,4 +146,103 @@ it("clears an explicit selection for a new creation flow", async () => {
   expect(container.querySelector("output")!.textContent).toBe("/Users/test");
   await act(async () => button("Start again").click());
   expect(container.querySelector("output")!.textContent).toBe("unselected");
+});
+
+it("keeps each machine's folder when switching machines and back", async () => {
+  function Fixture({ id }: { id: string }) {
+    const choice = useProjectFolderChoice(EnvironmentId.make(id), false);
+    return (
+      <>
+        <output>{choice.path ?? "unselected"}</output>
+        {choice.picker}
+      </>
+    );
+  }
+  await act(async () => root.render(<Fixture id="m1" />));
+  await act(async () => button("Use this folder").click());
+  await act(async () => root.render(<Fixture id="m3" />));
+  expect(container.querySelector("output")!.textContent).toBe("unselected");
+  await act(async () => root.render(<Fixture id="m1" />));
+  expect(container.querySelector("output")!.textContent).toBe("/Users/test");
+});
+
+it("offers the last chosen folder again when asked to remember", async () => {
+  function Fixture() {
+    const choice = useProjectFolderChoice(machine, false, { remember: true });
+    return (
+      <output>
+        {choice.path ?? "unselected"}
+        {choice.picker}
+      </output>
+    );
+  }
+  await act(async () => root.render(<Fixture />));
+  await act(async () => button("Use this folder").click());
+  await act(async () => root.unmount());
+  root = createRoot(container);
+  await act(async () => root.render(<Fixture />));
+  expect(container.querySelector("output")!.textContent).toContain("/Users/test");
+  expect(button("Change")).toBeDefined();
+});
+
+it("hides dot folders until asked and goes up without ../ paths", async () => {
+  await act(async () =>
+    root.render(
+      <NewProjectFolderPicker
+        environmentId={machine}
+        selectedPath={null}
+        disabled={false}
+        onSelect={vi.fn()}
+      />,
+    ),
+  );
+  expect(button(".config")).toBeUndefined();
+  const toggle = container.querySelector<HTMLInputElement>("input[type=checkbox]")!;
+  await act(async () => toggle.click());
+  expect(button(".config")).toBeDefined();
+  await act(async () => button("Up one folder").click());
+  expect(state.requests.at(-1).input.partialPath).toBe("/Users/");
+  expect(parentFolderOf("/Users/test/Alpha/")).toBe("/Users/test");
+  expect(parentFolderOf("/Users")).toBe("/");
+  expect(parentFolderOf("/")).toBeNull();
+  expect(parentFolderOf("C:\\Users")).toBe("C:\\");
+});
+
+it("reopens Change at the chosen folder and offers the default folder", async () => {
+  const onSelect = vi.fn();
+  await act(async () =>
+    root.render(
+      <NewProjectFolderPicker
+        environmentId={machine}
+        selectedPath="/Users/test/Projects"
+        defaultPath="/Users/test/Studio"
+        disabled={false}
+        onSelect={onSelect}
+      />,
+    ),
+  );
+  await act(async () => button("Change").click());
+  expect(state.requests.at(-1).input.partialPath).toBe("/Users/test/Projects/");
+  await act(async () => button("Use default folder").click());
+  expect(onSelect).toHaveBeenCalledWith("/Users/test/Studio");
+});
+
+it("chooses a folder with the system dialog when it is offered", async () => {
+  const onSelect = vi.fn();
+  const pick = vi.fn(async () => "/Users/test/Code");
+  await act(async () =>
+    root.render(
+      <NewProjectFolderPicker
+        environmentId={machine}
+        selectedPath={null}
+        nativePickerLabel="Choose in Finder…"
+        disabled={false}
+        onSelect={onSelect}
+        onPickNatively={pick}
+      />,
+    ),
+  );
+  await act(async () => button("Choose in Finder…").click());
+  expect(pick).toHaveBeenCalledWith("/Users/test");
+  expect(onSelect).toHaveBeenCalledWith("/Users/test/Code");
 });

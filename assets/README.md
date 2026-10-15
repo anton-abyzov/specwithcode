@@ -1,11 +1,11 @@
 # Brand icons
 
-The SpecWithCode icons come from two masters in `brand/`:
+The SpecWithCode icons come from two vector masters in `brand/`:
 
-- `brand/specwithcode-icon.png`: the 1024px full-bleed app icon artwork, a woven ribbon S around code brackets on midnight navy.
-- `brand/specweave-mark.svg`: the flat woven-S mark shared with spec-weave.com, used for favicons, `prod/logo.svg` and the in-app marks.
+- `brand/specwithcode-mark.svg`: the page-and-prompt mark, a white spec page with a folded corner and a `>_` prompt. Every icon puts it on an indigo `#5B6CFF` tile; the prompt is ink `#0B1020` and the fold `#AAACB2`.
+- `brand/specwithcode-mark-silhouette.svg`: the same page as one white shape with the prompt cut out, for Android's monochrome and notification icons.
 
-`python3 scripts/export-studio-icons.py` (Pillow and `rsvg-convert`) writes every tracked PNG, ICO and WebP icon from them: the macOS and Linux icons on the classic macOS grid (an 824px continuous-corner body inset 100px with a soft shadow), the full-bleed iOS icons and apple-touch icons, Windows ICOs (the mark on its tile at 16-32px), the favicons, `prod/logo.svg` with its copies, and the `text.svg` layer of the three Icon Composer projects. Change a master and rerun the script; do not edit the outputs by hand. All three variants share the same artwork.
+`python3 scripts/export-studio-icons.py` (Pillow and `rsvg-convert`) writes every tracked PNG, ICO and WebP icon from them, rendering the vectors at each target size: the macOS and Linux icons on the classic macOS grid (an 824px continuous-corner body inset 100px with a soft shadow), the full-bleed iOS icons and apple-touch icons, Windows ICOs (the mark on its tile at 16-32px), the favicons, `prod/logo.svg` with its copies, and the `text.svg` layer of the three Icon Composer projects. Change a master and rerun the script; do not edit the outputs by hand. All three variants share the same artwork.
 
 ## Icon Composer projects
 
@@ -16,13 +16,13 @@ The SpecWithCode icons come from two masters in `brand/`:
 Android masks the central 72dp of a 108dp adaptive canvas, and the Android 12+ splash screen masks
 the central two thirds of a 288dp canvas, so the Icon Composer exports cannot be used directly:
 their rounded-square silhouette gets framed again and the mark is cropped. The Android artwork
-is instead rendered by `vp run icons:export:android` from `brand/specweave-mark.svg`, without
-a tile, and from the Icon Composer background layers:
+is instead rendered by `vp run icons:export:android` from `brand/specwithcode-mark.svg` and
+`brand/specwithcode-mark-silhouette.svg`, without a tile, and from the Icon Composer background layers:
 
 - `apps/mobile/assets/android-icon-foreground.png`: the shared transparent mark at 40% of the
   108dp canvas, so that it stays inside the safe zone
 - `apps/mobile/assets/android-icon-background-dev.png` and `-nightly.png`: full-bleed variant
-  artwork (blueprint grid; night sky and clouds). Production uses a solid color.
+  artwork (blueprint grid; night sky and clouds). Production uses the solid indigo `#5B6CFF`.
 - `apps/mobile/assets/android-splash-icon-*.png`: the two layers composed into one 288dp image, so
   the splash mask reproduces the launcher icon's framing.
 - `apps/mobile/assets/android-icon-mark.png`: the mark as a white silhouette at 44% of the canvas,

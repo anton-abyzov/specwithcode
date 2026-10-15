@@ -108,7 +108,7 @@
   border-radius: 7px;
   padding: 6px 9px;
   &:disabled {
-    opacity: 0.5;
+    opacity: var(--disabled-opacity);
     cursor: not-allowed;
   }
   &:focus-visible {
@@ -213,7 +213,8 @@
   }
 }
 
-@utility project-notice {
+/* A worker completion tucked under the coordinator message it follows. */
+@utility project-inline-notice {
   margin: -16px 0 24px;
   font-size: 12px;
   color: var(--desk-muted);
@@ -301,7 +302,7 @@
     width: 16px;
   }
   & [role="alert"] {
-    color: var(--destructive);
+    color: var(--destructive-foreground);
     padding-bottom: 8px;
   }
   @media (max-width: 760px) {
@@ -634,7 +635,9 @@
   }
   & > nav button[aria-current="page"] {
     background: var(--desk-moss-soft);
-    color: var(--desk-moss);
+    /* The accent alone is ~4.3:1 on its tint; pulling it toward the ink
+       darkens it in light and lightens it in dark. */
+    color: color-mix(in oklab, var(--desk-moss) 80%, var(--desk-ink));
     font-weight: 600;
   }
   @media (max-width: 760px) {
@@ -736,7 +739,7 @@
   }
   &:disabled {
     cursor: default;
-    opacity: 0.6;
+    opacity: var(--disabled-opacity);
   }
 }
 
@@ -812,7 +815,7 @@
   border: 1px solid color-mix(in srgb, var(--destructive) 40%, transparent);
   border-radius: 10px;
   & h3 {
-    color: var(--destructive);
+    color: var(--destructive-foreground);
     font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.07em;
@@ -835,13 +838,13 @@
 }
 
 @utility project-danger {
-  background: var(--destructive) !important;
-  color: var(--destructive-foreground) !important;
+  background: var(--destructive-solid) !important;
+  color: var(--destructive-solid-foreground) !important;
   padding: 9px 12px !important;
 }
 
 @utility project-danger-text {
-  color: var(--destructive);
+  color: var(--destructive-foreground);
 }
 
 @utility project-settings-footer {

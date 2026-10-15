@@ -370,7 +370,7 @@ export function QueuedRunsControl({
                     {item.pending ? (
                       <Clock3Icon
                         aria-label="Saving queued message"
-                        className="size-3 shrink-0 text-muted-foreground/60"
+                        className="size-3 shrink-0 text-muted-foreground"
                       />
                     ) : null}
                     {item.thumbnails.length > 0 ? (

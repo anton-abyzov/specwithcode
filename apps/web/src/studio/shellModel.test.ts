@@ -72,14 +72,14 @@ describe("model and provider names", () => {
       ),
     ).toBe("Copilot");
     expect(providerShortLabel({ driverKind: "claudeAgent", displayName: "Work" }, "work")).toBe(
-      "Claude",
+      "Claude Code",
     );
     expect(providerShortLabel({ driverKind: "codex", displayName: "Codex 2" }, "codex2")).toBe(
       "Codex",
     );
   });
   it("still names a provider whose host has not answered yet", () => {
-    expect(providerShortLabel(null, "claudeAgent")).toBe("Claude");
+    expect(providerShortLabel(null, "claudeAgent")).toBe("Claude Code");
     expect(providerShortLabel(null, "grok")).toBe("Grok");
     expect(providerShortLabel(null, "team-a")).toBe("team-a");
   });
@@ -90,12 +90,12 @@ describe("model and provider names", () => {
       models: [{ slug: "claude-opus-5-5", name: "Claude Opus 5.5" }],
     };
     expect(modelLabel(claude, "claudeAgent", "claude-opus-5-5")).toEqual({
-      provider: "Claude",
+      provider: "Claude Code",
       model: "Opus 5.5",
-      full: "Claude Opus 5.5",
+      full: "Claude Code · Opus 5.5",
     });
     expect(modelLabel(null, "grok", "grok-code-fast-2").model).toBe("Code Fast 2");
-    expect(modelLabel(null, "codex", "gpt-6-astra").full).toBe("Codex GPT-6 Astra");
+    expect(modelLabel(null, "codex", "gpt-6-astra").full).toBe("Codex · GPT-6 Astra");
     // A model named only for its provider keeps its name.
     expect(modelLabel(null, "grok", "grok").model).toBe("Grok");
     expect(modelLabel(null, "grok", "grok-5")).toEqual({
@@ -103,6 +103,24 @@ describe("model and provider names", () => {
       model: "Grok 5",
       full: "Grok 5",
     });
+  });
+  it("names the harness apart from the model's maker", () => {
+    const copilot = {
+      driverKind: "acpRegistry",
+      displayName: "GitHub Copilot",
+      acpRegistryAgentId: "copilot",
+      models: [{ slug: "claude-opus-5.5", name: "Claude Opus 5.5" }],
+    };
+    expect(modelLabel(copilot, "copilot-0889", "claude-opus-5.5")).toEqual({
+      provider: "Copilot",
+      model: "Claude Opus 5.5",
+      full: "Copilot · Claude Opus 5.5",
+    });
+    // Before the host's catalogue answers, the slug alone still names the maker.
+    expect(modelLabel(null, "copilot-0889", "claude-opus-5.5").full).toBe(
+      "Copilot · Claude Opus 5.5",
+    );
+    expect(modelLabel(null, "claudeAgent", "claude-opus-5-5").full).toBe("Claude Code · Opus 5.5");
   });
 });
 
@@ -416,13 +434,33 @@ describe("a project's Threads pane", () => {
   });
 });
 
-
 describe("resolved historical failures", () => {
-  it.each(["usage_limit", "provider_error"])("removes %s attention and status wording", (lastErrorClass) => {
-    const resolved = thread({ settledOverride: "settled", runtime: { status: "failed", lastErrorClass } as EnvironmentThreadShell["runtime"] });
-    expect(waitingCount([resolved])).toBe(0);
-    expect(threadTone(resolved)).toBe("resolved");
-    expect(threadStatusWord(resolved)).toBeNull();
-    expect(waitingCount([{ ...resolved, settledOverride: "active" }])).toBe(1);
+  it.each(["usage_limit", "provider_error"])(
+    "removes %s attention and status wording",
+    (lastErrorClass) => {
+      const resolved = thread({
+        settledOverride: "settled",
+        runtime: { status: "failed", lastErrorClass } as EnvironmentThreadShell["runtime"],
+      });
+      expect(waitingCount([resolved])).toBe(0);
+      expect(threadTone(resolved)).toBe("resolved");
+      expect(threadStatusWord(resolved)).toBeNull();
+      expect(waitingCount([{ ...resolved, settledOverride: "active" }])).toBe(1);
+    },
+  );
+});
+
+describe("blocked threads", () => {
+  const blocked = thread({ reportedBlocker: "Ship 1.0.20 today, or wait for the signer?" });
+
+  it("names a quiet thread whose report has a blocker Blocked, waiting on you", () => {
+    expect(threadStatusWord(blocked)).toBe("Blocked");
+    expect(threadTone(blocked)).toBe("waiting");
+  });
+
+  it("drops the blocker while the thread runs again or once it is resolved", () => {
+    expect(threadStatusWord({ ...blocked, runtime: running })).toBe("Working");
+    expect(threadTone({ ...blocked, settledOverride: "settled" })).toBe("resolved");
+    expect(threadStatusWord(thread({ reportedBlocker: null }))).toBeNull();
   });
 });

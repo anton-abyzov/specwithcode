@@ -163,7 +163,7 @@ function ToolOutput(props: ToolOutputState) {
   ) : props.pending ? (
     <div className="text-muted-foreground italic">Loading output…</div>
   ) : props.error ? (
-    <div className="text-destructive">Couldn&apos;t load output: {props.error}</div>
+    <div className="text-destructive-foreground">Couldn&apos;t load output: {props.error}</div>
   ) : props.empty && images.length === 0 ? (
     <div className="text-muted-foreground italic">No output.</div>
   ) : null;
@@ -241,7 +241,7 @@ function ToolCallBody(
       ) : null}
       <ToolOutput {...props} />
       {props.exitCode !== undefined && props.exitCode !== 0 ? (
-        <div className="text-destructive">exit {props.exitCode}</div>
+        <div className="text-destructive-foreground">exit {props.exitCode}</div>
       ) : null}
     </div>
   );
@@ -290,8 +290,8 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
             </span>
             {item.additions !== undefined || item.deletions !== undefined ? (
               <span>
-                <span className="text-success">+{item.additions ?? 0}</span>{" "}
-                <span className="text-destructive">-{item.deletions ?? 0}</span>
+                <span className="text-success-foreground">+{item.additions ?? 0}</span>{" "}
+                <span className="text-destructive-foreground">-{item.deletions ?? 0}</span>
               </span>
             ) : null}
             {item.runId !== null ? (

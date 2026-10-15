@@ -1,5 +1,4 @@
 import type { ThreadId } from "@specweave-studio/contracts";
-import { formatStudioThreadLink } from "@specweave-studio/shared/studioThreadLinks";
 
 type Message = {
   readonly id: string;
@@ -40,10 +39,23 @@ export function projectCoordinatorMessageDisplay(
       worker.deletedAt === null,
   );
   if (!sourceThread) return unchanged;
-  const prefix = `User follow-up from selected worker ${sourceThread.id}. Review that thread and decide whether to reuse it or route elsewhere.\n\n`;
-  return message.text.startsWith(prefix)
-    ? { text: message.text.slice(prefix.length), sourceThread }
-    : unchanged;
+  const text = stripWorkerFollowUp(message.text, sourceThread.id, message.id);
+  return text === null ? unchanged : { text, sourceThread };
+}
+
+/** The server's one-line wrapper around a worker follow-up, current form or the one before message IDs. */
+export function stripWorkerFollowUp(
+  text: string,
+  sourceThreadId: string,
+  messageId: string,
+): string | null {
+  const tail = ". Review that thread and decide whether to reuse it or route elsewhere.\n\n";
+  for (const prefix of [
+    `User follow-up from selected worker ${sourceThreadId}, message ${messageId}${tail}`,
+    `User follow-up from selected worker ${sourceThreadId}${tail}`,
+  ])
+    if (text.startsWith(prefix)) return text.slice(prefix.length);
+  return null;
 }
 
 /** Assistant replies are also created by an agent; only a user-role message from another thread is a worker's. */
@@ -54,34 +66,24 @@ export function projectMessageAuthor(message: Pick<Message, "role" | "createdBy"
 
 /**
  * A delegated-task completion is a server wake addressed to the coordinator's model
- * ("Use task_status with taskId …"); people see which worker reported back instead.
+ * ("Use task_status with taskId …"). The worker's thread status and a notification
+ * tell the person it finished, so the coordinator's conversation does not show it.
  */
-export function projectSystemNotice(
-  message: {
-    readonly delegatedCompletion?: { readonly taskIds: readonly string[] } | undefined;
-    readonly notification?: { readonly summary: string } | undefined;
-  },
-  workers: readonly Pick<Worker, "id" | "title">[],
-): string | null {
-  const taskIds = message.delegatedCompletion?.taskIds;
-  if (!taskIds?.length) return message.notification?.summary ?? null;
-  const names = [
-    ...new Set(
-      taskIds.flatMap((taskId) => {
-        const prefix = "node:delegated-task:";
-        const worker = taskId.startsWith(prefix)
-          ? workers.find((w) => w.id === `thread:delegated-task:${taskId.slice(prefix.length)}`)
-          : undefined;
-        const label = worker?.title.replace(/[[\]\n]/g, " ").trim();
-        return worker && label ? [formatStudioThreadLink(worker.id, label)] : [];
-      }),
-    ),
-  ];
-  if (names.length === 0)
-    return taskIds.length === 1 ? "A worker reported back." : "Workers reported back.";
-  const list =
-    names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
-  return `${list} reported back.`;
+export function isWorkerCompletionWake(message: {
+  readonly delegatedCompletion?: { readonly taskIds: readonly string[] } | undefined;
+  readonly notification?: { readonly summary: string } | undefined;
+}): boolean {
+  if ((message.delegatedCompletion?.taskIds.length ?? 0) > 0) return true;
+  // A remote worker's wake is stored as a notification whose summary is the
+  // old "reported back" card. Status and the system notification announce it.
+  return /reported back\.?\s*$/.test(message.notification?.summary ?? "");
+}
+
+/** A background notification shows its summary in place of the text addressed to the model. */
+export function projectSystemNotice(message: {
+  readonly notification?: { readonly summary: string } | undefined;
+}): string | null {
+  return message.notification?.summary ?? null;
 }
 
 export type RoutedReply<At = string> = {

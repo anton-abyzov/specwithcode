@@ -10,6 +10,7 @@ import {
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  LaptopIcon,
   RotateCcwIcon,
   SearchIcon,
   SlidersVerticalIcon,
@@ -20,7 +21,7 @@ import { useLocalStorage } from "../../../hooks/useLocalStorage";
 import { PULL_REQUEST_STATE_PRESENTATION } from "../../pullRequest/pullRequestIcons";
 import { useNowMinute } from "../../../hooks/useNowMinute";
 import { sessionStateSince } from "../../../studio/overviewModel";
-import type { ProjectThreadGroup } from "../../../studio/projectWorkspaceModel";
+import { threadBlocker, type ProjectThreadGroup } from "../../../studio/projectWorkspaceModel";
 import {
   buildThreadPaneGroups,
   compactAge,
@@ -305,7 +306,15 @@ export function ThreadsPane({
                     const settled = thread.settledOverride === "settled";
                     const archived = thread.archivedAt !== null;
                     const action = archived || settled ? "Reopen" : "Resolve";
+                    // The group heading already says "Working" or "Waiting on you"; a row
+                    // names only a more specific state, such as "Answer needed".
                     const statusWord = threadStatusWord(thread);
+                    const rowStatus = statusWord === group ? null : statusWord;
+                    // This project's own machine goes without saying; name only another one.
+                    const machine =
+                      thread.environmentId === props.environmentId
+                        ? null
+                        : (props.machineLabels?.get(thread.environmentId) ?? null);
                     const showDot = tone === "waiting" || tone === "working" || tone === "failed";
                     const pullRequest = threadPullRequest(thread);
                     return (
@@ -329,24 +338,46 @@ export function ThreadsPane({
                           <span className="sws-thread-text">
                             <strong>{thread.title || "Untitled thread"}</strong>
                             <span className="sws-thread-meta">
-                              <span className="sws-thread-lead">
-                                {props.machineLabels && (
-                                  <span className="sws-machine-chip">
-                                    {props.machineLabels.get(thread.environmentId) ??
-                                      thread.environmentId}
-                                  </span>
-                                )}
-                                {statusWord ? (
-                                  <span className="sws-thread-status" data-tone={tone}>
-                                    {statusWord}
-                                  </span>
-                                ) : null}
-                                <ModelBadge
-                                  entry={entry}
-                                  instanceId={thread.modelSelection.instanceId}
-                                  model={thread.modelSelection.model}
-                                />
-                              </span>
+                              {rowStatus
+                                ? (() => {
+                                    const blocker = threadBlocker(thread);
+                                    const word = (
+                                      <span className="sws-thread-status" data-tone={tone}>
+                                        {rowStatus}
+                                      </span>
+                                    );
+                                    // Blocked says on hover what the report asks of the reader.
+                                    return blocker ? (
+                                      <Tip label={blocker} side="top">
+                                        {word}
+                                      </Tip>
+                                    ) : (
+                                      word
+                                    );
+                                  })()
+                                : null}
+                              <ModelBadge
+                                entry={entry}
+                                instanceId={thread.modelSelection.instanceId}
+                                model={thread.modelSelection.model}
+                              />
+                              {pullRequest ? (
+                                <span className="sws-thread-pr" data-state={pullRequest.state}>
+                                  <pullRequest.Icon
+                                    aria-hidden
+                                    className={pullRequest.toneClassName}
+                                  />
+                                  <span className="sr-only">Pull request </span>#
+                                  {pullRequest.number}
+                                  <span className="sr-only">, {pullRequest.label}</span>
+                                </span>
+                              ) : null}
+                              {machine ? (
+                                <span className="sws-thread-machine">
+                                  <LaptopIcon aria-hidden />
+                                  {machine}
+                                </span>
+                              ) : null}
                               {thread.runtime?.lastError ? (
                                 <span className="sws-thread-error">{thread.runtime.lastError}</span>
                               ) : null}
@@ -355,13 +386,6 @@ export function ThreadsPane({
                           <span className="sr-only">
                             , {THREAD_TONE_LABELS[tone]}, {label.full}, updated
                           </span>
-                          {pullRequest ? (
-                            <span className="sws-thread-pr" data-state={pullRequest.state}>
-                              <pullRequest.Icon aria-hidden className={pullRequest.toneClassName} />
-                              <span className="sr-only">Pull request </span>#{pullRequest.number}
-                              <span className="sr-only">, {pullRequest.label}</span>
-                            </span>
-                          ) : null}
                           <time className="sws-thread-age" dateTime={sessionStateSince(thread)}>
                             {compactAge(sessionStateSince(thread), now)}
                           </time>

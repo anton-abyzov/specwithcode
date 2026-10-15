@@ -32,7 +32,7 @@ export function UserMessageProvenance({
     <>
       {presentation.isAutomation ? (
         <p
-          className="me-1 text-2xs text-muted-foreground/70"
+          className="me-1 text-2xs text-muted-foreground"
           data-user-message-attribution="automation"
         >
           {presentation.scheduledTaskId ? (
@@ -47,8 +47,25 @@ export function UserMessageProvenance({
             "Sent by automation"
           )}
         </p>
+      ) : message.createdBy === "user" && senderThreadId ? (
+        // The user's own words, delivered here by the thread that routed them.
+        <p className="me-1 text-2xs text-muted-foreground" data-user-message-attribution="routed">
+          <InlineButton
+            onClick={() =>
+              senderThreadId === routing?.coordinatorThreadId
+                ? routing.openCoordinator()
+                : onOpenThread(senderThreadId)
+            }
+            tone="muted"
+            aria-label="Open routing thread"
+          >
+            {senderThreadId === routing?.coordinatorThreadId
+              ? "Your message · Routed by coordinator · View coordinator"
+              : "Your message · Routed by another thread"}
+          </InlineButton>
+        </p>
       ) : message.createdBy === "agent" ? (
-        <p className="me-1 text-2xs text-muted-foreground/70" data-user-message-attribution="agent">
+        <p className="me-1 text-2xs text-muted-foreground" data-user-message-attribution="agent">
           {senderThreadId ? (
             <InlineButton
               onClick={() =>
@@ -71,7 +88,7 @@ export function UserMessageProvenance({
       <Tooltip>
         <TooltipTrigger
           render={<p />}
-          className="me-1 max-w-[80%] break-words text-right text-2xs text-muted-foreground/70"
+          className="me-1 max-w-[80%] break-words text-right text-2xs text-muted-foreground"
           data-request-execution-origin="true"
           data-environment-id={environmentId}
           data-run-id={message.runId ?? undefined}

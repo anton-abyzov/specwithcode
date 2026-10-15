@@ -77,7 +77,10 @@ const contextChipVariants = cva(
       },
       // State colors win over any kind.
       { state: "unresolved", className: "text-foreground" },
-      { state: "invalid", className: "border-destructive/35 bg-destructive/8 text-destructive" },
+      {
+        state: "invalid",
+        className: "border-destructive/35 bg-destructive/8 text-destructive-foreground",
+      },
     ],
   },
 );

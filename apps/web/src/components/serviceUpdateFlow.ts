@@ -8,11 +8,14 @@ import type {
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 
 import { requestConfirmDialog } from "../confirmDialog";
+import { ensureLocalApi } from "../localApi";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { serverEnvironment } from "../state/server";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
   advanceServiceUpdateProgress,
+  APP_RESTART_UNKNOWN,
+  describeAppRestartWarning,
   canRetryServiceUpdate,
   describeServiceUpdateStop,
   retryServiceUpdateProgress,
@@ -492,6 +495,35 @@ export async function startServiceUpdateNow(
       : startServiceUpdateProgress(serviceState),
   );
   return true;
+}
+
+/**
+ * Asks before an app restart installs an update while work runs. Resolves true
+ * when the restart may go ahead: nothing runs, or the user chose to restart
+ * anyway. Nothing runs and no question is asked when the service says so.
+ */
+export async function confirmAppRestartForUpdate(
+  options: { readonly version?: string | null } = {},
+): Promise<boolean> {
+  const checked = await callPrepare({ stopWork: false }, QUICK_CALL_MS);
+  const question =
+    checked === null ? APP_RESTART_UNKNOWN : describeAppRestartWarning(checked, options);
+  if (question === null) return true;
+  return ensureLocalApi().dialogs.confirm(question, {
+    variant: "destructive",
+    confirmLabel: "Restart anyway",
+    cancelLabel: "Install when idle",
+  });
+}
+
+/**
+ * Whether work still runs on the service: false when idle, null when the
+ * service cannot say.
+ */
+export async function isServiceWorkRunning(): Promise<boolean | null> {
+  const checked = await callPrepare({ stopWork: false }, QUICK_CALL_MS);
+  if (checked === null) return null;
+  return describeAppRestartWarning(checked) !== null;
 }
 
 /** "Update now" again (or "Try again") for the update already under way. */

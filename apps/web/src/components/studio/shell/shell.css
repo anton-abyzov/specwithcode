@@ -202,7 +202,7 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   color: var(--primary);
 }
 .sws-icon-button:disabled {
-  opacity: 0.5;
+  opacity: var(--disabled-opacity);
   cursor: not-allowed;
 }
 
@@ -253,6 +253,10 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   text-overflow: ellipsis;
   font-weight: 600;
   color: var(--foreground);
+}
+.sws-model-sep {
+  flex: none;
+  color: var(--muted-foreground);
 }
 .sws-model-name {
   flex: 0 9999 auto;
@@ -473,6 +477,13 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   .sws-side-row {
   padding-right: 30px;
 }
+/* A pinned project carries a small pin before its counts. */
+.sws-side-row-pin {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  color: var(--sidebar-muted-foreground);
+}
 /* Archived projects keep their rows, quieter than the projects in use. */
 .sws-project-row[data-archived] .sws-side-row-label {
   color: var(--sidebar-muted-foreground);
@@ -526,7 +537,7 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 }
 .project-icon-button:disabled {
   cursor: default;
-  opacity: 0.6;
+  opacity: var(--disabled-opacity);
 }
 .sws-project-id h1 {
   overflow: hidden;
@@ -714,7 +725,8 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
     min-height: 0;
   }
 }
-.sws-pane-notice {
+.sws-pane-notice,
+.sws-coordinator > .contents > .project-notice {
   margin: 12px 22px 0;
 }
 .sws-coordinator .project-conversation {
@@ -726,35 +738,97 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   margin-left: auto;
   margin-right: auto;
 }
+/* Coordinator turns read like the thread view: a person's message is a bubble on the
+   right, the coordinator's answer is full-width prose under a "Worked for" line,
+   with copy and time under the answer that ends the turn. Spacing follows Codex
+   (docs/studio/assistant-turn-rendering-research.md). */
 .sws-coordinator .project-message {
-  margin-bottom: 26px;
+  margin-bottom: 28px;
   font-size: 14px;
-  line-height: 1.6;
+  line-height: 1.625;
+}
+.sws-coordinator .project-message:has(+ .project-message-assistant),
+.sws-coordinator .project-message-user:has(+ .project-message) {
+  margin-bottom: 20px;
 }
 .sws-coordinator .project-message > h3 {
-  margin-bottom: 6px;
-  font-size: 11.5px;
-  font-weight: 550;
-  letter-spacing: 0;
-  text-transform: none;
-  color: var(--muted-foreground);
-}
-.sws-coordinator .project-message-user {
-  width: fit-content;
-  max-width: min(640px, 86%);
-  margin-right: max(0px, calc((100% - 740px) / 2));
-  margin-left: auto;
-  padding: 10px 14px;
-  border-radius: 14px;
-  background: var(--accent);
-}
-.sws-coordinator .project-message-user > h3 {
   position: absolute;
   width: 1px;
   height: 1px;
   overflow: hidden;
   clip-path: inset(50%);
   white-space: nowrap;
+}
+.sws-coordinator .project-message-user {
+  width: fit-content;
+  max-width: min(640px, 70%);
+  margin-right: max(0px, calc((100% - 740px) / 2));
+  margin-left: auto;
+  padding: 10px 16px;
+  border-radius: 22px;
+  background: var(--message-surface);
+  color: var(--message-foreground);
+}
+.sws-turn-separator {
+  margin: 4px auto 20px;
+  text-align: center;
+  font-size: 13px;
+  line-height: 20px;
+  user-select: none;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.sws-turn-summary {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 12px;
+  padding: 2px 0 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+  cursor: pointer;
+  transition: color 120ms ease;
+}
+.sws-turn-summary:hover {
+  color: var(--foreground);
+}
+.sws-turn-summary:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.sws-turn-summary svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+.sws-turn-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  margin-left: -6px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  opacity: 0;
+  transition: opacity 150ms ease;
+}
+/* The latest answer keeps its actions in view; earlier ones show them on hover. */
+.sws-coordinator .project-message:hover .sws-turn-actions,
+.sws-turn-actions:focus-within,
+.sws-coordinator .project-message-assistant:not(:has(~ .project-message)) .sws-turn-actions {
+  opacity: 1;
+}
+@media (pointer: coarse) {
+  .sws-turn-actions {
+    opacity: 1;
+  }
 }
 /* Threads named in chat, on the project page and full page alike. One that
    already existed is a blue chip: thread icon, status dot, live title; one the
@@ -979,7 +1053,7 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   font-style: italic;
 }
 .sws-run-activity li[data-failed] .sws-run-activity-label {
-  color: var(--destructive);
+  color: var(--destructive-foreground);
 }
 .sws-run-activity-note {
   margin: 6px 0 0;
@@ -1124,7 +1198,7 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   color: var(--shell-failed);
 }
 .sws-attachment-remove:disabled {
-  opacity: 0.5;
+  opacity: var(--disabled-opacity);
   cursor: not-allowed;
 }
 .sws-attachment-remove {
@@ -1555,12 +1629,10 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   visibility: hidden;
 }
 .sws-thread-status {
-  flex: none;
-  max-width: 100%;
+  flex: 0 0 auto;
+  max-width: 60%;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12.5px;
   font-weight: 500;
   color: var(--shell-waiting);
 }
@@ -1569,12 +1641,6 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 }
 .sws-thread-status[data-tone="failed"] {
   color: var(--shell-failed);
-}
-.sws-thread-status::after {
-  content: "·";
-  margin-left: 6px;
-  font-weight: 400;
-  color: var(--muted-foreground);
 }
 .sws-thread-list {
   display: flex;
@@ -1607,22 +1673,16 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   cursor: pointer;
   touch-action: manipulation;
 }
-.sws-thread-pr {
+.sws-thread-meta > .sws-thread-pr {
   flex: none;
-  height: 24px;
-  padding: 0 8px;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  font-size: 12.5px;
   font-variant-numeric: tabular-nums;
-  color: var(--muted-foreground);
 }
 .sws-thread-pr svg {
-  width: 13px;
-  height: 13px;
+  width: 12px;
+  height: 12px;
+  margin-right: 3px;
 }
 .sws-thread-text {
   flex: 1;
@@ -1639,36 +1699,58 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   font-weight: 500;
   line-height: 1.35;
 }
+/* One quiet line under the title: state, who runs it, where, what went wrong.
+   Everything sits on one baseline and gives way with an ellipsis, never a wrap,
+   so the row keeps its height at any pane width. */
 .sws-thread-meta {
   min-width: 0;
-  /* One line: an error with no room to say anything wraps out of sight. */
-  max-height: 18px;
-  overflow: clip;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-}
-.sws-thread-lead {
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 100%;
+  height: 18px;
   overflow: hidden;
   display: flex;
   align-items: center;
-  gap: 6px;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+  color: var(--muted-foreground);
 }
-.sws-thread-lead .sws-model {
-  flex: 0 1 auto;
-}
-.sws-thread-error {
-  flex: 1 1 96px;
+.sws-thread-meta > * {
   min-width: 0;
+}
+.sws-thread-meta > * + *::before {
+  content: "";
+  width: 3px;
+  height: 3px;
+  margin: 0 7px;
+  flex: none;
+  display: inline-block;
+  vertical-align: middle;
+  border-radius: 50%;
+  background: var(--muted-foreground);
+  opacity: 0.55;
+}
+.sws-thread-meta > .sws-model {
+  /* Only the model name gives way here; the mark and harness stay. */
+  flex: 0 1 auto;
+  font-size: inherit;
+  line-height: inherit;
+}
+.sws-thread-machine {
+  flex: 0 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12.5px;
-  color: var(--muted-foreground);
+}
+.sws-thread-machine svg {
+  width: 12px;
+  height: 12px;
+  margin-right: 4px;
+  display: inline-block;
+  vertical-align: -2px;
+}
+.sws-thread-error {
+  /* The first to go when the line is short; the row's state already says it failed. */
+  flex: 1 1000 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .sws-thread-age {
   flex: none;
@@ -1712,8 +1794,14 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   cursor: not-allowed;
   color: var(--muted-foreground);
 }
-.sws-thread-row:hover :is(.sws-thread-age, .sws-thread-pr),
-.sws-thread-row:has(.sws-thread-action:focus-visible) :is(.sws-thread-age, .sws-thread-pr) {
+/* Resolve takes the age's place; the title and meta end before it, not under it. */
+@media (hover: hover) {
+  .sws-thread-row:is(:hover, :has(.sws-thread-action:focus-visible)) .sws-thread-text {
+    margin-right: 48px;
+  }
+}
+.sws-thread-row:hover .sws-thread-age,
+.sws-thread-row:has(.sws-thread-action:focus-visible) .sws-thread-age {
   visibility: hidden;
 }
 @media (hover: none) {
@@ -1727,7 +1815,7 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   .sws-thread-action span {
     display: none;
   }
-  .sws-thread-row :is(.sws-thread-age, .sws-thread-pr) {
+  .sws-thread-row .sws-thread-age {
     visibility: visible !important;
   }
 }
@@ -1888,7 +1976,7 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   cursor: default;
 }
 .sws-starter:disabled:not([data-started]) {
-  opacity: 0.6;
+  opacity: var(--disabled-opacity);
 }
 .sws-starter-icon {
   grid-row: 1 / span 2;
@@ -2082,7 +2170,7 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 }
 .sws-quick-start:disabled {
   cursor: default;
-  opacity: 0.55;
+  opacity: var(--disabled-opacity);
 }
 
 .sws-project-divider {

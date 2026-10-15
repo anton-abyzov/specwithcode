@@ -28,7 +28,7 @@ export function PermissionChecklist({
             <p className="text-xs text-muted-foreground">{permission.description}</p>
           </div>
           {permission.granted ? (
-            <span role="status" className="flex items-center gap-1 text-xs text-success">
+            <span role="status" className="flex items-center gap-1 text-xs text-success-foreground">
               <CircleCheckIcon className="size-4" aria-hidden="true" />
               Allowed
             </span>

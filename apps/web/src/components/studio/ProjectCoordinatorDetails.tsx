@@ -91,7 +91,7 @@ export function ProjectCoordinatorDetails({
         </DialogHeader>
         <DialogPanel>
           {error ? (
-            <p className="text-sm text-destructive" role="alert">
+            <p className="text-sm text-destructive-foreground" role="alert">
               {error}
             </p>
           ) : null}
@@ -185,7 +185,7 @@ function CoordinatorActivityItem({
             </p>
           ) : null}
           {detail.error ? (
-            <p role="alert" className="text-xs text-destructive">
+            <p role="alert" className="text-xs text-destructive-foreground">
               {detail.error}
             </p>
           ) : null}

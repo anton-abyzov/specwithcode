@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useSettingsOriginTracker } from "./settings/useSettingsOriginTracker";
 import * as Schema from "effect/Schema";
 import {
   useEffect,
@@ -231,6 +232,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   // sidebar is active.
   // Seeds server-side visited tracking from this browser's localStorage the
   useThreadVisitedMigration();
+  useSettingsOriginTracker();
   const pathname = useLocation({ select: (location) => location.pathname });
   const panelAnimationsSuppressed = usePanelNavigationSuppression(pathname);
   const routePanelAnimationsActive = panelAnimationsActive && !panelAnimationsSuppressed;

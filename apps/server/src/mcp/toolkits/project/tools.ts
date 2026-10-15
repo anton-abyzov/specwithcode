@@ -26,6 +26,7 @@ import * as Crypto from "effect/Crypto";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as SourceControlRepositoryService from "../../../sourceControl/SourceControlRepositoryService.ts";
@@ -109,7 +110,7 @@ const ProjectCloneTool = Tool.make("studio_project_clone", {
 const ThreadLaunchTool = Tool.make("studio_thread_launch", {
   ...shared,
   description:
-    'Create an ordinary TOP-LEVEL thread with an explicit workspace binding before its agent starts. Use this when the user requests independent work, a new thread, or a PR stack in its own worktree; use delegate_task for child subagents. Set workspaceStrategy to {type:"worktree",baseRef:"parent-branch",branch:"new-branch",startFromOrigin:false} for a new worktree based on local commits, or {type:"existing_worktree",worktreePath:"/absolute/path",branch:"existing-branch"} to use an existing checkout. For upstream commits, set startFromOrigin:true. Omitted workspaceStrategy means the project root, NOT the caller\'s worktree. Omit projectId/modelSelection/modes to inherit those settings from the calling thread (a project coordinator uses the project worker model default); a caller outside a Studio thread must pass projectId and gets the project\'s default model. Set scratch:true instead of projectId for a thread without a project: it runs in a fresh folder of its own, outside any repository. Put the task in message. Do not ask the agent to create its own worktree via shell: that does not update the thread binding. Each call creates a new launch with no retry key; retain threadId and use studio_thread_read/studio_thread_wait to follow preparation. After errors or lost responses, inspect studio_thread_list before retrying. Attachments must be pending uploads. The new thread may not run with broader runtime or interaction modes than the caller: the calling Studio thread\'s own modes, or the permission mode an outside agent was approved with.',
+    'Create an ordinary TOP-LEVEL thread with an explicit workspace binding before its agent starts. Use this when the user requests independent work, a new thread, or a PR stack in its own worktree; use delegate_task for child subagents. Set workspaceStrategy to {type:"worktree",baseRef:"parent-branch",branch:"new-branch",startFromOrigin:false} for a new worktree based on local commits, or {type:"existing_worktree",worktreePath:"/absolute/path",branch:"existing-branch"} to use an existing checkout. For upstream commits, set startFromOrigin:true. Omitted workspaceStrategy means the project root, NOT the caller\'s worktree. Pass effort when the user names one (\"extra high\" is xhigh). Omit projectId/modelSelection/modes to inherit those settings from the calling thread (a project coordinator uses the project worker model default); a caller outside a Studio thread must pass projectId and gets the project\'s default model. Set scratch:true instead of projectId for a thread without a project: it runs in a fresh folder of its own, outside any repository. Put the task in message. Do not ask the agent to create its own worktree via shell: that does not update the thread binding. Each call creates a new launch with no retry key; retain threadId and use studio_thread_read/studio_thread_wait to follow preparation. After errors or lost responses, inspect studio_thread_list before retrying. Attachments must be pending uploads. The new thread may not run with broader runtime or interaction modes than the caller: the calling Studio thread\'s own modes, or the permission mode an outside agent was approved with.',
   parameters: Schema.Struct({
     machine: Schema.optional(
       OrchestratorMcpMachineTarget.annotate({
@@ -138,6 +139,12 @@ const ThreadLaunchTool = Tool.make("studio_thread_launch", {
     ),
     title: TrimmedNonEmptyString,
     modelSelection: Schema.optional(ModelSelection),
+    effort: Schema.optional(
+      TrimmedNonEmptyString.annotate({
+        description:
+          "Reasoning effort the user asked for, e.g. 'low', 'medium', 'high', 'xhigh' (extra high) or 'max'. Mapped to the chosen model's own effort option; when the model lacks that level the nearest one it offers is used, and a model without an effort setting is rejected.",
+      }),
+    ),
     runtimeMode: Schema.optional(RuntimeMode),
     interactionMode: Schema.optional(ProviderInteractionMode),
     workspaceStrategy: Schema.optional(
@@ -163,6 +170,11 @@ const ThreadLaunchTool = Tool.make("studio_thread_launch", {
     projectId: ProjectId,
     /** Always set for a thread here; unknown only for a remote launch found again after a lost answer. */
     modelSelection: Schema.optional(ModelSelection),
+    effort: Schema.optional(
+      Schema.String.annotate({
+        description: "Reasoning effort option the thread was started with, when one was set.",
+      }),
+    ),
     runId: Schema.NullOr(RunId),
     status: Schema.NullOr(OrchestrationV2RunStatus),
     /** Set when the thread runs on another machine; projectId is then that machine's project. */
@@ -174,6 +186,7 @@ const ThreadLaunchTool = Tool.make("studio_thread_launch", {
     ...shared.dependencies,
     ThreadLaunchService.ThreadLaunchService,
     ManagedProjectFolders.ManagedProjectFolders,
+    ProviderRegistry.ProviderRegistry,
     GitVcsDriver.GitVcsDriver,
     FileSystem.FileSystem,
     ServerConfig.ServerConfig,

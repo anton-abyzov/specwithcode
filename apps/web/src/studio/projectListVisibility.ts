@@ -122,3 +122,27 @@ export function membersToToggle<M extends ProjectListMember>(
     (member) => !isScratchMember(member, scratchRootFor) && isArchivedMember(member) !== archived,
   );
 }
+
+/**
+ * Pinned projects first, in the order they were pinned, then the rest in input
+ * order. Keys that name no listed project are ignored.
+ */
+export function pinProjectsFirst<G extends { readonly projectKey: string }>(
+  groups: ReadonlyArray<G>,
+  pinnedKeys: ReadonlyArray<string>,
+): G[] {
+  const byKey = new Map(groups.map((group) => [group.projectKey, group]));
+  const pinned = pinnedKeys.flatMap((key) => byKey.get(key) ?? []);
+  const pinnedSet = new Set(pinned);
+  return [...pinned, ...groups.filter((group) => !pinnedSet.has(group))];
+}
+
+/** Pins a project at the end of the pinned list, or unpins it. */
+export function togglePinnedProject(
+  pinnedKeys: ReadonlyArray<string>,
+  projectKey: string,
+): string[] {
+  return pinnedKeys.includes(projectKey)
+    ? pinnedKeys.filter((key) => key !== projectKey)
+    : [...pinnedKeys, projectKey];
+}

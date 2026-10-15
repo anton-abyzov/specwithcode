@@ -4,6 +4,7 @@ import { ChevronDownIcon, LayersIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
+import { useServerConfigs } from "../../state/entities";
 import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ProjectFavicon } from "../ProjectFavicon";
@@ -27,6 +28,7 @@ import {
   selectEnvironmentAxis,
   selectProjectAxis,
   settingsScopeEnvironmentLabel,
+  settingsScopeProjectChoices,
 } from "./settingsScopeAxis";
 
 /** Pages whose every row is saved on this client; they have no scope to pick. */
@@ -186,7 +188,13 @@ function EnvironmentScopeMenu({
 }
 
 function ProjectScopeMenu({ value, groups, onChange }: SettingsScopeMenuProps) {
+  const configs = useServerConfigs();
   const selected = groups.find((group) => group.projectKey === value.project);
+  const choices = settingsScopeProjectChoices(
+    groups,
+    (environmentId) => configs.get(environmentId)?.scratchWorkspaceRoot ?? null,
+    value.project,
+  );
   return (
     <ScopeMenu
       ariaLabel="Project scope"
@@ -206,7 +214,7 @@ function ProjectScopeMenu({ value, groups, onChange }: SettingsScopeMenuProps) {
           </span>
         </MenuRadioItem>
         <MenuSeparator />
-        {groups.map((group) => (
+        {choices.map((group) => (
           <MenuRadioItem key={group.projectKey} value={group.projectKey}>
             <span className="flex min-w-0 items-center gap-2">
               <ProjectFavicon project={group} className="size-3.5" />

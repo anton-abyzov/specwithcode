@@ -440,6 +440,7 @@ const GIT_FAILURE_REASON_PATTERNS: ReadonlyArray<readonly [RegExp, GitCommandFai
   [/would clobber existing tag/i, "tag_would_be_clobbered"],
   [/is already (?:used by worktree at|checked out at)/i, "branch_checked_out_in_worktree"],
   [/a branch named .+ already exists/i, "branch_already_exists"],
+  [/invalid reference: |not a valid object name/i, "invalid_reference"],
   // ssh names the methods it tried, so the parenthesized list varies:
   // `(publickey)`, `(publickey,password)`, `(keyboard-interactive)`.
   [

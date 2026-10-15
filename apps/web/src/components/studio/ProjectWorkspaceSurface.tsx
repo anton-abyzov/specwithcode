@@ -798,6 +798,16 @@ export function ProjectWorkspaceSurface({
       const e = squashAtomCommandFailure(result);
       setError(e instanceof Error ? e.message : "Thread status could not be changed.");
     }
+    return result;
+  }
+  // Resolving the open thread closes it and shows every thread; Reopen keeps it open.
+  async function resolveOpenThread(thread: EnvironmentThreadShell) {
+    const resolving = thread.archivedAt === null && thread.settledOverride !== "settled";
+    const result = await resolve(thread);
+    if (!resolving || result?._tag === "Failure") return;
+    setFindQuery("");
+    setPaneTab("threads");
+    leaveThread();
   }
   // A project with no threads yet is offered a few first tasks; choosing one is a
   // message to the coordinator like any other, so the coordinator still starts the thread.
@@ -958,7 +968,12 @@ export function ProjectWorkspaceSurface({
             }
           />
         )}
-        <ProjectWorkspaceColumns open={paneOpen} expanded={paneExpanded} phone={phone} workerOpen={!!selectedThread}>
+        <ProjectWorkspaceColumns
+          open={paneOpen}
+          expanded={paneExpanded}
+          phone={phone}
+          workerOpen={!!selectedThread}
+        >
           <section
             className="project-coordinator sws-coordinator"
             aria-label="Project coordinator"
@@ -1377,7 +1392,7 @@ export function ProjectWorkspaceSurface({
                       selectedThread.environmentId === project.environmentId,
                     expanded: paneExpanded,
                     onBack: leaveThread,
-                    onToggleResolved: () => void resolve(selectedThread),
+                    onToggleResolved: () => void resolveOpenThread(selectedThread),
                     onToggleExpanded: () => setPaneExpanded((value) => !value),
                     onClose: hideOverview,
                     onOpenPullRequest: (url) => void openLink(url).catch(() => undefined),

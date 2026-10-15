@@ -1,11 +1,11 @@
-"""Generate the SpecWithCode icons from the two brand masters in assets/brand.
+"""Generate the SpecWithCode icons from the vector brand master in assets/brand.
 
-  specwithcode-icon.png  1024px full-bleed app icon artwork (macOS, iOS, Linux, Windows)
-  specweave-mark.svg     the flat woven-S mark (favicons, in-app marks, Icon Composer layer)
+  specwithcode-mark.svg             the page-and-prompt mark without its tile
+  specwithcode-mark-silhouette.svg  the same page as one white shape with the prompt cut out
 
-Writes the tracked PNG, ICO and WebP icons, logo.svg and its copies, and the text.svg
-layer of the three Icon Composer projects. See assets/README.md.
-Needs Pillow and rsvg-convert (brew install librsvg).
+Every icon is the mark on a rounded indigo tile. Writes the tracked PNG, ICO and WebP icons,
+logo.svg and its copies, and the text.svg layer of the three Icon Composer projects.
+See assets/README.md. Needs Pillow and rsvg-convert (brew install librsvg).
 """
 import math
 import re
@@ -18,7 +18,9 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 ROOT = Path(__file__).resolve().parent.parent
 BRAND = ROOT / "assets/brand"
-TILE = "#0B1020"
+TILE = "#5B6CFF"
+# The page fills this share of the tile's height on the app icons.
+APP_ICON_INSET = 0.221
 # variant directory -> (app icon prefix, Windows icon prefix, web icon prefix)
 VARIANTS = {
     "prod": ("black", "studio-black", "studio-black-web"),
@@ -27,13 +29,14 @@ VARIANTS = {
 }
 
 
-def mark_svg(size=64, inset=0.12, tile=True, radius=0.225):
-    """The woven-S mark centred in a size x size box, on a rounded navy tile unless tile=False."""
-    source = (BRAND / "specweave-mark.svg").read_text()
+def mark_svg(size=64, inset=0.2, tile=True, radius=0.225, full_bleed=False):
+    """The mark centred in a size x size box, on a rounded indigo tile unless tile=False."""
+    source = (BRAND / "specwithcode-mark.svg").read_text()
     view_box = re.search(r'viewBox="([^"]+)"', source).group(1)
     inner = re.sub(r"<title>.*?</title>", "", re.search(r"<svg[^>]*>(.*)</svg>", source, re.S).group(1))
     pad, box = size * inset, size * (1 - 2 * inset)
-    background = f'<rect width="{size}" height="{size}" rx="{size * radius:g}" fill="{TILE}"/>' if tile else ""
+    rx = 0 if full_bleed else size * radius
+    background = f'<rect width="{size}" height="{size}" rx="{rx:g}" fill="{TILE}"/>' if tile else ""
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" viewBox="0 0 {size} {size}">'
         f"<title>SpecWithCode</title>{background}"
@@ -52,8 +55,8 @@ def rasterize(svg, size):
 
 
 def favicon(size):
-    # Small sizes give the mark more of the tile so the weave still reads at 16px.
-    inset = 0.06 if size <= 16 else 0.1 if size <= 48 else 0.14
+    # Small sizes give the page more of the tile so the prompt still reads at 16px.
+    inset = 0.1 if size <= 16 else 0.13 if size <= 48 else 0.17
     return rasterize(mark_svg(inset=inset, radius=0.2), size)
 
 
@@ -99,15 +102,15 @@ def save_ico(path, sizes, render):
 
 
 def main():
-    art = Image.open(BRAND / "specwithcode-icon.png").convert("RGBA")
-    mac = macos_icon(art)
-    full = art.resize((1024, 1024), Image.Resampling.LANCZOS).convert("RGB")
+    art = rasterize(mark_svg(size=1024, inset=APP_ICON_INSET, full_bleed=True), 1024)
+    mac = macos_icon(rasterize(mark_svg(size=824, inset=APP_ICON_INSET, full_bleed=True), 824))
+    full = art.convert("RGB")
 
     def app_ico(size):
         return favicon(size) if size <= 32 else mac.resize((size, size), Image.Resampling.LANCZOS)
 
     # Icon Composer layer: the mark alone at scale 16, so the 64-unit box covers the 1024pt canvas.
-    layer = mark_svg(tile=False, inset=0.2)
+    layer = mark_svg(tile=False, inset=APP_ICON_INSET)
     for variant, (app, windows, web) in VARIANTS.items():
         directory = ROOT / "assets" / variant
         mac.save(directory / f"{app}-macos-1024.png", optimize=True)

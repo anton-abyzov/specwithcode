@@ -1541,7 +1541,7 @@ export default function ThreadTerminalDrawer({
               disabled={!canOperateTerminal}
               className={`p-1 text-foreground/90 transition-colors ${
                 hasReachedSplitLimit
-                  ? "cursor-not-allowed opacity-64 hover:bg-transparent"
+                  ? "cursor-not-allowed opacity-(--disabled-opacity) hover:bg-transparent"
                   : "hover:bg-accent"
               }`}
               onClick={onSplitTerminalAction}
@@ -1554,7 +1554,7 @@ export default function ThreadTerminalDrawer({
               disabled={!canOperateTerminal}
               className={`p-1 text-foreground/90 transition-colors ${
                 hasReachedSplitLimit
-                  ? "cursor-not-allowed opacity-64 hover:bg-transparent"
+                  ? "cursor-not-allowed opacity-(--disabled-opacity) hover:bg-transparent"
                   : "hover:bg-accent"
               }`}
               onClick={onSplitTerminalVerticalAction}
@@ -1690,7 +1690,7 @@ export default function ThreadTerminalDrawer({
                     disabled={!canOperateTerminal}
                     className={`inline-flex h-full items-center px-1 text-foreground/90 transition-colors ${
                       hasReachedSplitLimit
-                        ? "cursor-not-allowed opacity-64 hover:bg-transparent"
+                        ? "cursor-not-allowed opacity-(--disabled-opacity) hover:bg-transparent"
                         : "hover:bg-accent/70"
                     }`}
                     onClick={onSplitTerminalAction}
@@ -1702,7 +1702,7 @@ export default function ThreadTerminalDrawer({
                     disabled={!canOperateTerminal}
                     className={`inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors ${
                       hasReachedSplitLimit
-                        ? "cursor-not-allowed opacity-64 hover:bg-transparent"
+                        ? "cursor-not-allowed opacity-(--disabled-opacity) hover:bg-transparent"
                         : "hover:bg-accent/70"
                     }`}
                     onClick={onSplitTerminalVerticalAction}
@@ -1763,7 +1763,7 @@ export default function ThreadTerminalDrawer({
                         >
                           <GroupIcon className="size-3 shrink-0" />
                           <span className="min-w-0 flex-1 truncate text-left">{groupLabel}</span>
-                          <span className="text-muted-foreground/70 text-3xs tabular-nums">
+                          <span className="text-muted-foreground text-3xs tabular-nums">
                             {terminalCount}
                           </span>
                         </button>

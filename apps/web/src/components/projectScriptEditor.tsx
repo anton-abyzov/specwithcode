@@ -455,7 +455,9 @@ export function ProjectScriptEditorDialog({
                     onCheckedChange={(checked) => setAutoOpenPreview(Boolean(checked))}
                   />
                 </label>
-                {validationError && <p className="text-sm text-destructive">{validationError}</p>}
+                {validationError && (
+                  <p className="text-sm text-destructive-foreground">{validationError}</p>
+                )}
               </fieldset>
             </form>
           </DialogPanel>

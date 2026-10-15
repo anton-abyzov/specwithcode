@@ -145,7 +145,7 @@ export function AcpRegistryRepair({
           role="status"
           className={
             result.error
-              ? "px-4 pb-3 text-xs text-destructive"
+              ? "px-4 pb-3 text-xs text-destructive-foreground"
               : "px-4 pb-3 text-xs text-muted-foreground"
           }
         >

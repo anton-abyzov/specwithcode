@@ -220,10 +220,10 @@ function PullRequestGroupHeader({
 }) {
   const Icon = GROUP_ICONS[group.key] ?? LayersIcon;
   return (
-    <div className="flex items-center gap-2 px-3 pb-1 text-xs font-medium text-muted-foreground/70">
+    <div className="flex items-center gap-2 px-3 pb-1 text-xs font-medium text-muted-foreground">
       <Icon aria-hidden className="size-3.5 shrink-0" />
       <h2 className="shrink-0">{group.label}</h2>
-      <span className="shrink-0 tabular-nums text-muted-foreground/50">{group.entries.length}</span>
+      <span className="shrink-0 tabular-nums text-muted-foreground">{group.entries.length}</span>
       <Separator className="min-w-2 flex-1" />
     </div>
   );
@@ -2389,7 +2389,7 @@ function CompactFilterMenu<Value extends string>({
         ) : (
           <>
             <span className="truncate">{current.label}</span>
-            <ChevronDownIcon aria-hidden className="size-3 shrink-0 text-muted-foreground/70" />
+            <ChevronDownIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
           </>
         )}
       </MenuTrigger>

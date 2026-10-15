@@ -93,7 +93,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
               className="size-3"
               iconClassName="size-3"
             />
-            <span className="truncate text-xs font-normal leading-snug text-muted-foreground/70">
+            <span className="truncate text-xs font-normal leading-snug text-muted-foreground">
               {providerLabel}
             </span>
           </div>
@@ -125,7 +125,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
                 <StarIcon
                   className={cn(
                     "size-3.5 sm:size-3",
-                    props.isFavorite && "fill-current text-warning",
+                    props.isFavorite && "fill-current text-warning-foreground",
                   )}
                 />
               </Button>
