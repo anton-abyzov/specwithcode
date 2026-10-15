@@ -39,6 +39,7 @@ import {
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { UsageLimitsPooled } from "./UsageLimitsPooled";
+import { environmentsNeedingChatSetup } from "./usageChatSetup";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
 
 const PACE: Record<LimitPace, { readonly label: string; readonly icon: typeof GaugeIcon }> = {
@@ -353,26 +354,52 @@ export function UsageLimitsSection({
     selectedEnvironmentIds === null
       ? presentations
       : new Map([...presentations].filter(([id]) => selectedEnvironmentIds.has(id)));
+  const needingSetup = environmentsNeedingChatSetup(selected);
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-2 rounded-lg border border-border/60 p-3">
-        <p className="text-sm text-muted-foreground">
-          Quota reports do not confirm that an agent is ready to chat. Set up and sign in to chat
-          providers on the machine you want to use.
-        </p>
-        <div className="flex flex-wrap gap-2">
-          {[...selected].map(([environmentId, presentation]) =>
-            presentation.connection.phase === "connected" && presentation.serverConfig !== null ? (
-              <UsageAgentSetupButton
-                key={environmentId}
-                environmentId={environmentId}
-                environmentLabel={presentation.entry.target.label}
-              />
-            ) : null,
-          )}
-        </div>
-      </div>
+      <UsageChatSetupNotice environments={needingSetup} />
       <UsageLimitsPooled presentations={selected} now={now} cursorPrompt={cursorPrompt} />
+    </div>
+  );
+}
+
+/**
+ * Quota is read without proving an agent can chat, so the page says so, and
+ * offers setup only on machines with no ready, signed-in chat provider. When
+ * every machine is ready the caveat stays as a quiet line, without chips.
+ */
+export function UsageChatSetupNotice({
+  environments,
+}: {
+  readonly environments: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly label: string;
+  }>;
+}) {
+  if (environments.length === 0) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        Quota reports do not confirm that an agent is ready to chat.
+      </p>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-border/60 p-3">
+      <p className="text-sm text-muted-foreground">
+        Quota reports do not confirm that an agent is ready to chat.{" "}
+        {environments.length === 1
+          ? "This machine has no ready, signed-in chat provider yet:"
+          : "These machines have no ready, signed-in chat provider yet:"}
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {environments.map((environment) => (
+          <UsageAgentSetupButton
+            key={environment.environmentId}
+            environmentId={environment.environmentId}
+            environmentLabel={environment.label}
+          />
+        ))}
+      </div>
     </div>
   );
 }

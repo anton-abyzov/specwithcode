@@ -17,6 +17,7 @@ import {
   collectExternalUsageLinks,
   collectLimitNotices,
   collectLimitPools,
+  describeLimitAccount,
   displayLimitWindows,
   elapsedShare,
   formatResetsIn,
@@ -1203,5 +1204,162 @@ describe("ChatGPT sharing presentation", () => {
         auth: { status: "unauthenticated", subscriptionSharing: true },
       }),
     ).toBe(false);
+  });
+});
+
+describe("describeLimitAccount", () => {
+  const checkedAt = "2026-09-03T11:00:00.000Z";
+  const claude = ProviderDriverKind.make("claudeAgent");
+  const limits = { checkedAt, windows: [window] };
+
+  it("names each machine's account by the email its provider reported", () => {
+    const signedIn = (email: string | undefined, label?: string) =>
+      provider({
+        driver: claude,
+        instanceId: ProviderInstanceId.make("claude"),
+        displayName: "Claude",
+        auth: {
+          status: "authenticated",
+          ...(email ? { email } : {}),
+          ...(label ? { label } : {}),
+        },
+        usageLimits: limits,
+      });
+    const accounts = collectLimitAccounts(
+      new Map([
+        [
+          EnvironmentId.make("m1"),
+          {
+            entry: { target: { label: "MacBook Pro M1Max (190)" } },
+            serverConfig: { providers: [signedIn("work@example.com", "Claude Max")] },
+          },
+        ],
+        [
+          EnvironmentId.make("m4"),
+          {
+            entry: { target: { label: "MacBook M4MAX (149)" } },
+            serverConfig: { providers: [signedIn("home@example.com")] },
+          },
+        ],
+        [
+          EnvironmentId.make("old"),
+          {
+            entry: { target: { label: "Old host" } },
+            serverConfig: { providers: [signedIn(undefined, "Claude Pro")] },
+          },
+        ],
+      ]),
+    );
+    expect(accounts.map(describeLimitAccount)).toEqual([
+      {
+        account: "work@example.com",
+        accountKind: "email",
+        machine: "MacBook Pro M1Max (190)",
+        machineKind: "environment",
+      },
+      {
+        account: "home@example.com",
+        accountKind: "email",
+        machine: "MacBook M4MAX (149)",
+        machineKind: "environment",
+      },
+      // No email reported: the plan, never the instance name, stands in.
+      {
+        account: "Claude Pro",
+        accountKind: "plan",
+        machine: "Old host",
+        machineKind: "environment",
+      },
+    ]);
+  });
+
+  it("lists every machine a shared account is signed in on", () => {
+    const shared = provider({
+      driver: claude,
+      instanceId: ProviderInstanceId.make("claude"),
+      auth: { status: "authenticated", email: "same@example.com" },
+      usageLimits: limits,
+    });
+    const [account] = collectLimitAccounts(
+      new Map([
+        [
+          EnvironmentId.make("a"),
+          { entry: { target: { label: "Laptop" } }, serverConfig: { providers: [shared] } },
+        ],
+        [
+          EnvironmentId.make("b"),
+          { entry: { target: { label: "Desktop" } }, serverConfig: { providers: [shared] } },
+        ],
+      ]),
+    );
+    expect(describeLimitAccount(account!)).toMatchObject({
+      account: "same@example.com",
+      machine: "Laptop, Desktop",
+    });
+  });
+
+  it("shows nothing extra when an older host reports no identity", () => {
+    const [account] = collectLimitAccounts(
+      new Map([
+        [
+          EnvironmentId.make("old"),
+          {
+            entry: { target: { label: "Old host" } },
+            serverConfig: {
+              providers: [
+                provider({
+                  displayName: "Codex",
+                  auth: { status: "authenticated" },
+                  usageLimits: limits,
+                }),
+              ],
+            },
+          },
+        ],
+      ]),
+    );
+    expect(describeLimitAccount(account!)).toEqual({
+      account: null,
+      accountKind: null,
+      machine: "Old host",
+      machineKind: "environment",
+    });
+  });
+
+  it("names a hub-only account by its hub and its own account name", () => {
+    const [account] = collectLimitAccounts(
+      new Map([
+        [
+          EnvironmentId.make("host"),
+          {
+            entry: { target: { label: "Studio Mac" } },
+            serverConfig: {
+              providers: [],
+              usageLimitSources: [
+                {
+                  id: UsageLimitSourceId.make("hub"),
+                  kind: "cliproxy" as const,
+                  label: "CLIProxyAPI",
+                  checkedAt,
+                  accounts: [
+                    {
+                      id: "codex-team.json",
+                      driver: ProviderDriverKind.make("codex"),
+                      usageLimits: limits,
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+      ]),
+    );
+    expect(describeLimitAccount(account!)).toEqual({
+      account: "codex-team",
+      accountKind: "name",
+      machine: "CLIProxyAPI",
+      machineKind: "source",
+    });
   });
 });
