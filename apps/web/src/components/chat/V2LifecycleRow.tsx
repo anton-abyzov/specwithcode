@@ -80,7 +80,7 @@ export function V2LifecycleRow(props: {
   if (item.type === "run_interrupt_request") {
     return (
       <div className="flex justify-end px-1 py-1" data-v2-item-type={item.type}>
-        <div className="flex max-w-[80%] items-center gap-2 text-xs text-destructive">
+        <div className="flex max-w-[80%] items-center gap-2 text-xs text-destructive-foreground">
           <span aria-hidden="true" className="font-mono">
             ■
           </span>
@@ -459,7 +459,7 @@ function SubagentTimelineLink(props: {
             <span
               className={cn(
                 "shrink-0 text-3xs",
-                failed ? "text-destructive" : "text-muted-foreground",
+                failed ? "text-destructive-foreground" : "text-muted-foreground",
               )}
             >
               {statusLabel}
@@ -469,7 +469,7 @@ function SubagentTimelineLink(props: {
         <span
           className={cn(
             "block text-2xs leading-relaxed",
-            failed ? "text-destructive" : "text-muted-foreground",
+            failed ? "text-destructive-foreground" : "text-muted-foreground",
           )}
         >
           {detail === null ? (
@@ -487,7 +487,7 @@ function SubagentTimelineLink(props: {
       {threadId !== null ? (
         <ChevronRightIcon
           aria-hidden
-          className="size-3.5 shrink-0 text-muted-foreground/60 transition-colors group-hover/subagent:text-foreground"
+          className="size-3.5 shrink-0 text-muted-foreground transition-colors group-hover/subagent:text-foreground"
         />
       ) : null}
     </>

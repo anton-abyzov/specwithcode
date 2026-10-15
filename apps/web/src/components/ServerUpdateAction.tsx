@@ -185,7 +185,10 @@ export function ServerUpdateProgress({
 }) {
   if (state.status === "failed") {
     return (
-      <div className="mt-1 flex min-w-0 items-center gap-2 text-xs text-destructive" role="alert">
+      <div
+        className="mt-1 flex min-w-0 items-center gap-2 text-xs text-destructive-foreground"
+        role="alert"
+      >
         <span className="size-1.5 shrink-0 rounded-full bg-destructive" aria-hidden="true" />
         <Tooltip>
           <TooltipTrigger render={<span className="min-w-0 truncate">{state.message}</span>} />

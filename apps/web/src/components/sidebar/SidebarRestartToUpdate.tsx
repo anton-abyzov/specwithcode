@@ -7,6 +7,8 @@ import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import { useStudioServiceUpdateState } from "../../state/serviceUpdate";
 import { showDesktopUpdateDownloadedToast } from "../desktopUpdate.toast";
 import {
+  confirmAppRestartForUpdate,
+  isServiceWorkRunning,
   retryServiceUpdate,
   startServiceUpdateNow,
   useServiceUpdateFlow,
@@ -25,6 +27,8 @@ import {
 // An accepted install quits the app; if it is still open after this long,
 // say so instead of spinning forever.
 const RESTART_WATCHDOG_MS = 60_000;
+// While an update waits for running work to finish, check this often.
+const IDLE_CHECK_MS = 15_000;
 
 const errorText = (error: unknown, fallback: string) =>
   error instanceof Error ? error.message : fallback;
@@ -46,6 +50,9 @@ function SidebarRestartToUpdateButton() {
   const [pending, setPending] = useState(false);
   const [installOnQuit, setInstallOnQuit] = useState(false);
   const [downloadsInBackground, setDownloadsInBackground] = useState(false);
+  // The user chose to let running work finish: restart once nothing runs.
+  const [waitingForIdle, setWaitingForIdle] = useState(false);
+  const [checkingWork, setCheckingWork] = useState(false);
   const watchdog = useRef<number | null>(null);
   const view = getRestartToUpdateView(appState, serviceState, { installOnQuit });
   const readyVersion = view?.app && appState?.status === "downloaded" ? view.appVersion : null;
@@ -88,82 +95,124 @@ function SidebarRestartToUpdateButton() {
     [],
   );
 
-  const restart = useCallback(async () => {
-    const bridge = window.desktopBridge;
-    if (service.progress && canRetryServiceUpdate(service.progress)) {
-      void retryServiceUpdate();
-      return;
-    }
-    if (!bridge || !view || pending || service.progress || service.starting) return;
-    setPending(true);
-    let restarting = false;
-    try {
-      if (view.service && bridge.installServiceUpdate) {
-        // The service is asked first: the desktop kicks the agent before it
-        // answers, so the app restart that follows cannot drop the request.
-        const started = await startServiceUpdateNow(serviceState);
-        // The user chose to keep their work running: nothing restarts.
-        if (!started) return;
+  const restart = useCallback(
+    async (options: { readonly confirmed?: boolean } = {}) => {
+      const bridge = window.desktopBridge;
+      if (service.progress && canRetryServiceUpdate(service.progress)) {
+        void retryServiceUpdate();
+        return;
       }
-      if (view.app) {
-        const result = await bridge.installUpdate(
-          view.appVersion ? { expectedVersion: view.appVersion } : undefined,
-        );
-        restarting = result.accepted && !result.failed;
-        const message = describeInstallOutcome(result, { downloadsInBackground });
-        if (message) {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not install update",
-              description: message,
-            }),
-          );
+      if (!bridge || !view || pending || checkingWork || service.progress || service.starting)
+        return;
+      // A service update asks for itself before it stops work; an app restart
+      // alone asks here, so running jobs are never cut off without a warning.
+      if (view.app && !view.service && !options.confirmed) {
+        setCheckingWork(true);
+        const proceed = await confirmAppRestartForUpdate({ version: view.appVersion })
+          .catch(() => false)
+          .finally(() => setCheckingWork(false));
+        if (!proceed) {
+          setWaitingForIdle(true);
+          return;
         }
       }
-    } catch (error) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Could not install update",
-          description: errorText(error, "An unexpected error occurred."),
-        }),
-      );
-    } finally {
-      if (restarting) {
-        // Stay on "Restarting…" while the app shuts down.
-        watchdog.current = window.setTimeout(() => {
-          watchdog.current = null;
-          setPending(false);
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Studio did not restart",
-              description: "Quit and reopen SpecWithCode to finish the update.",
-            }),
+      setWaitingForIdle(false);
+      setPending(true);
+      let restarting = false;
+      try {
+        if (view.service && bridge.installServiceUpdate) {
+          // The service is asked first: the desktop kicks the agent before it
+          // answers, so the app restart that follows cannot drop the request.
+          const started = await startServiceUpdateNow(serviceState);
+          // The user chose to keep their work running: nothing restarts.
+          if (!started) return;
+        }
+        if (view.app) {
+          const result = await bridge.installUpdate(
+            view.appVersion ? { expectedVersion: view.appVersion } : undefined,
           );
-        }, RESTART_WATCHDOG_MS);
-      } else {
-        setPending(false);
+          restarting = result.accepted && !result.failed;
+          const message = describeInstallOutcome(result, { downloadsInBackground });
+          if (message) {
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Could not install update",
+                description: message,
+              }),
+            );
+          }
+        }
+      } catch (error) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not install update",
+            description: errorText(error, "An unexpected error occurred."),
+          }),
+        );
+      } finally {
+        if (restarting) {
+          // Stay on "Restarting…" while the app shuts down.
+          watchdog.current = window.setTimeout(() => {
+            watchdog.current = null;
+            setPending(false);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Studio did not restart",
+                description: "Quit and reopen SpecWithCode to finish the update.",
+              }),
+            );
+          }, RESTART_WATCHDOG_MS);
+        } else {
+          setPending(false);
+        }
       }
-    }
-  }, [downloadsInBackground, pending, service, serviceState, view]);
+    },
+    [checkingWork, downloadsInBackground, pending, service, serviceState, view],
+  );
+
+  // Restart on its own once the work the user let finish is done.
+  useEffect(() => {
+    if (!waitingForIdle || !view?.app) return;
+    let active = true;
+    const timer = window.setInterval(() => {
+      void isServiceWorkRunning().then((running) => {
+        if (active && running === false) void restart({ confirmed: true });
+      });
+    }, IDLE_CHECK_MS);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [restart, view?.app, waitingForIdle]);
 
   const progress = service.progress;
   // The button stays while a service update is under way, even once the agent no
   // longer lists it as waiting, so the click is never answered by nothing.
   if (!view && !progress) return null;
   const busy =
-    pending || service.starting || (progress !== null && !canRetryServiceUpdate(progress));
+    pending ||
+    checkingWork ||
+    service.starting ||
+    (progress !== null && !canRetryServiceUpdate(progress));
   const text =
     progress && !(pending && view?.app)
       ? serviceUpdateButtonLabel(progress)
       : service.starting || (pending && view?.service && !view.app)
         ? (view?.label ?? "Update now")
-        : pending
-          ? "Restarting…"
-          : (view?.label ?? "Restart to update");
-  const description = view?.description ?? SERVICE_UPDATE_NOW_DESCRIPTION;
+        : checkingWork
+          ? "Checking running work…"
+          : pending
+            ? "Restarting…"
+            : waitingForIdle && view?.app
+              ? "Restarts when idle"
+              : (view?.label ?? "Restart to update");
+  const description =
+    waitingForIdle && view?.app
+      ? `SpecWithCode restarts to install ${view.appVersion ?? "the update"} once running work finishes. Click to restart now.`
+      : (view?.description ?? SERVICE_UPDATE_NOW_DESCRIPTION);
 
   return (
     <Tooltip>

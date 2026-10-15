@@ -36,7 +36,7 @@ export function TimelineSystemDivider(props: {
     <div
       className={cn(
         "flex min-w-0 items-center gap-2 py-2 text-2xs text-muted-foreground",
-        props.tone === "danger" && "text-destructive",
+        props.tone === "danger" && "text-destructive-foreground",
       )}
     >
       <span aria-hidden="true" className="h-px flex-1 bg-border/70" />

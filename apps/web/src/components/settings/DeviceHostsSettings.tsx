@@ -264,7 +264,7 @@ function DeviceHostList({
               ) : null}
               {error ? (
                 <div className="mt-1" role="status">
-                  <details className="text-xs text-destructive">
+                  <details className="text-xs text-destructive-foreground">
                     <summary>Connection failed</summary>
                     <p className="mt-1 whitespace-pre-wrap break-words">{error}</p>
                   </details>

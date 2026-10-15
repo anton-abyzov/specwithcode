@@ -214,7 +214,7 @@ function Icon({ className, ...props }: ComponentProps<"span">) {
       data-slot="composer-banner-icon"
       className={cn(
         "col-start-1 row-start-1 flex w-(--composer-banner-icon-column) min-w-0 flex-none items-center justify-center text-muted-foreground [&>svg]:size-3",
-        "group-data-[composer-banner-layout=approval]/banner-row:pt-0.5 group-data-[composer-banner-layout=approval]/banner-row:text-warning group-data-[composer-banner-layout=approval]/banner-row:[&>svg]:size-4",
+        "group-data-[composer-banner-layout=approval]/banner-row:pt-0.5 group-data-[composer-banner-layout=approval]/banner-row:text-warning-foreground group-data-[composer-banner-layout=approval]/banner-row:[&>svg]:size-4",
         className,
       )}
       {...props}
@@ -243,7 +243,7 @@ function Separator() {
     <span
       aria-hidden
       data-slot="composer-banner-separator"
-      className="mx-1 inline-block flex-none text-muted-foreground/40"
+      className="mx-1 inline-block flex-none text-muted-foreground"
     >
       ·
     </span>

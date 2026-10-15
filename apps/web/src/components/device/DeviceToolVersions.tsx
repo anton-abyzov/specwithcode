@@ -79,7 +79,7 @@ export function DeviceToolVersions({
           {owner ? `Managed by ${owner}. ` : ""}Tools update automatically on this host when needed.
         </p>
         {error ? (
-          <p role="status" className="mt-2 text-xs text-destructive">
+          <p role="status" className="mt-2 text-xs text-destructive-foreground">
             {error}
           </p>
         ) : null}

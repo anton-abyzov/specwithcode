@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@specweave-studio/contracts";
+import { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -7,6 +7,7 @@ import {
   selectEnvironmentAxis,
   selectProjectAxis,
   settingsScopeEnvironmentLabel,
+  settingsScopeProjectChoices,
 } from "./settingsScopeAxis";
 
 const first = {
@@ -84,5 +85,38 @@ describe("environmentAxisValue", () => {
     expect(environmentAxisValue({ project: "p", checkout: "c" }, "laptop")).toBe("laptop");
     expect(environmentAxisValue({ project: "p" }, null)).toBe("all");
     expect(environmentAxisValue({ machine: "desk" }, "laptop")).toBe("desk");
+  });
+});
+
+describe("settings scope project choices", () => {
+  const environmentId = EnvironmentId.make("first");
+  const group = (projectKey: string, workspaceRoot: string, archived = false) => ({
+    projectKey,
+    memberProjects: [
+      {
+        environmentId,
+        id: ProjectId.make(projectKey),
+        workspaceRoot,
+        workspaceSettings: { archived },
+      },
+    ],
+  });
+  const groups = [
+    group("live", "/work/live"),
+    group("old", "/work/old", true),
+    group("scratch", "/home/.studio/no-project"),
+  ];
+  const scratchRootFor = () => "/home/.studio/no-project";
+
+  it("leaves out archived projects and the no-project folder", () => {
+    expect(
+      settingsScopeProjectChoices(groups, scratchRootFor, undefined).map((g) => g.projectKey),
+    ).toEqual(["live"]);
+  });
+
+  it("keeps the selected project listed even when it is archived", () => {
+    expect(
+      settingsScopeProjectChoices(groups, scratchRootFor, "old").map((g) => g.projectKey),
+    ).toEqual(["live", "old"]);
   });
 });

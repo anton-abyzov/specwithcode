@@ -98,3 +98,50 @@ it("opens host media through server authorization before the client grant loads"
     vi.unstubAllGlobals();
   }
 });
+
+it("opens a workspace image chip in the media viewer, not the files panel", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  mint.mockResolvedValue(
+    AsyncResult.success({ relativeUrl: "/api/assets/contact-sheet.png", expiresAt: 1 }),
+  );
+  const onImageExpand = vi.fn();
+  const threadRef = {
+    environmentId: EnvironmentId.make("media-environment"),
+    threadId: ThreadId.make("media-thread"),
+  };
+  let renderer: ReactTestRenderer | undefined;
+  try {
+    await act(async () => {
+      renderer = create(
+        <ChatMarkdown
+          cwd="/repo"
+          threadRef={threadRef}
+          text="[contact-sheet.png](/repo/swc-logo/contact-sheet.png)"
+          onImageExpand={onImageExpand}
+        />,
+      );
+    });
+    await act(async () => {
+      const link = renderer!.root
+        .findAllByType("a")
+        .find((node) => node.props.href === "/repo/swc-logo/contact-sheet.png");
+      expect(link).toBeDefined();
+      link!.props.onClick({ preventDefault: vi.fn(), stopPropagation: vi.fn() });
+    });
+    expect(onImageExpand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        images: [
+          expect.objectContaining({
+            src: "https://host.test/api/assets/contact-sheet.png",
+            actionsSource: expect.objectContaining({
+              reference: expect.objectContaining({ path: "/repo/swc-logo/contact-sheet.png" }),
+            }),
+          }),
+        ],
+      }),
+    );
+  } finally {
+    await act(async () => renderer?.unmount());
+    vi.unstubAllGlobals();
+  }
+});

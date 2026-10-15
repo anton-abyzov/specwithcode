@@ -159,7 +159,7 @@ export function SidebarProjectTree(props: {
                     className="pointer-events-none absolute top-0.5 bottom-0.5 left-[17px] w-px bg-sidebar-border"
                   />
                   {sessions.length === 0 ? (
-                    <li className="list-none py-1 pr-2 pl-9 text-xs text-sidebar-muted-foreground/70">
+                    <li className="list-none py-1 pr-2 pl-9 text-xs text-sidebar-muted-foreground">
                       No sessions yet
                     </li>
                   ) : (
@@ -187,7 +187,7 @@ export function SidebarProjectTree(props: {
                         className="flex h-7 w-full cursor-pointer items-center rounded-md pr-2 pl-9 text-left text-xs text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
                       >
                         Show {Math.min(remaining, 10)} more
-                        <span className="ml-1 text-sidebar-muted-foreground/60">
+                        <span className="ml-1 text-sidebar-muted-foreground">
                           of {group.sessions.length}
                         </span>
                       </button>
@@ -285,7 +285,7 @@ function ProjectRow(props: {
           />
         ) : null}
         {group.attentionCount === 0 && group.sessions.length > 0 ? (
-          <span className="pr-1 text-[11px] tabular-nums text-sidebar-muted-foreground/70">
+          <span className="pr-1 text-[11px] tabular-nums text-sidebar-muted-foreground">
             {group.sessions.length}
           </span>
         ) : null}
@@ -356,7 +356,7 @@ function SessionRow(props: {
         >
           {title}
         </span>
-        <span className="shrink-0 text-[11px] tabular-nums text-sidebar-muted-foreground/70">
+        <span className="shrink-0 text-[11px] tabular-nums text-sidebar-muted-foreground">
           {compactAge(session.updatedAt, props.now)}
         </span>
       </button>
@@ -388,7 +388,7 @@ function StatusGlyph(props: { status: ProjectTreeSession["status"]; label: strin
     case "resolved":
       return (
         <span aria-label={props.label} role="img" className={cn(base, "bg-sidebar")}>
-          <CheckIcon className="size-2.5 text-sidebar-muted-foreground/70" />
+          <CheckIcon className="size-2.5 text-sidebar-muted-foreground" />
         </span>
       );
     default:

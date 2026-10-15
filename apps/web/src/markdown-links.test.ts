@@ -391,12 +391,12 @@ describe("resolveInlineCodeFileLinkMeta", () => {
     });
   });
 
-  it("links bare filenames only when a line suffix marks them as file references", () => {
+  it("links bare code filenames only when a line suffix marks them as file references", () => {
     expect(resolveInlineCodeFileLinkMeta("script.ts:10", "/Users/dev/project")).toMatchObject({
       targetPath: "/Users/dev/project/script.ts:10",
       line: 10,
     });
-    expect(resolveInlineCodeFileLinkMeta("AGENTS.md", "/Users/dev/project")).toBeNull();
+    expect(resolveInlineCodeFileLinkMeta("script.ts", "/Users/dev/project")).toBeNull();
   });
 
   it("links extensionless bare filenames with a line suffix", () => {

@@ -514,7 +514,7 @@ export function AddProviderInstanceDialog({
                         ) : null}
                       </SettingsGroup>
                       {isAcpRegistry && hasAttemptedSubmit && acpSelectionError ? (
-                        <p className="text-2xs text-destructive">{acpSelectionError}</p>
+                        <p className="text-2xs text-destructive-foreground">{acpSelectionError}</p>
                       ) : null}
                     </div>
                   ) : (
@@ -534,7 +534,9 @@ export function AddProviderInstanceDialog({
                         onPreparingChange={setIsPreparingRegistryAgent}
                       />
                       {isAcpRegistry && hasAttemptedSubmit && acpSelectionError ? (
-                        <p className="mt-2 text-2xs text-destructive">{acpSelectionError}</p>
+                        <p className="mt-2 text-2xs text-destructive-foreground">
+                          {acpSelectionError}
+                        </p>
                       ) : null}
                     </>
                   )}
@@ -611,7 +613,7 @@ export function AddProviderInstanceDialog({
                       <span
                         id="add-provider-instance-id-error"
                         role="alert"
-                        className="text-destructive"
+                        className="text-destructive-foreground"
                       >
                         {instanceIdError}
                       </span>

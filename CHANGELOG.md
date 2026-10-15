@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- New app icon and mark: a white spec page with a folded corner and a `>_` prompt on an indigo tile replaces the woven "S" in the app icon (macOS, Windows, Linux, iOS and Android), favicons, the marketing site, the in-app wordmark, Android splash and notification icons, and the DMG window background. All masters are vector.
 - Discover existing Codex and Claude Code MCP declarations in a shared per-machine tool matrix. Project Environment shows project overrides, explicit disables and source details alongside existing Studio grants. Discovery is read-only; native authentication and runtime access are not inferred from configuration.
 - The composer access selector now synchronizes native ACP Allow All permissions. The duplicate toggle is removed, saved model options cannot override access mode, and unconfirmed permission changes block execution.
 - A project keeps one identity, name and coordinator window across machine handoffs, with threads from its explicitly linked machines and readable earlier coordinator history. Requests retain their recorded machine and model.

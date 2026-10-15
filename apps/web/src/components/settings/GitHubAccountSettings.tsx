@@ -188,7 +188,7 @@ export function GitHubAccountSettings({
             ) : null}
             {stalePin ? (
               <div className="flex items-center justify-between gap-3">
-                <p className="text-xs text-warning">
+                <p className="text-xs text-warning-foreground">
                   The chosen login is no longer signed in, so the active gh login is used.
                 </p>
                 <Button
@@ -204,14 +204,14 @@ export function GitHubAccountSettings({
             {group.broken.map((entry) => (
               <p
                 key={entry.account}
-                className="flex min-w-0 flex-wrap items-center gap-1 text-xs text-muted-foreground/70"
+                className="flex min-w-0 flex-wrap items-center gap-1 text-xs text-muted-foreground"
               >
                 <RedactedLogin revealed={revealed} account={entry.account} />
                 <span>can't be used: {entry.error ?? "gh reports this login as invalid."}</span>
               </p>
             ))}
             {group.environmentVariable ? (
-              <p className="text-xs text-warning">
+              <p className="text-xs text-warning-foreground">
                 {group.environmentVariable} is set on the server, so it overrides the account chosen
                 here until it is unset.
               </p>

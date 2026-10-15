@@ -136,7 +136,9 @@ export function PullRequestStackMenu({
               >
                 <PullRequestGlyph.stack aria-hidden className="size-3.5" /> {position}/
                 {stack.layers.length}
-                {onRetry ? <TriangleAlertIcon aria-hidden className="size-3 text-warning" /> : null}
+                {onRetry ? (
+                  <TriangleAlertIcon aria-hidden className="size-3 text-warning-foreground" />
+                ) : null}
               </MenuTrigger>
             }
           />

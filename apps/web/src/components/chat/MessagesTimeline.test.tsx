@@ -1435,6 +1435,31 @@ describe("MessagesTimeline", () => {
     expect(userMarkup).not.toContain("Sent by another agent");
   });
 
+  it("shows the user's own words routed from another thread as theirs", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const entry = buildUserTimelineEntry("rlease and push all!");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            ...entry,
+            message: {
+              ...entry.message,
+              createdBy: "user",
+              creationSource: "mcp",
+              senderThreadId: ThreadId.make("thread-coordinator"),
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-user-message-attribution="routed"');
+    expect(markup).toContain("Your message · Routed by another thread");
+    expect(markup).not.toContain("Sent by another agent");
+  });
+
   it("keeps a subagent parent-thread link at the top of an empty timeline", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
@@ -2004,7 +2029,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Ran 2 commands");
     expect(markup).toContain("lucide-terminal");
     expect(markup).not.toContain("lucide-x");
-    expect(markup).not.toContain("text-destructive");
+    expect(markup).not.toContain("text-destructive-foreground");
     // The failure stays discoverable for screen readers.
     expect(markup).toContain("tool call failed");
   });
@@ -2417,7 +2442,7 @@ describe("MessagesTimeline", () => {
 
     // The Studio wordmark replaces the generic tool icon for Studio MCP calls.
     expect(markup).toContain('aria-label="SpecWithCode"');
-    expect(markup).toContain('viewBox="89.8 83.6 332.8 332.8"');
+    expect(markup).toContain('viewBox="0 0 64 64"');
     expect(markup).toContain("Read a Studio thread");
     expect(markup).not.toContain("mcp__studio-code__studio_thread_read");
   });
@@ -2618,7 +2643,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("lucide-zap");
     expect(markup).toContain('aria-label="Tool call failed"');
     // Ordinary tool failures render muted, not red.
-    expect(markup).not.toContain("text-destructive");
+    expect(markup).not.toContain("text-destructive-foreground");
   });
 
   it("keeps the red treatment for severe orchestration failures", () => {
@@ -2655,7 +2680,7 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("lucide-circle-alert");
-    expect(markup).toContain("text-destructive");
+    expect(markup).toContain("text-destructive-foreground");
   });
 
   it.each([

@@ -86,7 +86,7 @@ export function getRestartToUpdateView(
         failure ? `The last install failed: ${failure}` : null,
         `SpecWithCode ${version ?? "update"} is downloaded.`,
         "Restarts the app to install it.",
-        "Any running task is interrupted.",
+        "If work is still running you are asked first, and can let it finish.",
         options.installOnQuit ? "Or keep working: it installs the next time you quit." : null,
       ];
 
@@ -463,6 +463,38 @@ export function describeServiceUpdateStop(
   if (lines.length === 0) return null;
   return ["Stop running work and update now?", ...lines].join("\n");
 }
+
+/**
+ * The warning shown before an app restart installs an update while work still
+ * runs: how much runs, where, and that it will be cut off. Null when nothing
+ * runs, so the restart goes ahead without asking.
+ */
+export function describeAppRestartWarning(
+  check: Pick<ServerPrepareServiceUpdateResult, "blockers">,
+  options: { readonly version?: string | null } = {},
+): string | null {
+  const running = blockerCount(check.blockers, ["run", "effect", "session"]);
+  const queued = blockerCount(check.blockers, ["queued"]);
+  const questions = blockerCount(check.blockers, ["request"]);
+  if (running + queued + questions === 0) return null;
+  const threads = new Set(check.blockers.flatMap((blocker) => blocker.threadId ?? [])).size;
+  const what = [
+    running > 0 ? plural(running, "job is", "jobs are") + " still running" : null,
+    queued > 0 ? `${plural(queued, "message is", "messages are")} queued` : null,
+    questions > 0 ? `${plural(questions, "question waits", "questions wait")} for you` : null,
+  ].filter(Boolean);
+  const version = options.version ? ` SpecWithCode ${options.version}` : "";
+  return [
+    `Restart to install${version} now?`,
+    `${what.join(", ")}${threads > 0 ? ` in ${plural(threads, "thread", "threads")}` : ""}. Restarting interrupts ${running + queued + questions === 1 ? "it" : "them"}.`,
+    describeServiceUpdateBlockers(check.blockers),
+    "Choose Install when idle to let the work finish: SpecWithCode restarts once nothing runs.",
+  ].join("\n");
+}
+
+/** What the restart warning asks when the service cannot say what runs. */
+export const APP_RESTART_UNKNOWN =
+  "Restart to install the update now?\nSpecWithCode could not check for running work. Any running task is interrupted.";
 
 export interface ServiceUpdateToastView {
   readonly type: "loading" | "warning" | "success" | "error";

@@ -38,7 +38,7 @@ function StatusGlyph({ tone }: { tone: ProviderSubagentStatusTone }) {
         <CheckIcon
           aria-hidden
           data-subagent-status-glyph="done"
-          className="size-3.5 shrink-0 text-success"
+          className="size-3.5 shrink-0 text-success-foreground"
         />
       );
     case "failed":
@@ -46,7 +46,7 @@ function StatusGlyph({ tone }: { tone: ProviderSubagentStatusTone }) {
         <CircleAlertIcon
           aria-hidden
           data-subagent-status-glyph="failed"
-          className="size-3.5 shrink-0 text-destructive"
+          className="size-3.5 shrink-0 text-destructive-foreground"
         />
       );
     case "stopped":

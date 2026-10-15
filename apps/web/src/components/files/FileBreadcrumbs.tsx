@@ -279,7 +279,7 @@ export function FileBreadcrumbs(props: FileBreadcrumbsProps) {
       data-current-file-crumb={crumb.kind === "file"}
     >
       {index > 0 ? (
-        <ChevronRightIcon className="mx-1 size-3.5 shrink-0 text-muted-foreground/60" />
+        <ChevronRightIcon className="mx-1 size-3.5 shrink-0 text-muted-foreground" />
       ) : null}
       {crumb.kind === "file" ? (
         <span aria-current="page">

@@ -113,8 +113,11 @@ describe("buildRuntimeInstructions", () => {
     expect(concise).toContain("Evidence");
     expect(concise).toContain("Blockers");
     expect(concise).toContain("at most 5 lines, not a replay of your steps");
-    // The coordinator relays instead of pasting.
+    // Other parents relay a short outcome. A project coordinator does not.
     expect(concise).toContain("Do not paste its report");
+    expect(concise).toContain(
+      "A project coordinator does not relay: the result stays in the worker's thread.",
+    );
   });
 
   it("never caps errors, security warnings or a required answer", () => {

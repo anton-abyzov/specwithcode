@@ -76,7 +76,7 @@ To install the agent by hand on a Mac without the desktop app (M1, M3):
 
 ## Publishing a release
 
-1. Build the service archive and helpers with `scripts/studio-fleet/bundle.mjs`, and the desktop app with an explicit version: `node scripts/build-desktop-artifact.ts --platform mac --target dmg --arch arm64 --build-version 0.2.1`. Builds without `--build-version` are stamped `<next patch>-dev.<date>.g<commit>`, so they are offered the next release. The feed defaults to the checkout's github.com origin; `STUDIO_DESKTOP_UPDATE_REPOSITORY` overrides it.
+1. Build the service archive and helpers with `scripts/studio-fleet/bundle.mjs`, and the desktop app with an explicit version: `node scripts/build-desktop-artifact.ts --platform mac --target dmg --arch arm64 --build-version 0.2.1`. Builds without `--build-version` are stamped `<next patch>-dev.<date>.g<commit>`, so they are offered the next release. Run directly with `node`, the script adds the workspace `node_modules/.bin` (for `vp`) and `~/.cargo/bin` to `PATH` when they exist. The feed defaults to the checkout's github.com origin; `STUDIO_DESKTOP_UPDATE_REPOSITORY` overrides it.
 2. Upload `latest-mac.yml`, the zip and its blockmap, the dmg, the runtime and helper archives, `SHA256SUMS` and `deployment-helpers-manifest.json` to a release tagged `v0.2.1`.
 3. Write the plan, listing each installed source commit that may upgrade on its own, and upload it:
 

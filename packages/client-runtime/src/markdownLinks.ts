@@ -142,7 +142,7 @@ const COUNTRY_HOSTNAME_TLDS = new Set([
   "hk",
 ]);
 
-function looksLikeHostname(segment: string, hasPosition: boolean): boolean {
+export function looksLikeHostname(segment: string, hasPosition: boolean): boolean {
   if (segment.startsWith(".")) return false;
   const lowered = segment.toLowerCase();
   if (SINGLE_LABEL_HOSTNAMES.has(lowered)) return true;

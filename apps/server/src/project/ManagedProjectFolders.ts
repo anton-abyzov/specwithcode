@@ -116,7 +116,11 @@ export class ManagedProjectFolders extends Context.Service<
     /** The folder that holds projects started from just a name. */
     readonly namedProjectsRoot: string;
     /**
-     * Starts a project: claims `<parentPath ?? namedProjectsRoot>/<slug>`
+     * Starts a project. A code project whose chosen `parentPath` is already a
+     * project (holding `.git` or `.specweave`, or named like the project), or whose `<parentPath>/<slug>` already is one,
+     * binds to that folder as-is and returns `existing: true`: no subfolder,
+     * no `git init`, no starter files. Otherwise it claims
+     * `<parentPath ?? namedProjectsRoot>/<slug>`
      * (adding `-2`, `-3`, ... when taken), makes it a Git repository with a
      * README, an icon, and a first commit, then creates the project. Personal
      * projects claim a private managed folder without invoking Git. A failed
@@ -133,6 +137,7 @@ export class ManagedProjectFolders extends Context.Service<
         readonly projectId: ProjectId;
         readonly workspaceRoot: string;
         readonly commitError?: string;
+        readonly existing?: boolean;
       },
       NamedProjectError
     >;
@@ -477,6 +482,62 @@ const make = Effect.gen(function* () {
       );
   });
 
+  const hasProjectMarker = (folder: string) =>
+    Effect.forEach([".git", ".specweave"], (marker) =>
+      fileSystem.exists(path.join(folder, marker)).pipe(Effect.orElseSucceed(() => false)),
+    ).pipe(Effect.map((found) => found.some(Boolean)));
+
+  /**
+   * The folder a new code project should bind to as-is, when the person
+   * picked an existing project rather than a parent for a new one. Only the
+   * chosen folder's own markers count, not an enclosing work tree, so a
+   * parent inside a dotfiles home repository still gets a new subfolder.
+   */
+  const existingProjectFolder = Effect.fn("ManagedProjectFolders.existingProjectFolder")(function* (
+    name: string,
+    parentPath: string,
+  ) {
+    if (!path.isAbsolute(parentPath)) return Option.none<string>();
+    const chosen = path.resolve(parentPath);
+    const info = yield* fileSystem.stat(chosen).pipe(Effect.option);
+    if (Option.isNone(info) || info.value.type !== "Directory") return Option.none<string>();
+    const folderName = newProjectFolderName(name);
+    if (
+      newProjectFolderName(path.basename(chosen)) === folderName ||
+      (yield* hasProjectMarker(chosen))
+    ) {
+      return Option.some(chosen);
+    }
+    const child = path.join(chosen, folderName);
+    return (yield* hasProjectMarker(child)) ? Option.some(child) : Option.none<string>();
+  });
+
+  // Registers an existing folder without touching its files or its Git state.
+  const bindExistingFolder = Effect.fn("ManagedProjectFolders.bindExistingFolder")(function* (
+    name: string,
+    workspaceRoot: string,
+  ) {
+    const owner = yield* projects
+      .getByWorkspaceRoot(workspaceRoot)
+      .pipe(Effect.mapError((cause) => new NamedProjectCreateError({ workspaceRoot, cause })));
+    if (Option.isSome(owner)) {
+      return { projectId: owner.value.id, workspaceRoot, existing: true };
+    }
+    const id = yield* crypto.randomUUIDv4.pipe(
+      Effect.mapError((cause) => new NamedProjectCreateError({ workspaceRoot, cause })),
+    );
+    const project = yield* projects
+      .create({
+        commandId: CommandId.make(`named-project:${id}`),
+        projectId: ProjectId.make(id),
+        title: name,
+        kind: "code",
+        workspaceRoot,
+      })
+      .pipe(Effect.mapError((cause) => new NamedProjectCreateError({ workspaceRoot, cause })));
+    return { projectId: project.id, workspaceRoot, existing: true };
+  });
+
   const createNamedProject: ManagedProjectFolders["Service"]["createNamedProject"] = Effect.fn(
     "ManagedProjectFolders.createNamedProject",
   )(function* (input) {
@@ -490,6 +551,10 @@ const make = Effect.gen(function* () {
         (project) => project.workspaceSettings?.kind === "personal",
       );
       if (existing) return { projectId: existing.id, workspaceRoot: existing.workspaceRoot };
+    }
+    if (input.kind !== "personal" && input.parentPath !== undefined) {
+      const existing = yield* existingProjectFolder(input.name, input.parentPath);
+      if (Option.isSome(existing)) return yield* bindExistingFolder(input.name, existing.value);
     }
     const workspaceRoot = yield* claimNamedFolder(
       input.name,

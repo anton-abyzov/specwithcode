@@ -44,6 +44,13 @@
   --tool-error-icon: var(--error);
   --error-surface: color-mix(in srgb, var(--error) 8%, transparent);
   --destructive: var(--error);
+  /* Fill for solid destructive controls. White text needs a darker fill than
+     the status color, so cap its lightness instead of pairing it with the
+     text-tone --destructive-foreground (which is meant for neutral surfaces). */
+  --destructive-solid: oklch(from var(--destructive) min(l, 0.55) c h);
+  --destructive-solid-foreground: var(--color-white);
+  /* Disabled controls fade but keep their label readable (at least 3:1). */
+  --disabled-opacity: 0.8;
   --border: var(--color-zinc-200);
   --input: var(--color-zinc-300);
   --ring: var(--primary);
@@ -95,16 +102,18 @@
     --accent: --alpha(var(--color-white) / 4%);
     --accent-foreground: var(--color-neutral-100);
     --error: color-mix(in srgb, var(--color-red-500) 90%, var(--color-white));
-    --error-foreground: var(--color-red-400);
+    /* Red-400 and blue-400 sit near 4.5:1 on the dark card and fall below it
+       on their own tinted surfaces; half a step lighter keeps AA. */
+    --error-foreground: color-mix(in oklab, var(--color-red-400) 50%, var(--color-red-300));
     --tool-error-icon: #fca5a5;
     --error-surface: color-mix(in srgb, var(--error) 16%, transparent);
     --border: --alpha(var(--color-white) / 6%);
     --input: --alpha(var(--color-white) / 8%);
-    --info-foreground: var(--color-blue-400);
+    --info-foreground: color-mix(in oklab, var(--color-blue-400) 50%, var(--color-blue-300));
     --success-foreground: var(--color-emerald-400);
     --warning-foreground: var(--color-amber-400);
     --warning-surface: color-mix(in srgb, var(--warning) 16%, transparent);
-    --update-foreground: var(--color-blue-400);
+    --update-foreground: color-mix(in oklab, var(--color-blue-400) 50%, var(--color-blue-300));
     --update-surface: color-mix(in srgb, var(--update) 18%, transparent);
     --sidebar: var(--card);
     --sidebar-control-surface: var(--muted);
@@ -685,6 +694,53 @@ code {
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--app-scrollbar-thumb-hover);
+}
+
+/* A worker report in its reader reads as a document: serif prose on a
+   narrow measure, like a document viewer rather than a chat reply. */
+.report-document {
+  --report-serif: "New York", ui-serif, "Iowan Old Style", Charter, Georgia, serif;
+}
+
+.report-document-prose .chat-markdown > * + * {
+  margin-top: 1em;
+}
+
+.report-document-serif {
+  font-family: var(--report-serif);
+}
+
+/* Measured from document viewers: a 1.75em title at 1.15 and 1.35em
+   section headings at 1.25, both weight 500. */
+.report-document-title {
+  margin: 0;
+  font-family: var(--report-serif);
+  font-size: 1.75rem;
+  font-weight: 500;
+  line-height: 1.15;
+  letter-spacing: -0.012em;
+  text-wrap: balance;
+  color: var(--foreground);
+}
+
+.report-document-heading {
+  margin: 0 0 0.625rem;
+  font-family: var(--report-serif);
+  font-size: 1.35rem;
+  font-weight: 500;
+  line-height: 1.25;
+  color: var(--foreground);
+}
+
+.report-document-prose {
+  font-family: var(--report-serif);
+  font-size: 1rem;
+  line-height: 1.6;
+  color: var(--foreground);
+}
+
+.report-document-prose .chat-markdown li + li {
+  margin-top: 0.35rem;
 }
 
 /* Chat markdown rendering */

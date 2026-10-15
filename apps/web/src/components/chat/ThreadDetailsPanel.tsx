@@ -130,7 +130,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
           >
             {props.versionMismatch ? (
               <div className="mx-1 mb-2 flex gap-2 rounded-xl border border-warning/30 bg-warning/6 p-3">
-                <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
+                <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0 text-warning-foreground" />
                 <div className="min-w-0 flex-1">
                   <p className="text-xs font-medium">Client and server versions differ</p>
                   <p className="mt-1 text-2xs leading-relaxed text-muted-foreground">

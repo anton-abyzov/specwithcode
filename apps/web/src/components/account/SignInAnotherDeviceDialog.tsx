@@ -263,7 +263,7 @@ export function SignInAnotherDeviceDialog({
                   cannot approve other devices.
                 </p>
               ) : approval.kind === "error" ? (
-                <p className="text-destructive text-sm" role="alert">
+                <p className="text-destructive-foreground text-sm" role="alert">
                   {approval.message}
                 </p>
               ) : (

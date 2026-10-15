@@ -8,6 +8,7 @@ import {
 } from "@tanstack/react-router";
 import { describe, expect, it } from "vite-plus/test";
 
+import { redirectSettingsEntry } from "./settingsEntryScope";
 import { resolveSettingsScope } from "./settingsScope";
 import { retainSettingsScope, validateSettingsRouteSearch } from "./settingsScopeNavigation";
 
@@ -26,11 +27,7 @@ function createSettingsRouter(initialEntry = "/settings/general") {
     path: "settings",
     validateSearch: validateSettingsRouteSearch,
     search: { middlewares: [retainSettingsScope] },
-    beforeLoad: ({ location }) => {
-      if (location.pathname === "/settings") {
-        throw redirect({ to: "/settings/general", replace: true });
-      }
-    },
+    beforeLoad: ({ location, search, cause }) => redirectSettingsEntry({ location, search, cause }),
   });
   const general = createRoute({ getParentRoute: () => settings, path: "general" });
   const projects = createRoute({ getParentRoute: () => settings, path: "projects" });

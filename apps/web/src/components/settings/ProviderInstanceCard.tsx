@@ -17,6 +17,7 @@ import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import { useEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
 import {
+  isLocalGitHubCopilotCommand,
   isProviderDriverKind,
   resolveProviderInstanceEnabled,
   type ProviderInstanceConfig,
@@ -720,9 +721,14 @@ export function ProviderInstanceCard({
       displayName={displayName}
       accentColor={accentColor}
       acpRegistryAgentId={
-        readConfigString(instance.config, "source") === "local"
-          ? undefined
-          : (readConfigString(instance.config, "agentId") ?? undefined)
+        readConfigString(instance.config, "source") !== "local"
+          ? (readConfigString(instance.config, "agentId") ?? undefined)
+          : isLocalGitHubCopilotCommand(
+                readConfigString(instance.config, "agentId"),
+                readConfigString(instance.config, "commandPath"),
+              )
+            ? "github-copilot-cli"
+            : undefined
       }
       acpRegistryIconUrl={
         readConfigString(instance.config, "source") === "local"
@@ -796,7 +802,7 @@ export function ProviderInstanceCard({
                   <VersionAdvisoryIcon
                     className={cn(
                       mode === "list" && "size-3.5",
-                      hasCompatibilityWarning && "text-warning",
+                      hasCompatibilityWarning && "text-warning-foreground",
                     )}
                   />
                 </Button>
@@ -815,7 +821,9 @@ export function ProviderInstanceCard({
             <p
               className={cn(
                 "text-xs leading-snug",
-                versionAdvisory.emphasis === "strong" ? "text-warning" : "text-muted-foreground",
+                versionAdvisory.emphasis === "strong"
+                  ? "text-warning-foreground"
+                  : "text-muted-foreground",
               )}
             >
               {versionAdvisory.detail}
@@ -907,7 +915,7 @@ export function ProviderInstanceCard({
               ) : null}
               {versionAdvisoryNode}
             </span>
-            <span className="mt-0.5 flex items-start gap-1.5 text-xs leading-normal text-muted-foreground/80">
+            <span className="mt-0.5 flex items-start gap-1.5 text-xs leading-normal text-muted-foreground">
               {statusDotNode ? (
                 <span className="flex h-[1.45em] shrink-0 items-center">{statusDotNode}</span>
               ) : null}

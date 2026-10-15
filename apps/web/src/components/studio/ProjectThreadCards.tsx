@@ -13,6 +13,7 @@ import {
   type ThreadCardAction,
 } from "../../studio/projectThreadCards";
 import { useThreadCardGitStatus } from "../../studio/useThreadCardGitStatus";
+import { threadBlocker } from "../../studio/projectWorkspaceModel";
 import { PULL_REQUEST_STATE_PRESENTATION, PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { Tip } from "./shell/Tip";
 import { ThreadLinkChipButton } from "../ThreadLinkChip";
@@ -69,6 +70,7 @@ export function ProjectThreadCard({
   onOpenPullRequest: (url: string) => void;
 }) {
   const status = threadCardStatus(thread);
+  const blocker = threadBlocker(thread);
   const git = useThreadCardGitStatus(thread, projectRoot);
   const pullRequest = threadCardPullRequest(thread, git);
   const actions = threadCardActions({ thread, git, pullRequest, canChange });
@@ -90,6 +92,11 @@ export function ProjectThreadCard({
           <span className="sws-thread-card-status">{status.label}</span>
         )}
       </span>
+      {blocker ? (
+        <span className="sws-thread-card-blocker" data-thread-blocker>
+          {blocker}
+        </span>
+      ) : null}
       <span className="sws-thread-card-actions">
         {actions.map((action) => (
           <ThreadCardActionButton

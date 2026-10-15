@@ -87,3 +87,17 @@
   height: 12px;
   flex: none;
 }
+
+/* The question a blocked thread's report asks, under its title: the reader
+   sees what is needed without opening the thread. */
+.sws-thread-card-blocker {
+  flex: 1 0 100%;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  padding-left: 18px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--shell-waiting);
+}

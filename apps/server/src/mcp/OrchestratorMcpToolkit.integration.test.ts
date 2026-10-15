@@ -1992,6 +1992,33 @@ describe("orchestrator MCP toolkit", () => {
               message: expect.stringContaining("more than once"),
             });
 
+            // An unknown target key fails the call instead of being dropped,
+            // so a misspelled effort never silently runs at the default.
+            const unknownTargetKeyCall = yield* invoke("delegate_task", {
+              task: cancellationPrompt,
+              target: {
+                providerInstanceId: codexInstanceId,
+                model: codexModel,
+                reasoningEffort: "xhigh",
+              },
+              mode: "async",
+              clientRequestId: "delegate-unknown-target-key-1",
+            }).pipe(Effect.flip);
+            expect(String(unknownTargetKeyCall)).toContain(
+              "Unknown target key(s): reasoningEffort",
+            );
+
+            const rejectedEffortCall = yield* invoke("delegate_task", {
+              task: cancellationPrompt,
+              target: { providerInstanceId: codexInstanceId, model: codexModel, effort: "turbo" },
+              mode: "async",
+              clientRequestId: "delegate-rejected-effort-1",
+            });
+            expect(declaredFailure(rejectedEffortCall)).toMatchObject({
+              code: "invalid_request",
+              message: expect.stringContaining('cannot run at effort "turbo"'),
+            });
+
             const cancellableCall = yield* invoke("delegate_task", {
               task: cancellationPrompt,
               target: {
@@ -1999,6 +2026,8 @@ describe("orchestrator MCP toolkit", () => {
                 model: codexModel,
                 // Shorthand record form; decodes to the canonical array.
                 options: { reasoning: "low" },
+                // The named effort wins; this model lacks max, so its nearest level runs.
+                effort: "max",
               },
               mode: "async",
               clientRequestId: "delegate-cancel-1",
@@ -2007,6 +2036,7 @@ describe("orchestrator MCP toolkit", () => {
               cancellableCall.structuredContent,
             ).pipe(Effect.orDie);
             expect(cancellable.status).toBe("running");
+            expect(cancellable.effort).toBe("high");
             // Original delegated run alone is not "later" work.
             expect(cancellable.hasPendingChildRuns).toBe(false);
             yield* waitForProjection(orchestrator, cancellable.childThreadId, (projection) =>
@@ -2032,7 +2062,7 @@ describe("orchestrator MCP toolkit", () => {
             expect(optionedChild.thread.modelSelection).toEqual({
               instanceId: codexInstanceId,
               model: codexModel,
-              options: [{ id: "reasoning", value: "low" }],
+              options: [{ id: "reasoning", value: "high" }],
             });
             const cancelCall = yield* invoke("task_cancel", {
               taskId: cancellable.taskId,

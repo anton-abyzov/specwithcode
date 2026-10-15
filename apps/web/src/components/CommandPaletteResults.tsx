@@ -159,7 +159,7 @@ function DisabledCommandPaletteResultRow(props: {
   item: CommandPaletteActionItem | CommandPaletteSubmenuItem;
 }) {
   return (
-    <div className="flex min-h-8 select-none items-center gap-2 rounded-sm px-2 py-1.5 text-base opacity-64 sm:min-h-7 sm:text-sm">
+    <div className="flex min-h-8 select-none items-center gap-2 rounded-sm px-2 py-1.5 text-base opacity-(--disabled-opacity) sm:min-h-7 sm:text-sm">
       {props.item.icon}
       {props.item.description || props.item.threadContentMatch ? (
         <span className="flex min-w-0 flex-1 flex-col">
@@ -171,9 +171,7 @@ function DisabledCommandPaletteResultRow(props: {
             <ThreadSearchMatchExcerpt match={props.item.threadContentMatch} />
           ) : null}
           {props.item.description ? (
-            <span className="min-w-0 text-muted-foreground/70 text-xs">
-              {props.item.description}
-            </span>
+            <span className="min-w-0 text-muted-foreground text-xs">{props.item.description}</span>
           ) : null}
         </span>
       ) : (
@@ -221,9 +219,7 @@ function CommandPaletteResultRow(props: {
             <ThreadSearchMatchExcerpt match={props.item.threadContentMatch} />
           ) : null}
           {props.item.description ? (
-            <span className="min-w-0 text-muted-foreground/70 text-xs">
-              {props.item.description}
-            </span>
+            <span className="min-w-0 text-muted-foreground text-xs">{props.item.description}</span>
           ) : null}
         </span>
       ) : (
@@ -234,13 +230,13 @@ function CommandPaletteResultRow(props: {
       )}
       {props.item.titleTrailingContent}
       {props.item.timestamp ? (
-        <span className="min-w-12 shrink-0 text-right text-xs tabular-nums text-muted-foreground/70">
+        <span className="min-w-12 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
           {props.item.timestamp}
         </span>
       ) : null}
       {shortcutLabel ? <CommandShortcut>{shortcutLabel}</CommandShortcut> : null}
       {props.item.kind === "submenu" ? (
-        <ChevronRightIcon className="-me-0.5 ms-auto size-4 shrink-0 text-muted-foreground/70" />
+        <ChevronRightIcon className="-me-0.5 ms-auto size-4 shrink-0 text-muted-foreground" />
       ) : null}
     </CommandItem>
   );

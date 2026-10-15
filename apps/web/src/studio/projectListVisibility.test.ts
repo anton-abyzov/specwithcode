@@ -7,6 +7,8 @@ import {
   isScratchGroup,
   membersToToggle,
   partitionProjectGroups,
+  pinProjectsFirst,
+  togglePinnedProject,
   type ProjectListMember,
 } from "./projectListVisibility";
 
@@ -121,5 +123,32 @@ describe("project list visibility", () => {
     expect(membersToToggle(shared, true, scratchRootFor).map((entry) => entry.id)).toEqual(["h2"]);
     expect(membersToToggle(shared, false, scratchRootFor).map((entry) => entry.id)).toEqual(["h1"]);
     expect(membersToToggle(hostScratch, true, scratchRootFor)).toEqual([]);
+  });
+});
+
+describe("pinned projects", () => {
+  const groups = ["a", "b", "c", "d"].map((projectKey) => ({ projectKey }));
+
+  it("lists pinned projects first in pin order, then the rest in input order", () => {
+    expect(pinProjectsFirst(groups, ["c", "a"]).map((group) => group.projectKey)).toEqual([
+      "c",
+      "a",
+      "b",
+      "d",
+    ]);
+  });
+
+  it("ignores pins for projects that are not listed", () => {
+    expect(pinProjectsFirst(groups, ["gone", "d"]).map((group) => group.projectKey)).toEqual([
+      "d",
+      "a",
+      "b",
+      "c",
+    ]);
+  });
+
+  it("pins at the end and unpins in place", () => {
+    expect(togglePinnedProject(["a"], "c")).toEqual(["a", "c"]);
+    expect(togglePinnedProject(["a", "c", "b"], "c")).toEqual(["a", "b"]);
   });
 });

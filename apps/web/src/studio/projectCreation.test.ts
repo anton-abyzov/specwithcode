@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   defaultProjectMachine,
+  newProjectNameNotice,
   resolveNewProjectName,
   suggestProjectMachine,
 } from "./projectCreation";
@@ -63,5 +64,17 @@ describe("new project machine suggestion", () => {
     expect(suggest(null, ["local"], { enabled: true, weights: { local: 0 } })).toBe("local");
     // Choosing it by working on it is still the person's choice.
     expect(suggest("local", ["local", "remote"], { enabled: true, weights })).toBe("local");
+  });
+});
+
+describe("newProjectNameNotice", () => {
+  it("stays quiet when the folder follows the name", () => {
+    expect(newProjectNameNotice("")).toBeNull();
+    expect(newProjectNameNotice("Pinball Stats")).toBeNull();
+    expect(newProjectNameNotice("Café")).toBeNull();
+  });
+  it("explains names that cannot become a folder name", () => {
+    expect(newProjectNameNotice("Проект")).toContain('"project"');
+    expect(newProjectNameNotice("x".repeat(80))).toContain("shortened");
   });
 });

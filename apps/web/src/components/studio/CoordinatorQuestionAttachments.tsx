@@ -199,7 +199,7 @@ export function CoordinatorQuestionAttachments({
         </p>
       ) : null}
       {problem ? (
-        <p className="text-xs text-destructive" role="alert">
+        <p className="text-xs text-destructive-foreground" role="alert">
           {problem}
         </p>
       ) : null}

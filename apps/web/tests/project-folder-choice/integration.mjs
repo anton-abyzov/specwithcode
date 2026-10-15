@@ -149,6 +149,21 @@ try {
       await page.getByRole("button", { name: "Create project", exact: true }).isEnabled(),
       true,
     );
+    const nameBox = dialog.getByRole("combobox", { name: "Project name" });
+    // Holding Backspace past an empty name stays in New project.
+    await nameBox.fill("");
+    for (let press = 0; press < 3; press += 1) await nameBox.press("Backspace");
+    await nameBox.fill("Folder proof");
+    // Closing and reopening keeps the typed name and the chosen folder.
+    await nameBox.press("Escape");
+    await dialog.waitFor({ state: "hidden" });
+    await page.getByRole("button", { name: "Add project", exact: true }).click();
+    await page.getByRole("option", { name: /^New project/ }).click();
+    NodeAssert.equal(await nameBox.inputValue(), "Folder proof");
+    NodeAssert.equal(
+      await page.getByRole("button", { name: "Create project", exact: true }).isEnabled(),
+      true,
+    );
     for (const [width, height] of [
       [1440, 1100],
       [390, 844],
@@ -176,20 +191,25 @@ try {
     await dialog.waitFor({ state: "hidden" });
     NodeAssert.ok(NodeFS.existsSync(NodePath.join(parent, "folder-proof", ".git")));
     receipt.checks.push(
-      "Name Enter creates; folder Enter only browses; same-machine selection preserves parent; primary action fits desktop and mobile",
+      "Name Enter creates; folder Enter only browses; same-machine selection, Backspace and reopening preserve name and parent; primary action fits desktop and mobile",
     );
     await page.getByRole("button", { name: "Add project", exact: true }).click();
     await page.getByRole("option", { name: /^New project/ }).click();
+    NodeAssert.equal(
+      await dialog.getByRole("combobox", { name: "Project name" }).inputValue(),
+      "",
+      "A created project's name is not offered again",
+    );
     await dialog.getByRole("combobox", { name: "Project name" }).fill("Keyboard button proof");
-    await page.getByRole("textbox", { name: "Parent folder path", exact: true }).fill(parent);
-    await page.getByRole("button", { name: "Browse", exact: true }).click();
+    // The folder chosen last time on this machine is offered again.
     await page.getByText(parent, { exact: true }).waitFor();
-    await page.getByRole("button", { name: "Use this folder", exact: true }).click();
     await page.getByRole("button", { name: "Create project", exact: true }).focus();
     await page.getByRole("button", { name: "Create project", exact: true }).press("Enter");
     await dialog.waitFor({ state: "hidden" });
     NodeAssert.ok(NodeFS.existsSync(NodePath.join(parent, "keyboard-button-proof", ".git")));
-    receipt.checks.push("Persistent Create project button activates from keyboard Enter");
+    receipt.checks.push(
+      "Remembered folder is offered again; persistent Create project button activates from keyboard Enter",
+    );
     await page.getByRole("button", { name: "Add project", exact: true }).click();
     const existing = NodePath.join(parent, "Existing project");
     NodeFS.mkdirSync(existing);

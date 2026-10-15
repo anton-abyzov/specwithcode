@@ -166,7 +166,7 @@ export function HandoffFolderPicker({
               </div>
             )}
             {(error || query.error || access.error) && (
-              <p role="alert" className="text-sm text-destructive">
+              <p role="alert" className="text-sm text-destructive-foreground">
                 {error ?? String(query.error ?? access.error)}
               </p>
             )}

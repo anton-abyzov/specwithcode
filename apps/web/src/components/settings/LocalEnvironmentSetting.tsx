@@ -74,7 +74,7 @@ export function LocalEnvironmentSetting() {
                 : "SpecWithCode will restart and start running a server on this computer again."}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          {error ? <p className="px-6 pb-4 text-sm text-destructive">{error}</p> : null}
+          {error ? <p className="px-6 pb-4 text-sm text-destructive-foreground">{error}</p> : null}
           <AlertDialogFooter>
             <AlertDialogClose disabled={isUpdating} render={<Button variant="outline" />}>
               Cancel

@@ -73,7 +73,7 @@ describe("resolvePullRequestState", () => {
     expect(resolvePullRequestConflict(input)).toMatchObject({
       Icon: PullRequestGlyph.conflicting,
       label: "Conflicts with main",
-      toneClassName: "text-destructive",
+      toneClassName: "text-destructive-foreground",
     });
   });
 });
@@ -119,7 +119,7 @@ describe("resolvePullRequestConflict", () => {
     ).toEqual({
       Icon: PullRequestGlyph.conflicting,
       label: "Conflicts with main",
-      toneClassName: "text-destructive",
+      toneClassName: "text-destructive-foreground",
     });
   });
 
@@ -133,7 +133,7 @@ describe("resolvePullRequestConflict", () => {
     ).toEqual({
       Icon: PullRequestGlyph.conflicting,
       label: "Has conflicts",
-      toneClassName: "text-destructive",
+      toneClassName: "text-destructive-foreground",
     });
   });
 });

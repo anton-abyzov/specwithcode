@@ -173,6 +173,11 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpThreadSendInput,
   ) => Effect.Effect<OrchestratorMcpThreadSendResult, OrchestratorMcpFailure>;
+  /** The user's words in the caller's message, for a forward to another machine. */
+  readonly forwardedMessageText: (
+    scope: McpInvocationScope,
+    messageId: MessageId,
+  ) => Effect.Effect<string, OrchestratorMcpFailure>;
   readonly waitForThread: (
     scope: McpInvocationScope,
     input: OrchestratorMcpThreadWaitInput,
@@ -776,6 +781,17 @@ import {
   needsExplicitWorkerTarget,
 } from "../project/ProjectDelegation.ts";
 import { defaultWorkerModelSelection } from "@specweave-studio/shared/coordinatorDefault";
+import {
+  modelSelectionEffortValue,
+  resolveEffort,
+  withEffortSelection,
+} from "@specweave-studio/shared/effortLevel";
+import { workerFollowUpText } from "../project/workerFollowUp.ts";
+
+const effortField = (selection: Pick<ModelSelection, "options"> | undefined) => {
+  const effort = modelSelectionEffortValue(selection);
+  return effort === undefined ? {} : { effort };
+};
 
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
@@ -932,6 +948,35 @@ const make = Effect.gen(function* () {
         return yield* failure("thread_not_found", `Thread ${threadId} was not found.`);
       }
       return yield* loadProjectThread(shell.projectId, threadId);
+    });
+
+  /**
+   * The text of a user message in the calling thread, without the wrapper a
+   * worker follow-up carries. Only what the user wrote can be forwarded as theirs.
+   */
+  const forwardedUserText = (
+    parent: Pick<OrchestrationV2ThreadProjection, "thread"> | undefined,
+    messageId: MessageId,
+  ) =>
+    Effect.gen(function* () {
+      if (parent === undefined)
+        return yield* failure(
+          "invalid_request",
+          "forwardMessageId needs a caller running inside a Studio thread.",
+        );
+      const { messages } = yield* threadManagement
+        .getThreadRecords(parent.thread.id, ["messages"], { messageIds: [messageId] })
+        .pipe(Effect.mapError(threadManagementFailure));
+      const message = messages.find((candidate) => candidate.id === messageId);
+      if (message === undefined || message.role !== "user" || message.createdBy !== "user")
+        return yield* failure(
+          "invalid_request",
+          `Message ${messageId} is not a message the user wrote in this thread.`,
+        );
+      const text = (workerFollowUpText(message) ?? message.text).trim();
+      if (text === "")
+        return yield* failure("invalid_request", `Message ${messageId} has no text to forward.`);
+      return text;
     });
 
   const loadScopedThread = (scope: McpInvocationScope, threadId: ThreadId) =>
@@ -1129,9 +1174,9 @@ const make = Effect.gen(function* () {
       }
 
       const requestedOptions = input.target?.options;
+      const descriptors = provider.models.find((candidate) => candidate.slug === model)
+        ?.capabilities?.optionDescriptors;
       if (requestedOptions !== undefined) {
-        const descriptors = provider.models.find((candidate) => candidate.slug === model)
-          ?.capabilities?.optionDescriptors;
         const invalid = invalidOptionSelections(requestedOptions, descriptors);
         if (invalid.length > 0) {
           return yield* failure(
@@ -1140,16 +1185,32 @@ const make = Effect.gen(function* () {
           );
         }
       }
+      const sameModelAsParent =
+        instanceId === inheritedSelection.instanceId && model === inheritedSelection.model;
+      let options = requestedOptions;
+      const requestedEffort = input.target?.effort;
+      if (requestedEffort !== undefined) {
+        const resolved = resolveEffort(requestedEffort, descriptors);
+        if (!resolved.ok) {
+          return yield* failure(
+            "invalid_request",
+            `Model ${model} on provider ${instanceId} cannot run at effort "${requestedEffort}": ${resolved.message}`,
+          );
+        }
+        // The effort the caller names wins over an inherited or default value.
+        options = withEffortSelection(
+          requestedOptions ?? (sameModelAsParent ? inheritedSelection.options : undefined),
+          resolved,
+        );
+      }
 
       return {
         modelSelection:
-          instanceId === inheritedSelection.instanceId &&
-          model === inheritedSelection.model &&
-          requestedOptions === undefined
+          sameModelAsParent && options === undefined
             ? inheritedSelection
-            : requestedOptions === undefined
+            : options === undefined
               ? { instanceId, model }
-              : { instanceId, model, options: requestedOptions },
+              : { instanceId, model, options },
       };
     });
 
@@ -1269,6 +1330,7 @@ const make = Effect.gen(function* () {
         hasPendingChildRuns: hasPendingChildRuns(childProjection, childRun),
         providerInstanceId: task.providerInstanceId,
         model: task.model,
+        ...effortField(childControls.thread.modelSelection),
         summary: derivedResult,
         resultContextTransferId: resultTransfer?.id ?? null,
         latestTerminalRunId: terminalRun?.id ?? null,
@@ -2216,6 +2278,7 @@ const make = Effect.gen(function* () {
                 creationSource: projection.thread.creationSource,
                 providerInstanceId: target.modelSelection.instanceId,
                 model: target.modelSelection.model,
+                ...effortField(target.modelSelection),
               } satisfies OrchestratorMcpCreatedThread;
             }),
           { concurrency: 1 },
@@ -2349,8 +2412,25 @@ const make = Effect.gen(function* () {
           }
         }
 
+        const forwarded =
+          input.forwardMessageId === undefined
+            ? undefined
+            : yield* forwardedUserText(parent, input.forwardMessageId);
+        const text = forwarded ?? input.message;
+        if (text === undefined || (input.message !== undefined && forwarded !== undefined))
+          return yield* failure(
+            "invalid_request",
+            "Pass either message or forwardMessageId to studio_thread_send.",
+          );
+
         const mode = input.mode ?? "auto";
-        const key = yield* requestKey(input.clientRequestId);
+        // A forwarded message has one delivery per target, however often it is retried.
+        const key = yield* requestKey(
+          input.clientRequestId ??
+            (input.forwardMessageId === undefined
+              ? undefined
+              : `forward:${input.forwardMessageId}:${input.threadId}`),
+        );
         const messageId = stableOperationMessageId({
           scope,
           requestKey: key,
@@ -2367,10 +2447,11 @@ const make = Effect.gen(function* () {
             threadId: input.threadId,
             ...(parent === undefined ? {} : { senderThreadId: parent.thread.id }),
             messageId,
-            text: input.message,
+            text,
             attachments: [],
             mode,
-            createdBy: "agent",
+            // The user's own words stay the user's; senderThreadId names who routed them.
+            createdBy: forwarded === undefined ? "agent" : "user",
             creationSource: "mcp",
           })
           .pipe(
@@ -2391,6 +2472,8 @@ const make = Effect.gen(function* () {
           delivery: result.delivery,
         } satisfies OrchestratorMcpThreadSendResult;
       }),
+    forwardedMessageText: (scope, messageId) =>
+      loadCaller(scope).pipe(Effect.flatMap(({ parent }) => forwardedUserText(parent, messageId))),
     waitForThread: (scope, input) =>
       Effect.gen(function* () {
         const { target } = yield* loadScopedThread(scope, input.threadId);

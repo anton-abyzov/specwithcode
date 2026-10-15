@@ -147,7 +147,7 @@ export function ThreadAutomationsPanel(props: {
       }
     >
       {tasksQuery.error !== null ? (
-        <p className="px-2.5 py-1.5 text-2xs text-destructive">
+        <p className="px-2.5 py-1.5 text-2xs text-destructive-foreground">
           Could not load automations: {tasksQuery.error}
         </p>
       ) : null}

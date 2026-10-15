@@ -497,7 +497,7 @@ function GitActionSuccessButtonContent({ success }: { success: InlineGitActionSu
       className="grid min-w-0 flex-1 grid-cols-[auto_minmax(0,1fr)] grid-rows-[1.75rem] items-center gap-x-3"
       role="status"
     >
-      <CheckIcon aria-hidden="true" className="size-3.5 shrink-0 text-success" />
+      <CheckIcon aria-hidden="true" className="size-3.5 shrink-0 text-success-foreground" />
       <p className="min-w-0 truncate text-left">{success.title}</p>
       <div
         className={cn(
@@ -760,7 +760,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                   return (
                     <div
                       key={option.value}
-                      className="relative flex cursor-not-allowed items-center gap-3 rounded-lg border border-border bg-background px-3 py-3 text-left opacity-64 dark:border-transparent dark:bg-white/[0.035]"
+                      className="relative flex cursor-not-allowed items-center gap-3 rounded-lg border border-border bg-background px-3 py-3 text-left opacity-(--disabled-opacity) dark:border-transparent dark:bg-white/[0.035]"
                     >
                       <option.Icon className="size-5 shrink-0 text-muted-foreground" aria-hidden />
                       <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
@@ -841,7 +841,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                   }}
                   placeholder={publishPathPlaceholder}
                   disabled={publishRepositoryAction.isPending}
-                  className="w-full bg-transparent px-3 py-2 font-mono text-sm placeholder:text-muted-foreground/60 focus:outline-none"
+                  className="w-full bg-transparent px-3 py-2 font-mono text-sm placeholder:text-muted-foreground focus:outline-none"
                 />
               </div>
             </div>
@@ -970,10 +970,10 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
             {publishError && !publishRepositoryAction.isPending ? (
               <div
                 role="alert"
-                className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+                className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive-foreground"
               >
                 <p className="font-medium">Publish failed</p>
-                <p className="mt-0.5 text-destructive/90">{publishError}</p>
+                <p className="mt-0.5 text-destructive-foreground">{publishError}</p>
               </div>
             ) : null}
           </div>
@@ -982,7 +982,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
             {publishResult ? (
               <>
                 <div className="flex flex-col items-center gap-2 py-1 text-center">
-                  <span className="grid size-8 place-items-center rounded-full bg-success/15 text-success">
+                  <span className="grid size-8 place-items-center rounded-full bg-success/15 text-success-foreground">
                     <CheckIcon className="size-4" aria-hidden />
                   </span>
                   <h3 className="text-sm font-semibold text-foreground">
@@ -1764,7 +1764,7 @@ export default function GitActionsControl({
         </MenuItem>
       ) : null}
       {gitStatusForActions?.refName === null && (
-        <p className="px-2 py-1.5 text-xs text-warning">
+        <p className="px-2 py-1.5 text-xs text-warning-foreground">
           Detached HEAD: create and check out a branch to enable push and pull request actions.
         </p>
       )}
@@ -1773,9 +1773,13 @@ export default function GitActionsControl({
         !gitStatusForActions.hasWorkingTreeChanges &&
         gitStatusForActions.behindCount > 0 &&
         gitStatusForActions.aheadCount === 0 && (
-          <p className="px-2 py-1.5 text-xs text-warning">Behind upstream. Pull/rebase first.</p>
+          <p className="px-2 py-1.5 text-xs text-warning-foreground">
+            Behind upstream. Pull/rebase first.
+          </p>
         )}
-      {gitStatusError && <p className="px-2 py-1.5 text-xs text-destructive">{gitStatusError}</p>}
+      {gitStatusError && (
+        <p className="px-2 py-1.5 text-xs text-destructive-foreground">{gitStatusError}</p>
+      )}
     </>
   );
 
@@ -1812,7 +1816,7 @@ export default function GitActionsControl({
               <MenuItemLabel>{quickAction.label}</MenuItemLabel>
             </MenuItem>
             {quickActionDisabledReason && (
-              <p className="max-w-64 px-2 py-1.5 text-xs text-warning">
+              <p className="max-w-64 px-2 py-1.5 text-xs text-warning-foreground">
                 {quickActionDisabledReason}
               </p>
             )}
@@ -1996,8 +2000,8 @@ export default function GitActionsControl({
           <FileDiffIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
           <span className="flex-1 text-left">Changes</span>
           <span className="flex items-center gap-1 font-mono text-2xs tabular-nums">
-            <span className="text-success">+{changesTotals?.insertions ?? 0}</span>
-            <span className="text-destructive">-{changesTotals?.deletions ?? 0}</span>
+            <span className="text-success-foreground">+{changesTotals?.insertions ?? 0}</span>
+            <span className="text-destructive-foreground">-{changesTotals?.deletions ?? 0}</span>
           </span>
         </ThreadDetailsControl>
       ) : null}
@@ -2026,7 +2030,9 @@ export default function GitActionsControl({
                   <span className="font-medium">
                     {gitStatusForActions?.refName ?? "(detached HEAD)"}
                   </span>
-                  {isDefaultRef && <span className="text-right text-warning">Default branch</span>}
+                  {isDefaultRef && (
+                    <span className="text-right text-warning-foreground">Default branch</span>
+                  )}
                 </span>
               </div>
               <div className="space-y-1">

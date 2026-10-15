@@ -12,7 +12,7 @@ import {
 import type { CommandPaletteView } from "../CommandPalette.logic";
 import { GitHubIcon } from "../Icons";
 import { Checkbox } from "../ui/checkbox";
-import type { NewProjectKind } from "../../studio/projectCreation";
+import { newProjectNameNotice, type NewProjectKind } from "../../studio/projectCreation";
 
 export function ProjectCreationPreview({
   kind,
@@ -39,18 +39,23 @@ export function ProjectCreationPreview({
           <span className="truncate text-sm text-foreground">
             {name || (kind === "personal" ? DEFAULT_PERSONAL_ASSISTANT_NAME : "New project")}
           </span>
-          <span className="break-words text-xs text-muted-foreground/85">
+          <span className="break-words text-xs text-muted-foreground">
             {kind === "personal"
               ? name
                 ? "Private, app-managed storage · No repository created"
                 : "Press Enter to keep this name, or type your own"
-              : root === null
-                ? "Choose a folder below"
-                : name
-                  ? `Creates ${path} (adds a suffix if taken)`
-                  : `New project inside ${root}`}
+              : !name
+                ? "Type a project name in the field above"
+                : root === null
+                  ? "Choose a folder below"
+                  : `Creates ${path}, or uses the chosen folder if it is already a project`}
             {machine === null ? "" : ` on ${machine}`}
           </span>
+          {kind === "code" && newProjectNameNotice(name) ? (
+            <span role="note" className="break-words text-xs text-warning-foreground">
+              {newProjectNameNotice(name)}
+            </span>
+          ) : null}
         </span>
       </div>
     </div>

@@ -67,7 +67,7 @@ export function PullRequestListGhost({
       className="motion-safe:animate-skeleton space-y-0.5"
     >
       {caption ? (
-        <p className="px-3 pb-1 text-xs font-medium text-muted-foreground/70">{caption}</p>
+        <p className="px-3 pb-1 text-xs font-medium text-muted-foreground">{caption}</p>
       ) : null}
       {Array.from({ length: rows }, (_, index) => (
         <div
@@ -242,7 +242,7 @@ export function PullRequestDetailGhost({
               </div>
 
               <div className="mt-4 flex min-h-5 min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-xs text-muted-foreground/70">
+                <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-xs text-muted-foreground">
                   {seed ? (
                     <span className="inline-flex min-w-0 max-w-[40%] shrink-0 items-center gap-1">
                       <code className="flex min-w-0">
@@ -380,10 +380,7 @@ export function PullRequestDetailGhost({
           <div className="sticky top-0 z-10 flex w-full items-center bg-background pr-4">
             <div className="flex min-w-0 flex-1 items-center gap-1.5 px-4 py-3 text-left text-xs font-medium text-muted-foreground">
               <span>Description</span>
-              <ChevronRightIcon
-                aria-hidden
-                className="size-3.5 rotate-90 text-muted-foreground/60"
-              />
+              <ChevronRightIcon aria-hidden className="size-3.5 rotate-90 text-muted-foreground" />
             </div>
           </div>
           <div className="space-y-3 px-4 pb-4">

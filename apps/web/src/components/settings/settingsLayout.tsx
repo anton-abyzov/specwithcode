@@ -233,10 +233,12 @@ export function SettingsUnavailableGroup({
   return (
     <div className="border-border/60 bg-muted/20 py-1.5">
       <div className="flex items-start gap-2 px-3 py-2 text-xs leading-relaxed text-muted-foreground sm:px-4">
-        <InfoIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
+        <InfoIcon className="mt-0.5 size-3.5 shrink-0 text-warning-foreground" />
         <p>{message}</p>
       </div>
-      <div className="[&_h3]:opacity-64 [&_p]:opacity-64">{children}</div>
+      <div className="[&_h3]:opacity-(--disabled-opacity) [&_p]:opacity-(--disabled-opacity)">
+        {children}
+      </div>
     </div>
   );
 }
@@ -449,7 +451,7 @@ export function SettingsRow({
       tabIndex={rowProps.id ? -1 : rowProps.tabIndex}
       data-slot="settings-row"
       className={cn(
-        "@container/settings-row min-w-0 [overflow-wrap:anywhere] rounded-xl px-3 sm:px-4 aria-disabled:opacity-64 aria-disabled:[&_*]:text-muted-foreground",
+        "@container/settings-row min-w-0 [overflow-wrap:anywhere] rounded-xl px-3 sm:px-4 aria-disabled:opacity-(--disabled-opacity) aria-disabled:[&_*]:text-muted-foreground",
         children ? "pt-3 pb-1" : "py-3",
         className,
       )}
@@ -468,7 +470,7 @@ export function SettingsRow({
             </span>
           </div>
           {description ? (
-            <div className="max-w-xl text-xs leading-normal text-muted-foreground/80">
+            <div className="max-w-xl text-xs leading-normal text-muted-foreground">
               {description}
             </div>
           ) : null}

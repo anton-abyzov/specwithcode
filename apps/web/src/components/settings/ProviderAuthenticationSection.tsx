@@ -519,7 +519,7 @@ export function ProviderAuthenticationSection({
             </form>
           ) : null}
           {error || query.error ? (
-            <p role="alert" className="py-2 text-xs text-destructive">
+            <p role="alert" className="py-2 text-xs text-destructive-foreground">
               {error ?? query.error}
             </p>
           ) : null}

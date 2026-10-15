@@ -1,4 +1,7 @@
-import { SelectedThreadShell, resolveSelectedThreadShell } from "../../src/state/selectedThreadShell";
+import {
+  SelectedThreadShell,
+  resolveSelectedThreadShell,
+} from "../../src/state/selectedThreadShell";
 import { Option, DateTime } from "effect";
 import { AsyncResult, Atom } from "effect/reactivity";
 import React, { useState, useSyncExternalStore, useContext } from "react";
@@ -37,6 +40,45 @@ const recoveryFailureId =
 const fresh = new URLSearchParams(window.location.search).get("fresh");
 // `?fresh&failed` adds a coordinator turn the host could not start (a reached usage limit).
 const failedTurn = new URLSearchParams(window.location.search).has("failed");
+/* `?turns`: a conversation across two days, for the turn layout (separators,
+   "Worked for", the answer's actions). Times are relative so "Today" holds. */
+const turns = new URLSearchParams(window.location.search).has("turns");
+const minutesAgo = (minutes, seconds = 0) =>
+  new Date(Date.now() - minutes * 60_000 + seconds * 1_000).toISOString();
+const turnMessages = [
+  {
+    id: "t1",
+    role: "user",
+    createdBy: "user",
+    text: "Summarize what changed in the landing page review.",
+    createdAt: minutesAgo(26 * 60),
+    attachments: [],
+  },
+  {
+    id: "t2",
+    role: "assistant",
+    text: "The review asked for **three changes**: a shorter hero line, one primary button instead of two, and the pricing table moved above the FAQ.\n\n[Review the landing page](studio://thread/review) is waiting on your call about the hero line.",
+    createdAt: minutesAgo(26 * 60, 9),
+    updatedAt: minutesAgo(26 * 60, 41),
+    attachments: [],
+  },
+  {
+    id: "t3",
+    role: "user",
+    createdBy: "user",
+    text: "What time is it?",
+    createdAt: minutesAgo(1),
+    attachments: [],
+  },
+  {
+    id: "t4",
+    role: "assistant",
+    text: "It's **11:52 PM EDT** on Sunday, October 11, 2026.",
+    createdAt: minutesAgo(1, 12),
+    updatedAt: minutesAgo(1, 14),
+    attachments: [],
+  },
+];
 // `?legacy` is a project from before projects had settings: no settings row, no saved
 // coordinator or worker model and no coordinator thread yet. `?legacy=loading` is the same
 // project before the host has sent its providers, and `?legacy=checking` after it sent them
@@ -209,7 +251,6 @@ const reportProjection = {
   runs: [],
   turnItems: [],
 };
-const minutesAgo = (minutes) => new Date(Date.now() - minutes * 60_000).toISOString();
 const shell = (id, title, extra = {}) => ({
   id,
   title,
@@ -226,6 +267,8 @@ const shell = (id, title, extra = {}) => ({
   deletedAt: null,
   updatedAt: "2026-10-09T00:00:00Z",
   modelSelection: { instanceId: "codex", model: "Native Codex worker" },
+  // The Threads pane lists only threads an agent started.
+  createdBy: "agent",
   ...extra,
 });
 let shells = recovery
@@ -264,7 +307,10 @@ let shells = recovery
         ]
       : [
           shell("coord", "Project coordinator"),
-          shell("review", "Review the landing page", { hasActionableProposedPlan: true }),
+          shell("review", "Review the landing page", {
+            hasActionableProposedPlan: true,
+            modelSelection: { instanceId: "claudeAgent", model: "claude-opus-5-5" },
+          }),
           // Started by the coordinator's answer below, so that answer shows it as a card.
           // Under `?activity` it is started during the first turn, by the commentary that names it.
           shell("skills", "Consolidate the skills", {
@@ -273,35 +319,112 @@ let shells = recovery
           }),
           // A delegated worker's real ID shape: `%3A` is part of the stored ID.
           shell(TUTORIALS_ID, "Record the tutorials", { createdAt: "2026-10-09T00:00:03Z" }),
-          shell("build", "Build project memory", { runtime: { status: "running" } }),
+          // A Claude model reached through Copilot must not read as a native Claude Code thread.
+          shell("build", "Build project memory", {
+            runtime: { status: "running" },
+            modelSelection: { instanceId: "github-copilot-cli", model: "claude-opus-5.5" },
+          }),
           shell("idle", "Polish onboarding"),
           shell("resolved", "Fix history pagination", { settledOverride: "settled" }),
           shell("archived", "Initial exploration", { archivedAt: "2026-10-08T00:00:00Z" }),
         ];
 const resolutionFixture = new URLSearchParams(window.location.search).has("resolution");
-if (resolutionFixture) shells = [
-  shell("coord", "Project coordinator"),
-  shell("failed-worker", "Failed worker", { createdBy: "agent", runtime: { status: "failed", lastErrorClass: "provider_error" } }),
-  shell("limited-worker", "Limited worker", { createdBy: "agent", runtime: { status: "failed", lastErrorClass: "usage_limit" } }),
-];
+if (resolutionFixture)
+  shells = [
+    shell("coord", "Project coordinator"),
+    shell("failed-worker", "Failed worker", {
+      createdBy: "agent",
+      runtime: { status: "failed", lastErrorClass: "provider_error" },
+    }),
+    shell("limited-worker", "Limited worker", {
+      createdBy: "agent",
+      runtime: { status: "failed", lastErrorClass: "usage_limit" },
+    }),
+  ];
+// `?rows`: busy workers on two machines, for the Threads pane row layout at any width.
+const rowsFixture = new URLSearchParams(window.location.search).has("rows");
+if (rowsFixture)
+  shells = [
+    shell("coord", "Project coordinator"),
+    shell("resolve-closes", "Resolve closes thread", {
+      createdBy: "agent",
+      runtime: { status: "running" },
+      modelSelection: { instanceId: "claude", model: "claude-opus-5-5" },
+    }),
+    shell("hide-archived", "Hide archived projects in dropdowns and every project picker", {
+      createdBy: "agent",
+      runtime: { status: "running" },
+      modelSelection: { instanceId: "claude", model: "claude-opus-5-5" },
+    }),
+    shell("remote-worker", "Profile the importer on the other machine", {
+      createdBy: "agent",
+      projectId: "project-m1",
+      environmentId: "m1",
+      runtime: { status: "running" },
+    }),
+    shell("failed-row", "Migrate saved sessions", {
+      createdBy: "agent",
+      runtime: {
+        status: "failed",
+        lastError: "Provider session failed to open: no remaining permitted usage this week.",
+      },
+    }),
+    shell("idle-row", "Show harness on thread rows", {
+      createdBy: "agent",
+      modelSelection: { instanceId: "github-copilot-cli", model: "claude-opus-5.5" },
+      pullRequests: [
+        {
+          host: "github.com",
+          repository: "atlas/studio",
+          number: 2041,
+          url: "https://example.invalid/pr/2041",
+          source: "agent",
+          linkedAt: "2026-10-09T00:00:00Z",
+          snapshot: {
+            state: "open",
+            title: "Rows",
+            headBranch: "rows",
+            baseBranch: "main",
+            isDraft: false,
+            updatedAt: null,
+            syncedAt: "2026-10-09T00:00:00Z",
+          },
+          stack: null,
+        },
+      ],
+    }),
+  ];
 const historyFixture = new URLSearchParams(window.location.search).has("history");
-let historyShells = historyFixture ? [shell("legacy-history", "Completed investigation", {
-  createdBy: "agent", archivedAt: "2026-10-08T00:00:00Z", settledOverride: "settled",
-})] : [];
+let historyShells = historyFixture
+  ? [
+      shell("legacy-history", "Completed investigation", {
+        createdBy: "agent",
+        archivedAt: "2026-10-08T00:00:00Z",
+        settledOverride: "settled",
+      }),
+    ]
+  : [];
 const shellListeners = new Set<() => void>();
-const subscribeShells = (listener: () => void) => { shellListeners.add(listener); return () => { shellListeners.delete(listener); }; };
+const subscribeShells = (listener: () => void) => {
+  shellListeners.add(listener);
+  return () => {
+    shellListeners.delete(listener);
+  };
+};
 function settleFixture(ref, settledOverride) {
   if (!resolutionFixture) return;
-  shells = shells.map((s) => s.id === ref.threadId ? { ...s, settledOverride } : s);
+  shells = shells.map((s) => (s.id === ref.threadId ? { ...s, settledOverride } : s));
   shellListeners.forEach((notify) => notify());
   return { _tag: "Success", value: undefined };
 }
 // `?machines`: the project is also checked out on a second machine, so the coordinator machine is a choice.
 const machineLabels = { host: "M4 Max", m1: "M1" };
 const otherMachineProject = { ...project, id: "project-m1", environmentId: "m1" };
-const memberProjects = new URLSearchParams(window.location.search).has("machines")
-  ? [otherMachineProject, project]
-  : [project];
+const memberProjects = rowsFixture
+  ? [project, otherMachineProject]
+  : new URLSearchParams(window.location.search).has("machines")
+    ? [otherMachineProject, project]
+    : [project];
 export const useSettingsProjectGroups = () => [
   {
     projectKey: "atlas",
@@ -458,24 +581,26 @@ export const useThreadProjection = () => ({
                       },
                     ]
                   : []
-                : [
-                    {
-                      id: "m1",
-                      role: "user",
-                      createdBy: "user",
-                      text: "Keep the project moving. Show me the work that needs a decision.",
-                      createdAt: "2026-10-09T00:00:00Z",
-                      attachments: [],
-                    },
-                    {
-                      id: "m2",
-                      role: "assistant",
-                      text: `Started [Consolidate the skills](studio://thread/skills) and [Record the tutorials](studio://thread/${TUTORIALS_ID}). The memory work is running. [Review the landing page](studio://thread/review) needs your decision before we continue. The old [Draft the launch post](studio://thread/thread%3Adelegated-task%3Acommand%253Amcp%253Afixture-0002) worker is no longer here.\n\nOnboarding is ready for another pass; the pagination fix is resolved and retained for future follow-ups.`,
-                      createdAt: "2026-10-09T00:00:04Z",
-                      updatedAt: "2026-10-09T00:00:05Z",
-                      attachments: [],
-                    },
-                  ],
+                : turns
+                  ? turnMessages
+                  : [
+                      {
+                        id: "m1",
+                        role: "user",
+                        createdBy: "user",
+                        text: "Keep the project moving. Show me the work that needs a decision.",
+                        createdAt: "2026-10-09T00:00:00Z",
+                        attachments: [],
+                      },
+                      {
+                        id: "m2",
+                        role: "assistant",
+                        text: `Started [Consolidate the skills](studio://thread/skills) and [Record the tutorials](studio://thread/${TUTORIALS_ID}). The memory work is running. [Review the landing page](studio://thread/review) needs your decision before we continue. The old [Draft the launch post](studio://thread/thread%3Adelegated-task%3Acommand%253Amcp%253Afixture-0002) worker is no longer here.\n\nOnboarding is ready for another pass; the pagination fix is resolved and retained for future follow-ups.`,
+                        createdAt: "2026-10-09T00:00:04Z",
+                        updatedAt: "2026-10-09T00:00:05Z",
+                        attachments: [],
+                      },
+                    ],
           },
 });
 export const useThreadHistory = () => ({ hasMoreHistory: false });
@@ -734,11 +859,11 @@ export const useThreadActions = () => ({
   settleThread: (ref) => settleFixture(ref, "settled"),
   unsettleThread: (ref) => settleFixture(ref, "active"),
   unarchiveThread: (ref) => {
-    const restored = historyShells.find(s => s.id === ref.threadId);
+    const restored = historyShells.find((s) => s.id === ref.threadId);
     if (restored) {
-      historyShells = historyShells.filter(s => s.id !== ref.threadId);
+      historyShells = historyShells.filter((s) => s.id !== ref.threadId);
       shells = [...shells, { ...restored, archivedAt: null }];
-      shellListeners.forEach(notify => notify());
+      shellListeners.forEach((notify) => notify());
     }
     return { _tag: "Success", value: undefined };
   },
@@ -797,13 +922,22 @@ function ThreadRightPanelFixture({ environmentId, threadId }) {
 export function NativeThreadFixture({ environmentId, threadId }) {
   const routing = useProjectMessageRouting();
   const selected = useContext(SelectedThreadShell);
-  const live = useThreadShells().find(s => s.environmentId === environmentId && s.id === threadId) ?? null;
+  const live =
+    useThreadShells().find((s) => s.environmentId === environmentId && s.id === threadId) ?? null;
   const readable = resolveSelectedThreadShell({ environmentId, threadId }, live, selected);
   const [prompt, setPrompt] = useState("");
   return (
     <div className="flex flex-col p-5 gap-4">
       <small>Native thread fixture · {threadId}</small>
-      {historyFixture ? <p data-history-readable={!!readable}>{readable ? "Saved investigation: the calculator result was verified." : "No active thread"}</p> : <p>Thread history and provider controls remain independent.</p>}
+      {historyFixture ? (
+        <p data-history-readable={!!readable}>
+          {readable
+            ? "Saved investigation: the calculator result was verified."
+            : "No active thread"}
+        </p>
+      ) : (
+        <p>Thread history and provider controls remain independent.</p>
+      )}
       <ThreadRightPanelFixture environmentId={environmentId} threadId={threadId} />
       <form
         className="mt-auto"
@@ -829,54 +963,80 @@ export function NativeThreadFixture({ environmentId, threadId }) {
     </div>
   );
 }
-// Chat markdown, minus everything but thread links, which resolve like the real
+// Chat markdown, minus everything but paragraphs, bold and thread links. Links resolve like the real
 // renderer's: the page's own renderer first, else the standard thread chip.
-const FIXTURE_THREAD_LINK =
-  /(\[[^\]]+\]\((?:studio-context:\/\/v1\/thread\/|studio:\/\/thread\/)[^)\s]+\))/;
+const FIXTURE_INLINE =
+  /(\[[^\]]+\]\((?:studio-context:\/\/v1\/thread\/|studio:\/\/thread\/)[^)\s]+\)|\*\*[^*]+\*\*)/;
 export function MarkdownFixture({ text, renderContextReference, renderThreadLink, environmentId }) {
-  const parts = text.split(FIXTURE_THREAD_LINK);
+  // Paragraphs, thread links and **bold**: enough Markdown to judge the turn layout.
   return (
-    <p className="leading-7">
-      {parts.map((part, index) => {
-        const context = /^\[([^\]]+)\]\(studio-context:\/\/v1\/thread\/([^)]+)\)$/.exec(part);
-        if (context)
-          return (
-            <span key={index}>
-              {renderContextReference({
-                kind: "thread",
-                contextId: decodeURIComponent(context[2]),
-                label: context[1],
-              })}
-            </span>
-          );
-        const link = /^\[([^\]]+)\]\((studio:\/\/thread\/[^)]+)\)$/.exec(part);
-        const candidates = link ? parseStudioThreadHref(link[2]) : null;
-        if (candidates)
-          return (
-            <span key={index}>
-              {renderThreadLink?.({ candidates, label: link[1] }) ?? (
-                <StudioThreadLink
-                  environmentId={environmentId ?? "host"}
-                  candidates={candidates}
-                  label={link[1]}
-                />
-              )}
-            </span>
-          );
-        return part;
-      })}
-    </p>
+    <div className="chat-markdown">
+      {text.split(/\n\n+/).map((paragraph, p) => (
+        <p key={p} className="leading-7">
+          {paragraph.split(FIXTURE_INLINE).map((part, index) => {
+            const context = /^\[([^\]]+)\]\(studio-context:\/\/v1\/thread\/([^)]+)\)$/.exec(part);
+            if (context)
+              return (
+                <span key={index}>
+                  {renderContextReference({
+                    kind: "thread",
+                    contextId: decodeURIComponent(context[2]),
+                    label: context[1],
+                  })}
+                </span>
+              );
+            const link = /^\[([^\]]+)\]\((studio:\/\/thread\/[^)]+)\)$/.exec(part);
+            const candidates = link ? parseStudioThreadHref(link[2]) : null;
+            if (candidates)
+              return (
+                <span key={index}>
+                  {renderThreadLink?.({ candidates, label: link[1] }) ?? (
+                    <StudioThreadLink
+                      environmentId={environmentId ?? "host"}
+                      candidates={candidates}
+                      label={link[1]}
+                    />
+                  )}
+                </span>
+              );
+            const bold = /^\*\*([^*]+)\*\*$/.exec(part);
+            return bold ? <strong key={index}>{bold[1]}</strong> : part;
+          })}
+        </p>
+      ))}
+    </div>
   );
 }
 
 export const useArchivedThreadSnapshots = () => {
   const history = useSyncExternalStore(subscribeShells, () => historyShells);
-  return { snapshots: history.length ? [{ environmentId: "host", snapshot: { threads: history.map(s => ({ ...s,
-      createdAt: DateTime.makeUnsafe(s.createdAt ?? s.updatedAt), updatedAt: DateTime.makeUnsafe(s.updatedAt),
-      archivedAt: DateTime.makeUnsafe(s.archivedAt), deletedAt: null, settledAt: null, latestRunId: null,
-      latestUserMessageAt: null, activeProviderThreadId: null, pendingRuntimeRequest: null, status: "idle",
-    })) } }] : [],
-    error: null, isLoading: false, refresh: () => {} };
+  return {
+    snapshots: history.length
+      ? [
+          {
+            environmentId: "host",
+            snapshot: {
+              threads: history.map((s) => ({
+                ...s,
+                createdAt: DateTime.makeUnsafe(s.createdAt ?? s.updatedAt),
+                updatedAt: DateTime.makeUnsafe(s.updatedAt),
+                archivedAt: DateTime.makeUnsafe(s.archivedAt),
+                deletedAt: null,
+                settledAt: null,
+                latestRunId: null,
+                latestUserMessageAt: null,
+                activeProviderThreadId: null,
+                pendingRuntimeRequest: null,
+                status: "idle",
+              })),
+            },
+          },
+        ]
+      : [],
+    error: null,
+    isLoading: false,
+    refresh: () => {},
+  };
 };
 
 export const useAssetUrlState = () => ({ _tag: "Loading" });

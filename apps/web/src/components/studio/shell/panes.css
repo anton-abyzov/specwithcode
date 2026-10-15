@@ -161,7 +161,7 @@
   height: 15px;
 }
 .sws-library-add:disabled {
-  opacity: 0.45;
+  opacity: var(--disabled-opacity);
   cursor: not-allowed;
 }
 

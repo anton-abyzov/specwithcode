@@ -20,18 +20,18 @@ import {
 } from "./ProjectWorkspace.test-fixtures";
 
 describe("project coordinator surface", () => {
-  it("keeps a thread's status and model together, apart from its error", async () => {
+  it("keeps a thread's meta on one line: model first, its error last", async () => {
     state.shells = [
       shell("coord"),
       shell("worker", { runtime: { lastError: "You have hit your usage limit" } } as never),
     ];
     await render();
     const meta = container.querySelector("[data-thread-id='worker'] .sws-thread-meta")!;
-    const lead = meta.querySelector(":scope > .sws-thread-lead")!;
-    expect(lead.querySelector("[data-model-badge]")).not.toBeNull();
-    const error = meta.querySelector(":scope > .sws-thread-error")!;
-    expect(error.textContent).toBe("You have hit your usage limit");
-    expect(lead.contains(error)).toBe(false);
+    const parts = [...meta.children];
+    expect(parts[0]?.matches("[data-model-badge]")).toBe(true);
+    expect(parts.at(-1)?.textContent).toBe("You have hit your usage limit");
+    // The project's own machine goes without saying.
+    expect(meta.querySelector(".sws-thread-machine")).toBeNull();
   });
   it("shows the retained coordinator model when its override is cleared", async () => {
     state.coordinatorModel = null;
@@ -166,7 +166,8 @@ describe("project coordinator surface", () => {
     ]);
     // Finished work stays folded until it is asked for.
     expect(groups).toEqual([
-      ["Waiting on you", 1], ["Working", 0],
+      ["Waiting on you", 1],
+      ["Working", 0],
       ["Idle", 1],
       ["Resolved", 0],
     ]);
@@ -505,7 +506,7 @@ describe("project coordinator surface", () => {
     });
     state.messages = [
       message("plan", "assistant", "agent"),
-      // A delegate_task completion wakes the coordinator; people see "reported back".
+      // A delegate_task completion wakes the coordinator; people see the worker's status, not a card.
       message("wake", "user", "system", {
         delegatedCompletion: { taskIds: ["node:delegated-task:a"] },
       }),
@@ -521,7 +522,8 @@ describe("project coordinator surface", () => {
     };
     await render();
     const conversation = container.querySelector('[aria-label="Coordinator conversation"]')!;
-    expect(conversation.textContent).toContain("reported back.");
+    expect(conversation.textContent).not.toContain("reported back");
+    expect(conversation.querySelector(".project-notice")).toBeNull();
     const articles = [...conversation.querySelectorAll("article")];
     const byAuthor = (author: string) =>
       articles.filter((article) => article.querySelector("h3")?.textContent === author);
@@ -807,12 +809,33 @@ describe("project coordinator surface", () => {
     await openFirstThread();
     const resolve = container.querySelector<HTMLButtonElement>('[aria-label="Resolve thread"]');
     expect(resolve).not.toBeNull();
-    await act(async () => resolve!.click());
-    expect(state.settle).toHaveBeenCalledWith({ environmentId: "host", threadId: "worker" });
     await act(async () =>
       container.querySelector<HTMLButtonElement>('[aria-label="Thread actions"]')!.click(),
     );
     expect(state.openMenu).toHaveBeenCalledTimes(1);
+    await act(async () => resolve!.click());
+    expect(state.settle).toHaveBeenCalledWith({ environmentId: "host", threadId: "worker" });
+  });
+  it("closes the open thread and shows the thread list once Resolve succeeds", async () => {
+    await render();
+    await openFirstThread();
+    state.settle.mockResolvedValueOnce({ _tag: "Success", value: undefined });
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="Resolve thread"]')!.click(),
+    );
+    expect(state.settle).toHaveBeenCalledWith({ environmentId: "host", threadId: "worker" });
+    expect(container.querySelector('[aria-label="Resolve thread"]')).toBeNull();
+    const pane = container.querySelector('[data-project-pane="threads"]')!;
+    expect(pane.querySelector('[data-thread-id="worker"]')).not.toBeNull();
+  });
+  it("keeps the thread open when Resolve fails", async () => {
+    await render();
+    await openFirstThread();
+    state.settle.mockResolvedValueOnce({ _tag: "Failure", error: new Error("offline") });
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="Resolve thread"]')!.click(),
+    );
+    expect(container.querySelector('[aria-label="Resolve thread"]')).not.toBeNull();
   });
   it("resolves through the native thread API without starting a provider", async () => {
     await render();

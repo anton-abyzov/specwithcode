@@ -18,6 +18,7 @@ import { useEnvironments } from "../state/environments";
 import { SettingsScopeNotice } from "../components/settings/SettingsScopeNotice";
 import { SETTINGS_DEVICE_ONLY_PATHS } from "../components/settings/SettingsScopeSentence";
 import { SettingsPageContainer } from "../components/settings/settingsLayout";
+import { redirectSettingsEntry } from "../components/settings/settingsEntryScope";
 import {
   retainSettingsScope,
   validateSettingsRouteSearch,
@@ -177,7 +178,7 @@ function SettingsRouteLayout() {
 export const Route = createFileRoute("/settings")({
   validateSearch: validateSettingsRouteSearch,
   search: { middlewares: [retainSettingsScope] },
-  beforeLoad: async ({ context, location }) => {
+  beforeLoad: async ({ context, location, search, cause }) => {
     if (
       context.authGateState.status !== "authenticated" &&
       context.authGateState.status !== "hosted-static"
@@ -185,9 +186,8 @@ export const Route = createFileRoute("/settings")({
       throw redirect({ to: "/pair", replace: true });
     }
 
-    if (location.pathname === "/settings") {
-      throw redirect({ to: "/settings/general", replace: true });
-    }
+    // Opening Settings from a project page or thread selects that project.
+    redirectSettingsEntry({ location, search, cause });
   },
   component: SettingsRouteLayout,
 });

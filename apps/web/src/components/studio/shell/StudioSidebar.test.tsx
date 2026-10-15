@@ -536,10 +536,40 @@ describe("projects and chats sidebar", () => {
       [...container.querySelectorAll("button")].some((b) =>
         b.textContent?.startsWith("Personal assistant"),
       ),
-    ).toBe(true);
-    expect(container.querySelector('[aria-labelledby="sws-side-projects"]')?.textContent).not.toContain("Aide");
-    expect(container.querySelector('[aria-labelledby="sws-side-projects"]')?.textContent).not.toContain("Personal assistant");
+    ).toBe(false);
+    expect(
+      container.querySelector('.sws-side-actions [aria-label="Personal assistant"]')?.textContent,
+    ).toContain("Aide");
+    expect(
+      container.querySelector('[aria-labelledby="sws-side-projects"]')?.textContent,
+    ).not.toContain("Aide");
+    expect(
+      container.querySelector('[aria-labelledby="sws-side-projects"]')?.textContent,
+    ).not.toContain("Personal assistant");
     window.removeEventListener("studio:open-command-palette", listen);
+  });
+  it("pins the personal assistant above Projects, outside the project paging", async () => {
+    state.groups = [
+      ...Array.from({ length: 10 }, (_, index) => ({
+        projectKey: `host:/p${index}`,
+        displayName: `Project ${index}`,
+        memberProjects: [{ environmentId: "host", id: `p${index}` }],
+      })),
+      {
+        projectKey: "host:/aide",
+        displayName: "Aide",
+        memberProjects: [
+          { environmentId: "host", id: "aide", workspaceSettings: { kind: "personal" } },
+        ],
+      },
+    ];
+    await render();
+    const pinned = container.querySelector('.sws-side-actions [aria-label="Personal assistant"]');
+    expect(pinned?.textContent).toContain("Aide");
+    const projects = container.querySelector('[aria-labelledby="sws-side-projects"]')!;
+    expect(projects.textContent).not.toContain("Aide");
+    expect(projects.querySelectorAll(".sws-project-row")).toHaveLength(7);
+    expect(projects.textContent).toContain("Show 3 more");
   });
   it("starts an independent chat even when several projects are available", async () => {
     const opened: unknown[] = [];
@@ -846,5 +876,58 @@ describe("cleaning up the projects list", () => {
         workspaceSettings: { expectedRevision: 2, archived: false },
       },
     });
+  });
+
+  it("pins a project to the top, keeps it after a restart and unpins it", async () => {
+    await render();
+    const openMenu = async (name: string) => {
+      const trigger = container.querySelector<HTMLButtonElement>(
+        `[aria-label="Actions for ${name}"]`,
+      )!;
+      await act(async () => {
+        trigger.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0 }));
+        trigger.click();
+      });
+    };
+    const clickItem = async (label: string) => {
+      const item = [...document.querySelectorAll('[role="menuitem"]')].find(
+        (entry) => entry.textContent === label,
+      ) as HTMLElement;
+      await act(async () => item.click());
+    };
+    await openMenu("Borealis");
+    await clickItem("Pin project");
+    expect(projectNames()).toEqual(["Borealis", "Atlas"]);
+    expect(container.querySelector('[data-pinned] [aria-label="Pinned"]')).not.toBeNull();
+
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    await render();
+    expect(projectNames()).toEqual(["Borealis", "Atlas"]);
+
+    await openMenu("Borealis");
+    await clickItem("Unpin project");
+    expect(projectNames()).toEqual(["Atlas", "Borealis"]);
+    expect(container.querySelector("[data-pinned]")).toBeNull();
+  });
+
+  it("keeps a pinned project visible when the list is folded", async () => {
+    state.groups = Array.from({ length: 10 }, (_, index) => ({
+      projectKey: `host:/p${index}`,
+      displayName: `Project ${index}`,
+      memberProjects: [{ environmentId: "host", id: `p${index}` }],
+    }));
+    state.shells = [];
+    localStorage.setItem("studio:sidebar-pinned-projects:v1", JSON.stringify(["host:/p9"]));
+    await render();
+    expect(projectNames()).toEqual([
+      "Project 9",
+      "Project 0",
+      "Project 1",
+      "Project 2",
+      "Project 3",
+      "Project 4",
+      "Project 5",
+    ]);
   });
 });

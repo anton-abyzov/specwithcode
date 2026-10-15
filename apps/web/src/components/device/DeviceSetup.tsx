@@ -166,7 +166,7 @@ export function DeviceSetup(props: {
           </section>
         ) : null}
         {props.state.hostStatus === "failed" && props.state.hostStatusDetail ? (
-          <p role="alert" className="mt-3 text-xs text-destructive">
+          <p role="alert" className="mt-3 text-xs text-destructive-foreground">
             {props.state.hostStatusDetail}
           </p>
         ) : null}
@@ -216,7 +216,7 @@ export function DeviceHubSetupStatus({
   if (!pending && state.hostStatus !== "ready") return null;
   return (
     <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
-      {pending ? <Spinner size="xs" /> : <Check className="size-3 text-success" />}
+      {pending ? <Spinner size="xs" /> : <Check className="size-3 text-success-foreground" />}
       {pending
         ? state.hostStatus === "installing"
           ? compact
@@ -287,7 +287,7 @@ export function AgentDeviceSetupStatus(props: {
   ) {
     return (
       <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
-        <Check className="size-3 text-success" />
+        <Check className="size-3 text-success-foreground" />
         Agent tools are ready.
       </p>
     );
@@ -307,7 +307,7 @@ export function PlatformStatus(props: {
       <MorphIcon
         className={cn(
           "mt-0.5 size-4 shrink-0",
-          props.status.ready ? "text-success" : "text-muted-foreground",
+          props.status.ready ? "text-success-foreground" : "text-muted-foreground",
         )}
         icon={props.status.ready ? CheckGlyph : CircleAlert}
       />

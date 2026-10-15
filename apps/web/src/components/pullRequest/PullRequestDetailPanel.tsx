@@ -2270,7 +2270,7 @@ export function PullRequestDetailPanel({
                     <span className="shrink-0">{formatRelativeTimeLabel(detail.updatedAt)}</span>
                   </span>
                   <span aria-hidden className="h-3 w-px shrink-0 bg-border/70" />
-                  <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-2xs text-muted-foreground/65">
+                  <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-2xs text-muted-foreground">
                     {/* An out-of-date base wears the warning on the branch name itself, so the
                         name is amber and pointing at either the name or the mark opens the way
                         out. Up to date, the name keeps its plain tooltip. */}
@@ -2460,7 +2460,7 @@ export function PullRequestDetailPanel({
                 </div>
 
                 <div className="mt-4 flex min-h-5 min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                  <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-xs text-muted-foreground/70">
+                  <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-xs text-muted-foreground">
                     {/* An out-of-date base wears the warning on the branch name itself, so the
                         name is amber and pointing at either the name or the mark opens the way
                         out. Up to date, the name keeps its plain tooltip. */}

@@ -93,7 +93,7 @@ function StatBlock({
 }) {
   return (
     <div className="min-w-0 border-border/60 px-4 py-3 sm:px-5">
-      <div className="flex min-w-0 items-center gap-1.5 text-2xs font-medium uppercase tracking-widest text-muted-foreground/70">
+      <div className="flex min-w-0 items-center gap-1.5 text-2xs font-medium uppercase tracking-widest text-muted-foreground">
         <span className="min-w-0 truncate">{label}</span>
         {tooltip ? (
           <Tooltip>
@@ -101,7 +101,7 @@ function StatBlock({
               render={
                 <button
                   type="button"
-                  className="cursor-pointer inline-flex size-3.5 shrink-0 items-center justify-center rounded-sm text-muted-foreground/60 hover:text-foreground"
+                  className="cursor-pointer inline-flex size-3.5 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
                   aria-label={`${label} details`}
                 >
                   <InfoIcon className="size-3" />
@@ -116,7 +116,7 @@ function StatBlock({
         className={cn(
           "mt-1 truncate font-mono text-lg font-semibold tabular-nums text-foreground",
           tone === "warning" && "text-warning-foreground",
-          tone === "danger" && "text-destructive",
+          tone === "danger" && "text-destructive-foreground",
         )}
       >
         {value}
@@ -182,7 +182,7 @@ function DiagnosticsTable({
             ))}
           </colgroup>
         ) : null}
-        <thead className="border-b border-border/60 text-2xs uppercase tracking-widest text-muted-foreground/70">
+        <thead className="border-b border-border/60 text-2xs uppercase tracking-widest text-muted-foreground">
           <tr>
             {headers.map((header, index) => (
               <th
@@ -362,7 +362,7 @@ function ProcessDiagnosticsTable({
             <col className="w-[11%]" />
             <col className="w-[6%]" />
           </colgroup>
-          <thead className="sticky top-0 z-10 border-b border-border/60 bg-card text-2xs uppercase tracking-widest text-muted-foreground/70">
+          <thead className="sticky top-0 z-10 border-b border-border/60 bg-card text-2xs uppercase tracking-widest text-muted-foreground">
             <tr>
               <th className="px-4 py-2 font-semibold sm:pl-5">Name</th>
               <th className="px-3 py-2 text-right font-semibold">CPU</th>
@@ -588,7 +588,7 @@ function ProcessResourceHistoryTable({
             <col className="w-[16%]" />
             <col className="w-[10%]" />
           </colgroup>
-          <thead className="sticky top-0 z-10 border-b border-border/60 bg-card text-2xs uppercase tracking-widest text-muted-foreground/70">
+          <thead className="sticky top-0 z-10 border-b border-border/60 bg-card text-2xs uppercase tracking-widest text-muted-foreground">
             <tr>
               <th className="px-4 py-2 font-semibold sm:pl-5">Process</th>
               <th className="px-3 py-2 text-right font-semibold">CPU Time</th>
@@ -662,15 +662,15 @@ function DiagnosticsLastChecked({ checkedAt }: { checkedAt: DateTime.Utc | null 
   const relative = getRelativeTimeState(checkedAt ? DateTime.formatIso(checkedAt) : null);
 
   if (relative.status === "missing") {
-    return <span className="text-2xs text-muted-foreground/50">Checking</span>;
+    return <span className="text-2xs text-muted-foreground">Checking</span>;
   }
 
   if (relative.status === "invalid") {
-    return <span className="text-2xs text-muted-foreground/50">Checked unavailable</span>;
+    return <span className="text-2xs text-muted-foreground">Checked unavailable</span>;
   }
 
   return (
-    <span className="text-2xs text-muted-foreground/60">
+    <span className="text-2xs text-muted-foreground">
       {relative.suffix ? (
         <>
           Checked <span className="font-mono tabular-nums">{relative.value}</span> {relative.suffix}
@@ -971,13 +971,13 @@ export function DiagnosticsSettingsPanel() {
         {processDiagnosticsError || processError ? (
           <div className="space-y-2 border-t border-border/60 px-4 py-3 text-xs text-muted-foreground sm:px-5">
             {processDiagnosticsError ? (
-              <div className="flex items-start gap-2 text-destructive">
+              <div className="flex items-start gap-2 text-destructive-foreground">
                 <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
                 <span>{processDiagnosticsError.message}</span>
               </div>
             ) : null}
             {processError ? (
-              <div className="flex items-start gap-2 text-destructive">
+              <div className="flex items-start gap-2 text-destructive-foreground">
                 <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
                 <span>{processError}</span>
               </div>
@@ -1037,13 +1037,13 @@ export function DiagnosticsSettingsPanel() {
         {processResourceError || resourceError ? (
           <div className="space-y-2 border-t border-border/60 px-4 py-3 text-xs text-muted-foreground sm:px-5">
             {processResourceError ? (
-              <div className="flex items-start gap-2 text-destructive">
+              <div className="flex items-start gap-2 text-destructive-foreground">
                 <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
                 <span>{processResourceError.message}</span>
               </div>
             ) : null}
             {resourceError ? (
-              <div className="flex items-start gap-2 text-destructive">
+              <div className="flex items-start gap-2 text-destructive-foreground">
                 <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
                 <span>{resourceError}</span>
               </div>
@@ -1120,7 +1120,7 @@ export function DiagnosticsSettingsPanel() {
         {openLogsDirectoryError || traceDiagnosticsError || error ? (
           <div className="space-y-2 border-t border-border/60 px-4 py-3 text-xs text-muted-foreground sm:px-5">
             {openLogsDirectoryError ? (
-              <div className="flex items-start gap-2 text-destructive">
+              <div className="flex items-start gap-2 text-destructive-foreground">
                 <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
                 <span>{openLogsDirectoryError}</span>
               </div>
@@ -1129,7 +1129,9 @@ export function DiagnosticsSettingsPanel() {
               <div
                 className={cn(
                   "flex items-start gap-2",
-                  traceDiagnosticsPartialFailure ? "text-warning-foreground" : "text-destructive",
+                  traceDiagnosticsPartialFailure
+                    ? "text-warning-foreground"
+                    : "text-destructive-foreground",
                 )}
               >
                 <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
@@ -1141,7 +1143,7 @@ export function DiagnosticsSettingsPanel() {
               </div>
             ) : null}
             {error ? (
-              <div className="flex items-start gap-2 text-destructive">
+              <div className="flex items-start gap-2 text-destructive-foreground">
                 <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
                 <span>{error}</span>
               </div>
@@ -1251,7 +1253,7 @@ export function DiagnosticsSettingsPanel() {
                 <col className="w-[26%]" />
                 <col className="w-[30%]" />
               </colgroup>
-              <thead className="border-b border-border/60 text-2xs uppercase tracking-widest text-muted-foreground/70">
+              <thead className="border-b border-border/60 text-2xs uppercase tracking-widest text-muted-foreground">
                 <tr>
                   <th className="whitespace-nowrap px-4 py-2.5 font-semibold sm:pl-5">Time</th>
                   <th className="whitespace-nowrap px-4 py-2.5 font-semibold">Level</th>

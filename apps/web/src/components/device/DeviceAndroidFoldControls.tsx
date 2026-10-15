@@ -141,7 +141,7 @@ export function DeviceAndroidFoldControls(props: {
                 tabIndex={0}
                 role="alert"
                 aria-label={error}
-                className="pointer-events-auto text-xs text-destructive"
+                className="pointer-events-auto text-xs text-destructive-foreground"
               >
                 !
               </span>

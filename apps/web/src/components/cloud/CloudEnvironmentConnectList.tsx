@@ -299,7 +299,7 @@ export function CloudEnvironmentConnectRows({
     if (discoveryProblem !== null && !environmentsState.refreshing) {
       return (
         <div className={ITEM_ROW_CLASSNAME}>
-          <p className="text-sm font-medium text-destructive">
+          <p className="text-sm font-medium text-destructive-foreground">
             Could not load Studio Connect environments
           </p>
           <p className="mt-1 text-xs text-muted-foreground">{discoveryProblem}</p>
@@ -410,7 +410,9 @@ export function CloudEnvironmentConnectRows({
               render={<span tabIndex={0} />}
               className={cn(
                 "max-w-[45%] shrink-0 truncate text-xs",
-                savedConnection?.tone === "error" ? "text-destructive" : "text-muted-foreground",
+                savedConnection?.tone === "error"
+                  ? "text-destructive-foreground"
+                  : "text-muted-foreground",
               )}
             >
               {connectingEnvironmentIds.has(environment.environmentId)
@@ -471,7 +473,7 @@ export function CloudEnvironmentConnectRows({
                 savedConnection?.tone === "error" ||
                   (savedConnection?.tone === "connecting" && savedEnvironment?.connection.error) ||
                   (savedConnection === null && availability === "error")
-                  ? "text-destructive"
+                  ? "text-destructive-foreground"
                   : "text-muted-foreground",
               )}
             >

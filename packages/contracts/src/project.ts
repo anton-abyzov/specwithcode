@@ -546,7 +546,10 @@ export const ProjectEnsureScratchResult = Schema.Struct({
 });
 export type ProjectEnsureScratchResult = typeof ProjectEnsureScratchResult.Type;
 
-/** A project started from just a name, in a new folder the server makes. */
+/**
+ * A project started from just a name, in a new folder the server makes, or in
+ * the chosen folder itself when that is already a project.
+ */
 export const ProjectCreateNewInput = Schema.Struct({
   /** Existing parent on the destination machine; omitted by legacy clients. */
   parentPath: Schema.optional(TrimmedNonEmptyString),
@@ -560,6 +563,8 @@ export const ProjectCreateNewResult = Schema.Struct({
   workspaceRoot: TrimmedNonEmptyString,
   /** Why the first commit failed. The project and its files exist either way. */
   commitError: Schema.optionalKey(TrimmedNonEmptyString),
+  /** The chosen folder was already a project and was used as-is. */
+  existing: Schema.optionalKey(Schema.Boolean),
 });
 export type ProjectCreateNewResult = typeof ProjectCreateNewResult.Type;
 

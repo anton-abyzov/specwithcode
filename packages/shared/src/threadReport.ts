@@ -75,23 +75,95 @@ function plain(line: string): string {
     .trim();
 }
 
+export interface ReportFrontmatterField {
+  /** Humanized: `review_cycle` reads "Review cycle". */
+  readonly label: string;
+  /** A list value (`- a` lines or `[a, b]`) is shown as chips. */
+  readonly value: string | ReadonlyArray<string>;
+}
+
+const FRONTMATTER = /^---[ \t]*\n([\s\S]*?)\n---[ \t]*(?:\n|$)/;
+const FRONTMATTER_KEY = /^([A-Za-z][\w -]{0,40}):(?:[ \t]+(.*))?$/;
+
+function unquoted(value: string): string {
+  return value.trim().replace(/^(["'])(.*)\1$/, "$2");
+}
+
+/**
+ * A flat YAML frontmatter block, the subset document viewers show as a
+ * property table: `key: value` lines and lists as `- a` lines or `[a, b]`.
+ * Anything richer (nesting, block text) is left in the body as written.
+ */
+export function reportFrontmatter(text: string): {
+  readonly fields: ReadonlyArray<ReportFrontmatterField>;
+  readonly body: string;
+} {
+  const source = normalized(text);
+  const match = FRONTMATTER.exec(source);
+  if (!match) return { fields: [], body: source };
+  const fields: Array<{ key: string; value: string | string[] }> = [];
+  for (const line of match[1]!.split("\n")) {
+    if (line.trim().length === 0) continue;
+    const item = /^\s+-\s+(.+)$|^-\s+(.+)$/.exec(line);
+    const last = fields.at(-1);
+    if (item && last && Array.isArray(last.value)) {
+      last.value.push(unquoted(item[1] ?? item[2]!));
+      continue;
+    }
+    const key = FRONTMATTER_KEY.exec(line);
+    if (!key) return { fields: [], body: source };
+    const raw = (key[2] ?? "").trim();
+    if (/^[|>]/.test(raw)) return { fields: [], body: source };
+    const value =
+      raw.length === 0
+        ? []
+        : /^\[.*\]$/.test(raw)
+          ? raw
+              .slice(1, -1)
+              .split(",")
+              .map(unquoted)
+              .filter((entry) => entry.length > 0)
+          : unquoted(raw);
+    fields.push({ key: key[1]!.trim(), value });
+  }
+  return {
+    fields: fields
+      .filter((field) => field.value.length > 0)
+      .map((field) => {
+        const words = field.key.replace(/[-_]+/g, " ").trim();
+        return { label: words.charAt(0).toUpperCase() + words.slice(1), value: field.value };
+      }),
+    body: source.slice(match[0].length).trim(),
+  };
+}
+
+const LABELED_LINE = /^\s*(?:\*\*[^*\n]{1,40}?:?\*\*:?|[A-Z][A-Za-z]*(?: [A-Za-z]+){0,2}:)\s/;
+
 /** The report's own first heading, or its first line, or the fallback. */
 export function reportTitle(text: string, fallback: string): string {
+  const { fields, body } = reportFrontmatter(text);
+  const named = fields.find((field) => field.label === "Title")?.value;
+  if (typeof named === "string" && named.trim().length > 0) {
+    const title = plain(named);
+    return title.length > 120 ? `${title.slice(0, 119).trimEnd()}…` : title;
+  }
   // Lines inside code fences are code: a `# comment` there is not a heading.
   let inFence = false;
-  const lines = normalized(text)
-    .split("\n")
-    .filter((line) => {
-      if (FENCE.test(line)) {
-        inFence = !inFence;
-        return false;
-      }
-      return !inFence;
-    });
+  const lines = body.split("\n").filter((line) => {
+    if (FENCE.test(line)) {
+      inFence = !inFence;
+      return false;
+    }
+    return !inFence;
+  });
   const heading = lines.find((line) => HEADING.test(line));
   const first = lines.find((line) => line.trim().length > 0);
   // A report that opens with a list or a table has no line that names it.
-  const unnamed = !heading && first !== undefined && /^\s*(?:[-*+]|\d+[.)]|\|)\s/.test(first);
+  // Nor does one that opens with a labeled part such as `**Outcome:** …`.
+  const unnamed =
+    !heading &&
+    first !== undefined &&
+    (/^\s*(?:[-*+]|\d+[.)]|\|)\s/.test(first) || LABELED_LINE.test(first));
   const raw = heading ? heading.replace(/^\s{0,3}#{1,6}\s+/, "") : unnamed ? "" : (first ?? "");
   const title = plain(raw).replace(/[:.]$/, "");
   if (title.length === 0 || (!heading && title.length > 90)) return fallback.trim() || "Report";
@@ -100,7 +172,7 @@ export function reportTitle(text: string, fallback: string): string {
 
 /** The opening paragraph as plain text, for the card. */
 export function reportSummary(text: string, maxLength = 280): string {
-  const paragraphs = normalized(text).split(/\n\s*\n/);
+  const paragraphs = reportFrontmatter(text).body.split(/\n\s*\n/);
   let inFence = false;
   for (const paragraph of paragraphs) {
     const lines = paragraph.split("\n");

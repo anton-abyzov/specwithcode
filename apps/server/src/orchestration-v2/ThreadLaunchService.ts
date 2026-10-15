@@ -369,6 +369,36 @@ const make = Effect.gen(function* () {
           }
         }
         if (startFromOrigin) yield* setupTracker.stageStatus(threadId, "fetch", "done");
+        // A launcher can name a base branch it saw in another checkout, such as
+        // a parent repository or a sibling clone. A new project starts with
+        // only its first branch, so `git worktree add` would fail with
+        // "invalid reference". Start from the project's checked-out branch
+        // instead of dead-ending the launch.
+        let baseRefName = input.workspaceStrategy.baseRef;
+        const startRefExists = yield* git
+          .hasCommit({ cwd: project.workspaceRoot, refName: startRef })
+          .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
+        if (!startRefExists) {
+          const currentRef = yield* git
+            .localStatus({ cwd: project.workspaceRoot })
+            .pipe(
+              Effect.map((status) => status.refName),
+              Effect.orElseSucceed(() => null),
+            );
+          const currentRefExists =
+            currentRef !== null &&
+            (yield* git
+              .hasCommit({ cwd: project.workspaceRoot, refName: `refs/heads/${currentRef}` })
+              .pipe(Effect.orElseSucceed(() => false)));
+          if (currentRef !== null && currentRefExists) {
+            yield* Effect.logWarning(
+              "Requested worktree base is missing; starting from the checked-out branch",
+              { threadId, requestedBaseRef: startRef, fallbackBaseRef: currentRef },
+            );
+            startRef = currentRef;
+            baseRefName = currentRef;
+          }
+        }
         if (
           branch !== null &&
           isTemporaryWorktreeBranch(branch) &&
@@ -389,7 +419,7 @@ const make = Effect.gen(function* () {
               cwd: project.workspaceRoot,
               refName: startRef,
               newRefName: branch!,
-              baseRefName: input.workspaceStrategy.baseRef,
+              baseRefName,
               path: null,
             },
             {

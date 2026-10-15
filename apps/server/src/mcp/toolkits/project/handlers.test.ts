@@ -7,6 +7,7 @@ import {
   ThreadId,
   type OrchestrationV2ThreadShell,
   type Project as ProjectRecord,
+  type ServerProvider,
 } from "@specweave-studio/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -21,6 +22,7 @@ import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts"
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ServerConfig from "../../../config.ts";
 import * as Project from "../../../project/ProjectService.ts";
+import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../../../vcs/VcsProcess.ts";
@@ -77,9 +79,12 @@ it.effect("attributes a launched thread's first message to the calling thread", 
           } as unknown as ThreadLaunch.ThreadLaunchResult);
         },
       }),
-      Layer.mock(Project.ProjectService)({ getById: (id) => Effect.succeed(Option.some(projectFixture(id))) }),
+      Layer.mock(Project.ProjectService)({
+        getById: (id) => Effect.succeed(Option.some(projectFixture(id))),
+      }),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
       Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
       NodeServices.layer,
       ServerConfig.layerTest(process.cwd(), { prefix: "studio-source-link-" }).pipe(
         Layer.provide(NodeServices.layer),
@@ -153,12 +158,15 @@ it.effect("launches a scratch thread into the Scratch project", () =>
           } as unknown as ThreadLaunch.ThreadLaunchResult);
         },
       }),
-      Layer.mock(Project.ProjectService)({ getById: (id) => Effect.succeed(Option.some(projectFixture(id))) }),
+      Layer.mock(Project.ProjectService)({
+        getById: (id) => Effect.succeed(Option.some(projectFixture(id))),
+      }),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",
         ensureScratchProject: Effect.succeed({ projectId: scratchProjectId }),
       }),
       Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
       NodeServices.layer,
       ServerConfig.layerTest(process.cwd(), { prefix: "studio-scratch-launch-" }).pipe(
         Layer.provide(NodeServices.layer),
@@ -262,6 +270,7 @@ it.effect("starts a project from just a title when workspaceRoot is omitted", ()
           }),
       }),
       Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
       NodeServices.layer,
       ServerConfig.layerTest(process.cwd(), { prefix: "studio-named-project-" }).pipe(
         Layer.provide(NodeServices.layer),
@@ -355,6 +364,28 @@ const clientLaunchHarness = (input: {
         ),
     }),
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
+    Layer.mock(ProviderRegistry.ProviderRegistry)({
+      getProviders: Effect.succeed([
+        {
+          instanceId: modelSelection.instanceId,
+          models: [
+            {
+              slug: modelSelection.model,
+              capabilities: {
+                optionDescriptors: [
+                  {
+                    id: "effort",
+                    label: "Reasoning",
+                    type: "select",
+                    options: ["low", "medium", "high", "max"].map((id) => ({ id, label: id })),
+                  },
+                ],
+              },
+            },
+          ],
+        } as unknown as ServerProvider,
+      ]),
+    }),
     NodeServices.layer,
   ).pipe(
     Layer.provideMerge(GitVcsDriver.layer),
@@ -396,6 +427,33 @@ it.effect("a client launches at its ceiling with the project's default model", (
 
     const untargeted = yield* handle({ title: "Fix" });
     expect(untargeted.at(-1)?.result).toMatchObject({ code: "target_required" });
+    expect(launched).toHaveLength(1);
+  }),
+);
+
+it.effect("a launch runs at the requested effort, or the nearest level the model offers", () =>
+  Effect.gen(function* () {
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const { projectId, dependencies } = clientLaunchHarness({
+      runtimeModeCeiling: "auto-accept-edits",
+      launched,
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const handle = (params: Parameters<typeof toolkit.handle<"studio_thread_launch">>[1]) =>
+      toolkit
+        .handle("studio_thread_launch", params)
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+
+    const result = yield* handle({ title: "Research", projectId, effort: "extra high" });
+    expect(result.at(-1)?.result).toMatchObject({ effort: "max" });
+    expect(launched[0]?.modelSelection.options).toEqual([{ id: "effort", value: "max" }]);
+
+    const unknown = yield* handle({ title: "Research", projectId, effort: "turbo" });
+    expect(unknown.at(-1)?.result).toMatchObject({ code: "invalid_request" });
     expect(launched).toHaveLength(1);
   }),
 );
@@ -501,6 +559,7 @@ it.effect("refuses agent changes to pause, archive and auto-resume", () =>
       }),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
       Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
       NodeServices.layer,
       ServerConfig.layerTest(process.cwd(), { prefix: "studio-project-lifecycle-" }).pipe(
         Layer.provide(NodeServices.layer),

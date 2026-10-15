@@ -3,14 +3,21 @@ import {
   ThreadId,
   OrchestratorMcpFailure,
   ProjectId,
+  type ModelSelection,
 } from "@specweave-studio/contracts";
 import { formatStudioThreadLink } from "@specweave-studio/shared/studioThreadLinks";
+import {
+  modelSelectionEffortValue,
+  resolveEffort,
+  withEffortSelection,
+} from "@specweave-studio/shared/effortLevel";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as Project from "../../../project/ProjectService.ts";
+import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as Repositories from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
@@ -54,6 +61,31 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
     });
 });
 
+/**
+ * Apply the effort the caller named to a launch's model selection, matched to
+ * that model's own effort option (nearest level when it lacks the exact one).
+ */
+const withRequestedEffort = Effect.fn("mcp.withRequestedEffort")(function* (
+  selection: ModelSelection,
+  effort: string,
+) {
+  const registry = yield* ProviderRegistry.ProviderRegistry;
+  const providers = yield* registry.getProviders;
+  const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
+  const descriptors = provider?.models.find((candidate) => candidate.slug === selection.model)
+    ?.capabilities?.optionDescriptors;
+  const resolved = resolveEffort(effort, descriptors);
+  if (!resolved.ok)
+    return yield* new OrchestratorMcpFailure({
+      code: "invalid_request",
+      message: `Model ${selection.model} on provider ${selection.instanceId} cannot run at effort "${effort}": ${resolved.message}`,
+    });
+  return {
+    ...selection,
+    options: withEffortSelection(selection.options, resolved),
+  } satisfies ModelSelection;
+});
+
 const access = Effect.gen(function* () {
   yield* readCaller();
   return yield* Project.ProjectService;
@@ -84,6 +116,12 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               });
         const target = yield* launchTarget(context, input, targetProject);
         if (target.kind === "remote") {
+          if (input.effort !== undefined)
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message:
+                "effort applies to threads on this machine. For another machine, pass the effort as modelSelection.options using that machine's option id from orchestrator_capabilities.",
+            });
           const launched = yield* launchRemote({
             context,
             machine: target,
@@ -154,12 +192,16 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             message:
               "Pass modelSelection: the project has no default model. orchestrator_capabilities lists providers and models.",
           });
+        const launchSelection =
+          input.effort === undefined
+            ? modelSelection
+            : yield* withRequestedEffort(modelSelection, input.effort);
         const result = yield* ThreadMessageIntake.launchThread({
           commandId,
           threadId,
           projectId,
           title: input.title,
-          modelSelection,
+          modelSelection: launchSelection,
           runtimeMode,
           interactionMode,
           workspaceStrategy: input.workspaceStrategy ?? { type: "root" },
@@ -183,12 +225,14 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           ),
         );
         const thread = result.projection.thread;
+        const effortValue = modelSelectionEffortValue(thread.modelSelection);
         const run = result.projection.runs.find((run) => run.userMessageId === messageId);
         return {
           threadId: thread.id,
           threadLink: formatStudioThreadLink(thread.id, thread.title || input.title),
           projectId: thread.projectId,
           modelSelection: thread.modelSelection,
+          ...(effortValue === undefined ? {} : { effort: effortValue }),
           runId: run?.id ?? null,
           status: run?.status ?? null,
         };

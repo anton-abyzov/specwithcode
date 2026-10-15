@@ -18,9 +18,9 @@ const PROVIDER_UPDATE_PILL_STYLES = {
   success:
     "bg-sidebar-control-surface text-sidebar-foreground group-has-[button[data-provider-update-main]:hover]/provider-update:bg-sidebar-row-hover",
   warning:
-    "bg-warning/12 text-warning group-has-[button[data-provider-update-main]:hover]/provider-update:bg-warning/18",
+    "bg-warning/12 text-warning-foreground group-has-[button[data-provider-update-main]:hover]/provider-update:bg-warning/18",
   error:
-    "bg-destructive/12 text-destructive group-has-[button[data-provider-update-main]:hover]/provider-update:bg-destructive/18",
+    "bg-destructive/12 text-destructive-foreground group-has-[button[data-provider-update-main]:hover]/provider-update:bg-destructive/18",
 } as const;
 
 const PROVIDER_UPDATE_PILL_PROGRESS_STYLES = {

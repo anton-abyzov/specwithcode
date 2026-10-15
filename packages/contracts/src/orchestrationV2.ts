@@ -1882,6 +1882,11 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
    */
   latestUserAuthoredMessageAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   hasActionableProposedPlan: Schema.Boolean,
+  /**
+   * What the thread's last report says stops the work (its Blockers part),
+   * while nobody has written to the thread since. Null when it names none.
+   */
+  reportedBlocker: Schema.optional(Schema.NullOr(Schema.String)),
   // Normalized post-settlement background work for sidebar Waiting pills.
   // Empty when the latest root run is still active or no pending work remains.
   pendingBackgroundTasks: Schema.optional(Schema.Array(OrchestrationV2PendingBackgroundTask)).pipe(

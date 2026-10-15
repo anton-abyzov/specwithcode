@@ -159,11 +159,11 @@ export function SubagentTooltipContent(props: {
           className={cn(
             "inline-flex items-center gap-1 rounded-sm font-medium capitalize",
             working
-              ? "text-info"
+              ? "text-info-foreground"
               : failed
-                ? "text-error"
+                ? "text-error-foreground"
                 : props.status === "completed"
-                  ? "text-success"
+                  ? "text-success-foreground"
                   : "text-muted-foreground",
           )}
         >

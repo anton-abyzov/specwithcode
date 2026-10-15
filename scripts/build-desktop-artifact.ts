@@ -2,7 +2,9 @@
 import * as DateTime from "effect/DateTime";
 // @effect-diagnostics nodeBuiltinImport:off - Node's typed junction API avoids Windows symlink privileges while keeping the probe isolated.
 
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
 import * as NodeCrypto from "node:crypto";
 import * as NodeModule from "node:module";
 
@@ -4299,7 +4301,32 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
 
 const cliRuntimeLayer = Layer.mergeAll(Logger.layer([Logger.consolePretty()]), NodeServices.layer);
 
+/**
+ * The build spawns `vp` and `cargo` by name. A package script puts the workspace's
+ * `node_modules/.bin` on PATH, but `node scripts/build-desktop-artifact.ts` does not,
+ * and non-login shells often miss rustup's `~/.cargo/bin`; add whichever exists.
+ */
+export function withBuildToolsOnPath(
+  currentPath: string | undefined,
+  repoRoot: string,
+  home: string | undefined,
+  exists: (path: string) => boolean,
+): string {
+  const entries = (currentPath ?? "").split(NodePath.delimiter).filter(Boolean);
+  const candidates = [
+    NodePath.join(repoRoot, "node_modules", ".bin"),
+    ...(home ? [NodePath.join(home, ".cargo", "bin")] : []),
+  ].filter((dir) => !entries.includes(dir) && exists(dir));
+  return [...candidates, ...entries].join(NodePath.delimiter);
+}
+
 if (import.meta.main) {
+  process.env.PATH = withBuildToolsOnPath(
+    process.env.PATH,
+    NodePath.resolve(import.meta.dirname, ".."),
+    process.env.HOME,
+    NodeFS.existsSync,
+  );
   Command.run(buildDesktopArtifactCli, { version: "0.0.0" }).pipe(
     Effect.scoped,
     Effect.provide(cliRuntimeLayer),

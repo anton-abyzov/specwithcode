@@ -95,7 +95,9 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
                   variant="ghost"
                   className="mb-1 last:mb-0"
                 >
-                  {option.warning ? <TriangleAlertIcon className="size-3 text-warning" /> : null}
+                  {option.warning ? (
+                    <TriangleAlertIcon className="size-3 text-warning-foreground" />
+                  ) : null}
                   <span className="min-w-0 whitespace-normal wrap-break-word">{option.label}</span>
                 </MenuItem>
               );

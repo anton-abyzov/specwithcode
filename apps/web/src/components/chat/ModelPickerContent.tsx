@@ -986,7 +986,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                         >
                           <div className="min-w-0 flex-1 text-left">
                             <div className="text-xs font-medium leading-snug">Legacy models</div>
-                            <div className="mt-1 text-xs font-normal leading-snug text-muted-foreground/70">
+                            <div className="mt-1 text-xs font-normal leading-snug text-muted-foreground">
                               {legacySection.legacyModels.length} models
                             </div>
                           </div>

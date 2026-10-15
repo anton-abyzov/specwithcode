@@ -43,6 +43,7 @@ export function projectDelegationTarget(
       : selected.options !== undefined
         ? { options: selected.options }
         : {}),
+    ...(target?.effort !== undefined ? { effort: target.effort } : {}),
   };
 }
 

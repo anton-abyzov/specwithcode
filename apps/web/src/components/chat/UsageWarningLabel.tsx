@@ -7,7 +7,7 @@ export function UsageWarningLabel({
 }) {
   return (
     <span
-      className={`text-sm font-medium ${resolved ? "text-muted-foreground" : "text-warning"}`}
+      className={`text-sm font-medium ${resolved ? "text-muted-foreground" : "text-warning-foreground"}`}
       title={
         resolved
           ? "This chat continued. The original provider's included allowance may still be exhausted."

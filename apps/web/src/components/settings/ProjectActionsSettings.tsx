@@ -213,7 +213,7 @@ export function ProjectActionsSettings() {
         <SettingsRow
           title="specweave-studio.json is invalid"
           description="A specweave-studio.json exists in this checkout but fails to parse, so every action and icon it declares is ignored. Check the JSON syntax and icon values."
-          className="text-warning"
+          className="text-warning-foreground"
         />
       ) : null}
       {target && (

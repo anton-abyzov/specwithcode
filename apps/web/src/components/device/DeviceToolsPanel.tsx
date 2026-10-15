@@ -115,7 +115,9 @@ export function DeviceToolsPanel(props: {
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {error ? (
-          <p className="border-b bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</p>
+          <p className="border-b bg-destructive/10 px-3 py-2 text-xs text-destructive-foreground">
+            {error}
+          </p>
         ) : null}
         {detail === null && !error ? (
           <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground">

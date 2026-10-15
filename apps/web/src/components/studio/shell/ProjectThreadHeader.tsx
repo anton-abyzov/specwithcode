@@ -10,12 +10,14 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@specweave-studio/client-runtime/state/runtime";
+import { modelSelectionEffortLabel } from "@specweave-studio/shared/effortLevel";
 import { resolveThreadCurrentPullRequestLink } from "@specweave-studio/shared/threadPullRequests";
 import {
   BotIcon,
   CheckCircle2Icon,
   ChevronRightIcon,
   EllipsisIcon,
+  GaugeIcon,
   Maximize2Icon,
   Minimize2Icon,
   RotateCcwIcon,
@@ -54,6 +56,15 @@ export function ProjectThreadHeader(props: {
   const threadRef = useMemo(
     () => scopeThreadRef(thread.environmentId, thread.id),
     [thread.environmentId, thread.id],
+  );
+  const effort = useMemo(
+    () =>
+      modelSelectionEffortLabel(
+        thread.modelSelection,
+        props.providerEntry?.models.find((model) => model.slug === thread.modelSelection.model)
+          ?.capabilities?.optionDescriptors,
+      ),
+    [thread.modelSelection, props.providerEntry],
   );
   const [renaming, setRenaming] = useState<string | null>(null);
   const updateMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
@@ -141,6 +152,13 @@ export function ProjectThreadHeader(props: {
             instanceId={thread.modelSelection.instanceId}
             model={thread.modelSelection.model}
           />
+          {effort ? (
+            <span className="sws-chip">
+              <GaugeIcon aria-hidden />
+              <span className="sr-only">Effort </span>
+              {effort}
+            </span>
+          ) : null}
           {pr && link ? (
             <button
               type="button"
@@ -165,7 +183,11 @@ export function ProjectThreadHeader(props: {
           ) : null}
         </span>
       </div>
-      {settled || archived ? <span className="sws-chip" role="status">Resolved</span> : null}
+      {settled || archived ? (
+        <span className="sws-chip" role="status">
+          Resolved
+        </span>
+      ) : null}
       <span ref={props.toolsSlotRef} className="sws-thread-head-tools" />
       <Tip label={`${resolveLabel} thread`}>
         <button

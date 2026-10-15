@@ -221,7 +221,7 @@ export function SettingInheritance({
             className={cn(
               "size-3",
               state === "overridden" && "text-primary",
-              state === "mixed" && "text-warning",
+              state === "mixed" && "text-warning-foreground",
             )}
           />
         </TooltipTrigger>
@@ -262,7 +262,7 @@ export function SettingInheritance({
                           ? "text-foreground"
                           : layer.set
                             ? "text-muted-foreground"
-                            : "text-muted-foreground/60",
+                            : "text-muted-foreground",
                       )}
                     >
                       <span className="max-w-32 truncate">{layer.value}</span>

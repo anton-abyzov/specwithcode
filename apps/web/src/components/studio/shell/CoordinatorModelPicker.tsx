@@ -90,7 +90,7 @@ function CoordinatorProviderRecovery(props: {
       {failed ? (
         <span
           role="alert"
-          className="text-destructive text-xs"
+          className="text-destructive-foreground text-xs"
           title="Provider status could not be checked. Try again."
         >
           Check failed

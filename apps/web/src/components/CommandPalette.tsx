@@ -130,6 +130,7 @@ import { useProjectFolderChoice } from "../hooks/useProjectFolderChoice";
 import { useNewProject } from "../hooks/useNewProject";
 import {
   defaultProjectMachine,
+  newProjectDraft,
   resolveNewProjectName,
   suggestProjectMachine,
   type NewProjectKind,
@@ -936,10 +937,29 @@ function OpenCommandPaletteDialog(props: {
   // State lags a render behind, so a repeated Enter could start a second create.
   const newProjectSubmittingRef = useRef(false);
   const createNewProject = useNewProject();
-  const folderChoice = useProjectFolderChoice(
-    newProjectFlow?.environmentId ?? null,
-    isCreatingNewProject,
-  );
+  const newProjectEnvironmentId = newProjectFlow?.environmentId ?? null;
+  const folderChoice = useProjectFolderChoice(newProjectEnvironmentId, isCreatingNewProject, {
+    remember: true,
+    defaultPath:
+      environments.find((environment) => environment.environmentId === newProjectEnvironmentId)
+        ?.serverConfig?.newProjectsRoot ?? null,
+    // The system folder dialog only shows this device's disks, and only the
+    // macOS desktop app maps its paths one-to-one onto the primary machine.
+    nativePicker:
+      newProjectEnvironmentId !== null &&
+      newProjectEnvironmentId === primaryEnvironmentId &&
+      typeof window !== "undefined" &&
+      window.desktopBridge !== undefined &&
+      isMacPlatform(navigator.platform)
+        ? {
+            label: "Choose in Finder…",
+            pick: async (initialPath) =>
+              (await readLocalApi()?.dialogs.pickFolder(
+                initialPath ? { initialPath } : undefined,
+              )) ?? null,
+          }
+        : null,
+  });
   const [isRemoteProjectCloning, setIsRemoteProjectCloning] = useState(false);
   const cloneFolderChoice = useProjectFolderChoice(
     addProjectCloneFlow?.step === "confirm" ? addProjectCloneFlow.environmentId : null,
@@ -1607,6 +1627,7 @@ function OpenCommandPaletteDialog(props: {
     browseNavigation.invalidate();
     clearTypedHighlight();
     setQuery(nextQuery);
+    if (newProjectFlow?.kind === "code") newProjectDraft.keep(nextQuery);
     if (nextQuery === "" && currentView?.initialQuery) {
       popView();
     }
@@ -1674,7 +1695,6 @@ function OpenCommandPaletteDialog(props: {
     ): void => {
       setAddProjectEnvironmentId(environmentId);
       setAddProjectCloneFlow(null);
-      folderChoice.reset();
       setNewProjectFlow({ environmentId, sourcesEnvironmentId, kind });
       setNewProjectPublishesToGitHub(false);
       pushPaletteView({
@@ -1686,8 +1706,10 @@ function OpenCommandPaletteDialog(props: {
           ),
         groups: [],
       });
+      // Coming back to New project picks up the name typed before.
+      if (kind === "code") setQuery(newProjectDraft.name());
     },
-    [pushPaletteView, folderChoice.reset],
+    [pushPaletteView],
   );
 
   const buildAddProjectSourceGroups = useCallback(
@@ -2281,7 +2303,7 @@ function OpenCommandPaletteDialog(props: {
           titleTrailingContent: (
             <span className="flex shrink-0 items-center gap-2">
               {(themeHalves?.[resolvedTheme] ?? getThemeDefinition(theme)?.id ?? null) === id ? (
-                <span className="text-xs text-muted-foreground/70">Current</span>
+                <span className="text-xs text-muted-foreground">Current</span>
               ) : null}
               <span className="flex items-center gap-1" aria-hidden>
                 {previews.map((preview) => (
@@ -2328,7 +2350,7 @@ function OpenCommandPaletteDialog(props: {
           icon: <Icon className={ITEM_ICON_CLASS} />,
           titleTrailingContent:
             appearanceMode === mode ? (
-              <span className="text-xs text-muted-foreground/70">Current</span>
+              <span className="text-xs text-muted-foreground">Current</span>
             ) : undefined,
           run: async () => {
             if (!setAppearanceMode(mode)) notifyThemeSaveFailure();
@@ -2360,7 +2382,7 @@ function OpenCommandPaletteDialog(props: {
           icon: <ListCollapseIcon className={ITEM_ICON_CLASS} />,
           titleTrailingContent:
             clientSettings.timelineDetail === level ? (
-              <span className="text-xs text-muted-foreground/70">Current</span>
+              <span className="text-xs text-muted-foreground">Current</span>
             ) : undefined,
           run: async () => setTimelineDetail(level),
         })),
@@ -2787,7 +2809,10 @@ function OpenCommandPaletteDialog(props: {
             ? newProjectGitHubTarget
             : null,
       });
-      if (created) setOpen(false);
+      if (created) {
+        if (newProjectFlow.kind === "code") newProjectDraft.keep("");
+        setOpen(false);
+      }
     } finally {
       newProjectSubmittingRef.current = false;
       setIsCreatingNewProject(false);
@@ -3090,8 +3115,8 @@ function OpenCommandPaletteDialog(props: {
     popView();
     startAddProjectSourceSelection(environmentId);
   };
+  // Each machine keeps its own chosen folder, so switching back restores it.
   const switchNewProjectEnvironment = (environmentId: EnvironmentId) => {
-    if (environmentId !== newProjectFlow?.environmentId) folderChoice.reset();
     setNewProjectFlow((flow) => (flow === null ? flow : { ...flow, environmentId }));
     setAddProjectEnvironmentId(environmentId);
   };
@@ -3327,7 +3352,8 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
 
-    if (event.key === "Backspace" && query === "" && isSubmenu) {
+    // Clearing the name with a held Backspace must not leave New project.
+    if (event.key === "Backspace" && query === "" && isSubmenu && newProjectFlow === null) {
       event.preventDefault();
       popView();
       return;
@@ -3680,7 +3706,7 @@ function OpenCommandPaletteDialog(props: {
         }
       }}
       onValueChange={handleQueryChange}
-      showBackHint={isSubmenu}
+      showBackHint={isSubmenu && newProjectFlow === null}
       value={query}
     >
       {newProjectFlow !== null ? (
@@ -3700,7 +3726,7 @@ function OpenCommandPaletteDialog(props: {
             {remoteProjectContext.icon}
             <span className="flex min-w-0 flex-1 flex-col">
               <span className="truncate text-foreground text-sm">{remoteProjectContext.title}</span>
-              <span className="truncate text-muted-foreground/85 text-xs">
+              <span className="truncate text-muted-foreground text-xs">
                 {remoteProjectContext.description}
               </span>
             </span>

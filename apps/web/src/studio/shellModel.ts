@@ -12,6 +12,7 @@ import {
   projectThreadGroup,
   threadActivityAt,
   type ProjectThreadGroup,
+  threadBlocker,
 } from "./projectWorkspaceModel";
 
 /** The slice of a provider instance that names it; `ProviderInstanceEntry` satisfies it. */
@@ -38,11 +39,8 @@ function brandFromHint(value: string): string | null {
   return null;
 }
 
-/**
- * One short word for who runs a thread. A registry agent is named for the
- * agent (Copilot), never for the transport ("ACP Registry").
- */
-export function providerShortLabel(entry: ProviderNameSource | null, instanceId: string): string {
+/** The maker's brand behind an instance: Claude, Codex, Copilot. */
+function providerBrand(entry: ProviderNameSource | null, instanceId: string): string {
   if (entry) {
     if (entry.driverKind === "acpRegistry")
       return (
@@ -55,6 +53,19 @@ export function providerShortLabel(entry: ProviderNameSource | null, instanceId:
     return brandFromHint(entry.displayName) ?? entry.displayName;
   }
   return brandFromHint(instanceId) ?? instanceId;
+}
+
+// "Claude" alone reads as the model's maker; the harness that runs the thread is Claude Code.
+const HARNESS_BY_BRAND: Readonly<Record<string, string>> = { Claude: "Claude Code" };
+
+/**
+ * The harness that runs a thread, named so it cannot be mistaken for the model:
+ * Claude Code, Codex, Copilot. A registry agent is named for the agent
+ * (Copilot), never for the transport ("ACP Registry").
+ */
+export function providerShortLabel(entry: ProviderNameSource | null, instanceId: string): string {
+  const brand = providerBrand(entry, instanceId);
+  return HARNESS_BY_BRAND[brand] ?? brand;
 }
 
 const UPPERCASE_WORDS = new Set(["gpt", "xl", "ai", "oss"]);
@@ -99,7 +110,7 @@ export function shortModelName(slug: string): string {
 }
 
 export type ModelLabel = {
-  /** Who runs it: Claude, Codex, Copilot, Grok. */
+  /** The harness that runs it: Claude Code, Codex, Copilot, Grok. */
   readonly provider: string;
   /** Which model, without repeating the provider. */
   readonly model: string;
@@ -113,17 +124,26 @@ export function modelLabel(
   instanceId: string,
   slug: string,
 ): ModelLabel {
-  const provider = providerShortLabel(entry, instanceId);
+  const brand = providerBrand(entry, instanceId);
+  const provider = HARNESS_BY_BRAND[brand] ?? brand;
   const catalogued = entry?.models?.find((model) => model.slug === slug)?.name?.trim();
   let model = catalogued || shortModelName(slug);
-  // "Claude Opus 5.5" beside a Claude mark says Claude twice.
-  const prefix = new RegExp(`^${provider.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+`, "i");
+  // A short name drops "Claude"; through another harness the maker is the point.
+  if (
+    !catalogued &&
+    brand !== "Claude" &&
+    /^claude[-_\s]/i.test(slug.trim()) &&
+    !/^claude\b/i.test(model)
+  )
+    model = `Claude ${model}`;
+  // "Claude Code · Claude Opus 5.5" says Claude twice; Copilot keeps the maker's name.
+  const prefix = new RegExp(`^${brand.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+`, "i");
   // "Grok 5" keeps its name: a bare "5" is a version, not a model.
   if (prefix.test(model) && /[a-z]/i.test(model.replace(prefix, "")))
     model = model.replace(prefix, "");
-  const full = model.toLowerCase().startsWith(provider.toLowerCase())
+  const full = model.toLowerCase().startsWith(brand.toLowerCase())
     ? model
-    : `${provider} ${model}`;
+    : `${provider} · ${model}`;
   return { provider, model, full };
 }
 
@@ -440,9 +460,7 @@ export function threadsSummary(
 }
 
 /** Groups a person has dealt with stay folded until they ask for them. */
-export const THREAD_GROUPS_FOLDED_BY_DEFAULT: readonly ProjectThreadGroup[] = [
-  "Resolved",
-];
+export const THREAD_GROUPS_FOLDED_BY_DEFAULT: readonly ProjectThreadGroup[] = ["Resolved"];
 
 export type ThreadTone = "waiting" | "working" | "failed" | "resolved" | "idle";
 
@@ -468,6 +486,7 @@ export function threadStatusWord(thread: EnvironmentThreadShell): string | null 
   if (status === "input") return "Answer needed";
   if (status === "limited") return "Usage limit reached";
   if (status === "failed") return "Needs review";
+  if (threadBlocker(thread) !== null) return "Blocked";
   const tone = threadTone(thread);
   if (tone === "waiting") return thread.hasActionableProposedPlan ? "Plan ready" : "Waiting on you";
   return tone === "working" ? "Working" : null;

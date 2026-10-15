@@ -5,6 +5,7 @@ import {
   usageLimitRunPresentedAsLatest,
 } from "@specweave-studio/shared/orchestrationV2ThreadError";
 import { threadPullRequestsOf } from "@specweave-studio/shared/threadPullRequests";
+import { reportBlocker } from "@specweave-studio/shared/reportDocument";
 import type {
   OrchestrationV2AppThread,
   OrchestrationV2CheckpointScope,
@@ -193,6 +194,7 @@ export type ProjectionSettlementCandidate = Pick<
   | "activityRunStatus"
   | "pendingRuntimeRequest"
   | "pendingBackgroundTasks"
+  | "reportedBlocker"
 > & { readonly latestUserAuthoredMessageAt: DateTime.Utc | null };
 
 const ProjectionCheckpointContext = Schema.Struct({
@@ -924,6 +926,8 @@ type ShellThreadRow = {
   readonly pending_secret_request_payload_json: string | null;
   readonly latest_user_message_at: string | null;
   readonly latest_user_authored_message_at: string | null;
+  readonly latest_assistant_message_at: string | null;
+  readonly latest_assistant_text: string | null;
   readonly has_actionable_proposed_plan: number;
   readonly item_count: number;
   readonly runless_item_count: number;
@@ -946,6 +950,8 @@ type SettlementThreadRow = Pick<
   | "latest_run_completed_at"
   | "latest_user_message_at"
   | "latest_user_authored_message_at"
+  | "latest_assistant_message_at"
+  | "latest_assistant_text"
 >;
 
 type ShellRunItemCountRow = {
@@ -1413,6 +1419,13 @@ export function threadShellFromProjection(
         DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
     );
   const latestUserMessage = userMessages[0] ?? null;
+  const latestAssistantMessage =
+    projection.messages
+      .filter((message) => message.role === "assistant" && !message.streaming)
+      .toSorted(
+        (left, right) =>
+          DateTime.toEpochMillis(right.createdAt) - DateTime.toEpochMillis(left.createdAt),
+      )[0] ?? null;
   const pendingBackgroundTasks = derivePendingBackgroundWork({
     latestRun,
     providerThreads: projection.providerThreads,
@@ -1481,6 +1494,15 @@ export function threadShellFromProjection(
     hasActionableProposedPlan: projection.plans.some(
       (plan) => plan.kind === "proposed_plan" && plan.status === "active",
     ),
+    reportedBlocker: shellReportedBlocker({
+      text: latestAssistantMessage?.text ?? null,
+      reportedAt:
+        latestAssistantMessage === null
+          ? null
+          : DateTime.formatIso(latestAssistantMessage.updatedAt),
+      latestUserMessageAt:
+        latestUserMessage === null ? null : DateTime.formatIso(latestUserMessage.updatedAt),
+    }),
     pendingBackgroundTasks: [...pendingBackgroundTasks],
     providerInstanceHistory: providerInstanceHistoryForShell({
       threadId: projection.thread.id,
@@ -1576,6 +1598,7 @@ type ShellThreadState = {
   readonly latestUserMessageAt: DateTime.Utc | null;
   readonly latestUserAuthoredMessageAt: DateTime.Utc | null;
   readonly hasActionableProposedPlan: boolean;
+  readonly reportedBlocker: string | null;
   readonly pendingBackgroundTasks: OrchestrationV2ThreadShell["pendingBackgroundTasks"];
   readonly providerInstanceHistory: OrchestrationV2ThreadShell["providerInstanceHistory"];
   readonly goal: OrchestrationV2ThreadShell["goal"];
@@ -1585,6 +1608,25 @@ type ShellThreadState = {
   readonly runOrdinalById: ReadonlyMap<RunId, number>;
   readonly itemCountByRunId: ReadonlyMap<RunId, number>;
 };
+
+/**
+ * The blocker the thread's last report names, until someone writes to the
+ * thread after it: a reply or a follow-up is the answer the report waited for.
+ */
+function shellReportedBlocker(input: {
+  readonly text: string | null;
+  readonly reportedAt: string | null;
+  readonly latestUserMessageAt: string | null;
+}): string | null {
+  if (input.text === null || input.reportedAt === null) return null;
+  if (
+    input.latestUserMessageAt !== null &&
+    Date.parse(input.latestUserMessageAt) >= Date.parse(input.reportedAt)
+  ) {
+    return null;
+  }
+  return reportBlocker(input.text);
+}
 
 function shellStatusFromStoredRunStatus(status: string | null): OrchestrationV2ShellThreadStatus {
   switch (status) {
@@ -1742,6 +1784,7 @@ function shellFromState(input: {
     latestUserMessageAt: input.state.latestUserMessageAt,
     latestUserAuthoredMessageAt: input.state.latestUserAuthoredMessageAt,
     hasActionableProposedPlan: input.state.hasActionableProposedPlan,
+    reportedBlocker: input.state.reportedBlocker,
     pendingBackgroundTasks: input.state.pendingBackgroundTasks,
     providerInstanceHistory: input.state.providerInstanceHistory,
     goal: input.state.goal,
@@ -5102,6 +5145,22 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ORDER BY message.updated_at DESC, message.message_id DESC
                 LIMIT 1
               ) AS latest_user_authored_message_at,
+              (
+                SELECT message.updated_at
+                FROM orchestration_v2_projection_messages message
+                WHERE message.thread_id = t.thread_id
+                  AND message.role = 'assistant' AND message.streaming = 0
+                ORDER BY message.created_at DESC, message.message_id DESC
+                LIMIT 1
+              ) AS latest_assistant_message_at,
+              (
+                SELECT json_extract(message.payload_json, '$.text')
+                FROM orchestration_v2_projection_messages message
+                WHERE message.thread_id = t.thread_id
+                  AND message.role = 'assistant' AND message.streaming = 0
+                ORDER BY message.created_at DESC, message.message_id DESC
+                LIMIT 1
+              ) AS latest_assistant_text,
               EXISTS (
                 SELECT 1
                 FROM orchestration_v2_projection_plans plan
@@ -5325,7 +5384,23 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   AND json_extract(message.payload_json, '$.createdBy') = 'user'
                 ORDER BY message.updated_at DESC, message.message_id DESC
                 LIMIT 1
-              ) AS latest_user_authored_message_at
+              ) AS latest_user_authored_message_at,
+              (
+                SELECT message.updated_at
+                FROM orchestration_v2_projection_messages message
+                WHERE message.thread_id = t.thread_id
+                  AND message.role = 'assistant' AND message.streaming = 0
+                ORDER BY message.created_at DESC, message.message_id DESC
+                LIMIT 1
+              ) AS latest_assistant_message_at,
+              (
+                SELECT json_extract(message.payload_json, '$.text')
+                FROM orchestration_v2_projection_messages message
+                WHERE message.thread_id = t.thread_id
+                  AND message.role = 'assistant' AND message.streaming = 0
+                ORDER BY message.created_at DESC, message.message_id DESC
+                LIMIT 1
+              ) AS latest_assistant_text
             FROM orchestration_v2_projection_threads t
             LEFT JOIN orchestration_v2_projection_runs r ON r.run_id = (
               SELECT latest.run_id FROM orchestration_v2_projection_runs latest
@@ -5405,6 +5480,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     row.latest_user_authored_message_at === null
                       ? null
                       : DateTime.makeUnsafe(row.latest_user_authored_message_at),
+                  reportedBlocker: shellReportedBlocker({
+                    text: row.latest_assistant_text,
+                    reportedAt: row.latest_assistant_message_at,
+                    latestUserMessageAt: row.latest_user_message_at,
+                  }),
                   activityRunStatus: null,
                   activityRunStartedAt: null,
                   pendingRuntimeRequest: null,
@@ -5577,6 +5657,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ? null
               : DateTime.makeUnsafe(row.latest_user_authored_message_at),
           hasActionableProposedPlan: row.has_actionable_proposed_plan === 1,
+          reportedBlocker: shellReportedBlocker({
+            text: row.latest_assistant_text,
+            reportedAt: row.latest_assistant_message_at,
+            latestUserMessageAt: row.latest_user_message_at,
+          }),
           pendingBackgroundTasks,
           providerInstanceHistory: providerInstanceHistoryForShell({
             threadId: thread.id,

@@ -373,6 +373,7 @@ export const GitCommandFailureReason = Schema.Literals([
   "branch_already_exists",
   "branch_checked_out_in_worktree",
   "host_key_unverified",
+  "invalid_reference",
   "not_a_repository",
   "path_already_exists",
   "remote_unreachable",

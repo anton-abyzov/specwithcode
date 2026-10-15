@@ -333,7 +333,7 @@ export function ProviderModelsSection({
           />
         }
       >
-        <StarIcon className={cn("size-3", isFavorite && "fill-current text-warning")} />
+        <StarIcon className={cn("size-3", isFavorite && "fill-current text-warning-foreground")} />
       </TooltipTrigger>
       <TooltipPopup side="top">
         {isFavorite ? "Remove from favorites" : "Add to favorites"}
@@ -486,19 +486,15 @@ export function ProviderModelsSection({
         <span className="flex min-w-0 items-baseline gap-2">
           <span className={cn(nameClassName, "truncate")}>{model.name}</span>
           {model.name !== model.slug ? (
-            <code className="truncate font-mono text-2xs text-muted-foreground/70">
-              {model.slug}
-            </code>
+            <code className="truncate font-mono text-2xs text-muted-foreground">{model.slug}</code>
           ) : null}
-          {model.isCustom ? (
-            <span className="text-2xs text-muted-foreground/70">custom</span>
-          ) : null}
+          {model.isCustom ? <span className="text-2xs text-muted-foreground">custom</span> : null}
         </span>
         {/*
           Always a grid item so the columns line up across rows; the text
           itself drops out on phone widths where it would starve the name.
         */}
-        <span className="text-2xs text-muted-foreground/70">
+        <span className="text-2xs text-muted-foreground">
           {capLabels.length > 0 ? (
             <span className="hidden sm:inline">{capLabels.join(" · ")}</span>
           ) : null}
@@ -644,7 +640,7 @@ export function ProviderModelsSection({
       ) : null}
 
       {driverKind !== "antigravity" && error ? (
-        <p className="mt-2 text-xs text-destructive">{error}</p>
+        <p className="mt-2 text-xs text-destructive-foreground">{error}</p>
       ) : null}
     </div>
   );

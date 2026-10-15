@@ -71,7 +71,7 @@ export default function ProviderAuthTerminal({
         className="relative h-64 overflow-hidden rounded-md border border-border"
       />
       {error ? (
-        <p role="alert" className="text-destructive">
+        <p role="alert" className="text-destructive-foreground">
           {error}
         </p>
       ) : null}

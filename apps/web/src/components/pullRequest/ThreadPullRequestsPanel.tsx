@@ -398,7 +398,7 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
   if (links.length === 0) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
-        <PullRequestGlyph.link aria-hidden className="size-6 text-muted-foreground/60" />
+        <PullRequestGlyph.link aria-hidden className="size-6 text-muted-foreground" />
         <p className="text-sm font-medium">No linked pull requests</p>
         <p className="max-w-60 text-xs text-muted-foreground">
           Pull requests the agent opens from this thread land here. Link one yourself from a URL or

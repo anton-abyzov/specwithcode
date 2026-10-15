@@ -1,4 +1,8 @@
-import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@specweave-studio/contracts";
+import {
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+} from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
   applyProviderInstanceSettings,
@@ -619,6 +623,72 @@ describe("resolveDefaultProviderModelSelection", () => {
 });
 
 describe("provider icon metadata", () => {
+  const acpDriver = ProviderDriverKind.make("acpRegistry");
+  const copilotSettings = (localName: string, managedName: string) => ({
+    providerInstances: {
+      [ProviderInstanceId.make("copilot-0889")]: {
+        driver: acpDriver,
+        enabled: true,
+        displayName: localName,
+        config: {
+          source: "local",
+          agentId: "github-copilot-cli",
+          commandPath: "/opt/node/lib/node_modules/@github/copilot-darwin-arm64/copilot",
+        },
+      },
+      [ProviderInstanceId.make("acpRegistry_copilot")]: {
+        driver: acpDriver,
+        enabled: true,
+        displayName: managedName,
+        config: { agentId: "github-copilot-cli", distribution: "auto" },
+      },
+    },
+    providers: {} as never,
+  });
+  const copilotEntries = (localName: string, managedName: string) =>
+    applyProviderInstanceSettings(
+      deriveProviderInstanceEntries([
+        {
+          ...provider({ provider: acpDriver, instanceId: "copilot-0889" }),
+          displayName: localName,
+        },
+        {
+          ...provider({ provider: acpDriver, instanceId: "acpRegistry_copilot" }),
+          displayName: managedName,
+          iconUrl: "https://cdn.agentclientprotocol.com/registry/v1/latest/github-copilot-cli.svg",
+        },
+      ]),
+      copilotSettings(localName, managedName),
+    );
+
+  it("keeps Copilot identity for a local Copilot install and names both sources", () => {
+    const [local, managed] = copilotEntries("GitHub Copilot", "Copilot");
+    expect(local?.acpRegistryAgentId).toBe("github-copilot-cli");
+    expect(local?.acpRegistryIconUrl).toBeUndefined();
+    expect(managed?.acpRegistryAgentId).toBe("github-copilot-cli");
+    expect(local?.displayName).toBe("GitHub Copilot (your install)");
+    expect(managed?.displayName).toBe("Copilot (Studio-managed)");
+  });
+
+  it("does not repeat a source the name already states", () => {
+    const [local, managed] = copilotEntries("Copilot (your install)", "Copilot managed");
+    expect(local?.displayName).toBe("Copilot (your install)");
+    expect(managed?.displayName).toBe("Copilot managed");
+  });
+
+  it("leaves a lone agent's name alone", () => {
+    const [local] = applyProviderInstanceSettings(
+      deriveProviderInstanceEntries([
+        {
+          ...provider({ provider: acpDriver, instanceId: "copilot-0889" }),
+          displayName: "Copilot",
+        },
+      ]),
+      copilotSettings("Copilot", "unused"),
+    );
+    expect(local?.displayName).toBe("Copilot");
+  });
+
   it("clears stale registry branding when an instance switches to a local command", () => {
     const instanceId = ProviderInstanceId.make("custom-acp");
     const driver = ProviderDriverKind.make("acpRegistry");

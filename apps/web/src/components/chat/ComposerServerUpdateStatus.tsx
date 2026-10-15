@@ -16,7 +16,7 @@ export function ComposerServerUpdateIcon({
     return <Spinner aria-hidden />;
   }
   if (status === "failed") {
-    return <CircleAlertIcon aria-hidden className="text-error" />;
+    return <CircleAlertIcon aria-hidden className="text-error-foreground" />;
   }
   return <DownloadIcon aria-hidden />;
 }

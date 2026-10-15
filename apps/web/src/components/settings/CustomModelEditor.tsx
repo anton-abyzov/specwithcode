@@ -339,7 +339,7 @@ export function CustomModelEditor({
           ) : null}
         </div>
         {draft.descriptors.length === 0 ? (
-          <p className="text-xs text-muted-foreground/70">
+          <p className="text-xs text-muted-foreground">
             No custom options. The composer uses the provider's default options.
           </p>
         ) : null}
@@ -374,7 +374,7 @@ export function CustomModelEditor({
         </div>
       </div>
 
-      {error ? <p className="text-xs text-destructive">{error}</p> : null}
+      {error ? <p className="text-xs text-destructive-foreground">{error}</p> : null}
 
       <div className="flex gap-2">
         <Button size="sm" variant="outline" onClick={handleSave}>

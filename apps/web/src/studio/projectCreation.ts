@@ -1,4 +1,5 @@
 import { DEFAULT_PERSONAL_ASSISTANT_NAME } from "@specweave-studio/contracts";
+import { newProjectFolderName } from "@specweave-studio/shared/path";
 
 /** Keep the current execution machine authoritative; never silently move work off it. */
 export function defaultProjectMachine<T extends string>(
@@ -9,6 +10,40 @@ export function defaultProjectMachine<T extends string>(
   return eligible.length === 1 ? eligible[0]! : null;
 }
 export type NewProjectKind = "code" | "personal";
+
+/**
+ * The name typed into New project, kept while the app runs so going back,
+ * closing the dialog or opening Add existing project does not lose it.
+ */
+let draftName = "";
+export const newProjectDraft = {
+  name: (): string => draftName,
+  keep: (name: string): void => {
+    draftName = name;
+  },
+};
+
+/**
+ * A note about how a typed name becomes the folder name, or null when the
+ * folder simply follows the name. It never blocks creating the project.
+ */
+export function newProjectNameNotice(typed: string): string | null {
+  const name = typed.trim();
+  if (name.length === 0) return null;
+  const folder = newProjectFolderName(name);
+  if (!/[a-z0-9]/i.test(name.normalize("NFKD"))) {
+    return `The folder will be named "${folder}". Add Latin letters or numbers to choose the folder name.`;
+  }
+  const fullSlug = name
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (fullSlug.length > folder.length)
+    return `Long names are shortened; the folder will be named "${folder}".`;
+  return null;
+}
 
 /**
  * The name a new project is created with. An assistant can be created without

@@ -65,9 +65,9 @@ it.layer(layer)("ProjectWorkspaceService", (it) => {
         const context = yield* service.context(id, coordinator);
         assert.include(context, "studio_google_status with checkConnection: true");
         assert.include(context, "native Google tools are separate from that list");
-        assert.include(context, "Handle simple permitted Gmail, Calendar and Drive reads yourself");
+        assert.include(context, "web lookups and Gmail, Calendar or Drive reads");
         assert.include(context, "For requests that need a worker, route them at once");
-        assert.include(context, "studio_google_* read tools directly for simple requests");
+        assert.include(context, "the project coordinator sends such requests to a worker");
         assert.include(
           context,
           "inspect the run and tool evidence before stating whether the worker started",
@@ -479,10 +479,11 @@ it("asks workers for short reports and the coordinator to relay only their outco
   });
   assert.include(coordinator, "Write every reply to the user in the <response_style>");
   assert.include(coordinator, "lead with the answer and keep it to a few lines");
-  assert.include(
-    coordinator,
-    "relay its outcome and link the worker; do not paste or repeat its report, but quote any error, failing test or security warning it reports exactly",
-  );
+  assert.include(coordinator, "You coordinate this project's work and do none of it yourself");
+  assert.include(coordinator, "do not relay, summarize or repeat its result here");
+  assert.include(coordinator, "otherwise end the turn without a reply");
+  assert.notInclude(coordinator, "relay its outcome");
+  assert.include(worker, "the user reads it in this thread");
   assert.notInclude(coordinator, "not a replay of your steps");
 });
 it("tells a coordinator how to run workers on another machine and where this project's go", () => {

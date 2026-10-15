@@ -527,3 +527,57 @@ it.effect("shell failure lookups stay on the thread's own turn items", () =>
     assert.include(secretLookups[0]!.detail, "turn_items_thread_run_idx");
   }).pipe(Effect.provide(layerSql)),
 );
+
+it.effect.each([
+  ["sql", layerSql],
+  ["memory", ProjectionStore.layerMemory],
+] as const)(
+  "%s: a report that names a blocker marks the thread until someone writes",
+  ([, testLayer]) =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = yield* createThread("blocked-report");
+      yield* createRun(threadId);
+      const message = (id: string, role: "user" | "assistant", text: string, at: DateTime.Utc) =>
+        store.apply({
+          id: EventId.make(`event:blocker:${id}`),
+          type: "message.updated",
+          threadId,
+          occurredAt: at,
+          payload: {
+            createdBy: role === "user" ? "user" : "agent",
+            creationSource: role === "user" ? "web" : "provider",
+            id: MessageId.make(`message:blocker:${id}`),
+            threadId,
+            runId: null,
+            nodeId: null,
+            role,
+            text,
+            attachments: [],
+            streaming: false,
+            createdAt: at,
+            updatedAt: at,
+          },
+        });
+      const blockerOf = function* () {
+        const shell = (yield* store.getShellSnapshot()).threads.find(
+          (thread) => thread.id === threadId,
+        );
+        const [candidate] = yield* store.getSettlementCandidates(threadId);
+        return [shell?.reportedBlocker ?? null, candidate?.reportedBlocker ?? null] as const;
+      };
+      yield* message("ask", "user", "Ship it", DateTime.subtract(now, { hours: 3 }));
+      yield* message(
+        "report",
+        "assistant",
+        "**Outcome:** built.\n\n**Blockers:** Ship 1.0.20 today, or wait for the signer?",
+        DateTime.subtract(now, { hours: 2 }),
+      );
+      assert.deepEqual(yield* blockerOf(), [
+        "Ship 1.0.20 today, or wait for the signer?",
+        "Ship 1.0.20 today, or wait for the signer?",
+      ]);
+      yield* message("answer", "user", "Ship today", DateTime.subtract(now, { hours: 1 }));
+      assert.deepEqual(yield* blockerOf(), [null, null]);
+    }).pipe(Effect.provide(testLayer)),
+);

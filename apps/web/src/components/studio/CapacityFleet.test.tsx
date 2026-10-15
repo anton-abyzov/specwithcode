@@ -246,7 +246,7 @@ it("reads capacity without refresh, policy mutation or inference on mount", asyn
   expect(state.mutate).not.toHaveBeenCalled();
   expect(state.draft).not.toHaveBeenCalled();
   expect(container.textContent).toContain("Independent capacity unknown");
-  expect(container.textContent).toContain("30% used");
+  expect(container.textContent).toContain("70% left");
   expect(container.textContent).toContain("EDT");
 });
 it("refreshes observations only from its explicit action", async () => {
@@ -403,7 +403,7 @@ it("shows read-only capacity while operating controls stay disabled", async () =
   state.canWrite = false;
   state.canOperate.mockReturnValue(false);
   await render();
-  expect(container.textContent).toContain("30% used");
+  expect(container.textContent).toContain("70% left");
   expect(container.querySelector("select")?.disabled).toBe(true);
   for (const text of ["Draft using capacity policy", "Refresh observations", "Prefer"]) {
     const button = [...container.querySelectorAll("button")].find(
@@ -445,7 +445,7 @@ it("degrades a denied host capacity read independently and disables disconnected
   state.failed = true;
   await render();
   expect(container.textContent).toContain("Capacity read failed or was denied");
-  expect(container.textContent).not.toContain("30% used");
+  expect(container.textContent).not.toContain("70% left");
   environment = { ...environment, connection: { phase: "offline", error: null, traceId: null } };
   await render();
   expect(container.textContent).toContain("Reconnect this host");
@@ -492,9 +492,8 @@ it("shows included usage, reported credits and banked resets as separate observa
   });
   state.snapshot = f;
   await render();
-  expect(container.textContent).toContain("15-minute window");
-  expect(container.textContent).toContain("0% remaining");
-  expect(container.textContent).toContain("100% used");
+  expect(container.textContent).toContain("15-minute window · 100% used");
+  expect(container.textContent).toContain("0% left");
   expect(container.textContent).toContain("Provider allows new work");
   expect(container.textContent).toContain("42.5 extra credits reported");
   expect(container.textContent).toContain("2 banked resets");
@@ -506,7 +505,7 @@ it("shows included usage, reported credits and banked resets as separate observa
 it("displays unknown credits and allowance without implying extra capacity or resetting usage", async () => {
   state.snapshot = fixture("exhausted");
   await render();
-  expect(container.textContent).toContain("0% remaining");
+  expect(container.textContent).toContain("0% left");
   expect(container.textContent).toContain("Extra credits unknown");
   expect(container.textContent).toContain("Banked resets unknown");
   expect(container.textContent).toContain("Provider allowance unknown");

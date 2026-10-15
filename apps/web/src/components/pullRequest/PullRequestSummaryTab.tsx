@@ -335,7 +335,7 @@ function Section({
           <ChevronRightIcon
             aria-hidden
             className={cn(
-              "size-3.5 text-muted-foreground/60 transition-transform",
+              "size-3.5 text-muted-foreground transition-transform",
               open && "rotate-90",
             )}
           />

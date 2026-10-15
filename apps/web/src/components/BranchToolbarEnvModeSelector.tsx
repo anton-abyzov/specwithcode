@@ -126,7 +126,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
     const lockedRow = (
       <span
         className={cn(
-          "inline-flex h-7 min-w-0 items-center gap-1 border border-transparent px-1.75 font-normal text-muted-foreground/70 text-xs sm:h-6",
+          "inline-flex h-7 min-w-0 items-center gap-1 border border-transparent px-1.75 font-normal text-muted-foreground text-xs sm:h-6",
           displayMode === "panel" && THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS,
         )}
         data-composer-context-control
@@ -152,7 +152,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
               resolveLockedWorkspaceLabel(activeWorktreePath, effectiveEnvMode))}
         </ComposerContextLabel>
         {displayMode === "panel" && lockedWorkspaceKind ? (
-          <span className="shrink-0 text-3xs font-normal text-muted-foreground/70">
+          <span className="shrink-0 text-3xs font-normal text-muted-foreground">
             {lockedWorkspaceKind}
           </span>
         ) : null}
@@ -215,7 +215,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
             <SelectValue />
           </ComposerContextLabel>
           {displayMode === "panel" && selectWorkspaceKind ? (
-            <span className="shrink-0 text-3xs font-normal text-muted-foreground/70">
+            <span className="shrink-0 text-3xs font-normal text-muted-foreground">
               {selectWorkspaceKind}
             </span>
           ) : null}

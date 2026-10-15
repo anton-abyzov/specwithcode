@@ -55,7 +55,11 @@ function ProviderUpdateToastIcon({ provider }: { provider: ServerProvider }) {
         iconClassName="size-4"
       />
       <span className="absolute -right-1 -bottom-1 inline-flex size-3 items-center justify-center rounded-full bg-popover">
-        <DownloadIcon aria-hidden="true" className="size-2.5 text-success" strokeWidth={2.5} />
+        <DownloadIcon
+          aria-hidden="true"
+          className="size-2.5 text-success-foreground"
+          strokeWidth={2.5}
+        />
       </span>
     </span>
   );

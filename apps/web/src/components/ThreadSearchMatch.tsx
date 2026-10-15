@@ -56,7 +56,7 @@ export function ThreadSearchMatchExcerpt(props: {
 }) {
   const isUser = props.match.source === "user";
   return (
-    <span className="truncate text-xs text-muted-foreground/85">
+    <span className="truncate text-xs text-muted-foreground">
       <span className={isUser ? "text-info-foreground" : "text-success-foreground"}>
         {isUser ? "You:" : "Agent:"}
       </span>{" "}

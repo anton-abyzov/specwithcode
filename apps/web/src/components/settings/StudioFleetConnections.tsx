@@ -462,7 +462,7 @@ export function StudioFleetRoster({
         </p>
       ) : null}
       {error ? (
-        <p role="alert" className="px-4 pb-4 text-xs text-destructive">
+        <p role="alert" className="px-4 pb-4 text-xs text-destructive-foreground">
           {error}
         </p>
       ) : null}

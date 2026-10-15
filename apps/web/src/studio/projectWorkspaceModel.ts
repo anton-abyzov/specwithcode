@@ -12,26 +12,28 @@ import {
   studioThreadLinkLabel,
 } from "./studioThreadLinks";
 
-export const PROJECT_THREAD_GROUPS = [
-  "Waiting on you",
-  "Working",
-  "Idle",
-  "Resolved",
-] as const;
+export const PROJECT_THREAD_GROUPS = ["Waiting on you", "Working", "Idle", "Resolved"] as const;
 export type ProjectThreadGroup = (typeof PROJECT_THREAD_GROUPS)[number];
 
 /** Attention and lifecycle remain independent in storage; grouping is only a view. */
+/**
+ * What a quiet thread's last report says stops the work, while the thread is
+ * neither running nor resolved: the question it is blocked on.
+ */
+export function threadBlocker(thread: EnvironmentThreadShell): string | null {
+  if (!thread.reportedBlocker || thread.archivedAt !== null) return null;
+  if (thread.settledOverride === "settled" || threadRuntimeIsActive(thread.runtime)) return null;
+  return thread.reportedBlocker;
+}
+
 export function projectThreadGroup(thread: EnvironmentThreadShell): ProjectThreadGroup {
   if (thread.archivedAt !== null) return "Resolved";
   const status = resolveSidebarThreadStatus(thread);
-  if (
-    thread.hasPendingApprovals ||
-    thread.hasPendingUserInput ||
-    thread.hasActionableProposedPlan
-  )
+  if (thread.hasPendingApprovals || thread.hasPendingUserInput || thread.hasActionableProposedPlan)
     return "Waiting on you";
   if (threadRuntimeIsActive(thread.runtime)) return "Working";
   if (thread.settledOverride === "settled") return "Resolved";
+  if (threadBlocker(thread) !== null) return "Waiting on you";
   if (status === "limited" || status === "failed") return "Waiting on you";
   return "Idle";
 }

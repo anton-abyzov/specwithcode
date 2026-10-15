@@ -882,7 +882,7 @@ function ManagedCodexSetup({
         >
           {needsManualCallback ? callbackFallback : callbackHelpContent}
           {setupError ? (
-            <p role="alert" className="text-xs text-destructive">
+            <p role="alert" className="text-xs text-destructive-foreground">
               {setupError}
             </p>
           ) : null}
@@ -1002,7 +1002,7 @@ function ManagedCodexSetup({
       ) : null}
       {callbackFallback ? <div className="px-3 py-3 sm:px-4">{callbackFallback}</div> : null}
       {error || authQuery.error || installQuery.error || installation?.phase === "failed" ? (
-        <p role="alert" className="px-3 py-2 text-xs text-destructive sm:px-4">
+        <p role="alert" className="px-3 py-2 text-xs text-destructive-foreground sm:px-4">
           {error ??
             (installation?.phase === "failed"
               ? installation.message

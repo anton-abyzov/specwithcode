@@ -579,41 +579,39 @@ it.effect("removes the folder when the repository cannot be made", () =>
   ),
 );
 
-it.effect(
-  "reuses one Personal assistant for concurrent requests without invoking Git",
-  () =>
-    withScratch(
-      () =>
-        Effect.gen(function* () {
-          const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
-          const projects = yield* ProjectService.ProjectService;
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const created = yield* Effect.all(
-            [0, 1].map(() => folders.createNamedProject({ name: "Personal", kind: "personal" })),
-            { concurrency: 2 },
-          );
-          assert.equal(created[0]!.workspaceRoot, created[1]!.workspaceRoot);
-          assert.equal(created[0]!.projectId, created[1]!.projectId);
-          assert.equal((yield* projects.snapshot).projects.length, 1);
-          for (const result of created) {
-            assert.isUndefined(result.commitError);
-            assert.isFalse(yield* fs.exists(path.join(result.workspaceRoot, ".git")));
-            assert.deepEqual(yield* fs.readDirectory(result.workspaceRoot), []);
-            const project = Option.getOrThrow(yield* projects.getById(result.projectId));
-            assert.equal(project.workspaceSettings?.kind, "personal");
-            assert.deepEqual(project.projectIcon, PERSONAL_ASSISTANT_PROJECT_ICON);
-            assert.isNull(project.repositoryIdentity);
-            assert.isTrue(result.workspaceRoot.startsWith(folders.namedProjectsRoot + path.sep));
-          }
-        }),
-      {
-        git: Layer.mock(GitVcsDriver.GitVcsDriver)({
-          readConfigValue: () => Effect.die("Personal must not read Git config"),
-          execute: () => Effect.die("Personal must not execute Git"),
-        }),
-      },
-    ),
+it.effect("reuses one Personal assistant for concurrent requests without invoking Git", () =>
+  withScratch(
+    () =>
+      Effect.gen(function* () {
+        const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+        const projects = yield* ProjectService.ProjectService;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const created = yield* Effect.all(
+          [0, 1].map(() => folders.createNamedProject({ name: "Personal", kind: "personal" })),
+          { concurrency: 2 },
+        );
+        assert.equal(created[0]!.workspaceRoot, created[1]!.workspaceRoot);
+        assert.equal(created[0]!.projectId, created[1]!.projectId);
+        assert.equal((yield* projects.snapshot).projects.length, 1);
+        for (const result of created) {
+          assert.isUndefined(result.commitError);
+          assert.isFalse(yield* fs.exists(path.join(result.workspaceRoot, ".git")));
+          assert.deepEqual(yield* fs.readDirectory(result.workspaceRoot), []);
+          const project = Option.getOrThrow(yield* projects.getById(result.projectId));
+          assert.equal(project.workspaceSettings?.kind, "personal");
+          assert.deepEqual(project.projectIcon, PERSONAL_ASSISTANT_PROJECT_ICON);
+          assert.isNull(project.repositoryIdentity);
+          assert.isTrue(result.workspaceRoot.startsWith(folders.namedProjectsRoot + path.sep));
+        }
+      }),
+    {
+      git: Layer.mock(GitVcsDriver.GitVcsDriver)({
+        readConfigValue: () => Effect.die("Personal must not read Git config"),
+        execute: () => Effect.die("Personal must not execute Git"),
+      }),
+    },
+  ),
 );
 
 it.effect("creates in the chosen parent and preserves existing folders on collision", () =>
@@ -671,5 +669,99 @@ it.effect("keeps Personal storage managed even when a parent is supplied", () =>
       });
       assert.isTrue(result.workspaceRoot.startsWith(folders.namedProjectsRoot + "/"));
     }),
+  ),
+);
+
+// A git driver that fails the test if a create touches Git at all.
+const noGitDriver = Layer.mock(GitVcsDriver.GitVcsDriver)({
+  readConfigValue: () => Effect.die("An existing folder must not read Git config"),
+  execute: () => Effect.die("An existing folder must not run Git"),
+});
+
+it.effect("binds a chosen existing repository as-is instead of nesting a new one", () =>
+  withScratch(
+    ({ baseDir }) =>
+      Effect.gen(function* () {
+        const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+        const projects = yield* ProjectService.ProjectService;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const repo = path.join(baseDir, "sw-easychamp");
+        yield* fs.makeDirectory(path.join(repo, ".git"), { recursive: true });
+        yield* fs.writeFileString(path.join(repo, "keep.txt"), "untouched");
+        const result = yield* folders.createNamedProject({ name: "EasyChamp", parentPath: repo });
+        assert.equal(result.workspaceRoot, repo);
+        assert.isTrue(result.existing);
+        assert.isFalse(yield* fs.exists(path.join(repo, "easychamp")));
+        assert.isFalse(yield* fs.exists(path.join(repo, "README.md")));
+        assert.deepEqual((yield* fs.readDirectory(repo)).toSorted(), [".git", "keep.txt"]);
+        const project = Option.getOrThrow(yield* projects.getById(result.projectId));
+        assert.equal(project.workspaceRoot, repo);
+        assert.equal(project.title, "EasyChamp");
+
+        const again = yield* folders.createNamedProject({
+          name: "EasyChamp",
+          parentPath: `${repo}/`,
+        });
+        assert.equal(again.projectId, result.projectId);
+        assert.isTrue(again.existing);
+      }),
+    { git: noGitDriver },
+  ),
+);
+
+it.effect("keeps a real repository's branches and remote when binding it", () =>
+  withScratch(({ baseDir }) =>
+    withGitEnv(
+      TEST_IDENTITY,
+      Effect.gen(function* () {
+        const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const repo = path.join(baseDir, "existing-repo");
+        yield* fs.makeDirectory(repo);
+        yield* git(repo, ["init", "--quiet", "--initial-branch=develop"]);
+        yield* git(repo, ["commit", "--quiet", "--allow-empty", "-m", "Start"]);
+        yield* git(repo, ["remote", "add", "origin", "https://example.invalid/repo.git"]);
+        const result = yield* folders.createNamedProject({ name: "Other Name", parentPath: repo });
+        assert.equal(result.workspaceRoot, repo);
+        assert.isTrue(result.existing);
+        assert.equal(yield* gitOutput(repo, ["branch", "--show-current"]), "develop");
+        assert.equal(yield* gitOutput(repo, ["log", "--format=%s"]), "Start");
+        assert.equal(
+          yield* gitOutput(repo, ["remote", "get-url", "origin"]),
+          "https://example.invalid/repo.git",
+        );
+        assert.isFalse(yield* fs.exists(path.join(repo, "other-name")));
+      }),
+    ),
+  ),
+);
+
+it.effect("binds a chosen folder named like the project, or an existing child repository", () =>
+  withScratch(
+    ({ baseDir }) =>
+      Effect.gen(function* () {
+        const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const named = path.join(baseDir, "pinball-stats");
+        yield* fs.makeDirectory(named);
+        const byName = yield* folders.createNamedProject({
+          name: "Pinball Stats",
+          parentPath: named,
+        });
+        assert.equal(byName.workspaceRoot, named);
+        assert.deepEqual(yield* fs.readDirectory(named), []);
+
+        const parent = path.join(baseDir, "code");
+        const child = path.join(parent, "scores");
+        yield* fs.makeDirectory(path.join(child, ".specweave"), { recursive: true });
+        const byChild = yield* folders.createNamedProject({ name: "Scores", parentPath: parent });
+        assert.equal(byChild.workspaceRoot, child);
+        assert.isTrue(byChild.existing);
+        assert.isFalse(yield* fs.exists(path.join(parent, "scores-2")));
+      }),
+    { git: noGitDriver },
   ),
 );

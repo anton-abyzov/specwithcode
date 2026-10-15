@@ -34,15 +34,17 @@ const ADAPTIVE_CANVAS = 432;
 const SPLASH_CANVAS = 1152;
 // 24dp at xxxhdpi, the largest density bucket of a status bar icon.
 const NOTIFICATION_CANVAS = 96;
-// The woven-S mark's own coordinates: a square box around the mark, as tall as the mark.
-const MARK = { x: 99.25, y: 93, width: 314, height: 314 };
-const MARK_SOURCE = "assets/brand/specweave-mark.svg";
+// The page-and-prompt mark's own coordinates: a square box around the page, as tall as the page.
+const MARK = { x: 10, y: 10, width: 80, height: 80 };
+const MARK_SOURCE = "assets/brand/specwithcode-mark.svg";
+// The same page as one shape with the prompt cut out, for the alpha-only layers.
+const SILHOUETTE_SOURCE = "assets/brand/specwithcode-mark-silhouette.svg";
 // Mark width as a fraction of the 108dp canvas. The visible area is 72dp (66dp
 // guaranteed), so 0.4 leaves the mark at 60% of the mask, with its whole box inside
 // the 66dp circle and room for the launcher's own zoom effects.
 const MARK_FRACTION = 0.4;
-// The themed layer's silhouette is 47.5dp wide. Its box reaches past the 66dp circle
-// only at the corners, where the mark's rounded ends stay inside it.
+// The themed layer's silhouette is 47.5dp tall. Its box reaches past the 66dp circle
+// only at the corners, where the narrower page stays inside it.
 const MONOCHROME_MARK_FRACTION = 0.44;
 // A 16dp mark with 4dp of padding on each side of the 24dp status bar icon.
 const NOTIFICATION_MARK_FRACTION = 2 / 3;
@@ -52,7 +54,7 @@ const COMPOSER_CANVAS_PT = 1024;
 const SVG_DENSITY = 300;
 const OUTPUT_DIRECTORY = "apps/mobile/assets";
 // Production has no background artwork, so its splash composes onto the adaptive color.
-const PRODUCTION_BACKGROUND_COLOR = "#0B1020";
+const PRODUCTION_BACKGROUND_COLOR = "#5B6CFF";
 
 export class AndroidIconRenderError extends Schema.TaggedError<AndroidIconRenderError>()(
   "AndroidIconRenderError",
@@ -117,11 +119,14 @@ const readLayerSource = Effect.fn("androidIcons.readLayerSource")(function* (
 });
 
 // The brand mark without a tile, because the adaptive background layer takes the
-// tile's place. Its gradients use user-space units, so they follow the mark transform.
-const readMarkPaths = Effect.fn("androidIcons.readMarkPaths")(function* (repositoryRoot: string) {
+// tile's place.
+const readMarkPaths = Effect.fn("androidIcons.readMarkPaths")(function* (
+  repositoryRoot: string,
+  source: string = MARK_SOURCE,
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const logo = yield* fs.readFileString(path.join(repositoryRoot, MARK_SOURCE));
+  const logo = yield* fs.readFileString(path.join(repositoryRoot, source));
   return [...(logo.match(/<defs>.*?<\/defs>/s) ?? []), ...(logo.match(/<path[^>]*\/>/g) ?? [])];
 });
 
@@ -152,7 +157,7 @@ const renderSilhouette = Effect.fn("androidIcons.renderSilhouette")(function* (
   size: number,
   fraction: number,
 ) {
-  const paths = yield* readMarkPaths(repositoryRoot);
+  const paths = yield* readMarkPaths(repositoryRoot, SILHOUETTE_SOURCE);
   return yield* renderMark(
     layer,
     paths.map((markPath) =>

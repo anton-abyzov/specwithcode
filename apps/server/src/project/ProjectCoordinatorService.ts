@@ -31,6 +31,7 @@ import * as ProjectWorkspaceService from "./ProjectWorkspaceService.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as CoordinatorAttachments from "./ProjectCoordinatorAttachments.ts";
+import { workerFollowUpPrefix } from "./workerFollowUp.ts";
 import {
   isProjectModelSelectionCompatible,
   projectCompatibleProviders,
@@ -301,16 +302,17 @@ const make = Effect.gen(function* () {
           yield* workspace.assertAdmission(input.projectId);
           const settings = (yield* workspace.readWorkspace(input)).settings;
           const modelSelection = yield* turnSelection(input.projectId, result.threadId, settings);
+          const messageId = CoordinatorAttachments.messageId(input);
           yield* CoordinatorAttachments.send({
             projectId: input.projectId,
             threadId: result.threadId,
             commandId: CommandId.make(`coordinator-send:${input.projectId}:${input.commandId}`),
-            messageId: CoordinatorAttachments.messageId(input),
+            messageId,
             ...(input.sourceThreadId === undefined ? {} : { senderThreadId: input.sourceThreadId }),
             text:
               input.sourceThreadId === undefined
                 ? input.prompt
-                : `User follow-up from selected worker ${input.sourceThreadId}. Review that thread and decide whether to reuse it or route elsewhere.\n\n${input.prompt}`,
+                : workerFollowUpPrefix(input.sourceThreadId, messageId) + input.prompt,
             ...(modelSelection ? { modelSelection } : {}),
             attachments: input.attachments ?? [],
             mode: "queue",

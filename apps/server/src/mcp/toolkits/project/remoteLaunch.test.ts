@@ -23,6 +23,7 @@ import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementSer
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import { projectFixture } from "../../../project/ProjectWorkspace.testkit.ts";
 import * as Project from "../../../project/ProjectService.ts";
+import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -133,6 +134,7 @@ const setup = (
     Layer.mock(Project.ProjectService)({ getById: () => Effect.succeed(Option.some(project)) }),
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
     Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+    Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
     NodeServices.layer,
     ServerConfig.layerTest(process.cwd(), { prefix: "studio-remote-launch-" }).pipe(
       Layer.provide(NodeServices.layer),

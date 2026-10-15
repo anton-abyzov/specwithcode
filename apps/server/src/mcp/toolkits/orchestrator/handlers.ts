@@ -1,6 +1,7 @@
 import { listFederatedProjectThreads } from "./federatedProjectThreads.ts";
 import { OrchestratorToolkit } from "./tools.ts";
 import * as Effect from "effect/Effect";
+import { OrchestratorMcpFailure } from "@specweave-studio/contracts";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -137,7 +138,28 @@ const handlers = {
             const service = yield* OrchestratorMcpService.OrchestratorMcpService;
             return yield* service.sendToThread(scope, local);
           }),
-        sendRemote,
+        // The other machine cannot read this thread, so it receives the user's words.
+        (machine, remote) =>
+          Effect.gen(function* () {
+            if (remote.forwardMessageId === undefined) return yield* sendRemote(machine, remote);
+            if (remote.message !== undefined)
+              return yield* Effect.fail(
+                new OrchestratorMcpFailure({
+                  code: "invalid_request",
+                  message: "Pass either message or forwardMessageId to studio_thread_send.",
+                }),
+              );
+            const scope = yield* McpInvocationContext.McpInvocationContext;
+            const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+            const { forwardMessageId, ...rest } = remote;
+            return yield* sendRemote(machine, {
+              ...rest,
+              message: yield* service.forwardedMessageText(scope, forwardMessageId),
+              clientRequestId:
+                rest.clientRequestId ??
+                `forward:${forwardMessageId}:${rest.threadId}`.slice(0, 256),
+            });
+          }),
       ),
   ),
   studio_thread_wait: McpToolAccess.reads((input) =>

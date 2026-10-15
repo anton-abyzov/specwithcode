@@ -101,6 +101,7 @@ import {
   WSL_RUNTIME_EXTRA_RESOURCES,
   WslRuntimeArchiveMissingError,
   wslRuntimeArchiveStem,
+  withBuildToolsOnPath,
 } from "./build-desktop-artifact.ts";
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
@@ -2638,4 +2639,19 @@ it("ignores trailing separators", () => {
     ancestorNodeModulesPaths("C:\\tmp\\probe\\app\\", "\\"),
     ancestorNodeModulesPaths("C:\\tmp\\probe\\app", "\\"),
   );
+});
+
+it("puts the workspace bin and cargo on PATH for direct script runs", () => {
+  const present = new Set(["/repo/node_modules/.bin", "/home/u/.cargo/bin"]);
+  const exists = (path: string) => present.has(path);
+  const sep = NodePath.delimiter;
+  assert.strictEqual(
+    withBuildToolsOnPath(`/usr/bin${sep}/bin`, "/repo", "/home/u", exists),
+    ["/repo/node_modules/.bin", "/home/u/.cargo/bin", "/usr/bin", "/bin"].join(sep),
+  );
+  assert.strictEqual(
+    withBuildToolsOnPath(`/repo/node_modules/.bin${sep}/bin`, "/repo", undefined, exists),
+    `/repo/node_modules/.bin${sep}/bin`,
+  );
+  assert.strictEqual(withBuildToolsOnPath(undefined, "/missing", "/nohome", exists), "");
 });

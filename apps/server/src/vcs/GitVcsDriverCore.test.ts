@@ -1095,6 +1095,30 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("tags a worktree base branch the repository lacks as invalid_reference", () =>
+      Effect.gen(function* () {
+        const parent = yield* makeTmpDir();
+        const pathService = yield* Path.Path;
+        const cwd = pathService.join(parent, "repo");
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* fileSystem.makeDirectory(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* initRepoWithCommit(cwd);
+
+        const error = yield* driver
+          .createWorktree({
+            cwd,
+            refName: "develop",
+            newRefName: "feature",
+            path: pathService.join(parent, "feature"),
+          })
+          .pipe(Effect.flip);
+
+        assert.equal(error.reason, "invalid_reference");
+        assert.include(error.message, "git worktree add failed (invalid_reference)");
+      }),
+    );
+
     it.effect.each([
       {
         label: "a refused key",

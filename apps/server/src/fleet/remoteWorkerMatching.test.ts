@@ -335,7 +335,7 @@ describe("remoteWorkerWake", () => {
     expect(wake.text).toBe(
       'Remote worker [Fix flaky test](studio://thread/env-m1/t1) on Studio B finished: completed. Read it with studio_thread_read {threadId:"studio://thread/env-m1/t1"}.',
     );
-    // People see a notice, never the model-facing text with its ids.
+    // Stored for the model. The coordinator conversation hides a "reported back" summary.
     expect(wake.notification).toEqual({
       source: { kind: "background_task" },
       outcome: "completed",

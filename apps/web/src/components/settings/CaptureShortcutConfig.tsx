@@ -235,7 +235,7 @@ export function CaptureShortcutConfig({
         </>
       )}
       {error ? (
-        <p role="alert" className="text-destructive">
+        <p role="alert" className="text-destructive-foreground">
           {error.message}
         </p>
       ) : null}

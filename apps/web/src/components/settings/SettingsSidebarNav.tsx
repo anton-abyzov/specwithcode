@@ -114,7 +114,7 @@ const SETTINGS_NAV_ITEMS: ReadonlyArray<{
 
 function SettingsSectionIcon({ to }: { to: SettingsPath }) {
   const Icon = SETTINGS_SECTION_ICONS[to];
-  return <Icon className="mt-0.5 size-3.5 shrink-0 text-sidebar-muted-foreground/60" />;
+  return <Icon className="mt-0.5 size-3.5 shrink-0 text-sidebar-muted-foreground" />;
 }
 
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
@@ -252,7 +252,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
         <SidebarGroup>
           <div className="flex flex-col gap-2">
             <div className="flex h-8 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground">
-              <SearchIcon className="size-4 shrink-0 text-sidebar-muted-foreground/80" />
+              <SearchIcon className="size-4 shrink-0 text-sidebar-muted-foreground" />
               <SidebarInput
                 ref={searchInputRef}
                 nativeInput
@@ -326,7 +326,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                         <span className="block truncate text-sm font-medium text-sidebar-foreground">
                           {item.title}
                         </span>
-                        <span className="block truncate text-2xs text-sidebar-muted-foreground/75">
+                        <span className="block truncate text-2xs text-sidebar-muted-foreground">
                           {SETTINGS_SECTION_LABELS[item.to]}
                         </span>
                       </span>

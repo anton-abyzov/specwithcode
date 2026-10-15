@@ -10,6 +10,7 @@ import {
   canRetryServiceUpdate,
   INSTALL_TIMEOUT_MS,
   describeServiceUpdateBlockers,
+  describeAppRestartWarning,
   describeServiceUpdateStop,
   isStaleServiceAnswer,
   retryServiceUpdateProgress,
@@ -603,5 +604,37 @@ describe("service update progress", () => {
     expect(
       advanceServiceUpdateProgress(retry, { ...before, message: "Waiting for tasks" }, 2_000).phase,
     ).toBe("waiting");
+  });
+});
+
+describe("describeAppRestartWarning", () => {
+  const blocker = (kind: ServiceUpdateBlocker["kind"], count: number, title: string | null) =>
+    ({
+      kind,
+      count,
+      threadId: title,
+      threadTitle: title,
+      projectId: null,
+      projectTitle: null,
+    }) as unknown as ServiceUpdateBlocker;
+
+  it("asks nothing when no work runs", () => {
+    expect(describeAppRestartWarning({ blockers: [] })).toBeNull();
+  });
+
+  it("names how many jobs run, where, and the way to let them finish", () => {
+    expect(
+      describeAppRestartWarning(
+        { blockers: [blocker("run", 1, "Fix login"), blocker("run", 2, "Docs")] },
+        { version: "1.0.21" },
+      ),
+    ).toBe(
+      [
+        "Restart to install SpecWithCode 1.0.21 now?",
+        "3 jobs are still running in 2 threads. Restarting interrupts them.",
+        "Still running: 1 running task in “Fix login”; 2 running tasks in “Docs”.",
+        "Choose Install when idle to let the work finish: SpecWithCode restarts once nothing runs.",
+      ].join("\n"),
+    );
   });
 });

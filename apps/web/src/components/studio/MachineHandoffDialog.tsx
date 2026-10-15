@@ -238,7 +238,7 @@ export function MachineHandoffDialog({
             </>
           )}
           {error && (
-            <p role="alert" className="wrap-anywhere text-sm text-destructive">
+            <p role="alert" className="wrap-anywhere text-sm text-destructive-foreground">
               {error}
             </p>
           )}

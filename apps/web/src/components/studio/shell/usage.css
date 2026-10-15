@@ -37,7 +37,7 @@
   color: var(--warning-foreground);
 }
 .sws-usage-chip-item[data-tone="full"] .sws-usage-chip-value {
-  color: var(--destructive);
+  color: var(--destructive-foreground);
 }
 .sws-usage-ring {
   flex: none;

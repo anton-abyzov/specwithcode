@@ -25,7 +25,7 @@ export function CloneProjectDestination({
           {path ? `Clone into ${path}` : "Choose where to clone this repository."}
         </p>
         {!allowed && (
-          <p role="alert" className="text-xs text-destructive">
+          <p role="alert" className="text-xs text-destructive-foreground">
             This machine must be connected with permission to clone and add projects.
           </p>
         )}
