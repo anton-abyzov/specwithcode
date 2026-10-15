@@ -295,6 +295,45 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
 }
 
 /**
+ * Who and where an account is, from what its provider reported and nothing
+ * else. `account` is the signed-in email when the provider reports one, else
+ * the plan, else a hub's own account name; null when none was reported, so
+ * an older host that sends neither shows nothing extra. `machine` names the
+ * environments the account is signed in on, or the hub that read it.
+ */
+export interface LimitAccountIdentity {
+  readonly account: string | null;
+  readonly accountKind: "email" | "plan" | "name" | null;
+  readonly machine: string | null;
+  readonly machineKind: "environment" | "source" | null;
+}
+
+export function describeLimitAccount(account: LimitAccount): LimitAccountIdentity {
+  const email = account.email?.trim();
+  const plan = account.plan?.trim();
+  // A native instance's display name is what the user called the instance,
+  // not the account, so only a hub's account name stands in for identity.
+  const hubName = account.environments.length === 0 ? account.displayName?.trim() : undefined;
+  const [identity, accountKind] = email
+    ? ([email, "email"] as const)
+    : plan
+      ? ([plan, "plan"] as const)
+      : hubName
+        ? ([hubName, "name"] as const)
+        : ([null, null] as const);
+  const environments = account.environments
+    .map((environment) => environment.label.trim())
+    .filter((label) => label.length > 0);
+  const [machine, machineKind] =
+    environments.length > 0
+      ? ([environments.join(", "), "environment"] as const)
+      : account.sourceLabel?.trim()
+        ? ([account.sourceLabel.trim(), "source"] as const)
+        : ([null, null] as const);
+  return { account: identity, accountKind, machine, machineKind };
+}
+
+/**
  * What the pooled views cannot draw as a bar: a hub that failed to read, a
  * provider whose probe failed. Accounts that can never report (API keys)
  * are left out; there is nothing for the user to act on. The environment

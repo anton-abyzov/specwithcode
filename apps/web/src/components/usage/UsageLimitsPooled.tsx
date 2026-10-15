@@ -5,6 +5,7 @@ import {
   collectLimitNotices,
   collectLimitPools,
   cursorUsageWindowDetails,
+  describeLimitAccount,
   displayLimitWindows,
   formatResetsIn,
   type LimitAccount,
@@ -22,7 +23,6 @@ import { cn } from "../../lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { getDriverOption } from "../settings/providerDriverMeta";
-import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 import { Button } from "../ui/button";
 import { OpenAI } from "../Icons";
 import { Alert, AlertTitle } from "../ui/alert";
@@ -34,6 +34,7 @@ import {
   resetCreditsSummary,
   useResetCredit,
 } from "./UsageLimits";
+import { instanceLabel, limitAccountLabel } from "./usageAccountLabel";
 
 /** `someone@example.com` → `SE`: enough to tell accounts apart, too little to identify one. */
 function accountInitials(email: string): string {
@@ -94,33 +95,6 @@ function AccountAvatar({
   return account.email ? <AccountChip email={account.email} /> : null;
 }
 
-/**
- * Who an account is, without printing the email: the instance name when there
- * is one, else a two-letter chip. The address itself is revealed on demand in
- * the segment's popover.
- */
-function AccountName({
-  account,
-  className,
-}: {
-  readonly account: LimitAccount;
-  readonly className?: string;
-}) {
-  if (account.displayName) return <span className={className}>{account.displayName}</span>;
-  if (account.email) {
-    return (
-      <span className={cn("inline-flex min-w-0 items-center", className)}>
-        <AccountChip email={account.email} />
-      </span>
-    );
-  }
-  return (
-    <span className={className}>
-      {getDriverOption(account.driver)?.label ?? String(account.driver)}
-    </span>
-  );
-}
-
 function Row({ label, children }: { readonly label: string; readonly children: ReactNode }) {
   return (
     <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-x-3">
@@ -131,8 +105,8 @@ function Row({ label, children }: { readonly label: string; readonly children: R
 }
 
 /**
- * Everything about one account in one window: plan, where it is signed in,
- * the email on request, reset time and share of the pool it restores, and the
+ * Everything about one account in one window: the signed-in email, plan,
+ * the machine it is signed in on, reset time and share of the pool it restores, and the
  * reset-credit action. Opens on hover for a glance, on click to act.
  */
 function SegmentPopover({
@@ -154,10 +128,7 @@ function SegmentPopover({
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const remaining = remainingPercent(window);
   const resetsIn = formatResetsIn(window, now);
-  const where =
-    account.environments.length > 0
-      ? account.environments.map((environment) => environment.label).join(", ")
-      : account.sourceLabel;
+  const identity = describeLimitAccount(account);
   const credits =
     redeem && account.limits.resetCredits?.availableCount ? account.limits.resetCredits : null;
   return (
@@ -165,24 +136,30 @@ function SegmentPopover({
       <div className="flex min-w-0 flex-col gap-0.5">
         <span className="flex items-center gap-2 text-sm font-medium text-foreground">
           <AccountAvatar account={account} />
-          <span className="truncate">
-            {account.displayName ?? getDriverOption(account.driver)?.label ?? account.driver}
-          </span>
+          <span className="truncate">{instanceLabel(account)}</span>
         </span>
-        {account.email ? (
-          <RedactedSensitiveText
-            value={account.email}
-            ariaLabel="Toggle account email visibility"
-            revealTooltip="Click to reveal email"
-            hideTooltip="Click to hide email"
-            className="w-fit"
-          />
-        ) : null}
       </div>
       <div className="flex flex-col gap-1 border-t border-border/60 pt-2.5">
+        {account.email ? (
+          <Row label="Account">
+            <span className="break-all select-text">{account.email}</span>
+          </Row>
+        ) : identity.accountKind === "name" && identity.account ? (
+          <Row label="Account">{identity.account}</Row>
+        ) : null}
         {account.plan ? <Row label="Plan">{account.plan}</Row> : null}
-        {where ? (
-          <Row label={account.environments.length > 0 ? "Signed in" : "Via"}>{where}</Row>
+        {identity.machine ? (
+          <Row
+            label={
+              identity.machineKind === "source"
+                ? "Via"
+                : account.environments.length > 1
+                  ? "Machines"
+                  : "Machine"
+            }
+          >
+            <span className="break-words">{identity.machine}</span>
+          </Row>
         ) : null}
       </div>
       <div className="flex flex-col gap-1 border-t border-border/60 pt-2.5">
@@ -229,7 +206,6 @@ function PoolSegment({
   color,
   now,
   index,
-  showAccountName,
 }: {
   readonly account: LimitAccount;
   readonly window: LimitPoolMember["window"];
@@ -238,8 +214,8 @@ function PoolSegment({
   readonly now: number;
   /** 1-based position in the bar, shown on the strip and its legend row to tie them together. */
   readonly index: number;
-  readonly showAccountName: boolean;
 }) {
+  const label = limitAccountLabel(account);
   const [open, setOpen] = useState(false);
   const remaining = remainingPercent(window);
   const resetsIn = formatResetsIn(window, now);
@@ -252,8 +228,8 @@ function PoolSegment({
           <button
             type="button"
             style={{ gridColumn: index, gridRow: 1 }}
-            aria-label={`${account.displayName ?? (account.email ? accountInitials(account.email) : account.driver)}: ${remaining}% left${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} reset ${credits === 1 ? "credit" : "credits"} banked` : ""}`}
-            className="relative h-5 min-w-0 cursor-pointer overflow-hidden rounded-md bg-muted text-start outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[popup-open]:ring-1 data-[popup-open]:ring-border @2xl/pool:h-8"
+            aria-label={`${label.summary}: ${remaining}% left${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} reset ${credits === 1 ? "credit" : "credits"} banked` : ""}`}
+            className="relative h-5 min-w-0 cursor-pointer overflow-hidden rounded-md bg-muted text-start outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[popup-open]:ring-1 data-[popup-open]:ring-border @2xl/pool:h-10"
           />
         }
       >
@@ -281,13 +257,18 @@ function PoolSegment({
           {index}
         </span>
         <div className="relative hidden h-full min-w-0 items-center gap-1.5 px-2 text-xs @2xl/pool:flex">
-          {showAccountName ? (
-            <AccountName
-              account={account}
-              className="min-w-0 truncate font-medium text-foreground"
-            />
-          ) : null}
-          <span className="shrink-0 font-semibold text-foreground tabular-nums">{remaining}%</span>
+          {/* Percent first so it never truncates; the account, then the machine, give way. */}
+          <span className="flex min-w-0 flex-col leading-tight">
+            <span className="flex min-w-0 items-baseline gap-1.5">
+              <span className="shrink-0 font-semibold text-foreground tabular-nums">
+                {remaining}%
+              </span>
+              <span className="min-w-0 truncate font-medium text-foreground">{label.primary}</span>
+            </span>
+            {label.machine ? (
+              <span className="min-w-0 truncate text-2xs text-foreground/70">{label.machine}</span>
+            ) : null}
+          </span>
           {/* Countdown and badge get their own plate: fill and hatching run under them otherwise. */}
           <span className="ms-auto flex shrink-0 items-center gap-1.5 rounded-sm bg-background/85 px-1.5 py-0.5 text-2xs text-foreground tabular-nums">
             {resetsIn?.replace("resets in ", "↻ ") ?? ""}
@@ -354,10 +335,11 @@ function LegendRow({
   const remaining = remainingPercent(window);
   const resetsIn = formatResetsIn(window, now);
   const credits = account.limits.resetCredits?.availableCount ?? 0;
+  const label = limitAccountLabel(account);
   return (
     <PopoverTrigger
       style={{ gridColumn: "1 / -1", gridRow: index + 1 }}
-      render={<Button variant="ghost" size="compact" />}
+      render={<Button variant="ghost" size="sm-multiline" />}
       className="min-w-0 @2xl/pool:hidden"
     >
       <span className="relative inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-3xs leading-none font-semibold text-foreground/80 tabular-nums">
@@ -369,8 +351,18 @@ function LegendRow({
         <span className="sr-only">Segment </span>
         <span className="relative">{index}</span>
       </span>
-      <AccountName account={account} className="min-w-0 truncate font-medium text-foreground" />
-      <span className="shrink-0 font-semibold text-foreground tabular-nums">{remaining}%</span>
+      <span className="shrink-0 text-xs font-semibold text-foreground tabular-nums">
+        {remaining}%
+      </span>
+      {/* Account over machine, so a narrow row truncates each on its own line. */}
+      <span className="flex min-w-0 flex-col text-start text-xs leading-tight">
+        <span className="truncate font-medium text-foreground">{label.primary}</span>
+        {label.machine ? (
+          <span className="truncate text-2xs font-normal text-muted-foreground">
+            {label.machine}
+          </span>
+        ) : null}
+      </span>
       <span className="ms-auto flex shrink-0 items-center gap-1.5 text-2xs text-muted-foreground tabular-nums">
         {resetsIn?.replace("resets in ", "↻ ") ?? ""}
         {credits ? (
@@ -434,7 +426,8 @@ function RedeemableSegmentPopup({
       {/* The popover closed before the confirm, so the outcome needs a home outside it. */}
       {redeem.status ? (
         <span role="status" className="col-span-full text-xs text-muted-foreground">
-          <AccountName account={account} className="font-medium text-foreground" /> {redeem.status}
+          <span className="font-medium text-foreground">{limitAccountLabel(account).primary}</span>{" "}
+          {redeem.status}
         </span>
       ) : null}
     </>
@@ -476,7 +469,6 @@ function PoolBar({
               color={color}
               now={now}
               index={position + 1}
-              showAccountName={pool.columns.length > 1}
             />
           ) : null,
         )}

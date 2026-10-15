@@ -212,9 +212,48 @@ it("rechecks the provider-management grant before opening setup", async () => {
   expect(state.navigate).not.toHaveBeenCalled();
 });
 
-function usageEnvironment(label: string, phase = "connected") {
-  return { entry: { target: { label } }, connection: { phase }, serverConfig: {} };
+function usageEnvironment(label: string, phase = "connected", providers: unknown[] = []) {
+  return { entry: { target: { label } }, connection: { phase }, serverConfig: { providers } };
 }
+
+const readyCodex = {
+  instanceId: "codex",
+  driver: "codex",
+  enabled: true,
+  installed: true,
+  version: "1.0.0",
+  status: "ready",
+  auth: { status: "authenticated", email: "me@example.com" },
+  checkedAt: "2026-10-15T00:00:00.000Z",
+  models: [],
+  slashCommands: [],
+  skills: [],
+};
+
+it("offers setup only on machines without a ready chat provider", async () => {
+  const freshId = EnvironmentId.make("fresh");
+  state.presentations = new Map([
+    [environmentId, usageEnvironment("M4 Mac", "connected", [readyCodex])],
+    [freshId, usageEnvironment("Fresh Mac")],
+  ]);
+  await act(async () => root.render(<UsageLimitsSection selectedEnvironmentIds={null} now={0} />));
+  expect(button("Set up on M4 Mac")).toBeUndefined();
+  expect(button("Set up on Fresh Mac")).toBeDefined();
+  expect(container.textContent).toContain("This machine has no ready, signed-in chat provider yet");
+});
+
+it("hides every setup chip when all machines are ready, keeping the caveat", async () => {
+  state.presentations = new Map([
+    [environmentId, usageEnvironment("M4 Mac", "connected", [readyCodex])],
+    [EnvironmentId.make("m1"), usageEnvironment("M1 Mac", "connected", [readyCodex])],
+  ]);
+  await act(async () => root.render(<UsageLimitsSection selectedEnvironmentIds={null} now={0} />));
+  expect(container.querySelector("button")).toBeNull();
+  expect(container.textContent).toContain(
+    "Quota reports do not confirm that an agent is ready to chat.",
+  );
+  expect(container.textContent).not.toContain("Set up");
+});
 
 it("routes usage-view setup to its selected machine without changing the quota filter", async () => {
   const remoteId = EnvironmentId.make("remote");
