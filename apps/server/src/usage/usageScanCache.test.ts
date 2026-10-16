@@ -64,7 +64,14 @@ describe("scan cache round trip", () => {
         100,
         [record(), record({ dedupeKey: "msg_2:", model: "claude-opus-5-5", speed: "fast" })],
       ],
-      ["/b.jsonl", 200, [record({ sessionId: "session-b", reportedCostUsd: 1.5 })]],
+      [
+        "/b.jsonl",
+        200,
+        [
+          record({ sessionId: "session-b", reportedCostUsd: 1.5 }),
+          record({ dedupeKey: "msg_3:", oneHourCacheCreationTokens: 8 }),
+        ],
+      ],
     ]);
     original.set("/grok.jsonl", {
       size: 40,
@@ -104,6 +111,17 @@ describe("scan cache round trip", () => {
     expect(restored.get("/b.jsonl")).toEqual(original.get("/b.jsonl"));
     expect(restored.get("/grok.jsonl")).toEqual(original.get("/grok.jsonl"));
     expect(restored.get("/codex.jsonl")).toEqual(original.get("/codex.jsonl"));
+  });
+
+  it("re-parses a live Claude transcript from a v5 cache, keeping its saved usage", () => {
+    const document = JSON.parse(
+      JSON.stringify(encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]))),
+    );
+    const restored = decodeScanCache({ ...document, version: 5 }).get("/a.jsonl");
+
+    expect(restored?.records).toEqual([record()]);
+    expect(restored?.size).toBe(-1);
+    expect(restored?.position.resumeOffset).toBe(0);
   });
 
   it("drops an entry whose persisted parse state is corrupt", () => {

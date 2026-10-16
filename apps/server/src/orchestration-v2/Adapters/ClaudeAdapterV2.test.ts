@@ -392,6 +392,22 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.deepEqual(options.supportedDialogKinds, ["resume_return"]);
   });
 
+  it("asks for the 1-hour prompt cache unless the environment picks a TTL", () => {
+    const open = (environment: NodeJS.ProcessEnv) =>
+      ClaudeAdapterV2.makeClaudeQueryOptions({
+        modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+        nativeThreadId: "native-thread-cache-ttl",
+        resume: false,
+        cwd: "/workspace",
+        environment,
+      }).env;
+
+    assert.equal(open({ PATH: "/bin" })?.CLAUDE_CODE_PROMPT_CACHE_TTL, "1h");
+    const forced = open({ PATH: "/bin", FORCE_PROMPT_CACHING_5M: "1" });
+    assert.equal(forced?.CLAUDE_CODE_PROMPT_CACHE_TTL, undefined);
+    assert.equal(forced?.FORCE_PROMPT_CACHING_5M, "1");
+  });
+
   it.each([
     ["", 400_000],
     ["auto", undefined],

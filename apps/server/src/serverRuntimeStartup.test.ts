@@ -81,6 +81,81 @@ it.effect("starts without scanning or rebuilding projection history", () =>
   }),
 );
 
+it.effect(
+  "behind an update install gate, resumes, recovers delegated tasks and starts the worker only after it opens",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const calls = yield* Ref.make<ReadonlyArray<string>>([]);
+        const record = (label: string) => Ref.update(calls, (current) => [...current, label]);
+        const opened = yield* Deferred.make<void>();
+        const workerStarted = yield* Deferred.make<void>();
+
+        const result = yield* ServerRuntimeStartup.runOrderedV2StartupPhases({
+          importLegacyShells: record("import"),
+          recover: record("recover").pipe(Effect.as({ closedRequests: 1 })),
+          recoverDelegatedTasks: record("delegated"),
+          startEffectWorker: record("worker").pipe(
+            Effect.andThen(Deferred.succeed(workerStarted, undefined)),
+          ),
+          autoBootstrap: record("bootstrap").pipe(Effect.as({})),
+          updateGate: {
+            reconcile: record("reconcile").pipe(Effect.as({ closedRequests: 0 })),
+            resumeAfterUpdate: record("resume"),
+            awaitReleased: Deferred.await(opened),
+            onWorkerStartFailure: () => record("worker-failed"),
+          },
+        });
+
+        // Nothing that writes history runs while the helper is still verifying.
+        yield* Effect.yieldNow;
+        assert.deepEqual(yield* Ref.get(calls), ["import", "reconcile", "bootstrap"]);
+        assert.deepEqual(result.recovery, { closedRequests: 0 });
+
+        yield* Deferred.succeed(opened, undefined);
+        yield* Deferred.await(workerStarted);
+        // Same order as an ungated start: delegated recovery sees the continuation
+        // the resume records, and the worker runs neither before it settles.
+        assert.deepEqual(yield* Ref.get(calls), [
+          "import",
+          "reconcile",
+          "bootstrap",
+          "resume",
+          "delegated",
+          "worker",
+        ]);
+      }),
+    ),
+);
+
+it.effect("behind an update install gate, a failing step skips none of the later ones", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const calls = yield* Ref.make<ReadonlyArray<string>>([]);
+      const record = (label: string) => Ref.update(calls, (current) => [...current, label]);
+      const handled = yield* Deferred.make<void>();
+
+      yield* ServerRuntimeStartup.runOrderedV2StartupPhases({
+        importLegacyShells: Effect.void,
+        recover: Effect.succeed({}),
+        recoverDelegatedTasks: record("delegated").pipe(Effect.andThen(Effect.fail("delegated"))),
+        startEffectWorker: Effect.fail("worker"),
+        autoBootstrap: Effect.succeed({}),
+        updateGate: {
+          reconcile: Effect.succeed({}),
+          resumeAfterUpdate: record("resume").pipe(Effect.andThen(Effect.fail("resume"))),
+          awaitReleased: Effect.void,
+          onWorkerStartFailure: () =>
+            record("worker-failed").pipe(Effect.andThen(Deferred.succeed(handled, undefined))),
+        },
+      });
+
+      yield* Deferred.await(handled);
+      assert.deepEqual(yield* Ref.get(calls), ["resume", "delegated", "worker-failed"]);
+    }),
+  ),
+);
+
 it.effect("interrupts the effect worker when awareness relay startup fails", () =>
   Effect.scoped(
     Effect.gen(function* () {

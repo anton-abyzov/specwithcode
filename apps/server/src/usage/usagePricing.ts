@@ -22,6 +22,11 @@ export interface TokenRates {
   readonly outputCostPerToken: number;
   readonly cacheReadCostPerToken: number;
   readonly cacheCreationCostPerToken: number;
+  /**
+   * Claude's 1-hour cache write, 2x base input against the 5-minute write's
+   * 1.25x. Absent: 1.6x the 5-minute rate, the ratio Anthropic publishes.
+   */
+  readonly oneHourCacheCreationCostPerToken?: number;
 }
 
 /**
@@ -61,6 +66,7 @@ export function createOverrideRateTable(
           (prices.cacheReadCostPerMillionTokens ?? prices.inputCostPerMillionTokens) / 1_000_000,
         cacheCreationCostPerToken:
           (prices.cacheWriteCostPerMillionTokens ?? prices.inputCostPerMillionTokens) / 1_000_000,
+        oneHourCacheCreationCostPerToken: (prices.inputCostPerMillionTokens * 2) / 1_000_000,
         fast: null,
         ultrafast: null,
       },
@@ -105,7 +111,16 @@ function readTokenRates(
       "cache_creation_input_token_cost",
       "cacheCreationCostPerToken",
     ),
+    ...oneHourRate(finiteNumber(entry[`cache_creation_input_token_cost_above_1hr${suffix}`])),
   };
+}
+
+function oneHourRate(value: number | null): Pick<TokenRates, "oneHourCacheCreationCostPerToken"> {
+  return value === null ? {} : { oneHourCacheCreationCostPerToken: value };
+}
+
+function oneHourCacheCreationCost(rates: TokenRates): number {
+  return rates.oneHourCacheCreationCostPerToken ?? rates.cacheCreationCostPerToken * 1.6;
 }
 
 function scaleTokenRates(rates: TokenRates, multiple: number): TokenRates {
@@ -114,6 +129,11 @@ function scaleTokenRates(rates: TokenRates, multiple: number): TokenRates {
     outputCostPerToken: rates.outputCostPerToken * multiple,
     cacheReadCostPerToken: rates.cacheReadCostPerToken * multiple,
     cacheCreationCostPerToken: rates.cacheCreationCostPerToken * multiple,
+    ...oneHourRate(
+      rates.oneHourCacheCreationCostPerToken === undefined
+        ? null
+        : rates.oneHourCacheCreationCostPerToken * multiple,
+    ),
   };
 }
 
@@ -183,7 +203,8 @@ function sameTokenRates(a: TokenRates | null, b: TokenRates | null): boolean {
     a.inputCostPerToken === b.inputCostPerToken &&
     a.outputCostPerToken === b.outputCostPerToken &&
     a.cacheReadCostPerToken === b.cacheReadCostPerToken &&
-    a.cacheCreationCostPerToken === b.cacheCreationCostPerToken
+    a.cacheCreationCostPerToken === b.cacheCreationCostPerToken &&
+    a.oneHourCacheCreationCostPerToken === b.oneHourCacheCreationCostPerToken
   );
 }
 
@@ -265,7 +286,7 @@ function resolveRate(table: RateTable, model: string): ModelRate | null {
 /** The parts of a transcript record that decide its price. */
 export type PricedRecord = Pick<
   UsageRecord,
-  "model" | "rateModel" | "totals" | "speed" | "reportedCostUsd"
+  "model" | "rateModel" | "totals" | "speed" | "reportedCostUsd" | "oneHourCacheCreationTokens"
 >;
 
 export interface PricedUsage {
@@ -277,11 +298,18 @@ export interface PricedUsage {
   readonly speedPremiumUsd: number;
 }
 
-function costByCategory(totals: UsageTokenTotals, rates: TokenRates): UsageCategoryCost {
+function costByCategory(
+  totals: UsageTokenTotals,
+  rates: TokenRates,
+  oneHourCacheCreationTokens = 0,
+): UsageCategoryCost {
+  const oneHour = Math.min(oneHourCacheCreationTokens, totals.cacheCreationTokens);
   return {
     input: totals.uncachedInputTokens * rates.inputCostPerToken,
     cacheRead: totals.cachedInputTokens * rates.cacheReadCostPerToken,
-    cacheWrite: totals.cacheCreationTokens * rates.cacheCreationCostPerToken,
+    cacheWrite:
+      (totals.cacheCreationTokens - oneHour) * rates.cacheCreationCostPerToken +
+      oneHour * oneHourCacheCreationCost(rates),
     output: totals.outputTokens * rates.outputCostPerToken,
   };
 }
@@ -321,11 +349,14 @@ export function priceUsage(
     return reported === null ? unsplit(0, "unpriced") : unsplit(reported, "providerReported");
   }
 
-  const listCost = costByCategory(totals, ratesAt(rate, record.speed));
+  const oneHour = record.oneHourCacheCreationTokens ?? 0;
+  const listCost = costByCategory(totals, ratesAt(rate, record.speed), oneHour);
   const listCostUsd = sumCategories(listCost);
   if (reported !== null && listCostUsd <= 0) return unsplit(reported, "providerReported");
   const premiumUsd =
-    record.speed === "standard" ? 0 : listCostUsd - sumCategories(costByCategory(totals, rate));
+    record.speed === "standard"
+      ? 0
+      : listCostUsd - sumCategories(costByCategory(totals, rate, oneHour));
   const scale = reported === null ? 1 : reported / listCostUsd;
   return {
     costUsd: reported ?? listCostUsd,

@@ -55,6 +55,36 @@ describe("usage pricing", () => {
     expect(cacheSavingsUsd(table, record("example-model"), overrides)).toBe(1.5);
   });
 
+  it("prices 1-hour cache writes at the 1-hour rate", () => {
+    const oneHour = { ...record("claude-opus-5-5"), oneHourCacheCreationTokens: 600_000 };
+    const published = parseRateTable({
+      "claude-opus-5-5": {
+        ...rate(5e-6, 0.5e-6),
+        cache_creation_input_token_cost: 6.25e-6,
+        cache_creation_input_token_cost_above_1hr: 10e-6,
+      },
+    });
+    // 400K at the 5-minute rate (2.5) plus 600K at the 1-hour rate (6).
+    expect(priceUsage(published, oneHour).categoryCostUsd?.cacheWrite).toBeCloseTo(8.5);
+    expect(priceUsage(published, record("claude-opus-5-5")).categoryCostUsd?.cacheWrite).toBe(6.25);
+
+    // Without a published 1-hour rate it is 1.6x the 5-minute one.
+    const unpublished = parseRateTable({
+      "claude-opus-5-5": { ...rate(5e-6, 0.5e-6), cache_creation_input_token_cost: 6.25e-6 },
+    });
+    expect(priceUsage(unpublished, oneHour).categoryCostUsd?.cacheWrite).toBeCloseTo(8.5);
+
+    // A custom price keeps the 1-hour write at twice its input price.
+    const overrides = createOverrideRateTable({
+      "claude-opus-5-5": {
+        inputCostPerMillionTokens: 5,
+        outputCostPerMillionTokens: 25,
+        cacheWriteCostPerMillionTokens: 6.25,
+      },
+    });
+    expect(priceUsage(published, oneHour, overrides).categoryCostUsd?.cacheWrite).toBeCloseTo(8.5);
+  });
+
   it("prices Cursor cache savings at the base model rate", () => {
     const table = parseRateTable({
       "claude-fable-5-1": rate(10e-6, 1e-6),

@@ -56,6 +56,19 @@ describe("parseClaudeLine", () => {
     expect(record?.speed).toBe("standard");
   });
 
+  it("keeps the tokens written to Claude's 1-hour cache", () => {
+    const line = JSON.parse(claudeLine({ messageId: "msg_1", contentType: "text" }));
+    line.message.usage.cache_creation = {
+      ephemeral_1h_input_tokens: 60000,
+      ephemeral_5m_input_tokens: 6818,
+    };
+    expect(parseClaudeLine(JSON.stringify(line))?.oneHourCacheCreationTokens).toBe(60000);
+    expect(
+      parseClaudeLine(claudeLine({ messageId: "msg_1", contentType: "text" }))
+        ?.oneHourCacheCreationTokens,
+    ).toBeUndefined();
+  });
+
   it("marks fast-mode requests", () => {
     const line = (speed: string) =>
       parseClaudeLine(claudeLine({ messageId: "msg_1", contentType: "text", speed }));

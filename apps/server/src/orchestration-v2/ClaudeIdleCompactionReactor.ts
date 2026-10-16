@@ -19,6 +19,8 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 
+import { claudeMainThreadPromptCacheTtl } from "../provider/ClaudePromptCache.ts";
+import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
 import { deriveProviderInstanceConfigMap } from "../provider/ProviderInstanceRegistryHydration.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as ServerSettingsModule from "../serverSettings.ts";
@@ -36,7 +38,7 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
  * summary is written from a warm cache and the next message starts small.
  */
 
-/** Claude Code's 1-hour prompt cache. */
+/** Claude Code's 1-hour prompt cache, which SpecWithCode asks for on every thread. */
 export const CLAUDE_PROMPT_CACHE_TTL_MS = 60 * 60_000;
 /** Claude Code fires idle compaction at 90% of the cache lifetime. */
 export const IDLE_COMPACT_AFTER_MS = 54 * 60_000;
@@ -120,14 +122,11 @@ export function claudeIdleCompactionPolicy(
   if (entry === undefined || entry.driver !== "claudeAgent" || entry.enabled === false) return null;
   const decoded = decodeClaudeSettings(entry.config ?? {});
   if (Option.isNone(decoded) || !decoded.value.idleCompaction) return null;
-  const fromInstance = entry.environment?.findLast(
-    (variable) => variable.name === "CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS",
-  )?.value;
-  return {
-    minTokens: idleCompactMinTokens(
-      fromInstance ?? process.env.CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS,
-    ),
-  };
+  const environment = mergeProviderInstanceEnvironment(entry.environment, process.env);
+  // At 54 minutes a 5-minute cache is long gone: the summary would be written
+  // from a cold cache and save nothing over the next message's own rewrite.
+  if (claudeMainThreadPromptCacheTtl(environment) !== "1h") return null;
+  return { minTokens: idleCompactMinTokens(environment.CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS) };
 }
 
 export class ClaudeIdleCompactionReactor extends Context.Service<

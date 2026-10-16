@@ -8,6 +8,7 @@ import {
 } from "@specweave-studio/shared/toolActivity";
 import { isWorkspaceImagePreviewPath } from "@specweave-studio/shared/filePreview";
 import { normalizeClaudeTurnTokenUsage } from "../../provider/ClaudeTurnTokenUsage.ts";
+import { withMainThreadPromptCache } from "../../provider/ClaudePromptCache.ts";
 import {
   type CanUseTool,
   forkSession as forkClaudeSession,
@@ -1044,7 +1045,9 @@ export function makeClaudeQueryOptions(input: {
     ...(input.settings?.binaryPath
       ? { pathToClaudeCodeExecutable: input.settings.binaryPath }
       : {}),
-    env: withInheritedSubagentModel(workflowPolicy.environment, compiledSelection.apiModelId),
+    env: withMainThreadPromptCache(
+      withInheritedSubagentModel(workflowPolicy.environment, compiledSelection.apiModelId),
+    ),
     ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
     systemPrompt: {
       type: "preset" as const,
