@@ -12,6 +12,7 @@ import { openBackgroundChatComposer, useNewChatDestination } from "~/hooks/useNe
 import { chatControlAnchor, chatUsesPanelSheet } from "./chat/embeddedProjectLayout";
 import { resolveCollapseLongReports } from "./chat/delegatedThreadMemory";
 import {
+  routesViaCoordinator,
   useProjectMessageRouting,
   sendProjectComposerDraft,
 } from "../studio/projectMessageRouting";
@@ -9352,7 +9353,7 @@ export default function ChatView(props: ChatViewProps) {
           selection: activeThreadShell.modelSelection,
           allowed:
             canOperateThread &&
-            projectRouting === null &&
+            !routesViaCoordinator(projectRouting) &&
             !activeEnvironmentUnavailable &&
             !activeGoal &&
             !hasHeldQueuedRuns &&
@@ -9381,7 +9382,7 @@ export default function ChatView(props: ChatViewProps) {
               !activeThread ||
               provider?.driver !== "codex" ||
               provider.usageLimits?.credits?.hasCredits !== true ||
-              projectRouting !== null
+              routesViaCoordinator(projectRouting)
             )
               return null;
             return {
@@ -10551,7 +10552,7 @@ export default function ChatView(props: ChatViewProps) {
     draftId,
     runtimeMode,
     allowed:
-      projectRouting === null &&
+      !routesViaCoordinator(projectRouting) &&
       phase !== "running" &&
       phase !== "connecting" &&
       !activeGoal &&
@@ -10778,7 +10779,7 @@ export default function ChatView(props: ChatViewProps) {
 
     if (
       manualCodexCreditIntent &&
-      (projectRouting !== null ||
+      (routesViaCoordinator(projectRouting) ||
         directAnnotation ||
         submissionIntent !== "foreground" ||
         dispatchMode !== "auto" ||
@@ -10828,7 +10829,7 @@ export default function ChatView(props: ChatViewProps) {
       }
       return;
     }
-    if (projectRouting && !activePendingProgress && !answersWorkerPlan) {
+    if (routesViaCoordinator(projectRouting) && !activePendingProgress && !answersWorkerPlan) {
       if (sendInFlightRef.current) return;
       sendInFlightRef.current = true;
       await settleAfter(
@@ -12586,7 +12587,7 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
 
-    if (projectRouting) {
+    if (routesViaCoordinator(projectRouting)) {
       sendInFlightRef.current = true;
       await settleCaught(
         async () => {
@@ -13810,7 +13811,7 @@ export default function ChatView(props: ChatViewProps) {
                           ) : null}
                           {!composerMounted ? null : (
                             <ChatComposer
-                              allowManualCodexCredits={projectRouting === null}
+                              allowManualCodexCredits={!routesViaCoordinator(projectRouting)}
                               canOperateThread={canOperateThread}
                               reportedModelSelection={reportedModelSelection}
                               multipleModelSelections={multipleModelSelections}

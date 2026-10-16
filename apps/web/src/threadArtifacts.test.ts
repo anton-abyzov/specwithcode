@@ -22,7 +22,7 @@ it("lists the files, pages and links a thread names, newest first, once each", (
           "Worktree: `~/Projects/github/studio-machine-label` and `png/app/`.",
           "Report: `docs/report.md`, deck https://example.com/deck.",
           "```",
-          "/tmp/promo/example-only.png",
+          "cp /tmp/promo/example-only.png /tmp/promo/copy.png",
           "```",
         ].join("\n"),
       },
@@ -68,4 +68,23 @@ it("lists each file a brace list names, not the pattern", () => {
     "a-y-1.png",
     "a-y-2.png",
   ]);
+});
+
+it("lists a fenced path list and files written outside the workspace", () => {
+  const cws = "/Users/me/Downloads/cws";
+  const artifacts = collectThreadArtifacts(
+    [
+      { id: "m1", text: `Assets are in \`${cws}/\`.` },
+      { id: "m2", text: "Screenshots:\n```\nscreenshot-1.png\nscreenshot-2.png\n```\n" },
+    ],
+    CWD,
+    [
+      { path: `${cws}/SUBMISSION.md`, itemId: "write-1" },
+      { path: `${CWD}/src/app.ts`, itemId: "write-2" },
+    ],
+  );
+  const names = artifacts.map((artifact) => artifact.name);
+  expect(names).toEqual(["screenshot-2.png", "screenshot-1.png", "SUBMISSION.md"]);
+  const first = artifacts[0]!;
+  expect("meta" in first && first.meta.filePath).toBe(`${cws}/screenshot-2.png`);
 });

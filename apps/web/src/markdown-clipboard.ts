@@ -6,6 +6,8 @@
  * copy of the rendered fragment for rich-paste targets.
  */
 
+import { exactCopyText } from "./exactClipboardText";
+
 const SKIPPED_TAGS = new Set(["BUTTON", "INPUT", "SCRIPT", "STYLE", "TEMPLATE"]);
 const SKIPPED_CLASS_NAMES = ["select-none", "sr-only"];
 const SANITIZED_HTML_SELECTOR = [
@@ -338,7 +340,7 @@ function tidyMarkdown(markdown: string): string {
 
 export function serializeRenderedMarkdownFragment(container: Node): string {
   const codeBlock = soleCodeBlock(container);
-  if (codeBlock) return (codeBlock.textContent ?? "").replace(/\n$/, "");
+  if (codeBlock) return exactCopyText(codeBlock.textContent ?? "");
   return tidyMarkdown(serializeChildren(container));
 }
 
@@ -394,14 +396,15 @@ export function chatMarkdownClipboardPayload(
     const ancestorElement =
       ancestor.nodeType === Node.ELEMENT_NODE ? (ancestor as Element) : ancestor.parentElement;
     if (ancestorElement?.closest("pre")) {
-      const text = range.toString();
+      // A triple-clicked line carries its newline; the paste target wants the line.
+      const text = exactCopyText(range.toString());
       if (text) {
         texts.push(text);
         htmls.push(sanitizedHtmlFrom(container));
       }
       continue;
     }
-    const text = serializeRenderedMarkdownFragment(container);
+    const text = exactCopyText(serializeRenderedMarkdownFragment(container));
     if (!text) continue;
     texts.push(text);
     htmls.push(sanitizedHtmlFrom(container));

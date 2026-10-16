@@ -502,6 +502,16 @@ describe("native session admission", () => {
     ).rejects.toThrow(/native provider status check failed/);
     expect(attempts).toEqual(["codex"]);
   });
+  it("says a timed-out sign-in probe did not finish instead of asking a signed-in user to sign in", async () => {
+    const native = [{
+      ...provider(),
+      status: "warning" as const,
+      auth: { status: "unknown" as const, type: "status-check-failed", label: "Status check did not finish" },
+    }];
+    const error = await run(start(), rawSnapshot(), native, settings, false, true, native).catch((cause: unknown) => cause);
+    expect((error as { detail: string }).detail).toMatch(/sign-in status check did not finish/);
+    expect((error as { detail: string }).detail).not.toMatch(/authorization is unverified/);
+  });
   it("rejects unavailable native status despite a fresh authenticated account", async () => {
     await expect(
       run(start(), rawSnapshot(), [{ ...provider(), availability: "unavailable" as const }]),

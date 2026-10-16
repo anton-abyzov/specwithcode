@@ -13,7 +13,13 @@ import re
 
 import live_database
 
-MAX_RESTART_WINDOW_SECONDS = 120
+# From the owned restart to the helper's observation of the new service. Before the kickstart
+# come process inventories and the state backup (unbounded on a loaded host), then up to
+# READINESS_DEADLINE_SECONDS of readiness polling and a final snapshot, all inside the helper's
+# apply budget (update.APPLY_BUDGET_SECONDS, at most 3600). The window only bounds which
+# `last_connected_at` values count as a reconnect; at 120 a sound 1.0.38 restart observed after
+# 137 s failed its proof.
+MAX_RESTART_WINDOW_SECONDS = 3600
 WEB_SESSION_METHOD = {'m4': 'browser-session-cookie', 'm1': 'bearer-access-token', 'm3': 'bearer-access-token'}
 MAX_WEB_HEARTBEATS = {'m4': 2, 'm1': 1, 'm3': 1}
 # The desktop app signs in with an access token and reports the desktop surface.

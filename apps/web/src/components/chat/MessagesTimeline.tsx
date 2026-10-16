@@ -330,6 +330,7 @@ import { linkifyQuestionPaths } from "./questionCard.logic";
 import { SkillChipIcon, SkillInlineText } from "./SkillInlineText";
 import * as DateTime from "effect/DateTime";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
+import { threadFileFolders } from "../../markdown-links";
 import {
   buildReviewCommentRenderablePatch,
   formatReviewCommentFence,
@@ -343,8 +344,51 @@ import {
 // components (LiveElapsed) handle it.
 // ---------------------------------------------------------------------------
 
+/**
+ * Folders outside the workspace the thread's finished messages name files in.
+ * Finished messages only, so a streaming reply does not rescan the thread. It
+ * reads a ref while rendering, which the React Compiler rejects, so it lives
+ * outside MessagesTimeline and the list owner still compiles.
+ */
+function useThreadFileFolders(
+  rows: ReadonlyArray<TimelineRow>,
+  markdownCwd: string | undefined,
+): ReadonlyArray<string> {
+  const settledMessageTexts = useMemo(
+    () =>
+      rows.flatMap((row) =>
+        row.kind === "message" && !row.message.streaming ? [row.message.text] : [],
+      ),
+    [rows],
+  );
+  const settledMessageKey = settledMessageTexts.map((text) => text.length).join(",");
+  const settledMessageTextsRef = useRef(settledMessageTexts);
+  settledMessageTextsRef.current = settledMessageTexts;
+  return useStableArray(
+    useMemo(
+      () => threadFileFolders(settledMessageTextsRef.current, markdownCwd),
+      // oxlint-disable-next-line react-hooks/exhaustive-deps -- keyed on the settled texts' lengths
+      [markdownCwd, settledMessageKey],
+    ),
+  );
+}
+
+/** The same array while its items are the same, so memoized rows keep their props. */
+function useStableArray(next: ReadonlyArray<string>): ReadonlyArray<string> {
+  const ref = useRef(next);
+  if (
+    ref.current.length !== next.length ||
+    ref.current.some((item, index) => item !== next[index])
+  ) {
+    ref.current = next;
+  }
+  return ref.current;
+}
+
 interface TimelineRowSharedState {
   citationRequest: AssistantCitationTarget | null;
+  /** Folders outside the workspace the thread's finished messages name files in. */
+  fileFolders: ReadonlyArray<string>;
   listRef: React.RefObject<LegendListRef | null>;
   timestampFormat: TimestampFormat;
   routeThreadKey: string;
@@ -1296,9 +1340,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     };
   }, [timelineViewportElement, rows.length, reportContentOverflow, chatWidth]);
 
+  const fileFolders = useThreadFileFolders(rows, markdownCwd);
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({
       citationRequest: readyCitationRequest,
+      fileFolders,
       listRef,
       timestampFormat,
       routeThreadKey,
@@ -1341,6 +1387,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }),
     [
       readyCitationRequest,
+      fileFolders,
       listRef,
       timestampFormat,
       routeThreadKey,
@@ -2763,6 +2810,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
       onUseArtifactTemplate={ctx.onUseArtifactTemplate}
       onRunShellCommand={ctx.onRunShellCommand}
       onImageExpand={ctx.onImageExpand}
+      contextFolders={ctx.fileFolders}
     />
   );
 

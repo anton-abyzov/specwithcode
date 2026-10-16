@@ -343,6 +343,14 @@ function rootRule(theme: HtmlRenderTheme): string {
 // so its client can fit the frame to the page.
 const BOOTSTRAP_SCRIPT = `(function(){var s=document.getElementById("studio-theme"),n=0;if(!s)return;var b=${JSON.stringify(BASE_CSS)};function a(t){if(!t||typeof t!=="object"||!t.variables||typeof t.variables!=="object")return;var c=":root{color-scheme:"+(t.appearance==="light"?"light":"dark")+";";for(var k in t.variables){if(/^--[a-z0-9-]+$/.test(k))c+=k+":"+String(t.variables[k]).replace(/[;{}<>]/g,"")+";";}s.textContent=c+"}"+b;}try{var m=/[#&]${THEME_FRAGMENT_KEY}=([^&]*)/.exec(location.hash);if(m){a(JSON.parse(decodeURIComponent(m[1])));history.replaceState(history.state,"",location.pathname+location.search);}}catch(e){}window.addEventListener("message",function(e){var d=e.data,p=d&&d.params;if(d&&d.jsonrpc==="2.0"&&d.method===${JSON.stringify(HOST_CONTEXT_CHANGED_METHOD)}&&p&&p.styles)a({appearance:p.theme,variables:p.styles.variables});});document.addEventListener("click",function(e){var l=e.isTrusted?e.composedPath().find(function(t){return t&&t.matches&&t.matches("a[href]");}):null,u;if(!l)return;try{u=new URL(l.getAttribute("href"),document.baseURI);}catch(x){return;}if(!/^https?:$/.test(u.protocol)||u.href.split("#")[0]===location.href.split("#")[0])return;if(window.parent!==window){e.preventDefault();window.parent.postMessage({jsonrpc:"2.0",id:"studio-link-"+(++n),method:${JSON.stringify(OPEN_LINK_METHOD)},params:{url:u.href}},"*");}else{l.setAttribute("target","_blank");l.setAttribute("rel","noopener");}},true);if(window.parent!==window){var h,o,z=function(){var r=document.documentElement,v=Math.ceil(r.scrollHeight>r.clientHeight?r.scrollHeight:r.getBoundingClientRect().height);if(v===h)return;h=v;window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(SIZE_CHANGED_METHOD)},params:{height:v}},"*");};if(window.ResizeObserver){o=new ResizeObserver(z);o.observe(document.documentElement);}document.addEventListener("DOMContentLoaded",function(){if(o&&document.body)o.observe(document.body);z();});window.addEventListener("load",z);}})();`;
 
+// A page's Copy buttons and selections put exactly the text shown on the
+// clipboard: no newline a textarea or <pre> ends with, no trailing spaces, no
+// zero-width or no-break characters. Pasted into a macOS file dialog's Go to
+// Folder, a trailing newline reads as a space and the path is not found. It
+// mirrors `exactCopyText` in the web client; the copy listener sits on window,
+// after the page's own handlers, and leaves a copy they handled alone.
+export const HTML_RENDER_EXACT_COPY_SCRIPT = String.raw`(function(){var I=/[\u200B\u2060\uFEFF\u00AD]/g,S=/[\u00A0\u202F\u2007]/g;function x(t){return String(t).replace(I,"").replace(S," ").replace(/\r\n?/g,"\n").replace(/^(?:[ \t]*\n)+/,"").replace(/\s+$/,"");}var c=navigator.clipboard;if(c&&typeof c.writeText==="function"){var w=c.writeText.bind(c);try{c.writeText=function(t){return w(x(t));};}catch(e){}}window.addEventListener("copy",function(e){if(e.defaultPrevented||!e.clipboardData)return;var a=document.activeElement,t,s=null;if(a&&(a.tagName==="TEXTAREA"||a.tagName==="INPUT")&&typeof a.selectionStart==="number"){t=a.value.slice(a.selectionStart,a.selectionEnd);}else{s=window.getSelection();t=s?s.toString():"";}if(!t)return;var v=x(t);if(v===t)return;e.clipboardData.setData("text/plain",v);if(s&&s.rangeCount>0){var d=document.createElement("div");for(var i=0;i<s.rangeCount;i++)d.appendChild(s.getRangeAt(i).cloneContents());e.clipboardData.setData("text/html",d.innerHTML);}e.preventDefault();});})();`;
+
 function bootstrapMarkup(markup: string): string {
   const dark = htmlRenderTheme(STUDIO_CODE_DARK_THEME_COLORS, "dark");
   const light = htmlRenderTheme(STUDIO_CODE_LIGHT_THEME_COLORS, "light");
@@ -355,7 +363,7 @@ function bootstrapMarkup(markup: string): string {
       ? ""
       : '<meta name="viewport" content="width=device-width, initial-scale=1">',
     `<style id="studio-theme">${defaultCss}</style>`,
-    `<script>${BOOTSTRAP_SCRIPT}</script>`,
+    `<script>${BOOTSTRAP_SCRIPT}${HTML_RENDER_EXACT_COPY_SCRIPT}</script>`,
   ].join("");
 }
 

@@ -42,7 +42,7 @@ describe("project coordinator surface", () => {
       shell("coord", { modelSelection: { instanceId: "codex", model: "gpt-6.1-sol" } } as never),
     ];
     state.hostSettings = DEFAULT_SERVER_SETTINGS;
-    const resetsAt = new Date(Date.now() + 39 * 3_600_000).toISOString();
+    const resetsAt = new Date(Date.now() + 39.5 * 3_600_000).toISOString();
     const claude = (weeklyUsed: number) => ({
       instanceId: "claudeAgent",
       driver: "claudeAgent",
@@ -76,12 +76,14 @@ describe("project coordinator surface", () => {
       // The weekly is spent: the session's room cannot be used, so the limit is real.
       state.providers = [claude(100), codex];
       await render();
-      const line = container.querySelector("[data-model-fallback]");
-      expect(line?.textContent).toContain("Claude Code limit reached");
-      expect(line?.textContent).toContain("running on Codex · GPT-6.1 Sol");
+      const line = container.querySelector("p[data-model-fallback]");
+      // The line names the reason, the target and the way back.
+      expect(line?.textContent).toContain("Switched to Codex");
+      expect(line?.textContent).toContain("Claude Code weekly limit reached, resets in 1d 15h");
+      expect(line?.textContent).toContain("goes back to Claude Code on its own");
       // The saved model runs the next turn once asked; the host decides if it has room.
       state.send.mockClear();
-      await click("Switch back");
+      await click("Switch back to Claude Code");
       expect(state.send).toHaveBeenCalledWith(
         expect.objectContaining({ input: { threadId: "coord", modelSelection: saved } }),
       );
@@ -767,25 +769,22 @@ describe("project coordinator surface", () => {
     expect(container.textContent).toContain("Thread worker");
     expect(container.textContent).not.toContain("Thread foreign");
   });
-  it("retains the coordinator while a selected worker sends its exact source ID", async () => {
+  it("retains the coordinator while a selected worker takes its reply itself", async () => {
     await render();
     await openFirstThread();
     expect(container.querySelector('[aria-label="Project coordinator"]')).not.toBeNull();
     expect(container.querySelector('[data-native-thread="worker"]')).not.toBeNull();
     await click("Reply in selected thread");
-    expect(state.send).toHaveBeenCalledTimes(1);
-    expect(state.send.mock.calls[0]![0]).toMatchObject({
-      environmentId: "host",
-      input: { projectId: "project", sourceThreadId: "worker", prompt: "Continue this worker" },
-    });
+    // No coordinator turn: the worker's own composer sends it.
+    expect(state.send).not.toHaveBeenCalled();
   });
-  it("opens existing workers and routes a first reply before coordinator creation", async () => {
+  it("lets a worker take its reply before the coordinator exists", async () => {
     state.coordinatorId = null;
     state.shells = state.shells.filter((t) => t.id !== "coord");
     await render();
     await openFirstThread();
     await click("Reply in selected thread");
-    expect(state.send.mock.calls[0]![0].input.sourceThreadId).toBe("worker");
+    expect(state.send).not.toHaveBeenCalled();
   });
   it("preserves a rejected draft and retries an uncertain result with the same identity", async () => {
     state.send.mockResolvedValueOnce({

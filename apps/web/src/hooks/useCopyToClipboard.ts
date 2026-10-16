@@ -5,6 +5,8 @@ import {
   encodeComposerContextClipboardHtml,
 } from "@specweave-studio/shared/composerContextClipboard";
 
+import { exactCopyText } from "../exactClipboardText";
+
 export class ClipboardApiUnavailableError extends Schema.TaggedError<ClipboardApiUnavailableError>()(
   "ClipboardApiUnavailableError",
   {
@@ -99,6 +101,7 @@ export async function writeTextToClipboard(
   value: string,
   target = "text",
   extraFlavors?: Readonly<Record<string, string>>,
+  options?: { readonly preserveBytes?: boolean },
 ) {
   if (typeof window === "undefined") {
     throw new ClipboardApiUnavailableError({
@@ -106,6 +109,9 @@ export async function writeTextToClipboard(
     });
   }
 
+  // Exactly the text shown: no fence newline, trailing space or invisible character.
+  // Command output keeps its original bytes, control characters and whitespace included.
+  if (options?.preserveBytes !== true) value = exactCopyText(value);
   if (!value) return false;
   if (extraFlavors) {
     extraFlavors = Object.fromEntries(

@@ -79,6 +79,51 @@ const turnMessages = [
     attachments: [],
   },
 ];
+/* `?followups`: messages typed in workers before they went straight to the worker.
+   One the coordinator only passed back to its own worker, which the conversation
+   leaves out with its reply, and one it moved to another worker, which shows. */
+const followups = new URLSearchParams(window.location.search).has("followups");
+const followUpWrapper = (worker, id) =>
+  `User follow-up from selected worker ${worker}, message ${id}. Review that thread and decide whether to reuse it or route elsewhere.\n\n`;
+// Real projections carry DateTime values; the routed-message notes format them.
+const followUpMessages = [
+  {
+    id: "coordinator-send:project:same",
+    role: "user",
+    createdBy: "user",
+    senderThreadId: "review",
+    text: followUpWrapper("review", "coordinator-send:project:same") + "marquee promo?",
+    createdAt: DateTime.makeUnsafe(minutesAgo(6)),
+    attachments: [],
+  },
+  {
+    id: "f2",
+    role: "assistant",
+    text: "I passed your marquee promo tile question to [Review the landing page](studio://thread/review), and it has started on it.",
+    createdAt: DateTime.makeUnsafe(minutesAgo(6, 7)),
+    updatedAt: DateTime.makeUnsafe(minutesAgo(6, 7)),
+    attachments: [],
+  },
+  {
+    id: "coordinator-send:project:moved",
+    role: "user",
+    createdBy: "user",
+    senderThreadId: "review",
+    text:
+      followUpWrapper("review", "coordinator-send:project:moved") +
+      "Also rebuild the project memory index.",
+    createdAt: DateTime.makeUnsafe(minutesAgo(3)),
+    attachments: [],
+  },
+  {
+    id: "f4",
+    role: "assistant",
+    text: "Moved to [Build project memory](studio://thread/build).",
+    createdAt: DateTime.makeUnsafe(minutesAgo(3, 5)),
+    updatedAt: DateTime.makeUnsafe(minutesAgo(3, 5)),
+    attachments: [],
+  },
+];
 // `?legacy` is a project from before projects had settings: no settings row, no saved
 // coordinator or worker model and no coordinator thread yet. `?legacy=loading` is the same
 // project before the host has sent its providers, and `?legacy=checking` after it sent them
@@ -769,24 +814,26 @@ const baseThreadProjection = () => ({
                   : []
                 : turns
                   ? turnMessages
-                  : [
-                      {
-                        id: "m1",
-                        role: "user",
-                        createdBy: "user",
-                        text: "Keep the project moving. Show me the work that needs a decision.",
-                        createdAt: "2026-10-09T00:00:00Z",
-                        attachments: [],
-                      },
-                      {
-                        id: "m2",
-                        role: "assistant",
-                        text: `Started [Consolidate the skills](studio://thread/skills) and [Record the tutorials](studio://thread/${TUTORIALS_ID}). The memory work is running. [Review the landing page](studio://thread/review) needs your decision before we continue. The old [Draft the launch post](studio://thread/thread%3Adelegated-task%3Acommand%253Amcp%253Afixture-0002) worker is no longer here.\n\nOnboarding is ready for another pass; the pagination fix is resolved and retained for future follow-ups.`,
-                        createdAt: "2026-10-09T00:00:04Z",
-                        updatedAt: "2026-10-09T00:00:05Z",
-                        attachments: [],
-                      },
-                    ],
+                  : followups
+                    ? followUpMessages
+                    : [
+                        {
+                          id: "m1",
+                          role: "user",
+                          createdBy: "user",
+                          text: "Keep the project moving. Show me the work that needs a decision.",
+                          createdAt: "2026-10-09T00:00:00Z",
+                          attachments: [],
+                        },
+                        {
+                          id: "m2",
+                          role: "assistant",
+                          text: `Started [Consolidate the skills](studio://thread/skills) and [Record the tutorials](studio://thread/${TUTORIALS_ID}). The memory work is running. [Review the landing page](studio://thread/review) needs your decision before we continue. The old [Draft the launch post](studio://thread/thread%3Adelegated-task%3Acommand%253Amcp%253Afixture-0002) worker is no longer here.\n\nOnboarding is ready for another pass; the pagination fix is resolved and retained for future follow-ups.`,
+                          createdAt: "2026-10-09T00:00:04Z",
+                          updatedAt: "2026-10-09T00:00:05Z",
+                          attachments: [],
+                        },
+                      ],
           },
 });
 /* `?stream`: a long coordinator conversation that the check grows while a

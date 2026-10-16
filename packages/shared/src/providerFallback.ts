@@ -550,3 +550,56 @@ export function coordinatorOnLimitFallback(input: {
   const { reason } = resolveCoordinatorTurnSelection(input);
   return reason !== "saved" && reason !== "saved-resets-soon";
 }
+
+/** Why the coordinator runs off its saved model, for the line that says so. */
+export interface CoordinatorFallbackReason {
+  /** `weekly limit reached`, `session at 96% used`, `returned a usage limit`. */
+  readonly text: string;
+  /** When the saved model gets room again, if the reading says. */
+  readonly resetsAt: number | null;
+}
+
+/**
+ * The reason behind a limit fallback, read from the same windows the switch
+ * used: a spent window that applies to the saved model, one past the rule's
+ * threshold, a usage-limit response, or the provider refusing new usage.
+ */
+export function coordinatorFallbackReason(input: {
+  readonly saved: ModelSelection;
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly rule: ProviderFallbackRule;
+  readonly nowMs: number;
+  readonly limitedInstanceIds?: ReadonlySet<string>;
+}): CoordinatorFallbackReason {
+  const provider = input.providers.find((entry) => entry.instanceId === input.saved.instanceId);
+  const threshold = input.rule.providerLimitSwitchAtPercent ?? 100;
+  const windows = (provider?.usageLimits?.windows ?? []).filter(
+    (window) =>
+      isLiveWindow(window, input.nowMs) && windowAppliesToModel(window, input.saved.model),
+  );
+  const resetOf = (window: (typeof windows)[number]) => {
+    const at = window.resetsAt === undefined ? Number.NaN : Date.parse(window.resetsAt);
+    return Number.isFinite(at) ? at : null;
+  };
+  const lower = (label: string) => label.charAt(0).toLowerCase() + label.slice(1);
+  // The spent window that resets last is the one that keeps the model out.
+  const spent = windows
+    .filter((window) => window.usedPercent >= 100)
+    .sort((a, b) => (resetOf(b) ?? Infinity) - (resetOf(a) ?? Infinity))[0];
+  if (spent) return { text: `${lower(spent.label)} limit reached`, resetsAt: resetOf(spent) };
+  if (input.limitedInstanceIds?.has(input.saved.instanceId))
+    return {
+      text: "returned a usage limit",
+      resetsAt: usageResetAt(provider, threshold, input.nowMs, input.saved.model),
+    };
+  const fullest = windows
+    .filter((window) => window.usedPercent >= threshold)
+    .sort((a, b) => b.usedPercent - a.usedPercent)[0];
+  if (fullest)
+    return {
+      text: `${lower(fullest.label)} at ${Math.round(fullest.usedPercent)}% used`,
+      resetsAt: resetOf(fullest),
+    };
+  if (provider && usageDeniesTurn(provider)) return { text: "refuses new usage", resetsAt: null };
+  return { text: "has no room", resetsAt: null };
+}

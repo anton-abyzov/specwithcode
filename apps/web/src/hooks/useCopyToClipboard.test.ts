@@ -178,3 +178,21 @@ describe("writeTextToClipboard", () => {
     },
   );
 });
+
+describe("writeTextToClipboard exact text", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("writes a fenced path without its trailing newline or invisible characters", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("window", {});
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    const path = "/Users/me/Downloads/cws/icon-128.png";
+
+    await expect(writeTextToClipboard(`﻿${path}​ \n`, "path")).resolves.toBe(true);
+
+    const written = writeText.mock.calls[0]![0] as string;
+    expect([...new TextEncoder().encode(written)]).toEqual([...new TextEncoder().encode(path)]);
+  });
+});

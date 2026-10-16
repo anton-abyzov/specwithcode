@@ -11,6 +11,7 @@ import {
   isWorkerCompletionWake,
   projectReportMessageIds,
   projectSystemNotice,
+  returnedFollowUpIds,
 } from "../../studio/projectCoordinatorMessageDisplay";
 import { ProjectWorkspaceAttachments } from "./ProjectWorkspaceAttachments";
 import { ProjectMessageBody } from "./ProjectMessageBody";
@@ -260,13 +261,20 @@ export function CoordinatorConversation({
       }),
     [messages, turnItems, runs, timelineDetail],
   );
+  // A follow-up the coordinator only passed back to its own worker is left out with its reply.
+  const hidden = useMemo(() => {
+    const returned = returnedFollowUpIds(messages, project, linkWorkers);
+    return returned.size === 0
+      ? view.hiddenMessageIds
+      : new Set([...view.hiddenMessageIds, ...returned]);
+  }, [messages, project, linkWorkers, view]);
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   // Separators, "Worked for" lines and action rows follow the messages that show.
   const turns = useMemo(
     () =>
       coordinatorTurnLayout(
         messages
-          .filter((message) => !view.hiddenMessageIds.has(message.id))
+          .filter((message) => !hidden.has(message.id))
           .map((message) => ({
             id: message.id,
             role: message.role,
@@ -276,7 +284,7 @@ export function CoordinatorConversation({
             notice: message.createdBy !== "user" && projectSystemNotice(message) !== null,
           })),
       ),
-    [messages, view],
+    [messages, hidden],
   );
   const messagesById = useMemo(
     () => new Map(messages.map((message) => [message.id as string, message])),
@@ -300,7 +308,7 @@ export function CoordinatorConversation({
   const rows = useMemo(
     () =>
       prepared
-        .filter(({ message }) => !view.hiddenMessageIds.has(message.id))
+        .filter(({ message }) => !hidden.has(message.id))
         .map((row) => ({
           ...row,
           announcedKey: withFoldedReplies(
@@ -319,7 +327,7 @@ export function CoordinatorConversation({
             ? (linkWorkers.find((t) => t.id === row.message.senderThreadId)?.title ?? null)
             : null,
         })),
-    [prepared, view, newThreads, messagesById, linkWorkers],
+    [prepared, view, hidden, newThreads, messagesById, linkWorkers],
   );
   // Only the latest messages mount; scrolling up or "Show earlier" mounts more.
   // A find in this conversation mounts them all, so every match can be found, and

@@ -20,10 +20,12 @@ import {
   TurnItemId,
 } from "./baseSchemas.ts";
 import {
+  ScheduledTaskCheck,
   ScheduledTaskRunStatus,
   ScheduledTaskSchedule,
   ScheduledTaskUpsertSchedule,
 } from "./scheduledTask.ts";
+import { ModelSelection } from "./modelSelection.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 import { ThreadLinkedPullRequest } from "./threadPullRequest.ts";
 import { ThreadTitleRegeneration } from "./threadTitle.ts";
@@ -776,6 +778,14 @@ export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
         "True (default) posts each run into this thread; false creates a fresh top-level thread per run.",
     }),
   ),
+  check: Schema.optional(ScheduledTaskCheck).annotate({
+    description:
+      "Make this a command routine: run the shell command on each trigger and wake the agent with the prompt (and the command's output) only when it exits 0. Quiet runs use no AI provider. Prefer this for watches such as disk space, a URL's status or a file's existence.",
+  }),
+  modelSelection: Schema.optional(ModelSelection).annotate({
+    description:
+      "Pin every run to this provider and model. Omit (recommended) so each run uses the model the thread's next turn would use and never switches its provider.",
+  }),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
 });
 export type OrchestratorMcpScheduleTaskInput = typeof OrchestratorMcpScheduleTaskInput.Type;
@@ -799,6 +809,9 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
   webhookSignature: Schema.optional(Schema.Literals(["none", "set"])).annotate({
     description: "Whether requests must carry a valid signature.",
   }),
+  check: Schema.optional(ScheduledTaskCheck),
+  /** Present only when runs are pinned to one model instead of following the thread. */
+  pinnedModel: Schema.optional(ModelSelection),
 });
 export type OrchestratorMcpScheduledTask = typeof OrchestratorMcpScheduledTask.Type;
 
@@ -829,6 +842,13 @@ export const OrchestratorMcpUpdateScheduledTaskInput = Schema.Struct({
   schedule: Schema.optional(OrchestratorMcpSchedule),
   enabled: Schema.optional(Schema.Boolean),
   bindToCurrentThread: Schema.optional(Schema.Boolean),
+  check: Schema.optional(Schema.NullOr(ScheduledTaskCheck)).annotate({
+    description: "Set a shell check (see schedule_task), or null to remove it.",
+  }),
+  modelSelection: Schema.optional(Schema.NullOr(ModelSelection)).annotate({
+    description:
+      "Pin runs to this model, or null to unpin so runs follow the thread's next-turn model.",
+  }),
 });
 export type OrchestratorMcpUpdateScheduledTaskInput =
   typeof OrchestratorMcpUpdateScheduledTaskInput.Type;

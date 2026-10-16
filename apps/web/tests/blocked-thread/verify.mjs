@@ -67,6 +67,45 @@ try {
         const box = await note.boundingBox();
         assert.ok(box && box.width <= width, "note fits the viewport");
       }
+      // The note overlays scrolled rows: its fill must be opaque and its own
+      // text must be the topmost element wherever it is drawn.
+      const lane = page.locator('[data-case="overlay-lane"]');
+      await lane.locator("[data-overlay-scroller]").evaluate((element) => {
+        element.scrollTop = 120;
+      });
+      const laneNote = lane.locator("[data-thread-blocker]");
+      const opaque = await laneNote.evaluate((element) => {
+        const probe = document.createElement("canvas").getContext("2d");
+        probe.fillStyle = getComputedStyle(element).backgroundColor;
+        probe.fillRect(0, 0, 1, 1);
+        return probe.getImageData(0, 0, 1, 1).data[3] === 255;
+      });
+      assert.ok(opaque, "blocker note background is opaque");
+      const covered = await laneNote.evaluate((element) => {
+        const text = element.querySelector("[data-thread-blocker-text]");
+        const rect = text.getBoundingClientRect();
+        const misses = [];
+        for (const fx of [0.1, 0.5, 0.9])
+          for (const fy of [0.2, 0.5, 0.8]) {
+            const hit = document.elementFromPoint(
+              rect.left + rect.width * fx,
+              rect.top + rect.height * fy,
+            );
+            if (!hit || !element.contains(hit)) misses.push([fx, fy, hit?.tagName ?? null]);
+          }
+        return misses;
+      });
+      assert.deepEqual(covered, [], "nothing draws over the blocker text");
+      const toggle = laneNote.getByRole("button", { name: "Show more" });
+      assert.equal(await toggle.count(), 1, "long blocker starts clamped");
+      const clampedHeight = (await laneNote.boundingBox()).height;
+      await toggle.click();
+      assert.ok(
+        (await laneNote.boundingBox()).height > clampedHeight,
+        "Show more expands the note",
+      );
+      assert.equal(await laneNote.getByRole("button", { name: "Show less" }).count(), 1);
+      await lane.screenshot({ path: path.join(output, `blocked-lane-${theme}-${width}.png`) });
       assert.deepEqual(errors, []);
       const file = path.join(output, `blocked-thread-${theme}-${width}.png`);
       await page.screenshot({ path: file, fullPage: true });

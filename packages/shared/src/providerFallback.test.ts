@@ -8,6 +8,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   canTakeTurn,
+  coordinatorFallbackReason,
   coordinatorOnLimitFallback,
   limitRestartRequest,
   providerUsedPercent,
@@ -832,5 +833,63 @@ describe("coordinatorOnLimitFallback", () => {
         limitedInstanceIds: new Set([claude.instanceId]),
       }),
     ).toBe(true);
+  });
+});
+
+describe("coordinatorFallbackReason", () => {
+  const saved = { instanceId: claude.instanceId, model: "claude-opus-5-5" };
+  const withWindows = (
+    windows: ReadonlyArray<{ id: string; label: string; used: number; resetsAt?: string }>,
+  ): ServerProvider => ({
+    ...claude,
+    usageLimits: {
+      checkedAt: claude.usageLimits!.checkedAt,
+      windows: windows.map((window) => ({
+        id: window.id,
+        kind: window.id === "five_hour" ? ("session" as const) : ("weekly" as const),
+        label: window.label,
+        usedPercent: window.used,
+        resetsAt: window.resetsAt ?? later,
+      })),
+    },
+  });
+  const reason = (provider: ServerProvider, limited = false) =>
+    coordinatorFallbackReason({
+      saved,
+      providers: [provider, codex],
+      rule: { ...switchRule, providerLimitSwitchAtPercent: 95 },
+      nowMs: now,
+      ...(limited ? { limitedInstanceIds: new Set([claude.instanceId]) } : {}),
+    });
+
+  it("names the spent window that keeps the saved model out and when it resets", () => {
+    expect(
+      reason(
+        withWindows([
+          { id: "five_hour", label: "Session", used: 0 },
+          { id: "seven_day", label: "Weekly", used: 100 },
+        ]),
+      ),
+    ).toEqual({ text: "weekly limit reached", resetsAt: Date.parse(later) });
+  });
+
+  it("names the window past the switch threshold, then a usage-limit response", () => {
+    expect(reason(withWindows([{ id: "five_hour", label: "Session", used: 96 }])).text).toBe(
+      "session at 96% used",
+    );
+    expect(reason(withWindows([{ id: "five_hour", label: "Session", used: 40 }]), true).text).toBe(
+      "returned a usage limit",
+    );
+  });
+
+  it("ignores a spent model window that does not apply to the saved model", () => {
+    expect(
+      reason(
+        withWindows([
+          { id: "five_hour", label: "Session", used: 96 },
+          { id: "seven_day_fable", label: "Weekly · Fable", used: 100 },
+        ]),
+      ).text,
+    ).toBe("session at 96% used");
   });
 });

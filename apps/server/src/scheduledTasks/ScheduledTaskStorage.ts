@@ -1,4 +1,9 @@
-import { ScheduledTask, ScheduledTaskId, ScheduledTaskError } from "@specweave-studio/contracts";
+import {
+  ScheduledTask,
+  ScheduledTaskCheck,
+  ScheduledTaskId,
+  ScheduledTaskError,
+} from "@specweave-studio/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -44,6 +49,7 @@ export interface ScheduledTaskRow {
   readonly run_count: number;
   readonly webhook_token: string | null;
   readonly webhook_secret: string | null;
+  readonly run_policy_json?: string | null;
 }
 
 export interface WebhookDeliveryRow {
@@ -113,6 +119,26 @@ function webhookEndpoint(
   };
 }
 
+const ScheduledTaskRunPolicy = Schema.Struct({
+  modelPinned: Schema.optional(Schema.Boolean),
+  check: Schema.optional(Schema.NullOr(ScheduledTaskCheck)),
+});
+const decodeRunPolicy = Schema.decodeUnknownEffect(Schema.fromJsonString(ScheduledTaskRunPolicy));
+const decodeRunPolicyJson = (json: string | null) =>
+  json === null ? Effect.succeed({} as typeof ScheduledTaskRunPolicy.Type) : decodeRunPolicy(json);
+
+/** The run policy column: null when the task sets neither. */
+export const encodeRunPolicyJson = (task: {
+  readonly modelPinned?: boolean | undefined;
+  readonly check?: ScheduledTaskCheck | null | undefined;
+}): string | null =>
+  task.modelPinned === undefined && !task.check
+    ? null
+    : JSON.stringify({
+        ...(task.modelPinned === undefined ? {} : { modelPinned: task.modelPinned }),
+        ...(task.check ? { check: task.check } : {}),
+      });
+
 export const decodeRow = (
   row: ScheduledTaskRow,
   origin: { readonly relayHookBaseUrl: string | null } | null = null,
@@ -122,6 +148,7 @@ export const decodeRow = (
     const webhook = schedule.type === "webhook" ? webhookEndpoint(row, origin) : undefined;
     const workspaceStrategy = yield* decodeWorkspaceStrategyJson(row.workspace_strategy_json);
     const modelSelection = yield* decodeModelSelectionJson(row.model_selection_json);
+    const policy = yield* decodeRunPolicyJson(row.run_policy_json ?? null);
     return yield* decodeTask({
       // The stored id decodes through the task schema so a corrupt value fails
       // as a typed parse error, not a `ScheduledTaskId.make` defect.
@@ -146,6 +173,8 @@ export const decodeRow = (
       lastRunError: row.last_run_error,
       runCount: row.run_count,
       ...(webhook === undefined ? {} : { webhook }),
+      ...(policy.modelPinned === undefined ? {} : { modelPinned: policy.modelPinned }),
+      ...(policy.check ? { check: policy.check } : {}),
     });
   }).pipe(
     Effect.mapError((cause) => {

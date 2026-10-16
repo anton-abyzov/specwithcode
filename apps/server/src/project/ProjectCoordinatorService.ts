@@ -54,9 +54,10 @@ export class ProjectCoordinatorService extends Context.Service<
     readonly send: (
       input: ProjectCoordinatorSendInput,
     ) => Effect.Effect<ProjectCoordinatorResult, ProjectWorkspaceError>;
+    /** Null asks for the project's coordinator, whichever thread that is. */
     readonly nextTurnModel: (
       projectId: ProjectId,
-      threadId: ThreadId,
+      threadId: ThreadId | null,
     ) => Effect.Effect<ModelSelection | undefined>;
   }
 >()("specweave-studio/project/ProjectCoordinatorService") {}
@@ -354,13 +355,15 @@ const make = Effect.gen(function* () {
    * scheduled task) runs on: the same choice a user message gets. Undefined
    * when the thread is not the project's coordinator or nothing can be chosen.
    */
-  const nextTurnModel = (projectId: ProjectId, threadId: ThreadId) =>
+  const nextTurnModel = (projectId: ProjectId, threadId: ThreadId | null) =>
     Effect.gen(function* () {
       const found = yield* projects.getById(projectId);
       if (Option.isNone(found)) return undefined;
       const settings = found.value.workspaceSettings ?? DEFAULT_PROJECT_WORKSPACE_SETTINGS;
-      if (settings.coordinatorThreadId !== threadId) return undefined;
-      return (yield* turnSelection(projectId, threadId, settings)) ?? undefined;
+      const coordinatorThreadId = settings.coordinatorThreadId;
+      if (!coordinatorThreadId || (threadId !== null && coordinatorThreadId !== threadId))
+        return undefined;
+      return (yield* turnSelection(projectId, coordinatorThreadId, settings)) ?? undefined;
     }).pipe(Effect.orElseSucceed(() => undefined));
   return ProjectCoordinatorService.of({ start, send, nextTurnModel });
 });

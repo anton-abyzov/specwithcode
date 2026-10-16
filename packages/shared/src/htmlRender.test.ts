@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  HTML_RENDER_EXACT_COPY_SCRIPT,
   HTML_RENDER_MAX_HEIGHT,
   htmlRenderFrameHeight,
   htmlRenderReferencesEqual,
@@ -45,7 +46,9 @@ describe("injectHtmlRenderBootstrap", () => {
       const fragment = `<${tag}><head><meta name="viewport"></head></${tag}>`;
       const injected = injectHtmlRenderBootstrap(fragment);
       expect(injected.startsWith("<!doctype html><head>")).toBe(true);
-      expect(injected.indexOf('<style id="studio-theme">')).toBeLessThan(injected.indexOf(`<${tag}>`));
+      expect(injected.indexOf('<style id="studio-theme">')).toBeLessThan(
+        injected.indexOf(`<${tag}>`),
+      );
       expect(injected).toContain('<meta name="viewport" content="width=device-width');
       expect(injected.endsWith(fragment)).toBe(true);
     },
@@ -57,7 +60,9 @@ describe("injectHtmlRenderBootstrap", () => {
   ])("keeps the bootstrap outside inert template content: %s", (fragment) => {
     const injected = injectHtmlRenderBootstrap(fragment);
     expect(injected.startsWith("<!doctype html><head>")).toBe(true);
-    expect(injected.indexOf('<style id="studio-theme">')).toBeLessThan(injected.indexOf("<template>"));
+    expect(injected.indexOf('<style id="studio-theme">')).toBeLessThan(
+      injected.indexOf("<template>"),
+    );
     expect(injected).toContain('<meta name="viewport" content="width=device-width');
     expect(injected.endsWith(fragment)).toBe(true);
   });
@@ -167,9 +172,9 @@ describe("htmlRenderFromToolItem", () => {
   });
 
   it("ignores other tools and failed calls", () => {
-    expect(htmlRenderFromToolItem({ toolName: "mcp__studio-code__html_preview", output: result })).toBe(
-      undefined,
-    );
+    expect(
+      htmlRenderFromToolItem({ toolName: "mcp__studio-code__html_preview", output: result }),
+    ).toBe(undefined);
     expect(htmlRenderFromToolItem({ toolName: "mcp__other__html_render", output: result })).toBe(
       undefined,
     );
@@ -235,5 +240,71 @@ describe("htmlRenderFrameHeight", () => {
     const copy = readHtmlRenderReference(JSON.parse(JSON.stringify(measured)))!;
     expect(htmlRenderReferencesEqual(measured, copy)).toBe(true);
     expect(htmlRenderReferencesEqual(measured, { ...copy, heights: [[390, 1290]] })).toBe(false);
+  });
+});
+
+describe("HTML_RENDER_EXACT_COPY_SCRIPT", () => {
+  const PATH = "/Users/me/Downloads/cws/icon-128.png";
+  const bytes = (text: string) => [...new TextEncoder().encode(text)];
+
+  function run(input: { activeElement?: unknown; selection?: string }) {
+    const writeText = vi.fn(async (_text: string) => {});
+    const listeners: Array<(event: unknown) => void> = [];
+    const clipboard = { writeText };
+    const fakeWindow = {
+      addEventListener: (type: string, listener: (event: unknown) => void) => {
+        if (type === "copy") listeners.push(listener);
+      },
+      getSelection: () =>
+        input.selection === undefined
+          ? null
+          : { toString: () => input.selection, rangeCount: 0, getRangeAt: () => null },
+    };
+    new Function("window", "document", "navigator", HTML_RENDER_EXACT_COPY_SCRIPT)(
+      fakeWindow,
+      { activeElement: input.activeElement ?? null, createElement: () => ({}) },
+      { clipboard },
+    );
+    const copy = () => {
+      const data = new Map<string, string>();
+      const event = {
+        defaultPrevented: false,
+        clipboardData: { setData: (type: string, value: string) => data.set(type, value) },
+        preventDefault() {
+          event.defaultPrevented = true;
+        },
+      };
+      for (const listener of listeners) listener(event);
+      return { data, prevented: event.defaultPrevented };
+    };
+    return { clipboard, writeText, copy };
+  }
+
+  it("writes a page's Copy button text without its trailing newline", async () => {
+    const { clipboard, writeText } = run({});
+    await clipboard.writeText(`\uFEFF${PATH}\u00A0\n`);
+    expect(bytes(writeText.mock.calls[0]![0])).toEqual(bytes(PATH));
+  });
+
+  it("copies a selected textarea path exactly, as execCommand copy does", () => {
+    const textarea = {
+      tagName: "TEXTAREA",
+      value: `${PATH}\n`,
+      selectionStart: 0,
+      selectionEnd: PATH.length + 1,
+    };
+    const { copy } = run({ activeElement: textarea });
+    const { data, prevented } = copy();
+    expect(prevented).toBe(true);
+    expect(bytes(data.get("text/plain")!)).toEqual(bytes(PATH));
+  });
+
+  it("leaves a copy that is already exact to the browser", () => {
+    const { copy } = run({ selection: PATH });
+    expect(copy().prevented).toBe(false);
+  });
+
+  it("ships in every page's bootstrap", () => {
+    expect(injectHtmlRenderBootstrap("<p>x</p>")).toContain(HTML_RENDER_EXACT_COPY_SCRIPT);
   });
 });

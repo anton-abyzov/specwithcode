@@ -46,6 +46,7 @@ describe("V2 preview upgrade", () => {
         [63, "ProjectConnections"],
         [64, "ThreadIncrementLinks"],
         [65, "ProjectActionRequests"],
+        [66, "ScheduledTaskRunPolicy"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -134,6 +135,7 @@ describe("V2 preview upgrade", () => {
         [63, "ProjectConnections"],
         [64, "ThreadIncrementLinks"],
         [65, "ProjectActionRequests"],
+        [66, "ScheduledTaskRunPolicy"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

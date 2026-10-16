@@ -98,6 +98,7 @@ import {
   bulkStopTargets,
 } from "./OrchestratorMcpBulkThreads.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import { checkAllowedFor, isModelPinned } from "../scheduledTasks/ScheduledTaskCheck.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import {
   clientRuntimeModeCeiling,
@@ -233,6 +234,29 @@ function failure(code: OrchestratorMcpFailure["code"], message: string): Orchest
   return new OrchestratorMcpFailure({ code, message });
 }
 
+/**
+ * A routine's check runs a shell command unattended, outside any approval
+ * prompt, so only a caller (and a routine) already allowed full access may
+ * set one.
+ */
+function assertCheckAllowed(
+  check: unknown,
+  modes: ReadonlyArray<{
+    readonly runtimeMode: RuntimeMode;
+    readonly interactionMode: ProviderInteractionMode;
+  }>,
+): Effect.Effect<void, OrchestratorMcpFailure> {
+  if (check === undefined || check === null) return Effect.void;
+  return checkAllowedFor(modes)
+    ? Effect.void
+    : Effect.fail(
+        failure(
+          "invalid_request",
+          "check runs a shell command without approval, so it needs a full-access thread outside plan mode.",
+        ),
+      );
+}
+
 function threadManagementFailure(error: unknown): OrchestratorMcpFailure {
   if (!isThreadManagementError(error)) return failure("orchestration_error", errorMessage(error));
   switch (error._tag) {
@@ -290,6 +314,8 @@ function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): Orchestrato
     ...(task.webhook === undefined
       ? {}
       : { webhookSignature: task.webhook.hasSecret ? "set" : "none" }),
+    ...(task.check ? { check: task.check } : {}),
+    ...(isModelPinned(task) ? { pinnedModel: task.modelSelection } : {}),
   };
 }
 
@@ -1711,6 +1737,7 @@ const make = Effect.gen(function* () {
         const projectId = yield* resolveProjectTarget(parent, input.projectId);
         yield* assertLiveCallerForOtherProject(scope, parent, projectId);
         const project = yield* requireProject(projectId);
+        yield* assertCheckAllowed(input.check, [limits]);
         // Binding means "wake this thread", which only a thread caller in that project has.
         const bindToCurrentThread =
           input.bindToCurrentThread ??
@@ -1726,8 +1753,12 @@ const make = Effect.gen(function* () {
               : "bindToCurrentThread binds to this thread, which belongs to a different project.",
           );
         }
+        // Recorded for a fresh thread's first run only; unless the caller pins
+        // it, runs follow the thread's next-turn model instead.
         const modelSelection =
-          parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project));
+          input.modelSelection ??
+          parent?.thread.modelSelection ??
+          (yield* projectDefaultModelSelection(project));
         const derivedTitle = input.prompt.split("\n")[0]?.trim() ?? "";
         const title =
           input.title ?? (derivedTitle.length > 0 ? derivedTitle.slice(0, 80) : "Scheduled task");
@@ -1744,6 +1775,8 @@ const make = Effect.gen(function* () {
           interactionMode: limits.interactionMode,
           createdBy: "agent",
           creationSource: "mcp",
+          modelPinned: input.modelSelection !== undefined,
+          ...(input.check === undefined ? {} : { check: input.check }),
           // Scope the idempotency key by provider session so two callers
           // reusing the same clientRequestId cannot collide on one task row.
           ...(input.clientRequestId === undefined
@@ -1788,6 +1821,7 @@ const make = Effect.gen(function* () {
         const { parent, limits } = yield* loadCaller(scope);
         const existing = yield* loadScheduledTask(input.scheduledTaskId, limits);
         yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
+        yield* assertCheckAllowed(input.check, [limits, existing]);
         if (
           input.bindToCurrentThread === true &&
           (parent === undefined || parent.thread.projectId !== existing.projectId)
@@ -1821,11 +1855,15 @@ const make = Effect.gen(function* () {
           projectId: existing.projectId,
           threadId,
           workspaceStrategy,
-          modelSelection: existing.modelSelection,
+          modelSelection: input.modelSelection ?? existing.modelSelection,
           runtimeMode: existing.runtimeMode,
           interactionMode: existing.interactionMode,
           createdBy: existing.createdBy,
           creationSource: existing.creationSource,
+          ...(input.modelSelection === undefined
+            ? {}
+            : { modelPinned: input.modelSelection !== null }),
+          ...(input.check === undefined ? {} : { check: input.check }),
         };
         const { task } = yield* scheduledTasks
           .upsert(upsertInput)

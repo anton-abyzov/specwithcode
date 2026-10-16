@@ -47,6 +47,8 @@ Document changes to user tasks and durable architectural constraints, not copies
 
 ## Commands
 
+Releases: `bash scripts/release/release.sh <version>` (try `--dry-run` first); the runbook is docs/studio/releasing.md.
+
 Focused ACP permission regression: `node node_modules/vite-plus/bin/vp test run apps/server/src/provider/acp/AcpPermissions.test.ts apps/server/src/provider/acp/AcpPermissions.lifecycle.test.ts apps/web/src/components/chat/unifiedPermissions.test.tsx`. Headless composer check: `node apps/web/tests/unified-permissions/check.mjs` (set `PLAYWRIGHT_MODULE` / `PLAYWRIGHT_EXECUTABLE` for a scoped installed runtime).
 
 Use Node 22.20.0 explicitly and the isolated pnpm 11.10.0 toolchain. Paths below are relative to this repository unless a working directory is specified. Verification of saved receipts requires their retained local evidence; it is not live acceptance or a fresh build.

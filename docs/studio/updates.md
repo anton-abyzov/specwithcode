@@ -76,21 +76,12 @@ To install the agent by hand on a Mac without the desktop app (M1, M3):
 
 ## Publishing a release
 
-1. Build the service archive and helpers with `scripts/studio-fleet/bundle.mjs`, and the desktop app with an explicit version: `node scripts/build-desktop-artifact.ts --platform mac --target dmg --arch arm64 --build-version 0.2.1`. Builds without `--build-version` are stamped `<next patch>-dev.<date>.g<commit>`, so they are offered the next release. Run directly with `node`, the script adds the workspace `node_modules/.bin` (for `vp`) and `~/.cargo/bin` to `PATH` when they exist. The feed defaults to the checkout's github.com origin; `STUDIO_DESKTOP_UPDATE_REPOSITORY` overrides it.
-2. Upload `latest-mac.yml`, the zip and its blockmap, the dmg, the runtime and helper archives, `SHA256SUMS` and `deployment-helpers-manifest.json` to a release tagged `v0.2.1`.
-3. Write the plan, listing each installed source commit that may upgrade on its own, and upload it:
-
-   ```sh
-   python3 scripts/studio-fleet/make_update_plan.py --version 0.2.1 --source-commit <commit> \
-     --sha256sums SHA256SUMS --runtime <runtime.tgz> --helpers <helpers.tar.gz> \
-     --from-source <installed-commit> --arg=--allow-project-migrations \
-     --arg=--allow-existing-browser-heartbeat --upload v0.2.1
-   ```
-
-   Take each `<installed-commit>` from `update_agent.py --status` (`installedSourceCommit`) on the machine, not from `git rev-parse` of an older tag. The history was rewritten on 2026-10-13, so releases up to 1.0.8 report source commits that no longer exist in the repository.
+`bash scripts/release/release.sh <version>` builds, signs, publishes and rolls out a release; the
+runbook is [releasing](./releasing.md). The plan it writes takes the installed source commits that
+may upgrade on their own from the previous release's plan (`make_update_plan.py --previous-plan`),
+plus any `--from-source <installed-commit>` given by hand. Take such a commit from
+`update_agent.py --status` (`installedSourceCommit`) on the machine, not from `git rev-parse` of an
+older tag: the history was rewritten on 2026-10-13, so releases up to 1.0.8 report source commits
+that no longer exist in the repository.
 
 A release without a plan shows "needs a manual upgrade" in Settings and is never installed on its own.
-
-## Signing, later
-
-Signed and notarized builds need the Apple Developer ID certificate and an App Store Connect API key as build secrets: `CSC_LINK`, `CSC_KEY_PASSWORD`, `APPLE_API_KEY`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`. With them, `--signed` builds switch to Squirrel.Mac and keep macOS permissions across updates.

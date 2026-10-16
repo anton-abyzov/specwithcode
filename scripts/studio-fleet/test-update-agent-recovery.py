@@ -293,6 +293,39 @@ class AutomaticRecovery(RecoveryCase):
         self.assertEqual(self.state()['status'], 'error')
         self.assertEqual(len(self.apply_calls()), 3)
 
+    def test_a_kept_release_that_failed_its_check_is_not_reported_as_not_installed(self):
+        self.fake.add_release()
+        self.config(quietMinutes=0)
+        # What update.py writes when the restarted release failed a check and was kept for review.
+        self.control(applyFailAfterSwitch=True, switchReceipt={
+            'phase': 'restart-requested', 'pointers': 'new-release', 'attemptedAfter': {'servicePid': 5151},
+            'error': 'AssertionError: Owned restart window is not bounded', 'rollbackError': 'AssertionError'})
+        self.run_agent()
+        self.run_agent()
+        state = self.state()
+        self.assertEqual((state['status'], state['installedVersion']), ('error', '0.2.0'))
+        self.assertIn('0.2.0 is running, but a check after the restart failed', state['message'])
+        self.assertNotIn('did not install', state['message'])
+
+    def test_a_kept_release_whose_rollback_failed_is_named_as_running(self):
+        self.fake.add_release()
+        self.config(quietMinutes=0)
+        self.control(applyFailAfterSwitch=True, switchReceipt={
+            'pointers': 'new-release', 'attemptedAfter': {'servicePid': 5151},
+            'rollback': 'held-new-release-state-restore-failed'})
+        self.run_agent()
+        self.run_agent()
+        self.assertIn('0.2.0 is running, but a check after the restart failed', self.state()['message'])
+
+    def test_a_new_version_on_disk_without_a_kept_restart_is_still_reported_as_not_installed(self):
+        self.fake.add_release()
+        self.config(quietMinutes=0)
+        # Pointers left mixed by a failed restore: installation.json names 0.2.0, the old service runs.
+        self.control(applyFailAfterSwitch=True, switchReceipt={'pointers': 'mixed-see-backup'})
+        self.run_agent()
+        self.run_agent()
+        self.assertIn('0.2.0 did not install', self.state()['message'])
+
     def test_generic_and_partial_failure_stay_held_when_target_changes(self):
         self.fake.add_release()
         self.config(quietMinutes=0)

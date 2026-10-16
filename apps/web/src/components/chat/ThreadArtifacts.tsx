@@ -17,7 +17,6 @@ import {
   LinkIcon,
   PanelRightOpenIcon,
   ShapesIcon,
-  XIcon,
 } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
@@ -71,6 +70,19 @@ const KIND_ICON: Record<ThreadArtifactKind, typeof FileIcon> = {
   link: LinkIcon,
 };
 
+/** What an artifact is, in the overlay header's words. */
+const KIND_LABEL: Record<ThreadArtifactKind, string> = {
+  image: "Image",
+  video: "Video",
+  audio: "Audio",
+  html: "Page",
+  markdown: "Document",
+  pdf: "PDF",
+  code: "File",
+  file: "File",
+  link: "Link",
+};
+
 function extensionBadge(name: string): string {
   const dot = name.lastIndexOf(".");
   return dot > 0 ? name.slice(dot + 1, dot + 5).toUpperCase() : "FILE";
@@ -99,7 +111,17 @@ export function useThreadArtifacts(
     const replies = (messages ?? [])
       .filter((message) => message.role === "assistant")
       .map((message) => ({ id: message.id, text: message.text }));
-    const fromText = collectThreadArtifacts(replies, cwd);
+    const createdFiles = (turnItems ?? []).flatMap((item) =>
+      item.type === "file_change" && item.status === "completed"
+        ? (item.changes?.length
+            ? item.changes.flatMap((change) =>
+                /^(?:delete|remove)/i.test(change.operation) ? [] : [change.path],
+              )
+            : [item.fileName]
+          ).map((path) => ({ path, itemId: item.id }))
+        : [],
+    );
+    const fromText = collectThreadArtifacts(replies, cwd, createdFiles);
     const renders: ThreadRenderArtifact[] = [];
     for (const item of turnItems ?? []) {
       if (item.type !== "dynamic_tool" || item.status !== "completed") continue;
@@ -347,13 +369,84 @@ export function ArtifactViewer(props: {
   const path = "meta" in artifact ? artifact.meta.filePath : null;
   const createdAt = useArtifactDate(props.threadRef, artifact);
   const date = formatViewerDate(createdAt);
-  const slot = useViewerOverlay({
+  const slots = useViewerOverlay({
     open: true,
     title: artifact.name,
+    kind: KIND_LABEL[artifact.kind],
+    badge: extensionBadge(artifact.name),
+    detail: date,
     threadRef: props.threadRef,
     onClose: props.onClose,
   });
-  if (slot === null) return null;
+  if (slots === null) return null;
+  const actions = (
+    <>
+      {count > 1 ? (
+        <>
+          <span
+            className="px-1 text-muted-foreground text-xs tabular-nums"
+            data-artifact-position="true"
+          >
+            {props.index + 1} of {count}
+          </span>
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            aria-label="Previous artifact"
+            onClick={() => step(-1)}
+          >
+            <ChevronLeftIcon aria-hidden />
+          </Button>
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            aria-label="Next artifact"
+            onClick={() => step(1)}
+          >
+            <ChevronRightIcon aria-hidden />
+          </Button>
+        </>
+      ) : null}
+      {url ? (
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          aria-label={`Download ${artifact.name}`}
+          render={<a href={url} download={artifact.name} />}
+        >
+          <DownloadIcon aria-hidden />
+        </Button>
+      ) : null}
+      <ViewerFileActions
+        environmentId={props.threadRef.environmentId}
+        path={path}
+        name={artifact.name}
+        menuItems={
+          <>
+            {props.onOpenInPanel && "meta" in artifact ? (
+              <MenuItem
+                onClick={() => {
+                  props.onOpenInPanel?.(artifact);
+                  props.onClose();
+                }}
+              >
+                <PanelRightOpenIcon aria-hidden />
+                Open in panel
+              </MenuItem>
+            ) : null}
+            {url ? (
+              <MenuItem onClick={() => openExternally(url)}>
+                <ExternalLinkIcon aria-hidden />
+                Open in browser
+              </MenuItem>
+            ) : null}
+          </>
+        }
+      />
+    </>
+  );
   return createPortal(
     <div
       className="viewer-overlay-frame"
@@ -364,100 +457,7 @@ export function ArtifactViewer(props: {
         if (event.key === "ArrowRight" && count > 1) step(1);
       }}
     >
-      <header className="report-reader-toolbar">
-        <span className="report-reader-badge" aria-hidden>
-          {extensionBadge(artifact.name)}
-        </span>
-        <h2 className="report-reader-title">{artifact.name}</h2>
-        {date ? (
-          <time
-            className="shrink-0 text-muted-foreground text-xs"
-            dateTime={createdAt ?? undefined}
-          >
-            {date}
-          </time>
-        ) : null}
-        {path ? (
-          <span className="report-reader-subtitle" dir="rtl">
-            <bdi>{path}</bdi>
-          </span>
-        ) : null}
-        <div className="ml-auto flex shrink-0 items-center gap-0.5">
-          {count > 1 ? (
-            <>
-              <span
-                className="px-1 text-muted-foreground text-xs tabular-nums"
-                data-artifact-position="true"
-              >
-                {props.index + 1} of {count}
-              </span>
-              <Button
-                type="button"
-                size="icon-sm"
-                variant="ghost"
-                aria-label="Previous artifact"
-                onClick={() => step(-1)}
-              >
-                <ChevronLeftIcon aria-hidden />
-              </Button>
-              <Button
-                type="button"
-                size="icon-sm"
-                variant="ghost"
-                aria-label="Next artifact"
-                onClick={() => step(1)}
-              >
-                <ChevronRightIcon aria-hidden />
-              </Button>
-            </>
-          ) : null}
-          {url ? (
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              aria-label={`Download ${artifact.name}`}
-              render={<a href={url} download={artifact.name} />}
-            >
-              <DownloadIcon aria-hidden />
-            </Button>
-          ) : null}
-          <ViewerFileActions
-            environmentId={props.threadRef.environmentId}
-            path={path}
-            name={artifact.name}
-            menuItems={
-              <>
-                {props.onOpenInPanel && "meta" in artifact ? (
-                  <MenuItem
-                    onClick={() => {
-                      props.onOpenInPanel?.(artifact);
-                      props.onClose();
-                    }}
-                  >
-                    <PanelRightOpenIcon aria-hidden />
-                    Open in panel
-                  </MenuItem>
-                ) : null}
-                {url ? (
-                  <MenuItem onClick={() => openExternally(url)}>
-                    <ExternalLinkIcon aria-hidden />
-                    Open in browser
-                  </MenuItem>
-                ) : null}
-              </>
-            }
-          />
-          <Button
-            type="button"
-            size="icon-sm"
-            variant="ghost"
-            aria-label="Close artifact"
-            onClick={props.onClose}
-          >
-            <XIcon aria-hidden />
-          </Button>
-        </div>
-      </header>
+      {slots.actions ? createPortal(actions, slots.actions) : null}
       <div className="artifact-viewer-stage" data-artifact-stage="true">
         <ArtifactBody
           key={artifact.key}
@@ -471,7 +471,7 @@ export function ArtifactViewer(props: {
         />
       </div>
     </div>,
-    slot,
+    slots.content,
   );
 }
 

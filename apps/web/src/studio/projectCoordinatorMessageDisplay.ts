@@ -225,6 +225,37 @@ export function routedRepliesForThread<At = string>(
 }
 
 /**
+ * Follow-ups typed in a worker that the coordinator only passed back to that
+ * same worker, with its replies. Sending a thread its own message is routine,
+ * so the coordinator conversation leaves the exchange out; a follow-up it moved
+ * elsewhere, kept, or has not answered yet still shows.
+ */
+export function returnedFollowUpIds(
+  messages: readonly (Message & { readonly streaming?: boolean | undefined })[],
+  project: { readonly id: string; readonly environmentId: string },
+  workers: readonly Worker[],
+): ReadonlySet<string> {
+  const ids = new Set<string>();
+  messages.forEach((message, index) => {
+    const source = projectCoordinatorMessageDisplay(message, project, workers).sourceThread;
+    if (source === null) return;
+    const replies: string[] = [];
+    let linked: string[] | null = null;
+    for (const next of messages.slice(index + 1)) {
+      if (next.role === "user") break;
+      if (next.role !== "assistant") continue;
+      replies.push(next.id);
+      if (linked === null && !next.streaming && next.text.trim() !== "")
+        linked = linkedThreadIds(next.text);
+    }
+    if (linked === null || linked.length === 0 || linked.some((id) => id !== source.id)) return;
+    ids.add(message.id);
+    for (const id of replies) ids.add(id);
+  });
+  return ids;
+}
+
+/**
  * The coordinator conversation's messages that carry a worker's report and fold
  * when long: a message a worker sent, and the coordinator's replies after a worker
  * reports back (a delegated-task completion or a worker's message), which relay

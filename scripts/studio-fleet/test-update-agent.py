@@ -107,7 +107,8 @@ receipt['archiveSha256'] = args.sha256
 receipt['release'] = str(home / '.specwithcode/install/releases' / args.sha256[:20])
 path.write_text(json.dumps(receipt))
 if control.get('applyFailAfterSwitch'):
-    pathlib.Path(args.output).write_text(json.dumps({'result': 'update-failed', 'rollback': 'held-for-safe-review'}))
+    pathlib.Path(args.output).write_text(json.dumps({'result': 'update-failed', 'rollback': 'held-for-safe-review',
+                                                     **control.get('switchReceipt', {})}))
     sys.exit(1)
 pathlib.Path(args.output).write_text(json.dumps({'phase': 'verified', 'preservedRowsAuthAndIdentity': True,
     'originalServicesPreserved': True, 'onlyKnownOwnedServiceRestarted': True, 'cookie': 'helper-private-receipt',
@@ -1475,7 +1476,8 @@ class BackgroundPriorityTests(unittest.TestCase):
                   'assert os.getpriority(4,0)==1;'
                   'r=subprocess.run([sys.executable,"-c",%r],capture_output=True,text=True,preexec_fn=update_agent.leave_background);'
                   'sys.stdout.write(r.stdout)') % (str(pathlib.Path(update_agent.__file__).parent), probe)
-        result = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, timeout=60)
+        # Background priority throttles the probe's import; 60s timed out on a loaded host.
+        result = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, timeout=300)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, '0')
 

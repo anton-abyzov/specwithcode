@@ -45,9 +45,13 @@ export function UserMessageProvenance({
   if (message.routedNote) return null;
   const fromCoordinator =
     senderThreadId !== undefined && senderThreadId === routing?.coordinatorThreadId;
+  // The user's own words the coordinator passed back to the thread they were
+  // typed in read as typed here: routing them home is not news.
+  const returnedHome = fromCoordinator && message.createdBy === "user";
   if (
     !presentation.isAutomation &&
     senderThreadId &&
+    !returnedHome &&
     (fromCoordinator || message.createdBy === "user")
   )
     // Routed through another thread: one quiet marker; who routed it and where it ran on hover.
@@ -68,9 +72,7 @@ export function UserMessageProvenance({
           } · ${execution}`}
         >
           {message.createdBy === "user"
-            ? fromCoordinator
-              ? "via coordinator"
-              : "via another thread"
+            ? "via another thread"
             : fromCoordinator
               ? "from coordinator"
               : "from another agent"}

@@ -111,7 +111,7 @@ export function RoutedMessageNoteLine({
     <p className="me-1 text-2xs text-muted-foreground" data-routed-note={note.kind}>
       {note.kind === "sent" && note.targetThreadId !== null ? (
         <button type="button" className={link} onClick={() => onOpenThread(note.targetThreadId!)}>
-          → Sent to {target?.title ?? "another thread"}
+          Moved to {target?.title ?? "another thread"}
         </button>
       ) : note.kind === "pending" ? (
         "Sending via coordinator…"

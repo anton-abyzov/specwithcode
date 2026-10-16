@@ -32,6 +32,8 @@ PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never node tests/project-workspace/check.mjs
 
 `enter-send-check.mjs` types into the coordinator composer the way a person does. Enter sends the message and Shift+Enter breaks the line. An Enter dispatched during an input method's composition (after `compositionstart`, with `isComposing` or `keyCode` 229) does not send, and the Enter after it does. Cmd/Ctrl+Enter also sends. A 600 px desktop window still sends on Enter and keeps focus in the composer, while a 390 px touch phone keeps Return as a new line and sends from the Send button, and so does an 844 px landscape touch phone. Set `UI_EVIDENCE_DIR` to a new directory and `PROJECT_UI_PORT` when the fixture runs on another port.
 
+`followup-check.mjs` opens the fixture with follow-ups typed in workers before they went straight to the worker (`?followups`). The coordinator conversation must leave out a follow-up it only passed back to its own worker, and its reply, and keep one it moved to another worker with its "Moved to" line. A reply typed in a worker on this machine must not reach the coordinator. It checks light and dark at 1440 px.
+
 `timeline-detail-check.mjs` opens the coordinator with runs and work items attached to its turns (`?activity`). It checks each level at 1440 px and 390 px, in light and dark.
 
 In every level the commentary that starts "Consolidate the skills" and carries `triage-notes.md` shows that thread's card and the file once; Concise moves both to the turn's answer.

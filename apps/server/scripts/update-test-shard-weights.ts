@@ -4,23 +4,13 @@
 // Runs the whole server suite once and records how long each test file takes,
 // so CI can split the suite into shards of equal duration. See
 // src/testUtils/weightedShardSequencer.ts. Rerun it when a shard in CI runs
-// much longer than the others.
+// much longer than the others. To record from the shard reports of a sharded
+// run instead, use the root scripts/update-test-shard-weights.ts.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
-
-// Files faster than this are all treated alike, which keeps the weights file short.
-const MIN_RECORDED_SECONDS = 0.5;
-
-interface VitestJsonReport {
-  readonly testResults: ReadonlyArray<{
-    readonly name: string;
-    readonly startTime: number;
-    readonly endTime: number;
-  }>;
-}
 
 const serverDir = NodeURL.fileURLToPath(new URL("..", import.meta.url));
 const weightsPath = NodePath.join(serverDir, "src/testUtils/shardWeights.json");
@@ -35,20 +25,21 @@ NodeChildProcess.spawnSync(
   { cwd: serverDir, stdio: "inherit" },
 );
 
-const report: VitestJsonReport = JSON.parse(NodeFS.readFileSync(reportPath, "utf8"));
-NodeFS.rmSync(reportDir, { recursive: true, force: true });
-
-const weights = Object.fromEntries(
-  report.testResults
-    .map(
-      (file) =>
-        [
-          NodePath.relative(serverDir, file.name).replaceAll("\\", "/"),
-          Math.round((file.endTime - file.startTime) / 100) / 10,
-        ] as const,
-    )
-    .filter(([, seconds]) => seconds >= MIN_RECORDED_SECONDS)
-    .toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+// The root script owns the recording rules (span, rounding, threshold, key form), so a full
+// run here and the shard reports of a release run record the same way.
+const recorded = NodeChildProcess.spawnSync(
+  process.execPath,
+  [
+    NodeURL.fileURLToPath(
+      new URL("../../../scripts/update-test-shard-weights.ts", import.meta.url),
+    ),
+    reportPath,
+    "--root",
+    serverDir,
+    "--out",
+    weightsPath,
+  ],
+  { stdio: "inherit" },
 );
-
-NodeFS.writeFileSync(weightsPath, `${JSON.stringify(weights, null, 2)}\n`);
+NodeFS.rmSync(reportDir, { recursive: true, force: true });
+process.exitCode = recorded.status ?? 1;

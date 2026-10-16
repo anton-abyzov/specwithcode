@@ -721,6 +721,7 @@ code {
 .viewer-overlay {
   inset: 2.75rem 1rem 1rem;
   display: flex;
+  flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 0.875rem;
@@ -737,12 +738,127 @@ code {
   transform: scale(0.985);
 }
 
+/* The overlay's one header, across the viewer and the thread: Back, where you
+   are, the viewer's actions, the thread toggle and Close. */
+.viewer-overlay-head {
+  display: flex;
+  height: 3rem;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.375rem;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in oklab, var(--muted) 35%, var(--background));
+  padding-inline: 0.5rem;
+}
+
+.viewer-overlay-crumbs {
+  display: flex;
+  min-width: 0;
+  flex: 0 1 auto;
+  padding-left: 0.375rem;
+}
+
+.viewer-overlay-crumbs ol {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.viewer-overlay-crumb {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.8125rem;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+
+.viewer-overlay-crumb[data-crumb="source"],
+.viewer-overlay-crumb[data-crumb="trail"] {
+  flex-shrink: 2;
+  max-width: 18rem;
+}
+
+.viewer-overlay-crumb[data-crumb="current"] {
+  flex-shrink: 1;
+}
+
+.viewer-overlay-crumb-sep {
+  width: 0.875rem;
+  height: 0.875rem;
+  flex-shrink: 0;
+  margin-inline: 0.125rem 0.0625rem;
+  opacity: 0.6;
+}
+
+.viewer-overlay-kind {
+  flex-shrink: 0;
+}
+
+.viewer-overlay-current {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.viewer-overlay-detail {
+  flex-shrink: 0;
+  padding-left: 0.375rem;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+
+.viewer-overlay-actions {
+  display: flex;
+  min-width: 0;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.125rem;
+  margin-left: auto;
+}
+
+.viewer-overlay-head-rule {
+  width: 1px;
+  height: 1.25rem;
+  flex-shrink: 0;
+  margin-inline: 0.25rem;
+  background: var(--border);
+}
+
+.viewer-overlay-close,
+.viewer-overlay-thread-toggle {
+  display: flex;
+  flex-shrink: 0;
+}
+
+.viewer-overlay-esc {
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  padding: 0 0.25rem;
+  font-family: inherit;
+  font-size: 0.625rem;
+  line-height: 1rem;
+  color: var(--muted-foreground);
+}
+
+.viewer-overlay-body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+}
+
 .viewer-overlay-content {
   display: flex;
   min-height: 0;
   min-width: 0;
   flex: 1;
   flex-direction: column;
+  outline: none;
 }
 
 .viewer-overlay-frame {
@@ -753,10 +869,6 @@ code {
   flex-direction: column;
 }
 
-.viewer-overlay-content:empty {
-  display: none;
-}
-
 .viewer-overlay-thread {
   display: flex;
   width: clamp(22rem, 34%, 34rem);
@@ -764,26 +876,6 @@ code {
   flex-direction: column;
   border-left: 1px solid var(--border);
   overflow: hidden;
-}
-
-.viewer-overlay-thread-head {
-  display: flex;
-  height: 2.75rem;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 0.5rem;
-  border-bottom: 1px solid var(--border);
-  padding-inline: 0.75rem 0.5rem;
-}
-
-.viewer-overlay-thread-rail {
-  display: flex;
-  width: 2.75rem;
-  flex-shrink: 0;
-  flex-direction: column;
-  align-items: center;
-  border-left: 1px solid var(--border);
-  padding-top: 0.375rem;
 }
 
 .viewer-overlay-thread-chat {
@@ -800,39 +892,17 @@ code {
   }
 
   .viewer-overlay-thread,
-  .viewer-overlay-thread-rail {
+  .viewer-overlay-thread-toggle,
+  .viewer-overlay-detail,
+  .viewer-overlay-crumb[data-crumb="source"],
+  .viewer-overlay-crumb[data-crumb="trail"],
+  .viewer-overlay-esc {
     display: none;
   }
-}
 
-.report-reader-toolbar {
-  display: flex;
-  height: 2.75rem;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 0.5rem;
-  border-bottom: 1px solid var(--border);
-  padding-inline: 0.75rem 0.5rem;
-}
-
-.report-reader-title {
-  min-width: 0;
-  overflow: hidden;
-  font-size: 0.875rem;
-  font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.report-reader-subtitle {
-  min-width: 0;
-  max-width: 28rem;
-  overflow: hidden;
-  font-family: var(--font-mono, monospace);
-  font-size: 0.6875rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--muted-foreground);
+  .viewer-overlay-crumb[data-crumb="current"] > .viewer-overlay-crumb-sep {
+    display: none;
+  }
 }
 
 .report-reader-badge {

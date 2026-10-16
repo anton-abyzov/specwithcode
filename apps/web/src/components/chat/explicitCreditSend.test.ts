@@ -30,6 +30,7 @@ import {
   type CreditSendContext,
 } from "./explicitCreditSend";
 import { settleAfter, settleCaught } from "../../lib/settle";
+import { routesViaCoordinator } from "../../studio/projectMessageRouting";
 
 const now = Date.parse("2026-10-09T08:00:00.000Z"),
   at = new Date(now).toISOString();
@@ -483,6 +484,7 @@ describe("actual callback integration", () => {
       currentCreditRouteRef: { current: { allowed: true } },
       composerRef: { current: { rejectCreditSubmission: reject } },
       routeProjectComposerSend: route,
+      routesViaCoordinator,
       promptRef: prompt,
     });
     await callback(

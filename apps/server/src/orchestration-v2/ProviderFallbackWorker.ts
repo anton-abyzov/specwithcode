@@ -191,7 +191,7 @@ export function providerFallbackCommand(
     return {
       type: "message.dispatch",
       commandId: CommandId.make(`limit-fallback:${identity}`),
-      messageId: MessageId.make(`limit-fallback:${identity}`),
+      messageId: MessageId.make(`${LIMIT_FALLBACK_MESSAGE_PREFIX}${identity}`),
       threadId: thread.id,
       manualContinuationOfRunId: thread.latestRunId,
       modelSelection: target,
@@ -435,8 +435,9 @@ export function apiCreditOrigin(
       "id" | "ordinal" | "providerInstanceId" | "modelSelection" | "userMessageId"
     >
   >,
+  messagePrefix: string = API_CREDIT_MESSAGE_PREFIX,
 ): ApiCreditOrigin | null {
-  const prefix = `${API_CREDIT_MESSAGE_PREFIX}${thread.id}:`;
+  const prefix = `${messagePrefix}${thread.id}:`;
   const latestFirst = runs.toSorted((a, b) => b.ordinal - a.ordinal);
   for (const run of latestFirst) {
     if (run.providerInstanceId !== thread.providerInstanceId) return null;
@@ -548,6 +549,54 @@ export function apiCreditReturnCommand(
     type: "thread.model-selection.set",
     commandId: CommandId.make(
       `limit-api-return:${thread.id}:${origin.continuedByRunId}${attempt === 0 ? "" : `:${attempt}`}`,
+    ),
+    threadId: thread.id,
+    modelSelection: origin.modelSelection,
+  };
+}
+
+/** The message id prefix of the continuation the `switch` rule sent on a usage-limit stop. */
+export const LIMIT_FALLBACK_MESSAGE_PREFIX = "limit-fallback:";
+
+/**
+ * The way back from a `switch` fallback. The fallback covers the runs the
+ * limit stopped, not the thread from then on: once the provider it stopped
+ * on reads as having room again (or its reset has passed), the idle thread
+ * goes back to the model it ran before the limit.
+ */
+export function limitFallbackReturnCommand(
+  thread: FallbackThread,
+  origin: ApiCreditOrigin,
+  providers: ReadonlyArray<ServerProvider>,
+  nowMs: number,
+  attempt = 0,
+): Extract<OrchestrationV2ServerCommand, { type: "thread.model-selection.set" }> | null {
+  if (thread.activeRunId !== null || thread.pendingRuntimeRequest !== null) return null;
+  if (thread.settledOverride === "settled") return null;
+  if (thread.activityRunStatus != null || hostsBackgroundWork(thread)) return null;
+  const home = providers.find(
+    (provider) => provider.instanceId === origin.modelSelection.instanceId,
+  );
+  if (
+    home === undefined ||
+    !home.enabled ||
+    !home.installed ||
+    !isProviderAvailable(home) ||
+    home.auth.status === "unauthenticated"
+  )
+    return null;
+  const limits = home.usageLimits;
+  const readShowsNoLimit =
+    limits !== undefined &&
+    limits.unavailable === undefined &&
+    limits.windows.length > 0 &&
+    reachedLimitWindow(home, nowMs, origin.modelSelection.model) === null;
+  const resetMs = Date.parse(origin.resetAt ?? "");
+  if (!readShowsNoLimit && !(Number.isFinite(resetMs) && resetMs <= nowMs)) return null;
+  return {
+    type: "thread.model-selection.set",
+    commandId: CommandId.make(
+      `limit-return:${thread.id}:${origin.continuedByRunId}${attempt === 0 ? "" : `:${attempt}`}`,
     ),
     threadId: thread.id,
     modelSelection: origin.modelSelection,
@@ -739,12 +788,15 @@ export const makeSweep = Effect.gen(function* () {
     ruleOn: boolean,
   ) {
     if (thread.latestRunId === null) return null;
-    if (
-      !isClaudeApiKeyProvider(
-        providers.find((provider) => provider.instanceId === thread.providerInstanceId),
-      )
-    )
-      return null;
+    // On an API-key instance the API-credit rule put it there; anywhere else,
+    // the `switch` rule may have.
+    const apiCredits = isClaudeApiKeyProvider(
+      providers.find((provider) => provider.instanceId === thread.providerInstanceId),
+    );
+    const returnCommand = (current: FallbackThread, found: ApiCreditOrigin, attempt: number) =>
+      apiCredits
+        ? apiCreditReturnCommand(current, found, providers, nowMs, { ruleOn, attempt })
+        : limitFallbackReturnCommand(current, found, providers, nowMs, attempt);
     const key = `${thread.id}:${thread.latestRunId}:${thread.providerInstanceId}`;
     let origin = (yield* Ref.get(origins)).get(key);
     if (origin === undefined) {
@@ -752,7 +804,11 @@ export const makeSweep = Effect.gen(function* () {
         .getThreadRecords(thread.id, ["runs"])
         .pipe(Effect.orElseSucceed(() => null));
       if (records === null) return null;
-      const found = apiCreditOrigin(thread, records.runs);
+      const found = apiCreditOrigin(
+        thread,
+        records.runs,
+        apiCredits ? API_CREDIT_MESSAGE_PREFIX : LIMIT_FALLBACK_MESSAGE_PREFIX,
+      );
       if (found === null) origin = null;
       else {
         const stopped = yield* projections
@@ -777,10 +833,7 @@ export const makeSweep = Effect.gen(function* () {
       nowMs - tries.lastFailureAt < API_CREDIT_RETURN_COOLDOWN_MS
     )
       return null;
-    const command = apiCreditReturnCommand(thread, origin, providers, nowMs, {
-      ruleOn,
-      attempt: tries.next,
-    });
+    const command = returnCommand(thread, origin, tries.next);
     if (command === null) return null;
     // Checked against the thread as it is now: a turn may have started since the snapshot.
     const current = yield* projections
@@ -790,8 +843,7 @@ export const makeSweep = Effect.gen(function* () {
       current === null ||
       current.latestRunId !== thread.latestRunId ||
       current.providerInstanceId !== thread.providerInstanceId ||
-      apiCreditReturnCommand(current, origin, providers, nowMs, { ruleOn, attempt: tries.next }) ===
-        null
+      returnCommand(current, origin, tries.next) === null
     )
       return null;
     // A queued message keeps the instance it was queued on and would pull the

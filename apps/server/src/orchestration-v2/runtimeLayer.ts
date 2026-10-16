@@ -348,6 +348,7 @@ const layerScheduledTaskProvided = ScheduledTaskService.layer.pipe(
       layerThreadManagementProvided,
       layerSecretRequestsProvided,
       layerProjectCoordinatorProvided,
+      ProcessRunner.layer,
     ),
   ),
 );

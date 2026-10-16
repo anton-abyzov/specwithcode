@@ -11,6 +11,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProjectCoordinator from "../project/ProjectCoordinatorService.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
@@ -45,7 +46,9 @@ const harness = Effect.gen(function* () {
     dispatchStarted: Effect.void,
     due: Effect.void as Effect.Effect<void, never, SqlClient.SqlClient>,
     heldMs: 0,
-    sent: [] as Array<{ readonly modelSelection?: unknown }>,
+    sent: [] as Array<{ readonly modelSelection?: unknown; readonly text?: string }>,
+    checks: [] as Array<{ readonly args: ReadonlyArray<string>; readonly cwd?: string }>,
+    checkExit: 1,
     nextTurnModel: undefined as { instanceId: string; model: string } | undefined,
   };
   const dependencies = () =>
@@ -85,6 +88,25 @@ const harness = Effect.gen(function* () {
           }),
       }),
       Layer.mock(SecretRequests.SecretRequests)({}),
+      Layer.mock(ProcessRunner.ProcessRunner)({
+        run: (input) =>
+          Effect.sync(() => {
+            state.checks.push({
+              args: input.args,
+              ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
+            });
+            return {
+              stdout: "/dev/disk3s1 22Gi free",
+              stderr: "",
+              code: state.checkExit as never,
+              timedOut: false,
+              stdoutTruncated: false,
+              stderrTruncated: false,
+              stdoutInvalidUtf8: false,
+              stderrInvalidUtf8: false,
+            };
+          }),
+      }),
       Layer.mock(ProjectCoordinator.ProjectCoordinatorService)({
         nextTurnModel: () => Effect.sync(() => state.nextTurnModel as never),
       }),
@@ -199,13 +221,66 @@ it.effect("runs in a bound thread on the coordinator's next model, not the one s
     yield* seedThread("bound", "project-a");
     yield* run((service) =>
       Effect.gen(function* () {
-        // Saved while the coordinator was on its fallback: never reused.
-        const { task } = yield* service.upsert(taskInput({ threadId: "bound" }));
+        // An agent's routine saved while the coordinator was on its fallback:
+        // the recorded model is never reused.
+        const { task } = yield* service.upsert(
+          taskInput({ threadId: "bound", createdBy: "agent", creationSource: "mcp" }),
+        );
         yield* service.runNow({ id: task.id });
         assert.isFalse("modelSelection" in state.sent[0]!);
         state.nextTurnModel = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
         yield* service.runNow({ id: task.id, commandId: CommandId.make("second-run") });
         assert.deepEqual(state.sent[1]?.modelSelection, state.nextTurnModel);
+        // Pinned on purpose: the run uses the task's model as chosen.
+        const pinned = yield* service.upsert(
+          taskInput({ id: "pinned", threadId: "bound", modelPinned: true }),
+        );
+        assert.isTrue(pinned.task.modelPinned);
+        yield* service.runNow({ id: pinned.task.id, commandId: CommandId.make("pinned-run") });
+        assert.deepEqual(state.sent[2]?.modelSelection, { instanceId: "codex", model: "fixture" });
+      }),
+    );
+  }).pipe(Effect.provide(Sqlite.layerMemory)),
+);
+
+it.effect("wakes the thread only when a command routine's check passes", () =>
+  Effect.gen(function* () {
+    const { run, state, seedThread } = yield* harness;
+    yield* seedThread("bound", "project-a");
+    yield* run((service) =>
+      Effect.gen(function* () {
+        const { task } = yield* service.upsert(
+          taskInput({
+            threadId: "bound",
+            prompt: "Disk space is low: report the biggest folders.",
+            check: { command: "test $(df -g / | awk 'NR==2{print $4}') -lt 25" },
+          }),
+        );
+        assert.deepEqual(task.check, {
+          command: "test $(df -g / | awk 'NR==2{print $4}') -lt 25",
+        });
+        // A quiet check: no agent, no provider, a succeeded run.
+        const quiet = yield* service.runNow({ id: task.id });
+        assert.equal(state.sends, 0);
+        assert.equal(quiet.task.lastRunStatus, "succeeded");
+        assert.deepEqual(state.checks[0]?.args, [
+          "-c",
+          "test $(df -g / | awk 'NR==2{print $4}') -lt 25",
+        ]);
+        assert.equal(state.checks[0]?.cwd, "/synthetic-project");
+        // The check passes: the thread wakes with the prompt and the output.
+        state.checkExit = 0;
+        yield* service.runNow({ id: task.id, commandId: CommandId.make("low-disk") });
+        assert.equal(state.sends, 1);
+        assert.include(state.sent[0]?.text ?? "", "Disk space is low");
+        assert.include(state.sent[0]?.text ?? "", "/dev/disk3s1 22Gi free");
+        // A save from a form that predates checks keeps the check.
+        const kept = yield* service.upsert(taskInput({ id: task.id, threadId: "bound" }));
+        assert.isDefined(kept.task.check);
+        const cleared = yield* service.upsert(
+          taskInput({ id: task.id, threadId: "bound", check: null }),
+        );
+        assert.isUndefined(cleared.task.check);
       }),
     );
   }).pipe(Effect.provide(Sqlite.layerMemory)),

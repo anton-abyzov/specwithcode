@@ -343,3 +343,23 @@ describe("serializeRenderedMarkdownFragment", () => {
     );
   });
 });
+
+describe("serializeRenderedMarkdownFragment exact paths", () => {
+  beforeEach(() => {
+    vi.stubGlobal("Node", { TEXT_NODE, ELEMENT_NODE });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("copies a selected path line from a code block as exactly that path", () => {
+    const path = "/Users/me/Downloads/cws/screenshot-2-pair.png";
+    const container = new FakeElement("DIV").append(
+      renderedCodeBlock([`${path} ​`]),
+      new FakeText("\n"),
+    );
+
+    const copied = serializeRenderedMarkdownFragment(asNode(container));
+    expect([...new TextEncoder().encode(copied)]).toEqual([...new TextEncoder().encode(path)]);
+  });
+});

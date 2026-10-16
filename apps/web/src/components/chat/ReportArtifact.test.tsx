@@ -2,8 +2,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { act, create } from "react-test-renderer";
 import { describe, expect, it, vi } from "vite-plus/test";
 
+const overlay = vi.hoisted(() => ({ last: null as Record<string, unknown> | null }));
 vi.mock("~/viewerOverlayStore", () => ({
-  useViewerOverlay: (options: { open: boolean }) => (options.open ? ({} as HTMLElement) : null),
+  // The overlay's header is the host's; the viewer's actions portal into it.
+  useViewerOverlay: (options: Record<string, unknown> & { open: boolean }) => {
+    overlay.last = options;
+    return options.open ? { content: {} as HTMLElement, actions: {} as HTMLElement } : null;
+  },
 }));
 vi.mock("react-dom", async (importOriginal) => ({
   ...(await importOriginal<typeof import("react-dom")>()),
@@ -266,10 +271,15 @@ describe("ReportArtifactCard", () => {
       renderer.root.findAll((node) => node.props["data-report-reader-body"] === "true")[0]!;
     // One view at a time: the report stays mounted, hidden, so Back returns to it.
     expect(body().props.hidden).toBe(true);
-    const back = renderer.root.findAll(
-      (node) => node.type === "button" && node.props["aria-label"] === "Back to Findings",
-    )[0]!;
-    act(() => back.props.onClick());
+    // The overlay header names where you are and offers Back to the report.
+    expect(overlay.last).toMatchObject({
+      title: "cds.css",
+      kind: "File",
+      badge: "CSS",
+      detail: "line 3",
+      trail: [{ kind: "Report", title: "Findings" }],
+    });
+    act(() => (overlay.last!.onBack as () => void)());
     expect(body().props.hidden).toBe(false);
     expect(
       renderer.root.findAll((node) => node.props["data-report-file-pane"] === "true"),

@@ -28,8 +28,24 @@ const identity = (version) => ({
   files: [{ path: "package.json", type: "file" }],
 });
 
-test("application packages declare the same 1.0.13 version", () => {
-  assert.equal(sourceVersion(root), "1.0.13");
+test("every release package manifest declares the one supported app version", () => {
+  // Since 8ccc7de55 (1.0.14) a release bumps the manifests listed in
+  // update-release-package-versions.ts instead of a literal here, so the
+  // coordinated set must agree with the version sourceVersion reads.
+  const version = sourceVersion(root);
+  assert.ok(compatibleVersion(version));
+  const updater = NodeFS.readFileSync(
+    join(root, "scripts/update-release-package-versions.ts"),
+    "utf8",
+  );
+  const list = updater.match(/export const releasePackageFiles = \[([^\]]*)\]/);
+  assert.ok(list, "release package manifest list");
+  const files = [...list[1].matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+  for (const app of ["server", "web", "desktop"])
+    assert.ok(files.includes(`apps/${app}/package.json`), app);
+  assert.ok(files.includes("packages/contracts/package.json"));
+  for (const file of files)
+    assert.equal(JSON.parse(NodeFS.readFileSync(join(root, file), "utf8")).version, version, file);
 });
 test("version policy accepts the 0.1/0.2 alpha line and stable 1.x but rejects ambiguous or incompatible labels", () => {
   for (const version of ["0.1.0", "0.1.9", "0.2.0", "0.2.12", "1.0.0", "1.0.1", "1.2.0", "1.10.3"])

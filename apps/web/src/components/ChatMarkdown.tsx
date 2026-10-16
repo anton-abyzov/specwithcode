@@ -166,6 +166,8 @@ import { remarkDisplayDates } from "../markdown-display-dates";
 import { remarkBareDomainLinks } from "../markdown-bare-domains";
 import { MarkdownTable } from "./MarkdownTable";
 import { chatMarkdownClipboardPayload } from "../markdown-clipboard";
+import { exactCopyText, exactPathText } from "../exactClipboardText";
+import { MarkdownPathList } from "./chat/MarkdownPathList";
 import { remarkNormalizeListItemIndentation } from "../markdown-list-indentation";
 import {
   extractMarkdownLinkHrefs,
@@ -174,6 +176,8 @@ import {
   resolveInlineCodeFileLinkMeta,
   mayBeDirectory,
   resolveInlineCodeFileLinks,
+  fileReferenceSpans,
+  pathListLines,
   resolveMarkdownFileLinkMeta,
   rewriteMarkdownFileUriHref,
   shouldOpenMarkdownFileLinkInBrowserByDefault,
@@ -265,6 +269,8 @@ interface ChatMarkdownProps {
       text nests under the heading that introduces it, such as a chat message's
       author. Rendered tags and their styling are unchanged. */
   headingLevelOffset?: number | undefined;
+  /** Folders the thread named files in; a bare file name may sit in one of them. */
+  contextFolders?: ReadonlyArray<string> | undefined;
 }
 
 export interface ChatMarkdownContextReference {
@@ -316,6 +322,7 @@ export function shouldUseMarkdownFileBrowserPrimaryAction(input: {
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 const EMPTY_REMARK_PLUGINS: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = [];
+const EMPTY_CONTEXT_FOLDERS: ReadonlyArray<string> = [];
 
 const ARTIFACT_TEMPLATE_ICON_BY_KIND = {
   document: FileTextIcon,
@@ -981,7 +988,7 @@ function MarkdownCodeBlock({
       return;
     }
     void navigator.clipboard
-      .writeText(code)
+      .writeText(exactCopyText(code))
       .then(() => {
         if (copiedTimerRef.current != null) {
           clearTimeout(copiedTimerRef.current);
@@ -1371,21 +1378,6 @@ function buildFileLinkParentSuffixByPath(filePaths: ReadonlyArray<string>): Map<
 const MessageFileViewer = lazy(() =>
   import("./chat/ThreadArtifacts").then((module) => ({ default: module.MessageFileViewer })),
 );
-
-const FENCED_CODE_SEGMENT_PATTERN = /(```[\s\S]*?(?:```|$))/;
-const INLINE_CODE_SPAN_PATTERN = /`([^`\n]+)`/g;
-
-function extractInlineCodeSpans(text: string): string[] {
-  const spans: string[] = [];
-  const segments = text.split(FENCED_CODE_SEGMENT_PATTERN);
-  for (let index = 0; index < segments.length; index += 2) {
-    for (const match of (segments[index] ?? "").matchAll(INLINE_CODE_SPAN_PATTERN)) {
-      const span = match[1]?.trim();
-      if (span) spans.push(span);
-    }
-  }
-  return spans;
-}
 
 function normalizeMarkdownLinkHrefKey(href: string): string {
   const normalizedHref = normalizeMarkdownLinkDestination(href);
@@ -2201,7 +2193,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         return;
       }
 
-      void navigator.clipboard.writeText(value).then(
+      void navigator.clipboard.writeText(exactPathText(value)).then(
         () => {
           toastManager.add({
             type: "success",
@@ -2422,6 +2414,7 @@ function useChatMarkdownState({
   renderThreadLink,
   headingLevelOffset = 0,
   githubMedia = false,
+  contextFolders = EMPTY_CONTEXT_FOLDERS,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const [localMediaPreview, setLocalMediaPreview] = useState<ExpandedImagePreview | null>(null);
@@ -2585,8 +2578,14 @@ function useChatMarkdownState({
     cwd,
   );
   const authoredInlineCodeFileLinks = useMemo(
-    () => resolveInlineCodeFileLinks(extractInlineCodeSpans(text), cwd, imageBaseDir ?? cwd),
-    [cwd, imageBaseDir, text],
+    () =>
+      resolveInlineCodeFileLinks(
+        fileReferenceSpans(text),
+        cwd,
+        imageBaseDir ?? cwd,
+        contextFolders,
+      ),
+    [contextFolders, cwd, imageBaseDir, text],
   );
   const inlineCodeFileLinkMetaByText = useExistingFileLinks(
     authoredInlineCodeFileLinks,
@@ -2959,9 +2958,14 @@ function useChatMarkdownState({
     ],
   );
 
+  const startFileDrag =
+    canUseShellActions && typeof window !== "undefined"
+      ? window.desktopBridge?.startFileDrag
+      : undefined;
   const componentState = useMemo(
     () => ({
       canOperateHost,
+      startFileDrag,
       canOperatePreview,
       cwd,
       diffThemeName,
@@ -2996,6 +3000,7 @@ function useChatMarkdownState({
     }),
     [
       canOperateHost,
+      startFileDrag,
       canOperatePreview,
       cwd,
       diffThemeName,
@@ -3603,15 +3608,44 @@ const CHAT_MARKDOWN_COMPONENTS = {
     return <MarkdownDetails open={detailsOpen}>{children}</MarkdownDetails>;
   },
   pre: function MarkdownPre({ node, children, ...props }) {
-    const { resolvedTheme, diffThemeName, expandMedia, isStreaming, onRunShellCommand, text } = use(
-      ChatMarkdownRendererContext,
-    );
+    const {
+      resolvedTheme,
+      diffThemeName,
+      expandMedia,
+      isStreaming,
+      onRunShellCommand,
+      text,
+      cwd,
+      imageBaseDir,
+      inlineCodeFileLinkMetaByText,
+      fileLinkChip,
+      startFileDrag,
+    } = use(ChatMarkdownRendererContext);
     const codeBlock = extractCodeBlock(children);
     if (!codeBlock) {
       return <pre {...props}>{children}</pre>;
     }
 
     const language = extractFenceLanguage(codeBlock.className);
+    // A fence that only lists files shows the files, each with its full path.
+    const pathLines = isStreaming ? null : pathListLines(codeBlock.code, language);
+    const pathEntries = pathLines?.flatMap((line) => {
+      const meta =
+        inlineCodeFileLinkMetaByText.get(line) ??
+        resolveInlineCodeFileLinkMeta(line, cwd, imageBaseDir ?? cwd);
+      if (!meta) return [];
+      return [
+        {
+          line,
+          chip: fileLinkChip(meta, line),
+          fullPath: meta.filePath,
+          missing: meta.unresolved !== undefined,
+        },
+      ];
+    });
+    if (pathEntries && pathEntries.length === pathLines?.length) {
+      return <MarkdownPathList entries={pathEntries} startFileDrag={startFileDrag} />;
+    }
     const fenceTitle = extractFenceTitle(extractPreCodeMeta(node));
     const highlightedCode = (
       <RenderErrorBoundary

@@ -1154,7 +1154,21 @@ class Agent(object):
                              'See the update receipt.' % version)
         if outcome == 'interrupted':
             return 'error', 'The install of SpecWithCode %s was interrupted; SpecWithCode is on %s.' % (version, current)
+        if inst is not None and inst['version'] == version and self.kept_after_restart(receipt):
+            # The new release is running but a check after the restart failed; the helper kept it for review.
+            return 'error', ('SpecWithCode %s is running, but a check after the restart failed, so the update was '
+                             'not confirmed. See the update receipt.' % version)
         return 'error', 'SpecWithCode %s did not install; SpecWithCode stayed on %s. See the update receipt.' % (version, current)
+
+    def kept_after_restart(self, receipt):
+        """True only when the helper restarted into the new release, observed it and kept it (any `held-*`
+        rollback: kept for review, or a rollback whose checks or restores failed)."""
+        try:
+            value = read_json(owned(pathlib.Path(receipt), self.home), self.home) if receipt else None
+        except (AgentError, OSError):
+            return False
+        return isinstance(value, dict) and value.get('pointers') == 'new-release' \
+            and str(value.get('rollback') or '').startswith('held-') and bool(value.get('attemptedAfter'))
 
     def ensure_failure_receipt(self, version, receipt, current):
         """A helper that failed before writing its receipt still leaves one with its cause."""
