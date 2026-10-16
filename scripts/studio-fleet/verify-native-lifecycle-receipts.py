@@ -6,6 +6,7 @@ import json
 import pathlib
 import re
 import subprocess
+import studio_paths
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--evidence-dir', type=pathlib.Path, required=True)
@@ -91,7 +92,7 @@ assert transition['newArchiveSha256'] == bundle['sha256'] and transition['source
 assert transition['allHostProofSha256'] == digest(proof_path)
 assert set(transition['unchangedTransports']) == {'com.specweave.studio.tunnel-m1', 'com.specweave.studio.tunnel-m3'}
 backup = pathlib.Path(transition['backup'])
-network = pathlib.Path.home() / '.specweave-studio/m4/network'
+network = studio_paths.identity_home(pathlib.Path.home(), 'm4') / 'network'
 assert backup.parent == network and digest(backup) == transition['previousProgressSha256']
 old = json.loads(backup.read_text())
 current_path = root / 'network-progress-after.json'

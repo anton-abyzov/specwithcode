@@ -10,6 +10,7 @@ import { useCallback, useEffect, useState } from "react";
 import { startServiceUpdateNow, useServiceUpdateFlow } from "../serviceUpdateFlow";
 import { canRetryServiceUpdate } from "../sidebar/SidebarRestartToUpdate.logic";
 import { Button } from "../ui/button";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { SettingsRow } from "./settingsLayout";
@@ -18,6 +19,11 @@ import {
   describeServiceUpdate,
   resolveServiceUpdateAction,
 } from "./UpdatePreferencesSection.logic";
+import {
+  FORCE_INSTALL_AFTER_OPTIONS,
+  forceInstallAfterLabel,
+  forceInstallAfterMinutes,
+} from "../sidebar/restartHoldWindow";
 
 const errorText = (error: unknown, fallback: string) =>
   error instanceof Error ? error.message : fallback;
@@ -168,6 +174,32 @@ export function UpdatePreferencesSection() {
             onCheckedChange={(checked) => change({ installAutomatically: checked })}
             aria-label="Install updates automatically"
           />
+        }
+      />
+      <SettingsRow
+        title="Restart when idle waits up to"
+        description="Then running work is stopped for the update, the app restarts, and running and queued threads continue after it."
+        control={
+          <Select
+            value={String(forceInstallAfterMinutes(preferences))}
+            onValueChange={(value) => {
+              if (value === null) return;
+              change({ forceInstallAfterMinutes: Number(value) });
+            }}
+          >
+            <SelectTrigger aria-label="Restart when idle waits up to" className="w-32" size="sm">
+              <SelectValue>
+                {forceInstallAfterLabel(forceInstallAfterMinutes(preferences))}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup>
+              {FORCE_INSTALL_AFTER_OPTIONS.map((minutes) => (
+                <SelectItem key={minutes} value={String(minutes)}>
+                  {forceInstallAfterLabel(minutes)}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
         }
       />
       {serviceState && serviceState.status !== "not-managed" ? (

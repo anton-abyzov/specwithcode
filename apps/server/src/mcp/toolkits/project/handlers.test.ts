@@ -4,6 +4,7 @@ import {
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
+  RuntimeRequestId,
   ThreadId,
   type OrchestrationV2ThreadShell,
   type Project as ProjectRecord,
@@ -21,6 +22,7 @@ import * as Stream from "effect/Stream";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ServerConfig from "../../../config.ts";
+import * as ProjectActionRequests from "../../../project/ProjectActionRequests.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
@@ -579,7 +581,7 @@ it.effect("refuses agent changes to pause, archive and auto-resume", () =>
           workspaceSettings: { expectedRevision: 1, ...change },
         })
         .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies), Effect.exit);
-      expect(JSON.stringify(result)).toContain("changed by the user in project settings");
+      expect(JSON.stringify(result)).toContain("in project settings");
     }
     expect(updates).toHaveLength(0);
     yield* toolkit
@@ -589,5 +591,105 @@ it.effect("refuses agent changes to pause, archive and auto-resume", () =>
       })
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies));
     expect(updates).toHaveLength(1);
+  }),
+);
+
+it.effect("routes folder moves, archive and delete through the user's approval card", () =>
+  Effect.gen(function* () {
+    const sourceThreadId = ThreadId.make("coordinator-thread");
+    const projectId = ProjectId.make("easychamp");
+    const providerInstanceId = ProviderInstanceId.make("codex");
+    const caller = {
+      id: sourceThreadId,
+      projectId,
+      providerInstanceId,
+      modelSelection: { instanceId: providerInstanceId, model: "gpt-5" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      activeRunId: "active-run",
+      archivedAt: null,
+      deletedAt: null,
+    } as OrchestrationV2ThreadShell;
+    const requested: Array<ProjectActionRequests.ProjectActionRequestInput> = [];
+    let changedDirectly = 0;
+    const layerDependencies = Layer.mergeAll(
+      NodeCrypto.layer,
+      Layer.succeed(McpInvocationContext.McpInvocationContext, {
+        environmentId: EnvironmentId.make("environment"),
+        requestNamespace: "session",
+        thread: { threadId: sourceThreadId, providerSessionId: "session", providerInstanceId },
+        client: undefined,
+        issuedAt: 0,
+        capabilities: new Set(["orchestration" as const]),
+      }),
+      Layer.mock(ThreadManagement.ThreadManagementService)({
+        getThreadShell: () => Effect.succeed(caller),
+      }),
+      Layer.mock(ThreadLaunch.ThreadLaunchService)({}),
+      Layer.mock(Project.ProjectService)({
+        getById: (id) => Effect.succeed(Option.some(projectFixture(id))),
+        update: (input) => {
+          changedDirectly += 1;
+          return Effect.succeed(projectFixture(input.projectId));
+        },
+        delete: (input) => {
+          changedDirectly += 1;
+          return Effect.succeed(projectFixture(input.projectId));
+        },
+      }),
+      Layer.mock(ProjectActionRequests.ProjectActionRequests)({
+        request: (input) => {
+          requested.push(input);
+          return Effect.succeed({ requestId: RuntimeRequestId.make("project-action:1") });
+        },
+      }),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
+      Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+      NodeServices.layer,
+      ServerConfig.layerTest(process.cwd(), { prefix: "studio-project-request-" }).pipe(
+        Layer.provide(NodeServices.layer),
+      ),
+    );
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+          Layer.provide(layerDependencies),
+        ),
+      ),
+    );
+    const moved = yield* toolkit
+      .handle("studio_project_update", { projectId, workspaceRoot: "/Users/me/sw-easychamp" })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies), Effect.exit);
+    expect(JSON.stringify(moved)).toContain(
+      "call studio_project_request with action change_folder",
+    );
+
+    const asked = yield* toolkit
+      .handle("studio_project_request", {
+        action: "change_folder",
+        workspaceRoot: "/Users/me/sw-easychamp",
+        reason: "The project points at a managed stub.",
+      })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies));
+    expect(asked.at(-1)?.result).toMatchObject({
+      requestId: "project-action:1",
+      status: "awaiting_user",
+    });
+
+    yield* toolkit
+      .handle("studio_project_delete", { projectId, reason: "Wrong project." })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies));
+    expect(requested).toEqual([
+      {
+        threadId: sourceThreadId,
+        projectId,
+        action: "change_folder",
+        workspaceRoot: "/Users/me/sw-easychamp",
+        reason: "The project points at a managed stub.",
+      },
+      { threadId: sourceThreadId, projectId, action: "delete", reason: "Wrong project." },
+    ]);
+    expect(changedDirectly).toBe(0);
   }),
 );

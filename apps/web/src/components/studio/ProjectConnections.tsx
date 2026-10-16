@@ -131,7 +131,7 @@ export function ProjectConnections({
         environmentId={environmentId}
         projectId={projectId}
       />
-      <h2>Studio-managed connections</h2>
+      <h2>SpecWithCode-managed connections</h2>
       <p className="project-muted">
         Project-scoped tools run on this execution machine using its existing sign-in. Credentials
         and provider sessions are not copied between projects.

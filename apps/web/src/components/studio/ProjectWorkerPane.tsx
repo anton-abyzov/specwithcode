@@ -10,8 +10,10 @@ import {
   type ProjectMessageRouting,
 } from "../../studio/projectMessageRouting";
 import ChatView from "../ChatView";
+import type { SubagentEntry } from "../../studio/threadSubagents";
 import { ProjectThreadHeader } from "./shell/ProjectThreadHeader";
-import { ProjectRoutedReplies } from "./ProjectRoutedReplies";
+import { SubagentPeek } from "./shell/SubagentPeek";
+import { useRoutedThreadMessages } from "./ProjectRoutedReplies";
 
 export function ProjectWorkerPane({
   project,
@@ -23,6 +25,7 @@ export function ProjectWorkerPane({
   send,
   suspendShortcuts,
   toolsSlot,
+  peek = null,
 }: {
   project: EnvironmentProject;
   thread: EnvironmentThreadShell;
@@ -37,27 +40,24 @@ export function ProjectWorkerPane({
   ) => Promise<void>;
   suspendShortcuts: boolean;
   toolsSlot: HTMLSpanElement | null;
+  /** A subagent of this thread whose transcript slides over it, read-only. */
+  peek?: {
+    readonly thread: EnvironmentThreadShell;
+    readonly entry: SubagentEntry | null;
+    readonly onClose: () => void;
+  } | null;
 }) {
   const local = thread.environmentId === project.environmentId;
+  const routedMessages = useRoutedThreadMessages(project, local ? coordinatorId : null, thread);
   return (
     <SelectedThreadShell value={thread}>
       <ProjectThreadHeader {...header} />
-      <div className="project-route-note">
-        Replies pass through the coordinator with this thread as context.
-      </div>
-      {coordinatorId && local ? (
-        <ProjectRoutedReplies
-          project={project}
-          coordinatorId={coordinatorId}
-          thread={thread}
-          onOpenCoordinator={openCoordinator}
-        />
-      ) : null}
       <ProjectMessageRoutingContext
         value={{
           coordinatorThreadId: coordinatorId,
           openCoordinator,
           openThread,
+          routedMessages,
           send: (text, attachments) => {
             if (local) return send(text, thread.id, attachments);
             if (attachments?.length)
@@ -79,10 +79,18 @@ export function ProjectWorkerPane({
             threadId={thread.id}
             routeKind="server"
             layoutMode="embedded"
-            suspendShortcuts={suspendShortcuts}
+            suspendShortcuts={suspendShortcuts || peek !== null}
             embeddedHeaderToolsTarget={toolsSlot}
             reserveTitleBarControlInset={false}
           />
+          {peek ? (
+            <SubagentPeek
+              thread={peek.thread}
+              entry={peek.entry}
+              parentTitle={thread.title || "this thread"}
+              onClose={peek.onClose}
+            />
+          ) : null}
         </div>
       </ProjectMessageRoutingContext>
     </SelectedThreadShell>

@@ -35,6 +35,7 @@ import {
   makeGitVcsDriverCore,
   parseGitCheckoutProgressLine,
   splitNullSeparatedGitStdoutPaths,
+  lastGitFatalLine,
 } from "./GitVcsDriverCore.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 
@@ -148,6 +149,18 @@ const initRepoWithCommit = (
     const initialBranch = yield* git(cwd, ["branch", "--show-current"]);
     return { initialBranch };
   });
+
+describe("lastGitFatalLine", () => {
+  it("returns the last fatal line without URL credentials", () => {
+    assert.equal(
+      lastGitFatalLine(
+        "Preparing worktree\nfatal: first\nfatal: unable to access 'https://user:tok3n@example.invalid/r.git/'\n",
+      ),
+      "fatal: unable to access 'https://example.invalid/r.git/'",
+    );
+    assert.isNull(lastGitFatalLine("warning: nothing fatal here\n"));
+  });
+});
 
 it.effect("bounds Git bursts across drivers without timing out queued commands", () =>
   Effect.gen(function* () {
@@ -1090,8 +1103,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           })
           .pipe(Effect.flip);
 
-        assert.equal(error.detail, "git worktree add failed");
-        assert.include(error.message, "git worktree add failed (branch_checked_out_in_worktree)");
+        assert.match(error.detail, /^git worktree add failed: fatal: .*taken-branch/);
+        assert.include(error.message, "(branch_checked_out_in_worktree)");
       }),
     );
 
@@ -1115,7 +1128,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           .pipe(Effect.flip);
 
         assert.equal(error.reason, "invalid_reference");
-        assert.include(error.message, "git worktree add failed (invalid_reference)");
+        assert.equal(error.detail, "git worktree add failed: fatal: invalid reference: develop");
+        assert.include(error.message, "fatal: invalid reference: develop (invalid_reference)");
       }),
     );
 

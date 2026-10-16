@@ -43,6 +43,7 @@ config.resolver = {
       : config.resolver?.blockList
         ? [config.resolver.blockList]
         : []),
+    new RegExp(`${escapedWorkspaceRoot}[/\\\\]\\.specwithcode[/\\\\].*`),
     new RegExp(`${escapedWorkspaceRoot}[/\\\\]\\.specweave-studio[/\\\\].*`),
   ],
   extraNodeModules: {

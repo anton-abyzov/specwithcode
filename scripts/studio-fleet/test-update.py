@@ -69,11 +69,11 @@ class ReleaseRetention(unittest.TestCase):
    names=['%020x'%index for index in range(1,8)]
    root=self.fixture(home,names,age=86400)
    new,old,stage,receipt,*stale=names
-   (home/'.specweave-studio/m4').mkdir(parents=True)
-   (home/'.specweave-studio/stage').mkdir(parents=True)
-   (home/'.specweave-studio/stage/launch.sh').write_text('exec node %s/bin.mjs\n'%(root/stage))
-   (home/'.specweave-studio/m1').mkdir(parents=True)
-   (home/'.specweave-studio/m1/installation.json').write_text(json.dumps({'release':str(root/receipt)}))
+   (home/'.specwithcode/m4').mkdir(parents=True)
+   (home/'.specwithcode/stage').mkdir(parents=True)
+   (home/'.specwithcode/stage/launch.sh').write_text('exec node %s/bin.mjs\n'%(root/stage))
+   (home/'.specwithcode/m1').mkdir(parents=True)
+   (home/'.specwithcode/m1/installation.json').write_text(json.dumps({'release':str(root/receipt)}))
    (root/'not-a-release').mkdir();(root/'notes.txt').write_text('keep')
    fresh='f'*20;(root/fresh).mkdir()
    removed=release_retention.prune_releases(home,[root/new,str(root/old)])
@@ -342,11 +342,11 @@ class WaitingThreadActivity(unittest.TestCase):
 class ApplyRecovery(unittest.TestCase):
  def setUp(self):
   self.temp=tempfile.TemporaryDirectory(prefix='studio-update-apply-');self.home=pathlib.Path(self.temp.name).resolve()
-  self.own=self.home/'.specweave-studio/m4';self.own.mkdir(parents=True)
+  self.own=self.home/'.specwithcode/m4';self.own.mkdir(parents=True)
   self.wrapper=self.home/'.local/bin/specweave-studio';self.wrapper.parent.mkdir(parents=True)
   self.plist=self.home/'Library/LaunchAgents/com.specweave.studio.m4.plist';self.plist.parent.mkdir(parents=True);self.plist.write_bytes(b'exact-owned-plist')
   self.archive=self.home/'archive.tgz';self.archive.write_bytes(b'verified-synthetic-archive');self.sha=update.digest(self.archive.read_bytes())
-  self.oldrelease=str(self.home/'.local/share/specweave-studio/releases/old');self.node='/exact/owned/node22'
+  self.oldrelease=str(self.home/'.specwithcode/install/releases/old');self.node='/exact/owned/node22'
   old=pathlib.Path(self.oldrelease);old.mkdir(parents=True);(old/'studio-manifest.json').write_text(json.dumps({'product':'SpecWeave Studio','version':'0.1.0','files':[]}))
   receipt={'node':self.node,'release':self.oldrelease,'sourceCommit':'old-source','archiveSha256':'old-sha'}
   (self.own/'installation.json').write_text(json.dumps(receipt))
@@ -415,7 +415,7 @@ class ApplyRecovery(unittest.TestCase):
   return self.rows_snapshot(state),None
  def transport(self,command,**kwargs):
   if command[0]=='/usr/bin/python3':
-   self.stage_timeouts.append(kwargs['timeout']);stage=pathlib.Path(kwargs['env']['HOME'])/'.local/share/specweave-studio/releases'/self.sha[:20];stage.mkdir(parents=True)
+   self.stage_timeouts.append(kwargs['timeout']);stage=pathlib.Path(kwargs['env']['HOME'])/'.specwithcode/install/releases'/self.sha[:20];stage.mkdir(parents=True)
    (stage/'bin.mjs').write_bytes(b'new-owned-code')
    manifest={'product':'SpecWeave Studio','version':self.incoming_version,'sourceCommit':self.incoming_source,'files':[{'path':'bin.mjs','type':'file','sha256':update.digest(b'new-owned-code')}]}
    if self.incoming_version != '0.1.0':
@@ -723,7 +723,7 @@ class ApplyRecovery(unittest.TestCase):
   def render_legacy_cli(prefix):return '#!/bin/sh\nset -eu\numask 077\nexec '+' '.join(shlex.quote(part) for part in prefix)+' "$@"\n'
   alias=self.home/'.local/bin/specwithcode'
   older=['/usr/bin/env','-i','HOME='+str(self.home),'PATH='+runtime_path(self.home,pathlib.Path(self.node)),
-         self.node,str(self.home/'.local/share/specweave-studio/releases/0123456789abcdef0123/bin.mjs')]
+         self.node,str(self.home/'.specwithcode/install/releases/0123456789abcdef0123/bin.mjs')]
   for name,render in [('unnamed',render_unnamed_cli),('legacy',render_legacy_cli),('named',render_cli)]:
    with self.subTest(format=name):
     alias.write_text(render(older));alias.chmod(0o700);previous=alias.read_bytes()
@@ -981,6 +981,56 @@ class ApplyRecovery(unittest.TestCase):
   self.assertEqual(self.backups,['old-source']);self.assertEqual(self.stops,[101]);self.assertEqual(self.restores,[b'pre-update-state'])
   self.assertEqual(self.launchd,['bootout','bootstrap']);self.assertEqual(len(self.restart_calls),1)
   self.assertTrue(all(path.read_bytes()==value for path,value in self.original.items()))
+ def with_settings(self,old_value,new_value):
+  """Real settings.json bytes before the restart and after the new release started on them."""
+  old,new=[(json.dumps(value,indent=2)+'\n').encode() for value in (old_value,new_value)]
+  self.before['fileHashes']['settings']=update.digest(old);self.before['settingsProof']=update.settings_continuity.settings_proof(old)
+  def change(after):
+   after['fileHashes']['settings']=update.digest(new);after['settingsProof']=update.settings_continuity.settings_proof(new)
+  self.after_mutation=change
+ FLEET_SETTINGS={'defaultRuntimeMode':'full-access','projectSettingsFolded':True,'branchNamePrefix':'prefix-SHOULD-not-leak',
+  'projectSettingsOverrides':{'p1':{'defaultRuntimeMode':'approval-required','providerLimitAction':'switch'},'p2':{'defaultRuntimeMode':'full-access'}}}
+ def test_a_one_time_settings_migration_on_start_is_verified_and_kept(self):
+  # 1.0.30+ adds projectSettingsSimplified and drops p2's override equal to the app value.
+  migrated=json.loads(json.dumps(self.FLEET_SETTINGS));migrated['projectSettingsSimplified']=True;del migrated['projectSettingsOverrides']['p2']
+  self.with_settings(self.FLEET_SETTINGS,migrated)
+  self.execute();result=json.loads(self.output.read_text())
+  self.assertEqual(result['phase'],'verified');self.assertEqual(self.restores,[]);self.assertEqual(self.launchd,[])
+  self.assertEqual(result['settingsContinuity']['migrations'],{'project-settings-simplified':{'droppedOverrides':1,'keys':['defaultRuntimeMode']}})
+  self.assertNotIn('approval-required',self.output.read_text());self.assertNotIn('SHOULD-not-leak',self.output.read_text())
+ def test_byte_identical_settings_are_reported_as_such(self):
+  self.with_settings(self.FLEET_SETTINGS,self.FLEET_SETTINGS)
+  self.execute();result=json.loads(self.output.read_text())
+  self.assertEqual(result['settingsContinuity'],{'result':'byte-identical'})
+ def test_a_changed_or_lost_user_setting_after_restart_still_rolls_back(self):
+  for edit,path in [(lambda v:v.update(branchNamePrefix='changed-SHOULD-not-leak'),'/branchNamePrefix'),
+                    (lambda v:v.pop('branchNamePrefix'),'/branchNamePrefix'),
+                    (lambda v:v['projectSettingsOverrides']['p1'].pop('defaultRuntimeMode'),'/projectSettingsOverrides/p1/defaultRuntimeMode')]:
+   with self.subTest(path=path):
+    self.setUp()
+    migrated=json.loads(json.dumps(self.FLEET_SETTINGS));migrated['projectSettingsSimplified']=True;edit(migrated)
+    self.with_settings(self.FLEET_SETTINGS,migrated)
+    with self.assertRaisesRegex(AssertionError,'User settings changed or disappeared'):self.execute()
+    result=json.loads(self.output.read_text())
+    self.assertEqual(result['result'],'update-failed');self.assertEqual(result['rollback'],'restored-runtime-pointers-and-state')
+    self.assertIn(path,result['error']);self.assertNotIn('SHOULD-not-leak',result['error'])
+    self.assertEqual(self.restores,[b'pre-update-state']);self.assertEqual(self.launchd,['bootout','bootstrap'])
+    self.assertTrue(all(p.read_bytes()==value for p,value in self.original.items()))
+ def test_without_a_settings_proof_any_settings_byte_change_rolls_back(self):
+  self.after_mutation=lambda after:after['fileHashes'].update(settings='changed')
+  with self.assertRaisesRegex(AssertionError,'User settings changed after restart'):self.execute()
+  result=json.loads(self.output.read_text())
+  self.assertEqual(result['rollback'],'restored-runtime-pointers-and-state');self.assertEqual(self.restores,[b'pre-update-state'])
+ def test_environment_identity_and_launch_agent_stay_byte_exact_beside_a_settings_migration(self):
+  migrated=dict(self.FLEET_SETTINGS,projectSettingsSimplified=True)
+  for field,message in [('environment','Environment identity changed'),('plist','LaunchAgent changed')]:
+   with self.subTest(field=field):
+    self.setUp();self.with_settings(self.FLEET_SETTINGS,migrated);settings_change=self.after_mutation
+    def change(after,field=field,settings_change=settings_change):
+     settings_change(after);after['fileHashes'][field]='changed'
+    self.after_mutation=change
+    with self.assertRaisesRegex(AssertionError,message):self.execute()
+    self.assertEqual(json.loads(self.output.read_text())['rollback'],'restored-runtime-pointers-and-state')
  def test_failed_state_restore_keeps_the_new_release_with_its_migrated_state(self):
   self.scenario='restore-failed';self.after_mutation=lambda after:after.update(archiveSha256='another-owned-release')
   with self.assertRaisesRegex(AssertionError,'intended artifact'):self.execute()
@@ -1423,7 +1473,7 @@ class StateSafety(unittest.TestCase):
   with self.assertRaises(AssertionError):update.assert_migration_preserved(self.rows(),missing)
  def test_backup_and_restore_round_trip_a_real_database(self):
   with tempfile.TemporaryDirectory() as temporary:
-   home=pathlib.Path(temporary).resolve();own=home/'.specweave-studio/m4';(own/'userdata').mkdir(parents=True)
+   home=pathlib.Path(temporary).resolve();own=home/'.specwithcode/m4';(own/'userdata').mkdir(parents=True)
    db=sqlite3.connect(str(own/'userdata/statev2.sqlite'));db.execute('PRAGMA journal_mode=WAL');db.execute('CREATE TABLE t(v)');db.execute("INSERT INTO t VALUES ('before')");db.commit()
    with patch.object(pathlib.Path,'home',return_value=home):backup=update.backup_state(own,'c8aeea9b0123456789')
    self.assertRegex(str(backup.parent.name),r'^pre-c8aeea9b0123-\d{8}T\d{6}Z-[a-f0-9]{32}$');self.assertEqual(backup.stat().st_mode & 0o777,0o600)
@@ -1433,6 +1483,28 @@ class StateSafety(unittest.TestCase):
    self.assertEqual(check.execute('SELECT v FROM t').fetchall(),[('before',)])
    self.assertEqual(check.execute("SELECT name FROM sqlite_master WHERE name='project_memory'").fetchall(),[]);check.close()
    self.assertEqual([p.name for p in (own/'userdata').iterdir() if 'owned-restore' in p.name],[])
+ def test_backup_and_restore_carry_the_exact_settings_file(self):
+  # A release that rewrote settings.json on start must not leave the rewrite to the old release.
+  with tempfile.TemporaryDirectory() as temporary:
+   home=pathlib.Path(temporary).resolve();own=home/'.specwithcode/m4';(own/'userdata').mkdir(parents=True)
+   db=sqlite3.connect(str(own/'userdata/statev2.sqlite'));db.execute('CREATE TABLE t(v)');db.commit();db.close()
+   settings=own/'userdata/settings.json';original=b'{\n  "branchNamePrefix": "anton"\n}\n';settings.write_bytes(original)
+   with patch.object(pathlib.Path,'home',return_value=home):backup=update.backup_state(own,'c8aeea9b0123456789')
+   saved=backup.parent/'settings.json'
+   self.assertEqual(saved.read_bytes(),original);self.assertEqual(saved.stat().st_mode & 0o777,0o600)
+   settings.write_bytes(b'{\n  "branchNamePrefix": "anton",\n  "projectSettingsSimplified": true\n}\n')
+   update.restore_state(backup,own)
+   self.assertEqual(settings.read_bytes(),original);self.assertEqual(settings.stat().st_mode & 0o777,0o600)
+   self.assertEqual(sorted(p.name for p in (own/'userdata').iterdir()),['settings.json','statev2.sqlite'])
+   before=settings.stat().st_mtime_ns;update.restore_state(backup,own)  # Unchanged settings are not rewritten.
+   self.assertEqual(settings.stat().st_mtime_ns,before)
+ def test_a_missing_settings_file_is_neither_backed_up_nor_created(self):
+  with tempfile.TemporaryDirectory() as temporary:
+   home=pathlib.Path(temporary).resolve();own=home/'.specwithcode/m4';(own/'userdata').mkdir(parents=True)
+   db=sqlite3.connect(str(own/'userdata/statev2.sqlite'));db.execute('CREATE TABLE t(v)');db.commit();db.close()
+   with patch.object(pathlib.Path,'home',return_value=home):backup=update.backup_state(own,'c8aeea9b0123456789')
+   self.assertFalse((backup.parent/'settings.json').exists());update.restore_state(backup,own)
+   self.assertFalse((own/'userdata/settings.json').exists())
 class AuthHeartbeatPrestate(unittest.TestCase):
  def fixture(self, state):
   db=sqlite3.connect(state/'statev2.sqlite')

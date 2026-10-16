@@ -237,7 +237,8 @@ function ModFrame({ environmentId, mod }: { environmentId: EnvironmentId; mod: M
             if (!current.supported) {
               respond(message.requestId, {
                 ok: false,
-                error: "This Studio service predates SpecWeave access for mods. Update it first.",
+                error:
+                  "This SpecWithCode service predates SpecWeave access for mods. Update it first.",
               });
             } else if (current.data !== null) {
               respond(message.requestId, { ok: true, value: current.data });

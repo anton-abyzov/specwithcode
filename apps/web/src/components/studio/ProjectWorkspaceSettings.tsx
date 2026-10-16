@@ -1,4 +1,12 @@
-import { useId, useMemo, useState } from "react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type RefObject,
+} from "react";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import type {
   ModelSelection,
@@ -33,6 +41,7 @@ import {
   Clock3Icon,
 } from "lucide-react";
 import { ProjectLocation } from "./ProjectLocation";
+import { ProjectFolderChange } from "./ProjectFolderChange";
 import { ProjectEnvironment } from "./ProjectEnvironment";
 import { ProjectConnections } from "./ProjectConnections";
 import { useProjectIconEditor } from "./ProjectIconEditor";
@@ -41,9 +50,17 @@ import { CharacterCount } from "../ui/character-count";
 import { ProviderLimitSettings } from "../settings/ProviderLimitSettings";
 import { SettingsScopeProvider } from "../settings/SettingsScopeContext";
 import { SettingsSection } from "../settings/settingsLayout";
+import { ProjectOverrides } from "../settings/ProjectOverrides";
+import { ProjectSettingsSearch } from "./ProjectSettingsSearch";
+import {
+  findProjectSettingsAnchor,
+  PROJECT_SETTINGS_SEARCH_ROWS,
+  PROJECT_SETTINGS_TABS,
+  type ProjectSettingsTab,
+} from "./projectSettingsSearch.logic";
 
-export type ProjectSettingsTab = "general" | "memory" | "environment" | "usage" | "routines";
-const tabs = ["general", "memory", "environment", "usage", "routines"] as const;
+export type { ProjectSettingsTab };
+const tabs = PROJECT_SETTINGS_TABS;
 const tabIcons = {
   general: Settings2Icon,
   memory: NotebookPenIcon,
@@ -51,6 +68,51 @@ const tabIcons = {
   usage: ChartNoAxesCombinedIcon,
   routines: Clock3Icon,
 };
+/** Arrow keys, Home and End move between sections; selection follows focus. */
+function moveTabFocus(event: KeyboardEvent<HTMLElement>) {
+  const step = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[event.key];
+  if (step === undefined && event.key !== "Home" && event.key !== "End") return;
+  const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>("button[data-tab]")];
+  const current = items.indexOf(document.activeElement as HTMLButtonElement);
+  if (current === -1) return;
+  event.preventDefault();
+  const next =
+    event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? items.length - 1
+        : (current + step! + items.length) % items.length;
+  items[next]?.focus();
+  items[next]?.click();
+}
+/** Scrolls a search result's row into view and pulses it, waiting for lazy tabs to render. */
+function useSettingsRowJump(body: RefObject<HTMLElement | null>, tab: ProjectSettingsTab) {
+  const [rowId, setRowId] = useState<string | null>(null);
+  useEffect(() => {
+    const row = PROJECT_SETTINGS_SEARCH_ROWS.find((candidate) => candidate.id === rowId);
+    if (!row || row.tab !== tab) return;
+    let frame = 0;
+    let tries = 0;
+    const attempt = () => {
+      const target = body.current ? findProjectSettingsAnchor(body.current, row) : null;
+      if (!target) {
+        if (++tries < 120) frame = requestAnimationFrame(attempt);
+        else setRowId(null);
+        return;
+      }
+      const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+      target.scrollIntoView?.({ block: "center", behavior: reduced ? "auto" : "smooth" });
+      target.classList.remove("project-search-target-pulse");
+      void target.offsetWidth;
+      target.classList.add("project-search-target-pulse");
+      setTimeout(() => target.classList.remove("project-search-target-pulse"), 1600);
+      setRowId(null);
+    };
+    attempt();
+    return () => cancelAnimationFrame(frame);
+  }, [body, rowId, tab]);
+  return setRowId;
+}
 // The usage limit rows edit this project's overrides only; there is no scope picker here.
 const keepProjectScope = () => {};
 export function ProjectWorkspaceSettings({
@@ -60,6 +122,8 @@ export function ProjectWorkspaceSettings({
   projectKey,
   snapshot,
   initialTab,
+  initialRow = null,
+  focusName = false,
   onClose,
   onSaved,
   onDeleted,
@@ -74,6 +138,10 @@ export function ProjectWorkspaceSettings({
   projectKey: string;
   snapshot: ProjectWorkspaceReadResult;
   initialTab: ProjectSettingsTab;
+  /** A search result's row to scroll to and highlight once the tab renders. */
+  initialRow?: string | null;
+  /** Opened to rename: the name starts focused and selected, and Enter saves and closes. */
+  focusName?: boolean;
   onClose: () => void;
   onSaved: () => void;
   onDeleted: () => void;
@@ -81,7 +149,14 @@ export function ProjectWorkspaceSettings({
   canOperate: boolean;
 }) {
   const countId = useId();
+  const nameInput = useRef<HTMLInputElement>(null);
   const [tab, setTab] = useState(initialTab);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const jumpToRow = useSettingsRowJump(bodyRef, tab);
+  useEffect(() => {
+    setTab(initialTab);
+    if (initialRow) jumpToRow(initialRow);
+  }, [initialRow, initialTab, jumpToRow]);
   const limitScope = useMemo(() => ({ project: projectKey }), [projectKey]);
   const projectTitle = logicalProjectTitle(project);
   const [title, setTitle] = useState(projectTitle);
@@ -144,13 +219,13 @@ export function ProjectWorkspaceSettings({
         : "Change rejected. Reload the project and try again; your draft is preserved.",
     );
   }
-  async function save() {
-    if (disabled) return;
+  async function save(): Promise<boolean> {
+    if (disabled) return false;
     if (titleEdited && title.trim() !== projectTitle && !ownsName) {
       setError(
         "Open the active coordinator to rename this project. This checkout does not own its name.",
       );
-      return;
+      return false;
     }
     setBusy(true);
     setError(null);
@@ -174,12 +249,13 @@ export function ProjectWorkspaceSettings({
     setBusy(false);
     if (result._tag === "Failure") {
       failure(result);
-      return;
+      return false;
     }
     setDirty(false);
     setTitleEdited(false);
     setBaseRevision(baseRevision + 1);
     onSaved();
+    return true;
   }
   async function lifecycle(kind: "paused" | "archived") {
     if (disabled) return;
@@ -232,6 +308,7 @@ export function ProjectWorkspaceSettings({
       <DialogPopup
         className="h-[min(800px,90dvh)] w-[min(1000px,calc(100vw-32px))] max-w-none overflow-hidden max-[760px]:h-[94dvh]"
         bottomStickOnMobile={false}
+        {...(focusName && tab === "general" ? { initialFocus: nameInput } : {})}
       >
         <div className="project-surface project-settings-dialog">
           <header className="project-settings-heading">
@@ -248,26 +325,36 @@ export function ProjectWorkspaceSettings({
             )}
           </header>
           <div className="project-settings-layout">
-            <nav aria-label="Project settings sections">
-              {tabs.map((t) => {
-                const Icon = tabIcons[t];
-                return (
-                  <button
-                    className="project-control"
-                    key={t}
-                    aria-current={tab === t ? "page" : undefined}
-                    onClick={() => setTab(t)}
-                  >
-                    <Icon size={16} aria-hidden="true" />
-                    <span>
-                      {t[0]?.toUpperCase()}
-                      {t.slice(1)}
-                    </span>
-                  </button>
-                );
-              })}
+            <nav aria-label="Project settings sections" onKeyDown={moveTabFocus}>
+              <ProjectSettingsSearch
+                tabs={tabs}
+                onPick={(result) => {
+                  setTab(result.section);
+                  if (result.kind === "row") jumpToRow(result.row.id);
+                }}
+              >
+                {tabs.map((t) => {
+                  const Icon = tabIcons[t];
+                  return (
+                    <button
+                      type="button"
+                      className="project-settings-nav-item"
+                      key={t}
+                      data-tab={t}
+                      aria-current={tab === t ? "page" : undefined}
+                      onClick={() => setTab(t)}
+                    >
+                      <Icon size={16} aria-hidden="true" />
+                      <span>
+                        {t[0]?.toUpperCase()}
+                        {t.slice(1)}
+                      </span>
+                    </button>
+                  );
+                })}
+              </ProjectSettingsSearch>
             </nav>
-            <div className="project-settings-body">
+            <div className="project-settings-body" ref={bodyRef}>
               {!canOperate && (
                 <p className="project-notice">
                   Read-only connection. Reconnect with permission to edit this project.
@@ -296,9 +383,22 @@ export function ProjectWorkspaceSettings({
                         "Change icon",
                       )}
                       <input
+                        ref={nameInput}
                         id="project-settings-name"
                         value={title}
                         disabled={disabled}
+                        onFocus={(e) => {
+                          if (focusName && !titleEdited) e.currentTarget.select();
+                        }}
+                        onKeyDown={(e) => {
+                          if (!focusName || e.key !== "Enter" || e.nativeEvent.isComposing) return;
+                          e.preventDefault();
+                          if (!dirty || title.trim() === "") return;
+                          void save().then((saved) => {
+                            if (saved && !memoryDirty && !environmentDraftDirty && !connectionDirty)
+                              onClose();
+                          });
+                        }}
                         onChange={(e) => {
                           setTitleEdited(true);
                           change(setTitle, e.target.value);
@@ -393,6 +493,13 @@ export function ProjectWorkspaceSettings({
                       <ProviderLimitSettings />
                     </SettingsSection>
                   </SettingsScopeProvider>
+                  {snapshot.settings.kind !== "personal" ? (
+                    <ProjectFolderChange
+                      project={project}
+                      disabled={disabled || dirty}
+                      onChanged={onSaved}
+                    />
+                  ) : null}
                   <div className="project-setting-row">
                     <div>
                       <h3>{snapshot.settings.paused ? "Resume project" : "Pause new work"}</h3>
@@ -426,6 +533,9 @@ export function ProjectWorkspaceSettings({
                     >
                       {snapshot.settings.archived ? "Unarchive" : "Archive"}
                     </button>
+                  </div>
+                  <div className="mt-6">
+                    <ProjectOverrides checkouts={iconCheckouts ?? [project]} />
                   </div>
                   <section className="project-danger-zone">
                     <h3>Danger zone</h3>

@@ -3,6 +3,7 @@ import {
   isProviderAvailable,
   resolveProviderInstanceEnabled,
   isProviderTextGenerationCapable,
+  PROJECT_SCOPED_SERVER_SETTING_KEYS,
   type ModelSelection,
   type ProjectId,
   type ProjectScopedServerSettingKey,
@@ -205,6 +206,73 @@ export function deriveLegacyProjectOverrides(
     }
   }
   return { projectAgentBrowserAccessOverrides, projectAutoPullOverrides, projectScriptOverrides };
+}
+
+function sameSettingValue(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (typeof left !== "object" || typeof right !== "object" || left === null || right === null) {
+    return false;
+  }
+  if (Array.isArray(left) !== Array.isArray(right)) return false;
+  const leftKeys = Object.keys(left).filter(
+    (key) => (left as Record<string, unknown>)[key] !== undefined,
+  );
+  const rightKeys = Object.keys(right).filter(
+    (key) => (right as Record<string, unknown>)[key] !== undefined,
+  );
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every((key) =>
+      sameSettingValue(
+        (left as Record<string, unknown>)[key],
+        (right as Record<string, unknown>)[key],
+      ),
+    )
+  );
+}
+
+/**
+ * One-time cleanup when app and agent settings became global. Per key:
+ * an override equal to the app value is dropped; a value every live project
+ * overrides identically becomes the app value; anything else stays a
+ * per-project override, so no project changes behavior.
+ */
+export function simplifyProjectSettingsOverrides(
+  settings: ServerSettings,
+  liveProjectIds: ReadonlyArray<string>,
+): ServerSettings {
+  if (settings.projectSettingsSimplified) return settings;
+  const entries: Record<string, Record<string, unknown>> = Object.fromEntries(
+    Object.entries(settings.projectSettingsOverrides).map(([id, entry]) => [id, { ...entry }]),
+  );
+  const next: Record<string, unknown> = { ...settings };
+  const live = new Set(liveProjectIds);
+  for (const key of PROJECT_SCOPED_SERVER_SETTING_KEYS) {
+    const owners = Object.keys(entries).filter((id) => Object.hasOwn(entries[id]!, key));
+    if (owners.length === 0) continue;
+    const first = entries[owners[0]!]![key];
+    const unanimous =
+      live.size > 0 &&
+      [...live].every(
+        (id) =>
+          entries[id] !== undefined &&
+          Object.hasOwn(entries[id], key) &&
+          sameSettingValue(entries[id][key], first),
+      );
+    if (unanimous) next[key] = first;
+    for (const id of owners) {
+      if (sameSettingValue(entries[id]![key], next[key])) delete entries[id]![key];
+    }
+  }
+  const projectSettingsOverrides = Object.fromEntries(
+    Object.entries(entries).filter(([, entry]) => Object.keys(entry).length > 0),
+  ) as ServerSettings["projectSettingsOverrides"];
+  return {
+    ...(next as unknown as ServerSettings),
+    projectSettingsOverrides,
+    projectSettingsSimplified: true,
+    ...deriveLegacyProjectOverrides({ projectSettingsOverrides }),
+  };
 }
 
 /**

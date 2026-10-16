@@ -69,8 +69,11 @@ export function shouldOfferResumeCompaction(input: {
   readonly usedTokens: number | null | undefined;
   readonly updatedAt: string | null | undefined;
   readonly now: string;
+  /** A resolved thread is finished; offering to resume it is noise. */
+  readonly settled?: boolean;
 }): boolean {
   if (
+    input.settled === true ||
     input.provider !== "claudeAgent" ||
     (input.usedTokens ?? 0) < CLAUDE_RESUME_COMPACTION_TOKENS
   ) {

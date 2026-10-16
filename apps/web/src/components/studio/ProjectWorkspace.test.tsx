@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
+import * as DateTime from "effect/DateTime";
 import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import * as FileSystem from "effect/FileSystem";
 import * as Effect from "effect/Effect";
 import { act } from "react";
 import { describe, expect, it } from "vite-plus/test";
+import { DEFAULT_SERVER_SETTINGS } from "@specweave-studio/contracts";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import {
   recreateRoot,
@@ -30,8 +32,64 @@ describe("project coordinator surface", () => {
     const parts = [...meta.children];
     expect(parts[0]?.matches("[data-model-badge]")).toBe(true);
     expect(parts.at(-1)?.textContent).toBe("You have hit your usage limit");
-    // The project's own machine goes without saying.
+    // A project on one machine leaves the machine to the composer.
     expect(meta.querySelector(".sws-thread-machine")).toBeNull();
+  });
+  it("says which model runs next when the limit rule moved the coordinator", async () => {
+    const saved = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
+    Object.assign(state.project, { workspaceSettings: { coordinatorModelSelection: saved } });
+    state.shells = [
+      shell("coord", { modelSelection: { instanceId: "codex", model: "gpt-6.1-sol" } } as never),
+    ];
+    state.hostSettings = DEFAULT_SERVER_SETTINGS;
+    const resetsAt = new Date(Date.now() + 39 * 3_600_000).toISOString();
+    const claude = (weeklyUsed: number) => ({
+      instanceId: "claudeAgent",
+      driver: "claudeAgent",
+      enabled: true,
+      installed: true,
+      status: "ready",
+      auth: { status: "authenticated" },
+      models: [{ slug: "claude-opus-5-5", name: "Opus 5.5", isCustom: false }],
+      usageLimits: {
+        checkedAt: new Date().toISOString(),
+        windows: [
+          { id: "five_hour", kind: "session", label: "Session", usedPercent: 0, resetsAt },
+          { id: "seven_day", kind: "weekly", label: "Weekly", usedPercent: weeklyUsed, resetsAt },
+        ],
+      },
+    });
+    const codex = {
+      instanceId: "codex",
+      driver: "codex",
+      enabled: true,
+      installed: true,
+      status: "ready",
+      auth: { status: "authenticated" },
+      models: [{ slug: "gpt-6.1-sol", name: "GPT-6.1 Sol", isCustom: false }],
+    };
+    try {
+      // Claude has room: running elsewhere is no limit, so no banner says so.
+      state.providers = [claude(20), codex];
+      await render();
+      expect(container.querySelector("[data-model-fallback]")).toBeNull();
+      // The weekly is spent: the session's room cannot be used, so the limit is real.
+      state.providers = [claude(100), codex];
+      await render();
+      const line = container.querySelector("[data-model-fallback]");
+      expect(line?.textContent).toContain("Claude Code limit reached");
+      expect(line?.textContent).toContain("running on Codex · GPT-6.1 Sol");
+      // The saved model runs the next turn once asked; the host decides if it has room.
+      state.send.mockClear();
+      await click("Switch back");
+      expect(state.send).toHaveBeenCalledWith(
+        expect.objectContaining({ input: { threadId: "coord", modelSelection: saved } }),
+      );
+      // The project runs on another machine than this one, and its header says so.
+      expect(container.querySelector("[data-project-machine]")).not.toBeNull();
+    } finally {
+      Object.assign(state.project, { workspaceSettings: undefined });
+    }
   });
   it("shows the retained coordinator model when its override is cleared", async () => {
     state.coordinatorModel = null;
@@ -437,34 +495,71 @@ describe("project coordinator surface", () => {
       ),
     ).toBe(false);
   });
-  it("keeps what was typed in a thread on record inside that thread", async () => {
+  it("notes a message typed in a thread only when it went somewhere else", async () => {
     const wrap = (id: string, text: string) =>
       `User follow-up from selected worker ${id}. Review that thread and decide whether to reuse it or route elsewhere.\n\n${text}`;
+    const userMessage = (id: string, senderThreadId: string, text: string) => ({
+      id,
+      role: "user",
+      createdBy: "user",
+      senderThreadId,
+      text: wrap(senderThreadId, text),
+      streaming: false,
+      attachments: [],
+      createdAt: DateTime.makeUnsafe("2026-10-15T15:00:00.000Z"),
+    });
+    const answer = (id: string, text: string) => ({
+      id,
+      role: "assistant",
+      createdBy: "agent",
+      text,
+      streaming: false,
+      attachments: [],
+    });
     state.shells.push(shell("second", { title: "Second worker" }));
+    state.messages = [
+      userMessage("coordinator-send:project:one", "worker", "Also cover the away fixtures."),
+      answer("answer-one", "Sent to [Second worker](studio://thread/second)."),
+      userMessage("coordinator-send:project:two", "second", "Belongs to the other thread."),
+      userMessage("coordinator-send:project:three", "worker", "Still waiting on this one."),
+    ];
+    await render();
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>('[data-thread-id="worker"] .sws-thread-open')!
+        .click(),
+    );
+    expect(container.textContent).not.toContain("Replies pass through the coordinator");
+    expect(container.textContent).not.toContain("message you sent from this thread");
+    // The worker's timeline gets the person's words where they typed them, with where they went.
+    const routed = state.routing!.routedMessages!;
+    expect(routed.map((m) => [m.text, m.routedNote])).toEqual([
+      ["Also cover the away fixtures.", { kind: "sent", targetThreadId: "second" }],
+      ["Still waiting on this one.", { kind: "pending", targetThreadId: null }],
+    ]);
+    expect(routed.every((m) => m.role === "user" && m.createdBy === "user")).toBe(true);
+    // The same message stays on the coordinator conversation, attributed to its thread.
+    const conversation = container.querySelector('[aria-label="Coordinator conversation"]')!;
+    expect(conversation.textContent).toContain("Also cover the away fixtures.");
+    expect(conversation.textContent).toContain("From Thread worker");
+  });
+  it("shows nothing extra once a message comes back to its own thread", async () => {
     state.messages = [
       {
         id: "coordinator-send:project:one",
         role: "user",
         createdBy: "user",
         senderThreadId: "worker",
-        text: wrap("worker", "Also cover the away fixtures."),
+        text: "User follow-up from selected worker worker. Review that thread and decide whether to reuse it or route elsewhere.\n\nShip it.",
         streaming: false,
         attachments: [],
       },
       {
-        id: "answer-one",
-        role: "assistant",
-        createdBy: "agent",
-        text: "Sent to [Thread worker](studio://thread/worker).",
-        streaming: false,
-        attachments: [],
-      },
-      {
-        id: "coordinator-send:project:two",
+        id: "forwarded-one",
         role: "user",
         createdBy: "user",
-        senderThreadId: "second",
-        text: wrap("second", "Belongs to the other thread."),
+        senderThreadId: "coord",
+        text: "Ship it.",
         streaming: false,
         attachments: [],
       },
@@ -475,23 +570,7 @@ describe("project coordinator surface", () => {
         .querySelector<HTMLButtonElement>('[data-thread-id="worker"] .sws-thread-open')!
         .click(),
     );
-    const record = container.querySelector<HTMLDetailsElement>("details.project-routed")!;
-    expect(record.querySelector("summary")?.textContent).toBe(
-      "1 message you sent from this thread",
-    );
-    expect(record.textContent).toContain("Also cover the away fixtures.");
-    expect(record.textContent).toContain("Coordinator: Sent to Thread worker.");
-    expect(record.textContent).not.toContain("Belongs to the other thread.");
-    expect(record.textContent).not.toContain("User follow-up from selected worker");
-    // The same message stays on the coordinator conversation, attributed to its thread.
-    const conversation = container.querySelector('[aria-label="Coordinator conversation"]')!;
-    expect(conversation.textContent).toContain("Also cover the away fixtures.");
-    expect(conversation.textContent).toContain("From Thread worker");
-    // The coordinator is the main conversation: the panel lets go of the thread for it.
-    await click("Show in the coordinator chat");
-    expect(container.querySelector('[data-native-thread="coord"]')).toBeNull();
-    expect(container.querySelector('[data-native-thread="worker"]')).toBeNull();
-    expect(container.querySelector("details.project-routed")).toBeNull();
+    expect(state.routing!.routedMessages).toEqual([]);
   });
   it("shows a worker's long report as a card and folds the coordinator's relay of it", async () => {
     const long = Array.from({ length: 20 }, (_, i) => `- Finding ${i + 1}`).join("\n");
@@ -602,10 +681,12 @@ describe("project coordinator surface", () => {
     expect(chips[0]!.classList.contains("sws-thread-mention")).toBe(true);
     expect(chips[1]!.querySelector(".sws-dot")?.getAttribute("data-tone")).toBe("idle");
     expect(chips[1]!.getAttribute("aria-label")).toBe("Open thread Thread worker, Idle");
-    // Without a branch or a pull request, the card only offers to view the thread.
-    const actions = [...cards[0]!.querySelectorAll("button")];
-    expect(actions.map((b) => b.textContent)).toEqual(["View thread"]);
-    await act(async () => actions[0]!.click());
+    // Without a branch or a pull request, the card has no actions: the card itself opens the thread.
+    expect(cards[0]!.querySelectorAll(".sws-thread-card-action")).toHaveLength(0);
+    const open = cards[0]!.querySelector<HTMLButtonElement>("button.sws-thread-card-head")!;
+    expect(open.getAttribute("aria-label")).toBe("Open thread Skills consolidation, Idle");
+    expect(cards[0]!.textContent).not.toContain("View thread");
+    await act(async () => open.click());
     expect(container.querySelector('[data-native-thread="fresh"]')).not.toBeNull();
     await act(async () => chips[1]!.click());
     expect(container.querySelector('[data-native-thread="worker"]')).not.toBeNull();

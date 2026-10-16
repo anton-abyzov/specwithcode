@@ -289,6 +289,16 @@ const sanitizeWslRuntimeId = (value: string): string => value.replace(/[^A-Za-z0
 // `archiveSha256` is the digest the build recorded alongside the archive. The
 // install verifies the bytes before extracting, so an archive can never be
 // promoted under an identity that does not describe it.
+// The distro user's SpecWithCode root, as in @specweave-studio/shared/studioIdentity:
+// `~/.specwithcode`, except a real (unmigrated) legacy `~/.specweave-studio` while no
+// branded root exists. A migrated legacy root is a link and resolves to the branded one.
+const WSL_STUDIO_ROOT_SCRIPT = [
+  'studio_root="$HOME/.specwithcode"',
+  'if [ -d "$HOME/.specweave-studio" ] && [ ! -L "$HOME/.specweave-studio" ] && [ ! -e "$HOME/.specwithcode" ]; then',
+  '  studio_root="$HOME/.specweave-studio"',
+  "fi",
+];
+
 export const buildWslRuntimeInstallScript = (
   linuxArchivePath: string,
   runtimeId: string,
@@ -297,7 +307,8 @@ export const buildWslRuntimeInstallScript = (
   const safeRuntimeId = sanitizeWslRuntimeId(runtimeId);
   return [
     "set -eu",
-    'runtime_parent="$HOME/.specweave-studio/wsl-runtime"',
+    ...WSL_STUDIO_ROOT_SCRIPT,
+    'runtime_parent="$studio_root/wsl-runtime"',
     `runtime_root="$runtime_parent/${safeRuntimeId}"`,
     `ready_marker="$runtime_root/${WSL_RUNTIME_READY_MARKER}"`,
     // The runtime is a self-contained `specweave-studio` executable with Node inside, so the
@@ -422,7 +433,8 @@ export const buildWslRuntimePruneScript = (runtimeId: string): string => {
   const safeRuntimeId = sanitizeWslRuntimeId(runtimeId);
   return [
     "set -eu",
-    'runtime_parent="$HOME/.specweave-studio/wsl-runtime"',
+    ...WSL_STUDIO_ROOT_SCRIPT,
+    'runtime_parent="$studio_root/wsl-runtime"',
     `current_runtime="$runtime_parent/${safeRuntimeId}"`,
     '[ -d "$runtime_parent" ] || exit 0',
     // Serialize the whole retention decision so two backends cannot select
@@ -486,7 +498,8 @@ export const buildWslRuntimeInvalidateScript = (runtimeId: string): string => {
   const safeRuntimeId = sanitizeWslRuntimeId(runtimeId);
   return [
     "set -eu",
-    `rm -f "$HOME/.specweave-studio/wsl-runtime/${safeRuntimeId}/${WSL_RUNTIME_READY_MARKER}"`,
+    ...WSL_STUDIO_ROOT_SCRIPT,
+    `rm -f "$studio_root/wsl-runtime/${safeRuntimeId}/${WSL_RUNTIME_READY_MARKER}"`,
   ].join("\n");
 };
 

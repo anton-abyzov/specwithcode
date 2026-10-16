@@ -97,7 +97,10 @@ import {
   resolveEmbeddedTerminalContent,
   type AcpClientTerminals,
 } from "../../provider/acp/AcpClientTerminals.ts";
-import { configureAcpOptions, type AcpNativeBuildConfiguration } from "../../provider/acp/AcpConfigureOptions.ts";
+import {
+  configureAcpOptions,
+  type AcpNativeBuildConfiguration,
+} from "../../provider/acp/AcpConfigureOptions.ts";
 import { synchronizeAcpPermissions } from "../../provider/acp/AcpPermissions.ts";
 import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
 import {
@@ -208,6 +211,8 @@ export interface AcpAdapterV2ExtensionContext {
     readonly output?: string;
     /** What the task is, so a wake it causes can name it. */
     readonly report?: BackgroundWork;
+    /** False when the provider will not start a wake turn for this end. */
+    readonly willWake?: boolean;
   }) => Effect.Effect<void>;
   readonly requestUserInput: (
     input: AcpAdapterV2UserInputRequest,
@@ -714,7 +719,13 @@ function acpMcpContext(threadId: ThreadId | null, self: SelfInvocation): AcpMcpC
   // through to their backend (codex-acp 1.2.0 and pi-acp both drop them), so
   // every ACP session gets the `specweave-studio acp-mcp-bridge` stdio server, which
   // forwards JSON-RPC to Studio's authenticated MCP endpoint. The credential
-  // travels via environment variables, never the command line.
+  // travels via environment variables, never the command line. The credential
+  // file path lets the bridge and `acp-mcp-call` pick up a credential the
+  // server re-issued after this agent was spawned.
+  const credentialFileEnv =
+    session.credentialFile === undefined
+      ? []
+      : [{ name: "STUDIO_ACP_MCP_CREDENTIAL_FILE", value: session.credentialFile }];
   return {
     servers: [
       {
@@ -725,6 +736,7 @@ function acpMcpContext(threadId: ThreadId | null, self: SelfInvocation): AcpMcpC
           { name: "ELECTRON_RUN_AS_NODE", value: "1" },
           { name: "STUDIO_ACP_MCP_ENDPOINT", value: session.endpoint },
           { name: "STUDIO_ACP_MCP_AUTHORIZATION", value: session.authorizationHeader },
+          ...credentialFileEnv,
         ],
       },
     ],
@@ -734,6 +746,9 @@ function acpMcpContext(threadId: ThreadId | null, self: SelfInvocation): AcpMcpC
     processEnvironment: {
       STUDIO_ACP_MCP_ENDPOINT: session.endpoint,
       STUDIO_ACP_MCP_AUTHORIZATION: session.authorizationHeader,
+      ...(session.credentialFile === undefined
+        ? {}
+        : { STUDIO_ACP_MCP_CREDENTIAL_FILE: session.credentialFile }),
       STUDIO_ACP_MCP_NODE: self.command,
       ...(self.entrypoint === undefined ? {} : { STUDIO_ACP_MCP_ENTRYPOINT: self.entrypoint }),
     },
@@ -2060,6 +2075,10 @@ export function makeAcpAdapterV2(
             ? setBackgroundTaskRunning(mutation.taskId, true)
             : markBackgroundTaskEnded(mutation.taskId);
 
+        // Ends that arrived mid-turn with no wake to follow (the agent already
+        // polled or killed the task). See finishEndedBackgroundTools.
+        const noWakeBackgroundTaskEnds = new Map<string, "completed" | "failed">();
+
         const trackRunningBackgroundTools = (
           notification: EffectAcpSchema.SessionNotification,
         ): Effect.Effect<void> =>
@@ -3030,6 +3049,27 @@ export function makeAcpAdapterV2(
           incoming: AcpToolCallState,
           projectedStatus?: ProjectedToolStatus,
         ) => Effect.Effect<void> = () => Effect.void;
+
+        /**
+         * A genuine end that lands mid-turn (Grok's task_completed while the
+         * prompt still runs) leaves its tool running for in-turn hydration.
+         * When the provider says no wake turn follows and the agent's own poll
+         * or kill was not recognised, nothing else ends the tool and it pins
+         * deferred finalize forever: finish such tools when the prompt settles.
+         */
+        const finishEndedBackgroundTools = (context: ActiveAcpTurn) =>
+          Effect.gen(function* () {
+            for (const [taskId, endStatus] of noWakeBackgroundTaskEnds) {
+              noWakeBackgroundTaskEnds.delete(taskId);
+              if (context.awaitingBackgroundHydration.has(taskId)) continue;
+              const toolCallId = context.toolCallIdsByBackgroundTaskId.get(taskId);
+              const tool = toolCallId === undefined ? undefined : context.tools.get(toolCallId);
+              if (tool === undefined) continue;
+              const status = toolStatus(tool.status);
+              if (status !== "pending" && status !== "running") continue;
+              yield* emitTool(context, { ...tool, status: endStatus }, endStatus);
+            }
+          });
 
         const markAwaitingBackgroundHydration = (context: ActiveAcpTurn, taskId: string) =>
           Effect.gen(function* () {
@@ -5514,8 +5554,8 @@ export function makeAcpAdapterV2(
               Effect.fail(
                 EffectAcpErrors.AcpRequestError.internalError(
                   disposition === "ask"
-                    ? `The active Studio runtime policy requires approval for ${operation}. Request permission with session/request_permission before retrying.`
-                    : `The active Studio runtime policy does not allow ${operation}.`,
+                    ? `The active SpecWithCode runtime policy requires approval for ${operation}. Request permission with session/request_permission before retrying.`
+                    : `The active SpecWithCode runtime policy does not allow ${operation}.`,
                 ),
               ),
             ),
@@ -5953,6 +5993,11 @@ export function makeAcpAdapterV2(
                       });
                     }
                     yield* applyLateBackgroundMutation(mutation.sessionId, mutation);
+                    if (mutation.status !== "running" && mutation.willWake === false) {
+                      noWakeBackgroundTaskEnds.set(mutation.taskId, mutation.status);
+                    } else {
+                      noWakeBackgroundTaskEnds.delete(mutation.taskId);
+                    }
                     if (mutation.status !== "running") {
                       yield* finishRegisteredBackgroundTool({
                         taskId: mutation.taskId,
@@ -5975,9 +6020,20 @@ export function makeAcpAdapterV2(
           if (mcpContext.endpoint === undefined || mcpContext.authorization === undefined) {
             return undefined;
           }
+          const providerInstanceId =
+            threadId === null
+              ? undefined
+              : McpProviderSession.readMcpProviderSession(threadId)?.providerInstanceId;
           const mcpBridge = yield* makeAcpMcpOverAcpBridge({
             endpoint: mcpContext.endpoint,
             authorization: mcpContext.authorization,
+            ...(threadId === null
+              ? {}
+              : {
+                  refreshCredentials: Effect.sync(() =>
+                    McpProviderSession.readMcpProviderCredentials(threadId, providerInstanceId),
+                  ),
+                }),
             allocateConnectionId: options.crypto.randomUUIDv4.pipe(Effect.orDie),
           });
           yield* Scope.addFinalizer(scope, mcpBridge.dispose);
@@ -6291,8 +6347,13 @@ export function makeAcpAdapterV2(
             });
           }
           yield* configureAcpOptions(
-            runtime, modelSelection, runtimePolicy, driver, startResult.sessionId,
-            nativeBuildConfigurationBySessionId, flavor.sessionModeForPolicy?.(runtimePolicy),
+            runtime,
+            modelSelection,
+            runtimePolicy,
+            driver,
+            startResult.sessionId,
+            nativeBuildConfigurationBySessionId,
+            flavor.sessionModeForPolicy?.(runtimePolicy),
           );
           yield* (
             flavor.onSessionConfigurationUpdate?.(
@@ -6682,6 +6743,7 @@ export function makeAcpAdapterV2(
               harness: flavor.runtimeHarness ?? driver,
               model: turnInput.modelSelection.model,
               responseStyle: turnInput.runtimePolicy.responseStyle,
+              agentInstructions: turnInput.runtimePolicy.agentInstructions,
             }),
           });
           return { prompt, instructionState: text === messageText ? undefined : instructionState };
@@ -7024,6 +7086,9 @@ export function makeAcpAdapterV2(
                           ? "interrupted"
                           : "cancelled"
                         : "completed";
+                    if (flavor.deferFinalizeForBackgroundWork === true && !context.interrupted) {
+                      yield* finishEndedBackgroundTools(context);
+                    }
                     // Grok monitors (and async subagents) keep working after the root
                     // prompt RPC returns. Defer finalize so their later updates and
                     // wake-turn traffic still project onto this run.

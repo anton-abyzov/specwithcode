@@ -66,6 +66,13 @@ import {
   DeviceStandardToolkit,
 } from "./toolkits/device/tools.ts";
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
+import * as ChromeHandlers from "./toolkits/chrome/handlers.ts";
+import {
+  ChromeScreenshotTool,
+  ChromeScreenshotToolkit,
+  ChromeStandardToolkit,
+} from "./toolkits/chrome/tools.ts";
+import * as BrowserExtension from "../browserExtension/BrowserExtension.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
 
 /** Where an MCP client discovers how to sign in (RFC 9728), at this request's own origin. */
@@ -100,7 +107,10 @@ const unauthorized = (input: {
   return HttpServerResponse.jsonUnsafe(
     {
       error: "invalid_mcp_credential",
-      message: "A valid SpecWithCode MCP credential is required.",
+      message:
+        !input.presentedToken || input.offerOAuth
+          ? "A valid SpecWithCode MCP credential is required."
+          : "This SpecWithCode MCP credential is no longer valid (its thread was archived, deleted or idle too long). Send another message in the thread to reconnect.",
     },
     {
       status: 401,
@@ -740,6 +750,30 @@ const registerDeviceScreenshot = Effect.fn("McpHttpServer.registerDeviceScreensh
   );
 });
 
+const registerChromeScreenshot = Effect.fn("McpHttpServer.registerChromeScreenshot")(function* () {
+  const extension = yield* BrowserExtension.BrowserExtension;
+  const threads = yield* ThreadManagementService.ThreadManagementService;
+  const built = yield* ChromeScreenshotToolkit;
+  yield* registerImageTool(
+    ChromeScreenshotTool,
+    (payload) =>
+      built
+        .handle("chrome_screenshot", payload)
+        .pipe(Stream.unwrap, Stream.run(Sink.last()), Effect.flatMap(Effect.fromOption)),
+    (effect) =>
+      effect.pipe(
+        Effect.provideService(BrowserExtension.BrowserExtension, extension),
+        Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
+      ),
+    "screenshot",
+    // Chrome tool errors are written by the server for the agent.
+    (error) =>
+      typeof (error as { reason?: unknown })?.reason === "string"
+        ? (error as { reason: string }).reason
+        : "Chrome screenshot failed.",
+  );
+});
+
 const isOrchestratorMcpFailure = Schema.is(OrchestratorMcpFailure);
 
 const registerHtmlPreview = Effect.fn("McpHttpServer.registerHtmlPreview")(function* () {
@@ -855,6 +889,11 @@ export const layerDeviceToolkit = Layer.mergeAll(
   layerDeviceScreenshotRegistration,
 );
 
+export const layerChromeToolkit = Layer.mergeAll(
+  toolkitRegistration(ChromeStandardToolkit, ChromeHandlers.layerStandard),
+  imageToolRegistration(registerChromeScreenshot(), ChromeHandlers.layerScreenshot),
+);
+
 export const layerMcpTransport = McpServer.layerHttp({
   // MCP serverInfo identity agents already registered; see docs/studio/naming.md.
   name: "SpecWeave Studio",
@@ -880,4 +919,5 @@ export const layer = Layer.mergeAll(
   layerPullRequestsToolkit,
   layerDeviceToolkit,
   layerHtmlToolkit,
+  layerChromeToolkit,
 ).pipe(Layer.provideMerge(layerMcpTransport));

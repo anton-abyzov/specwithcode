@@ -19,6 +19,7 @@ import {
   workEntryIndicatesToolFailure,
   workEntryDisplayIndicatesToolFailure,
   workEntryIndicatesToolSuccess,
+  workEntryReportsChromeDisconnected,
 } from "./presentation.js";
 
 function commandItem(
@@ -269,7 +270,7 @@ describe("summarizeToolGroup", () => {
 });
 
 describe("resolveWorkEntryToolPresentation", () => {
-  it("presents and summarizes every Studio tool using the same structured identity", () => {
+  it("presents and summarizes every SpecWithCode tool using the same structured identity", () => {
     for (const tool of STUDIO_MCP_TOOL_NAMES) {
       const entry: WorkLogPresentationEntry = {
         id: tool,
@@ -349,7 +350,7 @@ describe("resolveWorkEntryToolPresentation", () => {
     });
   });
 
-  it("does not summarize a foreign structured identity as Studio work", () => {
+  it("does not summarize a foreign structured identity as SpecWithCode work", () => {
     const entry: WorkLogPresentationEntry = {
       id: "foreign",
       createdAt: "2026-09-19T00:00:00.000Z",
@@ -474,8 +475,8 @@ describe("resolveWorkEntryToolPresentation", () => {
       "Stopping recording the preview browser",
       "Stopped recording the preview browser",
     ],
-    ["studio_thread_read", "Reading a Studio thread", "Read a Studio thread"],
-    ["studio_thread_send", "Sending to a Studio thread", "Sent to a Studio thread"],
+    ["studio_thread_read", "Reading a SpecWithCode thread", "Read a SpecWithCode thread"],
+    ["studio_thread_send", "Sending to a SpecWithCode thread", "Sent to a SpecWithCode thread"],
     [
       "studio_worktree_handoff",
       "Handing off thread to a git worktree",
@@ -492,7 +493,7 @@ describe("resolveWorkEntryToolPresentation", () => {
     ).toBe(completed);
   });
 
-  it("keeps Studio branding for non-browser tools and falls back to the original tool label", () => {
+  it("keeps SpecWithCode branding for non-browser tools and falls back to the original tool label", () => {
     expect(
       resolveWorkEntryToolPresentation({
         label: "mcp__studio_code__task_status",
@@ -791,7 +792,8 @@ describe("resolveViewedImageAsset", () => {
   const threadId = ThreadId.make("thread-1");
 
   it("serves specweave-studio attachment paths in place like any other host path", () => {
-    const path = "/Users/demo/.specweave-studio/dev/attachments/11111111-1111-4111-8111-111111111111.png";
+    const path =
+      "/Users/demo/.specweave-studio/dev/attachments/11111111-1111-4111-8111-111111111111.png";
     expect(resolveViewedImageAsset(path, { threadId, workspaceRoot: "/workspace" })).toEqual({
       resource: { _tag: "media-file", threadId, path },
       alt: "11111111-1111-4111-8111-111111111111.png",
@@ -891,9 +893,9 @@ describe("pull request tool presentation", () => {
     expect(summarizeToolGroup([link, link, list]).summary).toBe(
       "Linked 2 pull requests and checked linked pull requests",
     );
-    expect(summarizeToolGroup([{ ...link, label: "Studio-code · unlink_pull_request" }]).summary).toBe(
-      "Unlinked 1 pull request",
-    );
+    expect(
+      summarizeToolGroup([{ ...link, label: "Studio-code · unlink_pull_request" }]).summary,
+    ).toBe("Unlinked 1 pull request");
     expect(toolGroupSummaryKind([link, link, list])).toBe("pull-request");
     expect(summarizeToolGroup([list, list]).summary).toBe("Checked linked pull requests 2 times");
     expect(
@@ -949,7 +951,7 @@ describe("device group summaries", () => {
     expect(workEntryViewedImagePath(entry)).toBe("/workspace/device.png");
   });
 
-  it("does not classify another server's tools as Studio device controls", () => {
+  it("does not classify another server's tools as SpecWithCode device controls", () => {
     expect(
       summarizeToolGroup([
         {
@@ -958,5 +960,25 @@ describe("device group summaries", () => {
         },
       ]).summary,
     ).toBe("Used 1 tool");
+  });
+});
+
+describe("workEntryReportsChromeDisconnected", () => {
+  const message =
+    "Browser extension is not connected. Please ensure the Claude browser extension is installed and running.";
+
+  it("reads the row detail and the tool output", () => {
+    expect(workEntryReportsChromeDisconnected({ detail: message })).toBe(true);
+    expect(workEntryReportsChromeDisconnected({ toolData: { output: message } })).toBe(true);
+    expect(
+      workEntryReportsChromeDisconnected({
+        toolData: { content: [{ type: "text", text: message }] },
+      }),
+    ).toBe(true);
+  });
+
+  it("ignores other failures", () => {
+    expect(workEntryReportsChromeDisconnected({ detail: "Navigation timed out" })).toBe(false);
+    expect(workEntryReportsChromeDisconnected({})).toBe(false);
   });
 });

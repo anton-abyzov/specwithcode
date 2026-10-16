@@ -2,13 +2,14 @@ import type { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  archivedMemberKeys,
   archiveWorkspacePatch,
   isArchivedGroup,
   isScratchGroup,
   membersToToggle,
   partitionProjectGroups,
-  pinProjectsFirst,
-  togglePinnedProject,
+  projectPickerGroups,
+  projectPickerMembers,
   type ProjectListMember,
 } from "./projectListVisibility";
 
@@ -126,29 +127,56 @@ describe("project list visibility", () => {
   });
 });
 
-describe("pinned projects", () => {
-  const groups = ["a", "b", "c", "d"].map((projectKey) => ({ projectKey }));
+describe("project pickers", () => {
+  const pickerGroups = [atlas, hostScratch, remoteScratch, samples, shared];
 
-  it("lists pinned projects first in pin order, then the rest in input order", () => {
-    expect(pinProjectsFirst(groups, ["c", "a"]).map((group) => group.projectKey)).toEqual([
-      "c",
-      "a",
-      "b",
-      "d",
+  it("offers no archived project and no machine's No project folder", () => {
+    expect(projectPickerGroups(pickerGroups, scratchRootFor).map((g) => g.projectKey)).toEqual([
+      "atlas",
+      "shared",
     ]);
   });
 
-  it("ignores pins for projects that are not listed", () => {
-    expect(pinProjectsFirst(groups, ["gone", "d"]).map((group) => group.projectKey)).toEqual([
-      "d",
-      "a",
-      "b",
-      "c",
-    ]);
+  it("keeps the selected group listed even when it is archived", () => {
+    expect(
+      projectPickerGroups(pickerGroups, scratchRootFor, "remote:samples").map((g) => g.projectKey),
+    ).toEqual(["atlas", "remote:samples", "shared"]);
   });
 
-  it("pins at the end and unpins in place", () => {
-    expect(togglePinnedProject(["a"], "c")).toEqual(["a", "c"]);
-    expect(togglePinnedProject(["a", "c", "b"], "c")).toEqual(["a", "b"]);
+  it("filters one row per machine the same way", () => {
+    const members = pickerGroups.flatMap((g) => g.memberProjects);
+    expect(projectPickerMembers(members, scratchRootFor).map((m) => m.id)).toEqual(["a1", "h2"]);
+  });
+
+  it("keeps the selected member, matching machine and id", () => {
+    const members = pickerGroups.flatMap((g) => g.memberProjects);
+    const pick = (environmentId: string, id: string) =>
+      projectPickerMembers(members, scratchRootFor, {
+        environmentId: environmentId as EnvironmentId,
+        id: id as ProjectId,
+      }).map((m) => m.id);
+    expect(pick("remote", "r1")).toEqual(["a1", "r1", "h2"]);
+    expect(pick("host", "r1")).toEqual(["a1", "h2"]);
+  });
+});
+
+describe("archivedMemberKeys", () => {
+  it("names every checkout of an archived project and nothing else", () => {
+    const member = (environmentId: string, id: string, archived?: boolean): ProjectListMember =>
+      ({
+        environmentId,
+        id,
+        workspaceRoot: `/w/${id}`,
+        workspaceSettings: archived === undefined ? null : { archived },
+      }) as unknown as ProjectListMember;
+    const keys = archivedMemberKeys(
+      [
+        { projectKey: "old", memberProjects: [member("m1", "a", true), member("m4", "b", true)] },
+        { projectKey: "mixed", memberProjects: [member("m1", "c", true), member("m4", "d")] },
+        { projectKey: "live", memberProjects: [member("m1", "e")] },
+      ],
+      () => null,
+    );
+    expect([...keys].sort()).toEqual(["m1:a", "m4:b"]);
   });
 });

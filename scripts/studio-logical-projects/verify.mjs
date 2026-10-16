@@ -11,6 +11,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 
+import { openLiveDatabaseReadOnly } from "../lib/live-database.mjs";
+
 assert.equal(Number(process.versions.node.split(".")[0]), 22, "Use the project's Node 22 runtime");
 process.env.PWDEBUG = "0";
 process.env.PLAYWRIGHT_HTML_OPEN = "never";
@@ -549,7 +551,9 @@ try {
   const archivedRow = resolvedGroup.locator("article").filter({ hasText: "M1 archived worker" });
   await archivedRow.getByText("M1 archived worker", { exact: true }).waitFor();
   await archivedRow.getByRole("button", { name: "Reopen", exact: true }).waitFor();
-  receipt.checks.push("Remote archived threads remain visible in Resolved with their Reopen action");
+  receipt.checks.push(
+    "Remote archived threads remain visible in Resolved with their Reopen action",
+  );
   await page.locator("summary").filter({ hasText: "Previous coordinator on M1 fixture" }).click();
   await page
     .getByLabel("Retained coordinator messages on M1 fixture", { exact: true })
@@ -577,7 +581,7 @@ try {
   );
   assert.equal(errors.length, 0, "No browser exceptions");
   receipt.providerTurns = hosts.reduce((count, host) => {
-    const db = new DatabaseSync(join(host.data, "userdata/statev2.sqlite"), { readOnly: true });
+    const db = openLiveDatabaseReadOnly(join(host.data, "userdata/statev2.sqlite"));
     const total = db
       .prepare("SELECT COUNT(*) AS total FROM orchestration_v2_projection_provider_turns")
       .get().total;

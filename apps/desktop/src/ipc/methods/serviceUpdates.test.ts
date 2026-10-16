@@ -8,7 +8,7 @@ import type { AttachedLocalService } from "../../backend/DesktopLocalService.ts"
 import { makeServiceUpdateController } from "../../updates/studioServiceUpdates.ts";
 
 vi.mock("electron", () => ({}));
-import { controllerForAttachedService } from "./serviceUpdates.ts";
+import { isStaleService, controllerForAttachedService } from "./serviceUpdates.ts";
 
 function withInstallations(
   run: (
@@ -121,4 +121,15 @@ describe("legacy update controller attachment binding", () => {
         checkRequestedAt: "2026-10-14T12:00:00Z",
       });
     }));
+});
+
+describe("isStaleService", () => {
+  it("is true only for a release service older than the app", () => {
+    expect(isStaleService("1.0.20", "1.0.23")).toBe(true);
+    expect(isStaleService("1.0.23", "1.0.23")).toBe(false);
+    expect(isStaleService("1.0.24", "1.0.23")).toBe(false);
+    expect(isStaleService(undefined, "1.0.23")).toBe(false);
+    expect(isStaleService("1.0.20", "1.0.23-nightly.1")).toBe(false);
+    expect(isStaleService("1.0.20-dev.1", "1.0.23")).toBe(false);
+  });
 });

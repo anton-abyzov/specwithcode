@@ -138,24 +138,21 @@ describe("threadHasUnshippedWork", () => {
 describe("threadCardActions", () => {
   const kinds = (input: Parameters<typeof threadCardActions>[0]) =>
     threadCardActions(input).map((action) => action.kind);
-  it("always offers to view the thread, and nothing it has no data for", () => {
-    expect(kinds({ thread: thread(), git: null, pullRequest: null, canChange: true })).toEqual([
-      "view_thread",
-    ]);
+  it("offers nothing it has no data for: the card itself opens the thread", () => {
+    expect(kinds({ thread: thread(), git: null, pullRequest: null, canChange: true })).toEqual([]);
   });
   it("offers Create PR for unshipped work without an open pull request", () => {
     const changed = git({ hasWorkingTreeChanges: true });
     expect(kinds({ thread: thread(), git: changed, pullRequest: null, canChange: true })).toEqual([
-      "view_thread",
       "create_pr",
     ]);
-    expect(kinds({ thread: thread(), git: changed, pullRequest: null, canChange: false })).toEqual([
-      "view_thread",
-    ]);
+    expect(kinds({ thread: thread(), git: changed, pullRequest: null, canChange: false })).toEqual(
+      [],
+    );
     const open = { url: "u", number: 3, state: "open" as const };
     expect(
       threadCardActions({ thread: thread(), git: changed, pullRequest: open, canChange: true }),
-    ).toEqual([{ kind: "view_thread" }, { kind: "view_pr", ...open }]);
+    ).toEqual([{ kind: "view_pr", ...open }]);
   });
   it("offers both after a pull request closed and new work arrived", () => {
     const closed = { url: "u", number: 3, state: "closed" as const };
@@ -166,6 +163,6 @@ describe("threadCardActions", () => {
         pullRequest: closed,
         canChange: true,
       }),
-    ).toEqual(["view_thread", "create_pr", "view_pr"]);
+    ).toEqual(["create_pr", "view_pr"]);
   });
 });

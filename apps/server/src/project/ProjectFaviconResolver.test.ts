@@ -182,18 +182,20 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
       }),
     );
 
-    it.effect("falls back to well-known files when the specweave-studio.json iconPath does not exist", () =>
-      Effect.gen(function* () {
-        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
-        const cwd = yield* makeTempDir;
-        yield* writeTextFile(cwd, "specweave-studio.json", '{ "iconPath": "brand/missing.svg" }');
-        yield* writeTextFile(cwd, "favicon.svg", "<svg>favicon</svg>");
+    it.effect(
+      "falls back to well-known files when the specweave-studio.json iconPath does not exist",
+      () =>
+        Effect.gen(function* () {
+          const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+          const cwd = yield* makeTempDir;
+          yield* writeTextFile(cwd, "specweave-studio.json", '{ "iconPath": "brand/missing.svg" }');
+          yield* writeTextFile(cwd, "favicon.svg", "<svg>favicon</svg>");
 
-        const resolved = yield* resolver.resolvePath(cwd);
+          const resolved = yield* resolver.resolvePath(cwd);
 
-        expect(resolved).not.toBeNull();
-        expect(resolved).toContain("favicon.svg");
-      }),
+          expect(resolved).not.toBeNull();
+          expect(resolved).toContain("favicon.svg");
+        }),
     );
 
     it.effect("ignores invalid specweave-studio.json files", () =>

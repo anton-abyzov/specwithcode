@@ -46,7 +46,12 @@ describe("resolveInlineCodeFileLinks", () => {
     });
     expect(links.get("png/app/")).toMatchObject({ filePath: `${LOGO}/png/app`, directory: true });
     expect(links.get("explorations/")?.filePath).toBe(`${LOGO}/explorations`);
-    expect(links.get("README.md")?.candidates).toEqual([`${LOGO}/README.md`, `${CWD}/README.md`]);
+    // A bare name also tries the folder of the files named beside it.
+    expect(links.get("README.md")?.candidates).toEqual([
+      `${LOGO}/README.md`,
+      `${LOGO}/png/README.md`,
+      `${CWD}/README.md`,
+    ]);
   });
 
   it("keeps workspace paths when no relative path matches a folder the message names", () => {
@@ -58,5 +63,44 @@ describe("resolveInlineCodeFileLinks", () => {
       }),
     );
     expect(links.get("src/app.ts")?.candidates).toBeUndefined();
+  });
+});
+
+describe("line references", () => {
+  it("opens a file:line range at its first line", () => {
+    expect(
+      resolveInlineCodeFileLinkMeta("apps/server/src/serverRuntimeStartup.ts:353-357", CWD),
+    ).toMatchObject({
+      filePath: `${CWD}/apps/server/src/serverRuntimeStartup.ts`,
+      line: 353,
+      endLine: 357,
+    });
+  });
+
+  it("links a bare :line or :range to the file named before it", () => {
+    const spans = [
+      "apps/server/src/serverRuntimeStartup.ts:353-357",
+      ":396-399",
+      "prepareForShutdown",
+      "ProviderRuntimeRecoveryService.ts:71-81",
+      ":238",
+    ];
+    const links = resolveInlineCodeFileLinks(spans, CWD);
+    expect(links.get(":396-399")).toMatchObject({
+      filePath: `${CWD}/apps/server/src/serverRuntimeStartup.ts`,
+      line: 396,
+      endLine: 399,
+      label: ":396–399",
+    });
+    expect(links.get(":238")).toMatchObject({
+      filePath: `${CWD}/ProviderRuntimeRecoveryService.ts`,
+      line: 238,
+      label: ":238",
+    });
+    expect(links.has("prepareForShutdown")).toBe(false);
+  });
+
+  it("leaves a bare :line alone when no file came before it", () => {
+    expect(resolveInlineCodeFileLinks([":12", "a/b.ts"], CWD).has(":12")).toBe(false);
   });
 });

@@ -18,6 +18,18 @@ import { WS_METHODS } from "./rpc.ts";
 export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.projectsEnvironmentImport]: AuthOrchestrationOperateScope,
   [WS_METHODS.nativeConnectionsRead]: AuthFilesystemReadScope,
+  [WS_METHODS.browserBridgeStatus]: AuthFilesystemReadScope,
+  // Both start Claude Code's browser server, a local process.
+  [WS_METHODS.browserBridgeTest]: AuthTerminalOperateScope,
+  [WS_METHODS.browserBridgeReconnect]: AuthTerminalOperateScope,
+  [WS_METHODS.browserExtensionStatus]: AuthFilesystemReadScope,
+  // The pairing code lets a Chrome profile answer agents on this machine.
+  [WS_METHODS.browserExtensionPairing]: AuthTerminalOperateScope,
+  [WS_METHODS.browserExtensionTest]: AuthTerminalOperateScope,
+  [WS_METHODS.browserExtensionReconnect]: AuthTerminalOperateScope,
+  [WS_METHODS.browserExtensionStop]: AuthTerminalOperateScope,
+  [WS_METHODS.browserExtensionInstallFolder]: AuthFilesystemWriteScope,
+  [WS_METHODS.nativeConnectionApply]: AuthFilesystemWriteScope,
   [WS_METHODS.managedUpdatesEnroll]: AuthAccessWriteScope,
   [WS_METHODS.managedUpdatesRevoke]: AuthAccessWriteScope,
   [WS_METHODS.managedUpdatesCheck]: AuthEnvironmentMaintainScope,
@@ -74,6 +86,9 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.modsApprove]: AuthSettingsWriteScope,
   [WS_METHODS.modsDisable]: AuthSettingsWriteScope,
 
+  [WS_METHODS.composerDraftsPut]: AuthOrchestrationOperateScope,
+  [WS_METHODS.composerDraftsDelete]: AuthOrchestrationOperateScope,
+
   // The paired chat can start coordinator turns, so changing it is a settings write.
   [WS_METHODS.telegramChannelConfigure]: AuthSettingsWriteScope,
   [WS_METHODS.telegramChannelUnpair]: AuthSettingsWriteScope,
@@ -114,6 +129,9 @@ export function clientRpcRequiredScopes(
   }
   if (method === WS_METHODS.projectsConnectionSave || method === WS_METHODS.projectsConnectionCheck)
     return [AuthOrchestrationOperateScope, AuthTerminalOperateScope];
+  // Writes another tool's configuration, which that tool then runs as commands.
+  if (method === WS_METHODS.nativeConnectionApply)
+    return [AuthFilesystemWriteScope, AuthTerminalOperateScope];
   if (method === WS_METHODS.projectsPlanVerify)
     return [AuthOrchestrationOperateScope, AuthTerminalOperateScope];
   if (method === WS_METHODS.gitPreparePullRequestThread && input !== undefined) {

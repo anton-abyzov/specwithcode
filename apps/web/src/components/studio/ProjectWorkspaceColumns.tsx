@@ -2,7 +2,13 @@ import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { usePreviewPanelInlineSize } from "../../hooks/usePreviewPanelInlineSize";
 
 /** The same divider sizes both the thread list and an opened worker. */
-export function ProjectWorkspaceColumns({ open, expanded, phone, workerOpen, children }: {
+export function ProjectWorkspaceColumns({
+  open,
+  expanded,
+  phone,
+  workerOpen,
+  children,
+}: {
   open: boolean;
   expanded: boolean;
   phone: boolean;
@@ -33,7 +39,10 @@ export function ProjectWorkspaceColumns({ open, expanded, phone, workerOpen, chi
       className={`project-workspace-columns sws-columns ${workerOpen ? "project-worker-open" : ""}`}
       data-overview={open ? "open" : "closed"}
       data-expanded={open && expanded ? "true" : undefined}
-      style={{ position: "relative", ...(resizable ? { gridTemplateColumns: `minmax(0, 1fr) ${width}px` } : {}) }}
+      style={{
+        position: "relative",
+        ...(resizable ? { gridTemplateColumns: `minmax(0, 1fr) ${width}px` } : {}),
+      }}
     >
       {children}
       {resizable && (

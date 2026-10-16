@@ -24,7 +24,7 @@ const boundActor = Effect.fn("mcp.projectPlan.boundActor")(function* (requested?
     return yield* new OrchestratorMcpFailure({
       code: "capability_denied",
       message:
-        "Plan assignments require an authenticated Studio thread. Use the project UI for human actions.",
+        "Plan assignments require an authenticated SpecWithCode thread. Use the project UI for human actions.",
     });
   return { projectId, actor: { kind: "thread" as const, threadId: caller.id } };
 });

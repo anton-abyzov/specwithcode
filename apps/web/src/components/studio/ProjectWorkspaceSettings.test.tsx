@@ -19,6 +19,7 @@ const state = vi.hoisted(() => ({
   connectionCheck: vi.fn(),
   connectionRevoke: vi.fn(),
   providers: [] as unknown[],
+  initialFocus: null as React.RefObject<HTMLElement | null> | null,
   fleet: null as Record<string, unknown> | null,
   environment: {
     revision: 7,
@@ -131,7 +132,13 @@ vi.mock("../settings/settingsLayout", () => ({
 vi.mock("../settings/ProviderLimitSettings", () => ({
   ProviderLimitSettings: () => <p>When a provider runs out</p>,
 }));
+vi.mock("../settings/ProjectOverrides", () => ({
+  ProjectOverrides: ({ checkouts }: { checkouts: readonly { id: string }[] }) => (
+    <p data-project-overrides={checkouts.map((checkout) => checkout.id).join(",")} />
+  ),
+}));
 vi.mock("./ProjectRoutines", () => ({ ProjectRoutines: () => <p>Project routines</p> }));
+vi.mock("./ProjectFolderChange", () => ({ ProjectFolderChange: () => <p>Project folder</p> }));
 const CloseContext = createContext<() => void>(() => {});
 vi.mock("../ui/dialog", () => ({
   Dialog: ({
@@ -140,8 +147,12 @@ vi.mock("../ui/dialog", () => ({
   }: React.PropsWithChildren<{ onOpenChange: (open: boolean) => void }>) => (
     <CloseContext value={() => onOpenChange(false)}>{children}</CloseContext>
   ),
-  DialogPopup: ({ children }: React.PropsWithChildren) => {
+  DialogPopup: ({
+    children,
+    initialFocus,
+  }: React.PropsWithChildren<{ initialFocus?: React.RefObject<HTMLElement | null> }>) => {
     const close = useContext(CloseContext);
+    state.initialFocus = initialFocus ?? null;
     return (
       <main>
         <button onClick={close}>Close dialog</button>
@@ -216,6 +227,7 @@ async function render(
   canOperate = true,
   settingsOverride: Partial<ProjectWorkspaceReadResult["settings"]> = {},
   coordinatorThreadModel: ProjectWorkspaceReadResult["settings"]["coordinatorModelSelection"] = null,
+  focusName = false,
 ) {
   await act(async () =>
     root.render(
@@ -225,6 +237,7 @@ async function render(
         projectKey="atlas"
         snapshot={{ ...snapshot, settings: { ...snapshot.settings, ...settingsOverride } }}
         initialTab={tab}
+        focusName={focusName}
         onClose={state.close}
         onSaved={state.saved}
         onDeleted={state.deleted}
@@ -264,6 +277,44 @@ async function setLabel(label: string, value: string) {
   });
 }
 describe("project settings and memory", () => {
+  it("searches its own sections and rows, sections first, and opens the picked one", async () => {
+    await render("general");
+    await input('input[aria-label="Search project settings"]', "instructions");
+    const options = [...container.querySelectorAll<HTMLElement>('[role="option"]')];
+    expect(options.map((o) => [o.dataset.searchResultKind, o.textContent])).toEqual([
+      ["section", "Memory"],
+      ["row", "Project instructions"],
+    ]);
+    await act(async () => options[1]!.click());
+    expect(container.querySelector("nav button[aria-current='page']")?.textContent).toBe("Memory");
+    expect(container.querySelector('[role="option"]')).toBeNull();
+  });
+  it("selects a section on one click and with arrow keys, outside the generic control style", async () => {
+    await render("general");
+    const nav = container.querySelector<HTMLElement>(
+      'nav[aria-label="Project settings sections"]',
+    )!;
+    const current = () =>
+      [...nav.querySelectorAll("button[aria-current='page']")].map((b) => b.textContent);
+    expect(current()).toEqual(["General"]);
+    // The dialog's generic .project-control rule outranked the selected style.
+    expect(nav.querySelector(".project-control")).toBeNull();
+    await click("Memory");
+    expect(current()).toEqual(["Memory"]);
+    const memory = nav.querySelector<HTMLButtonElement>("button[data-tab='memory']")!;
+    memory.focus();
+    await act(async () => {
+      memory.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    });
+    expect(current()).toEqual(["Environment"]);
+    expect(document.activeElement?.textContent).toBe("Environment");
+    await act(async () => {
+      document.activeElement!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "End", bubbles: true }),
+      );
+    });
+    expect(current()).toEqual(["Routines"]);
+  });
   it("names the model the coordinator thread runs on, as the project view does", async () => {
     const threadModel = { instanceId: ProviderInstanceId.make("claude"), model: "thread-model" };
     await render("general", true, { coordinatorModelSelection: null }, threadModel);
@@ -277,6 +328,12 @@ describe("project settings and memory", () => {
     expect(scoped?.textContent).toContain("Usage limits");
     expect(scoped?.textContent).toContain("When a provider runs out");
   });
+  it("lists this project's overrides on the General tab", async () => {
+    await render("general");
+    expect(
+      container.querySelector("[data-project-overrides]")?.getAttribute("data-project-overrides"),
+    ).toBe("project");
+  });
   it("falls back to the worker default, then the host default, with no coordinator thread", async () => {
     await render("general", true, { coordinatorModelSelection: null });
     expect(container.textContent).toContain("Coordinator model and effort: codex-worker");
@@ -284,7 +341,7 @@ describe("project settings and memory", () => {
   it("saves the displayed revision and preserves edits after a conflict", async () => {
     state.update.mockResolvedValueOnce({ _tag: "Failure", error: new Error("Revision changed") });
     await render();
-    await input("input", "Atlas revised");
+    await input("#project-settings-name", "Atlas revised");
     await click("Save changes");
     expect(state.update.mock.calls[0]![0]).toMatchObject({
       environmentId: "host",
@@ -296,7 +353,9 @@ describe("project settings and memory", () => {
       },
     });
     expect(container.textContent).toContain("Revision changed");
-    expect(container.querySelector<HTMLInputElement>("input")!.value).toBe("Atlas revised");
+    expect(container.querySelector<HTMLInputElement>("#project-settings-name")!.value).toBe(
+      "Atlas revised",
+    );
     expect(state.saved).not.toHaveBeenCalled();
   });
   it("sends this project's workers to a machine that allows them, and back here", async () => {
@@ -923,5 +982,43 @@ describe("canonical project name in workspace settings", () => {
     expect(state.update.mock.calls[0]?.[0].input.workspaceSettings.goal).toBe(
       "Preserved source goal",
     );
+  });
+});
+
+describe("rename from a double click on the sidebar row", () => {
+  async function pressEnter() {
+    const name = container.querySelector<HTMLInputElement>("#project-settings-name")!;
+    await act(async () => {
+      name.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+  }
+  it("starts on the selected name, saves it on Enter and closes", async () => {
+    await render("general", true, {}, null, true);
+    const name = container.querySelector<HTMLInputElement>("#project-settings-name")!;
+    expect(state.initialFocus?.current).toBe(name);
+    await act(async () => name.focus());
+    expect([name.selectionStart, name.selectionEnd]).toEqual([0, "Atlas".length]);
+    await input("#project-settings-name", "Atlas renamed");
+    await pressEnter();
+    expect(state.update.mock.calls[0]![0].input).toMatchObject({ title: "Atlas renamed" });
+    expect(state.saved).toHaveBeenCalledOnce();
+    expect(state.close).toHaveBeenCalledOnce();
+  });
+  it("stays open with the draft when the rename fails, and Enter does nothing unchanged", async () => {
+    await render("general", true, {}, null, true);
+    await pressEnter();
+    expect(state.update).not.toHaveBeenCalled();
+    state.update.mockResolvedValueOnce({ _tag: "Failure", error: new Error("Rejected") });
+    await input("#project-settings-name", "Atlas renamed");
+    await pressEnter();
+    expect(container.textContent).toContain("Rejected");
+    expect(state.close).not.toHaveBeenCalled();
+  });
+  it("keeps the settings button's behavior: no name focus and no Enter save", async () => {
+    await render("general");
+    expect(state.initialFocus).toBeNull();
+    await input("#project-settings-name", "Atlas renamed");
+    await pressEnter();
+    expect(state.update).not.toHaveBeenCalled();
   });
 });

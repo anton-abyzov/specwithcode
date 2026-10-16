@@ -1,6 +1,6 @@
 # Google account
 
-Let a project's agents read your Gmail, Google Calendar and Google Drive. A Personal project can then brief you on your day, find a document, or check who is coming to a meeting. Studio only reads: agents cannot send mail, change events, or edit or delete files.
+Let a project's agents read your Gmail, Google Calendar and Google Drive. A Personal project can then brief you on your day, find a document, or check who is coming to a meeting. SpecWithCode only reads: agents cannot send mail, change events, or edit or delete files.
 
 ## Set it up
 
@@ -8,9 +8,9 @@ Official releases include SpecWithCode's Google OAuth client. Open **Settings > 
 
 For an organisation-owned client or a custom build without the bundled client, choose **Use your own OAuth client**. Create a **Desktop app** OAuth client in Google Cloud Console, enable the Gmail, Google Calendar and Google Drive APIs, configure the consent screen, and add your account as a test user if the app is in testing. Save that client in Settings before signing in.
 
-If the browser runs on a different machine than Studio, for example a phone over Tailscale, the page Google sends you back to will not load. Copy its address from the browser, paste it into **Address Google sent you to**, and press **Finish sign-in**.
+If the browser runs on a different machine than SpecWithCode, for example a phone over Tailscale, the page Google sends you back to will not load. Copy its address from the browser, paste it into **Address Google sent you to**, and press **Finish sign-in**.
 
-A sign-in that was started in Studio is the only one Studio accepts. Each one can be used once and expires after 15 minutes.
+A sign-in that was started in SpecWithCode is the only one SpecWithCode accepts. Each one can be used once and expires after 15 minutes.
 
 ## What agents can do
 
@@ -33,13 +33,13 @@ Next to a project with access, **Morning briefing** opens a new scheduled task w
 
 ## Security
 
-- Studio asks Google only for `gmail.readonly`, `calendar.readonly` and `drive.readonly`, plus your address. If you untick a service on Google's consent screen, Studio cannot turn it on for any project.
-- Sign-in uses PKCE and a single-use state value. The callback address answers only a sign-in that Studio itself started.
+- SpecWithCode asks Google only for `gmail.readonly`, `calendar.readonly` and `drive.readonly`, plus your address. If you untick a service on Google's consent screen, SpecWithCode cannot turn it on for any project.
+- Sign-in uses PKCE and a single-use state value. The callback address answers only a sign-in that SpecWithCode itself started.
 - The client secret and refresh token are kept in the host's secret store (`<stateDir>/secrets`, mode 0600). Clients never receive them. Requests to Google are kept out of traces, and errors report only the operation and Google's error code.
 - Access is granted per project and per service. Outside MCP clients, and threads of other projects, get nothing.
 - Signing in with a different Google account clears every project's access.
 - **Disconnect** revokes the refresh token at Google and forgets it. Project switches are kept for the next sign-in. **Remove** also forgets the client and every switch.
-- If Google ends Studio's access, for example after you remove it under Google Account > Security, the next agent call fails, and the settings page asks you to sign in again.
+- If Google ends SpecWithCode's access, for example after you remove it under Google Account > Security, the next agent call fails, and the settings page asks you to sign in again.
 
 ## Verify
 

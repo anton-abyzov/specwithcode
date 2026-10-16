@@ -8,6 +8,8 @@
  * the real CLI in ./binCli.ts.
  */
 import { isEntrypoint } from "./entrypoint.ts";
+import { installLiveDatabaseGuard } from "./persistence/liveDatabaseGuard.ts";
+import { ensureServerThreadPoolSize } from "./threadPool.ts";
 
 if (
   isEntrypoint({
@@ -24,6 +26,10 @@ if (
     const { runAcpMcpCliFastPath } = await import("./mcp/AcpMcpStdioBridge.ts");
     await runAcpMcpCliFastPath(command, process.argv.slice(3));
   } else {
+    // Before the CLI graph loads: the pool is sized on its first job, and
+    // Effect's file system captures node:fs at import.
+    ensureServerThreadPoolSize();
+    installLiveDatabaseGuard();
     const { runCli } = await import("./binCli.ts");
     runCli();
   }

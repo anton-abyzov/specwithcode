@@ -322,6 +322,27 @@ describe("pull request toolkit handlers", () => {
     }),
   );
 
+  it.effect("lets a coordinator's worker watch its own pull request", () =>
+    Effect.gen(function* () {
+      const base = makeThread([makeLink(1, { headBranch: "feature" })]);
+      const coordinator = ThreadId.make(`project-coordinator:${base.projectId}`);
+      const harness = yield* makeHarness({
+        thread: {
+          ...base,
+          lineage: {
+            rootThreadId: coordinator,
+            parentThreadId: coordinator,
+            relationshipToParent: "subagent",
+          },
+        },
+      });
+      yield* harness.call("watch_pull_request", { repository: "studiotools/studio", number: 1 });
+      expect(yield* Ref.get(harness.commands)).toMatchObject([
+        { type: "thread.pull-request.watch", number: 1, watching: true },
+      ]);
+    }),
+  );
+
   it.effect("links by repository and number, defaulting the host to the project's", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();

@@ -48,7 +48,8 @@ export function RemoveStudioConnectEnvironmentDialog({
               This forgets its pairing, credentials, and cached threads here.
             </AlertDialogDescription>
             <AlertDialogDescription>
-              It stays on your Studio Connect account and keeps its host space. Deregister it in{" "}
+              It stays on your SpecWithCode Connect account and keeps its host space. Deregister it
+              in{" "}
               {openAccountPage ? (
                 <InlineButton
                   onClick={() => {
@@ -56,10 +57,10 @@ export function RemoveStudioConnectEnvironmentDialog({
                     openAccountPage();
                   }}
                 >
-                  Studio Connect settings
+                  SpecWithCode Connect settings
                 </InlineButton>
               ) : (
-                "Studio Connect settings"
+                "SpecWithCode Connect settings"
               )}{" "}
               to free it.
             </AlertDialogDescription>

@@ -247,7 +247,7 @@ export const prepareCopilotStartupModel = Effect.fn("prepareCopilotStartupModel"
       new AcpSpawnError({ command: spawn.command, cause: new Error(detail) });
     if (spawn.args.some((arg) => arg === "--" || arg === "--model" || arg.startsWith("--model="))) {
       return yield* fail(
-        "Copilot launch arguments already override model parsing. Remove the override before selecting a Studio model.",
+        "Copilot launch arguments already override model parsing. Remove the override before selecting a SpecWithCode model.",
       );
     }
     const args = spawn.args.filter((arg) => arg !== "--acp" && arg !== "--stdio");

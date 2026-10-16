@@ -108,23 +108,24 @@ async function render(
   );
 }
 describe("project coordinator usage scope", () => {
-  it("shows the selected account's 100%, never the fleet or same-host account average", async () => {
+  it("shows the selected account's 0% left, never the fleet or same-host account average", async () => {
     await render();
-    expect(container.querySelector(".sws-usage-chip-value")?.textContent).toBe("100%");
+    expect(container.querySelector(".sws-usage-chip-value")?.textContent).toBe("0% left");
+    expect(container.querySelector(".sws-usage-chip-item")?.getAttribute("data-tone")).toBe("full");
     expect(container.querySelector(".sws-usage-chip")?.getAttribute("aria-label")).toContain("M4");
     expect(container.querySelector(".sws-usage-chip")?.getAttribute("aria-label")).toContain(
-      "Codex 100% used",
+      "Codex limit reached",
     );
   });
   it("updates scope when the project's machine changes", async () => {
     await render();
     await render(other);
-    expect(container.querySelector(".sws-usage-chip-value")?.textContent).toBe("2%");
+    expect(container.querySelector(".sws-usage-chip-value")?.textContent).toBe("98% left");
     expect(container.querySelector(".sws-usage-chip")?.getAttribute("aria-label")).toContain("M1");
   });
   it("updates scope when the coordinator account changes", async () => {
     await render(host, ProviderInstanceId.make("other-account"));
-    expect(container.querySelector(".sws-usage-chip-value")?.textContent).toBe("0%");
+    expect(container.querySelector(".sws-usage-chip-value")?.textContent).toBe("100% left");
   });
   it.each([
     [null, selected],

@@ -309,7 +309,10 @@ export function CoordinatorModelPicker(props: {
     );
   };
   return (
-    <span className="inline-flex min-w-0 flex-col items-start gap-1">
+    <span
+      className="inline-flex min-w-0 flex-col items-start gap-1"
+      data-coordinator-model-controls=""
+    >
       {content()}
       {props.requiresFolderGrants ? (
         <span

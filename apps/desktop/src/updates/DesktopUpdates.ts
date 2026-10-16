@@ -56,6 +56,10 @@ const AUTO_UPDATE_STARTUP_DELAY = "15 seconds";
 // far below its rate limit while still finding a release the same morning.
 const AUTO_UPDATE_POLL_INTERVAL = "1 hour";
 const PREPARED_INSTALL_CHECK_WAIT = Duration.seconds(90);
+// electron-updater's download promise can stay pending after it reported the
+// download (seen after an error event at 100%), holding the updater; the
+// download is given up after this long so the lock cannot stay taken.
+const DOWNLOAD_STALL_LIMIT = Duration.minutes(30);
 // Waking the Mac, unlocking it or focusing a Studio window re-checks only when
 // the last successful check is older than this, so focus changes stay cheap.
 const STALE_CHECK_MIN_AGE_MS = 30 * 60 * 1000;
@@ -303,7 +307,7 @@ function getAutoUpdateDisabledReason(args: {
     return "Automatic updates are only available in packaged production builds.";
   }
   if (args.disabledByEnv) {
-    return "Automatic updates are disabled by the STUDIO_DISABLE_AUTO_UPDATE setting.";
+    return "Automatic updates are disabled by the SPECWITHCODE_DISABLE_AUTO_UPDATE setting.";
   }
   if (args.platform === "linux" && !args.appImage && !args.isDebPackage) {
     return "Automatic updates on Linux require the AppImage or the .deb package.";
@@ -604,7 +608,17 @@ export const make = Effect.gen(function* () {
         isArm64HostRunningIntelBuild(environment.runtimeInfo),
       );
       yield* logUpdaterInfo("downloading update");
-      yield* electronUpdater.downloadUpdate;
+      const finished = yield* electronUpdater.downloadUpdate.pipe(
+        Effect.timeoutOption(DOWNLOAD_STALL_LIMIT),
+      );
+      if (Option.isNone(finished)) {
+        const current = yield* Ref.get(updateStateRef);
+        if (current.status === "downloaded") return { accepted: true, completed: true };
+        const message = "The update download stopped responding.";
+        yield* updateState((latest) => reduceDesktopUpdateStateOnDownloadFailure(latest, message));
+        yield* logUpdaterError(message, { errorTag: "DownloadStalled" });
+        return { accepted: true, completed: false };
+      }
       return { accepted: true, completed: true };
     }).pipe(
       Effect.catchTags({
@@ -781,7 +795,9 @@ export const make = Effect.gen(function* () {
               if (!(yield* Ref.get(updaterConfiguredRef))) return refuse("disabled");
               if (!hasExpectedDownload) return refuse("no-download");
               if (Option.isSome(activeAction)) {
-                return activeAction.value === "check" && expectedVersion !== undefined
+                // A check or a download ends on its own: wait for it instead of refusing.
+                return (activeAction.value === "check" && expectedVersion !== undefined) ||
+                  activeAction.value === "download"
                   ? ("wait-for-check" as const)
                   : refuse("busy");
               }
@@ -1072,6 +1088,9 @@ export const make = Effect.gen(function* () {
           const state = yield* Ref.get(updateStateRef);
           yield* setState(reduceDesktopUpdateStateOnDownloadComplete(state, info.version));
           yield* logUpdaterInfo("update downloaded", { version: info.version });
+          // Downloaded is done, even when the updater's download promise never
+          // settles: release the updater so a restart can install it.
+          yield* finishUpdateAction("download");
         }),
       ),
       Effect.catchCause((cause) => {

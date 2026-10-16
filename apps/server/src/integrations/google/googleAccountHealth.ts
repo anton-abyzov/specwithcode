@@ -65,7 +65,7 @@ export function projectGoogleStatus(input: {
     not_configured:
       "Open Settings > Google account and configure a Google client, then connect Google and enable services for this project.",
     disconnected:
-      "Open Settings > Google account, connect Google, then enable the needed services for this project. Connections in other apps do not connect this Studio host.",
+      "Open Settings > Google account, connect Google, then enable the needed services for this project. Connections in other apps do not connect this SpecWithCode host.",
     project_access_required:
       "Open Settings > Google account and enable the needed services for this project.",
     scope_required:

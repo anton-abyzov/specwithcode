@@ -47,6 +47,7 @@ vi.mock("../../connection/onboarding", () => ({ connectPairing: {} }));
 vi.mock("./settingsLayout", () => ({ SettingsRow: () => null, SettingsSection: () => null }));
 import {
   FleetWorkersRow,
+  fleetMachineAddress,
   StudioFleetConnections,
   StudioFleetRoster,
   StudioListenerRow,
@@ -99,6 +100,20 @@ const autoConnectSwitch = (tree: unknown) =>
     tree,
     (element) => element.props["aria-label"] === "Connect private machines automatically",
   );
+describe("private machine address", () => {
+  it("names the relay for a machine reached through another machine's private name", () => {
+    expect(fleetMachineAddress(snapshot.machines[1]!, snapshot.machines)).toBe(
+      "Through Mac M4, port 8443",
+    );
+    expect(fleetMachineAddress(snapshot.machines[0]!, snapshot.machines)).toBe(
+      "fixture.tailnet.ts.net",
+    );
+  });
+  it("shows a machine's own host and port when no configured machine owns that name", () => {
+    const own = { id: "m3", label: "Mac M3", url: "https://m3.tailnet.ts.net:8444" };
+    expect(fleetMachineAddress(own, [...snapshot.machines, own])).toBe("m3.tailnet.ts.net:8444");
+  });
+});
 describe("private machine roster", () => {
   beforeEach(() => {
     hooks.reset();

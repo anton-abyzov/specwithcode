@@ -27,7 +27,8 @@ import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { continueRestartedRun } from "./RestartContinuation.ts";
+import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
+import { continueRestartedRun, resumeQueueAfterRestart } from "./RestartContinuation.ts";
 
 export class OrchestrationEffectExecutionError extends Schema.TaggedError<OrchestrationEffectExecutionError>()(
   "OrchestrationEffectExecutionError",
@@ -129,6 +130,23 @@ export const layerExecutor: Layer.Layer<
               ),
             );
           }
+          case "provider-runtime.resume-queue":
+            return resumeQueueAfterRestart({
+              threadId: effect.threadId,
+              effectId: effect.id,
+              releaseHeld: effect.request.releaseHeld === true,
+            }).pipe(
+              Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
+              Effect.provideService(ServerSettings.ServerSettingsService, settings),
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
           case "provider-session.detach":
             return providerSessions
               .detach({
@@ -430,6 +448,17 @@ export const layerExecutor: Layer.Layer<
               );
           case "terminal.cleanup":
             return resourceCleanup.cleanupTerminals(effect.threadId).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
+          case "mcp-credential.invalidate":
+            return McpSessionRegistry.invalidateActiveMcpThread(effect.threadId).pipe(
               Effect.mapError(
                 (cause) =>
                   new OrchestrationEffectExecutionError({

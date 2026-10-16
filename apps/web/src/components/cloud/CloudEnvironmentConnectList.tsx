@@ -165,11 +165,11 @@ export function CloudEnvironmentConnectRows({
       toastManager.add({
         type: "success",
         title: savedWithoutRelay.has(environment.environmentId)
-          ? "Studio Connect route added"
+          ? "SpecWithCode Connect route added"
           : "Environment added",
         description: savedWithoutRelay.has(environment.environmentId)
-          ? `${environment.label} falls back to Studio Connect when its other routes are unreachable.`
-          : `Connecting to ${environment.label} through Studio Connect.`,
+          ? `${environment.label} falls back to SpecWithCode Connect when its other routes are unreachable.`
+          : `Connecting to ${environment.label} through SpecWithCode Connect.`,
       });
       return true;
     }
@@ -178,7 +178,9 @@ export function CloudEnvironmentConnectRows({
     }
     const cause = squashAtomCommandFailure(result);
     const message =
-      cause instanceof Error ? cause.message : "Could not connect the Studio Connect environment.";
+      cause instanceof Error
+        ? cause.message
+        : "Could not connect the SpecWithCode Connect environment.";
     const traceId = findErrorTraceId(cause);
     console.error("[studio-connect] Could not connect environment", { message, traceId, cause });
     toastManager.add({
@@ -300,7 +302,7 @@ export function CloudEnvironmentConnectRows({
       return (
         <div className={ITEM_ROW_CLASSNAME}>
           <p className="text-sm font-medium text-destructive-foreground">
-            Could not load Studio Connect environments
+            Could not load SpecWithCode Connect environments
           </p>
           <p className="mt-1 text-xs text-muted-foreground">{discoveryProblem}</p>
           <Button
@@ -364,23 +366,23 @@ export function CloudEnvironmentConnectRows({
             ? "bg-warning"
             : "bg-muted-foreground/35";
     const notAdded = savedWithoutRelay.has(environment.environmentId)
-      ? "Saved without Studio Connect"
+      ? "Saved without SpecWithCode Connect"
       : "Not added";
     const statusText =
       unsupported && !savedEnvironment
-        ? `Studio Connect · ${notAdded} · Client not supported`
+        ? `SpecWithCode Connect · ${notAdded} · Client not supported`
         : offlineReason !== null
           ? offlineReason
           : savedConnection
             ? savedConnection.statusText
             : availability === "online"
-              ? `Studio Connect · ${notAdded} · Relay online`
+              ? `SpecWithCode Connect · ${notAdded} · Relay online`
               : availability === "offline"
-                ? `Studio Connect · ${notAdded} · Relay offline`
+                ? `SpecWithCode Connect · ${notAdded} · Relay offline`
                 : availability === "checking"
-                  ? `Studio Connect · ${notAdded} · Checking relay status…`
+                  ? `SpecWithCode Connect · ${notAdded} · Checking relay status…`
                   : (Option.getOrNull(error)?.message ??
-                    `Studio Connect · ${notAdded} · Relay status unavailable`);
+                    `SpecWithCode Connect · ${notAdded} · Relay status unavailable`);
     if (selection) {
       return (
         <label

@@ -488,12 +488,13 @@ describe("thread cards' quick actions", () => {
     ...overrides,
   });
   const card = () => container.querySelector<HTMLElement>('[data-thread-card="fresh"]')!;
-  const actions = () => [...card().querySelectorAll("button")].map((b) => b.textContent);
+  const actions = () =>
+    [...card().querySelectorAll(".sws-thread-card-action")].map((b) => b.textContent);
   it("offers Create PR for unshipped changes and runs it beside the thread", async () => {
     announce();
     state.git = git();
     await render();
-    expect(actions()).toEqual(["View thread", "Create PR"]);
+    expect(actions()).toEqual(["Create PR"]);
     // A title cut short in a narrow panel can still be read in full on hover.
     const title = card().querySelector<HTMLElement>(".sws-thread-card-title")!;
     expect(title.getAttribute("data-slot")).toBe("tooltip-trigger");
@@ -523,25 +524,27 @@ describe("thread cards' quick actions", () => {
     });
     state.git = git();
     await render();
-    expect(actions()).toEqual(["View thread", "View PR"]);
+    expect(actions()).toEqual(["View PR"]);
     await act(async () =>
       card().querySelector<HTMLButtonElement>('[data-action="view-pr"]')!.click(),
     );
     expect(state.openLink).toHaveBeenCalledWith("https://github.com/acme/atlas/pull/42");
+    // The pull request opens on its own; the thread does not open behind it.
+    expect(container.querySelector('[data-native-thread="fresh"]')).toBeNull();
   });
   it("leaves Create PR out on a read-only connection", async () => {
     announce();
     state.git = git();
     state.canOperate = false;
     await render();
-    expect(actions()).toEqual(["View thread"]);
+    expect(actions()).toEqual([]);
   });
   it("leaves Create PR out when the grant can operate but not change source control", async () => {
     announce();
     state.git = git();
     state.canWriteSourceControl = false;
     await render();
-    expect(actions()).toEqual(["View thread"]);
+    expect(actions()).toEqual([]);
   });
   it("says why when nothing acted on Create PR by the deadline", async () => {
     vi.useFakeTimers();

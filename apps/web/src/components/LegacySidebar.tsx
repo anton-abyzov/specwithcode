@@ -225,6 +225,7 @@ import {
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
+import { isCoordinatorNamedThread } from "../studio/threadTitles";
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
   created_at: "Created at",
@@ -540,6 +541,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const handleRowDoubleClick = useCallback(
     (event: React.MouseEvent) => {
       if (!readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope)) return;
+      // Its coordinator names a worker thread; the title is read-only here.
+      if (isCoordinatorNamedThread(thread)) return;
       // Already renaming this row: a double-click on the row chrome (outside the
       // input) must not restart and discard the in-progress edit.
       if (renamingThreadKey === threadKey) return;
@@ -554,7 +557,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       event.preventDefault();
       startThreadRename(threadKey, thread.title);
     },
-    [isMobile, renamingThreadKey, startThreadRename, threadKey, thread.environmentId, thread.title],
+    [isMobile, renamingThreadKey, startThreadRename, threadKey, thread],
   );
   const handleRowKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
@@ -2202,7 +2205,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           ...(thread.branch
             ? [{ id: "new-thread-on-branch", label: `New thread on ${thread.branch}` }]
             : []),
-          { id: "rename", label: "Rename thread", disabled: !canOperateThread },
+          ...(isCoordinatorNamedThread(thread)
+            ? []
+            : [{ id: "rename", label: "Rename thread", disabled: !canOperateThread }]),
           { id: "mark-unread", label: "Mark unread" },
           { id: "copy-path", label: "Copy Path" },
           { id: "copy-thread-id", label: "Copy Thread ID" },

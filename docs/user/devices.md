@@ -29,7 +29,7 @@ off.
 Simulators run on the machine that hosts the environment server. iOS needs
 macOS with Xcode. Android needs the SDK Platform-Tools, Android Emulator,
 and Command-line Tools (latest), plus a virtual device created in Android
-Studio's Device Manager. SpecWithCode detects standard SDK locations; set
+SpecWithCode's Device Manager. SpecWithCode detects standard SDK locations; set
 `ANDROID_HOME` for a custom location. The panel explains missing dependencies.
 After installing them, restart the environment server and refresh devices.
 
@@ -69,7 +69,7 @@ If the thread has several devices open, choose one in the viewer. Closing the
 viewer stops streaming and leaves the device available to the agent. Device
 activity also appears in the thread timeline.
 
-Agents drive the device through the `agent-device` command line. Studio
+Agents drive the device through the `agent-device` command line. SpecWithCode
 Code installs and starts it only after **Agent device access** is enabled. iOS
 taps build a small test runner on first use, which takes a couple of minutes
 once per server. Restart an existing agent session after granting access so it
@@ -82,7 +82,7 @@ started from then on; your own Device panel is unaffected.
 ## Remote connections
 
 The device stream goes through the environment server, so it works over the
-local network, Tailscale, and Studio Connect. Live video needs a secure page
+local network, Tailscale, and SpecWithCode Connect. Live video needs a secure page
 (HTTPS or localhost); on a plain-HTTP remote origin iOS falls back to a slower
 still-image stream and Android cannot show video.
 
@@ -99,20 +99,20 @@ anything, with a result for each selected environment. Targets that resolve to
 the environment’s own machine are skipped, since its devices are already local.
 The first device listing installs pinned device tools on the host.
 Node 22 or newer and npm must be available to non-interactive SSH commands.
-Studio checks common Homebrew and Android SDK locations; custom installations need
+SpecWithCode checks common Homebrew and Android SDK locations; custom installations need
 the appropriate PATH and ANDROID_HOME on the host.
 
 The picker identifies devices by host when several hosts are configured.
 Connections recover after interruptions. Removing a host closes its device
-sessions and stops its Studio helpers when reachable; simulators keep running.
+sessions and stops its SpecWithCode helpers when reachable; simulators keep running.
 
-Studio provides discovery, streaming, and control. Arrange app builds,
+SpecWithCode provides discovery, streaming, and control. Arrange app builds,
 installation, and connectivity to development servers such as Metro separately.
 A simulator on another machine cannot reach Metro through your environment's
 localhost without forwarding or another reachable address.
 
 ## Device tool updates
 
-The connected Studio server manages the device hub and agent tools on its own machine and configured SSH hosts. Required versions install automatically the next time those tools are used. Settings → Integrations → Check device tool versions reads installed versions without installing tools or starting devices.
+The connected SpecWithCode server manages the device hub and agent tools on its own machine and configured SSH hosts. Required versions install automatically the next time those tools are used. Settings → Integrations → Check device tool versions reads installed versions without installing tools or starting devices.
 
-To receive newer tool versions on a remote environment, update that environment's Studio server. Updating only the browser or mobile app does not update the remote server. An offline host keeps its installed files, but an update needs network access before device support can start; Studio does not fall back to an older version. Reconnect the host and use Retry if installation fails. Existing device and agent-access settings are preserved.
+To receive newer tool versions on a remote environment, update that environment's SpecWithCode server. Updating only the browser or mobile app does not update the remote server. An offline host keeps its installed files, but an update needs network access before device support can start; SpecWithCode does not fall back to an older version. Reconnect the host and use Retry if installation fails. Existing device and agent-access settings are preserved.

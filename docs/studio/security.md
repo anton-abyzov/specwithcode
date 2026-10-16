@@ -1,50 +1,50 @@
-# Studio security boundaries
+# SpecWithCode security boundaries
 
-This page covers one person's setup: their own Macs, their own subscription accounts, Studio in the
+This page covers one person's setup: their own Macs, their own subscription accounts, SpecWithCode in the
 browser today and a Mac desktop app next. It ranks what can actually go wrong with the CLIProxyAPI
-hub and Tailscale, and says what Studio enforces versus what you configure.
+hub and Tailscale, and says what SpecWithCode enforces versus what you configure.
 
 ## How machines connect, with or without Tailscale
 
 Tailscale is not required to connect machines. A machine can have several routes: LAN address, SSH,
-Tailscale, a public URL, or Studio Connect (the hosted relay, off by default in Studio). What each
+Tailscale, a public URL, or SpecWithCode Connect (the hosted relay, off by default in SpecWithCode). What each
 gives you:
 
-| Route | Works off your home network | Notes |
-| --- | --- | --- |
-| SSH port forward (fleet tunnels, or desktop **Add environment → SSH**) | Only if SSH is reachable | Encrypted and pinned; today's workers use this over the LAN from the primary Mac |
-| Plain LAN address | No | Needs the server bound beyond loopback; traffic is unencrypted http unless you add TLS. Avoid |
-| Tailscale Serve | Yes | Encrypted, private https, no open ports. Needed today for the phone and off-LAN access |
-| Public URL | Yes | Exposes Studio to the internet behind pairing alone. Avoid |
+| Route                                                                  | Works off your home network | Notes                                                                                         |
+| ---------------------------------------------------------------------- | --------------------------- | --------------------------------------------------------------------------------------------- |
+| SSH port forward (fleet tunnels, or desktop **Add environment → SSH**) | Only if SSH is reachable    | Encrypted and pinned; today's workers use this over the LAN from the primary Mac              |
+| Plain LAN address                                                      | No                          | Needs the server bound beyond loopback; traffic is unencrypted http unless you add TLS. Avoid |
+| Tailscale Serve                                                        | Yes                         | Encrypted, private https, no open ports. Needed today for the phone and off-LAN access        |
+| Public URL                                                             | Yes                         | Exposes SpecWithCode to the internet behind pairing alone. Avoid                              |
 
 Recommendation: keep Tailscale for anything off the LAN and for the phone, and SSH forwards for
 workers on the same network. Another private network (plain WireGuard, ZeroTier) can replace
-Tailscale with the same rules: bind Studio to loopback, forward into it, pair each origin.
+Tailscale with the same rules: bind SpecWithCode to loopback, forward into it, pair each origin.
 
 ## What the CLIProxyAPI hub is for
 
 CLIProxyAPI is a separate open-source program that signs in to several Claude, Codex or Gemini
-subscriptions and offers them as one API endpoint. Studio does not need it. Studio runs agents
+subscriptions and offers them as one API endpoint. SpecWithCode does not need it. SpecWithCode runs agents
 through the official Codex and Claude Code CLIs on each machine, which bypass the hub entirely.
 
-Studio's only use of a hub is read-only usage plus one action: under **Settings → Providers → Usage
+SpecWithCode's only use of a hub is read-only usage plus one action: under **Settings → Providers → Usage
 providers → Add hub** it reads each pooled account's 5-hour and weekly limits, banked resets and
 Codex credit balance so they appear in **Usage → Limits**, and it can redeem a banked Codex or Claude
 reset. Sending agent requests through the
 hub is a separate, manual provider setting and carries the provider-terms risk below. Without a hub,
-Studio still shows limits for the accounts signed in on each machine.
+SpecWithCode still shows limits for the accounts signed in on each machine.
 
 ## What each layer protects
 
-| Layer | Protects | Does not protect |
-| --- | --- | --- |
-| Studio bind address | The server listens on `127.0.0.1:8319`; the fleet installer and updater refuse anything else | Anything that forwards into loopback (Serve, SSH `-L`) |
-| Studio pairing | Every origin needs its own one-time pairing; sessions are scoped cookies, bearer or DPoP tokens | A browser profile or device that is already paired |
-| Tailscale Serve | Private HTTPS inside your tailnet, encrypted by WireGuard; never Funnel | Who in the tailnet may connect: that is your tailnet policy |
-| Pinned SSH forwards | Primary-to-worker traffic over the LAN with strict host keys, bound to `127.0.0.1` | A compromised primary Mac, which holds the worker keys |
-| CLIProxyAPI management key | Studio stores it in its secret store and never sends it to a browser | Anyone who holds the key: it can act as every pooled account |
+| Layer                      | Protects                                                                                        | Does not protect                                             |
+| -------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| SpecWithCode bind address  | The server listens on `127.0.0.1:8319`; the fleet installer and updater refuse anything else    | Anything that forwards into loopback (Serve, SSH `-L`)       |
+| SpecWithCode pairing       | Every origin needs its own one-time pairing; sessions are scoped cookies, bearer or DPoP tokens | A browser profile or device that is already paired           |
+| Tailscale Serve            | Private HTTPS inside your tailnet, encrypted by WireGuard; never Funnel                         | Who in the tailnet may connect: that is your tailnet policy  |
+| Pinned SSH forwards        | Primary-to-worker traffic over the LAN with strict host keys, bound to `127.0.0.1`              | A compromised primary Mac, which holds the worker keys       |
+| CLIProxyAPI management key | SpecWithCode stores it in its secret store and never sends it to a browser                      | Anyone who holds the key: it can act as every pooled account |
 
-Studio ignores Tailscale identity headers (`Tailscale-User-Login` and similar). Network reachability
+SpecWithCode ignores Tailscale identity headers (`Tailscale-User-Login` and similar). Network reachability
 never authenticates a request; pairing does. Keep it that way in any new transport, including the
 desktop app.
 
@@ -53,11 +53,11 @@ desktop app.
 ### 1. The hub management key is every pooled account
 
 CLIProxyAPI's management API includes `api-call`, which sends a request to a caller-chosen URL with a
-pooled account's OAuth token substituted into the headers. Studio uses it to read Codex and Claude
+pooled account's OAuth token substituted into the headers. SpecWithCode uses it to read Codex and Claude
 usage and to redeem their banked resets. Anyone holding the management key can therefore use, or
 send away, the token of every account on the hub.
 
-Studio enforces:
+SpecWithCode enforces:
 
 - The key is kept in the server secret store and redacted to `••••••` for every client.
 - The key is sent only over https, loopback or a Tailscale address. A plain-http LAN URL is refused
@@ -69,7 +69,7 @@ You configure, in CLIProxyAPI's `config.yaml` on the hub machine:
 
 - `host: "127.0.0.1"`. The default empty host listens on every interface, including your LAN and the
   tailnet address, which bypasses Serve.
-- `remote-management.allow-remote: false`, unless Studio on another machine must read the hub. In
+- `remote-management.allow-remote: false`, unless SpecWithCode on another machine must read the hub. In
   that case put the hub behind Tailscale Serve on its own port and restrict that port in your
   tailnet policy.
 - A long random `remote-management.secret-key` and long random client `api-keys`.
@@ -82,24 +82,24 @@ Check without printing secrets: `lsof -nP -iTCP:8317 -sTCP:LISTEN` should show o
 
 ### 2. Provider terms for subscription accounts
 
-Studio's native path runs the official Codex and Claude Code binaries with their own sign-in. That
+SpecWithCode's native path runs the official Codex and Claude Code binaries with their own sign-in. That
 is the lowest-risk way to use a subscription. Routing a Claude or ChatGPT subscription's OAuth token
 through a proxy such as CLIProxyAPI, pooling several subscriptions behind one endpoint, or rotating
 accounts to get past limits can break the provider's terms and get an account suspended. Anthropic's
 Claude Code documentation says subscription OAuth is meant for Claude Code and Claude.ai, and that
-third-party products should use API keys. Studio's hub client also calls undocumented provider
+third-party products should use API keys. SpecWithCode's hub client also calls undocumented provider
 endpoints (`/api/oauth/usage`, `/api/oauth/profile`, Claude's `reset_rate_limits`, the ChatGPT
 `wham` usage and reset-credit endpoints) with
 Codex-client headers; these can change or be refused without notice.
 
 For a desktop app offered to other people, do not ship a flow that signs in with someone's Claude
-subscription inside Studio. Let each provider's own CLI or app own its sign-in, and use API keys for
-anything Studio calls directly.
+subscription inside SpecWithCode. Let each provider's own CLI or app own its sign-in, and use API keys for
+anything SpecWithCode calls directly.
 
-### 3. Tailnet policy decides who reaches Studio
+### 3. Tailnet policy decides who reaches SpecWithCode
 
 Serve makes the primary's `443`, `8443` and `8444` reachable by every tailnet device your policy
-allows. The default policy allows all of them. Pairing still stands between them and Studio, but a
+allows. The default policy allows all of them. Pairing still stands between them and SpecWithCode, but a
 pairing link sent to the wrong device, or a phishing page on a shared node, is enough.
 
 - Restrict those ports to your own user's devices with a grant, for example
@@ -115,7 +115,7 @@ pairing link sent to the wrong device, or a phishing page on a shared node, is e
 ### 4. The primary Mac holds the fleet
 
 The primary keeps pinned SSH keys for every worker and terminates all three Serve routes. Taking it
-over gives access to every worker's Studio and shell.
+over gives access to every worker's SpecWithCode and shell.
 
 - Use a separate SSH key for the tunnels and restrict it in the worker's `authorized_keys`:
   `restrict,port-forwarding,permitopen="127.0.0.1:8319" ssh-ed25519 …`. Keep the administrative key
@@ -138,11 +138,11 @@ preparation with the device's Git login. Review findings against that branch:
   environment secrets and no sandbox. A relative or `PATH`-resolved command (`node ./mcp.js`,
   `npx …`) lets an agent that can write the workspace plant code that runs outside its sandbox on
   the next check or call. Require an absolute executable outside every writable root and start it in
-  a Studio-owned empty folder.
+  a SpecWithCode-owned empty folder.
 - Granted connection tools run without a per-call approval, even in approval-required threads.
 - `envKeys` secrets must sit in the server environment, which provider processes inherit, so agents
   can usually read them directly. Prefer the secret store and pass values only to the connection.
-- Approved folders have no denylist: `/`, your home folder, `~/.ssh` or Studio's own state folder
+- Approved folders have no denylist: `/`, your home folder, `~/.ssh` or SpecWithCode's own state folder
   can be approved and become writable roots. Refuse those.
 - Repository preparation runs `git clone` with your credential helper and SSH agent, so it reaches
   every repository your login can. Its URL host is unrestricted; refuse loopback, link-local and

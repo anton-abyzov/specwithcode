@@ -101,6 +101,63 @@ describe("thread execution presentation", () => {
     ).toMatchObject({ status: "running", lastError: null, lastErrorClass: null });
   });
 
+  it("dates a failure by its run's end and drops a session error a later run outlived", () => {
+    const completedAt = DateTime.makeUnsafe("2026-07-28T09:30:00.000Z");
+    const failed = {
+      ...run("failed", 1, "failed"),
+      rootNodeId: NodeId.make("root"),
+      completedAt,
+    };
+    const item = {
+      id: TurnItemId.make("transport-error"),
+      threadId: v2Projection.thread.id,
+      runId: failed.id,
+      nodeId: failed.rootNodeId,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      type: "error" as const,
+      status: "failed" as const,
+      title: "Provider error",
+      startedAt: now,
+      completedAt,
+      updatedAt: completedAt,
+      failure: {
+        class: "transport_error" as const,
+        message: "The response stream disconnected.",
+        code: null,
+        retryable: null,
+      },
+    };
+    expect(
+      deriveThreadRuntime({ ...v2Projection, runs: [failed], turnItems: [item] }),
+    ).toMatchObject({
+      lastError: "The response stream disconnected.",
+      lastErrorAt: "2026-07-28T09:30:00.000Z",
+    });
+    const session = {
+      id: ProviderSessionId.make("session-1"),
+      driver: ProviderDriverKind.make("claudeAgent"),
+      providerInstanceId: v2Projection.thread.providerInstanceId,
+      status: "error" as const,
+      cwd: "/tmp/project",
+      model: null,
+      capabilities: {} as never,
+      createdAt: now,
+      updatedAt: now,
+      lastError: "Provider runtime failed.",
+    };
+    expect(
+      deriveThreadRuntime({
+        ...v2Projection,
+        runs: [{ ...run("done", 1, "completed"), completedAt: now }],
+        providerSessions: [session],
+      }),
+    ).toMatchObject({ lastError: null, lastErrorAt: null });
+  });
+
   it("counts a wake run's activity from the start of the work it continues", () => {
     const workStartedAt = DateTime.makeUnsafe("2026-07-28T09:20:00.000Z");
     const wake = { ...run("wake", 2, "running"), workStartedAt };

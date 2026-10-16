@@ -405,6 +405,19 @@ export function workEntryDisplayIndicatesToolFailure(entry: WorkLogPresentationE
   return workEntryIndicatesToolFailureFromOutput(entry, false);
 }
 
+const CHROME_DISCONNECTED = /browser extension is not connected/i;
+
+/** True when a browser tool failed because Chrome's extension is unreachable on the run's machine. */
+export function workEntryReportsChromeDisconnected(
+  entry: Pick<WorkLogPresentationEntry, "detail" | "toolData" | "structuredPayload">,
+): boolean {
+  if (entry.detail && CHROME_DISCONNECTED.test(entry.detail)) return true;
+  const output = workEntryToolOutput(entry);
+  if (output === undefined || output === null) return false;
+  const text = typeof output === "string" ? output : JSON.stringify(output);
+  return CHROME_DISCONNECTED.test(text.slice(0, 8_192));
+}
+
 /** Decides whether the row can show a success marker. */
 export function workEntryIndicatesToolSuccess(entry: WorkLogPresentationEntry): boolean {
   return (
@@ -609,6 +622,8 @@ function summaryActionPriority(action: ToolGroupAction | StudioMcpToolSummaryAct
     case "thread-create":
     case "thread-send":
     case "thread-interrupt":
+    case "thread-stop-all":
+    case "thread-continue-all":
     case "schedule-create":
     case "schedule-update":
     case "schedule-delete":
@@ -622,6 +637,7 @@ function summaryActionPriority(action: ToolGroupAction | StudioMcpToolSummaryAct
     case "queue-cancel":
     case "queue-reorder":
     case "queue-steer":
+    case "queue-resume":
     case "question-respond":
     case "worktree-handoff":
     case "project-create":
@@ -639,6 +655,14 @@ function summaryActionPriority(action: ToolGroupAction | StudioMcpToolSummaryAct
     default:
       return 1;
   }
+}
+
+/**
+ * The app's own MCP server keeps its registered protocol name, "SpecWeave Studio"
+ * (docs/studio/naming.md); people read the product name.
+ */
+export function displayToolSourceName(name: string): string {
+  return /^specweave[\s_-]*studio$/i.test(name.trim()) ? "SpecWithCode" : name;
 }
 
 /** Summarizes at most two action categories; every omitted call still counts in the remainder. */
@@ -664,7 +688,8 @@ export function summarizeToolGroup(entries: ReadonlyArray<WorkLogPresentationEnt
   >();
   const sources = new Map<string, ToolActivitySource>();
   for (const entry of entries) {
-    const studioAction = resolveStudioMcpToolDefinition(workEntryToolName(entry))?.summaryAction ?? null;
+    const studioAction =
+      resolveStudioMcpToolDefinition(workEntryToolName(entry))?.summaryAction ?? null;
     if (entry.toolSource && studioAction === null) {
       sources.set(entry.toolSource.key, entry.toolSource);
       continue;
@@ -696,7 +721,7 @@ export function summarizeToolGroup(entries: ReadonlyArray<WorkLogPresentationEnt
   const labels = selected.map(({ label }) => label);
   if (sources.size > 0) {
     const sourceValues = [...sources.values()];
-    const sourceNames = sourceValues.map((source) => source.name);
+    const sourceNames = sourceValues.map((source) => displayToolSourceName(source.name));
     const formattedNames =
       sourceNames.length < 2
         ? sourceNames[0]!
@@ -726,6 +751,93 @@ export function summarizeToolGroup(entries: ReadonlyArray<WorkLogPresentationEnt
       ? sentenceLabels.join(" and ")
       : `${sentenceLabels.slice(0, -1).join(", ")}, and ${sentenceLabels.at(-1)}`;
   return { summary, hasFailure: summaries.some((group) => group.failedCount > 0) };
+}
+
+/** The noun a compact chip counts for one kind of action: "88 commands", "94 thread updates". */
+function compactActionNoun(
+  action: ToolGroupAction | StudioMcpToolSummaryAction,
+): readonly [string, string] {
+  switch (action) {
+    case "command":
+      return ["command", "commands"];
+    case "edit":
+      return ["file changed", "files changed"];
+    case "read":
+      return ["file read", "files read"];
+    case "search":
+      return ["web search", "web searches"];
+    case "code-search":
+      return ["code search", "code searches"];
+    case "browser":
+      return ["browser step", "browser steps"];
+    case "device":
+      return ["device step", "device steps"];
+    case "link-pr":
+    case "unlink-pr":
+    case "watch-pr":
+    case "unwatch-pr":
+    case "list-prs":
+      return ["pull request check", "pull request checks"];
+    case "update":
+      return ["update", "updates"];
+    case "other":
+      return ["tool call", "tool calls"];
+    case "delegate":
+      return ["delegation", "delegations"];
+    case "thread-create":
+      return ["thread started", "threads started"];
+    case "thread-list":
+    case "thread-read":
+    case "thread-search":
+    case "thread-wait":
+    case "thread-transfers":
+    case "thread-configuration":
+    case "task-status":
+      return ["thread check", "thread checks"];
+    default:
+      if (action.startsWith("thread-")) return ["thread update", "thread updates"];
+      if (action.startsWith("queue-")) return ["queue update", "queue updates"];
+      if (action.startsWith("schedule-")) return ["schedule update", "schedule updates"];
+      if (action.startsWith("project-")) return ["project update", "project updates"];
+      return ["SpecWithCode action", "SpecWithCode actions"];
+  }
+}
+
+/**
+ * The same work as summarizeToolGroup, as at most `limit` short counts, largest first:
+ * ["88 commands", "94 thread updates"]. The sentence stays available as the full text.
+ */
+export function summarizeToolGroupChips(
+  entries: ReadonlyArray<WorkLogPresentationEntry>,
+  limit = 2,
+): string[] {
+  const counts = new Map<
+    string,
+    { count: number; nouns: readonly [string, string]; index: number }
+  >();
+  const add = (key: string, nouns: readonly [string, string], amount = 1) => {
+    const current = counts.get(key);
+    if (current) current.count += amount;
+    else counts.set(key, { count: amount, nouns, index: counts.size });
+  };
+  for (const entry of entries) {
+    if (entry.itemType === "reasoning") continue;
+    const studioAction =
+      resolveStudioMcpToolDefinition(workEntryToolName(entry))?.summaryAction ?? null;
+    if (entry.toolSource && studioAction === null) {
+      const name = displayToolSourceName(entry.toolSource.name);
+      add(`source:${entry.toolSource.key}`, [`${name} call`, `${name} calls`]);
+      continue;
+    }
+    const action = studioAction ?? toolGroupAction(entry);
+    const nouns = compactActionNoun(action);
+    // Chips that read the same ("thread updates") add up, whatever tool made them.
+    add(nouns[1], nouns, action === "edit" ? toolGroupActionCount("edit", [entry]) : 1);
+  }
+  return [...counts.values()]
+    .sort((a, b) => b.count - a.count || a.index - b.index)
+    .slice(0, limit)
+    .map(({ count, nouns }) => `${count} ${count === 1 ? nouns[0] : nouns[1]}`);
 }
 
 export function toolGroupSummaryKind(

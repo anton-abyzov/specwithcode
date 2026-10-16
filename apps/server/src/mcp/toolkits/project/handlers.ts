@@ -14,8 +14,10 @@ import {
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
+import * as ProjectActionRequests from "../../../project/ProjectActionRequests.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
@@ -32,10 +34,48 @@ function projectFailure(error: Project.ProjectServiceError) {
     error._tag === "ProjectNotFoundError"
       ? "The project was not found."
       : error._tag === "ProjectConflictError"
-        ? "The workspace is already registered to a project."
-        : "The project is not empty; force=true is required to delete it.";
+        ? `${error.workspaceRoot} already belongs to another project. studio_project_list shows which.`
+        : Project.projectMutationErrorMessage(error);
   return new OrchestratorMcpFailure({ code: "invalid_request", message });
 }
+
+/** Shows the approval card in the calling thread; the user's answer applies the change. */
+const requestProjectAction = Effect.fn("mcp.requestProjectAction")(function* (input: {
+  readonly action: ProjectActionRequests.ProjectAction;
+  readonly projectId?: ProjectId | undefined;
+  readonly workspaceRoot?: string | undefined;
+  readonly reason?: string | undefined;
+}) {
+  const context = yield* readCaller();
+  const caller = context.caller;
+  if (caller === undefined)
+    return yield* new OrchestratorMcpFailure({
+      code: "invalid_request",
+      message:
+        "Only an agent in a SpecWithCode thread can ask for this. Ask the user to do it in the project's settings.",
+    });
+  const projectId = yield* resolveProjectId(context, input.projectId);
+  const requests = yield* ProjectActionRequests.ProjectActionRequests;
+  const { requestId } = yield* requests
+    .request({
+      threadId: caller.id,
+      projectId,
+      action: input.action,
+      reason: input.reason ?? "No reason given.",
+      ...(input.workspaceRoot === undefined ? {} : { workspaceRoot: input.workspaceRoot }),
+    })
+    .pipe(
+      Effect.mapError(
+        (error) => new OrchestratorMcpFailure({ code: "invalid_request", message: error.message }),
+      ),
+    );
+  return {
+    requestId,
+    status: "awaiting_user" as const,
+    message:
+      "The user sees an approval card in this thread. End your turn now; their decision and what changed arrive as their answer.",
+  };
+});
 
 /**
  * An existing checkout a launch may bind: one of the project's own git
@@ -45,6 +85,7 @@ function projectFailure(error: Project.ProjectServiceError) {
 const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
   workspaceRoot: string,
   worktreePath: string,
+  owner = "the project's",
 ) {
   const git = yield* GitVcsDriver.GitVcsDriver;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -56,8 +97,7 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
   if (!worktrees.includes(yield* real(worktreePath)))
     return yield* new OrchestratorMcpFailure({
       code: "invalid_request",
-      message:
-        "worktreePath must be one of the project's git worktrees. studio_worktree_list shows them.",
+      message: `worktreePath must be one of ${owner} git worktrees. studio_worktree_list shows them.`,
     });
 });
 
@@ -175,7 +215,25 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               code: "invalid_request",
               message: "The project was not found.",
             });
-          yield* assertProjectWorktree(project.workspaceRoot, input.workspaceStrategy.worktreePath);
+          const repository = input.workspaceStrategy.repository;
+          let worktreeOwner = { cwd: project.workspaceRoot, label: "the project's" };
+          if (repository !== undefined) {
+            const resolved = ThreadLaunch.resolveLaunchRepository(project, repository);
+            if (!resolved.ok)
+              return yield* new OrchestratorMcpFailure({
+                code: "invalid_request",
+                message: resolved.message,
+              });
+            worktreeOwner = {
+              cwd: resolved.checkout.path,
+              label: `repository "${resolved.checkout.id}"'s`,
+            };
+          }
+          yield* assertProjectWorktree(
+            worktreeOwner.cwd,
+            input.workspaceStrategy.worktreePath,
+            worktreeOwner.label,
+          );
         }
         const project = yield* readProject;
         const isCoordinator =
@@ -221,7 +279,11 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           Effect.mapError((error) =>
             error._tag === "AttachmentClaimError"
               ? new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message })
-              : unavailable(),
+              : error._tag === "ThreadLaunchError" &&
+                  error.operation === "resolve-repository" &&
+                  typeof error.cause === "string"
+                ? new OrchestratorMcpFailure({ code: "invalid_request", message: error.cause })
+                : unavailable(),
           ),
         );
         const thread = result.projection.thread;
@@ -309,6 +371,12 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
       const projects = yield* Project.ProjectService;
       // Pause, archive and auto-resume are the user's lifecycle controls; an agent must not lift them.
       const lifecycle = input.workspaceSettings;
+      if (input.workspaceRoot !== undefined)
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message:
+            "Moving a project to another folder needs the user's approval: call studio_project_request with action change_folder and workspaceRoot.",
+        });
       if (
         lifecycle?.paused !== undefined ||
         lifecycle?.archived !== undefined ||
@@ -318,20 +386,16 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         return yield* new OrchestratorMcpFailure({
           code: "invalid_request",
           message:
-            "Pause, archive, auto-resume and the worker machine are changed by the user in project settings, not by an agent.",
+            "Pause, auto-resume and the worker machine are the user's to change in project settings. To archive or restore a project, call studio_project_request; the user approves it.",
         });
       return yield* projects
         .update({ ...input, commandId: yield* newCommandId() })
         .pipe(Effect.mapError(projectFailure));
     }),
   ),
-  studio_project_delete: McpToolAccess.writesEnvironment((input) =>
-    Effect.gen(function* () {
-      const projects = yield* Project.ProjectService;
-      return yield* projects
-        .delete({ ...input, commandId: yield* newCommandId() })
-        .pipe(Effect.mapError(projectFailure));
-    }),
+  studio_project_request: McpToolAccess.actsAsCaller((input) => requestProjectAction(input)),
+  studio_project_delete: McpToolAccess.actsAsCaller((input) =>
+    requestProjectAction({ ...input, action: "delete" }),
   ),
   studio_project_clone: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {

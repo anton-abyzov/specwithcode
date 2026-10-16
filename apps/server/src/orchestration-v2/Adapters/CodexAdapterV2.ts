@@ -748,6 +748,7 @@ export function buildCodexTurnStartParams(input: {
               model: input.modelSelection.model,
               reasoningEffort: effort ?? "medium",
               responseStyle: input.runtimePolicy.responseStyle,
+              agentInstructions: input.runtimePolicy.agentInstructions,
             },
             {
               browser: input.browserToolsAvailable ?? true,

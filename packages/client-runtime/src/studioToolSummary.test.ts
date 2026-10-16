@@ -68,7 +68,8 @@ describe("summarizeStudioToolCalls", () => {
       failedCount: 0,
     });
     expect(
-      summarizeStudioToolCalls("attachment-send", [first, completed({ threadId: "thread-1" })]).label,
+      summarizeStudioToolCalls("attachment-send", [first, completed({ threadId: "thread-1" })])
+        .label,
     ).toBe("Sent attachments to 1 thread 2 times");
   });
 
@@ -80,8 +81,9 @@ describe("summarizeStudioToolCalls", () => {
       ]).label,
     ).toBe("Requested 2 scheduled task runs");
     expect(
-      summarizeStudioToolCalls("thread-fork", [completed({}, { targetThreadId: "fork", sequence: 3 })])
-        .label,
+      summarizeStudioToolCalls("thread-fork", [
+        completed({}, { targetThreadId: "fork", sequence: 3 }),
+      ]).label,
     ).toBe("Requested 1 thread fork");
     expect(
       summarizeStudioToolCalls("thread-merge", [
@@ -204,7 +206,10 @@ describe("summarizeStudioToolCalls", () => {
   it("does not confuse a child's failure or wait timeout with failure of the orchestration call", () => {
     const failedChild = { taskId: "task-1", status: "failed", summary: "command not found" };
     expect(
-      summarizeStudioToolCalls("delegate", [completed({}, failedChild), completed({}, failedChild)]),
+      summarizeStudioToolCalls("delegate", [
+        completed({}, failedChild),
+        completed({}, failedChild),
+      ]),
     ).toEqual({
       label: "Delegated 1 task",
       failedCount: 0,
@@ -234,6 +239,16 @@ describe("summarizeStudioToolCalls", () => {
         ),
       ]).label,
     ).toBe("Requested interrupts for 1 thread");
+    expect(
+      summarizeStudioToolCalls("thread-stop-all", [
+        completed({}, { projectId: "project-1", count: 3, threads: [] }),
+      ]).label,
+    ).toBe("Requested stops for 3 threads");
+    expect(
+      summarizeStudioToolCalls("thread-continue-all", [
+        completed({}, { projectId: "project-1", count: 1, threads: [] }),
+      ]).label,
+    ).toBe("Continued 1 thread");
     expect(
       summarizeStudioToolCalls("task-cancel", [
         completed({ taskId: "task-1" }, { taskId: "task-1", status: "cancel_requested" }),

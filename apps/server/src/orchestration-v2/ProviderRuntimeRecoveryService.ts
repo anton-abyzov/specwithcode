@@ -286,8 +286,10 @@ export const make = Effect.gen(function* () {
       };
       // Queued runs have not started provider work. Preserve their execution
       // identities and order, but require explicit consent before draining them.
+      let newlyHeldQueuedRuns = 0;
       for (const run of projection.runs) {
         if (run.status !== "queued" || run.queueHeld === true) continue;
+        newlyHeldQueuedRuns += 1;
         events.push({
           id: yield* allocateEventId(),
           type: "run.updated",
@@ -652,6 +654,14 @@ export const make = Effect.gen(function* () {
         continueAfterRestart && trigger === "startup"
           ? restartContinuationRun(projection)
           : undefined;
+      // A queue that was only waiting (no run was cut off) starts again; one
+      // behind a cut run resumes with that run's continuation instead.
+      const resumeWaitingQueue =
+        continueAfterRestart &&
+        trigger === "startup" &&
+        continuationRun === undefined &&
+        runs.length === 0 &&
+        newlyHeldQueuedRuns > 0;
       const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> = continuationRun
         ? [
             {
@@ -661,7 +671,16 @@ export const make = Effect.gen(function* () {
               request: { type: "provider-runtime.continue", sourceRunId: continuationRun.id },
             },
           ]
-        : [];
+        : resumeWaitingQueue
+          ? [
+              {
+                id: `effect:restart-queue-resume:${commandId}`,
+                commandId,
+                threadId: projection.thread.id,
+                request: { type: "provider-runtime.resume-queue", releaseHeld: true },
+              },
+            ]
+          : [];
       const stoppedSessions = projection.providerSessions.filter(
         (candidate) => candidate.status !== "stopped" && candidate.status !== "error",
       ).length;
@@ -814,8 +833,108 @@ export const make = Effect.gen(function* () {
     Effect.mapError((cause) => new ProviderRuntimeRecoveryError({ operation: "reconcile", cause })),
   );
 
+  // Runs the server stopped to install an update are already `interrupted`
+  // when it shuts down, so reconcile never sees them. Once it is back, each
+  // one whose project continues threads after restarts gets the same
+  // continuation a restart gives a running turn; a user's Stop never does.
+  const continueUpdateInterruptedRuns = Effect.gen(function* () {
+    const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
+    if (!enabled) return;
+    const threadIds = yield* projections.getRecoveryThreadIds("update-interrupted");
+    for (const threadId of threadIds) {
+      yield* Effect.gen(function* () {
+        const { thread, runs } = yield* projections.getThreadRecords(threadId, ["runs"]);
+        if (
+          !resolveProjectSettings(enabled, thread.projectId).settings
+            .continueThreadsAfterServerUpdate
+        )
+          return;
+        const run = runs.reduce<(typeof runs)[number] | undefined>(
+          (latest, candidate) =>
+            candidate.status !== "queued" && (!latest || runRanAfter(candidate, latest))
+              ? candidate
+              : latest,
+          undefined,
+        );
+        if (run?.status !== "interrupted") return;
+        const commandId = CommandId.make(`command:update-continue:${run.id}`);
+        yield* eventSink.writeWithEffects({
+          commandId,
+          events: [],
+          effects: [
+            {
+              id: `effect:restart-continuation:${run.id}`,
+              commandId,
+              threadId,
+              request: { type: "provider-runtime.continue", sourceRunId: run.id },
+            },
+          ],
+        });
+      }).pipe(
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.logWarning("Failed to continue a run stopped for an update", {
+              threadId,
+              cause,
+            }),
+        ),
+      );
+    }
+  }).pipe(
+    Effect.mapError((cause) => new ProviderRuntimeRecoveryError({ operation: "reconcile", cause })),
+  );
+
+  // Queued messages a service update cancelled are queued again. Effects on a
+  // thread run in order, so they follow that thread's continuation.
+  const requeueUpdateCancelledRuns = Effect.gen(function* () {
+    const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
+    if (!enabled) return;
+    const threadIds = yield* projections.getRecoveryThreadIds("update-requeue");
+    for (const threadId of threadIds) {
+      yield* Effect.gen(function* () {
+        const { thread } = yield* projections.getThreadRecords(threadId, ["runs"]);
+        if (
+          !resolveProjectSettings(enabled, thread.projectId).settings
+            .continueThreadsAfterServerUpdate
+        )
+          return;
+        const now = yield* DateTime.now;
+        const commandId = CommandId.make(
+          `command:update-requeue:${threadId}:${DateTime.formatIso(now)}`,
+        );
+        yield* eventSink.writeWithEffects({
+          commandId,
+          events: [],
+          effects: [
+            {
+              id: `effect:update-requeue:${commandId}`,
+              commandId,
+              threadId,
+              request: { type: "provider-runtime.resume-queue" },
+            },
+          ],
+        });
+      }).pipe(
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.logWarning("Failed to queue again the messages an update cancelled", {
+              threadId,
+              cause,
+            }),
+        ),
+      );
+    }
+  }).pipe(
+    Effect.mapError((cause) => new ProviderRuntimeRecoveryError({ operation: "reconcile", cause })),
+  );
+
   const recover = Effect.gen(function* () {
-    return (yield* reconcile("startup")) satisfies ProviderRuntimeRecoverySummary;
+    const summary = yield* reconcile("startup");
+    yield* continueUpdateInterruptedRuns;
+    yield* requeueUpdateCancelledRuns;
+    return summary satisfies ProviderRuntimeRecoverySummary;
   });
 
   return ProviderRuntimeRecoveryService.of({ reconcile, prepareForShutdown, recover });

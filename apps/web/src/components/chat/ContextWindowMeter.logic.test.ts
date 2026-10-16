@@ -158,6 +158,18 @@ describe("shouldOfferResumeCompaction", () => {
     ).toBe(true);
   });
 
+  it("does not prompt on a resolved thread", () => {
+    expect(
+      shouldOfferResumeCompaction({
+        provider: "claudeAgent",
+        usedTokens: 277_000,
+        updatedAt: "2026-08-20T10:50:00.000Z",
+        now,
+        settled: true,
+      }),
+    ).toBe(false);
+  });
+
   it("does not prompt for recent or smaller sessions", () => {
     expect(
       shouldOfferResumeCompaction({

@@ -63,9 +63,12 @@ Then work from evidence, not assumption. In rough order of value:
   service log or desktop backend logs from the context file if they exist. Recent
   failures usually leave a trail here.
 - The provider event log, for problems with claude/codex/cursor sessions.
-- The SQLite database. Read it freely, but only write when a write is necessary
-  to fix the problem the user described, and get their explicit permission
-  before any write.
+- The SQLite database. Never open the live file or its -wal/-shm with sqlite3,
+  Python or Node, not even read-only: that can crash the running service. Read
+  it with `specweave-studio db query "SELECT ..."`, or copy it with
+  `specweave-studio db snapshot <new file>` and open the copy. Only write when
+  a write is necessary to fix the problem the user described, with the service
+  stopped, and get their explicit permission before any write.
 - Service state: is the server installed as a service (systemd, launchd, Windows)?
   Is it running, crash-looping, or dead? Is its port answering?
 - Harness health: are the user's coding-agent CLIs installed, on PATH, and logged in?

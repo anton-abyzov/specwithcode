@@ -203,7 +203,9 @@ describe("specweave-studio pair", () => {
   it.effect("mints a pairing grant with only the selected scopes", () =>
     withDescriptorServer((origin) =>
       Effect.gen(function* () {
-        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-pair-scopes-test-"));
+        const baseDir = NodeFS.mkdtempSync(
+          NodePath.join(NodeOS.tmpdir(), "studio-pair-scopes-test-"),
+        );
         yield* persistServerRuntimeState({
           path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
           state: yield* makePersistedServerRuntimeState({
@@ -240,7 +242,9 @@ describe("specweave-studio pair", () => {
   it.effect("prints one JSON object with --json for local tools", () =>
     withDescriptorServer((origin) =>
       Effect.gen(function* () {
-        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-pair-json-test-"));
+        const baseDir = NodeFS.mkdtempSync(
+          NodePath.join(NodeOS.tmpdir(), "studio-pair-json-test-"),
+        );
         yield* persistServerRuntimeState({
           path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
           state: yield* makePersistedServerRuntimeState({
@@ -283,21 +287,25 @@ describe("specweave-studio pair", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("directs to specweave-studio serve or specweave-studio connect when no server is running", () =>
-    Effect.gen(function* () {
-      const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-pair-none-test-"));
+  it.effect(
+    "directs to specweave-studio serve or specweave-studio connect when no server is running",
+    () =>
+      Effect.gen(function* () {
+        const baseDir = NodeFS.mkdtempSync(
+          NodePath.join(NodeOS.tmpdir(), "studio-pair-none-test-"),
+        );
 
-      const error = yield* provideCliTestLayers(
-        runCli(["pair", "--base-dir", baseDir]).pipe(Effect.flip),
-      );
+        const error = yield* provideCliTestLayers(
+          runCli(["pair", "--base-dir", baseDir]).pipe(Effect.flip),
+        );
 
-      const rendered = String(
-        typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
-      );
-      assert.include(rendered, "No running SpecWithCode server found.");
-      assert.include(rendered, "Start one with `specweave-studio serve`");
-      assert.include(rendered, "Studio Connect: `specweave-studio connect`");
-    }).pipe(Effect.provide(NodeServices.layer)),
+        const rendered = String(
+          typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
+        );
+        assert.include(rendered, "No running SpecWithCode server found.");
+        assert.include(rendered, "Start one with `specweave-studio serve`");
+        assert.include(rendered, "SpecWithCode Connect: `specweave-studio connect`");
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("ignores runtime state whose recorded pid is no longer alive", () =>

@@ -94,7 +94,7 @@ it("redacts unexpected RPC details while preserving expected not-empty guidance"
   );
   assert.equal(
     projectMutationErrorMessage(new ProjectNotEmptyError({ projectId })),
-    `Project ${projectId} is not empty.`,
+    "This project still has threads, and deleting it deletes them too. Confirm the deletion to go ahead.",
   );
 });
 

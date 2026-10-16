@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import * as ProjectCoordinator from "../project/ProjectCoordinatorService.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
@@ -44,6 +45,8 @@ const harness = Effect.gen(function* () {
     dispatchStarted: Effect.void,
     due: Effect.void as Effect.Effect<void, never, SqlClient.SqlClient>,
     heldMs: 0,
+    sent: [] as Array<{ readonly modelSelection?: unknown }>,
+    nextTurnModel: undefined as { instanceId: string; model: string } | undefined,
   };
   const dependencies = () =>
     Layer.mergeAll(
@@ -74,13 +77,17 @@ const harness = Effect.gen(function* () {
           ),
       }),
       Layer.mock(ThreadManagement.ThreadManagementService)({
-        sendToThread: () =>
+        sendToThread: (input) =>
           Effect.sync(() => {
             state.sends++;
+            state.sent.push(input);
             return {} as never;
           }),
       }),
       Layer.mock(SecretRequests.SecretRequests)({}),
+      Layer.mock(ProjectCoordinator.ProjectCoordinatorService)({
+        nextTurnModel: () => Effect.sync(() => state.nextTurnModel as never),
+      }),
       Layer.mock(Scheduler.Scheduler)({
         register: <E, R>(_name: string, work: Effect.Effect<void, E, R>) =>
           Effect.gen(function* () {
@@ -181,6 +188,24 @@ it.effect("requires the bound thread to belong to the routine project and still 
         yield* service.runNow({ id: task.id });
         assert.equal(state.sends, 1);
         assert.equal(state.launches, 0);
+      }),
+    );
+  }).pipe(Effect.provide(Sqlite.layerMemory)),
+);
+
+it.effect("runs in a bound thread on the coordinator's next model, not the one saved with it", () =>
+  Effect.gen(function* () {
+    const { run, state, seedThread } = yield* harness;
+    yield* seedThread("bound", "project-a");
+    yield* run((service) =>
+      Effect.gen(function* () {
+        // Saved while the coordinator was on its fallback: never reused.
+        const { task } = yield* service.upsert(taskInput({ threadId: "bound" }));
+        yield* service.runNow({ id: task.id });
+        assert.isFalse("modelSelection" in state.sent[0]!);
+        state.nextTurnModel = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
+        yield* service.runNow({ id: task.id, commandId: CommandId.make("second-run") });
+        assert.deepEqual(state.sent[1]?.modelSelection, state.nextTurnModel);
       }),
     );
   }).pipe(Effect.provide(Sqlite.layerMemory)),

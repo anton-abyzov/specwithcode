@@ -48,7 +48,7 @@ const boldTerminalText = (value: string): string => `\u001b[1m${value}\u001b[22m
 
 function formatLoopbackAuthorizationPrompt(authorizationUrl: string): string {
   return [
-    "Open this URL to authorize Studio Connect:",
+    "Open this URL to authorize SpecWithCode Connect:",
     `  ${authorizationUrl}`,
     "",
     `Press ${boldTerminalText("Enter")} to open it in your browser.`,
@@ -185,7 +185,7 @@ export class CloudCliCredentialRemovalError extends Schema.TaggedError<CloudCliC
   { cause: Schema.Defect() },
 ) {
   override get message(): string {
-    return "Could not remove the stored Studio Connect CLI credential.";
+    return "Could not remove the stored SpecWithCode Connect CLI credential.";
   }
 }
 
@@ -194,7 +194,7 @@ export class CloudCliCredentialRefreshError extends Schema.TaggedError<CloudCliC
   { cause: Schema.Defect() },
 ) {
   override get message(): string {
-    return "Could not refresh the Studio Connect CLI credential.";
+    return "Could not refresh the SpecWithCode Connect CLI credential.";
   }
 }
 
@@ -203,7 +203,7 @@ export class CloudCliCredentialReadError extends Schema.TaggedError<CloudCliCred
   { cause: Schema.Defect() },
 ) {
   override get message(): string {
-    return "Could not read the stored Studio Connect CLI credential.";
+    return "Could not read the stored SpecWithCode Connect CLI credential.";
   }
 }
 
@@ -212,7 +212,7 @@ export class CloudCliAuthorizationError extends Schema.TaggedError<CloudCliAutho
   { cause: Schema.Defect() },
 ) {
   override get message(): string {
-    return "Could not authorize the Studio Connect CLI.";
+    return "Could not authorize the SpecWithCode Connect CLI.";
   }
 }
 
@@ -221,7 +221,7 @@ export class CloudCliAuthorizationTimeoutError extends Schema.TaggedError<CloudC
   { cause: Schema.Defect() },
 ) {
   override get message(): string {
-    return "Timed out waiting for Studio Connect authorization.";
+    return "Timed out waiting for SpecWithCode Connect authorization.";
   }
 }
 
@@ -230,7 +230,7 @@ export class CloudCliAuthorizationDeniedError extends Schema.TaggedError<CloudCl
   {},
 ) {
   override get message(): string {
-    return "Studio Connect authorization was denied in the browser.";
+    return "SpecWithCode Connect authorization was denied in the browser.";
   }
 }
 
@@ -469,7 +469,7 @@ export const make = Effect.gen(function* () {
         const url = new URL(request.originalUrl, metadata.redirectUri);
         const code = url.searchParams.get("code");
         if (url.searchParams.get("state") !== state || !code) {
-          return HttpServerResponse.text("Invalid Studio Connect authorization callback.", {
+          return HttpServerResponse.text("Invalid SpecWithCode Connect authorization callback.", {
             status: 400,
           });
         }

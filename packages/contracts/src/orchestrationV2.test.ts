@@ -37,6 +37,7 @@ import {
   OrchestrationV2SubscribeThreadInput,
   OrchestrationV2Subagent,
   OrchestrationV2ThreadHistoryPage,
+  OrchestrationV2ThreadLaunchWorkspaceStrategy,
   OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadStreamItem,
   OrchestrationV2ThreadShell,
@@ -1452,5 +1453,34 @@ describe("automatic resolution version", () => {
     expect(decodeOrchestrationV2Command({ ...command, snapshotSequence: 42 })).toMatchObject({
       snapshotSequence: 42,
     });
+  });
+});
+
+describe("thread launch workspace strategy repository", () => {
+  const decode = Schema.decodeUnknownSync(OrchestrationV2ThreadLaunchWorkspaceStrategy);
+
+  it("accepts a repository id or checkout path on worktree strategies", () => {
+    expect(
+      decode({ type: "worktree", baseRef: "origin/main", repository: " specweave-studio " }),
+    ).toEqual({ type: "worktree", baseRef: "origin/main", repository: "specweave-studio" });
+    expect(
+      decode({
+        type: "existing_worktree",
+        worktreePath: "/work/studio-feature",
+        repository: "/work/repositories/specweave-studio",
+      }),
+    ).toEqual({
+      type: "existing_worktree",
+      worktreePath: "/work/studio-feature",
+      repository: "/work/repositories/specweave-studio",
+    });
+  });
+
+  it("keeps repository optional and rejects an empty one", () => {
+    expect(decode({ type: "worktree", baseRef: "develop" })).toEqual({
+      type: "worktree",
+      baseRef: "develop",
+    });
+    expect(() => decode({ type: "worktree", baseRef: "develop", repository: "  " })).toThrow();
   });
 });

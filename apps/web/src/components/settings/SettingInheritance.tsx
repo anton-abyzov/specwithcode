@@ -14,10 +14,12 @@ import type { EnvironmentPresentation } from "../../state/environments";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { resolveEnvModeLabel, WORKTREE_SUBMODULES_LABELS } from "../BranchToolbar.logic";
 import { PULL_REQUEST_MERGE_METHOD_LABELS } from "../pullRequest/pullRequestDetail.logic";
+import { THREAD_FINISH_ACTION_LABELS } from "./threadFinishAction";
 import { Button, InlineButton } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { ProjectOverrideEntry, ScopedSettingsTarget } from "./scopedSettings";
+import { ArchivedDisclosure } from "./ArchivedDisclosure";
 import { isProjectScopedSettingKey } from "./scopedSettings";
 
 interface InheritanceLayer {
@@ -61,6 +63,9 @@ function formatValue(key: keyof ServerSettings, value: unknown): string {
     }
     if (key === "worktreeSubmodules" && value in WORKTREE_SUBMODULES_LABELS) {
       return WORKTREE_SUBMODULES_LABELS[value as WorktreeSubmodules];
+    }
+    if (key === "threadFinishAction" && value in THREAD_FINISH_ACTION_LABELS) {
+      return THREAD_FINISH_ACTION_LABELS[value as keyof typeof THREAD_FINISH_ACTION_LABELS];
     }
     if (key === "pullRequestMergeMethod" && value in PULL_REQUEST_MERGE_METHOD_LABELS) {
       return PULL_REQUEST_MERGE_METHOD_LABELS[
@@ -159,6 +164,8 @@ export type SettingInheritanceState =
  */
 export interface SettingOverridingProject extends ProjectOverrideEntry {
   readonly label: string;
+  /** Archived projects are listed apart, collapsed. */
+  readonly archived?: boolean;
   /** Jumps the breadcrumb to this project so its override can be edited. */
   readonly open: () => void;
 }
@@ -291,8 +298,8 @@ export function SettingInheritance({
                         </InlineButton>
                       ) : null}
                     </div>
-                    <ul role="list" className="mt-0.5 text-sm">
-                      {overriding.map((project) => (
+                    {(() => {
+                      const renderItem = (project: SettingOverridingProject) => (
                         <li
                           key={project.projectId}
                           className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 px-2 py-1"
@@ -306,8 +313,23 @@ export function SettingInheritance({
                               : null}
                           </span>
                         </li>
-                      ))}
-                    </ul>
+                      );
+                      const archived = overriding.filter((project) => project.archived === true);
+                      return (
+                        <>
+                          <ul role="list" className="mt-0.5 text-sm">
+                            {overriding
+                              .filter((project) => project.archived !== true)
+                              .map(renderItem)}
+                          </ul>
+                          <ArchivedDisclosure count={archived.length}>
+                            <ul role="list" className="text-sm">
+                              {archived.map(renderItem)}
+                            </ul>
+                          </ArchivedDisclosure>
+                        </>
+                      );
+                    })()}
                   </div>
                 );
               })()}

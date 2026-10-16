@@ -5,6 +5,14 @@ import * as OS from "node:os";
 import * as Path from "node:path";
 
 import { ManagedUpdateError, ManagedUpdateStatus } from "@specweave-studio/contracts";
+import {
+  canonicalStudioPath,
+  LEGACY_STUDIO_HOME_DIRECTORY,
+  LEGACY_STUDIO_INSTALL_DIRECTORY,
+  STUDIO_HOME_DIRECTORY,
+  STUDIO_INSTALL_DIRECTORY,
+  studioIdentityHome,
+} from "@specweave-studio/shared/studioIdentity";
 import * as Schema from "effect/Schema";
 import { MAC_SERVICE_UPDATER_FILES } from "../../../../scripts/lib/studio-service-updater.ts";
 
@@ -62,7 +70,23 @@ export function parseManagedLocalInstallation(
   }
   try {
     const record = JSON.parse(text) as Record<string, unknown>;
-    const home = Path.join(owner.homeDirectory, ".specweave-studio", installationId);
+    const home = studioIdentityHome(owner.homeDirectory, installationId);
+    const canonical = (path: unknown) =>
+      typeof path === "string" ? canonicalStudioPath(path, owner.homeDirectory) : path;
+    // Releases live in `~/.specwithcode/install` or, before migration, the legacy
+    // `~/.local/share/specweave-studio`; both are this owner's fixed locations.
+    const releaseName =
+      typeof record.archiveSha256 === "string" ? record.archiveSha256.slice(0, 20) : "";
+    const releases = [
+      Path.join(
+        owner.homeDirectory,
+        STUDIO_HOME_DIRECTORY,
+        STUDIO_INSTALL_DIRECTORY,
+        "releases",
+        releaseName,
+      ),
+      Path.join(owner.homeDirectory, LEGACY_STUDIO_INSTALL_DIRECTORY, "releases", releaseName),
+    ];
     const service = record.service as Record<string, unknown> | undefined;
     const legacyPolicy = Object.hasOwn(LEGACY_POLICIES, installationId)
       ? LEGACY_POLICIES[installationId]
@@ -74,8 +98,8 @@ export function parseManagedLocalInstallation(
       record.identity !== installationId ||
       record.uid !== owner.uid ||
       record.user !== owner.user ||
-      record.studioHome !== home ||
-      record.stateDir !== Path.join(home, "userdata") ||
+      canonical(record.studioHome) !== home ||
+      canonical(record.stateDir) !== Path.join(home, "userdata") ||
       record.cliWrapper !==
         Path.join(owner.homeDirectory, ".local", "bin", `specweave-studio${suffix}`) ||
       service?.installed !== true ||
@@ -90,15 +114,8 @@ export function parseManagedLocalInstallation(
       (legacyPolicy !== undefined && policy !== legacyPolicy) ||
       typeof record.archiveSha256 !== "string" ||
       !/^[a-f0-9]{64}$/.test(record.archiveSha256) ||
-      record.release !==
-        Path.join(
-          owner.homeDirectory,
-          ".local",
-          "share",
-          "specweave-studio",
-          "releases",
-          record.archiveSha256.slice(0, 20),
-        )
+      typeof record.release !== "string" ||
+      !releases.includes(record.release)
     )
       return null;
     return {
@@ -140,26 +157,34 @@ export function isOwnedManagedPath(path: string, owner: ManagedInstallationOwner
 export function findManagedUpdateInstallations(
   owner: ManagedInstallationOwner,
 ): ReadonlyArray<ManagedLocalInstallation> {
-  const root = Path.join(owner.homeDirectory, ".specweave-studio");
-  if (!isOwnedManagedPath(root, owner)) return [];
+  // Branded root first; an unmigrated (real) legacy root may still hold services. A
+  // migrated legacy root is a link, which isOwnedManagedPath refuses.
   const found: ManagedLocalInstallation[] = [];
-  for (const id of FS.readdirSync(root).sort()) {
-    if (!isManagedInstallationId(id)) continue;
-    const receipt = Path.join(root, id, "installation.json");
-    if (!isOwnedManagedPath(receipt, owner)) continue;
-    try {
-      const info = FS.statSync(receipt);
-      if (!info.isFile() || info.size > 64 * 1024) continue;
-      const installation = parseManagedLocalInstallation(
-        FS.readFileSync(receipt, "utf8"),
-        id,
-        owner,
-      );
-      if (installation !== null) found.push(installation);
-    } catch {
-      /* A disappearing or unreadable candidate is not an installation. */
+  const seen = new Set<string>();
+  for (const directory of [STUDIO_HOME_DIRECTORY, LEGACY_STUDIO_HOME_DIRECTORY]) {
+    const root = Path.join(owner.homeDirectory, directory);
+    if (!isOwnedManagedPath(root, owner)) continue;
+    for (const id of FS.readdirSync(root).sort()) {
+      if (!isManagedInstallationId(id) || seen.has(id)) continue;
+      const receipt = Path.join(root, id, "installation.json");
+      if (!isOwnedManagedPath(receipt, owner)) continue;
+      try {
+        const info = FS.statSync(receipt);
+        if (!info.isFile() || info.size > 64 * 1024) continue;
+        const installation = parseManagedLocalInstallation(
+          FS.readFileSync(receipt, "utf8"),
+          id,
+          owner,
+        );
+        if (installation === null || installation.studioHome !== Path.join(root, id)) continue;
+        seen.add(id);
+        found.push(installation);
+      } catch {
+        /* A disappearing or unreadable candidate is not an installation. */
+      }
     }
   }
+  found.sort((a, b) => a.installationId.localeCompare(b.installationId));
   return found;
 }
 

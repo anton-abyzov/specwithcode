@@ -20,6 +20,7 @@ import {
   PanelsTopLeftIcon,
   KeyboardIcon,
   Link2Icon,
+  ChromeIcon,
   MailIcon,
   MessageCircleIcon,
   PaletteIcon,
@@ -32,6 +33,7 @@ import {
 } from "lucide-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 
+import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { Kbd } from "../ui/kbd";
 import {
@@ -41,17 +43,17 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  useSidebar,
   SidebarInput,
 } from "../ui/sidebar";
-import { SidebarUtilityMenu } from "../sidebar/SidebarChrome";
 import { scrollToSettingsTarget } from "./settingsLayout";
 import {
-  searchSettings,
+  searchSettingsBySection,
   isSettingsOverviewVisible,
+  settingsSearchDestination,
+  SETTINGS_NAV_GROUPS,
   SETTINGS_SECTION_LABELS,
   type SettingsPath,
-  type SettingsSearchItem,
+  type SettingsSearchResult,
 } from "./settingsSearch";
 import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchItems";
 import { validateSettingsScopeSearch } from "./settingsScope";
@@ -99,18 +101,45 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/messaging": MessageCircleIcon,
   "/settings/google": MailIcon,
   "/settings/connections": Link2Icon,
+  "/settings/chrome": ChromeIcon,
   "/settings/archived": ArchiveIcon,
 };
 
 const SETTINGS_NAV_ITEMS: ReadonlyArray<{
+  group: string;
   label: string;
   to: SettingsPath;
   icon: ComponentType<{ className?: string }>;
-}> = (Object.keys(SETTINGS_SECTION_LABELS) as SettingsPath[]).map((to) => ({
-  to,
-  label: SETTINGS_SECTION_LABELS[to],
-  icon: SETTINGS_SECTION_ICONS[to],
-}));
+}> = SETTINGS_NAV_GROUPS.flatMap((group) =>
+  group.paths.map((to) => ({
+    group: group.label,
+    to,
+    label: SETTINGS_SECTION_LABELS[to],
+    icon: SETTINGS_SECTION_ICONS[to],
+  })),
+);
+
+export function groupSettingsNavItems<Item extends { to: SettingsPath }>(items: readonly Item[]) {
+  const grouped = SETTINGS_NAV_GROUPS.map((group) => ({
+    label: group.label,
+    items: group.paths.flatMap((path) => items.filter((item) => item.to === path)),
+  }));
+  const placed = new Set(SETTINGS_NAV_GROUPS.flatMap((group) => group.paths));
+  const rest = items.filter((item) => !placed.has(item.to));
+  if (rest.length > 0) grouped[0] = { ...grouped[0]!, items: [...grouped[0]!.items, ...rest] };
+  return grouped.filter((group) => group.items.length > 0);
+}
+
+/** The clicked section wins until navigation settles, then the location decides. */
+export function isSettingsNavItemActive(
+  to: SettingsPath,
+  pathname: string,
+  pendingSection: SettingsPath | null,
+) {
+  if (pendingSection !== null) return pendingSection === to;
+  if (to === "/settings/general" && pathname === "/settings/open-source-licenses") return true;
+  return pathname === to || pathname.startsWith(`${to}/`);
+}
 
 function SettingsSectionIcon({ to }: { to: SettingsPath }) {
   const Icon = SETTINGS_SECTION_ICONS[to];
@@ -127,12 +156,15 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
       (item.to !== "/settings/projects" && item.to !== "/settings/skills") ||
       isSettingsOverviewVisible(scopeSearch),
   );
-  const { isMobile, setOpenMobile, open, setOpen } = useSidebar();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [activeResultIndex, setActiveResultIndex] = useState(0);
   const searchableItems = useAvailableSettingsSearchItems(scopeSearch);
-  const results = useMemo(() => searchSettings(query, searchableItems), [query, searchableItems]);
+  const navSections = useMemo(() => navItems.map((item) => item.to), [navItems]);
+  const results = useMemo(
+    () => searchSettingsBySection(query, searchableItems, navSections),
+    [navSections, query, searchableItems],
+  );
   const isSearching = query.trim().length > 0;
   const hasResults = results.length > 0;
 
@@ -158,66 +190,67 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
         (target.tagName === "INPUT" ||
           target.tagName === "TEXTAREA" ||
           target.isContentEditable ||
-          // Keep focus inside open dialogs and popups instead of escaping
-          // their focus trap into the sidebar search.
-          target.closest('[role="dialog"], [aria-modal="true"], [data-slot$="popup"]') !== null)
+          // Keep focus inside dialogs and popups opened over Settings
+          // instead of escaping their focus trap into the search.
+          target.closest(
+            '[role="dialog"]:not([data-settings-dialog]), [aria-modal="true"]:not([data-settings-dialog]), [data-slot$="popup"]:not([data-settings-dialog])',
+          ) !== null)
       ) {
         return;
       }
 
       event.preventDefault();
-      if (isMobile) {
-        setOpenMobile(true);
-      } else if (!open) {
-        setOpen(true);
-      }
-      requestAnimationFrame(() => {
-        searchInputRef.current?.focus();
-        searchInputRef.current?.select();
-      });
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isMobile, open, setOpen, setOpenMobile]);
+  }, []);
 
+  // A lazily loaded section updates the location only once its chunk arrives;
+  // mark the clicked item selected right away so the highlight never lags.
+  const [pendingSection, setPendingSection] = useState<SettingsPath | null>(null);
+  useEffect(() => setPendingSection(null), [pathname]);
   const handleSectionClick = useCallback(
     (to: SettingsPath) => {
-      if (isMobile) {
-        setOpenMobile(false);
-      }
+      setPendingSection(to);
+      // A blocked or failed navigation must not leave the wrong item selected.
       void navigate({
         to,
         hash: "",
         replace: true,
         hashScrollIntoView: false,
-      });
+      }).finally(() => setPendingSection(null));
     },
-    [isMobile, navigate, setOpenMobile],
+    [navigate],
   );
   const clearSearch = useCallback(() => {
     setQuery("");
     setActiveResultIndex(0);
   }, []);
   const handleSearchResultClick = useCallback(
-    (item: SettingsSearchItem) => {
+    (result: SettingsSearchResult) => {
       clearSearch();
-      if (isMobile) {
-        setOpenMobile(false);
+      if (result.kind === "section") {
+        handleSectionClick(result.section);
+        return;
       }
+      const item = result.row;
       const targetId = item.targetId ?? item.id;
-      if (pathname === item.to && currentHash.replace(/^#/, "") === targetId) {
+      const to = settingsSearchDestination(item, scopeSearch);
+      if (pathname === to && currentHash.replace(/^#/, "") === targetId) {
         scrollToSettingsTarget(targetId);
         return;
       }
       void navigate({
-        to: item.to,
+        to,
         hash: targetId,
         replace: true,
         hashScrollIntoView: false,
         state: { settingsTargetHighlight: true },
       });
     },
-    [clearSearch, currentHash, isMobile, navigate, pathname, setOpenMobile],
+    [clearSearch, currentHash, handleSectionClick, navigate, pathname, scopeSearch],
   );
   const handleSearchKeyDown = useCallback(
     (event: KeyboardEvent<HTMLInputElement>) => {
@@ -308,56 +341,68 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 role={hasResults ? "listbox" : undefined}
                 aria-label={hasResults ? "Settings search results" : undefined}
               >
-                {results.map((item, index) => (
-                  <SidebarMenuItem key={item.id} role="presentation">
+                {results.map((result, index) => (
+                  <SidebarMenuItem key={result.id} role="presentation">
                     <SidebarMenuButton
-                      id={`settings-search-result-${item.id}`}
+                      id={`settings-search-result-${result.id}`}
                       role="option"
                       aria-selected={index === activeResultIndex}
+                      data-search-result-kind={result.kind}
                       tabIndex={-1}
                       size="sm"
                       isActive={index === activeResultIndex}
-                      className="h-auto min-h-10 items-start"
+                      className={
+                        result.kind === "section"
+                          ? cn("h-auto min-h-8 items-center", index > 0 && "mt-2")
+                          : "h-auto min-h-7 items-center ps-7"
+                      }
                       onMouseMove={() => setActiveResultIndex(index)}
-                      onClick={() => handleSearchResultClick(item)}
+                      onClick={() => handleSearchResultClick(result)}
                     >
-                      <SettingsSectionIcon to={item.to} />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-medium text-sidebar-foreground">
-                          {item.title}
+                      {result.kind === "section" ? (
+                        <>
+                          <SettingsSectionIcon to={result.section} />
+                          <span className="min-w-0 flex-1 truncate text-sm font-semibold text-sidebar-foreground">
+                            {result.label}
+                          </span>
+                        </>
+                      ) : (
+                        <span className="min-w-0 flex-1 truncate text-sm text-sidebar-foreground">
+                          {result.row.title}
                         </span>
-                        <span className="block truncate text-2xs text-sidebar-muted-foreground">
-                          {SETTINGS_SECTION_LABELS[item.to]}
-                        </span>
-                      </span>
+                      )}
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 ))}
               </SidebarMenu>
             ) : (
-              <SidebarMenu>
-                {navItems.map((item) => {
-                  const Icon = item.icon;
-                  const isGeneralDetailPage =
-                    item.to === "/settings/general" &&
-                    pathname === "/settings/open-source-licenses";
-                  const isActive =
-                    isGeneralDetailPage ||
-                    pathname === item.to ||
-                    pathname.startsWith(`${item.to}/`);
-                  return (
-                    <SidebarMenuItem key={item.to}>
-                      <SidebarMenuButton
-                        isActive={isActive}
-                        onClick={() => handleSectionClick(item.to)}
-                      >
-                        <Icon />
-                        <span className="truncate">{item.label}</span>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  );
-                })}
-              </SidebarMenu>
+              <nav aria-label="Settings sections" className="flex flex-col gap-4">
+                {groupSettingsNavItems(navItems).map((group) => (
+                  <div key={group.label} className="flex flex-col gap-1">
+                    <div className="px-2 text-xs font-medium text-sidebar-muted-foreground">
+                      {group.label}
+                    </div>
+                    <SidebarMenu>
+                      {group.items.map((item) => {
+                        const Icon = item.icon;
+                        const isActive = isSettingsNavItemActive(item.to, pathname, pendingSection);
+                        return (
+                          <SidebarMenuItem key={item.to}>
+                            <SidebarMenuButton
+                              isActive={isActive}
+                              aria-current={isActive ? "page" : undefined}
+                              onClick={() => handleSectionClick(item.to)}
+                            >
+                              <Icon />
+                              <span className="truncate">{item.label}</span>
+                            </SidebarMenuButton>
+                          </SidebarMenuItem>
+                        );
+                      })}
+                    </SidebarMenu>
+                  </div>
+                ))}
+              </nav>
             )}
           </div>
         </SidebarGroup>
@@ -366,10 +411,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
         <Suspense fallback={null}>
           <StudioConnectSidebarSignIn />
         </Suspense>
-        <div className="flex items-center gap-1">
-          <div className="min-w-0 flex-1">
-            <SidebarUtilityMenu />
-          </div>
+        <div className="flex items-center justify-end gap-1 empty:hidden">
           <Suspense fallback={null}>
             <StudioConnectSidebarAvatar />
           </Suspense>

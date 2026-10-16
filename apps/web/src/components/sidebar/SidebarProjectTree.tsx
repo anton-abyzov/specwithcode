@@ -19,7 +19,7 @@ import {
 import { useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
 
 import { useLocalStorage } from "../../hooks/useLocalStorage";
-import { useNowMinute } from "../../hooks/useNowMinute";
+import { nowMinuteMs, useNowMinute } from "../../hooks/useNowMinute";
 import { cn } from "~/lib/utils";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { ProjectFavicon } from "../ProjectFavicon";
@@ -94,7 +94,7 @@ export function SidebarProjectTree(props: {
   onThreadContextMenu: (threadRef: ScopedThreadRef, position: { x: number; y: number }) => void;
 }) {
   const nowMinute = useNowMinute();
-  const now = Date.parse(nowMinute) || Date.now();
+  const now = nowMinuteMs(nowMinute) || Date.now();
   const activeProjectKey = useParams({
     strict: false,
     select: (params) => (params as { projectKey?: string }).projectKey ?? null,

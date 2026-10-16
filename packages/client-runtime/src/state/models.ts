@@ -1,4 +1,8 @@
-import { backgroundWorkHoldsCompletion } from "@specweave-studio/shared/orchestrationV2PendingBackgroundWork";
+import {
+  backgroundWorkHoldsCompletion,
+  classifyRunHealth,
+  type RunHealth,
+} from "@specweave-studio/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestsOf } from "@specweave-studio/shared/threadPullRequests";
 import type {
   ThreadLinkedPullRequest,
@@ -57,6 +61,8 @@ export interface ThreadRuntimeSummary {
   readonly providerName: string | null;
   readonly lastError: string | null;
   readonly lastErrorClass?: OrchestrationV2ProviderFailureClass | null;
+  /** When the run that owns lastError ended; null while it runs or when unknown. */
+  readonly lastErrorAt?: string | null;
   readonly usageLimitResetAt?: string | null;
   readonly updatedAt: string;
 }
@@ -112,9 +118,22 @@ export interface EnvironmentThreadShell {
   readonly hasActionableProposedPlan: boolean;
   /** What the thread's last report says stops the work; null when nothing does. */
   readonly reportedBlocker?: string | null;
+  /** Queued messages held until someone resumes or discards them; absent when none. */
+  readonly heldQueuedCount?: number;
+  /** Where the agent's newest todo list stands; null without one. */
+  readonly planProgress?: OrchestrationV2ThreadShell["planProgress"];
   readonly pendingBackgroundTasks: ReadonlyArray<
     NonNullable<OrchestrationV2ThreadShell["pendingBackgroundTasks"]>[number]
   >;
+  /** What the running turn waits on: its newest unfinished command or subagent. */
+  readonly activeWork?:
+    | {
+        readonly label: string;
+        readonly startedAt: string;
+        readonly waitThreadId?: string;
+      }
+    | null
+    | undefined;
   /** Provider instances that have owned the root conversation, oldest first. */
   readonly providerInstanceHistory: ReadonlyArray<ProviderInstanceId>;
   /** Native `/goal` on the active provider thread. */
@@ -205,6 +224,10 @@ function shellRuntime(thread: OrchestrationV2ThreadShell): ThreadRuntimeSummary 
     providerName: null,
     lastError: thread.lastError ?? null,
     lastErrorClass: thread.lastErrorClass ?? null,
+    lastErrorAt:
+      thread.lastError == null || thread.latestRunCompletedAt == null
+        ? null
+        : iso(thread.latestRunCompletedAt),
     usageLimitResetAt: thread.usageLimitResetAt ?? null,
     updatedAt: iso(thread.updatedAt),
   };
@@ -272,7 +295,22 @@ export function presentThreadShell(
     hasPendingUserInput: thread.pendingRuntimeRequest?.kind === "user_input",
     hasActionableProposedPlan: thread.hasActionableProposedPlan,
     reportedBlocker: thread.reportedBlocker ?? null,
+    ...(thread.heldQueuedCount ? { heldQueuedCount: thread.heldQueuedCount } : {}),
+    planProgress: thread.planProgress ?? null,
     pendingBackgroundTasks: thread.pendingBackgroundTasks ?? [],
+    // Absent (a server older than this field) differs from null (nothing in flight).
+    activeWork:
+      thread.activeWork === undefined
+        ? undefined
+        : thread.activeWork === null
+          ? null
+          : {
+              label: thread.activeWork.label,
+              startedAt: iso(thread.activeWork.startedAt),
+              ...(thread.activeWork.waitThreadId === undefined
+                ? {}
+                : { waitThreadId: thread.activeWork.waitThreadId }),
+            },
     providerInstanceHistory: thread.providerInstanceHistory ?? [],
     goal: thread.goal ?? null,
     itemCount: thread.itemCount,
@@ -347,4 +385,33 @@ export function resolveThreadWorkingStartedAt(input: {
     return valid(run.startedAt) ?? valid(run.requestedAt);
   }
   return null;
+}
+
+/**
+ * Whether a running thread is working, waiting on a long command, or stalled:
+ * no provider event for longer than its work explains. Null when idle.
+ */
+export function threadRunHealth(
+  thread: Pick<EnvironmentThreadShell, "runtime" | "updatedAt" | "activeWork">,
+  nowMs: number,
+): RunHealth | null {
+  const status = thread.runtime?.status;
+  const lastActivityMs = Date.parse(thread.updatedAt);
+  if (!Number.isFinite(lastActivityMs)) return null;
+  const startedAtMs =
+    thread.activeWork == null ? Number.NaN : Date.parse(thread.activeWork.startedAt);
+  return classifyRunHealth({
+    running: status === "running" || status === "waiting",
+    lastActivityMs,
+    activeWork:
+      thread.activeWork == null
+        ? null
+        : {
+            label: thread.activeWork.label,
+            startedAtMs: Number.isFinite(startedAtMs) ? startedAtMs : lastActivityMs,
+            waitThreadId: thread.activeWork.waitThreadId,
+          },
+    activeWorkUnknown: thread.activeWork === undefined,
+    nowMs,
+  });
 }

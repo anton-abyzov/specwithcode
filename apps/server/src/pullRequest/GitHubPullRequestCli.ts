@@ -1,4 +1,5 @@
 import { removeAgentCredits } from "./mergeMessage.ts";
+import { ByteTail, parseGitHubActionsJobUrl, trimFailureLog } from "./gitHubCheckFailureLog.ts";
 import { KnownWorkflowRuns, makeChecksRevalidator } from "./gitHubConditionalChecks.ts";
 import { runGitHubStackAction, type GitHubStackActionError } from "./githubStackActions.ts";
 import * as Cause from "effect/Cause";
@@ -10,6 +11,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as Request from "effect/Request";
 import * as RequestResolver from "effect/RequestResolver";
 import * as Result from "effect/Result";
@@ -343,6 +345,9 @@ const DIFF_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const DIFF_TIMEOUT = Duration.seconds(60);
 /** Pierre expansion is for source files, not blobs large enough to stall a review surface. */
 const DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
+/** A failing job's log is read for its end; this much of it is held while gh streams. */
+const CHECK_FAILURE_LOG_TAIL_BYTES = 256 * 1024;
+const CHECK_FAILURE_LOG_TIMEOUT_MS = 30_000;
 
 /** What `gh pr list --state` asked a repository's own list for, without search. */
 const LIST_STATES: Record<PullRequestListState, ReadonlyArray<"OPEN" | "CLOSED" | "MERGED">> = {
@@ -616,6 +621,27 @@ export class GitHubPullRequestCli extends Context.Service<
       readonly newPath: string;
     }) => Effect.Effect<
       { readonly oldContents: string; readonly newContents: string },
+      GitHubPullRequestCliError
+    >;
+
+    /**
+     * The failing output of one GitHub Actions job a check URL names. Anything that only means
+     * "there is no log to give" — a URL that is not an Actions job, a run still going, a job whose
+     * logs expired — answers `log: null` rather than failing.
+     */
+    readonly getCheckFailureLog: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly number: number;
+      readonly checkName: string;
+      readonly checkUrl: string | null;
+    }) => Effect.Effect<
+      {
+        readonly log: string | null;
+        readonly truncated: boolean;
+        readonly source: string | null;
+      },
       GitHubPullRequestCliError
     >;
 
@@ -1491,6 +1517,71 @@ export const make = Effect.gen(function* () {
         return { oldContents, newContents };
       });
 
+  const getCheckFailureLog: GitHubPullRequestCli["Service"]["getCheckFailureLog"] = (input) => {
+    const none = { log: null, truncated: false, source: null } as const;
+    const job =
+      input.checkUrl === null
+        ? null
+        : parseGitHubActionsJobUrl(input.checkUrl, {
+            host: input.host,
+            repository: input.repository,
+          });
+    if (job === null) return Effect.succeed(none);
+    const host = input.host.trim().toLowerCase();
+    return Effect.gen(function* () {
+      // The credential the rest of the app reads with, so a token saved in Settings wins over the
+      // gh login here too. Without one, gh falls back on its own.
+      const credential = yield* api.credential(host).pipe(Effect.option);
+      const token = Option.isSome(credential) ? Redacted.value(credential.value.token) : null;
+      const gitHubDotCom = host === "github.com" || host.endsWith(".ghe.com");
+      const tail = new ByteTail(CHECK_FAILURE_LOG_TAIL_BYTES);
+      const output = yield* vcsProcess
+        .run({
+          operation: "GitHubPullRequestCli.getCheckFailureLog",
+          command: "gh",
+          args: [
+            "run",
+            "view",
+            ...(job.runId === null ? [] : [job.runId]),
+            "--job",
+            job.jobId,
+            "--log-failed",
+            "--repo",
+            `${host}/${input.repository}`,
+          ],
+          cwd: input.cwd,
+          env: {
+            GH_DEBUG: "",
+            GH_PROMPT_DISABLED: "1",
+            GH_NO_UPDATE_NOTIFIER: "1",
+            NO_COLOR: "1",
+            GH_HOST: host,
+            ...(token === null
+              ? {}
+              : gitHubDotCom
+                ? { GH_TOKEN: token }
+                : { GH_ENTERPRISE_TOKEN: token }),
+          },
+          allowNonZeroExit: true,
+          timeoutMs: CHECK_FAILURE_LOG_TIMEOUT_MS,
+          maxOutputBytes: CHECK_FAILURE_LOG_TAIL_BYTES,
+          outputMode: "truncate",
+          onStdoutChunk: (chunk) => tail.push(chunk),
+        })
+        .pipe(Effect.option);
+      // A missing gh, a timeout or a non-zero exit (still running, logs expired, no access) all
+      // leave nothing to hand over; the reader shows the check without its log.
+      if (Option.isNone(output) || output.value.exitCode !== 0) return none;
+      const trimmed = trimFailureLog(tail.text(), {
+        alreadyTruncated: tail.overflowed,
+        knownSecrets: token === null ? [] : [token],
+      });
+      return trimmed.log === null
+        ? none
+        : { ...trimmed, source: `GitHub Actions job ${job.jobId}` };
+    });
+  };
+
   /**
    * Every check context of the head commit, a page at a time, for a rollup the detail read cut at
    * its first hundred. Each page names the head it read, so a push mid-walk fails rather than
@@ -2261,6 +2352,7 @@ export const make = Effect.gen(function* () {
     },
 
     getPullRequestDiffFileContents,
+    getCheckFailureLog,
 
     getReviewThreadComments: (input) => {
       const { owner, name } = parseRepositorySelector(input.repository);

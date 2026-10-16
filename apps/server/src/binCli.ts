@@ -12,6 +12,7 @@ import { authCommand } from "./cli/auth.ts";
 import { appCommand } from "./cli/app.ts";
 import { browserCommand } from "./cli/browser.ts";
 import { connectCommand } from "./cli/connect.ts";
+import { dbCommand } from "./cli/db.ts";
 import { modsCommand } from "./cli/mods.ts";
 import { pairCommand } from "./cli/pair.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
@@ -34,7 +35,7 @@ import { triageCommand } from "./cli/triage.ts";
 const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NetService.layer);
 
 const connectPublicConfigMissingMessage =
-  "Studio Connect commands are unavailable: this build is missing Studio Connect public configuration.";
+  "SpecWithCode Connect commands are unavailable: this build is missing SpecWithCode Connect public configuration.";
 
 class ConnectPublicConfigMissingError extends CliError.UserError {
   override get message() {
@@ -45,7 +46,9 @@ class ConnectPublicConfigMissingError extends CliError.UserError {
 const connectUnavailableCommand = Command.make("connect", {
   command: Argument.String("command").pipe(Argument.variadic),
 }).pipe(
-  Command.withDescription("Studio Connect is unavailable in builds without public configuration."),
+  Command.withDescription(
+    "SpecWithCode Connect is unavailable in builds without public configuration.",
+  ),
   Command.unlisted,
   Command.withHandler(() =>
     Effect.fail(
@@ -96,6 +99,7 @@ export const makeCli = <const Name extends StudioCliName = "specweave-studio">({
       modsCommand,
       traceCommand,
       triageCommand,
+      dbCommand,
       cloudEnabled ? connectCommand : connectUnavailableCommand,
     ]),
   );

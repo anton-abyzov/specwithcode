@@ -49,6 +49,7 @@ const makeHarness = (
   let apiFailure: GoogleApi.GoogleApiError | null = null;
   let scope = SCOPE_GMAIL_CALENDAR;
   let unauthorizedOnce = false;
+  let listed: ReadonlyArray<unknown> = [];
   const nextAccess = () => Redacted.make(`access-${++accessCounter}`);
 
   const api = GoogleApi.GoogleApi.of({
@@ -132,6 +133,7 @@ const makeHarness = (
                 ? Option.some({ projectId, title: "Errands", deletedAt: null })
                 : Option.none(),
             ),
+          list: () => Effect.succeed(listed),
         } as unknown as ProjectStore.ProjectStoreV2["Service"]),
         Layer.succeed(ServerConfig.ServerConfig)({ port: 8319 } as never),
         Layer.succeed(BuiltInGoogleClient, builtIn),
@@ -160,6 +162,9 @@ const makeHarness = (
     },
     unauthorizeNextCall: () => {
       unauthorizedOnce = true;
+    },
+    listProjects: (rows: ReadonlyArray<unknown>) => {
+      listed = rows;
     },
   };
 };
@@ -195,7 +200,7 @@ it.effect("signs in once with the state it issued and keeps secrets off the stat
             google.completeSignIn({ callbackUrl: `?code=good-code&state=forged` }),
           ),
         ),
-        "not the one Studio started",
+        "not the one SpecWithCode started",
       );
       const callback = `http://127.0.0.1:8319/api/google/oauth/callback?code=good-code&state=${state}`;
       const page = yield* google.callbackPage(callback.slice(callback.indexOf("?")));
@@ -215,7 +220,7 @@ it.effect("signs in once with the state it issued and keeps secrets off the stat
       // The state is single use.
       assert.include(
         failureDetail(yield* Effect.exit(google.completeSignIn({ callbackUrl: callback }))),
-        "not the one Studio started",
+        "not the one SpecWithCode started",
       );
     }).pipe(Effect.provide(harness.layer));
     assert.strictEqual(
@@ -520,7 +525,7 @@ it.effect("forgets the sign-in when Google revokes it, and on disconnect", () =>
   }),
 );
 
-it.effect("connects with Studio's own client when the person saved none", () =>
+it.effect("connects with SpecWithCode's own client when the person saved none", () =>
   Effect.gen(function* () {
     const harness = makeHarness(STUDIO_CLIENT);
     yield* Effect.gen(function* () {
@@ -602,7 +607,7 @@ it.effect("asks for a new sign-in when Google no longer accepts the client", () 
   }),
 );
 
-it.effect("drops a saved sign-in after a restart with a different Studio client", () =>
+it.effect("drops a saved sign-in after a restart with a different SpecWithCode client", () =>
   Effect.gen(function* () {
     const first = makeHarness(STUDIO_CLIENT);
     yield* Effect.gen(function* () {
@@ -636,5 +641,32 @@ it.effect("drops a saved sign-in after a restart with a different Studio client"
     );
     assert.include(dropped.lastError ?? "", "Connect again");
     assert.isFalse(first.secrets.has("google-refresh-token"));
+  }),
+);
+
+it.effect("a new account starts with only live personal projects switched on", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness();
+    harness.listProjects([
+      { projectId: PROJECT, deletedAt: null, workspaceSettings: { kind: "personal" } },
+      { projectId: OTHER_PROJECT, deletedAt: null, workspaceSettings: { kind: "code" } },
+      {
+        projectId: "project-archived",
+        deletedAt: null,
+        workspaceSettings: { kind: "personal", archived: true },
+      },
+    ]);
+    yield* Effect.gen(function* () {
+      const google = yield* GoogleAccountService.GoogleAccountService;
+      yield* google.configureClient({ clientId: CLIENT_ID, clientSecret: CLIENT_SECRET });
+      yield* connectForHealth(google);
+      assert.deepStrictEqual((yield* google.status).projects, [
+        { projectId: PROJECT, services: ["gmail", "calendar"] },
+      ]);
+      yield* google.setProjectAccess({ projectId: PROJECT, services: [] });
+      yield* connectForHealth(google);
+      // Reconnecting the same account keeps what the person chose.
+      assert.deepStrictEqual((yield* google.status).projects, []);
+    }).pipe(Effect.provide(harness.layer));
   }),
 );

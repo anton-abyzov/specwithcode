@@ -60,6 +60,7 @@ import { fromJsonStringPretty, fromLenientJson } from "@specweave-studio/shared/
 import {
   applyServerSettingsPatch,
   deriveLegacyProjectOverrides,
+  simplifyProjectSettingsOverrides,
   isModelSelectionProviderEnabled,
 } from "@specweave-studio/shared/serverSettings";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
@@ -504,6 +505,8 @@ const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
   "sourceControlWriterModelSelection",
   "textGenerationModelSelection",
   "pullRequestMergeMethod",
+  // Both lists are required; stripping an empty one makes the file unwritable.
+  "sidebarProjectOrder",
 ]);
 
 // Preserve both enabled states because provider history cannot recover a new opt-in.
@@ -831,8 +834,34 @@ const make = Effect.gen(function* () {
     const folded = settingsFileTrusted
       ? foldLegacyProjectSettings(loaded, legacyProjectRows)
       : loaded;
+    const liveProjectIds =
+      folded.projectSettingsSimplified ||
+      !settingsFileTrusted ||
+      Object.keys(folded.projectSettingsOverrides).length === 0
+        ? []
+        : (yield* sql<{ readonly projectId: string }>`
+            SELECT project_id AS "projectId"
+            FROM projection_projects
+            WHERE deleted_at IS NULL
+          `.pipe(
+            Effect.mapError(
+              (cause) =>
+                new ServerSettingsError({
+                  settingsPath,
+                  operation: "read-project-settings",
+                  cause,
+                }),
+            ),
+          )).map((row) => row.projectId);
+    // Fresh installs with no overrides stay sparse and are checked again next load.
+    const simplified =
+      settingsFileTrusted && Object.keys(folded.projectSettingsOverrides).length > 0
+        ? simplifyProjectSettingsOverrides(folded, liveProjectIds)
+        : folded;
     // Only rewrite a file that decoded cleanly; an untrusted one stays for the user to repair.
-    const migrated = settingsFileTrusted ? yield* moveInlineBitbucketTokens(folded) : folded;
+    const migrated = settingsFileTrusted
+      ? yield* moveInlineBitbucketTokens(simplified)
+      : simplified;
     if (migrated !== loaded) {
       yield* writeSettingsAtomically(migrated);
     }

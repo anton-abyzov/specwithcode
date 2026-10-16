@@ -95,7 +95,7 @@ export class PullRequestThreadRequiredError extends Schema.TaggedError<PullReque
   {},
 ) {
   override get message(): string {
-    return "Pass threadId: this MCP client is not running inside a Studio thread.";
+    return "Pass threadId: this MCP client is not running inside a SpecWithCode thread.";
   }
 }
 
@@ -149,7 +149,7 @@ export class PullRequestWatchFromSubagentError extends Schema.TaggedError<PullRe
   {},
 ) {
   override get message(): string {
-    return "This thread is a subagent, so it cannot watch pull requests. Its parent thread owns the pull request: finish your task and report back instead.";
+    return "This thread is another thread's subagent, so it cannot watch pull requests. Its parent thread owns the pull request: finish your task and report back instead.";
   }
 }
 
@@ -293,7 +293,7 @@ const ListThreadPullRequestsTool = Tool.make("list_thread_pull_requests", {
 
 const WatchPullRequestTool = Tool.make("watch_pull_request", {
   description:
-    "Have SpecWithCode watch an open pull request for this thread, linking it first if needed. SpecWithCode checks it every two minutes and wakes you with a message when a check fails, the required checks pass, someone else comments or reviews, or the branch starts to conflict with its base. Use this to monitor or babysit a pull request instead of polling, sleeping, or running a watcher. Only comments posted after this call wake you, so handle the existing ones first, then end your turn. A wake is news, not a merge decision: check readiness yourself before merging. While SpecWithCode watches, the thread stays in the user's Working list, not their inbox. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox. Watching ends when the pull request merges or closes, when its thread settles or is archived, when SpecWithCode fails to read it 8 times in a row (a host rate limit only delays it), when the user stops this thread, or when you call unwatch_pull_request. Unsettle the thread before starting a new watch. A subagent cannot watch: its parent thread owns the pull request.",
+    "Have SpecWithCode watch an open pull request for this thread, linking it first if needed. SpecWithCode checks it every two minutes and wakes you with a message when a check fails, the required checks pass, someone else comments or reviews, or the branch starts to conflict with its base. Use this to monitor or babysit a pull request instead of polling, sleeping, or running a watcher. Only comments posted after this call wake you, so handle the existing ones first, then end your turn. A wake is news, not a merge decision: check readiness yourself before merging. While SpecWithCode watches, the thread stays in the user's Working list, not their inbox. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox. Watching ends when the pull request merges or closes, when its thread settles or is archived, when SpecWithCode fails to read it 8 times in a row (a host rate limit only delays it), when the user stops this thread, or when you call unwatch_pull_request. Unsettle the thread before starting a new watch. A coordinator's worker can watch its own pull requests; a thread's internal subagent cannot, since its parent thread owns the pull request.",
   parameters: PullRequestTargetInput,
   success: WatchPullRequestResult,
   failure: PullRequestToolError,

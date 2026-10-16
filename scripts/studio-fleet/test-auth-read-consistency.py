@@ -28,7 +28,7 @@ class CoherentAuthRead(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='studio-auth-read-consistency-')
         self.home = pathlib.Path(self.temp.name).resolve()
-        self.state = self.home / '.specweave-studio/m3/userdata'
+        self.state = self.home / '.specwithcode/m3/userdata'
         self.state.mkdir(parents=True)
         self.writer = sqlite3.connect(self.state / 'statev2.sqlite')
         self.assertEqual(self.writer.execute('PRAGMA journal_mode=WAL').fetchone()[0], 'wal')
@@ -126,7 +126,7 @@ class CoherentAuthRead(unittest.TestCase):
         node = self.home / 'tools/node22'
         node.parent.mkdir()
         node.write_bytes(b'synthetic-node-never-executed')
-        release = self.home / '.local/share/specweave-studio/releases' / ('b' * 20)
+        release = self.home / '.specwithcode/install/releases' / ('b' * 20)
         release.mkdir(parents=True)
         binary = b'synthetic-runtime-never-executed'
         (release / 'bin.mjs').write_bytes(binary)

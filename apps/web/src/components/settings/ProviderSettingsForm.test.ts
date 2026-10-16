@@ -107,12 +107,18 @@ describe("ProviderSettingsForm helpers", () => {
     const claude = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("claudeAgent")];
     expect(claude).toBeDefined();
 
-    expect(deriveProviderSettingsFields(claude!).map((field) => field.key)).toEqual([
+    const fields = deriveProviderSettingsFields(claude!);
+    expect(fields.map((field) => field.key)).toEqual([
       "binaryPath",
       "homePath",
       "autoCompactWindow",
+      "idleCompaction",
       "launchArgs",
     ]);
+    expect(fields.find((field) => field.key === "idleCompaction")).toMatchObject({
+      control: "switch",
+      defaultBooleanValue: true,
+    });
   });
 
   it("preserves unknown config keys while omitting empty configurable fields", () => {

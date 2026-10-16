@@ -9,6 +9,8 @@ import type {
   ThreadId,
 } from "@specweave-studio/contracts";
 import {
+  BotIcon,
+  CirclePauseIcon,
   Clock3Icon,
   CornerUpRightIcon,
   GripVerticalIcon,
@@ -19,7 +21,10 @@ import { useId, useImperativeHandle, useMemo, useRef, useState, type Ref } from 
 
 import { useAssetUrls } from "../../assets/assetUrls";
 import { threadEnvironment } from "../../state/threads";
-import { useThreadProjection } from "../../state/entities";
+import { useThreadProjection, useThreadShell } from "../../state/entities";
+import { useNowMinute } from "../../hooks/useNowMinute";
+import { epochMillis } from "../../studio/projectThreadMentions";
+import { queuedAgeLabel, queuedRunOneLine } from "./queuedRunSummary";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { isImageAttachment, type ChatMessage } from "../../types";
 import { cn } from "~/lib/utils";
@@ -42,6 +47,26 @@ interface QueuedRowThumbnail {
 
 const QUEUED_RUN_DRAG_TYPE = "application/x-studio-queued-run";
 
+/** The thread that sent a queued message, by name; opening threads stays in the timeline. */
+function QueuedSenderChip(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+}) {
+  const sender = useThreadShell(scopeThreadRef(props.environmentId, props.threadId));
+  const title = sender?.title || "Another thread";
+  return (
+    <span
+      className="inline-flex min-w-0 max-w-36 shrink-0 items-center gap-1 rounded-full border border-border/70 px-1.5 text-2xs text-muted-foreground"
+      data-queued-sender={props.threadId}
+      title={`From ${title}`}
+    >
+      <BotIcon aria-hidden className="size-3 shrink-0" />
+      <span className="sr-only">From </span>
+      <span className="truncate">{title}</span>
+    </span>
+  );
+}
+
 export interface QueuedRunsControlHandle {
   steerNext: (repeat: boolean) => boolean;
   editLatest: (repeat: boolean) => boolean;
@@ -63,6 +88,10 @@ export function QueuedRunsControl({
   readonly editingRunId: RunId | null;
   readonly onEditQueuedRun: (request: EditQueuedRunRequest) => void;
   readonly onCancelEdit: () => void;
+  /** Resumes a held queue the way the composer's Resume does; absent where it cannot. */
+  readonly onResumeHeld?: (() => void) | undefined;
+  /** A resume or send is in flight, so Resume would do nothing yet. */
+  readonly resumeBusy?: boolean | undefined;
 }) {
   const projection = useThreadProjection(
     scopeThreadRef(props.environmentId, props.threadId),
@@ -87,6 +116,9 @@ export function QueuedRunsControl({
     [projection],
   );
   const queued = workflow?.queuedRuns ?? [];
+  const heldRunIds = queued.flatMap(({ run }) => (run.queueHeld === true ? [run.id] : []));
+  const [discardArmed, setDiscardArmed] = useState(false);
+  const [discarding, setDiscarding] = useState(false);
   const activeRun = workflow?.activeRun ?? null;
   const canReorder = workflow?.canReorder === true;
   const queuedImageAttachmentIds = useMemo(() => {
@@ -130,14 +162,18 @@ export function QueuedRunsControl({
   const optimisticQueued = props.optimisticMessages.filter(
     (message) => message.inputIntent === "queued_turn" && !acknowledgedMessageIds.has(message.id),
   );
+  const nowMs = Date.parse(useNowMinute());
   const items = [
-    ...queued.map(({ run, text, attachments }, serverIndex) => ({
+    ...queued.map(({ run, text, attachments, senderThreadId, summary }, serverIndex) => ({
       key: run.id,
       runId: run.id,
       messageId: run.userMessageId,
       serverIndex,
       text,
       attachments,
+      senderThreadId: senderThreadId ?? null,
+      summary: summary ?? null,
+      queuedAtMs: epochMillis(run.requestedAt),
       thumbnails: attachments
         .filter((attachment) => attachment.type === "image")
         .map<QueuedRowThumbnail>((attachment) => ({
@@ -154,6 +190,9 @@ export function QueuedRunsControl({
       serverIndex: null,
       text: message.text,
       attachments: [] as ReadonlyArray<ContractChatAttachment>,
+      senderThreadId: null,
+      summary: null,
+      queuedAtMs: null,
       thumbnails: (message.attachments ?? [])
         .filter(isImageAttachment)
         .map<QueuedRowThumbnail>((attachment) => ({
@@ -243,6 +282,28 @@ export function QueuedRunsControl({
     }
   };
 
+  // Discarding drops messages other threads may have handed over, so it asks twice.
+  const discardHeld = async () => {
+    if (!discardArmed) {
+      setDiscardArmed(true);
+      return;
+    }
+    setDiscardArmed(false);
+    setDiscarding(true);
+    try {
+      for (const runId of heldRunIds) {
+        await cancel({
+          environmentId: props.environmentId,
+          input: { threadId: props.threadId, runId },
+        });
+      }
+    } finally {
+      setDiscarding(false);
+    }
+  };
+  const heldCount = heldRunIds.length;
+  const heldLabel = `${heldCount} queued message${heldCount === 1 ? "" : "s"} held`;
+
   return (
     <ComposerBanner.Attachment>
       <ComposerBanner.Root
@@ -251,7 +312,54 @@ export function QueuedRunsControl({
         aria-live="polite"
         data-chat-composer-collapsed-controls="true"
         className="relative z-0"
+        variant={heldCount > 0 ? "warning" : "default"}
       >
+        {heldCount > 0 ? (
+          // A held queue never starts on its own: say so, and offer both ways out.
+          <ComposerBanner.Row data-queue-held={heldCount}>
+            <ComposerBanner.Icon>
+              <CirclePauseIcon />
+            </ComposerBanner.Icon>
+            <ComposerBanner.Content className="text-foreground/80">
+              <span className="truncate">
+                {heldLabel}
+                <span className="text-muted-foreground"> · not sent until you resume</span>
+              </span>
+            </ComposerBanner.Content>
+            <ComposerBanner.Actions>
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={
+                  props.onResumeHeld === undefined ||
+                  props.resumeBusy === true ||
+                  discarding ||
+                  busyRunId !== null
+                }
+                onClick={() => {
+                  setDiscardArmed(false);
+                  props.onResumeHeld?.();
+                }}
+              >
+                Resume
+              </Button>
+              <Button
+                size="xs"
+                variant="ghost-muted"
+                aria-label={
+                  discardArmed
+                    ? `Confirm: discard ${heldLabel}`
+                    : `Discard ${heldCount === 1 ? "the held message" : `the ${heldCount} held messages`}`
+                }
+                disabled={discarding || busyRunId !== null}
+                onBlur={() => setDiscardArmed(false)}
+                onClick={() => void discardHeld()}
+              >
+                {discardArmed ? `Discard ${heldCount}?` : "Discard"}
+              </Button>
+            </ComposerBanner.Actions>
+          </ComposerBanner.Row>
+        ) : null}
         <ComposerBanner.Row
           render={<button type="button" />}
           aria-label={expanded ? "Collapse queued messages" : "Expand queued messages"}
@@ -277,6 +385,8 @@ export function QueuedRunsControl({
               const previewText = replaceComposerContextReferences(item.text, (reference) =>
                 reference.kind === "image" && item.thumbnails.length > 0 ? "" : reference.label,
               ).trim();
+              const oneLine = queuedRunOneLine(previewText, item.summary);
+              const age = queuedAgeLabel(item.queuedAtMs, nowMs);
               const rowRunId = item.runId;
               const rowServerIndex = item.serverIndex;
               const isEditing = rowRunId !== null && rowRunId === props.editingRunId;
@@ -396,14 +506,33 @@ export function QueuedRunsControl({
                         ))}
                       </span>
                     ) : null}
+                    {item.senderThreadId ? (
+                      <QueuedSenderChip
+                        environmentId={props.environmentId}
+                        threadId={item.senderThreadId}
+                      />
+                    ) : null}
                     <Tooltip>
-                      <TooltipTrigger render={<span className="min-w-0 flex-1 truncate" />}>
-                        {previewText}
+                      <TooltipTrigger
+                        render={<span className="min-w-0 flex-1 truncate" data-queued-summary />}
+                      >
+                        {oneLine}
                       </TooltipTrigger>
-                      <TooltipPopup side="top" className="max-w-96 break-words">
+                      <TooltipPopup
+                        side="top"
+                        className="max-h-64 max-w-96 overflow-y-auto break-words whitespace-pre-line"
+                      >
                         {previewText}
                       </TooltipPopup>
                     </Tooltip>
+                    {age ? (
+                      <span
+                        className="shrink-0 text-2xs text-muted-foreground tabular-nums"
+                        data-queued-age
+                      >
+                        {age}
+                      </span>
+                    ) : null}
                   </ComposerBanner.Content>
                   <ComposerBanner.Actions>
                     {isEditing ? (

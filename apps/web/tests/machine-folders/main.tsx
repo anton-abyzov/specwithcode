@@ -6,9 +6,12 @@ import "./fixture.css";
 const params = new URLSearchParams(location.search);
 document.documentElement.classList.toggle("dark", params.get("theme") === "dark");
 function Fixture() {
-  const [selected, setSelected] = useState("m1:easychamp");
+  const [selected, setSelected] = useState("");
   const [phase, setPhase] = useState<"choose" | "review">("choose");
   const [consent, setConsent] = useState(false);
+  const [machine, setMachine] = useState<string | null>("m3");
+  const [remembered, setRemembered] = useState(false);
+  const [dirty, setDirty] = useState(true);
   const [destinations, setDestinations] = useState([
     {
       key: "m1:easychamp",
@@ -35,7 +38,26 @@ function Fixture() {
         projectTitle="EasyChamp"
         destinations={destinations}
         selected={selected}
-        onSelect={setSelected}
+        onSelect={(key) => {
+          setSelected(key);
+          setMachine(null);
+        }}
+        sourceChanges={{
+          state: dirty ? "dirty" : "clean",
+          fileCount: dirty ? 2 : 0,
+          committing: false,
+          error: null,
+          onCommit: dirty ? () => setDirty(false) : null,
+        }}
+        rememberMachine={
+          machine || selected
+            ? {
+                label: (machine ?? selected).startsWith("m1") ? "MacBook Pro M1" : "MacBook Pro M3",
+                checked: remembered,
+                onChange: setRemembered,
+              }
+            : null
+        }
         phase={phase}
         error={null}
         consent={consent}
@@ -52,9 +74,42 @@ function Fixture() {
           phase === "choose" ? (
             <HandoffFolderPicker
               title="EasyChamp"
+              key={machine ?? ""}
+              machine={machine as never}
+              onMachineChange={(value) => {
+                setMachine(value);
+                if (value) setSelected("");
+              }}
+              defaultOpen
+              sourceFolder="/Users/anton/Projects/sw-easychamp"
               machines={[
-                { id: "m1" as never, label: "MacBook Pro M1", unavailable: null },
-                { id: "m3" as never, label: "MacBook Pro M3", unavailable: null },
+                {
+                  id: "m1" as never,
+                  label: "MacBook Pro M1",
+                  online: true,
+                  unavailable: null,
+                  workersAllowed: false,
+                  hasProjectFolder: true,
+                  lastOnlineAt: null,
+                },
+                {
+                  id: "m3" as never,
+                  label: "MacBook Pro M3",
+                  online: true,
+                  unavailable: null,
+                  workersAllowed: true,
+                  hasProjectFolder: false,
+                  lastOnlineAt: null,
+                },
+                {
+                  id: "m2" as never,
+                  label: "Mac mini",
+                  online: false,
+                  unavailable: "Connect first",
+                  workersAllowed: false,
+                  hasProjectFolder: false,
+                  lastOnlineAt: null,
+                },
               ]}
               onSaved={(environmentId, projectId, path) => {
                 const key = `${environmentId}:${projectId}`;

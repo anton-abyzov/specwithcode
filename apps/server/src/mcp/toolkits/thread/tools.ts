@@ -14,6 +14,7 @@ import {
   IsoDateTime,
   OrchestratorMcpFailure,
   OrchestrationV2DispatchCommandResult,
+  OrchestrationV2ThreadSettledNote,
   ThreadId,
   RunId,
   NonNegativeInt,
@@ -30,7 +31,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const ThreadOrganizeTool = Tool.make("studio_thread_organize", {
   description:
-    "Pin, snooze, settle, archive, or mark a thread unread. Omit threadId for this thread. snooze requires snoozedUntil. Existing thread lifecycle rules apply; this does not schedule a future action.",
+    "Pin, snooze, settle, archive, or mark a thread unread. Omit threadId for this thread. snooze requires snoozedUntil. settle accepts an optional one-line note, shown with the resolved thread, such as where the work landed. Existing thread lifecycle rules apply; this does not schedule a future action.",
   parameters: Schema.Struct({
     threadId: Schema.optional(ThreadId),
     action: Schema.Literals([
@@ -45,6 +46,7 @@ const ThreadOrganizeTool = Tool.make("studio_thread_organize", {
       "mark_unread",
     ]),
     snoozedUntil: Schema.optional(IsoDateTime),
+    note: Schema.optional(OrchestrationV2ThreadSettledNote),
   }),
   success: OrchestrationV2DispatchCommandResult,
   failure: OrchestratorMcpFailure,
@@ -73,11 +75,13 @@ const queueEntry = Schema.Struct({
   queuedRunId: RunId,
   text: Schema.String,
   truncated: Schema.Boolean,
+  /** In a held queue: not delivered until the queue is resumed (studio_queue_resume). */
+  held: Schema.optional(Schema.Boolean),
 });
 const QueueListTool = Tool.make("studio_queue_list", {
   ...commandTool,
   description:
-    "List queued messages in delivery order. Results are a live offset page; use studio_thread_read for full thread history.",
+    "List queued messages in delivery order. held=true marks a message in a held queue (after Stop, a restart or a provider failure): it is not delivered until the queue is resumed with studio_queue_resume. Results are a live offset page; use studio_thread_read for full thread history.",
   parameters: Schema.Struct({
     threadId: Schema.optional(ThreadId),
     cursor: Schema.optional(NonNegativeInt),
@@ -124,6 +128,13 @@ const QueuePromoteTool = Tool.make("studio_queue_promote_to_steer", {
   parameters: Schema.Struct({ ...queueTarget, targetRunId: RunId }),
 }).annotate(Tool.Destructive, true);
 
+const QueueResumeTool = Tool.make("studio_queue_resume", {
+  ...commandTool,
+  description:
+    "Resume a thread's held queue. A queue is held after Stop, a restart or a provider failure, and its messages are not delivered until it is resumed; once resumed they start in order as the thread becomes idle. Omit threadId for this thread. Resume a queue only when its messages should still run; a thread waiting on a usage limit must be continued first.",
+  parameters: Schema.Struct({ threadId: Schema.optional(ThreadId) }),
+}).annotate(Tool.Destructive, true);
+
 const requestTarget = { threadId: Schema.optional(ThreadId), requestId: RuntimeRequestId };
 const question = Schema.Struct({
   id: Schema.String,
@@ -134,6 +145,7 @@ const question = Schema.Struct({
       label: Schema.String,
       description: Schema.String,
       value: Schema.optional(Schema.String),
+      recommended: Schema.optional(Schema.Boolean),
     }),
   ),
   multiSelect: Schema.optional(Schema.Boolean),
@@ -239,7 +251,7 @@ const ThreadTransfersTool = Tool.make("studio_thread_transfers", {
 const ThreadSearchTool = Tool.make("studio_thread_search", {
   ...commandTool,
   description:
-    "Search active thread titles and content with the app's existing bounded search. Matches are limited to one project (projectId, else the calling thread's project) out of the global top matches, so this may return fewer than limit. A caller outside a Studio thread that omits projectId searches every project. No pagination or exhaustive-result guarantee.",
+    "Search active thread titles and content with the app's existing bounded search. Matches are limited to one project (projectId, else the calling thread's project) out of the global top matches, so this may return fewer than limit. A caller outside a SpecWithCode thread that omits projectId searches every project. No pagination or exhaustive-result guarantee.",
   parameters: Schema.Struct({
     ...OrchestrationSearchThreadsInput.fields,
     projectId: Schema.optional(ProjectId),
@@ -285,4 +297,5 @@ export const ThreadToolkit = Toolkit.make(
   QueueCancelTool,
   QueueReorderTool,
   QueuePromoteTool,
+  QueueResumeTool,
 );

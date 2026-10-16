@@ -10,7 +10,8 @@ import datetime
 import hashlib
 import json
 import re
-import sqlite3
+
+import live_database
 
 MAX_RESTART_WINDOW_SECONDS = 120
 WEB_SESSION_METHOD = {'m4': 'browser-session-cookie', 'm1': 'bearer-access-token', 'm3': 'bearer-access-token'}
@@ -76,7 +77,7 @@ def read_auth_sessions_in_transaction(db, expected):
 
 def read_auth_sessions(state, expected):
     """Read schema and every cell in one RO transaction, bound to the saved snapshot."""
-    db = sqlite3.connect('file:' + str(state / 'statev2.sqlite') + '?mode=ro', uri=True)
+    db = live_database.connect(state / 'statev2.sqlite')
     try:
         db.execute('BEGIN')
         return read_auth_sessions_in_transaction(db, expected)

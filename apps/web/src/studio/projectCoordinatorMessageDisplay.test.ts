@@ -7,6 +7,7 @@ import {
   projectReportMessageIds,
   projectSystemNotice,
   routedRepliesForThread,
+  routedReplyNotes,
 } from "./projectCoordinatorMessageDisplay";
 
 const project = { id: "project", environmentId: "host" };
@@ -171,8 +172,37 @@ describe("a thread's record of what was typed in it", () => {
         text: original,
         createdAt: "2026-10-10T10:00:00.000Z",
         answer: "Sent to Calendar work, as asked.",
+        answerThreadIds: ["worker"],
       },
-      { id: second.id, text: "Again", createdAt: null, answer: null },
+      { id: second.id, text: "Again", createdAt: null, answer: null, answerThreadIds: [] },
+    ]);
+  });
+  it("notes only a message that went elsewhere or has not been routed yet", () => {
+    const reply = (id: string, answer: string | null, answerThreadIds: string[] = []) => ({
+      id,
+      text: ` ${id} words `,
+      createdAt: null,
+      answer,
+      answerThreadIds,
+    });
+    const notes = routedReplyNotes(
+      [
+        reply("here", "Sent to Calendar work.", ["worker"]),
+        reply("delivered", "Done."),
+        reply("elsewhere", "Sent to Other work.", [other.id]),
+        reply("waiting", null),
+        reply("kept", "It is not blocked."),
+      ],
+      [{ role: "user", senderThreadId: "coord", text: "delivered words" }],
+      "worker",
+      "coord",
+    );
+    expect(notes).toEqual([
+      // Answered with a link back here: still on its way.
+      { id: "here", text: "here words", kind: "pending", targetThreadId: null },
+      { id: "elsewhere", text: "elsewhere words", kind: "sent", targetThreadId: "other" },
+      { id: "waiting", text: "waiting words", kind: "pending", targetThreadId: null },
+      { id: "kept", text: "kept words", kind: "answered", targetThreadId: null },
     ]);
   });
   it("does not borrow an answer given to a later message", () => {

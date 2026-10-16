@@ -15,6 +15,7 @@ build/
 .logs/
 release/
 release-mock/
+.specwithcode
 .specweave-studio
 .idea/
 apps/web/.playwright
@@ -48,3 +49,6 @@ node_modules/
 
 # Generated browser fixtures, screenshots, and coverage evidence.
 /.artifacts/
+
+__pycache__/
+*.pyc

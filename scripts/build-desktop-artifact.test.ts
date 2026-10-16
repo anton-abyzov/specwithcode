@@ -365,6 +365,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       resolveReleaseFeedRepository("anton-abyzov/specwithcode"),
       "anton-abyzov/specwithcode",
     );
+    assert.equal(
+      resolveReleaseFeedRepository("anton-abyzov/specwithcode"),
+      "anton-abyzov/specwithcode",
+    );
     assert.equal(resolveReleaseFeedRepository("acme/studio"), "acme/studio");
     assert.equal(resolveReleaseFeedRepository(undefined), undefined);
   });
@@ -421,7 +425,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.deepStrictEqual(latestConfig, {
         provider: "github",
         owner: "anton-abyzov",
-        repo: "specweave-studio",
+        repo: "specwithcode-dev",
         releaseType: "release",
       });
       assert.deepStrictEqual(nightlyConfig, {

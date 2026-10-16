@@ -424,6 +424,14 @@ ensure_remote_node_path() {
 }
 `;
 
+// The remote host's SpecWithCode root, as in @specweave-studio/shared/studioIdentity:
+// `~/.specwithcode`, except a real (unmigrated) legacy `~/.specweave-studio` while no
+// branded root exists. A migrated legacy root is a link and resolves to the branded one.
+const REMOTE_STUDIO_ROOT_SCRIPT = `STUDIO_ROOT="$HOME/.specwithcode"
+if [ -d "$HOME/.specweave-studio" ] && [ ! -L "$HOME/.specweave-studio" ] && [ ! -e "$HOME/.specwithcode" ]; then
+  STUDIO_ROOT="$HOME/.specweave-studio"
+fi`;
+
 const REMOTE_RUNNER_SCRIPT = `#!/bin/sh
 set -eu
 @@STUDIO_NODE_ENV_SCRIPT@@
@@ -446,16 +454,17 @@ fi
 # Self-contained release archive: no Node, npm, or compiler on the remote.
 # Unpacked into the pinned-runtime layout so \`specweave-studio service install\` reuses it.
 STUDIO_RELEASE_BASE_URL=@@STUDIO_RELEASE_BASE_URL@@
-STUDIO_RUNTIME_DIR="$HOME/.specweave-studio/runtime/versions/$STUDIO_ARCHIVE_VERSION"
+${REMOTE_STUDIO_ROOT_SCRIPT}
+STUDIO_RUNTIME_DIR="$STUDIO_ROOT/runtime/versions/$STUDIO_ARCHIVE_VERSION"
 studio_runtime_ready() {
   [ -x "$STUDIO_RUNTIME_DIR/specweave-studio" ] && [ "$(cat "$STUDIO_RUNTIME_DIR/.install-complete" 2>/dev/null)" = "$STUDIO_ARCHIVE_VERSION" ]
 }
 if ! studio_runtime_ready; then
-  mkdir -p "$HOME/.specweave-studio/runtime/versions"
+  mkdir -p "$STUDIO_ROOT/runtime/versions"
   # Concurrent launches (two clients, a retry racing a slow first run) must
   # not both install: mkdir is the atomic lock and the ready check repeats
   # under it.
-  STUDIO_LOCK="$HOME/.specweave-studio/runtime/versions/.$STUDIO_ARCHIVE_VERSION.install.lock"
+  STUDIO_LOCK="$STUDIO_ROOT/runtime/versions/.$STUDIO_ARCHIVE_VERSION.install.lock"
   # mkdir is the only portable atomic exclusive create (mv would silently
   # nest a candidate inside an existing lock). The owner publishes its pid
   # right after, so a lock with a live owner is never reclaimed however
@@ -502,7 +511,7 @@ if ! studio_runtime_ready; then
     *) printf 'Remote host %s has no specweave-studio release archive.\\n' "$(uname -m)" >&2; exit 1 ;;
   esac
   STUDIO_ARCHIVE="studio-$STUDIO_ARCHIVE_VERSION-$STUDIO_PLATFORM-$STUDIO_ARCH.tar.gz"
-  STUDIO_STAGING="$(mktemp -d "$HOME/.specweave-studio/runtime/versions/.staging-XXXXXX")"
+  STUDIO_STAGING="$(mktemp -d "$STUDIO_ROOT/runtime/versions/.staging-XXXXXX")"
   trap 'rm -rf "$STUDIO_STAGING" "$STUDIO_LOCK"' EXIT
   studio_fetch() {
     if command -v curl >/dev/null 2>&1; then curl -fsSL --connect-timeout 30 --max-time "$3" "$1" -o "$2"
@@ -541,9 +550,10 @@ exec "$STUDIO_RUNTIME_DIR/specweave-studio" "$@"
 
 const REMOTE_LAUNCH_SCRIPT = `set -eu
 @@STUDIO_NODE_ENV_SCRIPT@@
+${REMOTE_STUDIO_ROOT_SCRIPT}
 STATE_KEY="$1"
-STATE_DIR="$HOME/.specweave-studio/ssh-launch/$STATE_KEY"
-DEFAULT_SERVER_HOME="$HOME/.specweave-studio"
+STATE_DIR="$STUDIO_ROOT/ssh-launch/$STATE_KEY"
+DEFAULT_SERVER_HOME="$STUDIO_ROOT"
 DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"
 PORT_FILE="$STATE_DIR/port"
 PID_FILE="$STATE_DIR/pid"
@@ -705,7 +715,7 @@ if [ -z "$REMOTE_PORT" ]; then
   printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
   printf 'managed\\n' >"$MANAGED_FILE"
   if ! wait_ready "@@STUDIO_READY_TIMEOUT_MS@@"; then
-    printf 'Remote Studio server did not become ready on 127.0.0.1:%s.\\n' "$REMOTE_PORT" >&2
+    printf 'Remote SpecWithCode server did not become ready on 127.0.0.1:%s.\\n' "$REMOTE_PORT" >&2
     if [ -s "$LOG_FILE" ]; then
       tail -n 80 "$LOG_FILE" >&2 2>/dev/null || true
     else
@@ -721,8 +731,9 @@ printf '{"remotePort":%s,"serverKind":"%s"}\\n' "$REMOTE_PORT" "\${REMOTE_MANAGE
 `;
 
 const REMOTE_PAIRING_SCRIPT = `set -eu
-STATE_DIR="$HOME/.specweave-studio/ssh-launch/@@STUDIO_STATE_KEY@@"
-DEFAULT_SERVER_HOME="$HOME/.specweave-studio"
+${REMOTE_STUDIO_ROOT_SCRIPT}
+STATE_DIR="$STUDIO_ROOT/ssh-launch/@@STUDIO_STATE_KEY@@"
+DEFAULT_SERVER_HOME="$STUDIO_ROOT"
 RUNNER_FILE="$STATE_DIR/run-studio.sh"
 mkdir -p "$STATE_DIR"
 cat >"$RUNNER_FILE" <<'SH'
@@ -734,7 +745,8 @@ PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"
 `;
 
 const REMOTE_STOP_SCRIPT = `set -eu
-STATE_DIR="$HOME/.specweave-studio/ssh-launch/@@STUDIO_STATE_KEY@@"
+${REMOTE_STUDIO_ROOT_SCRIPT}
+STATE_DIR="$STUDIO_ROOT/ssh-launch/@@STUDIO_STATE_KEY@@"
 PID_FILE="$STATE_DIR/pid"
 PORT_FILE="$STATE_DIR/port"
 MANAGED_FILE="$STATE_DIR/managed"
@@ -748,7 +760,7 @@ if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMO
     sleep 0.1
   done
   if kill -0 "$REMOTE_PID" 2>/dev/null; then
-    printf 'Remote Studio server with PID %s did not stop within 2 seconds. Its ownership files were kept.\\n' "$REMOTE_PID" >&2
+    printf 'Remote SpecWithCode server with PID %s did not stop within 2 seconds. Its ownership files were kept.\\n' "$REMOTE_PID" >&2
     exit 1
   fi
 fi
@@ -757,7 +769,8 @@ printf '{"stopped":true}\\n'
 `;
 
 const REMOTE_LOG_TAIL_SCRIPT = `set -eu
-STATE_DIR="$HOME/.specweave-studio/ssh-launch/@@STUDIO_STATE_KEY@@"
+${REMOTE_STUDIO_ROOT_SCRIPT}
+STATE_DIR="$STUDIO_ROOT/ssh-launch/@@STUDIO_STATE_KEY@@"
 LOG_FILE="$STATE_DIR/server.log"
 if [ -f "$LOG_FILE" ]; then
   tail -n 80 "$LOG_FILE" 2>/dev/null || true
@@ -839,7 +852,10 @@ export function buildRemoteLaunchScript(input?: RemoteStudioRunnerOptions): stri
   });
 }
 
-export function buildRemotePairingScript(stateKey: string, input?: RemoteStudioRunnerOptions): string {
+export function buildRemotePairingScript(
+  stateKey: string,
+  input?: RemoteStudioRunnerOptions,
+): string {
   return applyScriptPlaceholders(REMOTE_PAIRING_SCRIPT, {
     STUDIO_STATE_KEY: stateKey,
     STUDIO_RUNNER_SCRIPT: stripTrailingNewlines(buildRemoteStudioRunnerScript(input)),

@@ -107,8 +107,20 @@ describe("ssh tunnel scripts", () => {
       script,
       "STUDIO_RELEASE_BASE_URL='https://updates.studio.invalid/releases/download'",
     );
-    assert.include(script, 'STUDIO_RUNTIME_DIR="$HOME/.specweave-studio/runtime/versions/$STUDIO_ARCHIVE_VERSION"');
-    assert.include(script, 'STUDIO_ARCHIVE="studio-$STUDIO_ARCHIVE_VERSION-$STUDIO_PLATFORM-$STUDIO_ARCH.tar.gz"');
+    assert.include(
+      script,
+      'STUDIO_RUNTIME_DIR="$STUDIO_ROOT/runtime/versions/$STUDIO_ARCHIVE_VERSION"',
+    );
+    // The branded root, unless only a real (unmigrated) legacy root exists.
+    assert.include(script, 'STUDIO_ROOT="$HOME/.specwithcode"');
+    assert.include(
+      script,
+      'if [ -d "$HOME/.specweave-studio" ] && [ ! -L "$HOME/.specweave-studio" ] && [ ! -e "$HOME/.specwithcode" ]; then',
+    );
+    assert.include(
+      script,
+      'STUDIO_ARCHIVE="studio-$STUDIO_ARCHIVE_VERSION-$STUDIO_PLATFORM-$STUDIO_ARCH.tar.gz"',
+    );
     assert.include(script, "SHA256SUMS");
     assert.include(script, 'exec "$STUDIO_RUNTIME_DIR/specweave-studio" "$@"');
     assert.notInclude(script, "npx");
@@ -119,7 +131,7 @@ describe("ssh tunnel scripts", () => {
     // the completion marker after acquiring it.
     assert.include(
       script,
-      'STUDIO_LOCK="$HOME/.specweave-studio/runtime/versions/.$STUDIO_ARCHIVE_VERSION.install.lock"',
+      'STUDIO_LOCK="$STUDIO_ROOT/runtime/versions/.$STUDIO_ARCHIVE_VERSION.install.lock"',
     );
     // mkdir is the exclusive create; the pid follows atomically. A dead owner
     // is reclaimed at once, a never-published owner after a short grace.
@@ -254,7 +266,7 @@ describe("ssh tunnel scripts", () => {
     assert.include(launch, '"$RUNNER_FILE" serve --host 127.0.0.1');
     assert.include(launch, '--base-dir "$DEFAULT_SERVER_HOME"');
     assert.notInclude(launch, "server-home");
-    assert.include(launch, "Remote Studio server did not become ready");
+    assert.include(launch, "Remote SpecWithCode server did not become ready");
     assert.include(launch, 'wait_ready "60000"');
     assert.include(launch, 'if [ -s "$LOG_FILE" ]; then');
     assert.include(launch, "It wrote nothing to %s");
@@ -509,7 +521,9 @@ describe("ssh tunnel scripts", () => {
                 ...makeSuccessfulProcess(""),
                 exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
                 stderr: Stream.make(
-                  new TextEncoder().encode("Remote Studio server did not stop within 2 seconds.\n"),
+                  new TextEncoder().encode(
+                    "Remote SpecWithCode server did not stop within 2 seconds.\n",
+                  ),
                 ),
               };
             }
@@ -551,7 +565,7 @@ describe("ssh tunnel scripts", () => {
             assert.instanceOf(disconnected.failure, SshCommandError);
             assert.equal(
               disconnected.failure.message,
-              "Remote Studio server did not stop within 2 seconds.",
+              "Remote SpecWithCode server did not stop within 2 seconds.",
             );
           }
         } else {
@@ -774,7 +788,7 @@ describe("archive runner script", () => {
           assert.equal(result.exitCode, 0, result.stderr);
           assert.include(result.stdout, `specweave-studio v${archiveVersion}`);
         }
-        const versionsDir = `${home}/.specweave-studio/runtime/versions`;
+        const versionsDir = `${home}/.specwithcode/runtime/versions`;
         assert.deepEqual(yield* fs.readDirectory(versionsDir), [archiveVersion]);
         assert.equal(
           (yield* fs.readFileString(`${versionsDir}/${archiveVersion}/.install-complete`)).trim(),

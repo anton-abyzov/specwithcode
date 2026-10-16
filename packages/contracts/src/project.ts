@@ -11,6 +11,7 @@ import {
   NonNegativeInt,
   PositiveInt,
   ProjectId,
+  ThreadId,
   TrimmedNonEmptyString,
   TrimmedString,
   type UnknownUnionMember,
@@ -253,8 +254,64 @@ export const ProjectMutation = Schema.Union([
     force: Schema.optional(Schema.Boolean),
     confirmationTitle: Schema.optional(Schema.String),
   }),
+  Schema.Struct({
+    type: Schema.Literal("project.folder.change"),
+    commandId: CommandId,
+    projectId: ProjectId,
+    workspaceRoot: TrimmedNonEmptyString,
+    /** The user chose a folder whose repository differs from the current one. */
+    confirmDifferentRepository: Schema.optional(Schema.Boolean),
+  }),
 ]);
 export type ProjectMutation = typeof ProjectMutation.Type;
+
+export const ProjectFolderCheckInput = Schema.Struct({
+  projectId: ProjectId,
+  workspaceRoot: TrimmedNonEmptyString,
+});
+export type ProjectFolderCheckInput = typeof ProjectFolderCheckInput.Type;
+
+/** What changing a project's main folder to `targetRoot` would do, checked without changing it. */
+export const ProjectFolderCheck = Schema.Struct({
+  projectId: ProjectId,
+  currentRoot: Schema.String,
+  targetRoot: Schema.String,
+  unchanged: Schema.Boolean,
+  targetExists: Schema.Boolean,
+  /** Canonical remote of each folder, or null when it has none. */
+  currentRepository: Schema.NullOr(Schema.String),
+  targetRepository: Schema.NullOr(Schema.String),
+  /** Both folders report the same remote. Anything else needs the user's confirmation. */
+  sameRepository: Schema.Boolean,
+  /** Another project already uses the folder; it must move or be deleted first. */
+  conflictingProject: Schema.NullOr(
+    Schema.Struct({
+      id: ProjectId,
+      title: Schema.String,
+      threadCount: NonNegativeInt,
+      archived: Schema.Boolean,
+    }),
+  ),
+  /** Threads with a queued or running turn, or a pending request. They must stop first. */
+  activeThreads: Schema.Array(Schema.Struct({ id: ThreadId, title: Schema.String })),
+  threadCount: NonNegativeInt,
+  /** Threads bound to a checkout inside the current folder, rebound to the same place in the new one. */
+  reboundWorktreeCount: NonNegativeInt,
+  /**
+   * The current folder stays a checkout of another repository, as when a repository
+   * project moves up to its umbrella. Its threads keep running there; new threads and
+   * the coordinator use the new folder.
+   */
+  keptInPlaceCount: NonNegativeInt,
+  /** The folder holds a SpecWeave workspace whose repositories can be imported afterwards. */
+  specweaveWorkspace: Schema.Boolean,
+});
+export type ProjectFolderCheck = typeof ProjectFolderCheck.Type;
+
+export class ProjectFolderCheckError extends Schema.TaggedError<ProjectFolderCheckError>()(
+  "ProjectFolderCheckError",
+  { message: Schema.String },
+) {}
 
 export class ProjectMutationError extends Schema.TaggedError<ProjectMutationError>()(
   "ProjectMutationError",

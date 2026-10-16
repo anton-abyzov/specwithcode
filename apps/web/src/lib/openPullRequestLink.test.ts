@@ -204,7 +204,10 @@ describe("matchesLinkedPullRequestUrl", () => {
 
   it("rejects a different pull request or host", () => {
     expect(
-      matchesLinkedPullRequestUrl(linkedPullRequest, "https://github.com/anton-abyzov/specwithcode/pull/43"),
+      matchesLinkedPullRequestUrl(
+        linkedPullRequest,
+        "https://github.com/anton-abyzov/specwithcode/pull/43",
+      ),
     ).toBe(false);
     expect(
       matchesLinkedPullRequestUrl(
@@ -289,7 +292,9 @@ describe("parseChangeRequestUrl", () => {
   });
 
   it("survives trailing segments, a trailing slash and a query string", () => {
-    expect(parseChangeRequestUrl("https://github.com/studiotools/studio/pull/123/files?w=1")).toEqual({
+    expect(
+      parseChangeRequestUrl("https://github.com/studiotools/studio/pull/123/files?w=1"),
+    ).toEqual({
       host: "github.com",
       repository: "studiotools/studio",
       number: 123,
@@ -506,7 +511,9 @@ describe("findProjectForChangeRequest", () => {
     //
     // Derived from the SSH remote the way the server derives it rather than written out, so the
     // day that normalization stops reaching the web spelling this fails here too.
-    const canonicalKey = normalizeGitRemoteUrl("git@ssh.dev.azure.com:v3/StudioTools/Platform/Studio");
+    const canonicalKey = normalizeGitRemoteUrl(
+      "git@ssh.dev.azure.com:v3/StudioTools/Platform/Studio",
+    );
     const projects = [
       project({
         canonicalKey,

@@ -120,6 +120,7 @@ const makeClaudeConfig = (overrides: Partial<ClaudeSettings>): ClaudeSettings =>
   customModels: [],
   launchArgs: "",
   autoCompactWindow: "",
+  idleCompaction: true,
   ...overrides,
 });
 
@@ -361,7 +362,11 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
             driver: ProviderDriverKind.make("codex"),
             enabled: true,
             environment: [
-              { name: "STUDIO_CODEX_COLLAB_SCRIPT", value: fixtures.codexScriptPath, sensitive: false },
+              {
+                name: "STUDIO_CODEX_COLLAB_SCRIPT",
+                value: fixtures.codexScriptPath,
+                sensitive: false,
+              },
             ],
             config: makeCodexConfig({ enabled: true, binaryPath: fixtures.codexBinaryPath }),
           },

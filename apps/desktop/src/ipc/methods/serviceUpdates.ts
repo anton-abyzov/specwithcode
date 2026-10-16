@@ -3,6 +3,7 @@ import {
   DesktopUpdatePreferencesSchema,
   StudioServiceUpdateStateSchema,
 } from "@specweave-studio/contracts";
+import { compareSemverVersions, parseSemver } from "@specweave-studio/shared/semver";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -34,6 +35,20 @@ import {
 } from "../../updates/studioServiceUpdates.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import * as IpcChannels from "../channels.ts";
+
+/** A release service older than this app (never a dev or nightly build). */
+export function isStaleService(serviceVersion: string | undefined, appVersion: string): boolean {
+  const service = serviceVersion === undefined ? null : parseSemver(serviceVersion);
+  const app = parseSemver(appVersion);
+  if (
+    service === null ||
+    app === null ||
+    service.prerelease.length > 0 ||
+    app.prerelease.length > 0
+  )
+    return false;
+  return compareSemverVersions(serviceVersion!, appVersion) < 0;
+}
 
 const { logInfo, logWarning } = DesktopObservability.makeComponentLogger("service-updates");
 
@@ -76,7 +91,7 @@ const controllerFor = (environment: DesktopEnvironment.DesktopEnvironment["Servi
   });
 
 // Self-update follows the same build switch as the app's own updates
-// (STUDIO_DISABLE_AUTO_UPDATE). While it is off the agent never acts on its
+// (SPECWITHCODE_DISABLE_AUTO_UPDATE or STUDIO_DISABLE_AUTO_UPDATE). While it is off the agent never acts on its
 // own; "Check now" and "Install now" in Settings still run it on request.
 const automaticUpdatesAllowed = Effect.gen(function* () {
   const config = yield* DesktopConfig.DesktopConfig;
@@ -141,7 +156,9 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
   let lastSent = "";
   const publish = Effect.gen(function* () {
     const state = yield* readState;
-    const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(StudioServiceUpdateStateSchema))(state);
+    const encoded = yield* Schema.encodeEffect(
+      Schema.fromJsonString(StudioServiceUpdateStateSchema),
+    )(state);
     if (encoded === lastSent) return state;
     lastSent = encoded;
     yield* electronWindow.sendAll(IpcChannels.SERVICE_UPDATE_STATE_CHANNEL, state);
@@ -355,6 +372,29 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
     const controller = yield* controllerFor(environment);
     if (controller.installation() === null) return;
     yield* syncConfig();
+    // The service outlives the app, so an app update leaves the older service
+    // running. Ask its agent to install the app's version at its next quiet
+    // moment (never mid-task), instead of showing a separate server update.
+    const attached = Option.getOrNull(
+      yield* (yield* DesktopLocalService.DesktopLocalService).attached,
+    );
+    const serviceVersion = attached?.runtime.serviceManaged
+      ? attached.descriptor.serverVersion
+      : undefined;
+    const current = yield* readState;
+    if (
+      (yield* automaticUpdatesAllowed) &&
+      isStaleService(serviceVersion, environment.appVersion) &&
+      current.status !== "installing" &&
+      current.status !== "waiting-for-quiet"
+    ) {
+      yield* logInfo("service is older than the app; installing the app's version when idle", {
+        serviceVersion,
+        appVersion: environment.appVersion,
+      });
+      yield* request("install", { version: environment.appVersion });
+      return;
+    }
     const settings = yield* desktopSettings.get;
     if (settings.updatePreferences.checkAutomatically && (yield* automaticUpdatesAllowed)) {
       yield* startAgent("app start", false);

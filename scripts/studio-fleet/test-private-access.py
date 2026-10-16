@@ -19,7 +19,7 @@ class PrivateAccessRecoveryTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='studio-network-test-')
         self.home = pathlib.Path(self.temp.name).resolve() / 'home'
-        self.owner = self.home / '.specweave-studio/m4'
+        self.owner = self.home / '.specwithcode/m4'
         self.owner.mkdir(parents=True)
         (self.owner / 'installation.json').write_text(json.dumps({'archiveSha256': 'fixture-digest'}))
         fleet = self.home / '.local/share/specweave/fleet'

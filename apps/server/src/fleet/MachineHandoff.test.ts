@@ -717,6 +717,7 @@ const recoveryScenario = (
     let progressPath = "";
     const coordinator = ProjectCoordinatorService.ProjectCoordinatorService.of({
       start: () => Effect.die("must use send"),
+      nextTurnModel: () => Effect.succeed(undefined),
       send: (input) =>
         Effect.gen(function* () {
           sends++;

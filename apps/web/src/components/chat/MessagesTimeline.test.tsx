@@ -1456,27 +1456,37 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain('data-user-message-attribution="routed"');
-    expect(markup).toContain("Your message · Routed by another thread");
+    expect(markup).toContain("via another thread");
     expect(markup).not.toContain("Sent by another agent");
+    // Who routed it and where it ran are on hover, not printed above the bubble.
+    expect(markup).not.toContain("Execution environment:");
   });
 
-  it("keeps a subagent parent-thread link at the top of an empty timeline", async () => {
+  it("shows a message typed here and sent elsewhere as the user's, with where it went", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
+    const entry = buildUserTimelineEntry("Also cover the away fixtures.");
+    const routed = (kind: "sent" | "pending") => ({
+      ...entry,
+      id: `entry-${kind}`,
+      message: {
+        ...entry.message,
+        id: MessageId.make(`message-${kind}`),
+        createdBy: "user" as const,
+        routedNote: {
+          kind,
+          targetThreadId: kind === "sent" ? ThreadId.make("thread-other") : null,
+        },
+      },
+    });
     const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        timelineEntries={[]}
-        parentThreadLink={{
-          threadId: ThreadId.make("thread-parent"),
-          title: "Architecture audit",
-        }}
-      />,
+      <MessagesTimeline {...buildProps()} timelineEntries={[routed("sent"), routed("pending")]} />,
     );
-
-    expect(markup).toContain('aria-label="Open parent thread"');
-    expect(markup).toContain("Subagent of");
-    expect(markup).toContain("Architecture audit");
-    expect(markup).not.toContain("Send a message to start the conversation");
+    expect(markup).toContain('data-routed-note="sent"');
+    expect(markup).toContain("→ Sent to another thread");
+    expect(markup).toContain("Sending via coordinator…");
+    expect(markup).not.toContain("via coordinator<");
+    // The note is the provenance: no execution line or marker above the bubble.
+    expect(markup).not.toContain("data-request-execution-origin");
   });
 
   it("keeps steer intent visible on committed user messages", async () => {
@@ -2219,6 +2229,130 @@ describe("MessagesTimeline", () => {
     },
   );
 
+  describe("failed turns", () => {
+    const failedRunId = RunId.make("run-failed");
+    const failureEntries = (createdAt: string, message: string) => {
+      const item = {
+        id: "workspace-failure",
+        threadId: "thread-1",
+        runId: failedRunId,
+        nodeId: null,
+        providerThreadId: "provider-thread-1",
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 3,
+        status: "failed",
+        title: "Workspace preparation failed",
+        startedAt: {},
+        completedAt: {},
+        updatedAt: {},
+        type: "error",
+        failure: {
+          class: "validation_error",
+          message,
+          code: "workspace_preparation_failed",
+          retryable: false,
+        },
+      } as const;
+      return [
+        {
+          id: item.id,
+          kind: "work",
+          createdAt,
+          entry: {
+            id: item.id,
+            createdAt,
+            runId: failedRunId,
+            label: "Workspace preparation failed",
+            detail: message,
+            tone: "error",
+            itemType: "error",
+            toolLifecycleStatus: "failed",
+            structuredPayload: item,
+            projectedItem: {
+              position: 0,
+              visibility: "local",
+              sourceThreadId: "thread-1",
+              sourceItemId: item.id,
+              item,
+            },
+          },
+        },
+      ] as never;
+    };
+    const failedRun = (createdAt: string) => ({
+      runId: failedRunId,
+      status: "failed" as const,
+      startedAt: createdAt,
+      completedAt: createdAt,
+    });
+
+    it("keeps the current turn's failure prominent with its retry", () => {
+      activityTestState.expanded = false;
+      const createdAt = new Date().toISOString();
+      const markup = renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          latestRun={failedRun(createdAt)}
+          retryableWorkspacePreparationRunIds={new Set([failedRunId])}
+          onRetryWorkspacePreparation={() => {}}
+          timelineEntries={failureEntries(createdAt, "git worktree add failed: invalid reference")}
+        />,
+      );
+      expect(markup).not.toContain('data-v2-error-history="true"');
+      expect(markup).toContain("git worktree add failed: invalid reference");
+      expect(markup).toContain("Retry");
+    });
+
+    it("shows a resolved thread's failure as a collapsed note without retry", () => {
+      activityTestState.expanded = false;
+      const createdAt = new Date().toISOString();
+      const markup = renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          threadSettled
+          latestRun={failedRun(createdAt)}
+          retryableWorkspacePreparationRunIds={new Set([failedRunId])}
+          onRetryWorkspacePreparation={() => {}}
+          timelineEntries={failureEntries(createdAt, "git worktree add failed: invalid reference")}
+        />,
+      );
+      expect(markup).toContain('data-v2-error-history="true"');
+      expect(markup).toContain("earlier turn");
+      expect(markup).toContain('aria-expanded="false"');
+      expect(markup).not.toContain("git worktree add failed");
+      expect(markup).not.toContain("Retry");
+    });
+
+    it("shows a days-old failure as quiet history", () => {
+      activityTestState.expanded = false;
+      const markup = renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          latestRun={failedRun(MESSAGE_CREATED_AT)}
+          timelineEntries={failureEntries(MESSAGE_CREATED_AT, "Provider turn failed.")}
+        />,
+      );
+      expect(markup).toContain('data-v2-error-history="true"');
+      expect(markup).not.toContain("Provider turn failed.");
+    });
+
+    it("explains a legacy generic failure by its class", () => {
+      activityTestState.expanded = false;
+      const createdAt = new Date().toISOString();
+      const markup = renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          latestRun={failedRun(createdAt)}
+          timelineEntries={failureEntries(createdAt, "Provider turn failed.")}
+        />,
+      );
+      expect(markup).not.toContain("Provider turn failed.");
+      expect(markup).toContain("rejected the request for this turn");
+    });
+  });
+
   it("renders V2 provider retries in the normal work log", () => {
     activityTestState.expanded = true;
     const retryItem = {
@@ -2371,7 +2505,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Received 1 update and ran 1 command");
   });
 
-  it("renders Studio MCP dynamic tools with the product logo and pretty name", async () => {
+  it("renders SpecWithCode MCP dynamic tools with the product logo and pretty name", async () => {
     activityTestState.expanded = true;
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const item = {
@@ -2443,7 +2577,7 @@ describe("MessagesTimeline", () => {
     // The Studio wordmark replaces the generic tool icon for Studio MCP calls.
     expect(markup).toContain('aria-label="SpecWithCode"');
     expect(markup).toContain('viewBox="0 0 64 64"');
-    expect(markup).toContain("Read a Studio thread");
+    expect(markup).toContain("Read a SpecWithCode thread");
     expect(markup).not.toContain("mcp__studio-code__studio_thread_read");
   });
 

@@ -12,7 +12,11 @@ export const useAtomCommand = () => async (value: unknown) => {
 export const useEnvironmentQuery = (value: any) => {
   if (!value) return { data: null, error: null, isPending: false };
   (window as any).browsedMachine = value.environmentId;
-  const path = value.input.partialPath.replace("~", "/Users/you").replace(/\/$/, "");
+  // Mirrors the server: a trailing slash lists a folder, otherwise siblings by prefix.
+  const raw = value.input.partialPath.replace("~", "/Users/you");
+  const listing = raw.endsWith("/");
+  const path = listing ? raw.replace(/\/$/, "") : raw.slice(0, raw.lastIndexOf("/"));
+  const prefix = listing ? "" : raw.slice(raw.lastIndexOf("/") + 1);
   return {
     error: null,
     isPending: false,
@@ -22,7 +26,7 @@ export const useEnvironmentQuery = (value: any) => {
         ? [
             { name: "sw-easychamp", fullPath: `${path}/sw-easychamp` },
             { name: "another-project", fullPath: `${path}/another-project` },
-          ]
+          ].filter((entry) => entry.name.startsWith(prefix))
         : [],
     },
   };

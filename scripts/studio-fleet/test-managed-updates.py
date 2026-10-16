@@ -30,18 +30,18 @@ class ManagedConsent(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.home = pathlib.Path(temporary.name).resolve()
         self.identity = 'lab-502'
-        self.own = self.home / '.specweave-studio' / self.identity
+        self.own = self.home / '.specwithcode' / self.identity
         self.state = self.own / 'userdata'
         self.state.mkdir(parents=True)
         self.environment = 'env-owned-502'
         (self.state / 'environment-id').write_text(self.environment + '\n')
-        (self.home / '.local/share/specweave-studio/releases').mkdir(parents=True)
+        (self.home / '.specwithcode/install/releases').mkdir(parents=True)
         self.receipt = {'identity': self.identity, 'uid': 502, 'user': 'fixture-user',
                         'studioHome': str(self.own), 'stateDir': str(self.state), 'host': '127.0.0.1',
                         'port': 24319, 'cliWrapper': str(self.home / '.local/bin/specweave-studio-lab-502'),
                         'archiveSha256': 'a' * 64, 'sourceCommit': 'b' * 40, 'version': '1.0.17',
                         'webSessionPolicy': 'worker-relay',
-                        'release': str(self.home / '.local/share/specweave-studio/releases' / ('a' * 20)),
+                        'release': str(self.home / '.specwithcode/install/releases' / ('a' * 20)),
                         'service': {'installed': True, 'label': 'com.specweave.studio.lab-502', 'domain': 'gui/502'}}
         self.receipt_path = self.own / 'installation.json'
         self.receipt_path.write_text(json.dumps(self.receipt))
@@ -54,7 +54,7 @@ class ManagedConsent(unittest.TestCase):
         self.grant()
         self.updates = self.own / 'updates'
         self.consent_path = self.updates / 'managed-consent.json'
-        script = self.home / '.local/share/specweave-studio/updater/update_agent.py'
+        script = self.home / '.specwithcode/install/updater/update_agent.py'
         script.parent.mkdir(); script.write_text('# synthetic agent')
         self.plist = self.home / 'Library/LaunchAgents/com.specweave.studio.lab-502.updater.plist'
         self.plist.parent.mkdir(parents=True)

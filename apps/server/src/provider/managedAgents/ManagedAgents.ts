@@ -279,7 +279,7 @@ const make = Effect.gen(function* () {
                         content: [
                           {
                             type: "text",
-                            text: "Studio is ending this session; this report was canceled.",
+                            text: "SpecWithCode is ending this session; this report was canceled.",
                           },
                         ],
                       },
@@ -303,7 +303,7 @@ const make = Effect.gen(function* () {
                       content: [
                         {
                           type: "text",
-                          text: "Stop every open workflow run immediately. Do not start another run. This Studio command has ended; acknowledge briefly.",
+                          text: "Stop every open workflow run immediately. Do not start another run. This SpecWithCode command has ended; acknowledge briefly.",
                         },
                       ],
                     },
@@ -371,7 +371,7 @@ const make = Effect.gen(function* () {
           "create-worker",
           "agents",
           {
-            name: "Studio beta worker",
+            name: "SpecWithCode beta worker",
             model: input.config.model,
             system,
             tools: [
@@ -379,7 +379,7 @@ const make = Effect.gen(function* () {
                 type: "custom",
                 name: "studio_report_result",
                 description:
-                  "Record the worker's complete answer in the Studio receipt. Call exactly once with the plain-text answer before returning the workflow result. Include required instruction markers. This records text only and does not execute code, access files or contact any other service.",
+                  "Record the worker's complete answer in the SpecWithCode receipt. Call exactly once with the plain-text answer before returning the workflow result. Include required instruction markers. This records text only and does not execute code, access files or contact any other service.",
                 input_schema: {
                   type: "object",
                   properties: { text: { type: "string", maxLength: 8192 } },
@@ -397,7 +397,7 @@ const make = Effect.gen(function* () {
           "create-lead",
           "agents",
           {
-            name: "Studio beta lead",
+            name: "SpecWithCode beta lead",
             model: input.config.model,
             system: `${system}\n\nFor the supplied task, start a small dynamic workflow using the predefined worker, then synthesize its results.`,
             tools: [],
@@ -431,7 +431,7 @@ const make = Effect.gen(function* () {
               type: "limit",
               max_list_cost: { amount: input.config.maxCostCents, currency: "USD" },
             },
-            title: "SpecWeave Studio explicit Managed Agents beta run",
+            title: "SpecWithCode explicit Managed Agents beta run",
           },
           "sesn",
         );
@@ -490,8 +490,8 @@ const make = Effect.gen(function* () {
                               {
                                 type: "text",
                                 text: accepted
-                                  ? "Studio recorded this worker answer."
-                                  : "Studio rejected the unsupported or invalid report. No action was performed.",
+                                  ? "SpecWithCode recorded this worker answer."
+                                  : "SpecWithCode rejected the unsupported or invalid report. No action was performed.",
                               },
                             ],
                           },

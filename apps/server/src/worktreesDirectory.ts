@@ -1,3 +1,8 @@
+import {
+  canonicalStudioPath,
+  LEGACY_STUDIO_HOME_DIRECTORY,
+  STUDIO_HOME_DIRECTORY,
+} from "@specweave-studio/shared/studioIdentity";
 import type * as Path from "effect/Path";
 
 import { expandHomePathWith } from "./pathExpansion.ts";
@@ -26,7 +31,25 @@ export function isFilesystemRoot(directory: string, path: Path.Path): boolean {
   return path.dirname(directory) === directory;
 }
 
-/** Every directory that holds Studio-managed worktrees on this machine. */
+/**
+ * `directory` as it was recorded before the SpecWithCode root moved: the same path under
+ * the legacy `~/.specweave-studio`, when that legacy root is now a link to the branded
+ * one. Null otherwise, so a real legacy root beside a fresh profile is never claimed.
+ */
+export function legacyStudioPathAlias(directory: string, path: Path.Path): string | null {
+  const marker = `${path.sep}${STUDIO_HOME_DIRECTORY}${path.sep}`;
+  const index = directory.lastIndexOf(marker);
+  if (index <= 0) return null;
+  const home = directory.slice(0, index);
+  const legacy = `${home}${path.sep}${LEGACY_STUDIO_HOME_DIRECTORY}${directory.slice(index + marker.length - 1)}`;
+  return canonicalStudioPath(legacy, home) === directory ? legacy : null;
+}
+
+/**
+ * Every directory that holds Studio-managed worktrees on this machine, including the
+ * pre-migration spelling of the default directory, under which older worktrees were
+ * recorded.
+ */
 export function managedWorktreesDirectories(
   settings: {
     readonly worktreesDirectory: string;
@@ -36,6 +59,8 @@ export function managedWorktreesDirectories(
   path: Path.Path,
 ): ReadonlyArray<string> {
   const directories = new Set([defaultDir]);
+  const legacyDefault = legacyStudioPathAlias(defaultDir, path);
+  if (legacyDefault !== null) directories.add(legacyDefault);
   for (const setting of [settings.worktreesDirectory, ...settings.previousWorktreesDirectories]) {
     const directory = resolveWorktreesDirectory(setting, defaultDir, path);
     if (directory !== null) directories.add(directory);

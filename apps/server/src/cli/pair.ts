@@ -5,7 +5,7 @@
  * Discovery reads the `server-runtime.json` a live server persists next to its
  * database, then confirms the process is actually answering by fetching its
  * public environment descriptor. Inside a linked git worktree the worktree's
- * own `.specweave-studio` is checked first (matching dev-runner precedence); otherwise the
+ * own `.specwithcode` is checked first (matching dev-runner precedence); otherwise the
  * shared Studio home. `--tailscale` publishes the server over Tailscale Serve
  * HTTPS and pairs through the tailnet URL instead.
  */
@@ -78,7 +78,7 @@ export class NoRunningServerError extends Schema.TaggedError<NoRunningServerErro
     return [
       "No running SpecWithCode server found.",
       ...this.checkedStatePaths.map((statePath) => `  checked ${statePath}`),
-      "Start one with `specweave-studio serve`, or connect this machine with Studio Connect: `specweave-studio connect`.",
+      "Start one with `specweave-studio serve`, or connect this machine with SpecWithCode Connect: `specweave-studio connect`.",
     ].join("\n");
   }
 }
@@ -254,7 +254,7 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
   if (explicitBaseDir !== undefined && explicitBaseDir.trim().length > 0) {
     bases.push(yield* resolveBaseDir(explicitBaseDir));
   } else {
-    // Same precedence as dev-runner: inside a linked worktree its own `.specweave-studio`
+    // Same precedence as dev-runner: inside a linked worktree its own `.specwithcode`
     // outranks the shared home, so `specweave-studio pair` in a worktree pairs with the dev
     // server under test rather than the daily-driver install.
     const worktreeHome = yield* resolveWorktreeStudioHome(process.cwd());

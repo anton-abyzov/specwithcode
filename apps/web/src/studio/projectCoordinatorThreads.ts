@@ -65,12 +65,19 @@ export function isProjectCoordinatorThread(
  * coordinator waits on the person, the page offers that page, never the panel.
  */
 export interface CoordinatorAttention {
-  readonly reason: "approval" | "input" | "plan" | "failed";
+  readonly reason: "approval" | "input" | "plan" | "held" | "failed";
   /** What the page says about it. */
   readonly message: string;
   /** The button that opens the coordinator's own page. */
   readonly action: string;
 }
+
+const ACTIVE_RUNTIME_STATUSES: ReadonlySet<string> = new Set([
+  "preparing",
+  "starting",
+  "running",
+  "waiting",
+]);
 
 export function coordinatorAttention(
   coordinator: {
@@ -78,6 +85,8 @@ export function coordinatorAttention(
     readonly hasPendingUserInput: boolean;
     readonly hasActionableProposedPlan: boolean;
     readonly runtime: { readonly status: string } | null;
+    /** Messages waiting in the coordinator's held queue; absent when none. */
+    readonly heldQueuedCount?: number;
   } | null,
 ): CoordinatorAttention | null {
   if (!coordinator) return null;
@@ -98,6 +107,14 @@ export function coordinatorAttention(
       reason: "plan",
       message: "The coordinator has a plan ready for you.",
       action: "Review the plan",
+    };
+  const held = coordinator.heldQueuedCount ?? 0;
+  // Its own page shows the held queue with Resume and Discard.
+  if (held > 0 && !ACTIVE_RUNTIME_STATUSES.has(coordinator.runtime?.status ?? "idle"))
+    return {
+      reason: "held",
+      message: `${held} message${held === 1 ? " to the coordinator is" : "s to the coordinator are"} held and not delivered.`,
+      action: "Resume or discard them",
     };
   if (coordinator.runtime?.status === "failed")
     return {

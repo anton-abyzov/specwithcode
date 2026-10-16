@@ -44,7 +44,7 @@ export function environmentTransportLabel(
       ? connectionRouteLabel(routes[0]!)
       : `via ${connectionRouteLabel(active)}`;
   }
-  if (environment.relayManaged) return "Studio Connect";
+  if (environment.relayManaged) return "SpecWithCode Connect";
   if (isDesktopLocalConnectionTarget(entry.target)) return "WSL";
   if (
     entry.target._tag === "SshConnectionTarget" &&

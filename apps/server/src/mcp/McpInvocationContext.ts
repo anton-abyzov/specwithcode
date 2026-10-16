@@ -20,6 +20,9 @@ const ALL_MCP_CAPABILITIES = [
 ] as const;
 export type McpCapability = (typeof ALL_MCP_CAPABILITIES)[number];
 
+export const isMcpCapability = (value: string): value is McpCapability =>
+  (ALL_MCP_CAPABILITIES as ReadonlyArray<string>).includes(value);
+
 /** A provider session SpecWithCode launched for one thread. */
 export interface McpThreadCaller {
   readonly threadId: ThreadId;
@@ -121,7 +124,7 @@ export const requireThreadMcpCapability = <const C extends "preview" | "device">
 const threadCallerRequired = (operation: string) =>
   new OrchestratorMcpFailure({
     code: "thread_credential_required",
-    message: `${operation} acts as the calling Studio thread, so it needs an agent running inside SpecWithCode. This MCP client signed in from outside a thread.`,
+    message: `${operation} acts as the calling SpecWithCode thread, so it needs an agent running inside SpecWithCode. This MCP client signed in from outside a thread.`,
   });
 
 /** A scope with a thread caller, for tools whose whole surface acts as the caller. */

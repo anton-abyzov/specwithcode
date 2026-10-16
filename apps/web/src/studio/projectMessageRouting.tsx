@@ -28,6 +28,8 @@ export interface ProjectMessageRouting {
   readonly saveCoordinatorModel?: (selection: ModelSelection) => Promise<void>;
   readonly send: (prompt: string, attachments?: ReadonlyArray<ChatAttachment>) => Promise<void>;
   readonly openCoordinator: () => void;
+  /** Messages typed in this worker that the coordinator kept or sent elsewhere, for its timeline. */
+  readonly routedMessages?: ReadonlyArray<import("../types").ChatMessage>;
   /**
    * Opens a thread in the project's right panel. Returns false when the thread
    * belongs elsewhere, so the caller opens it full page instead.

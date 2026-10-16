@@ -173,11 +173,11 @@ export function useRemoteConnections() {
       if (environment.isRelayManaged) {
         Alert.alert(
           "Remove from this device?",
-          `Forget ${environment.environmentLabel} and its cached threads on this device.\n\nIt stays on your Studio Connect account and keeps its host space. Deregister it under Studio Account → Studio Connect to free it.`,
+          `Forget ${environment.environmentLabel} and its cached threads on this device.\n\nIt stays on your SpecWithCode Connect account and keeps its host space. Deregister it under SpecWithCode Account → SpecWithCode Connect to free it.`,
           [
             { text: "Cancel", style: "cancel" },
             {
-              text: "Open Studio Account",
+              text: "Open SpecWithCode Account",
               onPress: () => navigation.navigate("SettingsSheet", { screen: "SettingsAuth" }),
             },
             remove,

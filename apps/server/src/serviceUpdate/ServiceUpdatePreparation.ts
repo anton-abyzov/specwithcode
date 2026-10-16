@@ -17,8 +17,9 @@
  * so nothing new starts while the helper works, and it clears what Stop leaves
  * behind (`ServiceUpdateCleanup`): runs stuck before their provider answered,
  * pending requests, session rows with no live session, unsettled effects and
- * open terminals. Interrupted runs end `interrupted`; the person continues them
- * by hand after the restart (no restart continuation starts them on its own).
+ * open terminals. Interrupted runs end `interrupted`. After the restart, a project
+ * that continues threads after restarts continues them and queues the cancelled
+ * messages again; elsewhere the person continues them by hand.
  *
  * @module ServiceUpdatePreparation
  */
@@ -36,6 +37,7 @@ import {
   type ServiceUpdateBlocker,
   type ServiceUpdateBlockerKind,
 } from "@specweave-studio/contracts";
+import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -50,6 +52,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
 
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as ServiceUpdateCleanup from "./ServiceUpdateCleanup.ts";
@@ -181,6 +184,7 @@ export const makeWithTimings = (timings: ServiceUpdatePreparationTimings) =>
     // Both are absent in tools and tests that build the runtime alone.
     const hold = yield* Effect.serviceOption(ServiceUpdateHold.ServiceUpdateHold);
     const terminals = yield* Effect.serviceOption(TerminalManager.TerminalManager);
+    const settings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
 
     const readBlockerRows = Effect.gen(function* () {
       const rows = yield* sql.unsafe<{
@@ -192,6 +196,9 @@ export const makeWithTimings = (timings: ServiceUpdatePreparationTimings) =>
                thread_id, run_id
           FROM orchestration_v2_projection_runs
          WHERE status NOT IN (${TERMINAL_RUNS_SQL})
+           -- A held queue starts only when someone resumes it, so it is not work the
+           -- update waits for, and it stays held across the restart (update.py agrees).
+           AND NOT (status = 'queued' AND json_extract(payload_json, '$.queueHeld') IS 1)
         UNION ALL
         SELECT 'request', thread_id, NULL FROM orchestration_v2_projection_runtime_requests
          WHERE status = 'pending'
@@ -377,6 +384,7 @@ export const makeWithTimings = (timings: ServiceUpdatePreparationTimings) =>
                   providerSessionId: ProviderSessionId.make(run.providerSessionId),
                   reason: "manual_shutdown",
                   detail: RELEASE_DETAIL,
+                  keepMcpCredentials: true,
                 })
                 .pipe(logged("release-failed", { runId: run.runId }));
             }
@@ -456,6 +464,7 @@ export const makeWithTimings = (timings: ServiceUpdatePreparationTimings) =>
               commandId: CommandId.make(`service-update:${nonce}:cancel:${row.runId}`),
               threadId: ThreadId.make(row.threadId),
               runId: RunId.make(row.runId),
+              cause: "service_update",
             })
             .pipe(logged("cancel-queued-failed", { threadId: row.threadId, runId: row.runId }));
         },
@@ -487,6 +496,7 @@ export const makeWithTimings = (timings: ServiceUpdatePreparationTimings) =>
               threadId: ThreadId.make(row.threadId),
               runId: RunId.make(row.runId),
               reason: STOP_REASON,
+              cause: "service_update",
             })
             .pipe(dispatched("interrupt-failed", { threadId: row.threadId, runId: row.runId }));
           if (!accepted) stopThreads.add(row.threadId);
@@ -501,6 +511,7 @@ export const makeWithTimings = (timings: ServiceUpdatePreparationTimings) =>
               commandId: CommandId.make(`service-update:${nonce}:stop:${threadId}`),
               threadId: ThreadId.make(threadId),
               reason: STOP_REASON,
+              cause: "service_update",
             })
             .pipe(logged("stop-failed", { threadId }));
         }
@@ -519,7 +530,7 @@ export const makeWithTimings = (timings: ServiceUpdatePreparationTimings) =>
         yield* boundedBy(
           deadline,
           providerSessions
-            .releaseIdle({ detail: RELEASE_DETAIL, includeBusy: true })
+            .releaseIdle({ detail: RELEASE_DETAIL, includeBusy: true, keepMcpCredentials: true })
             .pipe(logged("release-sessions-failed", {})),
         );
         // Closing a busy session can end its turn through the provider's own events.
@@ -583,10 +594,22 @@ export const makeWithTimings = (timings: ServiceUpdatePreparationTimings) =>
         return { stoppedThreads: touched.size, interruptedRuns, closedTerminals };
       });
 
-    const report = (rows: ReadonlyArray<BlockerRow>) => {
-      const blockers = summarizeBlockers(rows);
-      return { idle: blockers.length === 0, blockers };
-    };
+    const report = (rows: ReadonlyArray<BlockerRow>) =>
+      Effect.gen(function* () {
+        const summarized = summarizeBlockers(rows);
+        const current = Option.isSome(settings)
+          ? yield* settings.value.getSettings.pipe(Effect.orElseSucceed(() => null))
+          : null;
+        const blockers =
+          current === null
+            ? summarized
+            : summarized.map((blocker) => ({
+                ...blocker,
+                continuesAfterRestart: resolveProjectSettings(current, blocker.projectId).settings
+                  .continueThreadsAfterServerUpdate,
+              }));
+        return { idle: blockers.length === 0, blockers };
+      });
 
     const holdUntil = Effect.gen(function* () {
       if (Option.isNone(hold)) return {};
@@ -634,7 +657,7 @@ export const makeWithTimings = (timings: ServiceUpdatePreparationTimings) =>
         if (input.releaseHold === true) {
           if (Option.isSome(hold)) yield* hold.value.release("cancelled");
           return {
-            ...report(yield* readBlockerRows),
+            ...(yield* report(yield* readBlockerRows)),
             stoppedThreads: 0,
             held: false,
             openTerminals: yield* openTerminals,
@@ -649,7 +672,7 @@ export const makeWithTimings = (timings: ServiceUpdatePreparationTimings) =>
             rows = yield* readBlockerRows;
           }
           return {
-            ...report(rows),
+            ...(yield* report(rows)),
             stoppedThreads: 0,
             held,
             ...(held ? yield* holdUntil : {}),
@@ -672,7 +695,7 @@ export const makeWithTimings = (timings: ServiceUpdatePreparationTimings) =>
         );
         const held = yield* isHeld;
         const result = {
-          ...report(rows),
+          ...(yield* report(rows)),
           stoppedThreads: drained.stoppedThreads,
           held,
           ...(held ? yield* holdUntil : {}),

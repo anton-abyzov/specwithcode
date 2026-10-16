@@ -16,7 +16,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--identity', choices=['m4', 'm1', 'm3', 'stage'], required=True)
 args = parser.parse_args()
 home = pathlib.Path.home().resolve()
-own = home / '.specweave-studio' / args.identity
+# studio_paths.identity_home, inlined: this helper is copied to a worker on its own.
+legacy, branded = home / '.specweave-studio', home / '.specwithcode' / args.identity
+own = branded if legacy.is_symlink() or branded.exists() or not (legacy / args.identity).exists() else legacy / args.identity
 assert own.resolve() == own, 'Studio state escapes its dedicated home'
 receipt = json.loads((own / 'installation.json').read_text())
 release = pathlib.Path(receipt['release'])

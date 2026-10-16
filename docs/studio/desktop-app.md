@@ -4,9 +4,9 @@ The desktop app wraps the same web UI as the browser workbench in an Electron
 shell, so every browser feature is available on desktop. macOS is the first
 target; Windows builds from the same code as an unsigned x64 installer.
 
-## One server per Studio home
+## One server per SpecWithCode home
 
-The desktop never runs a second server on data another Studio process owns.
+The desktop never runs a second server on data another SpecWithCode process owns.
 On launch it looks for a live server, in this order:
 
 1. Its own home: `STUDIO_HOME`, or `~/.specweave-studio` by default.
@@ -113,7 +113,10 @@ touches `~/.specweave-studio`.
 Signed builds need these repository secrets (names only; values stay with the
 owner): `CSC_LINK` and `CSC_KEY_PASSWORD` for the Developer ID Application
 certificate, and `APPLE_API_KEY`, `APPLE_API_KEY_ID` and `APPLE_API_ISSUER` for
-notarization with an App Store Connect API key. Clerk passkey entitlements are
+notarization with an App Store Connect API key. A local signed build reads the same
+variables: `CSC_LINK` is the path to the `.p12`, `APPLE_API_KEY` the path to the `.p8`, and
+`pnpm dist:desktop:dmg:arm64 --signed` signs, notarizes and staples. Release builds must be
+signed this way; see [releasing](releasing.md#desktop-assets). Clerk passkey entitlements are
 optional: a build without `STUDIO_CLERK_PUBLISHABLE_KEY` or
 `STUDIO_CLERK_PASSKEY_RP_DOMAINS` signs without an Associated Domains
 provisioning profile.
@@ -125,8 +128,8 @@ These follow [security.md](security.md) where it covers the desktop:
 - The embedded server stays on loopback. Reach other devices through Tailscale
   Serve, not the `0.0.0.0` exposure mode.
 - The connection catalog is encrypted with the OS secure store (Keychain on
-  macOS) and kept in the Studio state folder, never in web storage.
+  macOS) and kept in the SpecWithCode state folder, never in web storage.
 - The CLIProxyAPI management key and provider tokens stay server-side; the
   renderer never receives them.
 - Hosted relay and telemetry stay off. Self-update is on by default and
-  reads only Studio's own releases; see [updates.md](updates.md).
+  reads only SpecWithCode's own releases; see [updates.md](updates.md).

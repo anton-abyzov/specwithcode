@@ -153,7 +153,9 @@ const serviceUpdateCommand = Command.make("update", serviceReconcileFlags).pipe(
         );
         const result = yield* reconcileService({ allowDowngrade: flags.allowDowngrade });
         if (!result.changed) {
-          yield* Console.log(`SpecWithCode service is already using specweave-studio@${packageJson.version}.`);
+          yield* Console.log(
+            `SpecWithCode service is already using specweave-studio@${packageJson.version}.`,
+          );
           return;
         }
         yield* Console.log(
@@ -248,9 +250,9 @@ export const offerServiceDuringOnboarding = Effect.gen(function* () {
         ? "The installed SpecWithCode service needs an update or repair. Update it now?"
         : platform === "darwin"
           ? "Run SpecWithCode in the background whenever you log in to this Mac? " +
-            "It stays reachable through Studio Connect while you are logged in."
+            "It stays reachable through SpecWithCode Connect while you are logged in."
           : "Run SpecWithCode in the background whenever this machine boots? " +
-            "It stays reachable through Studio Connect even after you log out.",
+            "It stays reachable through SpecWithCode Connect even after you log out.",
       initial: true,
     }),
   );

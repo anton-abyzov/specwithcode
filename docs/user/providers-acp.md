@@ -40,13 +40,13 @@ without expanding shell expressions.
 ## Where agents run
 
 Registry agents always run on the machine that hosts your SpecWithCode server. That stays true when you
-connect through a hosted web app, Studio Connect, or a relay.
+connect through a hosted web app, SpecWithCode Connect, or a relay.
 
-Agents install under `tools/<agent-id>/<version>/` inside Studio home. SpecWithCode verifies SHA-256 when the Registry entry
+Agents install under `tools/<agent-id>/<version>/` inside SpecWithCode home. SpecWithCode verifies SHA-256 when the Registry entry
 provides one; entries without a checksum retain the Registry's HTTPS distribution guarantee.
-Registry `npx` and `uvx` packages use Studio-owned npm prefixes and Python tool directories at the exact
+Registry `npx` and `uvx` packages use SpecWithCode-owned npm prefixes and Python tool directories at the exact
 version published by the Registry. Their commands are available in a new server terminal for
-sign-in and direct use. Removing an agent's last provider instance removes Studio-managed binary files
+sign-in and direct use. Removing an agent's last provider instance removes SpecWithCode-managed binary files
 but keeps package installs. To use an existing local binary, set **Executable override** explicitly.
 
 ## Signing in
@@ -92,7 +92,7 @@ running. Commands the agent names with a `$` prefix appear in SpecWithCode's `$`
 ## Native sessions
 
 When an agent advertises ACP session listing and import support, expand its provider card,
-choose a project, and select **List sessions**. Importing one creates a deterministic Studio thread
+choose a project, and select **List sessions**. Importing one creates a deterministic SpecWithCode thread
 backed by that native session. Importing the same agent session again returns the existing thread,
 including when another client performs the import.
 
@@ -118,7 +118,7 @@ Devin runs its commands through SpecWithCode's terminals, and those commands fol
 permission mode. For other agents, SpecWithCode shows the command, output, and exit status the agent
 reports but does not run or stop their terminals.
 
-Registry agents can schedule work and use Studio's MCP tools. Child-task presentation depends on what
+Registry agents can schedule work and use SpecWithCode's MCP tools. Child-task presentation depends on what
 the agent exposes: ACP has no portable native subagent-lineage contract, so richer delegation views
 remain agent-specific.
 
@@ -128,7 +128,7 @@ Checkpoint rollback restores your files as usual. ACP agents cannot rewind their
 so the next turn after a rollback starts a fresh agent session that no longer remembers the
 conversation from before the checkpoint.
 
-Registry instances are not used for Studio's app-owned text generation, such as thread titles, commit
+Registry instances are not used for SpecWithCode's app-owned text generation, such as thread titles, commit
 messages, branch names, or pull request descriptions. Configure a text-generation-capable provider
 for those actions.
 

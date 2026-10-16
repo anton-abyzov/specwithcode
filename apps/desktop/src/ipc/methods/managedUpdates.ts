@@ -3,6 +3,7 @@ import {
   ManagedUpdateLocalConsentRequest,
   ManagedUpdateStatus,
 } from "@specweave-studio/contracts";
+import { studioInstallDirectory } from "@specweave-studio/shared/studioIdentity";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -73,10 +74,7 @@ export const resolveManagedUpdateConsentInstallation: ManagedUpdateConsentAdapte
         : []),
       environment.path.join(installation.release, "studio-updater", "managed_updates.py"),
       environment.path.join(
-        owner.homeDirectory,
-        ".local",
-        "share",
-        "specweave-studio",
+        studioInstallDirectory(owner.homeDirectory),
         "updater",
         "managed_updates.py",
       ),

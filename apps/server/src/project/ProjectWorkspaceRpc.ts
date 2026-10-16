@@ -10,8 +10,10 @@ import * as ProjectUsageService from "../usage/ProjectUsageService.ts";
 import * as ProjectPlanRpc from "./ProjectPlanRpc.ts";
 import * as ProjectSkillsService from "./ProjectSkillsService.ts";
 import * as ThreadReportService from "./ThreadReportService.ts";
+import * as ThreadIncrementProgressService from "./ThreadIncrementProgressService.ts";
 import * as ProjectService from "./ProjectService.ts";
 import { applyWorkspaceImport } from "./ProjectEnvironmentAdoption.ts";
+import { ProjectFolderService } from "./ProjectFolderChange.ts";
 export const handlers = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const handoff = yield* MachineHandoff.MachineHandoff;
@@ -22,6 +24,8 @@ export const handlers = Effect.gen(function* () {
   const coordinator = yield* ProjectCoordinatorService.ProjectCoordinatorService;
   const starters = yield* ProjectStarterSuggestions.ProjectStarterSuggestionsService;
   const reports = yield* ThreadReportService.ThreadReportService;
+  const incrementProgress = yield* ThreadIncrementProgressService.ThreadIncrementProgressService;
+  const folders = yield* ProjectFolderService;
   return {
     [WS_METHODS.machineHandoffPrepare]: handoff.prepare,
     [WS_METHODS.machineHandoffReceive]: handoff.receive,
@@ -33,6 +37,9 @@ export const handlers = Effect.gen(function* () {
     [WS_METHODS.projectsEnvironmentImport]: (
       input: import("@specweave-studio/contracts").ProjectEnvironmentImportInput,
     ) => applyWorkspaceImport(environment, projects, input),
+    [WS_METHODS.projectsFolderCheck]: (
+      input: import("@specweave-studio/contracts").ProjectFolderCheckInput,
+    ) => folders.check(input),
     [WS_METHODS.projectsUsageRead]: usage.read,
     [WS_METHODS.projectsSkillsRead]: skills.read,
     [WS_METHODS.projectsWorkspaceRead]: workspace.readWorkspace,
@@ -44,6 +51,9 @@ export const handlers = Effect.gen(function* () {
     [WS_METHODS.projectsLibraryAddArtifact]: workspace.addLibraryArtifact,
     [WS_METHODS.projectsThreadReportsRead]: reports.read,
     [WS_METHODS.projectsThreadReportSave]: reports.save,
+    [WS_METHODS.projectsThreadIncrementProgressRead]: incrementProgress.read,
+    [WS_METHODS.projectsIncrementsList]: incrementProgress.listIncrements,
+    [WS_METHODS.projectsThreadIncrementLink]: incrementProgress.link,
     [WS_METHODS.projectsCoordinatorStart]: coordinator.start,
     [WS_METHODS.projectsCoordinatorSend]: coordinator.send,
   };

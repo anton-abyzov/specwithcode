@@ -16,7 +16,6 @@ import {
   isServerUpdateFailureDismissed,
   isVersionMismatchDismissed,
   localBuildCommit,
-  manualServerUpdateSteps,
   resolveServerConfigVersionMismatch,
   resolveServerSelfUpdateCapability,
   resolveVersionMismatch,
@@ -26,37 +25,8 @@ import {
 
 const MISMATCH_HINT =
   "Version mismatch. Try syncing the client and server to the same SpecWithCode version.";
-const MANUAL_UPDATE_STEPS = [
-  "Update SpecWithCode to 0.0.45 on the machine that runs this server:",
-  "- With the desktop app on that machine: Settings > About > SpecWithCode service, then Check now or Install now.",
-  "- A service installed without the desktop app: its update agent or the guarded updater, described in docs/studio/updates.md.",
-  "- A server built from source: git pull, rebuild, then restart it with your usual options.",
-].join("\n");
 
 describe("versionSkew", () => {
-  it("names the proven npm prefix without offering a registry install", () => {
-    expect(manualServerUpdateSteps("0.0.45", { kind: "npm-global", prefix: "/opt/node" })).toBe(
-      `${MANUAL_UPDATE_STEPS}\nThis server runs from a global npm install under /opt/node. The npm registry has no specweave-studio package, so npm cannot update it.`,
-    );
-    expect(
-      manualServerUpdateSteps("0.0.45", { kind: "npm-global", prefix: "/opt/maria's node" }),
-    ).toBe(
-      `${MANUAL_UPDATE_STEPS}\nThis server runs from a global npm install under /opt/maria's node. The npm registry has no specweave-studio package, so npm cannot update it.`,
-    );
-  });
-
-  it("keeps runner and unknown installs on the supported update paths", () => {
-    expect(manualServerUpdateSteps("0.0.45")).toBe(MANUAL_UPDATE_STEPS);
-    expect(manualServerUpdateSteps("0.0.45", { kind: "npx" })).toBe(
-      `${MANUAL_UPDATE_STEPS}\nThis server was started with npx. The npm registry has no specweave-studio package, so npx cannot fetch a newer one.`,
-    );
-    expect(manualServerUpdateSteps("0.0.45", { kind: "pnpm-dlx" })).toBe(
-      `${MANUAL_UPDATE_STEPS}\nThis server was started with pnpm dlx. The npm registry has no specweave-studio package, so pnpm dlx cannot fetch a newer one.`,
-    );
-    expect(manualServerUpdateSteps("0.0.45", { kind: "bunx" })).toBe(
-      `${MANUAL_UPDATE_STEPS}\nThis server was started with bunx. The npm registry has no specweave-studio package, so bunx cannot fetch a newer one.`,
-    );
-  });
   beforeEach(() => {
     branding.APP_VERSION = "0.0.34";
   });

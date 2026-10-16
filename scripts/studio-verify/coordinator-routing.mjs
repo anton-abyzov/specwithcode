@@ -17,6 +17,8 @@ import { homedir } from "node:os";
 import { createServer } from "node:net";
 import { DatabaseSync } from "node:sqlite";
 
+import { openLiveDatabaseReadOnly } from "../lib/live-database.mjs";
+
 assert.ok(process.versions.node.startsWith("22."), "Use Node 22 for the candidate runtime");
 process.env.PWDEBUG = "0";
 process.env.PLAYWRIGHT_HTML_OPEN = "never";
@@ -440,7 +442,7 @@ try {
     { id: oldDraftId, value: oldDraftFixture },
   );
   const readThreadCount = () => {
-    const database = new DatabaseSync(join(state, "userdata/statev2.sqlite"), { readOnly: true });
+    const database = openLiveDatabaseReadOnly(join(state, "userdata/statev2.sqlite"));
     try {
       return database
         .prepare("SELECT count(*) AS count FROM orchestration_v2_projection_threads")

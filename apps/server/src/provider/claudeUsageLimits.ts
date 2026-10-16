@@ -74,6 +74,7 @@ function scopedWindow(
     kind: "weekly",
     label: `Weekly · ${displayName}`,
     windowDurationMins: WEEK_MINS,
+    modelScope: displayName,
     usedPercent: clampPercent(usedPercent),
     ...(resetsAt ? { resetsAt } : {}),
   };
@@ -114,9 +115,14 @@ function isoFromString(value: string | null | undefined): string | undefined {
 }
 
 function malformedUsageWindow(utilization: unknown, resetsAt: unknown): boolean {
-  return (utilization != null && (typeof utilization !== "number"
-    || !Number.isFinite(utilization) || utilization < 0 || utilization > 100))
-    || (resetsAt != null && (typeof resetsAt !== "string" || isoFromString(resetsAt) === undefined));
+  return (
+    (utilization != null &&
+      (typeof utilization !== "number" ||
+        !Number.isFinite(utilization) ||
+        utilization < 0 ||
+        utilization > 100)) ||
+    (resetsAt != null && (typeof resetsAt !== "string" || isoFromString(resetsAt) === undefined))
+  );
 }
 
 function makeWindow(
@@ -139,14 +145,24 @@ export function completeClaudeUsageWindows(
   now: number,
 ): boolean {
   const ids = new Set(windows.map((entry) => entry.id));
-  return Number.isFinite(now) && ids.size === windows.length
-    && windows.some((entry) => entry.id === "five_hour" && entry.kind === "session")
-    && windows.some((entry) => entry.id === "seven_day" && entry.kind === "weekly")
-    && windows.every((entry) => Number.isFinite(entry.usedPercent)
-      && entry.usedPercent >= 0 && entry.usedPercent < 100
-      // An unused session has no reset yet; all other windows need a future reset.
-      && ((entry.id === "five_hour" && entry.kind === "session" && entry.usedPercent === 0 && entry.resetsAt == null)
-        || (Number.isFinite(Date.parse(entry.resetsAt ?? "")) && Date.parse(entry.resetsAt!) > now)));
+  return (
+    Number.isFinite(now) &&
+    ids.size === windows.length &&
+    windows.some((entry) => entry.id === "five_hour" && entry.kind === "session") &&
+    windows.some((entry) => entry.id === "seven_day" && entry.kind === "weekly") &&
+    windows.every(
+      (entry) =>
+        Number.isFinite(entry.usedPercent) &&
+        entry.usedPercent >= 0 &&
+        entry.usedPercent < 100 &&
+        // An unused session has no reset yet; all other windows need a future reset.
+        ((entry.id === "five_hour" &&
+          entry.kind === "session" &&
+          entry.usedPercent === 0 &&
+          entry.resetsAt == null) ||
+          (Number.isFinite(Date.parse(entry.resetsAt ?? "")) && Date.parse(entry.resetsAt!) > now)),
+    )
+  );
 }
 
 /**
@@ -159,16 +175,29 @@ export function claudeRateLimitEventToUpdate(
   names: ClaudeScopedLimitNames,
 ): ProviderUsageLimitsUpdate | undefined {
   const overage = info as SDKRateLimitInfo & { readonly overageInUse?: boolean };
-  const overageAllowed = info.overageStatus === "allowed" || info.overageStatus === "allowed_warning"
-    || info.isUsingOverage === true || overage.overageInUse === true;
-  const denial = info.status === "rejected" && !overageAllowed
-    ? { ordinaryUsageAllowed: false as const, nativeDenialRequiresFullRead: true as const, rateLimitReachedType: "rate_limit_reached" }
-    : undefined;
+  const overageAllowed =
+    info.overageStatus === "allowed" ||
+    info.overageStatus === "allowed_warning" ||
+    info.isUsingOverage === true ||
+    overage.overageInUse === true;
+  const denial =
+    info.status === "rejected" && !overageAllowed
+      ? {
+          ordinaryUsageAllowed: false as const,
+          nativeDenialRequiresFullRead: true as const,
+          rateLimitReachedType: "rate_limit_reached",
+        }
+      : undefined;
   const type: string | undefined = info.rateLimitType;
   const resetsAt = isoFromEpochSeconds(info.resetsAt);
-  if (!type || typeof info.utilization !== "number" || !Number.isFinite(info.utilization)
-    || info.utilization < 0 || info.utilization > 1
-    || (info.resetsAt !== undefined && resetsAt === undefined)) {
+  if (
+    !type ||
+    typeof info.utilization !== "number" ||
+    !Number.isFinite(info.utilization) ||
+    info.utilization < 0 ||
+    info.utilization > 1 ||
+    (info.resetsAt !== undefined && resetsAt === undefined)
+  ) {
     return denial ? { windows: [], ...denial } : undefined;
   }
   const usedPercent = info.utilization * 100;
@@ -201,10 +230,18 @@ export function claudeUsageResponseToLimits(input: {
   }
   // Missing or contradictory fields are malformed evidence, not a valid
   // unavailable lookup. In particular false with windows is contradictory.
-  if (response.rate_limits_available !== true || response.rate_limits === null
-    || typeof response.rate_limits !== "object" || Array.isArray(response.rate_limits)) {
+  if (
+    response.rate_limits_available !== true ||
+    response.rate_limits === null ||
+    typeof response.rate_limits !== "object" ||
+    Array.isArray(response.rate_limits)
+  ) {
     return {
-      limits: { checkedAt, windows: [], unavailable: { reason: "probeFailed", invalidResponse: true } },
+      limits: {
+        checkedAt,
+        windows: [],
+        unavailable: { reason: "probeFailed", invalidResponse: true },
+      },
       names: { overageIncluded: undefined },
     };
   }
@@ -224,7 +261,10 @@ export function claudeUsageResponseToLimits(input: {
   let overageIncluded: string | undefined;
   const scopedInput = (response.rate_limits as { readonly model_scoped?: unknown }).model_scoped;
   const scopedEntries = readModelScoped(response.rate_limits);
-  if (scopedInput != null && (!Array.isArray(scopedInput) || scopedEntries.length !== scopedInput.length)) {
+  if (
+    scopedInput != null &&
+    (!Array.isArray(scopedInput) || scopedEntries.length !== scopedInput.length)
+  ) {
     invalidEvidence = true;
   }
   for (const entry of scopedEntries) {
@@ -245,11 +285,14 @@ export function claudeUsageResponseToLimits(input: {
       ...makeUsageLimits({ checkedAt, windows }),
       // Display normalization must not turn malformed/unknown input into
       // evidence of an unused subscription window for admission decisions.
-      ...(invalidEvidence ? { unavailable: { reason: "probeFailed" as const, invalidResponse: true as const } } : {}),
+      ...(invalidEvidence
+        ? { unavailable: { reason: "probeFailed" as const, invalidResponse: true as const } }
+        : {}),
       // Only a later complete valid read can reconcile a streamed rejection.
       // This witness does not assert ordinaryUsageAllowed or grant credits.
       ...(!invalidEvidence && completeClaudeUsageWindows(windows, Date.parse(checkedAt))
-        ? { nativeAllowanceObservedAt: checkedAt } : {}),
+        ? { nativeAllowanceObservedAt: checkedAt }
+        : {}),
     },
     names: { overageIncluded },
   };

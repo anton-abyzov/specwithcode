@@ -59,6 +59,7 @@ describe("claudeUsageResponseToLimits", () => {
             id: "seven_day_fable",
             kind: "weekly",
             label: "Weekly · Fable",
+            modelScope: "Fable",
             usedPercent: 73,
             windowDurationMins: 10080,
             resetsAt: "2026-07-24T08:59:00.000Z",
@@ -160,6 +161,7 @@ describe("claudeRateLimitEventToUpdate", () => {
           id: "seven_day_fable",
           kind: "weekly",
           label: "Weekly · Fable",
+          modelScope: "Fable",
           usedPercent: 40,
           windowDurationMins: 10080,
         },
@@ -179,17 +181,33 @@ describe("claudeRateLimitEventToUpdate", () => {
     ).toBeUndefined();
   });
 
-  it.each([-1, 1.01, NaN, Infinity])("ignores invalid utilization %s instead of normalizing it", (utilization) => {
-    expect(claudeRateLimitEventToUpdate({ status: "allowed", rateLimitType: "five_hour", utilization }, noNames)).toBeUndefined();
-  });
+  it.each([-1, 1.01, NaN, Infinity])(
+    "ignores invalid utilization %s instead of normalizing it",
+    (utilization) => {
+      expect(
+        claudeRateLimitEventToUpdate(
+          { status: "allowed", rateLimitType: "five_hour", utilization },
+          noNames,
+        ),
+      ).toBeUndefined();
+    },
+  );
 
-  it.each([-1, 0, NaN, Infinity, Number.MAX_VALUE])("does not hide a supplied invalid reset %s", (resetsAt) => {
-    const event = { rateLimitType: "five_hour" as const, utilization: 0, resetsAt };
-    expect(claudeRateLimitEventToUpdate({ ...event, status: "allowed" }, noNames)).toBeUndefined();
-    expect(claudeRateLimitEventToUpdate({ ...event, status: "rejected" }, noNames)).toEqual({
-      windows: [], ordinaryUsageAllowed: false, nativeDenialRequiresFullRead: true, rateLimitReachedType: "rate_limit_reached",
-    });
-  });
+  it.each([-1, 0, NaN, Infinity, Number.MAX_VALUE])(
+    "does not hide a supplied invalid reset %s",
+    (resetsAt) => {
+      const event = { rateLimitType: "five_hour" as const, utilization: 0, resetsAt };
+      expect(
+        claudeRateLimitEventToUpdate({ ...event, status: "allowed" }, noNames),
+      ).toBeUndefined();
+      expect(claudeRateLimitEventToUpdate({ ...event, status: "rejected" }, noNames)).toEqual({
+        windows: [],
+        ordinaryUsageAllowed: false,
+        nativeDenialRequiresFullRead: true,
+        rateLimitReachedType: "rate_limit_reached",
+      });
+    },
+  );
 
   it("publishes a rejection even when the native event omits usage or a known window", () => {
     for (const event of [
@@ -197,9 +215,13 @@ describe("claudeRateLimitEventToUpdate", () => {
       { status: "rejected" as const, rateLimitType: "five_hour" as const },
       { status: "rejected" as const, rateLimitType: "seven_day_opus" as const, utilization: 0.5 },
       { status: "rejected" as const, rateLimitType: "five_hour" as const, utilization: NaN },
-    ]) expect(claudeRateLimitEventToUpdate(event, noNames)).toEqual({
-      windows: [], ordinaryUsageAllowed: false, nativeDenialRequiresFullRead: true, rateLimitReachedType: "rate_limit_reached",
-    });
+    ])
+      expect(claudeRateLimitEventToUpdate(event, noNames)).toEqual({
+        windows: [],
+        ordinaryUsageAllowed: false,
+        nativeDenialRequiresFullRead: true,
+        rateLimitReachedType: "rate_limit_reached",
+      });
   });
 
   it.each([
@@ -208,6 +230,8 @@ describe("claudeRateLimitEventToUpdate", () => {
     { isUsingOverage: true },
     { overageInUse: true },
   ])("preserves the adapter's explicitly allowed overage semantics: %j", (overage) => {
-    expect(claudeRateLimitEventToUpdate({ status: "rejected", ...overage }, noNames)).toBeUndefined();
+    expect(
+      claudeRateLimitEventToUpdate({ status: "rejected", ...overage }, noNames),
+    ).toBeUndefined();
   });
 });

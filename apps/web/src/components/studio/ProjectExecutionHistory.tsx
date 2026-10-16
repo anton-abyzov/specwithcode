@@ -7,6 +7,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { threadEnvironment } from "../../state/threads";
 import { requestExecutionLabel, type ProjectExecutionScope } from "../../studio/projectDomain";
 import { ProjectMessageBody } from "./ProjectMessageBody";
+import { useProviderEntries } from "./shell/ModelBadge";
 
 export function ProjectExecutionHistory({
   project,
@@ -67,6 +68,7 @@ function RetainedMessages({ scope, label }: { scope: ProjectExecutionScope; labe
   const thread = useThreadProjection(ref);
   const history = useThreadHistory(ref);
   const load = useAtomCommand(threadEnvironment.loadEarlierHistory);
+  const providers = useProviderEntries(scope.environmentId);
   if (!thread) return <p>History is unavailable. Connect {label} to load its retained messages.</p>;
   return (
     <div aria-label={`Retained coordinator messages on ${label}`}>
@@ -88,7 +90,7 @@ function RetainedMessages({ scope, label }: { scope: ProjectExecutionScope; labe
         <article key={message.id} className="project-message">
           <h3>{message.role === "user" ? "You" : "Coordinator"}</h3>
           <p className="project-muted">
-            {requestExecutionLabel(message, thread.projection.runs, label)}
+            {requestExecutionLabel(message, thread.projection.runs, label, providers)}
           </p>
           <ProjectMessageBody text={message.text} collapsible>
             <p className="whitespace-pre-wrap break-words">{message.text}</p>

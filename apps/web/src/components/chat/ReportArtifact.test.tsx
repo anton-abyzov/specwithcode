@@ -2,12 +2,31 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { act, create } from "react-test-renderer";
 import { describe, expect, it, vi } from "vite-plus/test";
 
+vi.mock("~/viewerOverlayStore", () => ({
+  useViewerOverlay: (options: { open: boolean }) => (options.open ? ({} as HTMLElement) : null),
+}));
+vi.mock("react-dom", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("react-dom")>()),
+  createPortal: (node: unknown) => node,
+}));
 vi.mock("../ui/dialog", () => ({
   Dialog: (props: { open: boolean; children: unknown }) =>
     props.open ? <div data-dialog="open">{props.children as never}</div> : null,
   DialogPopup: (props: Record<string, unknown>) => <div {...props} />,
+  DialogDockedPopup: (props: Record<string, unknown>) => <div {...props} />,
   DialogTitle: (props: { children: unknown }) => <h2>{props.children as never}</h2>,
   DialogDescription: (props: { children: unknown }) => <div>{props.children as never}</div>,
+}));
+
+vi.mock("../ui/menu", () => ({
+  Menu: (props: { children: unknown }) => <div>{props.children as never}</div>,
+  MenuTrigger: () => null,
+  MenuPopup: (props: { children: unknown }) => <div>{props.children as never}</div>,
+  MenuItem: (props: { children: unknown; onClick?: () => void }) => (
+    <button type="button" onClick={props.onClick}>
+      {props.children as never}
+    </button>
+  ),
 }));
 
 vi.mock("../files/projectFilesQueryState", () => ({
@@ -127,8 +146,11 @@ describe("ReportArtifactCard", () => {
     expect(reader).toHaveLength(1);
     expect(JSON.stringify(renderer.toJSON())).toContain("full body");
     expect(JSON.stringify(renderer.toJSON())).toContain(
-      "Not saved yet. Saving puts it in .specweave/increments/0973-budget/reports/",
+      "Save to increment (.specweave/increments/0973-budget/reports/)",
     );
+    expect(
+      renderer.root.findAll((node) => node.props["data-report-outline"] === "true"),
+    ).toHaveLength(0);
   });
 
   it("can hand the report to the conversation from the reader", () => {
@@ -201,7 +223,7 @@ describe("ReportArtifactCard", () => {
       "- Commit `d7c074f0b` on `feat/x`.\\n- Screenshots at `a.png`.",
     );
   });
-  it("opens a linked file beside the report, never behind the reader", () => {
+  it("opens a linked file in the report's place, never beside or behind it", () => {
     const threadRef = { environmentId: "host-1", threadId: "thread-1" } as never;
     function FileLink(props: { path: string }) {
       const host = use(ReportFileHostContext);
@@ -240,6 +262,19 @@ describe("ReportArtifactCard", () => {
     expect(pane).toHaveLength(1);
     expect(JSON.stringify(renderer.toJSON())).toContain("contents of /tmp/rea/cds.css");
     expect(openFileInPanel).not.toHaveBeenCalled();
+    const body = () =>
+      renderer.root.findAll((node) => node.props["data-report-reader-body"] === "true")[0]!;
+    // One view at a time: the report stays mounted, hidden, so Back returns to it.
+    expect(body().props.hidden).toBe(true);
+    const back = renderer.root.findAll(
+      (node) => node.type === "button" && node.props["aria-label"] === "Back to Findings",
+    )[0]!;
+    act(() => back.props.onClick());
+    expect(body().props.hidden).toBe(false);
+    expect(
+      renderer.root.findAll((node) => node.props["data-report-file-pane"] === "true"),
+    ).toHaveLength(0);
+    act(() => link.props.onClick());
 
     const toPanel = renderer.root.findAll(
       (node) =>

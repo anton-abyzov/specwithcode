@@ -97,8 +97,8 @@ export function ConnectCliAuthorizeSurface() {
         title="Connecting your terminal"
         description={
           isSignedIn
-            ? "Redirecting to authorize Studio Connect for your CLI…"
-            : "Sign in to continue authorizing Studio Connect for your CLI."
+            ? "Redirecting to authorize SpecWithCode Connect for your CLI…"
+            : "Sign in to continue authorizing SpecWithCode Connect for your CLI."
         }
       />
       {isLoaded && !isSignedIn ? (

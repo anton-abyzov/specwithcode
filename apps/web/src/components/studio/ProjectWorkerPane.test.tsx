@@ -16,7 +16,9 @@ vi.mock("./shell/ProjectThreadHeader", () => ({
   ProjectThreadHeader: () => <header>Worker</header>,
 }));
 vi.mock("./ProjectRoutedReplies", () => ({
-  ProjectRoutedReplies: () => <div data-routed-replies />,
+  // A remote worker gets no coordinator, so nothing is placed in its timeline.
+  useRoutedThreadMessages: (_project: unknown, coordinatorId: string | null) =>
+    coordinatorId ? [{ id: "routed" }] : [],
 }));
 vi.mock("../ChatView", async () => {
   const { useProjectMessageRouting, routeProjectComposerSend } =
@@ -26,6 +28,7 @@ vi.mock("../ChatView", async () => {
       const routing = useProjectMessageRouting();
       return (
         <section data-chat-environment={environmentId} data-chat-thread={threadId}>
+          {routing?.routedMessages?.length ? <div data-routed-replies /> : null}
           <button
             onClick={() =>
               void routeProjectComposerSend(routing, {

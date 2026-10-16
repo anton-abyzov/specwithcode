@@ -8,6 +8,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   canTakeTurn,
+  coordinatorOnLimitFallback,
   limitRestartRequest,
   providerUsedPercent,
   isClaudeApiKeyProvider,
@@ -737,5 +738,99 @@ describe("review follow-ups", () => {
         ?.instanceId,
     ).toBe(busy.instanceId);
     expect(resolveProviderFallback({ ...input, providers: [claude, keyedCodex] })).toBeNull();
+  });
+});
+
+const switchRule = {
+  ...rule,
+  providerLimitAction: "switch" as const,
+  providerLimitSwitchAtPercent: 100,
+};
+
+describe("model-scoped windows", () => {
+  const withFable = (fableUsed: number, weeklyUsed = 40): ServerProvider => ({
+    ...claude,
+    usageLimits: {
+      checkedAt: claude.usageLimits!.checkedAt,
+      windows: [
+        { id: "five_hour", kind: "session", label: "Session", usedPercent: 10, resetsAt: later },
+        {
+          id: "seven_day",
+          kind: "weekly",
+          label: "Weekly",
+          usedPercent: weeklyUsed,
+          resetsAt: later,
+        },
+        {
+          id: "seven_day_fable",
+          kind: "weekly",
+          label: "Weekly · Fable",
+          modelScope: "Fable",
+          usedPercent: fableUsed,
+          resetsAt: later,
+        },
+      ],
+    },
+  });
+
+  it("counts a spent Fable weekly only against Fable", () => {
+    const full = withFable(100);
+    expect(providerUsedPercent(full, now, "claude-opus-5-5")).toBe(40);
+    expect(providerUsedPercent(full, now, "claude-fable-5-1")).toBe(100);
+    expect(providerUsedPercent(full, now)).toBe(40);
+  });
+
+  it("keeps Opus on Claude while only the Fable weekly is spent", () => {
+    const saved = { instanceId: claude.instanceId, model: "claude-opus-5-5" };
+    const input = {
+      saved,
+      thread: { instanceId: codex.instanceId, model: "codex-default" },
+      providers: [withFable(100), codex],
+      rule: switchRule,
+      nowMs: now,
+    };
+    expect(resolveCoordinatorTurnSelection(input).reason).toBe("saved");
+    expect(coordinatorOnLimitFallback(input)).toBe(false);
+    const fableSaved = { ...input, saved: { ...saved, model: "claude-fable-5-1" } };
+    expect(coordinatorOnLimitFallback(fableSaved)).toBe(true);
+  });
+});
+
+describe("coordinatorOnLimitFallback", () => {
+  const saved = { instanceId: claude.instanceId, model: "claudeAgent-default" };
+  const base = {
+    saved,
+    providers: [provider("claudeAgent", "claudeAgent", 18), codex],
+    rule: switchRule,
+    nowMs: now,
+  };
+
+  it("is false on the saved instance and when the saved provider has room", () => {
+    expect(coordinatorOnLimitFallback({ ...base, thread: saved })).toBe(false);
+    // Another instance alone is no limit: the stale scheduled-task case.
+    expect(
+      coordinatorOnLimitFallback({
+        ...base,
+        thread: { instanceId: codex.instanceId, model: "codex-default" },
+      }),
+    ).toBe(false);
+  });
+
+  it("is true once the saved provider is full or stopped on a limit", () => {
+    const thread = { instanceId: codex.instanceId, model: "codex-default" };
+    expect(
+      coordinatorOnLimitFallback({
+        ...base,
+        thread,
+        providers: [provider("claudeAgent", "claudeAgent", 100), codex],
+      }),
+    ).toBe(true);
+    expect(
+      coordinatorOnLimitFallback({
+        ...base,
+        thread,
+        limitedInstanceIds: new Set([claude.instanceId]),
+      }),
+    ).toBe(true);
   });
 });

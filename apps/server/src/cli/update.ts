@@ -76,16 +76,23 @@ const resolveNewestVersion = Effect.fn("cli.update.resolve_newest")(function* (
       .pipe(
         Effect.flatMap(HttpClientResponse.filterStatusOk),
         Effect.flatMap((response) => response.text),
-        Effect.mapError(() => new CliUpdateError({ reason: "Could not list specweave-studio releases." })),
+        Effect.mapError(
+          () => new CliUpdateError({ reason: "Could not list specweave-studio releases." }),
+        ),
         Effect.timeoutOrElse({
           duration: RELEASE_INDEX_TIMEOUT,
           orElse: () =>
-            Effect.fail(new CliUpdateError({ reason: "Timed out listing specweave-studio releases." })),
+            Effect.fail(
+              new CliUpdateError({ reason: "Timed out listing specweave-studio releases." }),
+            ),
         }),
       );
     const releases = yield* decodeReleaseIndex(body).pipe(
       Effect.mapError(
-        () => new CliUpdateError({ reason: "The specweave-studio release index had an unexpected shape." }),
+        () =>
+          new CliUpdateError({
+            reason: "The specweave-studio release index had an unexpected shape.",
+          }),
       ),
     );
     const version = newestCliReleaseVersion(releases, channel);
@@ -136,13 +143,14 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
     const current = yield* fs.readFileString(shimPath).pipe(Effect.option);
     const quoted = Option.isSome(current) ? /^"([^"]+)"/m.exec(current.value)?.[1] : undefined;
     if (quoted === undefined || !ownsTarget(quoted)) return Option.none<string>();
-    yield* fs
-      .writeFileString(shimPath, `@echo off\r\n"${input.targetEntryPath}" %*`)
-      .pipe(
-        Effect.mapError(
-          () => new CliUpdateError({ reason: `Could not rewrite the specweave-studio launcher at ${shimPath}.` }),
-        ),
-      );
+    yield* fs.writeFileString(shimPath, `@echo off\r\n"${input.targetEntryPath}" %*`).pipe(
+      Effect.mapError(
+        () =>
+          new CliUpdateError({
+            reason: `Could not rewrite the specweave-studio launcher at ${shimPath}.`,
+          }),
+      ),
+    );
     return Option.some(shimPath);
   }
 
@@ -155,7 +163,9 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
     Effect.andThen(fs.rename(tempLink, input.launchedAs)),
     Effect.mapError(
       () =>
-        new CliUpdateError({ reason: `Could not repoint the specweave-studio launcher at ${input.launchedAs}.` }),
+        new CliUpdateError({
+          reason: `Could not repoint the specweave-studio launcher at ${input.launchedAs}.`,
+        }),
     ),
   );
   return Option.some(input.launchedAs);
@@ -256,7 +266,9 @@ export const updateCommand = Command.make("update", {
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       if (process.env.STUDIO_ENABLE_SELF_UPDATE !== "true") {
-        yield* Console.log("SpecWithCode self-update is disabled. Install a verified SpecWithCode build explicitly.");
+        yield* Console.log(
+          "SpecWithCode self-update is disabled. Install a verified SpecWithCode build explicitly.",
+        );
         return;
       }
       const logLevel = yield* GlobalFlag.LogLevel;
@@ -467,7 +479,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   let restartService = false;
   if (serviceInstalled && !serviceCurrent) {
     yield* Console.log(
-      "  A background service is installed for this Studio home. Restarting it interrupts anything running in it: agent turns, terminals, remote clients.",
+      "  A background service is installed for this SpecWithCode home. Restarting it interrupts anything running in it: agent turns, terminals, remote clients.",
     );
     if (input.assumeYes) {
       restartService = true;
@@ -506,7 +518,10 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
         .pipe(
           Effect.mapError(
             (cause) =>
-              new PinnedRuntimeInstallError({ step: "verifying the downloaded specweave-studio", cause }),
+              new PinnedRuntimeInstallError({
+                step: "verifying the downloaded specweave-studio",
+                cause,
+              }),
           ),
           Effect.flatMap((result) =>
             result.code === 0 && /\bv(\S+)\s*$/.exec(result.stdout)?.[1] === targetVersion
@@ -592,7 +607,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     );
   } else if (status.installed && !servesThisHome) {
     yield* Console.log(
-      `  The background service serves ${status.installedBaseDir ?? "another Studio home"} and was left unchanged.`,
+      `  The background service serves ${status.installedBaseDir ?? "another SpecWithCode home"} and was left unchanged.`,
     );
   }
   if (foreground !== undefined) {

@@ -4,7 +4,7 @@
  * project's right panel; a card also offers the next step its state calls for.
  */
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
-import { PanelRightOpenIcon } from "lucide-react";
+import { ChevronRightIcon } from "lucide-react";
 
 import {
   threadCardActions,
@@ -13,11 +13,14 @@ import {
   type ThreadCardAction,
 } from "../../studio/projectThreadCards";
 import { useThreadCardGitStatus } from "../../studio/useThreadCardGitStatus";
-import { threadBlocker } from "../../studio/projectWorkspaceModel";
+import { threadAttentionNote } from "../../studio/projectWorkspaceModel";
 import { PULL_REQUEST_STATE_PRESENTATION, PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { Tip } from "./shell/Tip";
 import { ThreadLinkChipButton } from "../ThreadLinkChip";
 import { formatStudioThreadLink } from "../../studio/studioThreadLinks";
+import { compactThreadPlan } from "../../studio/threadPlanProgress";
+import { useThreadIncrementProgress } from "../../studio/useThreadIncrementProgress";
+import { PlanProgressChip } from "./PlanProgressChip";
 
 /** A thread named in a message: its icon, status dot and live title; opens in the right pane. */
 export function ProjectThreadChip({
@@ -48,9 +51,8 @@ export function ProjectThreadChip({
 
 /**
  * A thread the coordinator started, as the project chat shows one: its status
- * dot, title and state, then quick actions. "View thread" is always there;
- * "Create PR" while its checkout has work no pull request carries; "View PR"
- * once it has one.
+ * dot, title and state. The whole card opens the thread; beside it, "Create PR"
+ * while its checkout has work no pull request carries, "View PR" once it has one.
  */
 export function ProjectThreadCard({
   thread,
@@ -70,11 +72,18 @@ export function ProjectThreadCard({
   onOpenPullRequest: (url: string) => void;
 }) {
   const status = threadCardStatus(thread);
-  const blocker = threadBlocker(thread);
+  const blocker = threadAttentionNote(thread);
   const git = useThreadCardGitStatus(thread, projectRoot);
   const pullRequest = threadCardPullRequest(thread, git);
   const actions = threadCardActions({ thread, git, pullRequest, canChange });
   const title = thread.title.trim() || "Untitled thread";
+  const incrementProgress = useThreadIncrementProgress({
+    environmentId: thread.environmentId,
+    projectId: thread.projectId,
+    threadIds: [thread.id],
+    activityKey: thread.updatedAt,
+  });
+  const plan = compactThreadPlan(incrementProgress.get(thread.id) ?? null, thread.planProgress);
   return (
     <div
       className="sws-thread-card"
@@ -82,7 +91,13 @@ export function ProjectThreadCard({
       aria-label={`Thread ${title}, ${status.label}`}
       data-thread-card={thread.id}
     >
-      <span className="sws-thread-card-head">
+      {/* One button opens the thread; it stretches over the card, so a click anywhere opens it. */}
+      <button
+        type="button"
+        className="sws-thread-card-head"
+        aria-label={`Open thread ${title}, ${status.label}`}
+        onClick={onOpen}
+      >
         <span className="sws-dot" data-tone={status.tone} aria-hidden />
         {/* Cut to one line in a narrow panel; the full title shows on hover. */}
         <Tip label={title} side="top">
@@ -91,24 +106,39 @@ export function ProjectThreadCard({
         {status.tone === "idle" ? null : (
           <span className="sws-thread-card-status">{status.label}</span>
         )}
-      </span>
+        {plan ? <PlanProgressChip plan={plan} /> : null}
+        <ChevronRightIcon className="sws-thread-card-open" aria-hidden />
+      </button>
+      {plan && plan.current ? (
+        <span className="sws-thread-card-plan" data-thread-card-plan>
+          <span className="sws-thread-card-plan-label">Now</span> {plan.current}
+          {plan.next ? (
+            <>
+              {" "}
+              <span className="sws-thread-card-plan-label">· Next</span> {plan.next}
+            </>
+          ) : null}
+        </span>
+      ) : null}
       {blocker ? (
         <span className="sws-thread-card-blocker" data-thread-blocker>
           {blocker}
         </span>
       ) : null}
-      <span className="sws-thread-card-actions">
-        {actions.map((action) => (
-          <ThreadCardActionButton
-            key={action.kind}
-            action={action}
-            title={title}
-            onOpen={onOpen}
-            onCreatePullRequest={onCreatePullRequest}
-            onOpenPullRequest={onOpenPullRequest}
-          />
-        ))}
-      </span>
+      {actions.length > 0 ? (
+        // Secondary actions sit above the card's open button and do their own thing.
+        <span className="sws-thread-card-actions" onClick={(event) => event.stopPropagation()}>
+          {actions.map((action) => (
+            <ThreadCardActionButton
+              key={action.kind}
+              action={action}
+              title={title}
+              onCreatePullRequest={onCreatePullRequest}
+              onOpenPullRequest={onOpenPullRequest}
+            />
+          ))}
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -116,30 +146,14 @@ export function ProjectThreadCard({
 function ThreadCardActionButton({
   action,
   title,
-  onOpen,
   onCreatePullRequest,
   onOpenPullRequest,
 }: {
   action: ThreadCardAction;
   title: string;
-  onOpen: () => void;
   onCreatePullRequest: () => void;
   onOpenPullRequest: (url: string) => void;
 }) {
-  if (action.kind === "view_thread")
-    return (
-      <Tip label="Open this thread in the right panel">
-        <button
-          type="button"
-          className="sws-thread-card-action"
-          aria-label={`View thread ${title}`}
-          onClick={onOpen}
-        >
-          <PanelRightOpenIcon aria-hidden />
-          View thread
-        </button>
-      </Tip>
-    );
   if (action.kind === "create_pr")
     return (
       <Tip label="Commit, push and open a pull request with this thread's changes">

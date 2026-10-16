@@ -417,46 +417,6 @@
   }
 }
 
-@utility project-routed {
-  flex-shrink: 0;
-  padding: 6px 16px 8px;
-  border-bottom: 1px solid var(--desk-line);
-  font-size: 12px;
-  & > summary {
-    cursor: pointer;
-    color: var(--desk-muted);
-  }
-  & > ol {
-    max-height: min(30vh, 240px);
-    overflow-y: auto;
-    margin: 6px 0;
-    padding: 0;
-    list-style: none;
-    display: grid;
-    gap: 8px;
-  }
-  & .project-routed-text {
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-  }
-  & .project-routed-answer {
-    color: var(--desk-muted);
-    font-size: 11px;
-    overflow-wrap: anywhere;
-  }
-}
-
-@utility project-route-note {
-  padding: 7px 16px;
-  background: var(--desk-moss-soft);
-  color: var(--desk-muted);
-  font-size: 11px;
-  flex-shrink: 0;
-  @media (max-width: 760px) {
-    font-size: 10px;
-  }
-}
-
 @utility project-notice {
   padding: 12px 16px;
   border: 1px solid var(--desk-line);
@@ -510,6 +470,24 @@
     outline: 2px solid var(--desk-moss);
     outline-offset: 2px;
   }
+  /* The search wrapper draws the frame; its input drops the dialog's input box. */
+  & .project-settings-search > input {
+    min-width: 0;
+    flex: 1;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    padding: 7px 0;
+    font-size: 13px;
+    color: var(--desk-ink);
+    outline: none;
+    &:focus-visible {
+      outline: none;
+    }
+    &::-webkit-search-cancel-button {
+      appearance: none;
+    }
+  }
   & .project-name-control > input {
     border: 0;
     background: transparent;
@@ -520,9 +498,143 @@
     flex-direction: row;
     align-items: center;
   }
+  /* Secondary actions read as buttons: one line, an optional leading icon, a quiet border.
+     Memory file rows and the inline icon picker keep their own look. */
+  & .project-control:not(.project-memory-list *, .project-name-icon) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    flex-shrink: 0;
+    white-space: nowrap;
+    min-height: 32px;
+    padding: 6px 11px;
+    font-weight: 500;
+    & > svg {
+      width: 14px;
+      height: 14px;
+      flex-shrink: 0;
+      opacity: 0.85;
+    }
+  }
+  &
+    .project-control:not(
+      .project-memory-list *,
+      .project-name-icon,
+      .project-primary,
+      .project-danger,
+      .project-danger-text
+    ) {
+    border: 1px solid var(--desk-line);
+    background: var(--desk-panel);
+    color: var(--desk-ink);
+    &:hover:not(:disabled) {
+      background: var(--accent);
+      border-color: color-mix(in srgb, var(--desk-ink) 24%, var(--desk-line));
+    }
+  }
+  & .project-control.project-control-strong:not(:disabled) {
+    background: var(--desk-ink);
+    border-color: var(--desk-ink);
+    color: var(--desk-paper);
+    &:hover {
+      background: var(--desk-moss);
+      border-color: var(--desk-moss);
+    }
+  }
+  /* App-wide setting groups embedded here line up with the dialog's own headings. */
+  & section > [data-settings-scroll-target]:first-child {
+    padding-inline: 0;
+    & h2 {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--desk-ink);
+    }
+  }
   @media (max-width: 760px) {
     width: 100%;
     height: 100%;
+  }
+}
+
+/* A field and the buttons that act on it, on one line; the buttons drop below on a phone. */
+@utility project-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  & > input {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  @media (max-width: 560px) {
+    flex-wrap: wrap;
+    & > input {
+      flex-basis: 100%;
+    }
+  }
+}
+
+/* The folder a project uses now: an icon, the path end-first, and a "Current" tag. */
+@utility project-folder-current {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin: 12px 0 10px;
+  padding: 8px 11px;
+  border: 1px solid var(--desk-line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--desk-panel) 60%, transparent);
+  & > svg {
+    flex-shrink: 0;
+    color: var(--desk-muted);
+  }
+  & > span:first-of-type {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    /* Keep the folder name visible: the ellipsis eats the start of a long path. */
+    direction: rtl;
+    text-align: left;
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 12px;
+  }
+  & > small {
+    flex-shrink: 0;
+    padding: 1px 7px;
+    border-radius: 999px;
+    border: 1px solid var(--desk-line);
+    color: var(--desk-muted);
+    font-size: 11px;
+  }
+}
+
+/* One check result: a status icon and its sentence. */
+@utility project-check-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--desk-ink);
+  & > svg {
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  &[data-tone="ok"] > svg {
+    color: var(--success, #3fa66b);
+  }
+  &[data-tone="warn"] > svg {
+    color: var(--warning, #d39b2a);
+  }
+  &[data-tone="error"] > svg {
+    color: var(--destructive-foreground);
+  }
+  &[data-tone="info"] > svg {
+    color: var(--desk-muted);
   }
 }
 
@@ -624,21 +736,57 @@
     border-right: 1px solid var(--desk-line);
     padding: 18px 12px;
   }
-  & > nav button {
+  /* Nav items are not .project-control: the dialog's generic button rule
+     outranks an attribute selector here and hid the selected state, so the
+     focus ring was the only cue. Selected comes from aria-current alone, the
+     same on mouse and keyboard; the ring shows only for keyboard focus. */
+  & .project-settings-nav-item {
+    position: relative;
     display: flex;
     align-items: center;
     flex-shrink: 0;
     gap: 9px;
+    min-height: 36px;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--desk-muted, var(--desk-ink));
     text-align: left;
-    padding: 10px 13px !important;
+    padding: 8px 12px;
     font-size: 13px;
-  }
-  & > nav button[aria-current="page"] {
-    background: var(--desk-moss-soft);
-    /* The accent alone is ~4.3:1 on its tint; pulling it toward the ink
-       darkens it in light and lightens it in dark. */
-    color: color-mix(in oklab, var(--desk-moss) 80%, var(--desk-ink));
-    font-weight: 600;
+    font-weight: 500;
+    touch-action: manipulation;
+    & > svg {
+      flex-shrink: 0;
+    }
+    &:hover:not([aria-current="page"]) {
+      background: var(--accent);
+      color: var(--desk-ink);
+    }
+    &:focus {
+      outline: none;
+    }
+    &:focus-visible {
+      outline: 2px solid var(--desk-moss);
+      outline-offset: 2px;
+    }
+    &[aria-current="page"] {
+      background: color-mix(in srgb, var(--desk-moss) 14%, var(--desk-panel));
+      border-color: color-mix(in srgb, var(--desk-moss) 35%, transparent);
+      /* The accent alone is ~4.3:1 on its tint; pulling it toward the ink
+         darkens it in light and lightens it in dark. */
+      color: color-mix(in oklab, var(--desk-moss) 80%, var(--desk-ink));
+      font-weight: 600;
+    }
+    &[aria-current="page"]::before {
+      content: "";
+      position: absolute;
+      inset-block: 7px;
+      inset-inline-start: -1px;
+      width: 3px;
+      border-radius: 3px;
+      background: var(--desk-moss);
+    }
   }
   @media (max-width: 760px) {
     grid-template-columns: minmax(0, 1fr);
@@ -655,9 +803,9 @@
     }
   }
   @media (max-width: 760px) {
-    & > nav button {
+    & .project-settings-nav-item {
       white-space: nowrap;
-      padding: 9px !important;
+      padding: 8px 10px;
     }
   }
 }
@@ -793,6 +941,11 @@
   align-items: center;
   justify-content: space-between;
   gap: 18px;
+  /* The text column takes the room and may shrink; the action keeps its size. */
+  & > div:first-child {
+    min-width: 0;
+    flex: 1;
+  }
   margin-top: 22px;
   padding-top: 20px;
   border-top: 1px solid var(--desk-line);
@@ -1379,5 +1532,61 @@
   }
   & .project-actions {
     flex-wrap: wrap;
+  }
+}
+
+@utility project-settings-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 8px;
+  border: 1px solid var(--desk-line);
+  border-radius: 7px;
+  padding: 0 8px;
+  color: var(--desk-muted);
+  &:focus-within {
+    border-color: var(--desk-moss);
+  }
+  & > button {
+    display: inline-flex;
+    border-radius: 4px;
+    padding: 3px;
+    &:hover {
+      background: var(--accent);
+    }
+  }
+}
+
+@utility project-settings-search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  & > [role="option"] {
+    cursor: pointer;
+    border-radius: 6px;
+    padding: 6px 10px 6px 22px;
+    font-size: 13px;
+    color: var(--desk-ink);
+  }
+  & > [data-search-result-kind="section"] {
+    padding-left: 10px;
+    font-weight: 600;
+  }
+  & > [data-search-result-kind="section"]:not(:first-child) {
+    margin-top: 6px;
+  }
+  & > [aria-selected="true"] {
+    background: color-mix(in srgb, var(--desk-moss) 14%, var(--desk-panel));
+  }
+}
+
+/* A search jump's destination row pulses twice, like app Settings. */
+@utility project-search-target-pulse {
+  border-radius: 10px;
+  animation: settings-search-target-pulse 650ms ease-in-out 2;
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+    outline: 2px solid var(--desk-moss);
+    outline-offset: 2px;
   }
 }

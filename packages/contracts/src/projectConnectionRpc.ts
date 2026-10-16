@@ -1,4 +1,5 @@
 import {
+  NativeConnectionApplyInput,
   NativeConnectionsInput,
   NativeConnectionsSnapshot,
   NativeConnectionsError,
@@ -17,6 +18,7 @@ import {
 } from "./projectConnections.ts";
 export const PROJECT_CONNECTION_RPC_METHODS = {
   nativeConnectionsRead: "connections.nativeRead",
+  nativeConnectionApply: "connections.nativeApply",
   projectsConnectionsRead: "projects.connectionsRead",
   projectsConnectionSave: "projects.connectionSave",
   projectsConnectionCheck: "projects.connectionCheck",
@@ -50,3 +52,12 @@ export const projectConnectionRpcs = [
     error,
   }),
 ] as const;
+/** In its own RPC group: one more method in the core group passes TypeScript's depth limit. */
+export const nativeConnectionApplyRpc = Rpc.make(
+  PROJECT_CONNECTION_RPC_METHODS.nativeConnectionApply,
+  {
+    payload: NativeConnectionApplyInput,
+    success: NativeConnectionsSnapshot,
+    error: Schema.Union([NativeConnectionsError, EnvironmentAuthorizationError]),
+  },
+);

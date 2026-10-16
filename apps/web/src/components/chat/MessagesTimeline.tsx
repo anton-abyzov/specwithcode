@@ -1,4 +1,7 @@
+import { ArtifactCards } from "./ThreadArtifacts";
 import { UsageWarningLabel } from "./UsageWarningLabel";
+import { RoutedMessageNoteLine } from "../studio/ProjectRoutedReplies";
+import type { RunHealth } from "@specweave-studio/shared/orchestrationV2PendingBackgroundWork";
 import {
   usageWarningResolved,
   type UsageRecoveryRun,
@@ -6,10 +9,15 @@ import {
 } from "./usageWarningResolution";
 import { formatDisplayDates } from "../../lib/displayDates";
 import { FailureDetail } from "./FailureDetail";
+import {
+  providerFailureDisplayMessage,
+  timelineFailureIsHistory,
+} from "@specweave-studio/shared/orchestrationV2ThreadError";
 import { useProjectMessageRouting } from "../../studio/projectMessageRouting";
 import { ComputerUseAppIcon } from "~/components/Icons";
 import { useChatCanvas } from "./ChatCanvasContext";
 import { shouldCollapseReport } from "./longReport";
+import { useTimelineDetail } from "~/timelineDetail";
 import { ReportArtifact, type ReportArtifactSource } from "./ReportArtifact";
 import {
   CollapsibleReport,
@@ -53,12 +61,16 @@ import { parseScopedThreadKey, scopeThreadRef } from "@specweave-studio/client-r
 import { useAtomValue } from "@effect/atom-react";
 import { environmentThreadDetails } from "../../state/threads";
 import { UserMessageProvenance } from "./UserMessageProvenance";
+import { useProviderEntries } from "../studio/shell/ModelBadge";
+import { limitContinuationNote, restartContinuationNote } from "../../studio/runIdentity";
+import { modelLabel } from "../../studio/shellModel";
 import { canForkProjectedAssistantItem } from "@specweave-studio/client-runtime/state/thread-workflows";
 import { notificationChildThreadId } from "@specweave-studio/client-runtime/state/thread-execution";
 import { replaceComposerContextReferences } from "@specweave-studio/shared/composerContextReferences";
 import {
   resolveWorkEntryToolPresentation,
   resolveViewedImageAsset,
+  workEntryReportsChromeDisconnected,
   workEntryViewedImagePath,
 } from "@specweave-studio/client-runtime/work-log/presentation";
 import { resolveWorkGroupScrollAnchor } from "@specweave-studio/client-runtime/work-log/scroll-anchor";
@@ -105,6 +117,7 @@ import { FileDiff } from "@pierre/diffs/react";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
 import {
   type TimelineEntry,
+  isAnsweredQuestionItem,
   providerErrorPresentation,
   createMessageAttachmentPreviewProjector,
   selectMessageImageResources,
@@ -161,8 +174,11 @@ import {
   HammerIcon,
   WrenchIcon,
   XIcon,
+  RotateCwIcon,
   ZapIcon,
   RotateCcwIcon,
+  MoreHorizontalIcon,
+  SquareIcon,
 } from "lucide-react";
 import { ChevronDown, ChevronRight } from "lucide";
 import type {
@@ -232,6 +248,8 @@ import {
   workEntryReadOutput,
   workEntryIsVisibleInGroup,
   worktreeSetupAgentStarted,
+  workingStepLabel,
+  type WorkingPlanProgress,
   type StableMessagesTimelineRowsState,
   type MessagesTimelineRow,
   TIMELINE_MINIMAP_MIN_ITEMS,
@@ -247,6 +265,7 @@ import {
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger, TooltipScrollDismissArea } from "../ui/tooltip";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { WorktreeSetupCard } from "./WorktreeSetupCard";
 import {
   ContextChipPopover as UserMessageContextPopover,
@@ -279,6 +298,7 @@ import { chatMarkdownClipboardPayload } from "../../markdown-clipboard";
 import { ContextChip, ContextChipLabel, type ContextChipKind } from "../ContextChip";
 import { createContextPresentationRegistry } from "../contextPresentationRegistry";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
+import { ChromeConnectCard } from "./ChromeConnectCard";
 import { useClientSettings } from "~/hooks/useSettings";
 import type { ChatMarkdownContextReference } from "../ChatMarkdown";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
@@ -302,7 +322,8 @@ import {
   type HandoffTimelineRun,
 } from "./V2LifecycleRow";
 import { SecretRequestCard } from "./SecretRequestCard";
-import { TimelineSystemDivider } from "./TimelineSystemDivider";
+import { DecisionCard } from "./DecisionCard";
+import { linkifyQuestionPaths } from "./questionCard.logic";
 
 import { SkillChipIcon, SkillInlineText } from "./SkillInlineText";
 import * as DateTime from "effect/DateTime";
@@ -379,6 +400,8 @@ interface TimelineRowActivityState {
   activeTurnInProgress: boolean;
   isPreparingWorktree: boolean;
   latestRunId: RunId | null;
+  /** A resolved thread shows its failed turns as quiet history. */
+  threadSettled: boolean;
   recoveryRuns: ReadonlyArray<UsageRecoveryRun>;
   recoveryItems: ReadonlyArray<UsageRecoveryItem>;
   /**
@@ -387,11 +410,13 @@ interface TimelineRowActivityState {
    * list itself has already left the timeline.
    */
   backgroundWorktreeSetup: WorktreeSetupSnapshot | null;
+  runHealth: RunHealth | null;
+  onStopStalledRun: (() => void) | undefined;
+  onContinueStalledRun: (() => void) | undefined;
+  workingPlan: WorkingPlanProgress | null;
 }
 
 const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
-const selectTimelineDetail = (settings: { timelineDetail: TimelineDetail }) =>
-  settings.timelineDetail;
 const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
 
 interface WorkGroupViewState {
@@ -461,11 +486,19 @@ interface MessagesTimelineProps {
   runlessWorkActive?: boolean;
   activeTurnInProgress: boolean;
   activeTurnStartedAt?: string | null;
+  /** What the running turn waits on, or that it has stalled. */
+  runHealth?: RunHealth | null;
+  /** The plan card's progress; the working row names the step in progress. */
+  workingPlan?: WorkingPlanProgress | null;
+  onStopStalledRun?: () => void;
+  onContinueStalledRun?: () => void;
   worktreeSetup?: WorktreeSetupSnapshot | null;
   onCancelWorktreeSetup?: () => void;
   /** Runs whose failed workspace preparation can be retried, keyed by run id. */
   retryableWorkspacePreparationRunIds?: ReadonlySet<RunId>;
   onRetryWorkspacePreparation?: (runId: RunId) => void;
+  /** Whether the thread is resolved; its failed turns then read as history. */
+  threadSettled?: boolean;
   onWorktreeSetupWorkLocally?: () => void;
   onOpenWorktreeSetupTerminal?: (terminalId: string) => void;
   isPreparingWorktree?: boolean;
@@ -482,10 +515,6 @@ interface MessagesTimelineProps {
   displayThreadKey?: string;
   onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
   onOpenThread: (threadId: OrchestrationV2TurnItem["threadId"]) => void;
-  parentThreadLink?: {
-    readonly threadId: ThreadId;
-    readonly title: string;
-  } | null;
   /** Delegated threads show long assistant reports as report cards. */
   collapseLongReports?: boolean;
   /** Project of the thread, so report cards can save beside its SpecWeave increment. */
@@ -560,10 +589,15 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   runlessWorkActive = false,
   activeTurnInProgress,
   activeTurnStartedAt = null,
+  runHealth = null,
+  workingPlan = null,
+  onStopStalledRun,
+  onContinueStalledRun,
   worktreeSetup = null,
   onCancelWorktreeSetup,
   retryableWorkspacePreparationRunIds = EMPTY_RUN_IDS,
   onRetryWorkspacePreparation,
+  threadSettled = false,
   onWorktreeSetupWorkLocally,
   onOpenWorktreeSetupTerminal,
   isPreparingWorktree = false,
@@ -579,7 +613,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   displayThreadKey,
   onOpenTurnDiff,
   onOpenThread,
-  parentThreadLink = null,
   collapseLongReports = false,
   reportProjectId = null,
   reportFallbackTitle = "Report",
@@ -622,7 +655,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     () => readTimelinePosition(listIdentityKey),
     [listIdentityKey],
   );
-  const timelineDetail = useClientSettings(selectTimelineDetail);
+  const timelineDetail = useTimelineDetail(listIdentityKey);
   // Toggled ids mean the opposite in verbose, so they only carry over within
   // the level they were made under.
   const rememberedDisclosures =
@@ -1381,10 +1414,19 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeTurnInProgress,
       isPreparingWorktree,
       latestRunId: latestRun?.runId ?? null,
+      threadSettled,
       recoveryRuns,
       recoveryItems,
+      runHealth,
+      onStopStalledRun,
+      onContinueStalledRun,
+      workingPlan,
     }),
     [
+      workingPlan,
+      runHealth,
+      onStopStalledRun,
+      onContinueStalledRun,
       compactionAwaitingRow,
       backgroundWorktreeSetup,
       activeTurnInProgress,
@@ -1392,42 +1434,25 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       isRevertingCheckpoint,
       isWorking,
       latestRun?.runId,
+      threadSettled,
       recoveryRuns,
       recoveryItems,
     ],
   );
-  const listHeader = useMemo(() => {
-    const leadingContent =
-      parentThreadLink === null ? (
-        topFadeEnabled ? (
-          TIMELINE_LIST_FADE_HEADER
-        ) : (
-          TIMELINE_LIST_HEADER
-        )
-      ) : (
-        <div className="messages-timeline-row-frame">
-          <div className="chat-content-lane pt-1 sm:pt-2">
-            <TimelineSystemDivider
-              label="Subagent of"
-              detail={parentThreadLink.title}
-              icon={BotIcon}
-              actionLabel="Open parent thread"
-              onAction={() => onOpenThread(parentThreadLink.threadId)}
-            />
-          </div>
-        </div>
-      );
-    return (
+  // The parent a subagent reports to and the working folder sit in the chat's
+  // meta row above the timeline (ThreadMetaRow), not in the list.
+  const listHeader = useMemo(
+    () => (
       <>
         {contentInsetStart > 0 ? (
           <div aria-hidden data-timeline-banner-inset style={{ height: contentInsetStart }} />
         ) : null}
-        {parentThreadLink === null ? leadingContent : null}
+        {topFadeEnabled ? TIMELINE_LIST_FADE_HEADER : TIMELINE_LIST_HEADER}
         {historyControls ? <TimelineHistoryControl {...historyControls} /> : null}
-        {parentThreadLink !== null ? leadingContent : null}
       </>
-    );
-  }, [contentInsetStart, historyControls, onOpenThread, parentThreadLink, topFadeEnabled]);
+    ),
+    [contentInsetStart, historyControls, topFadeEnabled],
+  );
 
   const canvas = useChatCanvas();
   const registerTimeline = canvas?.registerTimeline;
@@ -1452,12 +1477,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     [],
   );
 
-  if (
-    rows.length === 0 &&
-    !isWorking &&
-    parentThreadLink === null &&
-    historyControls === undefined
-  ) {
+  if (rows.length === 0 && !isWorking && historyControls === undefined) {
     if (hideEmptyPlaceholder) {
       // Occupy the pane with the theme surface so a thread switch cannot
       // punch a hole through to the window chrome (white in light mode).
@@ -2281,6 +2301,35 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       ctx.activeThreadEnvironmentId,
     ],
   );
+  const providers = useProviderEntries(ctx.activeThreadEnvironmentId);
+  // A request the usage-limit rule resent reads as one line, not a second copy of it.
+  const limitNote = limitContinuationNote(row.message, ctx.runs, (selection) =>
+    modelLabel(providers.get(selection.instanceId) ?? null, selection.instanceId, selection.model),
+  );
+  const restartNote = restartContinuationNote(row.message);
+  if (restartNote)
+    return (
+      <p
+        className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground"
+        role="status"
+        title={row.message.text}
+        data-restart-continuation
+      >
+        <RotateCwIcon aria-hidden className="size-3.5" />
+        {restartNote}
+      </p>
+    );
+  if (limitNote)
+    return (
+      <p
+        className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground"
+        role="status"
+        data-limit-continuation
+      >
+        <ZapIcon aria-hidden className="size-3.5" />
+        {limitNote}
+      </p>
+    );
 
   return (
     <div className="group flex flex-col items-end gap-1">
@@ -2288,6 +2337,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         message={row.message}
         runs={ctx.runs}
         environmentId={ctx.activeThreadEnvironmentId}
+        threadRef={ctx.threadRef}
         onOpenThread={ctx.onOpenThread}
       />
       {row.message.inputIntent && row.message.inputIntent !== "turn_start" ? (
@@ -2412,6 +2462,14 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           />
         </div>
       </div>
+      {row.message.routedNote ? (
+        <RoutedMessageNoteLine
+          note={row.message.routedNote}
+          environmentId={ctx.activeThreadEnvironmentId}
+          onOpenThread={ctx.onOpenThread}
+          onOpenCoordinator={projectRouting?.openCoordinator}
+        />
+      ) : null}
       {row.projectedItem &&
       row.projectedItem.item.status !== "completed" &&
       row.projectedItem.item.status !== "pending" &&
@@ -2612,11 +2670,12 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
         onClick={() => ctx.onToggleTurnFold(row.runId)}
         className="flex cursor-pointer select-none items-center gap-1 rounded-md px-1 text-sm leading-relaxed text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       >
-        <span>
+        <span title={row.activityDetail}>
           {row.label}
           {row.activitySummary ? (
             <span className="text-muted-foreground"> · {row.activitySummary}</span>
           ) : null}
+          {row.activityDetail ? <span className="sr-only">. {row.activityDetail}</span> : null}
         </span>
         <MorphIcon className="size-3.5" icon={row.expanded ? ChevronDown : ChevronRight} />
       </button>
@@ -2728,6 +2787,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
         >
           {asReportCard ? (
             <ReportArtifact
+              createdAt={row.message.createdAt}
               source={reportSource}
               text={messageText}
               fallbackTitle={ctx.reportFallbackTitle}
@@ -2746,6 +2806,13 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
                   headingLevelOffset={MESSAGE_HEADING_LEVEL}
                   onRunShellCommand={ctx.onRunShellCommand}
                   onImageExpand={ctx.onImageExpand}
+                />
+              )}
+              renderAttachments={() => (
+                <ArtifactCards
+                  threadRef={ctx.threadRef ?? null}
+                  cwd={ctx.markdownCwd}
+                  text={messageText}
                 />
               )}
             >
@@ -3053,6 +3120,21 @@ function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event"
   const { item, visibility, sourceThreadId } = row.projectedItem;
   if (item.type === "subagent" && (row.subagents?.length ?? 1) > 1) {
     return <V2SubagentGroup key={row.id} row={row} />;
+  }
+  if (isAnsweredQuestionItem(item)) {
+    return (
+      <DecisionCard
+        item={item}
+        renderText={(text) => (
+          <ChatMarkdown
+            text={linkifyQuestionPaths(text)}
+            cwd={ctx.markdownCwd}
+            threadRef={ctx.threadRef ?? undefined}
+            className="text-sm leading-snug text-foreground"
+          />
+        )}
+      />
+    );
   }
   if (item.type === "secret_request") {
     return (
@@ -3686,8 +3768,16 @@ function toolIconAcceptsTint(
 }
 
 function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
-  const { isCompacting, isPreparingWorktree, backgroundWorktreeSetup } =
-    use(TimelineRowActivityCtx);
+  const {
+    isCompacting,
+    isPreparingWorktree,
+    backgroundWorktreeSetup,
+    runHealth,
+    onStopStalledRun,
+    onContinueStalledRun,
+    workingPlan,
+  } = use(TimelineRowActivityCtx);
+  const step = isPreparingWorktree || isCompacting ? null : workingStepLabel(workingPlan);
   // One span for every label so the setup-to-working handoff swaps text in
   // place instead of remounting the row.
   const shimmer = isPreparingWorktree || isCompacting;
@@ -3712,11 +3802,106 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
           {label}
           {shimmer ? <ActivityShimmerOverlay>{label}</ActivityShimmerOverlay> : null}
         </span>
+        {step ? (
+          <span className="min-w-0 truncate text-foreground/75" data-working-step title={step}>
+            · {step}
+          </span>
+        ) : null}
         {backgroundWorktreeSetup ? (
           <BackgroundWorktreeSetupChip snapshot={backgroundWorktreeSetup} />
         ) : null}
+        {isPreparingWorktree || isCompacting ? null : (
+          <RunHealthNote
+            health={runHealth}
+            onStop={onStopStalledRun}
+            onContinue={onContinueStalledRun}
+          />
+        )}
       </div>
     </div>
+  );
+}
+
+function formatQuietDuration(ms: number): string {
+  const minutes = Math.max(1, Math.floor(ms / 60_000));
+  return minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+/**
+ * A quiet chip saying what a long turn waits on ("Waiting on <thread> · 22m",
+ * the thread linked) or that it went quiet for longer than its work explains
+ * ("No activity 22m"), with Continue and Stop behind one overflow button.
+ */
+function RunHealthNote(props: {
+  health: RunHealth | null;
+  onStop: (() => void) | undefined;
+  onContinue: (() => void) | undefined;
+}) {
+  const { health } = props;
+  const ctx = use(TimelineRowCtx);
+  if (health === null || health.state === "working") return null;
+  if (health.state === "waiting") {
+    if (health.waitingMs < 60_000) return null;
+    const waitThreadId = health.waitThreadId;
+    return (
+      <span
+        className="inline-flex min-w-0 items-center gap-1 self-center rounded-full border border-border/70 px-2 text-xs leading-5 text-muted-foreground"
+        data-run-health="waiting"
+      >
+        <span className="shrink-0">Waiting on</span>
+        {waitThreadId ? (
+          <button
+            type="button"
+            className="min-w-0 truncate text-foreground/80 underline-offset-2 hover:underline"
+            onClick={() => ctx.onOpenThread(waitThreadId as OrchestrationV2TurnItem["threadId"])}
+          >
+            {health.label}
+          </button>
+        ) : (
+          <span className="min-w-0 truncate">{health.label}</span>
+        )}
+        <span className="shrink-0">· {formatQuietDuration(health.waitingMs)}</span>
+      </span>
+    );
+  }
+  const hasActions = props.onStop !== undefined || props.onContinue !== undefined;
+  return (
+    <span
+      className="inline-flex min-w-0 items-center gap-1 self-center rounded-full border border-border/70 px-2 text-xs leading-5 text-muted-foreground"
+      data-run-health="stalled"
+    >
+      <span
+        className="min-w-0 truncate"
+        title={health.label === null ? undefined : `Last in flight: ${health.label}`}
+      >
+        No activity {formatQuietDuration(health.idleMs)}
+      </span>
+      {hasActions ? (
+        <Menu>
+          <MenuTrigger
+            className="-me-1 inline-flex size-4 shrink-0 items-center justify-center rounded-full hover:bg-accent hover:text-foreground"
+            aria-label="Quiet run actions"
+            render={<button type="button" />}
+          >
+            <MoreHorizontalIcon aria-hidden className="size-3.5" />
+          </MenuTrigger>
+          <MenuPopup align="end" className="min-w-44">
+            {props.onContinue ? (
+              <MenuItem onClick={props.onContinue}>
+                <RotateCcwIcon aria-hidden className="size-3.5" />
+                Continue
+              </MenuItem>
+            ) : null}
+            {props.onStop ? (
+              <MenuItem onClick={props.onStop}>
+                <SquareIcon aria-hidden className="size-3.5" />
+                Stop
+              </MenuItem>
+            ) : null}
+          </MenuPopup>
+        </Menu>
+      ) : null}
+    </span>
   );
 }
 
@@ -5282,6 +5467,14 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEntryRowP
   const childThreadId =
     item?.type === "notification" ? notificationChildThreadId(item.source) : undefined;
   if (item?.type !== "notification" || childThreadId === undefined) {
+    if (workEntryReportsChromeDisconnected(props.workEntry)) {
+      return (
+        <>
+          <WorkEntryLogRow {...props} />
+          <ChromeConnectCard environmentId={ctx.activeThreadEnvironmentId} />
+        </>
+      );
+    }
     return <WorkEntryLogRow {...props} />;
   }
   return (
@@ -5334,11 +5527,66 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     }
     setToggleState({ opensByDefault, toggled });
   };
-  const { recoveryRuns: warningRecoveryRuns, recoveryItems: warningRecoveryItems } =
-    use(TimelineRowActivityCtx);
+  const {
+    recoveryRuns: warningRecoveryRuns,
+    recoveryItems: warningRecoveryItems,
+    latestRunId: failureLatestRunId,
+    threadSettled,
+  } = use(TimelineRowActivityCtx);
   const failureItem = workEntry.projectedItem?.item;
   if (failureItem?.type === "error" && failureItem.status === "failed") {
     const warning = failureItem.failure.class === "usage_limit";
+    const failureMessage = providerFailureDisplayMessage(failureItem.failure);
+    // A turn a later run superseded, an old one, or one on a resolved thread is
+    // history: a quiet line that opens to its cause, with no retry.
+    if (
+      !warning &&
+      timelineFailureIsHistory({
+        runId: failureItem.runId,
+        latestRunId: failureLatestRunId,
+        occurredAt: workEntry.createdAt,
+        settled: threadSettled,
+        nowMs: Date.now(),
+      })
+    ) {
+      return (
+        <WorkLogRow
+          data-v2-item-type="error"
+          data-v2-error-history="true"
+          data-v2-item-visibility={workEntry.projectedItem?.visibility}
+          role="button"
+          tabIndex={0}
+          aria-expanded={expanded}
+          onClick={toggleExpanded}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" && event.key !== " ") return;
+            event.preventDefault();
+            toggleExpanded();
+          }}
+          wrapLabel
+          icon={<CircleAlertIcon className="size-4 text-muted-foreground" />}
+          label={
+            <span className="text-sm text-muted-foreground">
+              {workEntry.label}
+              <span className="text-muted-foreground"> · earlier turn</span>
+            </span>
+          }
+          trailing={
+            <TimelineRowTimestamp
+              createdAt={workEntry.createdAt}
+              timestampFormat={timestampFormat}
+              alwaysVisible
+            />
+          }
+        >
+          {expanded ? (
+            <WorkLogDetails>
+              <FailureDetail message={failureMessage} timestampFormat={timestampFormat} />
+            </WorkLogDetails>
+          ) : null}
+        </WorkLogRow>
+      );
+    }
     const resolved =
       warning && usageWarningResolved(failureItem.runId, warningRecoveryRuns, warningRecoveryItems);
     const resetAt = failureItem.failure.resetAt;
@@ -5385,7 +5633,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         }
       >
         {!warning ? (
-          <FailureDetail message={failureItem.failure.message} timestampFormat={timestampFormat} />
+          <FailureDetail message={failureMessage} timestampFormat={timestampFormat} />
         ) : null}
         {retryRunId !== null && onRetryWorkspacePreparation ? (
           <div className="ms-7 pb-1">

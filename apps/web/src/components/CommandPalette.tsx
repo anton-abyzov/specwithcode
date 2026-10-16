@@ -57,6 +57,7 @@ import {
 import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import {
+  ActivityIcon,
   AppWindowIcon,
   ArrowLeftIcon,
   ChartNoAxesColumnIcon,
@@ -69,6 +70,7 @@ import {
   FolderIcon,
   FolderPlusIcon,
   ListCollapseIcon,
+  ListTodoIcon,
   MessageSquareDashedIcon,
   LinkIcon,
   MessageSquareIcon,
@@ -141,7 +143,7 @@ import {
   ProjectCreationPreview,
 } from "./studio/ProjectCreation";
 import { isScratchProject } from "@specweave-studio/client-runtime/state/projects";
-import { isArchivedMember } from "../studio/projectListVisibility";
+import { projectPickerMembers } from "../studio/projectListVisibility";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useProjects, useServerConfigs, useThreadShells, waitForProject } from "../state/entities";
 import { useThreadSearch } from "../state/queries";
@@ -230,9 +232,16 @@ import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
+import { openLinkIncrementDialog } from "./chat/LinkIncrementDialog";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { toggleThemeEditorForTheme } from "./settings/themeEditorStore";
-import { searchSettings, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
+import { searchSettingsBySection, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
+import {
+  PROJECT_SETTINGS_TAB_LABELS,
+  PROJECT_SETTINGS_TABS,
+  searchProjectSettings,
+} from "./studio/projectSettingsSearch.logic";
+import { requestProjectSettings } from "../studio/projectSettingsRequests";
 import {
   COMMAND_PALETTE_META_ICON_CLASS,
   CommandPaletteMetaDot,
@@ -1368,10 +1377,17 @@ function OpenCommandPaletteDialog(props: {
     ],
   );
 
+  // Pickers list neither a machine's "No project" folder nor an archived project;
+  // "No project" shows once, as its own item, and an archived project takes no new
+  // work until it is restored.
+  const listedPickerProjects = useMemo(
+    () => projectPickerMembers(pickerProjects, scratchWorkspaceRootFor),
+    [pickerProjects, scratchWorkspaceRootFor],
+  );
   const projectSearchItems = useMemo(
     () =>
       buildProjectActionItems({
-        projects: pickerProjects,
+        projects: listedPickerProjects,
         valuePrefix: "project",
         searchTerms: (project) => {
           const members = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`)
@@ -1406,8 +1422,8 @@ function OpenCommandPaletteDialog(props: {
         runProject: openProjectFromSearch,
       }),
     [
+      listedPickerProjects,
       openProjectFromSearch,
-      pickerProjects,
       projectEnvironmentLocationById,
       projectGroupByTargetKey,
     ],
@@ -1418,11 +1434,7 @@ function OpenCommandPaletteDialog(props: {
       isScratchProject(project, scratchWorkspaceRootFor(project.environmentId));
     const projectItems = enumerateCommandPaletteItems(
       buildProjectActionItems({
-        // The no-project home shows once, as the "No project" item below; an archived
-        // project takes no new work until it is restored.
-        projects: pickerProjects.filter(
-          (project) => !isScratch(project) && !isArchivedMember(project),
-        ),
+        projects: listedPickerProjects,
         valuePrefix: "new-thread-in",
         searchTerms: (project) => {
           const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
@@ -1499,6 +1511,7 @@ function OpenCommandPaletteDialog(props: {
   }, [
     contextualProjectRef,
     handleNewThread,
+    listedPickerProjects,
     pickerProjects,
     projectEnvironmentLocationById,
     projectGroupByTargetKey,
@@ -2098,6 +2111,23 @@ function OpenCommandPaletteDialog(props: {
 
   if (
     activeThread !== null &&
+    readEnvironmentScope(activeThread.environmentId, AuthOrchestrationOperateScope)
+  ) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    actionItems.push({
+      kind: "action",
+      value: "action:link-increment",
+      searchTerms: ["link", "increment", "specweave", "plan", "spec", "tasks"],
+      title: "Link SpecWeave increment to thread",
+      icon: <ListTodoIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        openLinkIncrementDialog(threadRef);
+      },
+    });
+  }
+
+  if (
+    activeThread !== null &&
     threadPullRequestLinkMode(activeThreadServerConfig?.environment.capabilities) !== "unsupported"
   ) {
     const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
@@ -2429,8 +2459,17 @@ function OpenCommandPaletteDialog(props: {
     actionItems.push({
       kind: "action",
       value: "action:pull-requests",
-      searchTerms: ["pull requests", "prs", "pr", "github", "review", "merge", "branch"],
-      title: "Open pull requests",
+      searchTerms: [
+        "code review",
+        "pull requests",
+        "prs",
+        "pr",
+        "github",
+        "review",
+        "merge",
+        "branch",
+      ],
+      title: "Open Code Review",
       icon: <PullRequestGlyph.pullRequest className={ITEM_ICON_CLASS} />,
       run: async () => {
         await navigate({ to: "/pull-requests", search: readPullRequestListPreferences() });
@@ -2447,6 +2486,17 @@ function OpenCommandPaletteDialog(props: {
     shortcutCommand: "usage.open",
     run: async () => {
       await navigate({ to: "/usage" });
+    },
+  });
+
+  actionItems.push({
+    kind: "action",
+    value: "action:status",
+    searchTerms: ["status", "health", "outage", "incidents", "uptime", "providers", "machines"],
+    title: "Open status",
+    icon: <ActivityIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      await navigate({ to: "/status" });
     },
   });
 
@@ -2499,6 +2549,7 @@ function OpenCommandPaletteDialog(props: {
           to: "/projects/$projectKey",
           params: { projectKey: contextualProjectGroup.projectKey },
         });
+        requestProjectSettings(contextualProjectGroup.projectKey, Date.now(), { tab: "general" });
       },
     });
     // Only desktop builds with project windows offer this.
@@ -2521,26 +2572,82 @@ function OpenCommandPaletteDialog(props: {
   }
 
   const rootGroups = buildRootGroups({ actionItems, recentThreadItems });
-  const settingsSearchItems: CommandPaletteActionItem[] = searchSettings(
+  // Sections the query names lead as roots, then the rows of each section.
+  const settingsSearchItems: CommandPaletteActionItem[] = searchSettingsBySection(
     deferredQuery,
     availableSettingsSearchItems,
-  ).map((item) => ({
-    kind: "action",
-    value: `setting:${item.id}`,
-    searchTerms: [item.title, SETTINGS_SECTION_LABELS[item.to], ...(item.searchTerms ?? [])],
-    title: item.title,
-    description: `Settings · ${SETTINGS_SECTION_LABELS[item.to]}`,
-    ...(item.secondary ? { secondary: true } : {}),
-    icon: <SettingsIcon className={ITEM_ICON_CLASS} />,
-    run: async () => {
-      await navigate({
-        to: item.to,
-        hash: item.targetId ?? item.id,
-        replace: pathname === item.to,
-        hashScrollIntoView: false,
+  ).flatMap((result): CommandPaletteActionItem[] => {
+    if (result.kind === "section") {
+      if (!result.matched) return [];
+      return [
+        {
+          kind: "action",
+          value: `setting-section:${result.section}`,
+          searchTerms: [result.label, "settings"],
+          title: result.label,
+          description: "Settings section",
+          icon: <SettingsIcon className={ITEM_ICON_CLASS} />,
+          run: async () => {
+            await navigate({ to: result.section, hash: "", hashScrollIntoView: false });
+          },
+        },
+      ];
+    }
+    const item = result.row;
+    return [
+      {
+        kind: "action",
+        value: `setting:${item.id}`,
+        searchTerms: [item.title, SETTINGS_SECTION_LABELS[item.to], ...(item.searchTerms ?? [])],
+        title: item.title,
+        description: `Settings · ${SETTINGS_SECTION_LABELS[item.to]}`,
+        ...(item.secondary ? { secondary: true } : {}),
+        icon: <SettingsIcon className={ITEM_ICON_CLASS} />,
+        run: async () => {
+          await navigate({
+            to: item.to,
+            hash: item.targetId ?? item.id,
+            replace: pathname === item.to,
+            hashScrollIntoView: false,
+            state: { settingsTargetHighlight: true },
+          });
+        },
+      },
+    ];
+  });
+  // The project in view (route or thread) also exposes its Project settings rows.
+  const settingsProject =
+    routeProjectKey !== null || contextualProjectRef ? contextualProjectGroup : null;
+  const openProjectSettingsAt = async (projectKey: string, tab: string, row?: string) => {
+    await navigate({ to: "/projects/$projectKey", params: { projectKey } });
+    requestProjectSettings(projectKey, Date.now(), row ? { tab, row } : { tab });
+  };
+  if (settingsProject) {
+    for (const result of searchProjectSettings(deferredQuery, PROJECT_SETTINGS_TABS)) {
+      if (result.kind === "section" && !result.matched) continue;
+      const tabLabel = PROJECT_SETTINGS_TAB_LABELS[result.section];
+      settingsSearchItems.push({
+        kind: "action",
+        value: `project-setting:${result.id}`,
+        searchTerms:
+          result.kind === "section"
+            ? [tabLabel, "project settings"]
+            : [result.row.title, tabLabel, "project settings", ...(result.row.searchTerms ?? [])],
+        title: result.kind === "section" ? tabLabel : result.row.title,
+        description:
+          result.kind === "section"
+            ? `Project settings · ${settingsProject.displayName}`
+            : `Project settings · ${tabLabel}`,
+        icon: <FolderIcon className={ITEM_ICON_CLASS} />,
+        run: () =>
+          openProjectSettingsAt(
+            settingsProject.projectKey,
+            result.section,
+            result.kind === "row" ? result.row.id : undefined,
+          ),
       });
-    },
-  }));
+    }
+  }
   const activeGroups =
     browseEnvironmentId !== null &&
     currentView?.groups.some((group) => group.value.startsWith("sources:"))

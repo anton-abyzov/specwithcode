@@ -28,6 +28,24 @@ export function resolveTerminalSessionLabel(
   return getTerminalLabel(terminalId);
 }
 
+/** Last segment of a terminal's folder, for tab titles: `/a/b/repo` -> `repo`. */
+export function terminalFolderName(cwd: string | null | undefined): string | null {
+  const trimmed = cwd?.trim().replace(/[\\/]+$/, "");
+  if (trimmed === undefined) return null;
+  if (trimmed.length === 0) return cwd?.trim() ? "/" : null;
+  return trimmed.slice(Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\")) + 1);
+}
+
+/** Tab title naming the session and the folder it runs in, e.g. `Terminal 1 · repo`. */
+export function resolveTerminalTabTitle(
+  terminalId: string,
+  summary: Pick<TerminalSummary, "label" | "cwd"> | null | undefined,
+): string {
+  const label = resolveTerminalSessionLabel(terminalId, summary);
+  const folder = terminalFolderName(summary?.cwd);
+  return folder ? `${label} · ${folder}` : label;
+}
+
 /**
  * Client-side terminal id allocator. Ids are ALWAYS chosen by the client and sent explicitly
  * on every `terminal.open` / `terminal.attach` call — the server never allocates.

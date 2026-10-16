@@ -67,7 +67,7 @@ export function SettingsNotificationsRouteScreen() {
           contentContainerClassName="px-5 pt-4"
         >
           <Text className="text-base text-foreground-muted">
-            Notifications require Studio Connect in this app build.
+            Notifications require SpecWithCode Connect in this app build.
           </Text>
         </ScrollView>
       </SettingsScreen>
@@ -178,7 +178,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
       } else {
         Alert.alert(
           "Couldn't finish enabling notifications",
-          "Notification access was granted, but this device could not be registered with Studio Connect. Notifications will start once registration succeeds.",
+          "Notification access was granted, but this device could not be registered with SpecWithCode Connect. Notifications will start once registration succeeds.",
         );
       }
       return;
@@ -208,8 +208,8 @@ function ConfiguredSettingsNotificationsRouteScreen() {
 
   const promptSignIn = useCallback(() => {
     Alert.alert(
-      "Sign in to Studio Connect",
-      "Live Activity updates require Studio Connect so relay can deliver updates to this device.",
+      "Sign in to SpecWithCode Connect",
+      "Live Activity updates require SpecWithCode Connect so relay can deliver updates to this device.",
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -312,7 +312,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     } else {
       Alert.alert(
         "Couldn't finish enabling activity updates",
-        "This device could not be registered with Studio Connect, so activity updates won't appear yet. They'll start once registration succeeds.",
+        "This device could not be registered with SpecWithCode Connect, so activity updates won't appear yet. They'll start once registration succeeds.",
       );
     }
   }, [

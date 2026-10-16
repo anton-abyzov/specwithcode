@@ -1065,10 +1065,8 @@ try {
     assert.equal(threads[0].id, otherThread.id);
     assert.ok(threads.every((thread) => thread.activeRunId == null));
     assert.equal(pageErrors, 0);
-    const { DatabaseSync } = await import("node:sqlite");
-    const database = new DatabaseSync(join(dataDir, "userdata", "statev2.sqlite"), {
-      readOnly: true,
-    });
+    const { openLiveDatabaseReadOnly } = await import("../lib/live-database.mjs");
+    const database = openLiveDatabaseReadOnly(join(dataDir, "userdata", "statev2.sqlite"));
     try {
       const providerTurns = database
         .prepare("SELECT count(*) AS count FROM orchestration_v2_projection_provider_turns")

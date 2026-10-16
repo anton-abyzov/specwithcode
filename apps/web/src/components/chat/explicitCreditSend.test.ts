@@ -29,6 +29,7 @@ import {
   explicitCreditSendStillMatches,
   type CreditSendContext,
 } from "./explicitCreditSend";
+import { settleAfter, settleCaught } from "../../lib/settle";
 
 const now = Date.parse("2026-10-09T08:00:00.000Z"),
   at = new Date(now).toISOString();
@@ -390,6 +391,8 @@ describe("actual credit recovery callback", () => {
           clearUsageLimitsFor: vi.fn(),
           currentRouteThreadKeyRef: { current: "original-route" },
           scrollToEnd: vi.fn(),
+          settleAfter,
+          settleCaught,
         });
         const restart = {
           text: "Original unanswered prompt",
@@ -474,6 +477,7 @@ describe("actual callback integration", () => {
     const callback = executable(viewSource, declaration(viewSource, "onSend").initializer, {
       projectDraftSendGuard: { preventSend: () => false },
       usageLimitsOffered: false,
+      appCommandsOffered: false,
       projectRouting: { send: vi.fn(), coordinatorThreadId: "coordinator" },
       activePendingProgress: null,
       currentCreditRouteRef: { current: { allowed: true } },

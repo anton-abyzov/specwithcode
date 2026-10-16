@@ -65,6 +65,7 @@ const fixture = (afterCoordinatorLaunch: Effect.Effect<void> = Effect.void) => {
   const sends: Parameters<Threads.ThreadManagementService["Service"]["sendToThread"]>[0][] = [];
   const receipts = new Set<string>();
   const runs: OrchestrationV2Run[] = [];
+  const turnItems: Array<{ type: string; failure?: { class: string } }> = [];
   const updates: Projects.ProjectUpdateInput[] = [];
   const dependencies = Layer.mergeAll(
     Layer.mock(EventSink.EventSinkV2)({ readByCommandId: () => Stream.empty }),
@@ -145,7 +146,7 @@ const fixture = (afterCoordinatorLaunch: Effect.Effect<void> = Effect.void) => {
       getProviders: Effect.sync(() => providers),
     }),
     Layer.mock(ProjectionStore.ProjectionStoreV2)({
-      getThreadRecords: (() => Effect.sync(() => ({ runs }))) as never,
+      getThreadRecords: (() => Effect.sync(() => ({ runs, turnItems }))) as never,
     }),
   ).pipe(
     Layer.provideMerge(
@@ -160,6 +161,7 @@ const fixture = (afterCoordinatorLaunch: Effect.Effect<void> = Effect.void) => {
     sends,
     shells,
     runs,
+    turnItems,
     get project() {
       return project;
     },
@@ -779,6 +781,7 @@ it.effect("keeps a coordinator on its fallback while the saved model's provider 
         status: "failed",
         completedAt: DateTime.makeUnsafe("2098-12-31T00:00:00Z"),
       } as OrchestrationV2Run);
+      f.turnItems.push({ type: "error", failure: { class: "usage_limit" } });
       f.setProviders([ready("claude", "claudeAgent", 10), ready("codex", "codex", 20)]);
       yield* service.send({
         projectId: id,
@@ -786,7 +789,18 @@ it.effect("keeps a coordinator on its fallback while the saved model's provider 
         prompt: "Next",
       });
       expect(f.sends.at(-1)?.modelSelection).toEqual(fallback);
+      // The same failure for any other reason is no limit: Claude has room, so
+      // the coordinator goes back to it.
+      f.turnItems.length = 0;
+      f.turnItems.push({ type: "error", failure: { class: "provider_error" } });
+      yield* service.send({
+        projectId: id,
+        commandId: CommandId.make("request:other-failure"),
+        prompt: "Next",
+      });
+      expect(f.sends.at(-1)?.modelSelection).toEqual(model);
       f.runs.length = 0;
+      f.turnItems.length = 0;
       // Claude has room again: the next message goes back to the saved model.
       f.setProviders([ready("claude", "claudeAgent", 10), ready("codex", "codex", 20)]);
       yield* service.send({

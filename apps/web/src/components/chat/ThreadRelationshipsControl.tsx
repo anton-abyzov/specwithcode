@@ -45,6 +45,7 @@ import {
 import { useMemo, useState, type ReactNode } from "react";
 
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
+import { isOrchestratorThreadId } from "../../studio/projectCoordinatorThreads";
 import { useOpenThread } from "../../hooks/useOpenThread";
 import {
   useProjects,
@@ -158,7 +159,10 @@ function ThreadLineageGroup(props: {
 function relationshipLabel(edge: ThreadRelationshipEdge, currentThreadId: ThreadId) {
   if (edge.kind === "transfer") return "Context transfer";
   if (edge.kind === "subagent") {
-    return edge.sourceThreadId === currentThreadId ? "Subagent" : "Parent agent";
+    // A coordinator's children are the project's workers, not internal subagents.
+    const fromCoordinator = isOrchestratorThreadId(edge.sourceThreadId);
+    if (edge.sourceThreadId === currentThreadId) return fromCoordinator ? "Worker" : "Subagent";
+    return fromCoordinator ? "Coordinator" : "Parent thread";
   }
   return edge.sourceThreadId === currentThreadId ? "Fork" : "Parent thread";
 }
@@ -273,7 +277,12 @@ export function ThreadRelationshipsPanel(props: {
   const groups = [
     { id: "related", label: null, rows: related, expanded: true },
     { id: "active", label: null, rows: active, expanded: true },
-    { id: "previous", label: "Previous agents", rows: previous, expanded: false },
+    {
+      id: "previous",
+      label: isOrchestratorThreadId(props.threadId) ? "Previous workers" : "Previous agents",
+      rows: previous,
+      expanded: false,
+    },
   ];
   // Subagents without a child thread yet have no row, so count them separately.
   const runningCount =
@@ -314,6 +323,7 @@ export function ThreadRelationshipsPanel(props: {
     setBusyAction(null);
   };
 
+  const childNoun = isOrchestratorThreadId(props.threadId) ? "worker" : "subagent";
   const stopSubagent = async (childThreadId: ThreadId) => {
     if (stoppingThreadId !== null) return;
     setStoppingThreadId(childThreadId);
@@ -323,7 +333,7 @@ export function ThreadRelationshipsPanel(props: {
     });
     setStoppingThreadId(null);
     if (result._tag === "Failure") {
-      toastManager.add({ type: "error", title: "Could not stop subagent" });
+      toastManager.add({ type: "error", title: `Could not stop ${childNoun}` });
     }
   };
 
@@ -543,7 +553,7 @@ export function ThreadRelationshipsPanel(props: {
                               variant="ghost"
                               part="icon"
                               tone="destructive"
-                              aria-label={`Stop subagent ${threadTitle}`}
+                              aria-label={`Stop ${childNoun} ${threadTitle}`}
                               disabled={stoppingThreadId !== null}
                               onClick={() => void stopSubagent(threadId)}
                             />
@@ -555,7 +565,7 @@ export function ThreadRelationshipsPanel(props: {
                             <SquareIcon aria-hidden className="size-3 fill-current" />
                           )}
                         </TooltipTrigger>
-                        <TooltipPopup side="left">Stop subagent</TooltipPopup>
+                        <TooltipPopup side="left">Stop {childNoun}</TooltipPopup>
                       </Tooltip>
                     </div>
                   ) : null}

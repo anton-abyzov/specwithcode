@@ -111,7 +111,7 @@ runpy.run_path(install, run_name='__main__')
 
     def assert_rejected(self, result):
         self.assertNotEqual(result.returncode, 0)
-        self.assertFalse((self.home / '.specweave-studio/stage').exists())
+        self.assertFalse((self.home / '.specwithcode/stage').exists())
         self.assertFalse((self.root / 'outside').exists())
 
     def test_02_installs_matching_provenance_and_preserves_version(self):
@@ -199,7 +199,7 @@ runpy.run_path(install, run_name='__main__')
         result = self.install(digest)
         self.assertEqual(result.returncode, 0, result.stderr)
         receipt = json.loads(result.stdout)
-        own = self.home / '.specweave-studio/stage'
+        own = self.home / '.specwithcode/stage'
         own.rename(own.with_name('preserved-first-install'))
         release = pathlib.Path(receipt['release'])
         (release / 'bin.mjs').write_text('// altered bytes\n')
@@ -215,7 +215,7 @@ runpy.run_path(install, run_name='__main__')
         result = self.install(digest)
         self.assertEqual(result.returncode, 0, result.stderr)
         receipt = json.loads(result.stdout)
-        own = self.home / '.specweave-studio/stage'
+        own = self.home / '.specwithcode/stage'
         own.rename(own.with_name('preserved-first-install'))
         (pathlib.Path(receipt['release']) / 'unindexed-code.mjs').write_text('// unexpected\n')
         rejected = self.install(digest)
@@ -228,7 +228,7 @@ runpy.run_path(install, run_name='__main__')
         protected.mkdir()
         original = protected / 'original.txt'
         original.write_text('preserved fixture')
-        for relative in ['.specweave-studio', '.local/share/specweave-studio', '.local/share/specweave-studio/releases']:
+        for relative in ['.specwithcode', '.specwithcode/install', '.specwithcode/install/releases']:
             with self.subTest(root=relative):
                 link = self.home / relative
                 link.parent.mkdir(parents=True, exist_ok=True)
@@ -298,7 +298,7 @@ runpy.run_path(install, run_name='__main__')
         receipt = json.loads(result.stdout)
         self.assertTrue((self.home / '.local/bin/specweave-studio').is_file())
         self.assertTrue((self.home / 'Library/LaunchAgents/com.specweave.studio.m4.plist').is_file())
-        self.assertTrue((self.home / '.specweave-studio/m4/installation.json').is_file())
+        self.assertTrue((self.home / '.specwithcode/m4/installation.json').is_file())
         self.assertEqual(receipt['service']['domain'], 'gui/' + str(os.getuid()))
         self.assertEqual(result.stderr.count('MOCK_LAUNCHCTL:bootstrap'), 1)
 
@@ -306,7 +306,7 @@ runpy.run_path(install, run_name='__main__')
         result = self.install(self.bundle())
         self.assertEqual(result.returncode, 0, result.stderr)
         receipt = json.loads(result.stdout)
-        own = self.home / '.specweave-studio/stage'
+        own = self.home / '.specwithcode/stage'
         settings = json.loads((own / 'userdata/settings.json').read_text())
         self.assertEqual(settings['defaultThreadEnvMode'], 'worktree')
         self.assertEqual(settings['defaultRuntimeMode'], 'approval-required')
@@ -327,7 +327,7 @@ runpy.run_path(install, run_name='__main__')
         result = self.install(self.bundle(cli_bytes=cli), ('--install-cli',))
         self.assertEqual(result.returncode, 0, result.stderr)
         receipt = json.loads(result.stdout)
-        launcher = (self.home / '.specweave-studio/stage/launch.sh').read_text()
+        launcher = (self.home / '.specwithcode/stage/launch.sh').read_text()
         self.assertIn('STUDIO_AUTO_BOOTSTRAP_PROJECT_FROM_CWD=false', launcher)
         wrapper = receipt['cliWrapper']
         for deliberate in [None, 'true', 'false']:

@@ -1,4 +1,8 @@
-import type { ServerConfig, ServerConfigStreamEvent } from "@specweave-studio/contracts";
+import {
+  gitHubCopilotIconUrlForInstanceConfig,
+  type ServerConfig,
+  type ServerConfigStreamEvent,
+} from "@specweave-studio/contracts";
 import * as Option from "effect/Option";
 
 export interface ServerConfigProjection {
@@ -21,7 +25,38 @@ export function withoutEnvironmentThemes(config: ServerConfig): ServerConfig {
   return rest;
 }
 
+/**
+ * Copilot is named by its configured identity, not by whatever icon a snapshot
+ * carries: a server from before local-install branding, or a cached snapshot,
+ * omits the icon and every surface would fall back to the generic ACP mark.
+ */
+export function withCopilotProviderIcons(config: ServerConfig): ServerConfig {
+  const instances = config.settings?.providerInstances;
+  if (!instances || !config.providers) return config;
+  let changed = false;
+  const providers = config.providers.map((provider) => {
+    if (provider.driver !== "acpRegistry" || !Object.hasOwn(instances, provider.instanceId)) {
+      return provider;
+    }
+    const iconUrl = gitHubCopilotIconUrlForInstanceConfig(instances[provider.instanceId]?.config);
+    if (iconUrl === null || provider.iconUrl === iconUrl) return provider;
+    changed = true;
+    return { ...provider, iconUrl };
+  });
+  return changed ? { ...config, providers } : config;
+}
+
 export function applyServerConfigProjection(
+  current: Option.Option<ServerConfigProjection>,
+  event: ServerConfigStreamEvent,
+): Option.Option<ServerConfigProjection> {
+  return Option.map(applyServerConfigEvent(current, event), (projection) => {
+    const config = withCopilotProviderIcons(projection.config);
+    return config === projection.config ? projection : { ...projection, config };
+  });
+}
+
+function applyServerConfigEvent(
   current: Option.Option<ServerConfigProjection>,
   event: ServerConfigStreamEvent,
 ): Option.Option<ServerConfigProjection> {

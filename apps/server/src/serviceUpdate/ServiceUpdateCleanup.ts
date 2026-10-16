@@ -160,11 +160,11 @@ export const make = Effect.gen(function* () {
       for (const [rawThreadId, threadRows] of groupByThread(rows)) {
         const threadId = ThreadId.make(rawThreadId);
         const commandId = CommandId.make(`service-update:${nonce}:finalize:${threadId}`);
-        const records = yield* projections.getThreadRecords(threadId, [
-          "runs",
-          "attempts",
-          "nodes",
-        ]);
+        const records = yield* projections.getThreadRecords(
+          threadId,
+          ["runs", "attempts", "nodes", "turnItems"],
+          { turnItemTypes: ["run_interrupt_request"] },
+        );
         const now = yield* DateTime.now;
         const events: Array<OrchestrationV2DomainEvent> = [];
         let waitingRuns = 0;
@@ -221,6 +221,42 @@ export const make = Effect.gen(function* () {
             ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
             payload: { ...runWithoutCohort, status, completedAt: now },
           });
+          // Marks the run as stopped for the update, so it resumes once the
+          // service is back. A Stop already recorded (the user's) is kept.
+          if (
+            status === "interrupted" &&
+            run.rootNodeId !== null &&
+            run.providerThreadId !== null &&
+            !records.turnItems.some(
+              (item) => item.runId === run.id && item.type === "run_interrupt_request",
+            )
+          ) {
+            events.push({
+              ...base,
+              id: yield* ids.allocate.event({ threadId, commandId }),
+              type: "turn-item.updated",
+              nodeId: run.rootNodeId,
+              payload: {
+                id: ids.derive.runSignalTurnItem({ runId: run.id, signal: "interrupt-request" }),
+                threadId,
+                runId: run.id,
+                nodeId: run.rootNodeId,
+                providerThreadId: run.providerThreadId,
+                providerTurnId: rootNode?.providerTurnId ?? null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: run.ordinal * 100 + 98,
+                status: "completed",
+                title: "Interrupt requested",
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+                type: "run_interrupt_request",
+                message: reason,
+                cause: "service_update",
+              },
+            });
+          }
           // Where the checkpoint would have been, so the turn shows it has none.
           if (status === "completed" && run.checkpointId === null) {
             events.push({

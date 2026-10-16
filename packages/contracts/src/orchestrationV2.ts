@@ -354,6 +354,11 @@ export const OrchestrationV2ProviderCapabilities = Schema.Struct({
 });
 export type OrchestrationV2ProviderCapabilities = typeof OrchestrationV2ProviderCapabilities.Type;
 
+/** A resolved thread's closing note: one short line. */
+export const OrchestrationV2ThreadSettledNote = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(500),
+);
+
 export const OrchestrationV2AppThread = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
@@ -394,6 +399,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   settledAt: Schema.NullOr(Schema.DateTimeUtc).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** Why the thread was resolved, shown with the resolved banner. */
+  settledNote: Schema.optional(Schema.NullOr(OrchestrationV2ThreadSettledNote)),
   unsettledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -508,6 +515,16 @@ export const OrchestrationV2RunBackgroundWorkCancelled = Schema.Struct({
 export type OrchestrationV2RunBackgroundWorkCancelled =
   typeof OrchestrationV2RunBackgroundWorkCancelled.Type;
 
+/**
+ * The checkout a worktree launch targets: the id of one of the project's
+ * environment repositories, or the absolute path of that repository's checkout.
+ * Omitted means the project root.
+ */
+export const OrchestrationV2ThreadLaunchRepository = TrimmedNonEmptyString.annotate({
+  description:
+    "Nested repository to run git in: an id from the project's environment repositories (studio_project_read lists them under workspaceSettings.environment.repositories) or the absolute path of that repository's checkout. Omit to use the project root.",
+});
+
 export const OrchestrationV2ThreadLaunchWorkspaceStrategy = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("root"),
@@ -517,12 +534,14 @@ export const OrchestrationV2ThreadLaunchWorkspaceStrategy = Schema.Union([
     type: Schema.Literal("existing_worktree"),
     worktreePath: TrimmedNonEmptyString,
     branch: Schema.optional(TrimmedNonEmptyString),
+    repository: Schema.optional(OrchestrationV2ThreadLaunchRepository),
   }),
   Schema.Struct({
     type: Schema.Literal("worktree"),
     baseRef: TrimmedNonEmptyString,
     branch: Schema.optional(TrimmedNonEmptyString),
     startFromOrigin: Schema.optional(Schema.Boolean),
+    repository: Schema.optional(OrchestrationV2ThreadLaunchRepository),
   }),
 ]);
 export type OrchestrationV2ThreadLaunchWorkspaceStrategy =
@@ -546,6 +565,8 @@ export const OrchestrationV2Run = Schema.Struct({
   queuePosition: Schema.optional(Schema.NullOr(PositiveInt)),
   /** Restart recovery holds the queue until the user explicitly resumes it. */
   queueHeld: Schema.optional(Schema.Boolean),
+  /** A service update cancelled this queued run; the restart queues its message again. */
+  cancelledForUpdate: Schema.optional(Schema.Boolean),
   requestedAt: Schema.DateTimeUtc,
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -1158,6 +1179,8 @@ export const OrchestrationV2UserInputQuestion = Schema.Struct({
       label: TrimmedNonEmptyString,
       description: TrimmedNonEmptyString,
       value: Schema.optional(Schema.String),
+      /** The asker's suggested choice, shown with a Recommended badge. */
+      recommended: Schema.optional(Schema.Boolean),
     }),
   ),
   multiSelect: Schema.optional(Schema.Boolean),
@@ -1313,6 +1336,20 @@ export const OrchestrationV2UserMessageInputIntent = Schema.Literals([
 ]);
 export type OrchestrationV2UserMessageInputIntent =
   typeof OrchestrationV2UserMessageInputIntent.Type;
+
+/**
+ * Who stopped a run. `user` is a person's Stop (never resumed on its own);
+ * `agent` an agent's tool call; `service_update` the server stopping work to
+ * install an update, `delegated_cancel` a coordinator cancelling its worker.
+ * Runs stopped for an update resume once the server is back.
+ */
+export const OrchestrationV2RunInterruptCause = Schema.Literals([
+  "user",
+  "agent",
+  "service_update",
+  "delegated_cancel",
+]);
+export type OrchestrationV2RunInterruptCause = typeof OrchestrationV2RunInterruptCause.Type;
 
 const OrchestrationV2TurnItemBaseFields = {
   toolNonExecutionKind: Schema.optional(Schema.String),
@@ -1481,6 +1518,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("run_interrupt_request"),
     message: Schema.String,
+    /** Who asked; absent on older items, which count as the user's Stop. */
+    cause: Schema.optional(OrchestrationV2RunInterruptCause),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -1836,6 +1875,15 @@ export const OrchestrationV2LatestVisibleMessageSummary = Schema.Struct({
 export type OrchestrationV2LatestVisibleMessageSummary =
   typeof OrchestrationV2LatestVisibleMessageSummary.Type;
 
+/** A compact todo-list summary for thread rows: "3/5", the current step and the next. */
+export const OrchestrationV2ThreadPlanProgress = Schema.Struct({
+  completed: NonNegativeInt,
+  total: NonNegativeInt,
+  current: Schema.NullOr(Schema.String),
+  next: Schema.NullOr(Schema.String),
+});
+export type OrchestrationV2ThreadPlanProgress = typeof OrchestrationV2ThreadPlanProgress.Type;
+
 export const OrchestrationV2ThreadShell = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
@@ -1869,6 +1917,17 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   activityRunStatus: Schema.optional(
     Schema.NullOr(Schema.Literals(["preparing", "starting", "running", "waiting"])),
   ),
+  /** The active run's newest unfinished command, tool or subagent. */
+  activeWork: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        label: Schema.String,
+        startedAt: Schema.DateTimeUtc,
+        /** The thread a wait is on, so the UI can link it instead of calling it stalled. */
+        waitThreadId: Schema.optional(Schema.String),
+      }),
+    ),
+  ),
   status: OrchestrationV2ShellThreadStatus,
   lastError: Schema.optional(Schema.NullOr(Schema.String)),
   lastErrorClass: Schema.optional(Schema.NullOr(OrchestrationV2ProviderFailureClass)),
@@ -1882,6 +1941,12 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
    */
   latestUserAuthoredMessageAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   hasActionableProposedPlan: Schema.Boolean,
+  /**
+   * Where the agent's newest todo list stands (Claude TodoWrite, Codex plan
+   * updates and the like). Omitted by servers that predate it and null when
+   * the thread has no todo list.
+   */
+  planProgress: Schema.optional(Schema.NullOr(OrchestrationV2ThreadPlanProgress)),
   /**
    * What the thread's last report says stops the work (its Blockers part),
    * while nobody has written to the thread since. Null when it names none.
@@ -1900,6 +1965,13 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   ),
   /** Native goal on the active provider thread; omitted by servers without goals. */
   goal: Schema.optional(Schema.NullOr(OrchestrationV2ProviderGoal)),
+  /**
+   * Queued messages waiting in a held queue (after Stop, a restart or a provider
+   * failure). They do not start until someone resumes or discards them, so lists
+   * show the thread as waiting on the user. Omitted when none are held and by
+   * servers that predate it.
+   */
+  heldQueuedCount: Schema.optional(NonNegativeInt),
   itemCount: NonNegativeInt,
   visibleItemCount: NonNegativeInt,
   createdAt: Schema.DateTimeUtc,
@@ -2266,6 +2338,8 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("run_interrupt_request"),
     message: Schema.String,
+    /** Who asked; absent on older items, which count as the user's Stop. */
+    cause: Schema.optional(OrchestrationV2RunInterruptCause),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
@@ -2423,6 +2497,15 @@ export const OrchestrationV2ThreadShellJson = OrchestrationV2ThreadShell.mapFiel
   latestRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   latestRunCompletedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   activityRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  activeWork: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        label: Schema.String,
+        startedAt: Schema.DateTimeUtcFromString,
+        waitThreadId: Schema.optional(Schema.String),
+      }),
+    ),
+  ),
   pendingRuntimeRequest: Schema.NullOr(OrchestrationV2PendingRuntimeRequestSummaryJson),
   latestVisibleMessage: Schema.NullOr(OrchestrationV2LatestVisibleMessageSummaryJson),
   latestUserMessageAt: Schema.NullOr(Schema.DateTimeUtcFromString),
@@ -2662,6 +2745,8 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     settledAt: Schema.optional(Schema.DateTimeUtc),
+    /** A short closing note, such as where the work landed. */
+    note: Schema.optional(OrchestrationV2ThreadSettledNote),
   }),
   /**
    * Server-internal settlement (#8600): dispatched by the settlement sweep,
@@ -2921,6 +3006,8 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     runId: RunId,
     reason: Schema.optional(Schema.String),
+    /** Who asked; absent means the user. Only a non-user stop resumes on its own. */
+    cause: Schema.optional(OrchestrationV2RunInterruptCause),
     /**
      * Set by the Stop button. Stop also holds the queue, ends the thread's pull request
      * watches, and stops every delegated task under the thread.
@@ -2951,6 +3038,8 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     runId: RunId,
+    /** A service update cancels the queue; the restart sends those messages again. */
+    cause: Schema.optional(Schema.Literal("service_update")),
   }),
   Schema.Struct({
     type: Schema.Literal("queued-run.edit"),
@@ -2971,6 +3060,8 @@ export const OrchestrationV2Command = Schema.Union([
     decision: Schema.optional(ProviderApprovalDecision),
     answers: Schema.optional(ProviderUserInputAnswers),
     attachmentsByQuestionId: Schema.optional(UserInputAttachments),
+    /** Set when an agent answered on the user's behalf; absent means the user chose. */
+    answeredByThreadId: Schema.optional(ThreadId),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.user-input.dismiss"),
@@ -3119,6 +3210,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     reason: Schema.optional(Schema.String),
+    cause: Schema.optional(OrchestrationV2RunInterruptCause),
   }),
   /**
    * Records or updates a secret an agent asked the user for. Internal so no
@@ -3135,6 +3227,21 @@ const OrchestrationV2InternalCommand = Schema.Union([
     reason: Schema.String,
     placeholder: Schema.optional(Schema.String),
     secretStatus: OrchestrationV2SecretRequestStatus,
+  }),
+  /**
+   * Records a question an agent asked the user through `ask_user`. The answer
+   * arrives back in the thread as a message, so the question outlives the run.
+   */
+  Schema.Struct({
+    type: Schema.Literal("user_input_request.record"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    nodeId: NodeId,
+    requestNodeId: NodeId,
+    requestId: RuntimeRequestId,
+    turnItemId: TurnItemId,
+    questions: Schema.Array(OrchestrationV2UserInputQuestion),
   }),
 ]);
 export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalCommand.Type;

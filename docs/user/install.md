@@ -12,9 +12,9 @@ launch SpecWithCode and configure providers afterwards.
 
 Download [SpecWithCode-arm64.dmg](https://github.com/anton-abyzov/specwithcode/releases/latest/download/SpecWithCode-arm64.dmg),
 the latest release, and drag SpecWithCode to Applications. It runs on Apple
-silicon Macs with macOS 13 or later. The build is not notarized yet: on first launch, open
-**System Settings → Privacy & Security** and choose **Open Anyway**. The desktop app starts the local
-service for you.
+silicon Macs with macOS 13 or later. Releases are signed with an Apple Developer ID and notarized,
+so the app opens without a security override. The desktop app starts the local service for you.
+Windows, Linux and Intel Mac builds are not published yet.
 
 ## Command line
 
@@ -22,21 +22,22 @@ A one-line installer is not available yet. No site hosts `install.sh` or `instal
 installer scripts in `scripts/` do not yet match the release archive names. Use the desktop app, or
 [build from source](#build-from-source).
 
-Once `specweave-studio` is on your `PATH` (built from source, or from the desktop app), these commands cover the basics:
+Once `specwithcode` is on your `PATH` (built from source, or from the desktop app), these commands cover the basics.
+The same tool is also installed under its original name, `specweave-studio`, so older scripts keep working.
 
-| Task                                             | Command                                                                 |
-| ------------------------------------------------ | ----------------------------------------------------------------------- |
-| Start the server and open the web app            | `specweave-studio`                                                      |
-| Start the server without a browser               | `specweave-studio serve`                                                |
-| Keep it running in the background (macOS, Linux) | `specweave-studio service install` ([details](./background-service.md)) |
-| Move to a newer release                          | See [Updating SpecWithCode](./updating.md)                              |
-| Remove it again                                  | `specweave-studio uninstall`                                            |
+| Task                                             | Command                                                             |
+| ------------------------------------------------ | ------------------------------------------------------------------- |
+| Start the server and open the web app            | `specwithcode`                                                      |
+| Start the server without a browser               | `specwithcode serve`                                                |
+| Keep it running in the background (macOS, Linux) | `specwithcode service install` ([details](./background-service.md)) |
+| Move to a newer release                          | See [Updating SpecWithCode](./updating.md)                          |
+| Remove it again                                  | `specwithcode uninstall`                                            |
 
-Run `specweave-studio help` or `specweave-studio --help` for the full reference. To start in a new working
-directory, use an explicit path such as `specweave-studio ./my-project`. A bare directory name
+Run `specwithcode help` or `specwithcode --help` for the full reference. To start in a new working
+directory, use an explicit path such as `specwithcode ./my-project`. A bare directory name
 is accepted only if it already exists.
 
-If `specweave-studio` or `specweave-studio start` reports an already running server, connect to that server
+If `specwithcode` or `specwithcode start` reports an already running server, connect to that server
 instead. Stop it before starting a replacement, or use a different `--base-dir`
 for an independent server.
 
@@ -61,36 +62,27 @@ node apps/server/dist/bin.mjs
 The background service does not apply to a server run this way; update it with
 `git pull` and a rebuild.
 
-There is no `specweave-studio` executable for Intel Macs, so building from source is the only
+There is no `specwithcode` executable for Intel Macs, so building from source is the only
 way to run a server there.
 
-## Desktop app
+## Windows Subsystem for Linux
 
-Download a release from [GitHub Releases](https://github.com/anton-abyzov/specwithcode/releases).
-On Debian or Ubuntu, install the downloaded package with
-`sudo apt install ./SpecWithCode-*.deb`.
-
-The `.deb` updates itself like the other desktop builds. It asks for your
-password to install each update. If your desktop has no password prompt, the
-update fails. Download the new `.deb` and install it the same way.
-
-### Windows Subsystem for Linux
-
+Windows builds are not published yet; this applies to a Windows desktop app built from source.
 Choose a WSL distro in **Settings → Connections** to run agents and projects
 there. Install the provider CLIs inside that distro. SpecWithCode installs its own
 server runtime there automatically; the first launch after an app update can
 take longer.
 
-### Open a project from a terminal
+## Open a project from a terminal
 
 With the desktop app already running on the same machine:
 
 ```bash
-specweave-studio app
+specwithcode app
 ```
 
 This opens a new thread for the current directory, adding the project if needed.
-Pass a path, such as `specweave-studio app ../my-project`, to open another directory. It requires
+Pass a path, such as `specwithcode app ../my-project`, to open another directory. It requires
 the desktop app, so a standalone server or an SSH session is not enough. If the
 command cannot reach the app, start or update the desktop app and try again.
 
@@ -101,7 +93,7 @@ Play, and there is no TestFlight or Google Play beta. To use SpecWithCode from a
 the web app in the phone's browser and follow [remote access](./remote-access.md).
 
 The mobile app's source is in `apps/mobile`. A build you make from it connects to a server on
-another machine through Studio Connect or a pairing URL. If that build crashes during launch,
+another machine through SpecWithCode Connect or a pairing URL. If that build crashes during launch,
 open Settings → Diagnostics on the next launch that succeeds. It lists startup crashes from the
 last 7 days with the error and component stack. Copy the report and paste it into a GitHub
 issue. Error messages can quote values from the app, so read it over before sharing.

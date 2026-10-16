@@ -28,7 +28,11 @@ export * from "./checkpointDiff.ts";
 export * from "./model.ts";
 export * from "./keybindings.ts";
 export * from "./mods.ts";
+export * from "./composerDraft.ts";
+export * from "./browserBridge.ts";
+export * from "./browserExtension.ts";
 export * from "./telegramChannel.ts";
+export * from "./statusPage.ts";
 export * from "./googleAccount.ts";
 export * from "./server.ts";
 export * from "./settings.ts";
@@ -79,6 +83,7 @@ export * from "./studio.ts";
 
 export * from "./projectUsage.ts";
 export * from "./projectSkills.ts";
+export * from "./threadIncrementProgress.ts";
 
 export * from "./machineHandoff.ts";
 

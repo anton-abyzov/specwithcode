@@ -1,6 +1,6 @@
 # Workflow candidate
 
-This candidate adds Settings → Agents to installed Studio v0.1.4's source baseline. It runs from its own built server and uses a separate profile by default:
+This candidate adds Settings → Agents to installed SpecWithCode v0.1.4's source baseline. It runs from its own built server and uses a separate profile by default:
 
 ```sh
 node scripts/studio-verify/workflow-candidate.mjs

@@ -2,10 +2,10 @@
 """Removes unpacked Studio releases that no service can start any more.
 
 Each update unpacks a release of about 340 MB under
-~/.local/share/specweave-studio/releases/<sha20>, and nothing removed old ones.
+~/.specwithcode/install/releases/<sha20>, and nothing removed old ones.
 After a verified update this keeps:
 - the release the service now runs and the one it ran before (the rollback target);
-- every release named by any ~/.specweave-studio/<identity>/launch.sh or
+- every release named by any ~/.specwithcode/<identity>/launch.sh or
   installation.json, so another identity's service is never broken;
 - anything unpacked in the last hour, which may belong to an update in flight;
 - anything that is not a plain <sha20> directory.
@@ -16,22 +16,23 @@ import re
 import shutil
 import time
 
+import studio_paths
+
 RELEASE_NAME = re.compile(r'[a-f0-9]{20}')
-RELEASE_REFERENCE = re.compile(r'specweave-studio/releases/([a-f0-9]{20})(?![a-f0-9])')
+RELEASE_REFERENCE = re.compile(r'(?:specweave-studio|install)/releases/([a-f0-9]{20})(?![a-f0-9])')
 RECENT_SECONDS = 3600
 
 
 def releases_root(home):
-    return pathlib.Path(home) / '.local/share/specweave-studio/releases'
+    return studio_paths.releases_root(home)
 
 
 def referenced_releases(home):
     """Release names that any Studio identity's launcher or receipt points at."""
     names = set()
-    studio = pathlib.Path(home) / '.specweave-studio'
-    if not studio.is_dir() or studio.is_symlink():
-        return names
-    for identity in studio.iterdir():
+    roots = [root for root in (studio_paths.branded_root(home), studio_paths.legacy_root(home))
+             if root.is_dir() and not root.is_symlink()]
+    for identity in (entry for root in roots for entry in root.iterdir()):
         if identity.is_symlink() or not identity.is_dir():
             continue
         for file_name in ('launch.sh', 'installation.json'):

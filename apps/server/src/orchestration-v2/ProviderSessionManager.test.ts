@@ -460,6 +460,22 @@ function makeProviderAdapter(
   };
 }
 
+/** The adapter, plus copies of it that serve `extraInstanceIds`. */
+function layerAdapterInstances(
+  extraInstanceIds: ReadonlyArray<ProviderInstanceId>,
+  adapter: ProviderAdapterV2Shape,
+) {
+  return ProviderAdapterRegistry.layerFromAdapters([
+    adapter,
+    ...extraInstanceIds.map((instanceId): ProviderAdapterV2Shape => ({
+      ...adapter,
+      instanceId,
+      openSession: (input) =>
+        adapter.openSession(input).pipe(Effect.map((runtime) => ({ ...runtime, instanceId }))),
+    })),
+  ]);
+}
+
 function layerTest(input: {
   readonly state: Ref.Ref<TestProviderRuntimeState>;
   readonly idleTimeoutMs: number;
@@ -491,6 +507,8 @@ function layerTest(input: {
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
   readonly capacityLayer?: Layer.Layer<StudioCapacity.Capacity>;
+  /** More provider instances served by the same fake adapter. */
+  readonly extraInstanceIds?: ReadonlyArray<ProviderInstanceId>;
 }) {
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
@@ -500,7 +518,8 @@ function layerTest(input: {
         : input.failReleaseEventWrites
           ? layerFailingReleaseEventSink
           : layerTestEventSink;
-  const layerRegistry = ProviderAdapterRegistry.layerSingle(
+  const layerRegistry = layerAdapterInstances(
+    input.extraInstanceIds ?? [],
     makeProviderAdapter(input.state, {
       failEventStream: input.failEventStream ?? false,
       ...(input.capabilities === undefined ? {} : { capabilities: input.capabilities }),
@@ -1200,14 +1219,16 @@ it.effect("ProviderSessionManagerV2 cleans up an open interrupted mid-handshake"
       assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
 
       // Nothing of the interrupted open is left behind: the next open starts a
-      // fresh process with a fresh credential that a later release revokes,
-      // which a leaked reservation would prevent.
+      // fresh process whose re-issued credential (the thread's deterministic
+      // token, honored again) a later release revokes, which a leaked
+      // reservation would prevent.
       yield* Ref.set(holdHandshake, false);
       yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
       const replacement = (yield* Ref.get(mcpConfigs)).at(-1);
       const replacementToken = replacement?.authorizationHeader.replace(/^Bearer\s+/, "");
       assert.isDefined(replacementToken);
-      assert.notEqual(replacementToken, token);
+      assert.notEqual(replacement?.providerSessionId, issued?.providerSessionId);
+      assert.isDefined(yield* registry.resolve(replacementToken!));
       const projection = yield* projectionStore.getThreadProjection(threadId);
       assert.equal(projection.providerSessions.at(-1)?.status, "ready");
 
@@ -2241,6 +2262,154 @@ it.effect(
     }),
 );
 
+it.effect(
+  "ProviderSessionManagerV2 issues a fresh MCP credential when another provider took the thread's slot",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-slot-taken");
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const own = McpProviderSession.readMcpProviderSession(threadId);
+        assert.isDefined(own);
+
+        // A run on another provider (a limit switch, a scheduled task) revokes
+        // this thread's credentials and puts its own in the slot.
+        yield* registry.revokeThread(threadId);
+        McpProviderSession.setMcpProviderSession({
+          ...own!,
+          providerSessionId: "other-session",
+          providerInstanceId: ProviderInstanceId.make("other-instance"),
+          authorizationHeader: "Bearer other",
+        });
+
+        // Back on the still-attached session, the thread gets its own credential again.
+        yield* runtime.resumeThread({
+          threadId,
+          providerThread: makeProviderThread({
+            idAllocator,
+            threadId,
+            providerSessionId,
+            now,
+            nativeThreadId: "native-slot-taken",
+          }),
+        });
+        const config = McpProviderSession.readMcpProviderSession(threadId);
+        assert.equal(config?.providerInstanceId, modelSelection.instanceId);
+        const token = config!.authorizationHeader.replace(/^Bearer\s+/, "");
+        assert.equal((yield* registry.resolve(token))?.thread.threadId, threadId);
+      }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 keeps a provider's MCP credential when the thread runs on another provider",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const otherInstanceId = ProviderInstanceId.make("claudeAgent");
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-two-instances");
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const firstSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        const first = yield* manager.open({
+          threadId,
+          providerSessionId: firstSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const firstConfig = McpProviderSession.readMcpProviderSession(
+          threadId,
+          modelSelection.instanceId,
+        );
+        assert.isDefined(firstConfig);
+        const firstToken = firstConfig!.authorizationHeader.replace(/^Bearer\s+/, "");
+
+        // A limit switch, a handoff or a run on another provider opens that
+        // provider's session for the thread while the first one stays
+        // attached, its background agents still working.
+        yield* manager.open({
+          threadId,
+          providerSessionId: idAllocator.derive.providerSession({
+            providerInstanceId: otherInstanceId,
+          }),
+          modelSelection: { instanceId: otherInstanceId, model: "claude-opus-5-5" },
+          runtimePolicy,
+        });
+        const otherConfig = McpProviderSession.readMcpProviderSession(threadId);
+        assert.equal(otherConfig?.providerInstanceId, otherInstanceId);
+        const otherToken = otherConfig!.authorizationHeader.replace(/^Bearer\s+/, "");
+        assert.notEqual(otherToken, firstToken);
+
+        // The first provider's credential still resolves as its own: its
+        // calls are told who runs the thread instead of failing with a 401
+        // that makes its MCP client drop the tools.
+        const firstScope = yield* registry.resolve(firstToken);
+        assert.equal(firstScope?.thread.providerInstanceId, modelSelection.instanceId);
+        assert.isTrue(McpProviderSession.isLiveMcpProviderSession(firstScope!.thread));
+        assert.equal(
+          McpProviderSession.readMcpProviderSession(threadId, modelSelection.instanceId)
+            ?.authorizationHeader,
+          firstConfig!.authorizationHeader,
+        );
+
+        // Back on the first provider, its credential is the thread's current
+        // one again, and the other provider keeps its own.
+        yield* first.resumeThread({
+          threadId,
+          providerThread: makeProviderThread({
+            idAllocator,
+            threadId,
+            providerSessionId: firstSessionId,
+            now,
+            nativeThreadId: "native-two-instances",
+          }),
+        });
+        assert.equal(
+          McpProviderSession.readMcpProviderSession(threadId)?.providerInstanceId,
+          modelSelection.instanceId,
+        );
+        assert.equal(
+          (yield* registry.resolve(firstToken))?.thread.providerInstanceId,
+          modelSelection.instanceId,
+        );
+        assert.equal(
+          (yield* registry.resolve(otherToken))?.thread.providerInstanceId,
+          otherInstanceId,
+        );
+      }).pipe(
+        Effect.provide(
+          layerTest({ state, idleTimeoutMs: 60_000, extraInstanceIds: [otherInstanceId] }),
+        ),
+      );
+    }),
+);
+
 it.effect("ProviderSessionManagerV2 duplicate detach preserves replacement MCP credentials", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
@@ -2630,10 +2799,82 @@ it.effect("ProviderSessionManagerV2 terminal detach revokes the thread's MCP cre
       });
       assert.isUndefined(yield* registry.resolve(token!));
       assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
+
+      // Invalidation retires the token value itself: issuing for the thread
+      // again (an unarchive) cannot revive the copy an agent still holds.
+      const reissued = yield* registry.issue({
+        threadId,
+        providerInstanceId: modelSelection.instanceId,
+      });
+      assert.notEqual(reissued.config.authorizationHeader, issued?.authorizationHeader);
+      assert.isUndefined(yield* registry.resolve(token!));
     });
 
     yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1_000, mcpConfigs })));
   }),
+);
+
+const credentialReleases = [
+  { name: "a server shutdown", kept: true, release: "shutdown" },
+  { name: "an update's forced release", kept: true, release: "update" },
+  { name: "an update's release of a hung turn", kept: true, release: "hung" },
+  { name: "an ordinary forced release", kept: false, release: "manual" },
+] as const;
+
+it.effect.each(credentialReleases)(
+  "ProviderSessionManagerV2 MCP credentials after $name",
+  ({ kept, release }) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const mcpConfigs = yield* Ref.make<
+        ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+      >([]);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-shutdown-credential");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        const token = (yield* Ref.get(mcpConfigs))
+          .at(-1)
+          ?.authorizationHeader.replace(/^Bearer\s+/, "");
+        assert.isDefined(token);
+
+        // An update restart: agent processes or MCP bridges that outlive this
+        // server must still be admitted by the next one, so shutdown does not
+        // revoke (the registry persists the credential).
+        if (release === "shutdown") {
+          yield* manager.shutdown;
+        } else if (release === "hung") {
+          yield* manager.release({
+            providerSessionId,
+            reason: "manual_shutdown",
+            keepMcpCredentials: true,
+          });
+        } else {
+          yield* manager.releaseIdle({
+            detail: "test",
+            includeBusy: true,
+            ...(release === "update" ? { keepMcpCredentials: true } : {}),
+          });
+        }
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+        const resolved = yield* registry.resolve(token!);
+        if (kept) assert.isDefined(resolved);
+        else assert.isUndefined(resolved);
+      });
+
+      yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, mcpConfigs })));
+    }),
 );
 
 it.effect("ProviderSessionManagerV2 releases idle sessions without sweeping all sessions", () =>

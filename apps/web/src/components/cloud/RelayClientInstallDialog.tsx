@@ -69,8 +69,8 @@ export function RelayClientInstallDialog() {
           </DialogTitle>
           <DialogDescription>
             {isInstalling
-              ? "SpecWithCode is preparing this environment for secure access through Studio Connect."
-              : "SpecWithCode needs the relay client to make this environment available through Studio Connect."}
+              ? "SpecWithCode is preparing this environment for secure access through SpecWithCode Connect."
+              : "SpecWithCode needs the relay client to make this environment available through SpecWithCode Connect."}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel scrollFade={false}>

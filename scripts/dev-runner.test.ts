@@ -908,7 +908,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
 
     // `tailscale serve` config outlives the process, so a dry run that shared
     // would replace and then tear down whatever mapping the port already had.
-    // Base-dir precedence (--home-dir > worktree .specweave-studio > ambient STUDIO_HOME)
+    // Base-dir precedence (--home-dir > worktree .specwithcode > ambient STUDIO_HOME)
     // lives in runDevRunnerWithInput; the env builder must not consult the
     // ambient variable on its own, or it would silently outrank the worktree
     // default and land dev state on the user's real database.
@@ -1307,11 +1307,11 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             cwd: root,
             ambientHome: "/home/user/.specweave-studio",
           });
-          assert.equal(home, path.join(path.resolve(root), ".specweave-studio"));
+          assert.equal(home, path.join(path.resolve(root), ".specwithcode"));
         }).pipe(Effect.scoped),
       );
 
-      it.effect("prefers the worktree .specweave-studio over an ambient STUDIO_HOME", () =>
+      it.effect("prefers the worktree .specwithcode over an ambient STUDIO_HOME", () =>
         Effect.gen(function* () {
           const path = yield* Path.Path;
           const root = yield* makeWorktree;
@@ -1320,7 +1320,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             cwd: root,
             ambientHome: "/home/user/.specweave-studio",
           });
-          assert.equal(home, path.join(path.resolve(root), ".specweave-studio"));
+          assert.equal(home, path.join(path.resolve(root), ".specwithcode"));
         }).pipe(Effect.scoped),
       );
 

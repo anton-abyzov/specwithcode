@@ -10,6 +10,7 @@ import {
 import { Rpc } from "effect/rpc";
 import * as Schema from "effect/Schema";
 import { EnvironmentAuthorizationError } from "./auth.ts";
+import { ProjectFolderCheck, ProjectFolderCheckError, ProjectFolderCheckInput } from "./project.ts";
 import {
   ProjectPlanReadInput,
   ProjectPlanAuthorityReadResult,
@@ -54,6 +55,14 @@ import {
   ProjectUsageReadError,
 } from "./projectUsage.ts";
 import {
+  ProjectIncrementsListInput,
+  ProjectIncrementsListResult,
+  ThreadIncrementLinkInput,
+  ThreadIncrementLinkResult,
+  ThreadIncrementProgressInput,
+  ThreadIncrementProgressSnapshot,
+} from "./threadIncrementProgress.ts";
+import {
   ProjectSkillsReadError,
   ProjectSkillsReadInput,
   ProjectSkillsSnapshot,
@@ -63,6 +72,7 @@ export const PROJECT_WORKSPACE_RPC_METHODS = {
   projectsEnvironmentPrepare: "projects.environmentPrepare",
   projectsEnvironmentImportPreview: "projects.environmentImportPreview",
   projectsEnvironmentImport: "projects.environmentImport",
+  projectsFolderCheck: "projects.folderCheck",
   projectsPlanRead: "projects.planRead",
   projectsPlanAuthorityRead: "projects.planAuthorityRead",
   projectsPlanReplace: "projects.planReplace",
@@ -85,6 +95,9 @@ export const PROJECT_WORKSPACE_RPC_METHODS = {
   projectsLibraryAddArtifact: "projects.libraryAddArtifact",
   projectsThreadReportsRead: "projects.threadReportsRead",
   projectsThreadReportSave: "projects.threadReportSave",
+  projectsThreadIncrementProgressRead: "projects.threadIncrementProgressRead",
+  projectsIncrementsList: "projects.incrementsList",
+  projectsThreadIncrementLink: "projects.threadIncrementLink",
 } as const;
 const error = Schema.Union([ProjectWorkspaceError, EnvironmentAuthorizationError]);
 const planError = Schema.Union([ProjectPlanError, EnvironmentAuthorizationError]);
@@ -95,6 +108,11 @@ const planChange = {
 };
 const planTask = { ...planChange, taskId: ProjectPlanTaskInput.fields.taskId };
 export const projectWorkspaceRpcs = [
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsFolderCheck, {
+    payload: ProjectFolderCheckInput,
+    success: ProjectFolderCheck,
+    error: Schema.Union([ProjectFolderCheckError, EnvironmentAuthorizationError]),
+  }),
   Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsEnvironmentImportPreview, {
     payload: ProjectEnvironmentImportPreviewInput,
     success: ProjectEnvironmentImportPreview,
@@ -242,5 +260,20 @@ export const projectWorkspaceRpcs = [
     payload: ProjectThreadReportSaveInput,
     success: ProjectThreadReportsSnapshot,
     error: Schema.Union([ProjectLibraryError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsThreadIncrementProgressRead, {
+    payload: ThreadIncrementProgressInput,
+    success: ThreadIncrementProgressSnapshot,
+    error,
+  }),
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsIncrementsList, {
+    payload: ProjectIncrementsListInput,
+    success: ProjectIncrementsListResult,
+    error,
+  }),
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsThreadIncrementLink, {
+    payload: ThreadIncrementLinkInput,
+    success: ThreadIncrementLinkResult,
+    error,
   }),
 ] as const;

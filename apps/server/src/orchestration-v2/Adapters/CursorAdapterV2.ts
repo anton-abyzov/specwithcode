@@ -2179,6 +2179,7 @@ export function makeCursorAdapterV2(
             harness: "Cursor",
             model: turnInput.modelSelection.model,
             responseStyle: turnInput.runtimePolicy.responseStyle,
+            agentInstructions: turnInput.runtimePolicy.agentInstructions,
           });
           const text = `${userText}\n\n${runtimeInstructions}`;
           return images.length === 0

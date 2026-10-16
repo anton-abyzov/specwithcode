@@ -12,6 +12,9 @@ import json
 import pathlib
 import sqlite3
 import sys
+import studio_paths
+
+import live_database
 
 GENERIC_MESSAGES = {
     'Provider turn failed.',
@@ -33,8 +36,7 @@ select r.run_id, r.thread_id, r.provider, r.requested_at, r.completed_at,
 
 
 def open_read_only(database):
-    uri = pathlib.Path(database).resolve().as_uri() + '?mode=ro'
-    return sqlite3.connect(uri, uri=True)
+    return live_database.connect(pathlib.Path(database).resolve())
 
 
 def failures(connection, since):
@@ -74,7 +76,7 @@ def main(argv=None):
     parser.add_argument('--hours', type=float, default=24.0, help='How far back to look.')
     parser.add_argument('--json', action='store_true')
     args = parser.parse_args(argv)
-    database = args.database or str(pathlib.Path.home() / '.specweave-studio' / args.identity / 'userdata' / 'statev2.sqlite')
+    database = args.database or str(studio_paths.identity_home(pathlib.Path.home(), args.identity) / 'userdata' / 'statev2.sqlite')
     since = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=args.hours)).strftime('%Y-%m-%dT%H:%M:%S.000Z')
     with open_read_only(database) as connection:
         rows = failures(connection, since)

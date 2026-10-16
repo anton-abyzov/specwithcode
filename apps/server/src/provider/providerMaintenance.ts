@@ -413,7 +413,13 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   if (!context) {
     return manual;
   }
-  if ((yield* independentProviderMaintenance({ provider: definition.provider, packageName: definition.npmPackageName, context })) !== null) {
+  if (
+    (yield* independentProviderMaintenance({
+      provider: definition.provider,
+      packageName: definition.npmPackageName,
+      context,
+    })) !== null
+  ) {
     return manual;
   }
   const commandPaths = [context.resolvedCommandPath, context.realCommandPath];
@@ -765,9 +771,10 @@ export function createProviderVersionAdvisory(input: {
     canUpdate: capabilities.update !== null,
     canInstallVersion: makeTargetedProviderUpdateAction(capabilities, "0.0.0") !== null,
     checkedAt: input.checkedAt ?? null,
-    message: advisory.status === "behind_latest" && capabilities.update === null
-      ? "Update the configured executable with its owning installer, then refresh Providers. This installation cannot be updated from Studio."
-      : advisory.message,
+    message:
+      advisory.status === "behind_latest" && capabilities.update === null
+        ? "Update the configured executable with its owning installer, then refresh Providers. This installation cannot be updated from SpecWithCode."
+        : advisory.message,
   };
 }
 

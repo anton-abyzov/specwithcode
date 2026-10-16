@@ -40,6 +40,8 @@ export type TerminalSessionInput = Schema.Codec.Encoded<typeof TerminalSessionIn
 export const TerminalOpenInput = Schema.Struct({
   ...TerminalSessionInput.fields,
   cwd: TrimmedNonEmptyStringSchema,
+  /** Used when `cwd` no longer exists (e.g. a removed worktree); home is the last resort. */
+  fallbackCwd: Schema.optional(TrimmedNonEmptyStringSchema),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyStringSchema)),
   cols: Schema.optional(TerminalColsSchema),
   rows: Schema.optional(TerminalRowsSchema),
@@ -51,6 +53,7 @@ export type TerminalOpenInput = typeof TerminalOpenInput.Type;
 export const TerminalAttachInput = Schema.Struct({
   ...TerminalSessionInput.fields,
   cwd: Schema.optional(TrimmedNonEmptyStringSchema),
+  fallbackCwd: Schema.optional(TrimmedNonEmptyStringSchema),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyStringSchema)),
   cols: Schema.optional(TerminalColsSchema),
   rows: Schema.optional(TerminalRowsSchema),
@@ -82,6 +85,7 @@ export type TerminalClearInput = Schema.Codec.Encoded<typeof TerminalClearInput>
 export const TerminalRestartInput = Schema.Struct({
   ...TerminalSessionInput.fields,
   cwd: TrimmedNonEmptyStringSchema,
+  fallbackCwd: Schema.optional(TrimmedNonEmptyStringSchema),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyStringSchema)),
   cols: TerminalColsSchema,
   rows: TerminalRowsSchema,

@@ -27,6 +27,12 @@ import { Checkbox } from "../ui/checkbox";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
+import { ArchivedDisclosure } from "./ArchivedDisclosure";
+import {
+  bulkServiceChanges,
+  enableAllChanges,
+  partitionGoogleProjects,
+} from "./googleAccountSettings.logic";
 import { MORNING_BRIEFING_TEMPLATE } from "./scheduledTasksSettings.logic";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 
@@ -69,18 +75,14 @@ export function GoogleAccountSettingsPanel() {
   const remove = useAtomCommand(serverEnvironment.removeGoogleAccount, { reportFailure: false });
 
   const allProjects = useProjects();
-  const projects = useMemo(
+  const scratchRoot = config?.scratchWorkspaceRoot ?? null;
+  const { active: projects, archived: archivedProjects } = useMemo(
     () =>
-      allProjects
-        .filter((project) => project.environmentId === environmentId)
-        // Personal projects first: they are where a personal agent lives.
-        .toSorted(
-          (left, right) =>
-            Number(right.workspaceSettings?.kind === "personal") -
-              Number(left.workspaceSettings?.kind === "personal") ||
-            left.title.localeCompare(right.title),
-        ),
-    [allProjects, environmentId],
+      partitionGoogleProjects(
+        allProjects.filter((project) => project.environmentId === environmentId),
+        () => scratchRoot,
+      ),
+    [allProjects, environmentId, scratchRoot],
   );
 
   const [clientId, setClientId] = useState("");
@@ -98,6 +100,15 @@ export function GoogleAccountSettingsPanel() {
     const timer = window.setInterval(refresh, 3_000);
     return () => window.clearInterval(timer);
   }, [signingIn, refresh]);
+
+  // Access starts off; right after an account connects, offer every active project in one click.
+  const connected = status?.connected;
+  const [seenConnected, setSeenConnected] = useState(connected);
+  const [offerEnableAll, setOfferEnableAll] = useState(false);
+  if (connected !== undefined && connected !== seenConnected) {
+    setSeenConnected(connected);
+    setOfferEnableAll(seenConnected === false && connected);
+  }
 
   const run = async <A,>(
     title: string,
@@ -179,6 +190,106 @@ export function GoogleAccountSettingsPanel() {
     );
   };
 
+  const applyChanges = async (
+    title: string,
+    changes: ReadonlyArray<{ projectId: ProjectId; services: ReadonlyArray<GoogleService> }>,
+  ) => {
+    if (environmentId === null || changes.length === 0) return;
+    setBusy(true);
+    try {
+      for (const change of changes) {
+        const result = await setProjectAccess({
+          environmentId,
+          input: { projectId: change.projectId, services: [...change.services] },
+        });
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result)) {
+            const failure = squashAtomCommandFailure(result);
+            toastManager.add({
+              type: "error",
+              title,
+              description:
+                failure instanceof Error ? failure.message : "The host refused the change.",
+            });
+          }
+          return;
+        }
+      }
+    } finally {
+      setBusy(false);
+      refresh();
+    }
+  };
+
+  const activeIds = projects.map((project) => project.id);
+  const setServiceForAll = (service: GoogleService, on: boolean) => {
+    if (status === null) return;
+    // Disabling also covers archived projects, so nothing keeps reading behind a collapsed list.
+    const ids = on ? activeIds : [...activeIds, ...archivedProjects.map((project) => project.id)];
+    void applyChanges(
+      on ? "Could not enable access" : "Could not disable access",
+      bulkServiceChanges(status.projects, ids, service, on),
+    );
+  };
+  const enableAllPending =
+    status === null ? [] : enableAllChanges(status.projects, activeIds, status.services);
+
+  const renderProjectRow = (project: (typeof projects)[number]) => {
+    if (status === null) return null;
+    const enabled = status.projects.find((entry) => entry.projectId === project.id)?.services ?? [];
+    return (
+      <li
+        key={project.id}
+        className="flex flex-col gap-2 px-3 py-2 sm:flex-row sm:items-center sm:justify-between sm:px-4"
+      >
+        <span className="min-w-0 truncate text-sm">
+          {project.title}
+          {project.workspaceSettings?.kind === "personal" ? (
+            <span className="text-muted-foreground"> (personal)</span>
+          ) : null}
+        </span>
+        <div className="flex flex-wrap items-center gap-4">
+          {GOOGLE_SERVICES.map((service) => {
+            const granted = status.services.includes(service);
+            return (
+              <label
+                key={service}
+                className="flex items-center gap-1.5 text-muted-foreground text-xs"
+              >
+                <Switch
+                  size="sm"
+                  checked={granted && enabled.includes(service)}
+                  disabled={!canWrite || busy || !granted}
+                  aria-label={`${SERVICE_LABELS[service]} for ${project.title}`}
+                  onCheckedChange={(on) => toggleService(project.id, service, on)}
+                />
+                {SERVICE_LABELS[service]}
+              </label>
+            );
+          })}
+          {enabled.length > 0 ? (
+            <Button
+              size="xs"
+              variant="ghost-muted"
+              render={
+                <Link
+                  to="/settings/scheduled-tasks"
+                  search={{
+                    template: MORNING_BRIEFING_TEMPLATE,
+                    projectId: project.id,
+                    returnTo,
+                  }}
+                />
+              }
+            >
+              Morning briefing
+            </Button>
+          ) : null}
+        </div>
+      </li>
+    );
+  };
+
   return (
     <SettingsPageContainer>
       <SettingsSection
@@ -201,7 +312,8 @@ export function GoogleAccountSettingsPanel() {
           <p className="text-xs">
             Access is read-only: agents cannot send, change or delete anything. SpecWithCode talks
             Google from this machine, keeps the sign-in in a private file on this machine, and gives
-            a project nothing until you turn it on below.
+            a project nothing until you turn it on below. Only your Personal project starts with
+            access.
           </p>
         </div>
 
@@ -416,68 +528,102 @@ export function GoogleAccountSettingsPanel() {
                 Agents in a project see only the services you turn on for it.
               </span>
             </div>
-            {projects.length === 0 ? (
+            {offerEnableAll && enableAllPending.length > 0 ? (
+              <div
+                role="status"
+                className="mx-3 mb-2 flex flex-col gap-2 rounded-md border bg-muted/40 p-3 text-sm sm:mx-4 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <span>
+                  Connected. Let all {projects.length} active{" "}
+                  {projects.length === 1 ? "project" : "projects"} read{" "}
+                  {listServices(status.services)}?
+                </span>
+                <div className="flex gap-2">
+                  <Button
+                    size="xs"
+                    disabled={!canWrite || busy}
+                    onClick={() => {
+                      setOfferEnableAll(false);
+                      void applyChanges("Could not enable access", enableAllPending);
+                    }}
+                  >
+                    Enable for all active projects
+                  </Button>
+                  <Button size="xs" variant="ghost-muted" onClick={() => setOfferEnableAll(false)}>
+                    Not now
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+            {projects.length === 0 && archivedProjects.length === 0 ? (
               <p className="px-3 pb-4 text-muted-foreground text-sm sm:px-4">
                 Add a project first. A Personal project suits a personal agent.
               </p>
             ) : (
-              <ul className="flex flex-col pb-2">
-                {projects.map((project) => {
-                  const enabled =
-                    status.projects.find((entry) => entry.projectId === project.id)?.services ?? [];
-                  return (
-                    <li
-                      key={project.id}
-                      className="flex flex-col gap-2 px-3 py-2 sm:flex-row sm:items-center sm:justify-between sm:px-4"
-                    >
-                      <span className="min-w-0 truncate text-sm">
-                        {project.title}
-                        {project.workspaceSettings?.kind === "personal" ? (
-                          <span className="text-muted-foreground"> (personal)</span>
-                        ) : null}
-                      </span>
-                      <div className="flex flex-wrap items-center gap-4">
-                        {GOOGLE_SERVICES.map((service) => {
-                          const granted = status.services.includes(service);
-                          return (
-                            <label
-                              key={service}
-                              className="flex items-center gap-1.5 text-muted-foreground text-xs"
-                            >
-                              <Switch
-                                size="sm"
-                                checked={granted && enabled.includes(service)}
-                                disabled={!canWrite || busy || !granted}
-                                aria-label={`${SERVICE_LABELS[service]} for ${project.title}`}
-                                onCheckedChange={(on) => toggleService(project.id, service, on)}
-                              />
-                              {SERVICE_LABELS[service]}
-                            </label>
-                          );
-                        })}
-                        {enabled.length > 0 ? (
-                          <Button
-                            size="xs"
-                            variant="ghost-muted"
-                            render={
-                              <Link
-                                to="/settings/scheduled-tasks"
-                                search={{
-                                  template: MORNING_BRIEFING_TEMPLATE,
-                                  projectId: project.id,
-                                  returnTo,
-                                }}
-                              />
-                            }
+              <>
+                {status.services.length > 0 && projects.length > 0 ? (
+                  <div className="flex flex-col gap-1 border-b px-3 pb-2 sm:px-4">
+                    {GOOGLE_SERVICES.filter((service) => status.services.includes(service)).map(
+                      (service) => {
+                        const label = SERVICE_LABELS[service];
+                        const onCount = projects.filter((project) =>
+                          status.projects
+                            .find((entry) => entry.projectId === project.id)
+                            ?.services.includes(service),
+                        ).length;
+                        const anyOn =
+                          bulkServiceChanges(
+                            status.projects,
+                            [...projects, ...archivedProjects].map((project) => project.id),
+                            service,
+                            false,
+                          ).length > 0;
+                        return (
+                          <div
+                            key={service}
+                            className="flex flex-wrap items-center justify-between gap-2 text-xs"
                           >
-                            Morning briefing
-                          </Button>
-                        ) : null}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
+                            <span className="text-muted-foreground">
+                              <span className="font-medium text-foreground">{label}</span> ·{" "}
+                              {onCount} of {projects.length} active
+                            </span>
+                            <div className="flex gap-1">
+                              <Button
+                                size="xs"
+                                variant="ghost-muted"
+                                disabled={!canWrite || busy || onCount === projects.length}
+                                aria-label={`Enable ${label} for all active projects`}
+                                onClick={() => setServiceForAll(service, true)}
+                              >
+                                Enable for all active projects
+                              </Button>
+                              <Button
+                                size="xs"
+                                variant="ghost-muted"
+                                disabled={!canWrite || busy || !anyOn}
+                                aria-label={`Disable ${label} for all projects`}
+                                onClick={() => setServiceForAll(service, false)}
+                              >
+                                Disable all
+                              </Button>
+                            </div>
+                          </div>
+                        );
+                      },
+                    )}
+                  </div>
+                ) : null}
+                {projects.length > 0 ? (
+                  <ul className="flex flex-col py-2">{projects.map(renderProjectRow)}</ul>
+                ) : (
+                  <p className="px-3 py-2 text-muted-foreground text-sm sm:px-4">
+                    Every project here is archived.
+                  </p>
+                )}
+                <ArchivedDisclosure count={archivedProjects.length} className="pb-2">
+                  <ul className="flex flex-col">{archivedProjects.map(renderProjectRow)}</ul>
+                </ArchivedDisclosure>
+              </>
             )}
           </div>
         ) : null}

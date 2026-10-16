@@ -69,6 +69,22 @@ export function isArchivedGroup(group: ProjectListGroup, scratchRootFor: Scratch
   return real.length > 0 && real.every(isArchivedMember);
 }
 
+/**
+ * `environmentId:projectId` of every checkout of an archived project. Overview
+ * leaves their threads out, as the sidebar leaves the projects out of its list.
+ */
+export function archivedMemberKeys(
+  groups: ReadonlyArray<ProjectListGroup>,
+  scratchRootFor: ScratchRootLookup,
+): Set<string> {
+  const keys = new Set<string>();
+  for (const group of groups) {
+    if (!isArchivedGroup(group, scratchRootFor)) continue;
+    for (const member of group.memberProjects) keys.add(`${member.environmentId}:${member.id}`);
+  }
+  return keys;
+}
+
 export interface ProjectListPartition<G extends ProjectListGroup> {
   /** The main list, in input order. */
   readonly listed: G[];
@@ -104,6 +120,34 @@ export function partitionProjectGroups<G extends ProjectListGroup>(
   return { listed, archived };
 }
 
+/**
+ * The projects a project picker offers: the main list, so neither a machine's
+ * "No project" folder nor an archived project is a row. The selected project stays
+ * listed even when archived, so the picker still shows its choice.
+ */
+export function projectPickerGroups<G extends ProjectListGroup>(
+  groups: ReadonlyArray<G>,
+  scratchRootFor: ScratchRootLookup,
+  selectedProjectKey: string | null = null,
+): G[] {
+  return partitionProjectGroups(groups, scratchRootFor, selectedProjectKey).listed;
+}
+
+/** {@link projectPickerGroups} for a picker that lists one row per machine's project. */
+export function projectPickerMembers<M extends ProjectListMember>(
+  projects: ReadonlyArray<M>,
+  scratchRootFor: ScratchRootLookup,
+  selected: Pick<ProjectListMember, "environmentId" | "id"> | null = null,
+): M[] {
+  return projects.filter(
+    (project) =>
+      (selected !== null &&
+        project.environmentId === selected.environmentId &&
+        project.id === selected.id) ||
+      (!isScratchMember(project, scratchRootFor) && !isArchivedMember(project)),
+  );
+}
+
 /** The workspace-settings patch that archives or restores one project. */
 export function archiveWorkspacePatch(
   member: ProjectListMember,
@@ -123,26 +167,41 @@ export function membersToToggle<M extends ProjectListMember>(
   );
 }
 
-/**
- * Pinned projects first, in the order they were pinned, then the rest in input
- * order. Keys that name no listed project are ignored.
- */
-export function pinProjectsFirst<G extends { readonly projectKey: string }>(
-  groups: ReadonlyArray<G>,
-  pinnedKeys: ReadonlyArray<string>,
-): G[] {
-  const byKey = new Map(groups.map((group) => [group.projectKey, group]));
-  const pinned = pinnedKeys.flatMap((key) => byKey.get(key) ?? []);
-  const pinnedSet = new Set(pinned);
-  return [...pinned, ...groups.filter((group) => !pinnedSet.has(group))];
+export interface NamedProjectGroup {
+  readonly projectKey: string;
+  readonly workspaceRoot?: string | undefined;
+  readonly environmentPresence?: "local-only" | "remote-only" | "mixed" | undefined;
+  readonly remoteEnvironmentLabels?: ReadonlyArray<string> | undefined;
 }
 
-/** Pins a project at the end of the pinned list, or unpins it. */
-export function togglePinnedProject(
-  pinnedKeys: ReadonlyArray<string>,
-  projectKey: string,
-): string[] {
-  return pinnedKeys.includes(projectKey)
-    ? pinnedKeys.filter((key) => key !== projectKey)
-    : [...pinnedKeys, projectKey];
+/**
+ * Tells apart projects listed under the same name. They are separate projects,
+ * often one repository registered on two machines or in two folders, so each
+ * gets its other machine's name, or else its folder's name.
+ */
+export function sameNameHints<G extends NamedProjectGroup>(
+  groups: ReadonlyArray<G>,
+  nameOf: (group: G) => string,
+): Map<string, string> {
+  const byName = new Map<string, G[]>();
+  for (const group of groups) {
+    const name = nameOf(group).toLocaleLowerCase();
+    byName.set(name, [...(byName.get(name) ?? []), group]);
+  }
+  const hints = new Map<string, string>();
+  for (const same of byName.values()) {
+    if (same.length < 2) continue;
+    for (const group of same) {
+      const machines = group.remoteEnvironmentLabels ?? [];
+      const folder = group.workspaceRoot?.split(/[\\/]/).findLast(Boolean);
+      const hint =
+        group.environmentPresence === "remote-only" && machines.length > 0
+          ? machines.join(", ")
+          : folder;
+      // A folder named like the project tells nothing apart.
+      if (hint && hint.toLocaleLowerCase() !== nameOf(group).toLocaleLowerCase())
+        hints.set(group.projectKey, hint);
+    }
+  }
+  return hints;
 }

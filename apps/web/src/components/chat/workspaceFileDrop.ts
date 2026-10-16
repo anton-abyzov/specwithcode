@@ -1,3 +1,5 @@
+import { useMemo } from "react";
+
 export interface WorkspaceFileDragEvent {
   readonly dataTransfer: {
     readonly types: ReadonlyArray<string>;
@@ -81,4 +83,17 @@ export function makeWorkspaceFileDropHandlers(host: WorkspaceFileDropHost) {
       if (folders.length > 0) host.addFolders(folders);
     },
   };
+}
+
+/**
+ * The handlers as a hook. A component that passes ref-reading callbacks to the
+ * plain factory while rendering is skipped by the React Compiler, which cannot
+ * tell they are only called on a drop.
+ */
+export function useWorkspaceFileDropHandlers(host: WorkspaceFileDropHost) {
+  const { setDragActive, addFiles, addFolders } = host;
+  return useMemo(
+    () => makeWorkspaceFileDropHandlers({ setDragActive, addFiles, addFolders }),
+    [setDragActive, addFiles, addFolders],
+  );
 }

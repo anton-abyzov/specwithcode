@@ -273,7 +273,8 @@ function RecoveryActions({
 export function usageApproachingBannerItem(props: {
   id: string;
   providerLabel: string;
-  usedPercent: number;
+  /** Share of the fullest window still left, 0..100. */
+  leftPercent: number;
   resetAt: string | null;
   fallbackLabel: string;
   onSwitch: () => void;
@@ -284,7 +285,7 @@ export function usageApproachingBannerItem(props: {
     variant: "info",
     priority: "notice",
     icon: <GaugeIcon />,
-    title: `${props.providerLabel} is at ${Math.round(props.usedPercent)}% of its usage limit`,
+    title: `${props.providerLabel} has ${Math.max(0, Math.round(props.leftPercent))}% of its usage left`,
     description: (
       <>
         <ResetCountdown resetAt={props.resetAt} />

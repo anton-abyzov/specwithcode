@@ -14,14 +14,32 @@ Make human-facing output readable in prose, lists and table cells.
 - Lists: use real Markdown bullets or numbered steps with a blank line before the list; use one item per line and consistent indentation. Keep short answers as prose when a list adds no structure.
 - Tables: use compact Markdown tables for meaningful comparisons or records, with a header row, separator row and consistent columns. Label units and currencies in headers or cells, right-align numeric columns with Markdown alignment syntax, and keep long explanations outside the table.
 - Quantities: use appropriate digit grouping and consistent precision; include units, currency codes when the symbol is ambiguous, and percent signs for percentages. Do not invent units, currencies or precision. Distinguish unknown, unavailable and not applicable from zero or an empty value.
+- Product name: call this app SpecWithCode on first mention and "the app" after that, never "Studio" or "SpecWeave Studio"; branch, repo, path and tool names stay literal, such as \`feat/studio-plan-progress\` or \`studio_thread_list\`.
 - Literal content: explicit exact-output requests take precedence. Preserve code, commands, URLs, paths, identifiers, quoted source text and raw machine exports such as JSON or CSV exactly; do not reformat their dates or values. Quote errors verbatim when required, then give a readable date separately if useful. Never change stored or transported data just to improve its display.
 </output_formatting>`;
+
+/**
+ * Plain-prose rules for both response styles, adapted from unslop by Lauren Tan
+ * (pstack, MIT; rules 3, 7, 10, 13, 20, 22, 24, 27, 30 and 33, plus the "what makes this
+ * look machine-generated?" self-check from its earlier versions). See
+ * third-party-licenses.config.json. Every agent receives this on every turn,
+ * so keep it short; RuntimeInstructions.test.ts caps its length.
+ */
+export const STUDIO_WRITING_INSTRUCTIONS = `<writing>
+- Take a position and say why; hedge only real uncertainty.
+- Be specific: a number, file or command, not an adverb.
+- Say what a thing does ("a renamed column fails the build"), not how it feels ("robust").
+- Cut puffery, praise, closing offers, chatbot phrases ("Certainly!") and stock -ing tails ("ensuring...").
+- Avoid em dashes; use a period or comma. Vary sentence length; do not force ideas into threes.
+- Concise means fewer whole sentences, not dropped articles, verbs or arrows.
+- Before sending, ask what makes this look machine-generated, and fix it.
+</writing>`;
 
 /**
  * How every Studio agent writes, whatever its provider: the user's reply, a
  * worker's report to its coordinator, and a coordinator relaying that report.
  * Concise follows Claude Code's Concise output style.
- * Include shared formatting in both constants: Pi embeds these directly.
+ * Include the shared writing and formatting blocks in both constants: Pi embeds these directly.
  */
 export const STUDIO_CONCISE_RESPONSE_STYLE_INSTRUCTIONS = `<response_style mode="concise">
 Keep your responses short and direct while doing the work just as thoroughly.
@@ -30,14 +48,14 @@ Keep your responses short and direct while doing the work just as thoroughly.
 - Short by default: answer a simple question in 1-3 sentences. Use headers, tables or bullets only for real structure.
 - State things plainly, without hedging boilerplate. Give full detail when the user asks for it.
 - Never trade correctness for brevity: errors, failing tests, security warnings and confirmations before destructive actions stay complete.
-- When your final message goes to a coordinator or parent thread (you are a worker, delegated task or subagent), it is a short structured result of at most 5 lines, not a replay of your steps: Outcome (what changed or what you found), Evidence (links, file paths, commands that passed), Blockers (or the decision you need; omit when none). Write long inventories, tables and logs to a file in the repository or a scratch directory and give its path instead of pasting them. The 5-line cap never applies to errors, failing tests or security warnings (quote them exactly), or to an answer, answer markers or output format your task explicitly requires (give those complete).
+- When your final message goes to a coordinator or parent thread (you are a worker, delegated task or subagent), a short result is a plain message of 1-3 lines, not a replay of your steps or a report: what changed or what you found, with the link or path that proves it. Use labeled parts (**Outcome:**, **Evidence:**, **Blockers:**, each opening its own paragraph, at most 5 lines in all) only when the result needs them, such as several findings or evidence that needs links, or when the user asks for a report. Build an HTML page only for screenshots, charts, tables or comparisons that prose cannot carry, or when the user asks for one. When you are blocked, end with a paragraph opening **Blockers:** that asks the one question, with the options and your recommendation. Write long inventories, tables and logs to a file in the repository or a scratch directory and give its path instead of pasting them. These limits never apply to errors, failing tests or security warnings (quote them exactly), or to an answer, answer markers or output format your task explicitly requires (give those complete).
 - When you brief a worker or subagent, ask for that same short result and pass this response style on.
 - When a worker or subagent reports back, relay its outcome to the user in a few lines and link the worker. Do not paste its report, but quote any error, failing test or security warning it reports exactly. A project coordinator does not relay: the result stays in the worker's thread.
-</response_style>\n\n${STUDIO_OUTPUT_FORMATTING_INSTRUCTIONS}`;
+</response_style>\n\n${STUDIO_WRITING_INSTRUCTIONS}\n\n${STUDIO_OUTPUT_FORMATTING_INSTRUCTIONS}`;
 
 export const STUDIO_DETAILED_RESPONSE_STYLE_INSTRUCTIONS = `<response_style mode="detailed">
-The user chose detailed responses. Lead with the result, then give the evidence, trade-offs and anything left open, and the steps that mattered when they help the reader follow or check the work. Structure long answers with short headers or lists. A worker or subagent reporting to a coordinator or parent thread may go beyond 5 lines and include the relevant steps and evidence; long inventories, tables and logs still go to a file referenced by path. When relaying a worker's report, summarize it in your own words and link the worker instead of pasting it verbatim, unless you are the project coordinator: a project coordinator does not relay, and the result stays in the worker's thread. Errors, failing tests, security warnings and confirmations before destructive actions stay complete; quote errors exactly.
-</response_style>\n\n${STUDIO_OUTPUT_FORMATTING_INSTRUCTIONS}`;
+The user chose detailed responses. Lead with the result, then give the evidence, trade-offs and anything left open, and the steps that mattered when they help the reader follow or check the work. Structure long answers with short headers or lists. A worker or subagent reporting to a coordinator or parent thread writes its result as a document: each part a paragraph opening with its bold label (**Outcome:**, **Evidence:**, **Blockers:**), so SpecWithCode shows it as a report; it may go beyond 5 lines and include the relevant steps and evidence. **Blockers:** is none, or the one question the user must answer, with the options and a recommendation. Long inventories, tables and logs still go to a file referenced by path. When relaying a worker's report, summarize it in your own words and link the worker instead of pasting it verbatim, unless you are the project coordinator: a project coordinator does not relay, and the result stays in the worker's thread. Errors, failing tests, security warnings and confirmations before destructive actions stay complete; quote errors exactly.
+</response_style>\n\n${STUDIO_WRITING_INSTRUCTIONS}\n\n${STUDIO_OUTPUT_FORMATTING_INSTRUCTIONS}`;
 
 export function responseStyleInstructions(style: ResponseStyle = "concise"): string {
   return style === "detailed"
@@ -56,7 +74,13 @@ export function buildRuntimeInstructions(runtime: {
   readonly reasoningEffort?: string | undefined;
   /** Concise unless the user chose detailed responses; see `responseStyleInstructions`. */
   readonly responseStyle?: ResponseStyle | undefined;
+  /**
+   * Settings > Agents instructions, already resolved for the project. Claude
+   * receives them through its own system-prompt append, so it leaves this out.
+   */
+  readonly agentInstructions?: string | undefined;
 }): string {
+  const agentInstructions = runtime.agentInstructions?.trim() ?? "";
   const harness = toSingleLine(runtime.harness);
   const model = toSingleLine(runtime.model ?? "");
   const modelName = toSingleLine(runtime.modelName ?? "");
@@ -65,7 +89,11 @@ export function buildRuntimeInstructions(runtime: {
     modelName && modelName !== model ? `${modelName} (model slug: ${model})` : model;
   const modelInfo = model && model !== "auto" && model !== "default" ? `, as ${modelLabel}` : "";
   const effortInfo = effort ? ` with ${effort} reasoning effort` : "";
-  return `<runtime_info>In case you're asked: you are running in SpecWithCode through the ${harness} harness${modelInfo}${effortInfo}. No need to mention this otherwise. You can embed images and videos in your response using Markdown with absolute file paths.</runtime_info>\n\n${responseStyleInstructions(runtime.responseStyle)}\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}\n\n${STUDIO_HEADLESS_INSTRUCTIONS}`;
+  const agentBlock =
+    agentInstructions.length === 0
+      ? ""
+      : `<agent_instructions>\n${agentInstructions}\n</agent_instructions>\n\n`;
+  return `${agentBlock}<runtime_info>In case you're asked: you are running in SpecWithCode through the ${harness} harness${modelInfo}${effortInfo}. No need to mention this otherwise. You can embed images and videos in your response using Markdown with absolute file paths.</runtime_info>\n\n${responseStyleInstructions(runtime.responseStyle)}\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}\n\n${STUDIO_HEADLESS_INSTRUCTIONS}`;
 }
 
 function toSingleLine(value: string): string {

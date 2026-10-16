@@ -96,7 +96,11 @@ it("publishes unique tool names with reference-free object-root inputs", () => {
         definition?.labels.every((label) => label.trim().length > 0),
         tool.name,
       ).toBe(true);
-      for (const name of [tool.name, `mcp__studio-code__${tool.name}`, `Studio-code.${tool.name}`]) {
+      for (const name of [
+        tool.name,
+        `mcp__studio-code__${tool.name}`,
+        `Studio-code.${tool.name}`,
+      ]) {
         expect(resolveStudioMcpToolPresentation(name)?.logo, name).toBe("studio-code");
         expect(resolveStudioMcpToolSummaryAction(name), name).not.toBeNull();
       }
@@ -421,7 +425,11 @@ it.effect("a client caller targets any thread within its ceiling and cannot act 
           Effect.provideService(McpSchema.McpServerClient, client),
         );
 
-    const untargeted = yield* call("studio_thread_organize", { action: "pin" }, clientScope("auto"));
+    const untargeted = yield* call(
+      "studio_thread_organize",
+      { action: "pin" },
+      clientScope("auto"),
+    );
     expect(declaredFailure(untargeted)).toMatchObject({ code: "target_required" });
 
     const pinned = yield* call(
@@ -685,6 +693,62 @@ it.effect("a caller cannot interrupt a thread that runs above its own modes", ()
                 runs: [],
               } as never),
             interruptThread: () => Effect.die("interrupt must not dispatch above the ceiling"),
+          }),
+        ),
+        Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
+        Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
+        Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+        Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+        Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+      ),
+    ),
+  ),
+);
+
+it.effect("an agent cannot answer a project approval card", () =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const result = yield* server
+      .callTool({
+        name: "studio_pending_request_respond",
+        arguments: {
+          threadId: "full-access-thread",
+          requestId: "project-action:card",
+          answers: { approval: "Approve" },
+        },
+      })
+      .pipe(
+        Effect.provideService(
+          McpInvocationContext.McpInvocationContext,
+          clientScope("full-access"),
+        ),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(declaredFailure(result)).toMatchObject({
+      code: "invalid_request",
+      message: "Only the user can answer an approval card. Wait for their answer.",
+    });
+  }).pipe(
+    Effect.provide(
+      McpHttpServer.layerThreadToolkit.pipe(
+        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: () =>
+              Effect.succeed({ projectId: "project-a", deletedAt: null } as never),
+            getProjectThreadRecords: () =>
+              Effect.succeed({
+                thread: {
+                  id: ThreadId.make("full-access-thread"),
+                  projectId: "project-a",
+                  runtimeMode: "full-access",
+                  interactionMode: "default",
+                  deletedAt: null,
+                },
+                runs: [],
+              } as never),
+            dispatch: () => Effect.die("an approval card must not be answered by an agent"),
           }),
         ),
         Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),

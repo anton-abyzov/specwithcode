@@ -59,6 +59,13 @@ function errorMessage(error: unknown): string {
 export interface AcpMcpOverAcpBridgeOptions {
   readonly endpoint: string;
   readonly authorization: string;
+  /**
+   * The thread's current credentials. After a 401 the bridge asks once and,
+   * if they moved, retries the message with them; unchanged credentials fail.
+   */
+  readonly refreshCredentials?: Effect.Effect<
+    { readonly endpoint: string; readonly authorization: string } | undefined
+  >;
   readonly allocateConnectionId: Effect.Effect<string>;
   readonly fetchImplementation?: (url: string, init?: RequestInit) => Promise<Response>;
 }
@@ -85,6 +92,47 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
 ): Effect.fn.Return<AcpMcpOverAcpBridge> {
   const fetchImplementation = options.fetchImplementation ?? fetch;
   const connections = new Map<string, Connection>();
+  let credentials = { endpoint: options.endpoint, authorization: options.authorization };
+
+  const post = (connection: Connection, body: string, used: typeof credentials) =>
+    Effect.tryPromise({
+      try: (signal) =>
+        fetchImplementation(used.endpoint, {
+          method: "POST",
+          signal,
+          headers: {
+            "content-type": "application/json",
+            accept: "application/json, text/event-stream",
+            authorization: used.authorization,
+            ...(connection.sessionId === null ? {} : { "mcp-session-id": connection.sessionId }),
+            ...(connection.protocolVersion === null
+              ? {}
+              : { "mcp-protocol-version": connection.protocolVersion }),
+          },
+          body,
+        }),
+      catch: bridgeError,
+    });
+
+  /** Adopts fresh credentials when they differ from the ones a request used. */
+  const refresh = (used: typeof credentials): Effect.Effect<boolean> =>
+    options.refreshCredentials === undefined
+      ? Effect.succeed(false)
+      : options.refreshCredentials.pipe(
+          Effect.map((fresh) => {
+            if (
+              fresh !== undefined &&
+              (fresh.endpoint !== used.endpoint || fresh.authorization !== used.authorization)
+            ) {
+              credentials = { endpoint: fresh.endpoint, authorization: fresh.authorization };
+              return true;
+            }
+            return (
+              credentials.endpoint !== used.endpoint ||
+              credentials.authorization !== used.authorization
+            );
+          }),
+        );
 
   const connectionFor = (connectionId: string): Effect.Effect<Connection, AcpMcpOverAcpError> =>
     Effect.suspend(() => {
@@ -104,33 +152,27 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
         if (Buffer.byteLength(body) > MAX_MESSAGE_BYTES) {
           return yield* Effect.fail(new AcpMcpOverAcpError("MCP-over-ACP message exceeds 8 MiB."));
         }
-        const response = yield* Effect.tryPromise({
-          try: (signal) =>
-            fetchImplementation(options.endpoint, {
-              method: "POST",
-              signal,
-              headers: {
-                "content-type": "application/json",
-                accept: "application/json, text/event-stream",
-                authorization: options.authorization,
-                ...(connection.sessionId === null
-                  ? {}
-                  : { "mcp-session-id": connection.sessionId }),
-                ...(connection.protocolVersion === null
-                  ? {}
-                  : { "mcp-protocol-version": connection.protocolVersion }),
-              },
-              body,
-            }),
-          catch: bridgeError,
-        });
+        const used = credentials;
+        let response = yield* post(connection, body, used);
+        // One retry at most: a credential that is still rejected after a
+        // refresh is really gone.
+        if (response.status === 401 && (yield* refresh(used))) {
+          yield* Effect.promise(
+            () => response.body?.cancel().catch(() => undefined) ?? Promise.resolve(),
+          );
+          response = yield* post(connection, body, credentials);
+        }
         connection.sessionId = response.headers.get("mcp-session-id") ?? connection.sessionId;
         if (!response.ok) {
           yield* Effect.promise(
             () => response.body?.cancel().catch(() => undefined) ?? Promise.resolve(),
           );
           return yield* Effect.fail(
-            new AcpMcpOverAcpError(`SpecWithCode MCP endpoint responded with HTTP ${response.status}.`),
+            new AcpMcpOverAcpError(
+              response.status === 401
+                ? "SpecWithCode MCP endpoint responded with HTTP 401: this agent's SpecWithCode credential is no longer valid. Send another message in the thread to reconnect."
+                : `SpecWithCode MCP endpoint responded with HTTP ${response.status}.`,
+            ),
           );
         }
         const payloads = [...(yield* Stream.runCollect(responsePayloads(response)))];
@@ -151,11 +193,11 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
       if (sessionId !== null) {
         const response = yield* Effect.tryPromise({
           try: (signal) =>
-            fetchImplementation(options.endpoint, {
+            fetchImplementation(credentials.endpoint, {
               method: "DELETE",
               signal,
               headers: {
-                authorization: options.authorization,
+                authorization: credentials.authorization,
                 "mcp-session-id": sessionId,
                 ...(connection.protocolVersion === null
                   ? {}

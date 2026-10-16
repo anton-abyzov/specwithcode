@@ -66,6 +66,12 @@ export interface UpdateProjectInput extends CommandMetadata {
   readonly scripts?: ReadonlyArray<ProjectScript>;
 }
 
+export interface ChangeProjectFolderInput extends CommandMetadata {
+  readonly projectId: ProjectId;
+  readonly workspaceRoot: string;
+  readonly confirmDifferentRepository?: boolean;
+}
+
 export interface DeleteProjectInput extends CommandMetadata {
   readonly confirmationTitle?: string;
   readonly projectId: ProjectId;
@@ -346,6 +352,13 @@ const mutateProject = Effect.fn("EnvironmentCommands.mutateProject")(function* (
         readonly commandId: CommandId;
         readonly projectId: ProjectId;
         readonly force?: boolean;
+      }
+    | {
+        readonly type: "project.folder.change";
+        readonly commandId: CommandId;
+        readonly projectId: ProjectId;
+        readonly workspaceRoot: string;
+        readonly confirmDifferentRepository?: boolean;
       },
 ) {
   return yield* request(WS_METHODS.projectsMutate, mutation);
@@ -392,6 +405,21 @@ export const updateProject = Effect.fn("EnvironmentCommands.updateProject")(func
       ? {}
       : { defaultThreadEnvMode: input.defaultThreadEnvMode }),
     ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
+  });
+});
+
+/** Moves a project to another folder; its threads follow from their next turn. */
+export const changeProjectFolder = Effect.fn("EnvironmentCommands.changeProjectFolder")(function* (
+  input: ChangeProjectFolderInput,
+) {
+  return yield* mutateProject({
+    type: "project.folder.change",
+    commandId: yield* allocateCommandId(input),
+    projectId: input.projectId,
+    workspaceRoot: input.workspaceRoot,
+    ...(input.confirmDifferentRepository === undefined
+      ? {}
+      : { confirmDifferentRepository: input.confirmDifferentRepository }),
   });
 });
 
@@ -650,16 +678,26 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
   input: StartThreadTurnInput,
 ) {
   const commandId = yield* allocateCommandId(input);
-  if (input.manualCodexCreditIntent !== undefined && !manualCreditDispatchAllowed({
-    createdBy: "user", creationSource: input.creationSource ?? "web",
-    dispatchMode: input.dispatchMode === undefined || input.dispatchMode === "auto" || input.dispatchMode === "start"
-      ? "start_immediately" : input.dispatchMode,
-    manualContinuationOfRunId: input.manualContinuationOfRunId,
-    sourcePlanRef: input.sourceProposedPlan,
-    text: input.message.text,
-  })) {
+  if (
+    input.manualCodexCreditIntent !== undefined &&
+    !manualCreditDispatchAllowed({
+      createdBy: "user",
+      creationSource: input.creationSource ?? "web",
+      dispatchMode:
+        input.dispatchMode === undefined ||
+        input.dispatchMode === "auto" ||
+        input.dispatchMode === "start"
+          ? "start_immediately"
+          : input.dispatchMode,
+      manualContinuationOfRunId: input.manualContinuationOfRunId,
+      sourcePlanRef: input.sourceProposedPlan,
+      text: input.message.text,
+    })
+  ) {
     return yield* new OrchestrationDispatchCommandError({
-      message: "Existing credits require a fresh explicit human Send, without queue, steering or continuation." });
+      message:
+        "Existing credits require a fresh explicit human Send, without queue, steering or continuation.",
+    });
   }
   const attachments = yield* persistAttachments(
     input.threadId,
@@ -712,7 +750,9 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       interactionMode: input.interactionMode,
       workspaceStrategy,
       initialMessage: {
-        ...(input.manualCodexCreditIntent ? { manualCodexCreditIntent: input.manualCodexCreditIntent } : {}),
+        ...(input.manualCodexCreditIntent
+          ? { manualCodexCreditIntent: input.manualCodexCreditIntent }
+          : {}),
         messageId: input.message.messageId,
         text: input.message.text,
         ...(context ? { context } : {}),
@@ -725,7 +765,9 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
   if (requestedMode === "start") {
     return yield* dispatch({
       type: "message.dispatch",
-      ...(input.manualCodexCreditIntent ? { manualCodexCreditIntent: input.manualCodexCreditIntent } : {}),
+      ...(input.manualCodexCreditIntent
+        ? { manualCodexCreditIntent: input.manualCodexCreditIntent }
+        : {}),
       commandId,
       createdBy: "user",
       creationSource: input.creationSource ?? "web",
@@ -790,7 +832,9 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
     (serverResolvesCommandContext || projection?.messages.length === 0);
   return yield* dispatch({
     type: "message.dispatch",
-    ...(input.manualCodexCreditIntent ? { manualCodexCreditIntent: input.manualCodexCreditIntent } : {}),
+    ...(input.manualCodexCreditIntent
+      ? { manualCodexCreditIntent: input.manualCodexCreditIntent }
+      : {}),
     commandId,
     createdBy: "user",
     creationSource: input.creationSource ?? "web",

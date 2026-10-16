@@ -62,18 +62,18 @@ class InstallationIdentity(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.home = pathlib.Path(temporary.name).resolve()
         self.identity = 'studio-lab-7'
-        self.own = self.home / '.specweave-studio' / self.identity
+        self.own = self.home / '.specwithcode' / self.identity
         self.state = self.own / 'userdata'
         self.state.mkdir(parents=True)
         self.receipt = self.make_receipt(self.identity)
 
     def make_receipt(self, identity, policy='worker-relay'):
-        own = self.home / '.specweave-studio' / identity
+        own = self.home / '.specwithcode' / identity
         value = {'identity': identity, 'uid': 502, 'user': 'fixture-user', 'studioHome': str(own),
                  'stateDir': str(own / 'userdata'), 'host': '127.0.0.1', 'port': 24319,
                  'cliWrapper': str(descriptor.cli_paths(self.home, identity)[0]),
                  'archiveSha256': 'a' * 64,
-                 'release': str(self.home / '.local/share/specweave-studio/releases' / ('a' * 20)),
+                 'release': str(self.home / '.specwithcode/install/releases' / ('a' * 20)),
                  'service': {'installed': True, 'label': 'com.specweave.studio.' + identity, 'domain': 'gui/502'}}
         if identity not in descriptor.LEGACY_POLICIES:
             value['webSessionPolicy'] = policy
@@ -238,7 +238,7 @@ class GenericAgent(unittest.TestCase):
         label = 'com.specweave.studio.' + case.identity + '.updater'
         plist = case.home / 'Library/LaunchAgents' / (label + '.plist'); plist.parent.mkdir(parents=True)
         updates = case.own / 'updates'; updates.mkdir()
-        content = {'Label': label, 'ProgramArguments': ['/usr/bin/python3', str(case.home / '.local/share/specweave-studio/updater/update_agent.py'), '--identity', case.identity],
+        content = {'Label': label, 'ProgramArguments': ['/usr/bin/python3', str(case.home / '.specwithcode/install/updater/update_agent.py'), '--identity', case.identity],
                    'WorkingDirectory': str(updates), 'StandardOutPath': str(updates / 'agent.log'), 'StandardErrorPath': str(updates / 'agent.log')}
         plist.write_bytes(plistlib.dumps({**content, 'Label': 'foreign'}))
         with simulated_owner(case.home), mock.patch.object(update_agent, 'launchctl', return_value=0) as transport:
@@ -467,7 +467,7 @@ class SharedInstallationStore(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix='studio-shared-store-')
         self.addCleanup(temporary.cleanup)
         self.home = pathlib.Path(temporary.name).resolve()
-        (self.home / '.local/share/specweave-studio').mkdir(parents=True)
+        (self.home / '.specwithcode/install').mkdir(parents=True)
 
     def test_another_installation_apply_refuses_before_snapshot_or_prune(self):
         with descriptor.installation_lock(self.home), mock.patch.object(update, 'current_owner', return_value={'home': self.home}), mock.patch.object(update, '_apply') as guarded:
@@ -496,8 +496,8 @@ class SharedInstallationStore(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('Another installation operation', result.stderr)
         self.assertNotIn('MOCK_LAUNCHCTL:bootstrap', result.stderr)
-        self.assertFalse((case.home / '.specweave-studio/lab').exists())
-        self.assertFalse((case.home / '.local/share/specweave-studio/releases').exists())
+        self.assertFalse((case.home / '.specwithcode/lab').exists())
+        self.assertFalse((case.home / '.specwithcode/install/releases').exists())
 
     def release(self, path):
         path.mkdir(parents=True)
@@ -524,7 +524,7 @@ class SharedInstallationStore(unittest.TestCase):
             def now(cls, tz=None): return cls(2026, 10, 14, 12, 0, 0, tzinfo=tz)
         backups = []
         for identity in ('lab-one', 'lab-two'):
-            own = self.home / '.specweave-studio' / identity; (own / 'userdata').mkdir(parents=True)
+            own = self.home / '.specwithcode' / identity; (own / 'userdata').mkdir(parents=True)
             with sqlite3.connect(own / 'userdata/statev2.sqlite') as db:
                 db.execute('CREATE TABLE protected(value TEXT)'); db.execute('INSERT INTO protected VALUES (?)', (identity,))
             with mock.patch.object(pathlib.Path, 'home', return_value=self.home), mock.patch.object(update.datetime, 'datetime', Clock):

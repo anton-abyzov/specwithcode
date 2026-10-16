@@ -80,6 +80,7 @@ type OpenInOption = {
 export const resolveOpenInOptions = (
   platform: string,
   availableEditors: ReadonlyArray<EditorId>,
+  preferredEditor: EditorId | null = null,
 ) => {
   const baseOptions: ReadonlyArray<Omit<OpenInOption, "label">> = [
     {
@@ -193,9 +194,12 @@ export const resolveOpenInOptions = (
     },
   ];
   const availableEditorSet = new Set(availableEditors);
-  return baseOptions
+  const options = baseOptions
     .filter((option) => availableEditorSet.has(option.value))
     .map((option) => ({ ...option, label: editorLabelForPlatform(option.value, platform) }));
+  // The preferred editor leads the list, where its shortcut is shown.
+  const preferred = options.find((option) => option.value === preferredEditor);
+  return preferred ? [preferred, ...options.filter((option) => option !== preferred)] : options;
 };
 
 function getOpenInIconClass(kind: OpenInOption["kind"]) {
@@ -238,8 +242,8 @@ export const OpenInPicker = memo(function OpenInPicker({
   const effectiveEditors = remote.mode === "local-exec" ? availableEditors : remoteCapableEditors;
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(effectiveEditors);
   const options = useMemo(
-    () => resolveOpenInOptions(navigator.platform, effectiveEditors),
-    [effectiveEditors],
+    () => resolveOpenInOptions(navigator.platform, effectiveEditors, preferredEditor),
+    [effectiveEditors, preferredEditor],
   );
   const primaryOption = options.find(({ value }) => value === preferredEditor) ?? null;
 

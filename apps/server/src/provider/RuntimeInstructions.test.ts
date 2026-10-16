@@ -5,6 +5,7 @@ import {
   STUDIO_CONCISE_RESPONSE_STYLE_INSTRUCTIONS,
   STUDIO_DETAILED_RESPONSE_STYLE_INSTRUCTIONS,
   STUDIO_OUTPUT_FORMATTING_INSTRUCTIONS,
+  STUDIO_WRITING_INSTRUCTIONS,
 } from "./RuntimeInstructions.ts";
 
 describe("buildRuntimeInstructions", () => {
@@ -66,6 +67,48 @@ describe("buildRuntimeInstructions", () => {
     },
   );
 
+  it.each(["concise", "detailed"] as const)(
+    "includes the writing rules once for every harness in %s mode",
+    (responseStyle) => {
+      for (const harness of ["Claude Code", "Codex", "Cursor", "OpenCode", "Pi", "ACP"]) {
+        const instructions = buildRuntimeInstructions({ harness, responseStyle });
+        expect(instructions).toContain(STUDIO_WRITING_INSTRUCTIONS);
+        expect(instructions.match(/<writing>/g)).toHaveLength(1);
+      }
+      expect(responseStyleInstructions(responseStyle)).toContain(STUDIO_WRITING_INSTRUCTIONS);
+    },
+  );
+
+  it("asks for plain, specific prose without compressing it", () => {
+    const writing = STUDIO_WRITING_INSTRUCTIONS;
+    expect(writing).toContain("Take a position and say why");
+    expect(writing).toContain("hedge only real uncertainty");
+    expect(writing).toContain("Be specific: a number, file or command, not an adverb.");
+    expect(writing).toContain("Say what a thing does");
+    expect(writing).toContain("not how it feels");
+    expect(writing).toContain("Cut puffery, praise, closing offers, chatbot phrases");
+    expect(writing).toContain("stock -ing tails");
+    expect(writing).toContain("Avoid em dashes; use a period or comma.");
+    expect(writing).toContain("Vary sentence length");
+    expect(writing).toContain(
+      "Concise means fewer whole sentences, not dropped articles, verbs or arrows.",
+    );
+    expect(writing).toContain("ask what makes this look machine-generated, and fix it");
+  });
+
+  it("keeps the writing rules within their per-turn budget", () => {
+    // About 150 tokens. Every agent turn carries this block, so growth should be a deliberate choice.
+    expect(STUDIO_WRITING_INSTRUCTIONS.length).toBeLessThanOrEqual(640);
+  });
+
+  it.each(["concise", "detailed"] as const)(
+    "follows its own punctuation rules in %s mode",
+    (responseStyle) => {
+      const instructions = buildRuntimeInstructions({ harness: "Codex", responseStyle });
+      expect(instructions).not.toMatch(/[\u2013\u2014\u2015\u2018\u2019\u201C\u201D]/);
+    },
+  );
+
   it("requires readable dates without guessing or changing literal data", () => {
     const instructions = STUDIO_OUTPUT_FORMATTING_INSTRUCTIONS;
     expect(instructions).toContain("month name, day and year");
@@ -112,7 +155,11 @@ describe("buildRuntimeInstructions", () => {
     expect(concise).toContain("Outcome");
     expect(concise).toContain("Evidence");
     expect(concise).toContain("Blockers");
-    expect(concise).toContain("at most 5 lines, not a replay of your steps");
+    expect(concise).toContain(
+      "a plain message of 1-3 lines, not a replay of your steps or a report",
+    );
+    expect(concise).toContain("only when the result needs them");
+    expect(concise).toContain("end with a paragraph opening **Blockers:**");
     // Other parents relay a short outcome. A project coordinator does not.
     expect(concise).toContain("Do not paste its report");
     expect(concise).toContain(
@@ -120,10 +167,19 @@ describe("buildRuntimeInstructions", () => {
     );
   });
 
+  it("keeps short concise results plain and reserves reports and pages for results that need them", () => {
+    const concise = responseStyleInstructions("concise");
+    expect(concise).not.toContain("so SpecWithCode shows it as a report");
+    expect(concise).toContain(
+      "Build an HTML page only for screenshots, charts, tables or comparisons that prose cannot carry, or when the user asks for one.",
+    );
+    expect(responseStyleInstructions("detailed")).toContain("so SpecWithCode shows it as a report");
+  });
+
   it("never caps errors, security warnings or a required answer", () => {
     const concise = responseStyleInstructions("concise");
     expect(concise).toContain(
-      "The 5-line cap never applies to errors, failing tests or security warnings (quote them exactly)",
+      "These limits never apply to errors, failing tests or security warnings (quote them exactly)",
     );
     expect(concise).toContain("answer markers or output format your task explicitly requires");
     expect(concise).toContain(
@@ -131,6 +187,7 @@ describe("buildRuntimeInstructions", () => {
     );
     const detailed = responseStyleInstructions("detailed");
     expect(detailed).toContain("may go beyond 5 lines");
+    expect(detailed).toContain("each part a paragraph opening with its bold label");
     expect(detailed).toContain("quote errors exactly");
     expect(detailed).not.toContain("explain what you did and why");
   });
@@ -146,5 +203,22 @@ describe("buildRuntimeInstructions", () => {
     const instructions = buildRuntimeInstructions({ harness: "Cursor", model });
     expect(instructions).toContain("through the Cursor harness.");
     expect(instructions).not.toContain("reasoning effort");
+  });
+});
+
+describe("agent instructions", () => {
+  it("leads with the Settings > Agents rules when there are any", () => {
+    const instructions = buildRuntimeInstructions({
+      harness: "Cursor",
+      agentInstructions: "  Never block-wait on another thread.  ",
+    });
+    expect(
+      instructions.startsWith(
+        "<agent_instructions>\nNever block-wait on another thread.\n</agent_instructions>",
+      ),
+    ).toBe(true);
+    expect(buildRuntimeInstructions({ harness: "Cursor", agentInstructions: " " })).not.toContain(
+      "<agent_instructions>",
+    );
   });
 });

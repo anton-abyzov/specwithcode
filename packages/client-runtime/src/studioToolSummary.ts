@@ -168,6 +168,21 @@ export function summarizeStudioToolCalls(
         quantity(countEntities(threadIds), "thread"),
       );
       break;
+    case "thread-stop-all":
+    case "thread-continue-all": {
+      const counts = selected.map((call) => call.output?.count);
+      const known = completed.length > 0 && counts.every((count) => typeof count === "number");
+      const total = counts.reduce<number>((sum, count) => sum + (Number(count) || 0), 0);
+      label =
+        action === "thread-stop-all"
+          ? known
+            ? `Requested stops for ${quantity(total, "thread")}`
+            : phrase("Requested", "stop", `all running threads ${times}`)
+          : known
+            ? `Continued ${quantity(total, "thread")}`
+            : phrase("Requested", "continue", `all interrupted threads ${times}`);
+      break;
+    }
     case "task-status":
       label = phrase("Checked", "check", `task status ${times}`);
       break;
@@ -267,6 +282,9 @@ export function summarizeStudioToolCalls(
         "steer with",
         quantity(countEntities(entityIds("queuedRunId")), "queued message"),
       );
+      break;
+    case "queue-resume":
+      label = phrase("Resumed", "resume", `held queues ${times}`);
       break;
     case "question-list":
       label = phrase("Listed", "list", `pending questions ${times}`);

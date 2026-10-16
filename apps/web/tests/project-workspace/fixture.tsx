@@ -1,7 +1,9 @@
 /* Isolated UI fixture: all host/provider operations are explicit in-memory fakes. */
 import React, { useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { ConnectionsFixture } from "./connections-fixture";
 import { ProjectWorkspace } from "../../src/components/studio/ProjectWorkspace";
+import { ViewerOverlayHost } from "../../src/components/ViewerOverlayHost";
 import { useProjectDeletionConfirmation } from "../../src/components/studio/useProjectDeletionConfirmation";
 function LegacyDeletionFixture() {
   const { confirmDeletion, deletionDialog } = useProjectDeletionConfirmation();
@@ -53,9 +55,44 @@ function RecoveryNavigationFixture() {
     </>
   );
 }
+/* `?report`: the app's projects sidebar beside the workspace, so the viewer
+   overlay can be checked never to cover it. The thread beside a viewer is a
+   stand-in; the native ChatView is not part of this fixture. */
+function SidebarLayout(props: { children: React.ReactNode }) {
+  return (
+    <div style={{ display: "flex", height: "100vh" }}>
+      <div data-slot="sidebar" data-side="left" className="hidden md:block">
+        <nav
+          data-slot="sidebar-container"
+          aria-label="Projects"
+          className="h-full border-r bg-sidebar p-3 text-sm"
+          style={{ width: 240 }}
+        >
+          <button type="button" onClick={() => (window.__projectClicked = true)}>
+            Atlas Studio
+          </button>
+        </nav>
+      </div>
+      <div style={{ minWidth: 0, flex: 1 }}>{props.children}</div>
+      <ViewerOverlayHost
+        renderThread={(threadRef) => (
+          <div className="p-4 text-sm" data-overlay-thread={threadRef.threadId}>
+            Thread {threadRef.threadId}
+          </div>
+        )}
+      />
+    </div>
+  );
+}
 const search = new URLSearchParams(location.search);
 createRoot(document.getElementById("root")!).render(
-  search.has("recovery-navigation") ? (
+  search.has("connections") ? (
+    <ConnectionsFixture />
+  ) : search.has("report") ? (
+    <SidebarLayout>
+      <ProjectWorkspace projectKey="atlas" />
+    </SidebarLayout>
+  ) : search.has("recovery-navigation") ? (
     <RecoveryNavigationFixture />
   ) : search.has("legacy-delete") ? (
     <LegacyDeletionFixture />

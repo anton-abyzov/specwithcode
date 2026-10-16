@@ -11,6 +11,8 @@ export type ChatViewProps =
       layoutMode?: ChatLayoutMode;
       /** Project review dialog: native decisions, without another conversation or composer. */
       reviewOnly?: boolean;
+      /** A subagent's peek: its conversation, read-only, with no composer or parent divider. */
+      transcriptOnly?: boolean;
       /** Keep a background worker mounted without handling shortcuts behind an overlay. */
       suspendShortcuts?: boolean;
       /** Embedded only: the host's header slot for the terminal and details toggles. */
@@ -26,6 +28,7 @@ export type ChatViewProps =
       reserveTitleBarControlInset?: boolean;
       layoutMode?: ChatLayoutMode;
       reviewOnly?: boolean;
+      transcriptOnly?: boolean;
       /** Keep a background worker mounted without handling shortcuts behind an overlay. */
       suspendShortcuts?: boolean;
       embeddedHeaderToolsTarget?: HTMLElement | null;

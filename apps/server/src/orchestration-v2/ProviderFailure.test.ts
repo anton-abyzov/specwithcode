@@ -1,3 +1,4 @@
+import { providerFailureFallbackMessage } from "@specweave-studio/shared/orchestrationV2ThreadError";
 import { assert, it } from "@effect/vitest";
 import {
   NodeId,
@@ -85,7 +86,10 @@ it("does not expose arbitrary cause messages and preserves explicit messages", (
     "Session expired. Sign in again.",
     { message: "Session expired. Sign in again." },
   ]) {
-    assert.equal(makeProviderFailure({ cause: value }).message, "Provider turn failed.");
+    assert.equal(
+      makeProviderFailure({ cause: value }).message,
+      providerFailureFallbackMessage("unknown"),
+    );
     assert.equal(
       makeProviderFailure({ cause: value, message: "Provider connection closed." }).message,
       "Provider connection closed.",
@@ -148,7 +152,7 @@ it("does not trust unknown project environment codes", () => {
     { _tag: "ProjectEnvironmentError", projectId: "p", code: "provider-secret" },
     { _tag: "ProjectEnvironmentError", message: "Private provider text" },
   ]) {
-    assert.equal(makeProviderFailure({ cause }).message, "Provider turn failed.");
+    assert.equal(makeProviderFailure({ cause }).message, providerFailureFallbackMessage("unknown"));
   }
 });
 
@@ -219,7 +223,10 @@ it("handles cyclic causes and throwing accessors", () => {
     message: "Provider disconnected. Retry the turn.",
   };
   cyclic.cause = cyclic;
-  assert.equal(makeProviderFailure({ cause: cyclic }).message, "Provider turn failed.");
+  assert.equal(
+    makeProviderFailure({ cause: cyclic }).message,
+    providerFailureFallbackMessage("unknown"),
+  );
   assert.equal(
     makeProviderFailure({
       cause: {
@@ -231,7 +238,7 @@ it("handles cyclic causes and throwing accessors", () => {
         },
       },
     }).message,
-    "Provider turn failed.",
+    providerFailureFallbackMessage("unknown"),
   );
 });
 
@@ -244,7 +251,7 @@ it("falls back when inspecting a provider cause throws", () => {
       },
     },
   );
-  assert.equal(makeProviderFailure({ cause }).message, "Provider turn failed.");
+  assert.equal(makeProviderFailure({ cause }).message, providerFailureFallbackMessage("unknown"));
 });
 
 it("does not serialize arbitrary provider causes", () => {
@@ -258,7 +265,7 @@ it("does not serialize arbitrary provider causes", () => {
 
   assert.deepEqual(failure, {
     class: "transport_error",
-    message: "Provider turn failed.",
+    message: providerFailureFallbackMessage("transport_error"),
     code: null,
     retryable: null,
   });

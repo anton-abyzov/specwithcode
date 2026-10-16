@@ -23,16 +23,15 @@ Free for every developer and team, MIT licensed, no account. You bring your own 
 
 SpecWithCode is not a cloud service: work runs on the machine you choose and stops when it sleeps.
 
-**Settings → Connections** includes a read-only [MCP connections library](docs/connections-library.md) for Codex and Claude Code on each machine. Project **Environment** adds project declarations and overrides alongside Studio-managed tool grants. Configuration is shown separately from unverified authentication and session availability.
+**Settings → Connections** includes a read-only [MCP connections library](docs/connections-library.md) for Codex and Claude Code on each machine. Project **Environment** adds project declarations and overrides alongside SpecWithCode-managed tool grants. Configuration is shown separately from unverified authentication and session availability.
 
 ## Install
 
 1. Download [SpecWithCode-arm64.dmg](https://github.com/anton-abyzov/specwithcode/releases/latest/download/SpecWithCode-arm64.dmg), the latest release (all versions are on [Releases](https://github.com/anton-abyzov/specwithcode/releases)). It runs on Apple silicon Macs with macOS 13 or later. Windows and Intel Macs are not built yet.
-2. Drag **SpecWithCode** to Applications. An install from before 1.0.0, named SpecWeave Studio (Alpha), renames itself to SpecWithCode when it updates and keeps its settings and sign-ins.
-3. The build is not notarized yet. On first launch, open **System Settings → Privacy & Security** and choose **Open Anyway**.
-4. Install and sign in to at least one coding agent (for example Claude Code or Codex). You also need git, which comes with the Xcode Command Line Tools.
+2. Drag **SpecWithCode** to Applications. Releases are signed with an Apple Developer ID and notarized, so the app opens without a security override. An install from before 1.0.0, named SpecWeave Studio (Alpha), renames itself to SpecWithCode when it updates and keeps its settings and sign-ins.
+3. Install and sign in to at least one coding agent (for example Claude Code or Codex). You also need git, which comes with the Xcode Command Line Tools.
 
-The app updates itself from this repository's releases. Turn that off in **Settings → About**, or set `STUDIO_DISABLE_AUTO_UPDATE=true`.
+The app updates itself from this repository's releases. Turn that off in **Settings → About**, or set `SPECWITHCODE_DISABLE_AUTO_UPDATE=true` (the older `STUDIO_DISABLE_AUTO_UPDATE` is still accepted).
 
 More: [install](docs/user/install.md), [first run](docs/user/welcome-wizard.md), [providers](docs/user/providers-claude.md), [remote access](docs/user/remote-access.md), [updating](docs/user/updating.md).
 
@@ -47,12 +46,12 @@ The composer’s access selector also controls a provider’s **Allow All** sett
 - **Add a machine**: run SpecWithCode on it, then pair it. Being reachable is not permission; every machine and browser is paired separately. To pair a browser:
 
   ```sh
-  specweave-studio auth pairing create --ttl 5m --label "My laptop" --base-url http://127.0.0.1:8319
+  specwithcode auth pairing create --ttl 5m --label "My laptop" --base-url http://127.0.0.1:8319
   ```
 
   The output is a credential. Keep it out of chat and screenshots.
 
-The local service listens on `http://127.0.0.1:8319/` and keeps its data in `~/.specweave-studio`. The command line tool is `specweave-studio`, also installed as `specwithcode`.
+The local service listens on `http://127.0.0.1:8319/` and keeps its data in `~/.specwithcode`; installs that started before that default keep using `~/.specweave-studio`. The command line tool is `specwithcode`, also installed under its original name `specweave-studio`.
 
 Projects keep their coordinator in the main pane, with workers beside it. For short replies, use **Settings → Agents → Response style → Concise**. If the coordinator's model is unavailable, open its model picker to **Check again**, choose another model, or open setup for that machine; checking availability does not resend your message.
 

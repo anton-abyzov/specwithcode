@@ -16,6 +16,7 @@ import {
   ComposerContextId,
   type ChatAttachment,
   CommandId,
+  DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
   GitCommandError,
   MessageId,
@@ -102,6 +103,10 @@ interface HarnessOptions {
   readonly createWorktree?: GitWorkflow.GitWorkflowService["Service"]["createWorktree"];
   readonly fetchRemote?: GitWorkflow.GitWorkflowService["Service"]["fetchRemote"];
   readonly hasCommit?: GitWorkflow.GitWorkflowService["Service"]["hasCommit"];
+  readonly isRepository?: GitWorkflow.GitWorkflowService["Service"]["isRepository"];
+  readonly project?: typeof project & {
+    readonly workspaceSettings?: typeof DEFAULT_PROJECT_WORKSPACE_SETTINGS;
+  };
   readonly localStatus?: GitWorkflow.GitWorkflowService["Service"]["localStatus"];
   readonly remoteExists?: GitWorkflow.GitWorkflowService["Service"]["remoteExists"];
   readonly renameBranch?: GitWorkflow.GitWorkflowService["Service"]["renameBranch"];
@@ -160,7 +165,7 @@ function makeHarness(options: HarnessOptions = {}) {
       getById: (id) =>
         Effect.succeed(
           id === projectId
-            ? Option.some(project)
+            ? Option.some(options.project ?? project)
             : id === otherProjectId
               ? Option.some(otherProject)
               : Option.none(),
@@ -174,10 +179,10 @@ function makeHarness(options: HarnessOptions = {}) {
       createWorktree,
       renameBranch,
       fetchRemote: options.fetchRemote ?? (() => Effect.void),
+      isRepository: options.isRepository ?? (() => Effect.succeed(true)),
       // Base refs resolve; temporary-branch namespace lookups do not.
       hasCommit:
-        options.hasCommit ??
-        ((input) => Effect.succeed(!input.refName.startsWith("refs/heads/"))),
+        options.hasCommit ?? ((input) => Effect.succeed(!input.refName.startsWith("refs/heads/"))),
       localStatus:
         options.localStatus ?? (() => Effect.die("localStatus is not stubbed in this test")),
       remoteExists: options.remoteExists ?? (() => Effect.succeed(true)),
@@ -1351,6 +1356,197 @@ it.effect("starts from the checked-out branch when the requested base is missing
         baseRefName: "main",
         path: null,
       });
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+const studioCheckout = "/repo/repositories/specweave-studio";
+const projectWithRepositories = {
+  ...project,
+  workspaceSettings: {
+    ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+    environment: {
+      additionalFolders: [],
+      repositories: [
+        {
+          id: "specweave-studio",
+          url: "https://github.com/anton-abyzov/specwithcode",
+          localPath: studioCheckout,
+        },
+        { id: "vskill", url: "https://github.com/anton-abyzov/vskill", localPath: null },
+      ],
+    },
+  },
+};
+
+it.effect.each([
+  { label: "id", repository: "specweave-studio", cwd: studioCheckout },
+  { label: "checkout path", repository: `${studioCheckout}/`, cwd: studioCheckout },
+  { label: "default checkout", repository: "vskill", cwd: "/repo/.studio-repositories/vskill" },
+])("creates the worktree in a repository named by $label", ({ repository, cwd }) =>
+  Effect.gen(function* () {
+    const lookups: Array<{ cwd: string; refName: string }> = [];
+    const harness = makeHarness({
+      project: projectWithRepositories,
+      hasCommit: (input) => {
+        lookups.push({ cwd: input.cwd, refName: input.refName });
+        return Effect.succeed(input.cwd === cwd && input.refName === "origin/main");
+      },
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const launched = yield* launches.launch(
+        launchInput({
+          command: `command:launch:repository:${repository}`,
+          thread: `thread:launch:repository:${repository}`,
+          message: "Fix the launch target",
+          workspace: {
+            type: "worktree",
+            baseRef: "origin/main",
+            branch: "fix/launch-target-repository",
+            startFromOrigin: false,
+            repository,
+          },
+        }),
+      );
+      yield* waitUntil(() =>
+        threads
+          .getThreadProjection(launched.threadId)
+          .pipe(Effect.map((current) => current.thread.worktreePath !== null)),
+      );
+      assert.deepEqual(harness.createWorktree.mock.calls[0]?.[0], {
+        cwd,
+        refName: "origin/main",
+        newRefName: "fix/launch-target-repository",
+        baseRefName: "origin/main",
+        path: null,
+      });
+      assert.isTrue(lookups.length > 0 && lookups.every((lookup) => lookup.cwd === cwd));
+      const projection = yield* threads.getThreadProjection(launched.threadId);
+      assert.equal(projection.thread.worktreePath, "/repo-worktrees/feature");
+      assert.equal(projection.thread.branch, "fix/launch-target-repository");
+      yield* waitUntil(() => Effect.sync(() => harness.runSetup.mock.calls.length === 1));
+      assert.equal(harness.runSetup.mock.calls[0]?.[0].worktreePath, "/repo-worktrees/feature");
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("rejects an unknown repository before creating the thread", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({ project: projectWithRepositories });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const error = yield* launches
+        .launch(
+          launchInput({
+            command: "command:launch:unknown-repository",
+            thread: "thread:launch:unknown-repository",
+            message: "Fix the launch target",
+            workspace: { type: "worktree", baseRef: "main", repository: "specweave-cli" },
+          }),
+        )
+        .pipe(Effect.flip);
+      assert.equal(error.operation, "resolve-repository");
+      assert.equal(
+        error.cause,
+        `Repository "specweave-cli" is not one of project "Project"'s environment repositories. Use one of these ids or checkout paths: specweave-studio (${studioCheckout}), vskill (/repo/.studio-repositories/vskill).`,
+      );
+      assert.equal(
+        yield* threads.getThreadShell(ThreadId.make("thread:launch:unknown-repository")),
+        null,
+      );
+      assert.equal(harness.createWorktree.mock.calls.length, 0);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("rejects a repository on a project without environment repositories", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness();
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const error = yield* launches
+        .launch(
+          launchInput({
+            command: "command:launch:no-repositories",
+            thread: "thread:launch:no-repositories",
+            workspace: { type: "worktree", baseRef: "main", repository: "/repo/nested" },
+          }),
+        )
+        .pipe(Effect.flip);
+      assert.equal(error.operation, "resolve-repository");
+      assert.include(String(error.cause), "The project has none; omit repository");
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("rejects a repository whose checkout is not prepared", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      project: projectWithRepositories,
+      isRepository: () => Effect.succeed(false),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const error = yield* launches
+        .launch(
+          launchInput({
+            command: "command:launch:unprepared-repository",
+            thread: "thread:launch:unprepared-repository",
+            workspace: { type: "worktree", baseRef: "main", repository: "vskill" },
+          }),
+        )
+        .pipe(Effect.flip);
+      assert.equal(error.operation, "resolve-repository");
+      assert.include(
+        String(error.cause),
+        'Repository "vskill" has no git checkout at /repo/.studio-repositories/vskill.',
+      );
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("fails instead of falling back when the base is missing in the chosen repository", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      project: projectWithRepositories,
+      remoteExists: () => Effect.succeed(false),
+      hasCommit: (input) => Effect.succeed(input.refName === "refs/heads/develop"),
+      localStatus: () => Effect.succeed({ refName: "develop" } as never),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const launched = yield* launches.launch(
+        launchInput({
+          command: "command:launch:repository-missing-base",
+          thread: "thread:launch:repository-missing-base",
+          message: "Fix the launch target",
+          workspace: {
+            type: "worktree",
+            baseRef: "origin/main",
+            branch: "fix/launch-target-repository",
+            repository: "specweave-studio",
+          },
+        }),
+      );
+      yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "run.updated" && stored.event.payload.status === "failed",
+        ),
+        Stream.runHead,
+      );
+      const projection = yield* threads.getThreadProjection(launched.threadId);
+      assert.equal(projection.runs[0]?.status, "failed");
+      assert.equal(projection.thread.worktreePath, null);
+      assert.include(
+        projection.turnItems.find((item) => item.type === "error")?.failure.message ?? "",
+        `Base ref "origin/main" was not found in repository "specweave-studio" (${studioCheckout}).`,
+      );
+      assert.equal(harness.createWorktree.mock.calls.length, 0);
     }).pipe(Effect.provide(harness.layer));
   }),
 );

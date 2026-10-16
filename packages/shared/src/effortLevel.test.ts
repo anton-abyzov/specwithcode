@@ -3,8 +3,6 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   findEffortDescriptor,
-  formatEffortLabel,
-  modelSelectionEffortLabel,
   modelSelectionEffortValue,
   resolveEffort,
   withEffortSelection,
@@ -93,13 +91,8 @@ describe("effort helpers", () => {
     ]);
   });
 
-  it("labels a selection's effort, falling back to the model default", () => {
+  it("reads a selection's effort value", () => {
     const options = [{ id: "reasoning_effort", value: "xhigh" }];
     expect(modelSelectionEffortValue({ options })).toBe("xhigh");
-    expect(modelSelectionEffortLabel({ options }, copilot)).toBe("Extra High");
-    expect(modelSelectionEffortLabel({ options })).toBe("Extra High");
-    expect(modelSelectionEffortLabel({}, copilot)).toBe("Medium");
-    expect(modelSelectionEffortLabel({}, undefined)).toBeUndefined();
-    expect(formatEffortLabel("ultrathink")).toBe("ultrathink");
   });
 });

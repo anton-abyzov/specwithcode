@@ -16,7 +16,11 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ServerSettings from "../serverSettings.ts";
-import { restartContinuationRun, continueRestartedRun } from "./RestartContinuation.ts";
+import {
+  restartContinuationRun,
+  continueRestartedRun,
+  resumeQueueAfterRestart,
+} from "./RestartContinuation.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -249,6 +253,42 @@ it.effect("does not continue a failed run that lost background work", () =>
       ),
     );
     assert.lengthOf(commands, 0);
+  }),
+);
+
+it.effect("resumes a run a crash cut off, with default settings and no shutdown", () =>
+  Effect.gen(function* () {
+    // A crash (SIGBUS on M4, October 16) runs no shutdown: startup alone must continue the run.
+    let committed: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0] | undefined;
+    const recovery = yield* ProviderRuntimeRecovery.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ServerSettings.layerTest({}),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getRecoveryThreadIds: () => Effect.succeed([threadId]),
+            getRuntimeRecoveryProjection: () => Effect.succeed(makeProjection()),
+          }),
+          Layer.mock(EventSink.EventSinkV2)({
+            commitCommand: (input) => {
+              committed = input;
+              return Effect.succeed({ committed: true, cancelledEffectCount: 1 } as never);
+            },
+          }),
+          IdAllocator.layer,
+          Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({
+            runRecoveryOnce: Effect.succeed(false),
+          }),
+          Layer.mock(EffectOutbox.EffectOutboxV2)({
+            reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+          }),
+        ),
+      ),
+    );
+    yield* recovery.reconcile("startup");
+    assert.deepEqual(committed?.effects[0]?.request, {
+      type: "provider-runtime.continue",
+      sourceRunId: runId,
+    });
   }),
 );
 
@@ -813,6 +853,139 @@ it.effect("prepares later threads' continuations when one thread fails", () =>
     assert.deepEqual(
       writes.map((write) => write.effects[0]?.request),
       [{ type: "provider-runtime.continue", sourceRunId: runId }],
+    );
+  }),
+);
+
+it.effect("continues a run and then releases the queue the restart held", () =>
+  Effect.gen(function* () {
+    const base = makeProjection();
+    const queuedRunId = RunId.make("run:queued");
+    const projection = {
+      ...base,
+      runs: [
+        { ...base.runs[0]!, status: "cancelled" },
+        { ...base.runs[0]!, id: queuedRunId, ordinal: 2, status: "queued", queueHeld: true },
+      ],
+    } as unknown as OrchestrationV2ThreadProjection;
+    const commands: Parameters<
+      ThreadManagementService.ThreadManagementService["Service"]["dispatch"]
+    >[0][] = [];
+    yield* continueRestartedRun({ threadId, sourceRunId: runId }).pipe(
+      Effect.provide(
+        Layer.merge(
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadRecords: () => Effect.succeed(projection),
+            recoverDelegatedTask: () => Effect.void,
+            dispatch: (command) => {
+              commands.push(command);
+              return Effect.succeed({} as never);
+            },
+          }),
+          ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+        ),
+      ),
+    );
+    assert.deepEqual(
+      commands.map((command) => command.type),
+      ["message.dispatch", "queue.resume"],
+    );
+    const continuation = commands[0]!;
+    assert.equal(
+      continuation.type === "message.dispatch" ? continuation.messageId : null,
+      MessageId.make(`message:restart-continuation:${runId}`),
+    );
+  }),
+);
+
+it.effect("names an update continuation so the thread can say so", () =>
+  Effect.gen(function* () {
+    const base = makeProjection();
+    const projection = {
+      ...base,
+      runs: [{ ...base.runs[0]!, status: "interrupted" }],
+      turnItems: [{ runId, type: "run_interrupt_request", cause: "service_update" }],
+    } as unknown as OrchestrationV2ThreadProjection;
+    const commands: Parameters<
+      ThreadManagementService.ThreadManagementService["Service"]["dispatch"]
+    >[0][] = [];
+    yield* continueRestartedRun({ threadId, sourceRunId: runId }).pipe(
+      Effect.provide(
+        Layer.merge(
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadRecords: () => Effect.succeed(projection),
+            recoverDelegatedTask: () => Effect.void,
+            dispatch: (command) => {
+              commands.push(command);
+              return Effect.succeed({} as never);
+            },
+          }),
+          ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+        ),
+      ),
+    );
+    assert.lengthOf(commands, 1);
+    const continuation = commands[0]!;
+    assert.equal(
+      continuation.type === "message.dispatch" ? continuation.messageId : null,
+      MessageId.make(`message:update-continuation:${runId}`),
+    );
+  }),
+);
+
+it.effect("queues again, in order and once, the messages an update cancelled", () =>
+  Effect.gen(function* () {
+    const base = makeProjection();
+    const first = RunId.make("run:cancelled-1");
+    const second = RunId.make("run:cancelled-2");
+    const cancelled = (id: RunId, ordinal: number) => ({
+      ...base.runs[0]!,
+      id,
+      ordinal,
+      status: "cancelled",
+      cancelledForUpdate: true,
+      userMessageId: MessageId.make(`message:${id}`),
+    });
+    let projection = {
+      ...base,
+      runs: [{ ...base.runs[0]!, status: "completed" }, cancelled(second, 3), cancelled(first, 2)],
+      messages: [first, second].map((id) => ({
+        id: MessageId.make(`message:${id}`),
+        text: `text ${id}`,
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+      })),
+    } as unknown as OrchestrationV2ThreadProjection;
+    const commands: Parameters<
+      ThreadManagementService.ThreadManagementService["Service"]["dispatch"]
+    >[0][] = [];
+    const layer = Layer.merge(
+      Layer.mock(ThreadManagementService.ThreadManagementService)({
+        getThreadRecords: () => Effect.succeed(projection),
+        dispatch: (command) => {
+          commands.push(command);
+          if (command.type === "message.dispatch")
+            projection = {
+              ...projection,
+              messages: [...projection.messages, { id: command.messageId } as never],
+            };
+          return Effect.succeed({} as never);
+        },
+      }),
+      ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+    );
+    const input = { threadId, effectId: "effect:test", releaseHeld: false };
+    yield* resumeQueueAfterRestart(input).pipe(Effect.provide(layer));
+    yield* resumeQueueAfterRestart(input).pipe(Effect.provide(layer));
+    assert.deepEqual(
+      commands.map((command) =>
+        command.type === "message.dispatch" ? [command.text, command.dispatchMode.type] : null,
+      ),
+      [
+        [`text ${first}`, "queue_after_active"],
+        [`text ${second}`, "queue_after_active"],
+      ],
     );
   }),
 );

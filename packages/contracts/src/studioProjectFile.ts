@@ -96,12 +96,13 @@ export const StudioProjectFile = Schema.Struct({
   scripts: Schema.optionalKey(
     Schema.Array(StudioProjectFileScript)
       .annotate({
-        description: "Project scripts shared with everyone who opens this repository in SpecWithCode.",
+        description:
+          "Project scripts shared with everyone who opens this repository in SpecWithCode.",
       })
       .check(Schema.isMaxLength(STUDIO_PROJECT_FILE_MAX_SCRIPTS)),
   ),
 }).annotate({
-  title: "Studio project file",
+  title: "SpecWithCode project file",
   description:
     "Checked-in project configuration for SpecWithCode (specweave-studio.json at the repository root). See https://studio.invalid for documentation.",
 });

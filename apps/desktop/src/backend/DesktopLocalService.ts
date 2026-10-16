@@ -8,6 +8,12 @@ import {
   fetchRemoteSessionState,
 } from "@specweave-studio/client-runtime/authorization";
 import {
+  canonicalStudioPath,
+  LEGACY_STUDIO_HOME_DIRECTORY,
+  STUDIO_HOME_DIRECTORY,
+  studioRootDirectory,
+} from "@specweave-studio/shared/studioIdentity";
+import {
   AuthSessionState,
   ExecutionEnvironmentDescriptor,
   ServerAuthDescriptor,
@@ -239,44 +245,67 @@ export const make = Effect.gen(function* () {
 
   // The app's own home first. With no explicit STUDIO_HOME, also every home
   // the fleet installer created beside it: the installed service runs from
-  // `~/.specweave-studio/<identity>`, not from the default home.
+  // `~/.specwithcode/<identity>` (or an unmigrated `~/.specweave-studio/<identity>`),
+  // not from the default home.
   const listCandidates = Effect.sync((): ReadonlyArray<StudioHomeCandidate> => {
     const own = {
       baseDir: environment.baseDir,
       stateDir: environment.stateDir,
       serviceInstalled: false,
     };
-    const studioRoot = environment.path.join(environment.homeDirectory, ".specweave-studio");
-    if (environment.baseDir !== studioRoot) return [own];
-    let entries: NodeFS.Dirent[];
-    try {
-      entries = NodeFS.readdirSync(studioRoot, { withFileTypes: true });
-    } catch {
+    const home = environment.homeDirectory;
+    const brandedRoot = environment.path.join(home, STUDIO_HOME_DIRECTORY);
+    const legacyRoot = environment.path.join(home, LEGACY_STUDIO_HOME_DIRECTORY);
+    if (
+      environment.baseDir !== studioRootDirectory(home) &&
+      environment.baseDir !== brandedRoot &&
+      environment.baseDir !== legacyRoot
+    ) {
       return [own];
     }
+    // Branded first; a real (unmigrated) legacy root may still hold a service next to a
+    // fresh branded profile. A migrated legacy root is a link to the branded one.
+    const roots = [brandedRoot];
+    try {
+      if (!NodeFS.lstatSync(legacyRoot).isSymbolicLink()) roots.push(legacyRoot);
+    } catch {
+      // No legacy root.
+    }
+    const seen = new Set<string>();
     const installed: StudioHomeCandidate[] = [];
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      let text: string;
+    for (const studioRoot of roots) {
+      let entries: NodeFS.Dirent[];
       try {
-        text = NodeFS.readFileSync(
-          environment.path.join(studioRoot, entry.name, "installation.json"),
-          "utf8",
-        );
+        entries = NodeFS.readdirSync(studioRoot, { withFileTypes: true });
       } catch {
         continue;
       }
-      const installation = parseStudioInstallation(text, {
-        studioRoot,
-        directoryName: entry.name,
-        join: environment.path.join,
-      });
-      if (installation === null || installation.stateDir === environment.stateDir) continue;
-      installed.push({
-        baseDir: installation.studioHome,
-        stateDir: installation.stateDir,
-        serviceInstalled: installation.serviceInstalled,
-      });
+      for (const entry of entries) {
+        if (!entry.isDirectory() || seen.has(entry.name)) continue;
+        let text: string;
+        try {
+          text = NodeFS.readFileSync(
+            environment.path.join(studioRoot, entry.name, "installation.json"),
+            "utf8",
+          );
+        } catch {
+          continue;
+        }
+        const installation = parseStudioInstallation(text, {
+          studioRoot,
+          directoryName: entry.name,
+          join: environment.path.join,
+          canonical: (path) => canonicalStudioPath(path, home),
+        });
+        if (installation === null) continue;
+        seen.add(entry.name);
+        if (installation.stateDir === environment.stateDir) continue;
+        installed.push({
+          baseDir: installation.studioHome,
+          stateDir: installation.stateDir,
+          serviceInstalled: installation.serviceInstalled,
+        });
+      }
     }
     // Services before plain installs, then by name for a stable order.
     installed.sort(

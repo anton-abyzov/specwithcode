@@ -8,6 +8,8 @@ export const MAC_SERVICE_UPDATER_FILES = [
   "update_agent_recovery.py",
   "installation_descriptor.py",
   "managed_updates.py",
+  "studio_paths.py",
+  "migrate_home.py",
 ] as const;
 
 export const MAC_SERVICE_UPDATER_EXTRA_RESOURCES = [

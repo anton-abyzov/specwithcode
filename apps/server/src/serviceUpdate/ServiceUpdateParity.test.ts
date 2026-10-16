@@ -68,6 +68,20 @@ it.effect("mirrors the idle check in update.py", () =>
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.effect("leaves held queued runs out of the idle check on both sides", () =>
+  Effect.gen(function* () {
+    // A held queue never starts on its own; counting it would keep the update waiting forever.
+    const script = yield* readScript("update.py");
+    assert.include(script, "get('queueHeld') is True");
+    assert.include(script, "runs = run_work(db)[0]");
+    const preparation = yield* serverSource("serviceUpdate/ServiceUpdatePreparation.ts");
+    assert.include(
+      preparation,
+      "AND NOT (status = 'queued' AND json_extract(payload_json, '$.queueHeld') IS 1)",
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.effect("reads the request and the agent's answer where the update agent keeps them", () =>
   Effect.gen(function* () {
     const source = yield* readScript("update_agent.py");

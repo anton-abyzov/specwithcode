@@ -23,6 +23,7 @@ import {
   OrchestratorMcpThreadReadResult,
   OrchestratorMcpThreadSendResult,
   OrchestratorMcpThreadWaitResult,
+  OrchestratorMcpThreadsBulkResult,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -113,6 +114,7 @@ const decodeThreadListResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadL
 const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
 const decodeThreadSendResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadSendResult);
 const decodeThreadWaitResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadWaitResult);
+const decodeThreadsBulkResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadsBulkResult);
 const decodeThreadUpdateResult = Schema.decodeUnknownEffect(ThreadMetadataMcpUpdateResult);
 
 const codexSelection = {
@@ -776,7 +778,8 @@ describe("orchestrator MCP toolkit", () => {
             expect(declaredFailure(refusedSettle)).toEqual({
               _tag: "OrchestratorMcpFailure",
               code: "orchestration_error",
-              message: `Thread ${parentThreadId} has active or blocked work and cannot be settled.`,
+              message:
+                "This thread can't be resolved yet: a turn is still running. Stop it first, then resolve.",
             });
             const afterRefusedSettle = yield* orchestrator.getThreadProjection(parentThreadId);
             expect(afterRefusedSettle.thread.settledOverride).not.toBe("settled");
@@ -790,6 +793,12 @@ describe("orchestrator MCP toolkit", () => {
             expect((yield* orchestrator.getThreadShell(parentThreadId))?.pinnedAt).not.toBeNull();
             yield* invoke("studio_thread_organize", { action: "unpin" });
             expect((yield* orchestrator.getThreadShell(parentThreadId))?.pinnedAt).toBeNull();
+
+            // A thread with nothing held resumes harmlessly; held queues are covered in
+            // HeldQueueRelease.test.ts.
+            const resumedQueue = yield* invoke("studio_queue_resume", {});
+            expect(resumedQueue.isError).toBe(false);
+            expect(resumedQueue.structuredContent).toHaveProperty("sequence");
 
             if (parentRun === undefined || parentRun.rootNodeId === null) {
               return yield* Effect.die(new Error("Parent run missing."));
@@ -1690,6 +1699,81 @@ describe("orchestrator MCP toolkit", () => {
               .pipe(Effect.flip);
             expect(reused.message).toContain("already used");
 
+            // ask_user shows a message-mode question card and returns at once;
+            // the answer comes back to the thread as a message.
+            const askCall = yield* invoke("ask_user", {
+              questions: [
+                {
+                  question: "Clear regenerable caches on the M4 to free disk space?",
+                  header: "Disk space",
+                  options: [
+                    {
+                      label: "Clear caches",
+                      description: "Removes `~/Library/Caches` entries that rebuild.",
+                      recommended: true,
+                    },
+                    { label: "Leave as is" },
+                  ],
+                },
+              ],
+              clientRequestId: "disk-question",
+            });
+            expect(askCall.isError).toBe(false);
+            const askResult = askCall.structuredContent as { requestId: string; status: string };
+            expect(askResult.status).toBe("asked");
+            const withQuestion = yield* orchestrator.getThreadProjection(parentThreadId);
+            const questionCard = withQuestion.turnItems.find(
+              (item) =>
+                item.type === "user_input_request" && item.requestId === askResult.requestId,
+            );
+            expect(questionCard).toMatchObject({
+              status: "waiting",
+              responseMode: "message",
+              questions: [
+                {
+                  id: "q1",
+                  header: "Disk space",
+                  options: [
+                    { label: "Clear caches", recommended: true },
+                    { label: "Leave as is", description: "Leave as is" },
+                  ],
+                  allowCustomAnswer: true,
+                },
+              ],
+            });
+            expect(
+              withQuestion.runtimeRequests.find((request) => request.id === askResult.requestId),
+            ).toMatchObject({
+              kind: "user_input",
+              status: "pending",
+              responseCapability: { type: "message" },
+            });
+            expect(
+              (yield* orchestrator.getThreadShell(parentThreadId))?.pendingRuntimeRequest,
+            ).toMatchObject({ kind: "user_input" });
+            // A retry finds the same card instead of asking twice.
+            const askedAgain = yield* invoke("ask_user", {
+              questions: [{ question: "Clear caches?", options: [] }],
+              clientRequestId: "disk-question",
+            });
+            expect(askedAgain.structuredContent).toEqual(askResult);
+            yield* orchestrator.dispatch({
+              type: "thread.user-input.dismiss",
+              commandId: CommandId.make("command:test:ask-user-dismiss"),
+              threadId: parentThreadId,
+              requestId: askResult.requestId as never,
+            });
+            const afterDismiss = yield* invoke("ask_user", {
+              questions: [{ question: "Clear caches?", options: [] }],
+              clientRequestId: "disk-question",
+            });
+            expect(afterDismiss.structuredContent).toMatchObject({ status: "dismissed" });
+            expect(
+              (yield* orchestrator.getThreadProjection(parentThreadId)).turnItems.filter(
+                (item) => item.type === "user_input_request",
+              ),
+            ).toHaveLength(1);
+
             const delegatedCall = yield* invoke("delegate_task", {
               task: delegatedPrompt,
               target: {
@@ -2589,6 +2673,65 @@ describe("orchestrator MCP toolkit", () => {
               repeatedInterruptCall.structuredContent,
             ).pipe(Effect.orDie);
             expect(repeatedInterrupt.status).toBe("interrupted");
+
+            // Continue-all picks the interrupted thread up from its stopped run, once.
+            const continueAllCall = yield* invoke("studio_threads_continue_all", {});
+            const continuedAll = yield* decodeThreadsBulkResult(
+              continueAllCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(continuedAll.threads).toContainEqual(
+              expect.objectContaining({
+                threadId: activeThread.threadId,
+                runId: activeRun.id,
+                status: "continued",
+              }),
+            );
+            expect(continuedAll.threads.map((thread) => thread.threadId)).not.toContain(
+              parentThreadId,
+            );
+            const continuedProjection = yield* waitForProjection(
+              orchestrator,
+              activeThread.threadId,
+              (projection) => projection.runs.at(-1)?.status === "completed",
+            );
+            expect(continuedProjection.runs).toHaveLength(2);
+            expect(continuedProjection.messages.at(-1)).toMatchObject({
+              role: "user",
+              text: "Continue where you left off.",
+              senderThreadId: parentThreadId,
+            });
+
+            // Stop-all stops running threads as the user's Stop would, never the caller.
+            const stopTargetCall = yield* invoke("create_threads", {
+              threads: [{ prompt: cancellationPrompt, title: "Stop-all target" }],
+              clientRequestId: "stop-all-target-1",
+            });
+            const stopTarget = (yield* decodeCreateThreadsResult(
+              stopTargetCall.structuredContent,
+            ).pipe(Effect.orDie)).threads[0]!;
+            yield* waitForProjection(orchestrator, stopTarget.threadId, (projection) =>
+              projection.providerTurns.some((turn) => turn.status === "running"),
+            );
+            const stopAllCall = yield* invoke("studio_threads_stop_all", {
+              reason: "Stop everything.",
+            });
+            const stoppedAll = yield* decodeThreadsBulkResult(stopAllCall.structuredContent).pipe(
+              Effect.orDie,
+            );
+            expect(stoppedAll.threads).toContainEqual(
+              expect.objectContaining({ threadId: stopTarget.threadId, status: "stop_requested" }),
+            );
+            expect(stoppedAll.threads.map((thread) => thread.threadId)).not.toContain(
+              parentThreadId,
+            );
+            const stoppedProjection = yield* waitForProjection(
+              orchestrator,
+              stopTarget.threadId,
+              (projection) => projection.runs.at(-1)?.status === "interrupted",
+            );
+            expect(
+              stoppedProjection.turnItems.find((item) => item.type === "run_interrupt_request"),
+            ).toMatchObject({ cause: "user" });
 
             const foreignThreadId = ThreadId.make("thread:mcp-foreign-project");
             yield* orchestrator.dispatch({

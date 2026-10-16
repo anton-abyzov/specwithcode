@@ -1,5 +1,8 @@
 import type { DpopFailureReason } from "@specweave-studio/contracts";
-import type { RelayEnvironmentStatusResponse, RelayProtectedError } from "@specweave-studio/contracts/relay";
+import type {
+  RelayEnvironmentStatusResponse,
+  RelayProtectedError,
+} from "@specweave-studio/contracts/relay";
 
 export const DPOP_CLOCK_HINT =
   "Hint: Check that automatic date and time is enabled on both devices, then try again.";
@@ -69,7 +72,7 @@ export function relayProtectedErrorMessage(error: RelayProtectedError): string {
 // coming back, which clears this reason. While it is still reported, the host
 // is either still off or running a build too old to do that.
 export const RELAY_TUNNEL_RELEASED_MESSAGE =
-  "Offline for a while, so its Studio Connect tunnel was removed. Start SpecWithCode on that computer and update it to the latest version to reconnect.";
+  "Offline for a while, so its SpecWithCode Connect tunnel was removed. Start SpecWithCode on that computer and update it to the latest version to reconnect.";
 
 /** User-facing text for an offline status, or null when the relay gave no known reason. */
 export function relayOfflineReasonMessage(

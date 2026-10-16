@@ -250,6 +250,26 @@ export function StudioFleetConnections({ environmentId, savedEnvironmentIds }: P
     />
   );
 }
+/**
+ * The address line for a machine card. A machine reached through another
+ * machine's private name (a relay port on it) says so, instead of showing
+ * that other machine's host as if it were its own.
+ */
+export function fleetMachineAddress(
+  machine: Pick<StudioFleetMachine, "id" | "url">,
+  machines: ReadonlyArray<Pick<StudioFleetMachine, "id" | "label" | "url">>,
+): string {
+  const url = new URL(machine.url);
+  const relay = url.port
+    ? machines.find((other) => {
+        if (other.id === machine.id) return false;
+        const otherUrl = new URL(other.url);
+        return otherUrl.hostname === url.hostname && !otherUrl.port;
+      })
+    : undefined;
+  return relay ? `Through ${relay.label}, port ${url.port}` : url.host;
+}
+
 export function StudioFleetRoster({
   snapshot,
   loading,
@@ -361,6 +381,11 @@ export function StudioFleetRoster({
                   </span>
                   <div className="min-w-0">
                     <h3 className="truncate text-sm font-semibold">{machine.label}</h3>
+                    {machine.machineName && machine.machineName !== machine.label ? (
+                      <p className="truncate text-xs text-muted-foreground">
+                        {machine.machineName}
+                      </p>
+                    ) : null}
                     <p className="mt-0.5 text-xs text-muted-foreground">
                       {current
                         ? "This machine"
@@ -381,7 +406,7 @@ export function StudioFleetRoster({
                     className="truncate font-mono text-[10px] text-muted-foreground"
                     title={machine.url}
                   >
-                    {new URL(machine.url).host}
+                    {fleetMachineAddress(machine, snapshot.machines)}
                   </p>
                 </div>
                 {current || saved ? (

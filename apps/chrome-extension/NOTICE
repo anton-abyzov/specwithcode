@@ -1,0 +1,20 @@
+SpecWithCode Browser (Chrome extension)
+Copyright 2026 Anton Abyzov
+
+This extension includes software derived from Playwright
+(https://github.com/microsoft/playwright, packages/extension), the
+"Playwright MCP Bridge" / "Playwright Extension":
+
+  Playwright
+  Copyright (c) Microsoft Corporation
+
+  Licensed under the Apache License, Version 2.0. A copy of the license is in
+  the LICENSE file next to this NOTICE.
+
+Files derived from it carry Microsoft's copyright header and a note that
+describes the changes:
+
+  src/relayConnection.js  (from packages/extension/src/relayConnection.ts)
+  src/tabGroup.js         (from packages/extension/src/connectedTabGroup.ts)
+
+Upstream revision used: microsoft/playwright@034f230cc68b286055186f4d9783188536f2f3cf

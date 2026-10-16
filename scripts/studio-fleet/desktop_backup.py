@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Keeps desktop app rollback copies where macOS does not treat them as apps.
 
-A loose `.app` copy under ~/.specweave-studio/backups is indexed by Spotlight
+A loose `.app` copy under ~/.specwithcode/backups is indexed by Spotlight
 and registered with Launch Services. Every copy shares the bundle id
 com.specweave.studio, so Spotlight lists several "SpecWithCode" apps and
 `open -b` can start an old copy that then pairs with the running service.
 
 This is the only supported way to keep a desktop rollback copy:
 - `snapshot APP` zips the bundle with `ditto` into
-  ~/.specweave-studio/backups/desktop.noindex/<version>-<timestamp>.zip;
+  ~/.specwithcode/backups/desktop.noindex/<version>-<timestamp>.zip;
 - `prune` keeps the most recently made copies (one by default);
 - `migrate` zips every loose `.app` that earlier release sessions left under
   backups/ (and any `--extra` paths), removes the loose copy and drops it from
@@ -28,6 +28,7 @@ import shutil
 import subprocess
 import sys
 import time
+import studio_paths
 
 LSREGISTER = ('/System/Library/Frameworks/CoreServices.framework/Frameworks/'
               'LaunchServices.framework/Support/lsregister')
@@ -36,7 +37,7 @@ ARCHIVE_NAME = re.compile(r'(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?-(\d{8}T\d{6}
 
 
 def backups_root(home):
-    return pathlib.Path(home) / '.specweave-studio' / 'backups'
+    return studio_paths.backups_root(home)
 
 
 def archive_root(home):

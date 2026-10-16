@@ -1347,7 +1347,7 @@ describe("buildThreadFeed", () => {
     expect(activity?.workEntry.viewedImagePath).toBe("/workspace/reference.png");
   });
 
-  it("pretty prints Studio MCP dynamic tool activities and attaches the product logo", () => {
+  it("pretty prints SpecWithCode MCP dynamic tool activities and attaches the product logo", () => {
     const toolItem: OrchestrationV2TurnItem = {
       ...base("item-studio-tool", "2026-06-20T00:00:04.000Z", 3),
       type: "dynamic_tool",
@@ -1359,9 +1359,9 @@ describe("buildThreadFeed", () => {
     const feed = buildThreadFeed([projected(toolItem, 0)]);
     const activity = feed[0]?.type === "activity-group" ? feed[0].activities[0] : null;
 
-    expect(activity?.summary).toBe("Read a Studio thread");
+    expect(activity?.summary).toBe("Read a SpecWithCode thread");
     expect(activity?.logo).toBe("studio-code");
-    expect(activity?.getCopyText().split("\n")[0]).toBe("Read a Studio thread");
+    expect(activity?.getCopyText().split("\n")[0]).toBe("Read a SpecWithCode thread");
   });
 
   it("uses the CUA action title in the mobile feed", () => {
@@ -1376,21 +1376,24 @@ describe("buildThreadFeed", () => {
     expect(activity?.summary).toBe("Inspect Saga music screen");
   });
 
-  it("uses canonical Studio orchestration summaries in compact work groups", () => {
+  it("uses canonical SpecWithCode orchestration summaries in compact work groups", () => {
     const rows = [
       projected(command("2026-06-20T00:00:01.000Z"), 0),
-      ...["mcp__studio-code__studio_thread_send", "studio_code.studio_thread_send", "studio_thread_send"].map(
-        (toolName, index) =>
-          projected(
-            {
-              ...base(`item-send-${index}`, `2026-06-20T00:00:0${index + 2}.000Z`, index + 2),
-              type: "dynamic_tool" as const,
-              toolName,
-              input: { threadId: `thread-${index}`, message: "Continue" },
-              output: { threadId: `thread-${index}`, messageId: `message-${index}` },
-            },
-            index + 1,
-          ),
+      ...[
+        "mcp__studio-code__studio_thread_send",
+        "studio_code.studio_thread_send",
+        "studio_thread_send",
+      ].map((toolName, index) =>
+        projected(
+          {
+            ...base(`item-send-${index}`, `2026-06-20T00:00:0${index + 2}.000Z`, index + 2),
+            type: "dynamic_tool" as const,
+            toolName,
+            input: { threadId: `thread-${index}`, message: "Continue" },
+            output: { threadId: `thread-${index}`, messageId: `message-${index}` },
+          },
+          index + 1,
+        ),
       ),
       projected(
         {

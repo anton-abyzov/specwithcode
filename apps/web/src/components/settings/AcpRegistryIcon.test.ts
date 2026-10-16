@@ -213,6 +213,6 @@ it("renders bundled Copilot immediately without fetching or cache access", () =>
   expect(typeof element.type).toBe("function");
   const svg = (element.type as Function)(element.props);
   expect(svg.props["data-provider-icon"]).toBe("github-copilot");
-  expect(svg.props.viewBox).toBe("0 0 24 24");
+  expect(svg.props.viewBox).toBe("0 0 16 16");
   expect(fetchIcon).not.toHaveBeenCalled();
 });

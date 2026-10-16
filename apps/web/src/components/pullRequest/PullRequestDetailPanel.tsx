@@ -9,7 +9,10 @@ import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
   type EnvironmentId,
+  type ModelSelection,
+  type ProjectId,
   type PullRequestAction,
+  type PullRequestCheck,
   type PullRequestMergeMethod,
   type PullRequestListEntry,
   type PullRequestUpdateMethod,
@@ -128,6 +131,9 @@ import { openOnHostLabel, showPullRequestLinkContextMenu } from "./pullRequestLi
 import { PullRequestMarkdownContext } from "./PullRequestMarkdown";
 import { PullRequestComposer } from "./PullRequestComposer";
 import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
+import { ReviewWithMenu } from "./codeReview/ReviewWithMenu";
+import { useStartPullRequestWorker } from "./codeReview/useStartPullRequestWorker";
+import { buildFixCheckPrompt, buildReviewPullRequestPrompt } from "./codeReview/codeReview.logic";
 import { PullRequestTimelineTab } from "./PullRequestTimelineTab";
 import {
   buildAddSelectionToAgentHandoff,
@@ -1370,7 +1376,75 @@ export function PullRequestDetailPanel({
   };
 
   /** One finding, handed over on its own — the surfaces that show findings call this. */
+  const worker = useStartPullRequestWorker({
+    environmentId: actingEnvironmentId,
+    projectId: (acting?.projectId ?? detail?.projectId ?? reference.projectId) as ProjectId,
+    workspaceRoot: checkoutRoot,
+  });
+  const readCheckLog = useAtomCommand(pullRequestEnvironment.checkFailureLog, {
+    reportFailure: false,
+  });
+
+  /** One press: a worker on the pull request's branch, sent the failing check and its log. */
+  const startCheckWorker = async (check: PullRequestCheck) => {
+    if (!detail) return;
+    const key = pullRequestFindingKey({ kind: "check", check });
+    // Best effort: a check whose log cannot be read still gets its worker, told where to look.
+    const log = await Promise.resolve()
+      .then(() =>
+        readCheckLog({
+          environmentId,
+          input: { ...reference, checkName: check.name, checkUrl: check.url },
+        }),
+      )
+      .then((read) => (read._tag === "Success" ? read.value : null))
+      .catch(() => null);
+    await worker.start(key, {
+      verb: "Fix",
+      title: `Fix ${check.name} on #${detail.number}`,
+      url: detail.url,
+      checkout: true,
+      prompt: buildFixCheckPrompt({
+        number: detail.number,
+        title: detail.title,
+        url: detail.url,
+        headBranch: detail.headBranch,
+        baseBranch: detail.baseBranch,
+        checkName: check.name,
+        checkUrl: check.url,
+        log: log?.log ?? null,
+        logTruncated: log?.truncated ?? false,
+        logSource: log?.source ?? null,
+      }),
+    });
+  };
+
+  /** A read-only review by whichever provider the reader picked, as its own worker thread. */
+  const startReview = async (model: ModelSelection) => {
+    if (!detail) return;
+    await worker.start("review", {
+      verb: "Review",
+      title: `Review #${detail.number}: ${detail.title}`,
+      url: detail.url,
+      checkout: false,
+      model,
+      prompt: buildReviewPullRequestPrompt({
+        number: detail.number,
+        title: detail.title,
+        url: detail.url,
+        headBranch: detail.headBranch,
+        baseBranch: detail.baseBranch,
+      }),
+    });
+  };
+
   const startFixFinding = (finding: PullRequestFinding) => {
+    // Beside a thread the finding goes into that thread's composer, as it always has; on the
+    // page a failing check starts its own worker with the log attached.
+    if (finding.kind === "check" && attachTarget === null && context === "page") {
+      void startCheckWorker(finding.check);
+      return;
+    }
     if (!detail) return;
     void startHandoff(
       pullRequestFindingKey(finding),
@@ -1707,6 +1781,18 @@ export function PullRequestDetailPanel({
                     <TooltipPopup side="top">Back to pull requests</TooltipPopup>
                   </Tooltip>
                 ) : null}
+                {context === "page" ? (
+                  <span
+                    className={cn(
+                      "mr-1 inline-flex shrink-0 items-center gap-1 rounded-full bg-muted/60 px-2 py-0.5 font-medium",
+                      statePresentation.toneClassName,
+                    )}
+                    data-pull-request-state-chip
+                  >
+                    <statePresentation.Icon aria-hidden className="size-3" />
+                    {statePresentation.label}
+                  </span>
+                ) : null}
                 <Tooltip>
                   <TooltipTrigger
                     render={
@@ -1852,13 +1938,12 @@ export function PullRequestDetailPanel({
                   }}
                 />
               ) : null}
-              {context === "page" ? (
-                <PullRequestThreadLinks
-                  display="count"
-                  environmentId={environmentId}
-                  reference={reference}
-                  url={detail.url}
-                  threadRef={null}
+              {context === "page" && detail.state === "open" ? (
+                <ReviewWithMenu
+                  entries={worker.usableEntries}
+                  defaultModel={worker.defaultModel}
+                  pending={worker.pending === "review"}
+                  onReview={(model) => void startReview(model)}
                 />
               ) : null}
               {checkoutControl}
@@ -2381,7 +2466,12 @@ export function PullRequestDetailPanel({
                     <Tooltip>
                       <TooltipTrigger
                         render={
-                          <h1 className="min-w-0 flex-1 truncate text-base font-semibold leading-snug">
+                          <h1
+                            className={cn(
+                              "min-w-0 flex-1 truncate font-semibold leading-snug",
+                              context === "page" ? "text-lg" : "text-base",
+                            )}
+                          >
                             {detail.title}
                           </h1>
                         }
@@ -2752,12 +2842,29 @@ export function PullRequestDetailPanel({
                   activityPending={activityPending}
                   checksStale={checksStale}
                   activityError={activityError}
-                  pendingFinding={handoff}
+                  pendingFinding={handoff ?? worker.pending}
                   fixFindingLabel={handoffLabels.fixFinding}
                   fixCheckLabel={handoffLabels.fixCheck}
                   {...(canFixFindings ? { onFixFinding: startFixFinding } : {})}
                   onRefresh={refreshDetail}
                   onRefreshChecks={refreshFromHost}
+                  onOpenChanges={
+                    visibleTabs.some((item) => item.value === "code")
+                      ? () => setTab("code")
+                      : undefined
+                  }
+                  threadsSlot={
+                    context === "page" ? (
+                      <PullRequestThreadLinks
+                        display="list"
+                        environmentId={environmentId}
+                        reference={reference}
+                        url={detail.url}
+                        threadRef={null}
+                        onPickerOpenChange={setThreadPickerOpen}
+                      />
+                    ) : undefined
+                  }
                 />
               </div>
             ) : null}

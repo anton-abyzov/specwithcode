@@ -86,3 +86,21 @@ export function projectExecutionIsFenced(
       threadId === (settings.coordinatorThreadId ?? `project-coordinator:${projectId}`))
   );
 }
+
+/**
+ * Whether a thread is the project's coordinator. Its children are the
+ * project's workers, first-class threads, not internal subagents.
+ */
+export function isProjectCoordinatorThreadId(
+  threadId: string | null | undefined,
+  project: {
+    readonly id: string;
+    readonly workspaceSettings?: { readonly coordinatorThreadId?: string | null } | undefined;
+  },
+): boolean {
+  if (!threadId) return false;
+  return (
+    threadId === `project-coordinator:${project.id}` ||
+    threadId === project.workspaceSettings?.coordinatorThreadId
+  );
+}

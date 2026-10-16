@@ -5,9 +5,16 @@ import * as NodeOS from "node:os";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@specweave-studio/shared/Net";
-import { resolveGitWorktreePath, resolveWorktreeStudioHome } from "@specweave-studio/shared/devHome";
-import { HostProcessEnvironment, HostProcessWorkingDirectory } from "@specweave-studio/shared/hostProcess";
+import {
+  resolveGitWorktreePath,
+  resolveWorktreeStudioHome,
+} from "@specweave-studio/shared/devHome";
+import {
+  HostProcessEnvironment,
+  HostProcessWorkingDirectory,
+} from "@specweave-studio/shared/hostProcess";
 import { resolveSpawnCommand } from "@specweave-studio/shared/shell";
+import { studioRootDirectory } from "@specweave-studio/shared/studioIdentity";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Hash from "effect/Hash";
@@ -67,9 +74,7 @@ export function isProxiableBindHost(host: string): boolean {
   );
 }
 
-export const DEFAULT_STUDIO_HOME = Effect.map(Effect.service(Path.Path), (path) =>
-  path.join(NodeOS.homedir(), ".specweave-studio"),
-);
+export const DEFAULT_STUDIO_HOME = Effect.sync(() => studioRootDirectory(NodeOS.homedir()));
 
 const MODE_ARGS = {
   dev: [
@@ -82,7 +87,12 @@ const MODE_ARGS = {
   ],
   "dev:server": ["run", "--filter=specweave-studio", "dev"],
   "dev:web": ["run", "--filter=@specweave-studio/web", "dev"],
-  "dev:desktop": ["run", "--filter=@specweave-studio/desktop", "--filter=@specweave-studio/web", "dev"],
+  "dev:desktop": [
+    "run",
+    "--filter=@specweave-studio/desktop",
+    "--filter=@specweave-studio/web",
+    "dev",
+  ],
 } as const satisfies Record<string, ReadonlyArray<string>>;
 
 type DevMode = keyof typeof MODE_ARGS;
@@ -309,7 +319,7 @@ export function createDevRunnerEnv({
   return Effect.gen(function* () {
     const serverPort = port ?? BASE_SERVER_PORT + serverOffset;
     const webPort = BASE_WEB_PORT + webOffset;
-    // Precedence (--home-dir > worktree .specweave-studio > ambient STUDIO_HOME) is resolved
+    // Precedence (--home-dir > worktree .specwithcode > ambient STUDIO_HOME) is resolved
     // by the caller; an unset studioHome here genuinely means "use the default".
     const configuredBaseDir = studioHome?.trim() || undefined;
     const resolvedBaseDir = yield* resolveBaseDir(configuredBaseDir);
@@ -665,7 +675,7 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
 
     const hostEnvironment = yield* HostProcessEnvironment;
     // A dev server started inside a worktree defaults to that worktree's own
-    // (gitignored) `.specweave-studio` — see @specweave-studio/shared/devHome for why this must
+    // (gitignored) `.specwithcode` — see @specweave-studio/shared/devHome for why this must
     // outrank an ambient STUDIO_HOME. `--home-dir` still wins.
     const worktreeHome = yield* resolveWorktreeStudioHome(yield* HostProcessWorkingDirectory);
     // Trim before choosing: `--home-dir ""` is not a selection, and treating it
@@ -850,7 +860,7 @@ const devRunnerCli = Command.make("dev-runner", {
   ),
   studioHome: Flag.String("home-dir").pipe(
     Flag.withDescription(
-      "Explicit SpecWithCode data directory; runtime state is stored under userdata (equivalent to STUDIO_HOME). Inside a git worktree this defaults to that worktree's own .specweave-studio so dev state stays off the shared home.",
+      "Explicit SpecWithCode data directory; runtime state is stored under userdata (equivalent to STUDIO_HOME). Inside a git worktree this defaults to that worktree's own .specwithcode so dev state stays off the shared home.",
     ),
     Flag.optional,
     Flag.map(Option.getOrUndefined),

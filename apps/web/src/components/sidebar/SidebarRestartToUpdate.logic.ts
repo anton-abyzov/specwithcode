@@ -7,6 +7,7 @@ import type {
 } from "@specweave-studio/contracts";
 
 import { resolveDesktopUpdateButtonAction } from "../desktopUpdate.logic";
+import { groupRunningWork, summarizeRunningWork } from "./restartRunningWork.logic";
 
 export interface RestartToUpdateView {
   /** The app has a downloaded update that a restart installs. */
@@ -122,7 +123,11 @@ export function describeInstallOutcome(
     case "disabled":
       return "Updates are off in this build.";
     default:
-      return "Another update step is still running. Try again in a moment.";
+      return result.state.status === "downloading"
+        ? `SpecWithCode is still downloading ${result.state.availableVersion ?? "the update"}${result.state.downloadPercent === null ? "" : ` (${Math.round(result.state.downloadPercent)}%)`}. Restart to update once it finishes.`
+        : result.state.status === "checking"
+          ? "SpecWithCode is still checking for updates. Restart to update once the check finishes."
+          : "The updater stayed busy for 2 minutes. It frees itself within 30 minutes; quit and reopen SpecWithCode to install sooner.";
   }
 }
 
@@ -444,8 +449,13 @@ function blockerCount(
 export function describeServiceUpdateStop(
   check: Pick<ServerPrepareServiceUpdateResult, "blockers" | "openTerminals">,
 ): string | null {
-  const tasks = blockerCount(check.blockers, ["run"]);
-  const queued = blockerCount(check.blockers, ["queued"]);
+  // A project that continues threads after restarts gets its work back on its own.
+  const continuing = check.blockers.filter((blocker) => blocker.continuesAfterRestart === true);
+  const stopping = check.blockers.filter((blocker) => blocker.continuesAfterRestart !== true);
+  const tasks = blockerCount(stopping, ["run"]);
+  const queued = blockerCount(stopping, ["queued"]);
+  const continuedTasks = blockerCount(continuing, ["run"]);
+  const requeued = blockerCount(continuing, ["queued"]);
   const questions = blockerCount(check.blockers, ["request"]);
   const steps = blockerCount(check.blockers, ["effect", "session"]);
   const terminals = check.openTerminals ?? 0;
@@ -453,7 +463,13 @@ export function describeServiceUpdateStop(
     tasks > 0
       ? `${plural(tasks, "task", "tasks")} will be interrupted. You can continue ${tasks === 1 ? "it" : "them"} after the update.`
       : null,
+    continuedTasks > 0
+      ? `${plural(continuedTasks, "task", "tasks")} will be interrupted and continue after the update.`
+      : null,
     queued > 0 ? `${plural(queued, "queued message", "queued messages")} will be cancelled.` : null,
+    requeued > 0
+      ? `${plural(requeued, "queued message", "queued messages")} will wait and send after the update.`
+      : null,
     questions > 0
       ? `${plural(questions, "open question or approval", "open questions or approvals")} will be closed.`
       : null,
@@ -471,26 +487,32 @@ export function describeServiceUpdateStop(
  */
 export function describeAppRestartWarning(
   check: Pick<ServerPrepareServiceUpdateResult, "blockers">,
-  options: { readonly version?: string | null } = {},
+  options: {
+    readonly version?: string | null;
+    /** The dialog lists the work itself, so the text only summarizes it. */
+    readonly listed?: boolean;
+  } = {},
 ): string | null {
-  const running = blockerCount(check.blockers, ["run", "effect", "session"]);
-  const queued = blockerCount(check.blockers, ["queued"]);
-  const questions = blockerCount(check.blockers, ["request"]);
-  if (running + queued + questions === 0) return null;
-  const threads = new Set(check.blockers.flatMap((blocker) => blocker.threadId ?? [])).size;
-  const what = [
-    running > 0 ? plural(running, "job is", "jobs are") + " still running" : null,
-    queued > 0 ? `${plural(queued, "message is", "messages are")} queued` : null,
-    questions > 0 ? `${plural(questions, "question waits", "questions wait")} for you` : null,
-  ].filter(Boolean);
-  const version = options.version ? ` SpecWithCode ${options.version}` : "";
+  const groups = groupRunningWork(check.blockers);
+  if (groups.length === 0) return null;
+  const version = options.version ? ` SpecWithCode ${options.version}` : " the update";
   return [
-    `Restart to install${version} now?`,
-    `${what.join(", ")}${threads > 0 ? ` in ${plural(threads, "thread", "threads")}` : ""}. Restarting interrupts ${running + queued + questions === 1 ? "it" : "them"}.`,
-    describeServiceUpdateBlockers(check.blockers),
-    "Choose Install when idle to let the work finish: SpecWithCode restarts once nothing runs.",
-  ].join("\n");
+    `Restart to install${version}?`,
+    `${summarizeRunningWork(groups)}. ${
+      check.blockers.every((blocker) => blocker.continuesAfterRestart === true)
+        ? "Restarting interrupts this work; it continues after the restart."
+        : "Restarting interrupts this work."
+    }`,
+    options.listed ? null : describeServiceUpdateBlockers(check.blockers),
+    options.listed ? null : RESTART_WHEN_IDLE_NOTE,
+  ]
+    .filter((line): line is string => line !== null && line !== "")
+    .join("\n");
 }
+
+/** Under the restart warning: what "Restart when idle" does. */
+export const RESTART_WHEN_IDLE_NOTE =
+  "Restart when idle lets it finish first: SpecWithCode restarts once nothing runs, or after the wait set in Settings, and the stopped work continues after the restart.";
 
 /** What the restart warning asks when the service cannot say what runs. */
 export const APP_RESTART_UNKNOWN =

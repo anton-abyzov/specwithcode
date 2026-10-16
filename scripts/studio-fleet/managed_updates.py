@@ -22,6 +22,7 @@ import urllib.parse
 
 sys.dont_write_bytecode = True
 import installation_descriptor as installation
+import studio_paths
 import update_agent as agent
 
 MAX_INPUT = 16384
@@ -93,7 +94,11 @@ def fresh_grant(state, home, controller, scopes):
         if path.exists():
             require(path.is_file())
     require(database.is_file(), 'unavailable')
-    uri = 'file:' + urllib.parse.quote(str(database), safe='/') + '?mode=ro'
+    # live_database.readonly_uri, inlined so the installed updater needs no new module: with
+    # readonly_shm a reader can never truncate the -shm the running service has mapped.
+    shm = pathlib.Path(str(database) + '-shm')
+    uri = ('file:' + urllib.parse.quote(str(database), safe='/') + '?mode=ro'
+           + ('&readonly_shm=1' if shm.exists() else ''))
     with contextlib.closing(sqlite3.connect(uri, uri=True, timeout=1)) as connection:
         connection.execute('PRAGMA query_only=ON')
         row = connection.execute('SELECT subject, scopes, issued_at, expires_at, revoked_at '
@@ -124,9 +129,12 @@ class Destination:
         self.support = 'unsupported' if sys.platform != 'darwin' else 'unmanaged'
         # Managed service paths are explicit installer roots; default desktop homes
         # (.specwithcode or legacy .specweave-studio) do not imply service ownership.
-        if self.state.name != 'userdata' or self.state.parent.parent != self.home / '.specweave-studio':
+        if self.state.name != 'userdata' or self.state.parent.parent not in {
+                studio_paths.branded_root(self.home), studio_paths.legacy_root(self.home)}:
             return
         identity = installation.validate_identity(self.state.parent.name)
+        if self.state.parent != studio_paths.identity_home(self.home, identity):
+            return
         receipt_path = self.state.parent / 'installation.json'
         if not os.path.lexists(str(receipt_path)):
             return
@@ -235,7 +243,7 @@ def status(destination, controller):
                       else 'enrolled' if saved['controller'] == controller else 'other-controller'))
     config = agent.load_config(destination.updates, destination.home)
     _, _, plist = installation.updater_removal(destination.home, destination.descriptor.identity)
-    script = installation.owned_path(destination.home / '.local/share/specweave-studio/updater/update_agent.py', destination.home)
+    script = installation.owned_path(studio_paths.updater_root(destination.home) / 'update_agent.py', destination.home)
     if plist.is_file() and script.is_file():
         result['localAutomation'] = 'enabled' if config['checkAutomatically'] else 'disabled'
     result['currentVersion'] = destination.receipt['version']
@@ -350,7 +358,7 @@ def remote_apply_guard(identity, authorization):
             and revision(value.get('expectedRevision')))
     owner = installation.current_owner()
     installation.validate_identity(identity)
-    destination = Destination(str(owner['home'] / '.specweave-studio' / identity / 'userdata'),
+    destination = Destination(str(studio_paths.identity_home(owner['home'], identity) / 'userdata'),
                               authorization['environmentId'])
     destination.target(value)
     fresh_grant(destination.state, destination.home, authorization['controller'], ('environment:maintain',))

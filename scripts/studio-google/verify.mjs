@@ -343,13 +343,35 @@ try {
   }
   receipt.checks.push({ connected: true, email: connected.email, services: connected.services });
 
-  // Projects get nothing until switched on; Drive cannot be switched on because it was not granted.
+  // A new account starts with every granted service on for personal projects only; Drive
+  // cannot be switched on because it was not granted. Switch Gmail off and on again.
+  NodeAssert.deepEqual(connected.projects, [
+    { projectId: project.projectId, services: ["gmail", "calendar"] },
+  ]);
   NodeAssert.equal(
     await page.getByRole("switch", { name: "Drive for Errands" }).isDisabled(),
     true,
   );
-  await page.getByRole("switch", { name: "Gmail for Errands" }).click();
-  await page.getByRole("switch", { name: "Calendar for Errands" }).click();
+  const gmail = page.getByRole("switch", { name: "Gmail for Errands" });
+  await gmail.click();
+  await page.waitForFunction(
+    () =>
+      document.querySelector('[aria-label="Gmail for Errands"]')?.getAttribute("aria-checked") ===
+      "false",
+    null,
+    { timeout: 15000 },
+  );
+  NodeAssert.deepEqual((await rpc(context, "googleAccount.status")).projects, [
+    { projectId: project.projectId, services: ["calendar"] },
+  ]);
+  await gmail.click();
+  await page.waitForFunction(
+    () =>
+      document.querySelector('[aria-label="Gmail for Errands"]')?.getAttribute("aria-checked") ===
+      "true",
+    null,
+    { timeout: 15000 },
+  );
   await page.getByRole("link", { name: "Morning briefing" }).waitFor({ timeout: 15000 });
   const granted = await rpc(context, "googleAccount.status");
   NodeAssert.deepEqual(granted.projects, [
@@ -484,9 +506,11 @@ try {
   await page.goto(providersHref);
   for (const method of ["cancel", "escape"]) {
     await page.getByRole("button", { name: "Add provider", exact: true }).click();
-    await page.getByRole("dialog").waitFor();
+    // Settings is itself a dialog; wait on the wizard nested inside it.
+    const wizard = page.locator('[role="dialog"]:not([data-settings-dialog])');
+    await wizard.waitFor();
     await dismiss(method);
-    await page.getByRole("dialog").waitFor({ state: "detached" });
+    await wizard.waitFor({ state: "detached" });
     NodeAssert.equal(page.url(), providersHref);
   }
   receipt.checks.push({ providerWizardCancelAndEscapeStayInSettings: true });
@@ -551,7 +575,7 @@ try {
   // The same address cannot be used twice.
   await NodeAssert.rejects(
     rpc(context, "googleAccount.completeSignIn", { callbackUrl: landed }),
-    /not the one Studio started/u,
+    /not the one SpecWithCode started/u,
   );
   receipt.checks.push({ pastedSignIn: true, singleUseState: true, forgedCallbackRefused: true });
 

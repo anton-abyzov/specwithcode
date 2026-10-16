@@ -7,6 +7,7 @@ import {
 import { COORDINATOR_RECOMMENDED_TRAITS } from "../../studio/shellModel";
 import {
   buildTraitsTriggerDisplay,
+  buildTraitsTriggerParts,
   buildUnavailableModelOptionDescriptors,
   traitOptionBadges,
 } from "./TraitsPicker";
@@ -345,5 +346,99 @@ describe("traitOptionBadges", () => {
       "Default",
     ]);
     expect(traitOptionBadges("effort", { id: "medium" }, undefined)).toEqual([]);
+  });
+});
+
+describe("buildTraitsTriggerParts", () => {
+  const CLAUDE = ProviderDriverKind.make("claudeAgent");
+  const CLAUDE_EFFORT = selectDescriptor(
+    "effort",
+    [
+      { id: "low", label: "Low" },
+      { id: "medium", label: "Medium", isDefault: true },
+      { id: "high", label: "High" },
+      { id: "xhigh", label: "Extra High" },
+      { id: "max", label: "Max" },
+      { id: "ultracode", label: "Ultracode" },
+      { id: "ultrathink", label: "Ultrathink" },
+    ],
+    "high",
+  );
+  const thinking = (currentValue: boolean): ProviderOptionDescriptor => ({
+    id: "thinking",
+    label: "Thinking",
+    type: "boolean",
+    currentValue,
+  });
+  const parts = (
+    descriptors: ReadonlyArray<ProviderOptionDescriptor>,
+    ultrathinkPromptControlled = false,
+  ) =>
+    buildTraitsTriggerParts({
+      provider: CLAUDE,
+      descriptors,
+      primarySelectDescriptorId: "contextWindow",
+      ultrathinkPromptControlled,
+    });
+
+  it("labels the effort and summarizes context, thinking and speed", () => {
+    expect(
+      parts([CONTEXT_WINDOW, CLAUDE_EFFORT, thinking(true), fastModeDescriptor(true)]),
+    ).toMatchObject({
+      effort: { value: "high", label: "High" },
+      details: "1M · Thinking · Fast",
+    });
+    expect(
+      parts([CONTEXT_WINDOW, CLAUDE_EFFORT, thinking(false), fastModeDescriptor(false)]),
+    ).toMatchObject({ details: "1M · No thinking" });
+  });
+
+  it("capitalizes a level whose provider label is its raw id", () => {
+    const copilotEffort = selectDescriptor(
+      "reasoning_effort",
+      [
+        { id: "low", label: "low" },
+        { id: "medium", label: "medium" },
+      ],
+      "medium",
+    );
+    expect(parts([copilotEffort]).effort).toEqual({ value: "medium", label: "Medium" });
+  });
+
+  it("names Ultracode as the effort", () => {
+    expect(parts([{ ...CLAUDE_EFFORT, currentValue: "ultracode" }, CONTEXT_WINDOW]).effort).toEqual(
+      { value: "ultracode", label: "Ultracode" },
+    );
+  });
+
+  it("shows Ultrathink while the prompt asks for it", () => {
+    const result = buildTraitsTriggerParts({
+      provider: CLAUDE,
+      descriptors: [CLAUDE_EFFORT, CONTEXT_WINDOW],
+      primarySelectDescriptorId: "effort",
+      ultrathinkPromptControlled: true,
+    });
+    expect(result.effort).toEqual({ value: "ultrathink", label: "Ultrathink" });
+    expect(result.details).toBe("1M");
+  });
+
+  it("drops the standard Codex tier and keeps a faster one", () => {
+    const codex = (tier: "default" | "priority") =>
+      buildTraitsTriggerParts({
+        provider: CODEX,
+        descriptors: [EFFORT, serviceTierDescriptor(tier)],
+        primarySelectDescriptorId: "reasoningEffort",
+        ultrathinkPromptControlled: false,
+      });
+    expect(codex("default")).toMatchObject({ effort: { label: "High" }, details: "" });
+    expect(codex("priority")).toMatchObject({ effort: { label: "High" }, details: "Fast" });
+  });
+
+  it("falls back to the plain label without an effort setting", () => {
+    expect(parts([CONTEXT_WINDOW, fastModeDescriptor(true)])).toEqual({
+      label: "1M · Fast",
+      effort: null,
+      details: "",
+    });
   });
 });

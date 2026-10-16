@@ -6,6 +6,12 @@ import { expect, it, vi } from "vite-plus/test";
 
 const mint = vi.hoisted(() => vi.fn());
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
+// The overlay viewer, reduced to what it was asked to open.
+vi.mock("./chat/ThreadArtifacts", () => ({
+  MessageFileViewer: (props: { target: { filePath: string } }) => (
+    <div data-file-viewer={props.target.filePath} />
+  ),
+}));
 vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
 vi.mock("../hooks/useSettings", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../hooks/useSettings")>();
@@ -59,7 +65,13 @@ vi.mock("~/lib/openPullRequestLink", () => ({
 
 import ChatMarkdown from "./ChatMarkdown";
 
-it("opens host media through server authorization before the client grant loads", async () => {
+function openedInViewer(renderer: ReactTestRenderer) {
+  return renderer.root
+    .findAll((node) => node.type === "div" && node.props["data-file-viewer"] !== undefined)
+    .map((node) => node.props["data-file-viewer"]);
+}
+
+it("opens host media in the viewer overlay before the client grant loads", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   mint.mockResolvedValue(
     AsyncResult.success({ relativeUrl: "/api/assets/image.png", expiresAt: 1 }),
@@ -88,18 +100,16 @@ it("opens host media through server authorization before the client grant loads"
       expect(link).toBeDefined();
       link!.props.onClick({ preventDefault: vi.fn(), stopPropagation: vi.fn() });
     });
-    expect(onImageExpand).toHaveBeenCalledWith(
-      expect.objectContaining({
-        images: [expect.objectContaining({ src: "https://host.test/api/assets/image.png" })],
-      }),
-    );
+    // The overlay streams it from the host through the server.
+    expect(openedInViewer(renderer!)).toEqual(["/tmp/image.png"]);
+    expect(onImageExpand).not.toHaveBeenCalled();
   } finally {
     await act(async () => renderer?.unmount());
     vi.unstubAllGlobals();
   }
 });
 
-it("opens a workspace image chip in the media viewer, not the files panel", async () => {
+it("opens a workspace image chip in the viewer overlay, not the files panel", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   mint.mockResolvedValue(
     AsyncResult.success({ relativeUrl: "/api/assets/contact-sheet.png", expiresAt: 1 }),
@@ -128,18 +138,7 @@ it("opens a workspace image chip in the media viewer, not the files panel", asyn
       expect(link).toBeDefined();
       link!.props.onClick({ preventDefault: vi.fn(), stopPropagation: vi.fn() });
     });
-    expect(onImageExpand).toHaveBeenCalledWith(
-      expect.objectContaining({
-        images: [
-          expect.objectContaining({
-            src: "https://host.test/api/assets/contact-sheet.png",
-            actionsSource: expect.objectContaining({
-              reference: expect.objectContaining({ path: "/repo/swc-logo/contact-sheet.png" }),
-            }),
-          }),
-        ],
-      }),
-    );
+    expect(openedInViewer(renderer!)).toEqual(["/repo/swc-logo/contact-sheet.png"]);
   } finally {
     await act(async () => renderer?.unmount());
     vi.unstubAllGlobals();

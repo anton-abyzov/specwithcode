@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { AuthAccessWriteScope, AuthOrchestrationReadScope } from "@specweave-studio/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import {
+  ActivityIcon,
   ChartNoAxesColumnIcon,
   ChevronsUpDownIcon,
   MonitorSmartphoneIcon,
@@ -82,7 +83,7 @@ export const SidebarAccountMenu = memo(function SidebarAccountMenu({
   const [deviceDialogOpen, setDeviceDialogOpen] = useState(false);
 
   const go = useCallback(
-    (to: "/settings" | "/usage" | "/settings/connections") => {
+    (to: "/settings" | "/usage" | "/status" | "/settings/connections") => {
       if (isMobile) setOpenMobile(false);
       void navigate({ to });
     },
@@ -148,10 +149,14 @@ export const SidebarAccountMenu = memo(function SidebarAccountMenu({
               Usage
               {usageShortcut ? <MenuShortcut>{usageShortcut}</MenuShortcut> : null}
             </MenuItem>
+            <MenuItem onClick={() => go("/status")}>
+              <ActivityIcon />
+              Status
+            </MenuItem>
             {pullRequestsSupported ? (
               <MenuItem onClick={openPullRequests}>
                 <PullRequestGlyph.pullRequest />
-                Pull requests
+                Code Review
               </MenuItem>
             ) : null}
           </MenuGroup>

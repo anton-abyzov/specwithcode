@@ -57,6 +57,21 @@
       ]
     },
     {
+      "bundles": ["server"],
+      "license": "MIT",
+      "name": "unslop by Lauren Tan",
+      "sourceUrl": "https://github.com/cursor/plugins/tree/bc697d0a5a163cec979e362b601e36f5616083fd/pstack/skills/unslop",
+      "generatedNotices": [
+        {
+          "licenseId": "MIT",
+          "copyrights": ["Copyright (c) 2026 Lauren Tan"],
+          "preamble": [
+            "The agent writing rules in apps/server/src/provider/RuntimeInstructions.ts and the generated-text checks in apps/server/src/textGeneration/GeneratedTextLint.ts adapt rules from the unslop skill in pstack, revision bc697d0:\nhttps://github.com/cursor/plugins/tree/bc697d0a5a163cec979e362b601e36f5616083fd/pstack/skills/unslop"
+          ]
+        }
+      ]
+    },
+    {
       "bundles": ["device-tools"],
       "includeInBundles": ["mobile", "web"],
       "license": "MIT",
@@ -149,18 +164,6 @@
       "name": "Expo text editor implementation",
       "noticeFile": "apps/mobile/modules/studio-composer-editor/LICENSE",
       "sourceUrl": "https://github.com/expo/expo"
-    },
-    {
-      "bundles": ["assets", "desktop", "web", "mobile"],
-      "license": "MIT",
-      "name": "GitHub Octicons \u2014 Copilot icon",
-      "sourceUrl": "https://github.com/primer/octicons",
-      "generatedNotices": [
-        {
-          "licenseId": "MIT",
-          "copyrights": ["Copyright (c) 2026 GitHub Inc."]
-        }
-      ]
     }
   ],
   "packageOverrides": [

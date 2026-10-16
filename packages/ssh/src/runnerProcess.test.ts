@@ -67,7 +67,9 @@ server.listen(Number(process.env.STUDIO_TEST_PORT ?? 0), "127.0.0.1", () => {
                 },
                 detached: false,
                 stdin: Stream.make(
-                  new TextEncoder().encode(buildRemoteStudioRunnerScript({ nodeScriptPath: cliPath })),
+                  new TextEncoder().encode(
+                    buildRemoteStudioRunnerScript({ nodeScriptPath: cliPath }),
+                  ),
                 ),
               }),
             );
@@ -205,7 +207,8 @@ server.listen(0, "127.0.0.1", () => {
             const stop = yield* spawner.spawn(
               ChildProcess.make("/bin/sh", ["-s"], {
                 cwd: fixture,
-                env: { STUDIO_TEST_STATE_DIR: fixture },
+                // The script resolves the SpecWithCode root from HOME; keep it in the fixture.
+                env: { STUDIO_TEST_STATE_DIR: fixture, HOME: fixture },
                 stdin: Stream.make(new TextEncoder().encode(isolatedScript)),
               }),
             );

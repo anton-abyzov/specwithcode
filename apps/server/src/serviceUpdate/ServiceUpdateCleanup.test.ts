@@ -364,7 +364,7 @@ it.effect("lists questions asked as a plain message for the orchestrator to dism
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("leaves a running rollback or checkpoint to finish and cancels one not started", () =>
+it.effect("keeps running rollbacks, checkpoints and all MCP retirements", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const outbox = yield* EffectOutbox.EffectOutboxV2;
@@ -395,10 +395,16 @@ it.effect("leaves a running rollback or checkpoint to finish and cancels one not
           scopeId: CheckpointScopeId.make("scope:1"),
         },
       },
+      ...["effect:invalidate-pending", "effect:invalidate-running"].map((id) => ({
+        id,
+        commandId: CommandId.make(`command:${id}`),
+        threadId,
+        request: { type: "mcp-credential.invalidate" as const },
+      })),
     ]);
-    // Two are mid-way; the other waits in retry backoff.
+    // Three are mid-way; the others wait in retry backoff.
     yield* sql`UPDATE orchestration_v2_effect_outbox SET status = 'running'
-      WHERE effect_id IN ('effect:rollback-running', 'effect:capture-running')`;
+      WHERE effect_id IN ('effect:rollback-running', 'effect:capture-running', 'effect:invalidate-running')`;
 
     const cancelled = yield* cleanup.cancelUnsettledEffects({ reason: Preparation.STOP_REASON });
     assert.deepEqual(
@@ -413,6 +419,8 @@ it.effect("leaves a running rollback or checkpoint to finish and cancels one not
       statuses.map((row) => [row.effect_id, row.status]),
       [
         ["effect:capture-running", "running"],
+        ["effect:invalidate-pending", "pending"],
+        ["effect:invalidate-running", "running"],
         ["effect:rollback-backoff", "cancelled"],
         ["effect:rollback-running", "running"],
       ],

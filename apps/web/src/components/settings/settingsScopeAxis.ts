@@ -1,6 +1,6 @@
 import type { EnvironmentPresentation } from "../../state/environments";
 import {
-  partitionProjectGroups,
+  projectPickerGroups,
   type ProjectListGroup,
   type ScratchRootLookup,
 } from "../../studio/projectListVisibility";
@@ -24,17 +24,13 @@ export function settingsScopeEnvironmentLabel(
 export const ALL_ENVIRONMENTS_VALUE = "all";
 export const ALL_PROJECTS_VALUE = "all";
 
-/**
- * The projects the project picker offers: the sidebar's main list, so neither a
- * machine's "No project" folder nor an archived project is a row. The selected
- * project stays listed even when archived, so the picker still shows its choice.
- */
+/** The projects the scope picker offers; see {@link projectPickerGroups}. */
 export function settingsScopeProjectChoices<G extends ProjectListGroup>(
   groups: readonly G[],
   scratchRootFor: ScratchRootLookup,
   selectedProjectKey: string | undefined,
 ): G[] {
-  return partitionProjectGroups(groups, scratchRootFor, selectedProjectKey ?? null).listed;
+  return projectPickerGroups(groups, scratchRootFor, selectedProjectKey ?? null);
 }
 
 /**

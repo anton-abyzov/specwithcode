@@ -54,13 +54,9 @@ it("cancels an answer's pending auto-submit on revocation and resumes after a ne
   );
   let renderer: ReactTestRenderer | undefined;
   const chooseOption = () => {
-    const option = renderer!.root
-      .findAllByType("button")
-      .find((button) =>
-        button.findAllByType("span").some((span) => span.children.includes("Incremental")),
-      );
+    const option = renderer!.root.findAll((node) => node.props["data-question-option"] === "A")[0];
     expect(option).toBeDefined();
-    option!.props.onClick();
+    option!.props.onClick({ target: { closest: () => null } });
   };
   try {
     await act(async () => {

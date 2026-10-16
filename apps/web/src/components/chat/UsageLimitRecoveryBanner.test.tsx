@@ -219,13 +219,13 @@ it("suggests switching before the limit under the offer rule", async () => {
   const item = usageApproachingBannerItem({
     id: "approaching",
     providerLabel: "Claude",
-    usedPercent: 96.4,
+    leftPercent: 3.6,
     resetAt: "2099-10-15T00:00:00.000Z",
     fallbackLabel: "Codex",
     onSwitch,
     onDismiss: () => {},
   });
-  expect(item.title).toBe("Claude is at 96% of its usage limit");
+  expect(item.title).toBe("Claude has 4% of its usage left");
   await act(() => {
     renderer = create(<>{item.actions}</>);
   });

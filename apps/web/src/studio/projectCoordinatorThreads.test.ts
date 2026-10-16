@@ -61,4 +61,22 @@ describe("coordinatorAttention", () => {
       "failed",
     );
   });
+  it("says when messages to the coordinator wait in a held queue", () => {
+    expect(coordinatorAttention(coordinator({ heldQueuedCount: 2 }))).toEqual({
+      reason: "held",
+      message: "2 messages to the coordinator are held and not delivered.",
+      action: "Resume or discard them",
+    });
+    expect(coordinatorAttention(coordinator({ heldQueuedCount: 1 }))?.message).toBe(
+      "1 message to the coordinator is held and not delivered.",
+    );
+    // A running coordinator is busy; a held queue outranks an older failure.
+    expect(
+      coordinatorAttention(coordinator({ heldQueuedCount: 2, runtime: { status: "running" } })),
+    ).toBeNull();
+    expect(
+      coordinatorAttention(coordinator({ heldQueuedCount: 2, runtime: { status: "failed" } }))
+        ?.reason,
+    ).toBe("held");
+  });
 });

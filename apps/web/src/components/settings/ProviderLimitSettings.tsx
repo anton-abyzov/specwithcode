@@ -50,6 +50,8 @@ const ACTION_LABELS: Record<ProviderLimitAction, string> = {
   switch: "Switch automatically",
 };
 const SWITCH_AT_OPTIONS = ["off", "80", "85", "90", "95"] as const;
+/** The stored threshold is a used share; the label names what is left at that point. */
+const switchAtLabel = (value: string) => `At ${100 - Number(value)}% left`;
 const WAIT_UNDER_OPTIONS = ["0", "15", "30", "60", "120"] as const;
 const waitUnderLabel = (value: string) =>
   value === "0"
@@ -202,7 +204,7 @@ export function ProviderLimitSettings() {
         mixed={mixedSwitchAt}
         id="provider-limit-switch-at"
         title="Switch before the limit"
-        description="With Switch automatically, the next turn starts on the fallback once the provider's fullest usage window reaches this share. With Offer the fallback, the thread suggests the switch at this share instead. Never mid-turn, and only to a provider below it."
+        description="With Switch automatically, the next turn starts on the fallback once the provider's lowest usage window has only this much left. With Offer the fallback, the thread suggests the switch at this point instead. Never mid-turn, and only to a provider with more left."
         resetAction={
           switchAt !== DEFAULT_PROVIDER_LIMIT_SWITCH_AT_PERCENT ? (
             <SettingResetButton
@@ -227,14 +229,18 @@ export function ProviderLimitSettings() {
             <SelectTrigger size="sm" aria-label="Switch before the limit">
               <SelectValue>
                 {(value: string | null) =>
-                  value === "off" ? "Only when it stops" : value === null ? "Mixed" : `At ${value}%`
+                  value === "off"
+                    ? "Only when it stops"
+                    : value === null
+                      ? "Mixed"
+                      : switchAtLabel(value)
                 }
               </SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
               {SWITCH_AT_OPTIONS.map((option) => (
                 <SelectItem key={option} value={option}>
-                  {option === "off" ? "Only when it stops" : `At ${option}%`}
+                  {option === "off" ? "Only when it stops" : switchAtLabel(option)}
                 </SelectItem>
               ))}
             </SelectPopup>

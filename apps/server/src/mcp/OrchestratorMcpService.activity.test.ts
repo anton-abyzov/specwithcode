@@ -447,6 +447,7 @@ it("readThread and sendToThread reach threads in other projects", async () => {
           sendToThread: () =>
             Effect.succeed({
               run: { id: "run-foreign", status: "queued" },
+              projection: { runs: [] },
               delivery: "started",
             } as unknown as ThreadManagementService.ThreadManagementSendResult),
         } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
@@ -611,6 +612,7 @@ it("sendToThread forwards the user's own words from a worker follow-up", async (
             sent.push(input);
             return Effect.succeed({
               run: { id: "run-worker", status: "queued" },
+              projection: { runs: [] },
               delivery: "started",
             } as unknown as ThreadManagementService.ThreadManagementSendResult);
           },
@@ -668,5 +670,21 @@ it("sendToThread forwards the user's own words from a worker follow-up", async (
       .pipe(Effect.flip);
     expect(neither.code).toBe("invalid_request");
     expect(sent).toHaveLength(2);
+
+    // A relay that quotes the follow-up back to its thread delivers only the user's words.
+    yield* service.sendToThread(makeScope(), {
+      threadId: workerThreadId,
+      clientRequestId: "relay-1",
+      message:
+        'User follow-up typed in this thread, relayed by the coordinator: "rlease and push all!"\n\nReply with one line of status.',
+    });
+    expect(sent[2]).toMatchObject({ text: "rlease and push all!", createdBy: "user" });
+    expect(sent[2]!.messageId).toBe(sent[0]!.messageId);
+    // A coordinator's own brief that does not quote the user stays the coordinator's.
+    yield* service.sendToThread(makeScope(), {
+      threadId: workerThreadId,
+      message: "Please push all the branches",
+    });
+    expect(sent[3]).toMatchObject({ text: "Please push all the branches", createdBy: "agent" });
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });

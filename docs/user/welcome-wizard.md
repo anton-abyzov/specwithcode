@@ -12,16 +12,16 @@ browser.
 
 You can add more computers before continuing:
 
-- **Studio Connect** connects computers that are signed in to your account.
-  [Install the CLI](./install.md#command-line) and run `specweave-studio connect` on each
-  computer you want to add, then start SpecWithCode or run `specweave-studio serve` so the
+- **SpecWithCode Connect** connects computers that are signed in to your account.
+  [Install the CLI](./install.md#command-line) and run `specwithcode connect` on each
+  computer you want to add, then start SpecWithCode or run `specwithcode serve` so the
   computer stays available.
 - **Add a computer** connects directly to a server on your network or tailnet.
-  Start the server with `specweave-studio serve`, then run `specweave-studio pair --tailscale` and paste
-  the pairing link. You can also run `specweave-studio serve --host <address>` and use
-  `specweave-studio pair` when the server is already reachable on your network.
+  Start the server with `specwithcode serve`, then run `specwithcode pair --tailscale` and paste
+  the pairing link. You can also run `specwithcode serve --host <address>` and use
+  `specwithcode pair` when the server is already reachable on your network.
 
-Saved computers and computers discovered through Studio Connect are selected by
+Saved computers and computers discovered through SpecWithCode Connect are selected by
 default. Uncheck any you do not want to set up; this does not disconnect them.
 Continue when your selected computers are connected. Setup checks
 agents across the selected computers, then offers project import grouped by computer.

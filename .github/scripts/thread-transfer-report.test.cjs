@@ -132,7 +132,7 @@ test("resolves a fallback PR with a redacted head repo and exact main baseline",
   await resolve({
     github,
     context: {
-      repo: { owner: "anton-abyzov", repo: "specweave-studio" },
+      repo: { owner: "anton-abyzov", repo: "specwithcode-dev" },
       payload: {
         workflow_run: {
           id: 2,
@@ -190,7 +190,7 @@ test("does not guess when a fallback commit belongs to multiple PRs", async () =
       },
     },
     context: {
-      repo: { owner: "anton-abyzov", repo: "specweave-studio" },
+      repo: { owner: "anton-abyzov", repo: "specwithcode-dev" },
       payload: {
         workflow_run: {
           id: 2,
@@ -240,7 +240,7 @@ test("does not publish a stale result after the PR head advances", async () => {
         },
       },
     },
-    { repo: { owner: "anton-abyzov", repo: "specweave-studio" } },
+    { repo: { owner: "anton-abyzov", repo: "specwithcode-dev" } },
     { info: (message) => info.push(message) },
     5350,
     "old-head-sha",
@@ -279,7 +279,7 @@ test("preserves a successful result when a same-SHA rerun has no artifact", asyn
         },
       },
     },
-    { repo: { owner: "anton-abyzov", repo: "specweave-studio" } },
+    { repo: { owner: "anton-abyzov", repo: "specwithcode-dev" } },
     { info: () => {} },
     5350,
     sha,

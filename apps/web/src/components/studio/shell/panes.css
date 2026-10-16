@@ -337,50 +337,6 @@
   gap: 6px;
 }
 
-.sws-library-preview-head {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  margin: 0 -12px 10px;
-  padding: 6px 12px 8px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  border-bottom: 1px solid var(--border);
-  background: var(--card);
-}
-.sws-library-preview-head > div {
-  min-width: 0;
-}
-.sws-library-preview-head h2 {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13.5px;
-  font-weight: 600;
-}
-.sws-library-preview-head p {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11.5px;
-  color: var(--muted-foreground);
-}
-.sws-library-markdown {
-  padding: 0 4px;
-  font-size: 13.5px;
-}
-.sws-library-text {
-  padding: 10px;
-  overflow-x: auto;
-  border-radius: 8px;
-  background: var(--muted);
-  font-size: 12px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
 /* PRs ---------------------------------------------------------------------- */
 
 .sws-pr-row {
@@ -493,4 +449,199 @@ button.sws-chip:hover {
   font-weight: 600;
   color: var(--foreground);
   outline: none;
+}
+
+/* A thread's subagents: a header chip, its popover and a read-only peek. */
+.sws-subagents-chip .sws-dot {
+  width: 6px;
+  height: 6px;
+  margin-inline-start: 1px;
+  animation: sws-subagent-pulse 1.6s ease-in-out infinite;
+}
+@keyframes sws-subagent-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sws-subagents-chip .sws-dot {
+    animation: none;
+  }
+}
+.sws-subagents-popover {
+  display: flex;
+  flex-direction: column;
+  max-height: min(60vh, 420px);
+  font-size: 12.5px;
+}
+.sws-subagents-popover > header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 10px 12px 6px;
+  border-bottom: 1px solid var(--border);
+}
+.sws-subagents-popover > header strong {
+  font-weight: 600;
+  font-size: 13px;
+}
+.sws-subagents-popover > header span {
+  color: var(--shell-working);
+  font-size: 11.5px;
+}
+.sws-subagents-popover ul {
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  overflow-y: auto;
+}
+.sws-subagent-row {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 7px 8px;
+  border-radius: 7px;
+  text-align: start;
+  color: inherit;
+}
+button.sws-subagent-row {
+  cursor: pointer;
+}
+button.sws-subagent-row:hover,
+button.sws-subagent-row:focus-visible {
+  background: var(--accent);
+}
+.sws-subagent-row > .sws-dot {
+  margin-top: 5px;
+}
+.sws-subagent-text {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sws-subagent-title {
+  font-weight: 500;
+  color: var(--foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sws-subagent-meta {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+}
+.sws-subagent-meta [data-tone="working"] {
+  color: var(--shell-working);
+}
+.sws-subagent-meta [data-tone="failed"] {
+  color: var(--destructive);
+}
+.sws-subagent-result {
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sws-subagent-open {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-top: 3px;
+  color: var(--muted-foreground);
+  opacity: 0;
+}
+.sws-subagent-row:hover .sws-subagent-open,
+.sws-subagent-row:focus-visible .sws-subagent-open {
+  opacity: 1;
+}
+
+.project-native-thread {
+  position: relative;
+}
+.sws-subagent-peek {
+  position: absolute;
+  inset: 0 0 0 20px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--background);
+  border-inline-start: 1px solid var(--border);
+  box-shadow: -14px 0 32px -18px rgb(0 0 0 / 0.35);
+  animation: sws-subagent-peek-in 160ms ease-out;
+}
+@keyframes sws-subagent-peek-in {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sws-subagent-peek {
+    animation: none;
+  }
+}
+.sws-subagent-peek-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px 8px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.sws-subagent-peek-text {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sws-subagent-peek-text h3 {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sws-subagent-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.sws-subagent-kind {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.sws-subagent-peek-body {
+  min-height: 0;
+  flex: 1;
+}
+.sws-subagent-peek-note {
+  flex: none;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sws-subagent-peek-note button {
+  color: var(--foreground);
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
 }

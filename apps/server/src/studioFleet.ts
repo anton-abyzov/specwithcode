@@ -240,6 +240,7 @@ export async function checkIdentity(
   if (decoded._tag === "None") throw new FleetError("unreachable");
   if (decoded.value.environmentId !== target.environmentId)
     throw new FleetError("identity-mismatch");
+  return decoded.value;
 }
 export async function discoverFleet(
   config: FleetConfig | null,
@@ -255,8 +256,10 @@ export async function discoverFleet(
     machines: await Promise.all(
       (config?.machines ?? []).map(async (target) => {
         let status: "reachable" | "unreachable" | "identity-mismatch" = "reachable";
+        // The name the machine gives itself; a relayed address does not show it.
+        let machineName: string | undefined;
         try {
-          await checkIdentity(fetcher, target);
+          machineName = (await checkIdentity(fetcher, target)).label;
         } catch (error) {
           status =
             error instanceof FleetError && error.kind === "identity-mismatch"
@@ -270,6 +273,7 @@ export async function discoverFleet(
           url: target.url,
           status,
           pairingConfigured: Boolean(target.managementToken),
+          ...(machineName === undefined ? {} : { machineName }),
         };
       }),
     ),

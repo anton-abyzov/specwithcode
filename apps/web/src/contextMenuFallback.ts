@@ -22,6 +22,26 @@ const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<stri
     { tag: "circle", attrs: { cx: "12", cy: "14", r: "8" } },
   ],
   "chevron-right": [{ tag: "path", attrs: { d: "m9 19 7-7-7-7" } }],
+  "panel-bottom": [
+    { tag: "rect", attrs: { width: "18", height: "18", x: "3", y: "3", rx: "2" } },
+    { tag: "path", attrs: { d: "M3 15h18" } },
+  ],
+  "panel-right": [
+    { tag: "rect", attrs: { width: "18", height: "18", x: "3", y: "3", rx: "2" } },
+    { tag: "path", attrs: { d: "M15 3v18" } },
+  ],
+  "square-menu": [
+    { tag: "rect", attrs: { width: "18", height: "18", x: "3", y: "3", rx: "2" } },
+    { tag: "path", attrs: { d: "M7 8h10" } },
+    { tag: "path", attrs: { d: "M7 12h10" } },
+    { tag: "path", attrs: { d: "M7 16h10" } },
+  ],
+  maximize: [
+    { tag: "path", attrs: { d: "M15 3h6v6" } },
+    { tag: "path", attrs: { d: "m21 3-7 7" } },
+    { tag: "path", attrs: { d: "m3 21 7-7" } },
+    { tag: "path", attrs: { d: "M9 21H3v-6" } },
+  ],
   "circle-check": [
     { tag: "circle", attrs: { cx: "12", cy: "12", r: "10" } },
     { tag: "path", attrs: { d: "m9 12 2 2 4-4" } },

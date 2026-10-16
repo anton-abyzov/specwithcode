@@ -1005,6 +1005,27 @@ export const PullRequestDiffFileContentsResult = Schema.Struct({
 export type PullRequestDiffFileContentsResult = typeof PullRequestDiffFileContentsResult.Type;
 
 /**
+ * The failing output of one CI check, for handing to an agent that fixes it. Both strings come
+ * from the client, so both are bounded; the URL is only parsed, never fetched as given.
+ */
+export const PullRequestCheckFailureLogInput = Schema.Struct({
+  ...PullRequestRef.fields,
+  checkName: TrimmedNonEmptyString.check(Schema.isMaxLength(500)),
+  checkUrl: Schema.NullOr(Schema.String.check(Schema.isMaxLength(2048))),
+});
+export type PullRequestCheckFailureLogInput = typeof PullRequestCheckFailureLogInput.Type;
+
+export const PullRequestCheckFailureLogResult = Schema.Struct({
+  /** The tail of the failed steps' output, or null where the host has no log to give. */
+  log: Schema.NullOr(Schema.String),
+  /** Earlier lines were dropped to keep the log bounded. */
+  truncated: Schema.Boolean,
+  /** A short label for where the log came from, such as "GitHub Actions job 123". */
+  source: Schema.NullOr(Schema.String),
+});
+export type PullRequestCheckFailureLogResult = typeof PullRequestCheckFailureLogResult.Type;
+
+/**
  * Bounded because a path arrives from a client rather than from the host: one element of a write
  * batch could otherwise carry a megabyte into a SQL statement or a GraphQL field.
  */

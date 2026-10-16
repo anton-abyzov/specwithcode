@@ -16,6 +16,7 @@ import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+import * as McpProviderSession from "./McpProviderSession.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import { liveThreadShell } from "./McpToolAccess.testkit.ts";
 
@@ -23,6 +24,20 @@ const supervisedThreadId = ThreadId.make("thread:supervised");
 const planThreadId = ThreadId.make("thread:plan");
 const fullAccessThreadId = ThreadId.make("thread:full-access");
 const endedThreadId = ThreadId.make("thread:ended");
+// Between turns, its session still attached: its provider's background agents call.
+const betweenTurnsThreadId = ThreadId.make("thread:between-turns");
+// Between turns, after the thread switched to another provider.
+const switchedAwayThreadId = ThreadId.make("thread:switched-away");
+// In a turn another provider runs.
+const otherTurnThreadId = ThreadId.make("thread:other-turn");
+// Between turns, its session still attached, after the user pressed Stop.
+const stoppedThreadId = ThreadId.make("thread:stopped");
+const otherInstance = ProviderInstanceId.make("claudeAgent");
+const onOtherInstance = (shell: ReturnType<typeof liveThreadShell>) => ({
+  ...shell,
+  providerInstanceId: otherInstance,
+  modelSelection: { instanceId: otherInstance, model: "claude-opus-5-5" },
+});
 
 const shells = new Map([
   [supervisedThreadId, liveThreadShell(supervisedThreadId, { runtimeMode: "approval-required" })],
@@ -32,7 +47,22 @@ const shells = new Map([
   ],
   [fullAccessThreadId, liveThreadShell(fullAccessThreadId)],
   [endedThreadId, liveThreadShell(endedThreadId, { activeRunId: null })],
+  [betweenTurnsThreadId, liveThreadShell(betweenTurnsThreadId, { activeRunId: null })],
+  [
+    switchedAwayThreadId,
+    onOtherInstance(liveThreadShell(switchedAwayThreadId, { activeRunId: null })),
+  ],
+  [otherTurnThreadId, onOtherInstance(liveThreadShell(otherTurnThreadId))],
+  [stoppedThreadId, liveThreadShell(stoppedThreadId, { activeRunId: null })],
 ]);
+/** The runs and Stop markers the gate reads between turns: Stop reached the stopped thread's turn. */
+const threadRecords = (threadId: ThreadId) =>
+  threadId === stoppedThreadId
+    ? {
+        runs: [{ id: "run:stopped", status: "completed", ordinal: 1 }],
+        turnItems: [{ type: "run_interrupt_request", runId: "run:stopped" }],
+      }
+    : { runs: [], turnItems: [] };
 
 const threadCaller = (threadId: ThreadId): McpInvocationContext.McpInvocationScope => ({
   environmentId: EnvironmentId.make("environment"),
@@ -191,6 +221,22 @@ const supervised = threadCaller(supervisedThreadId);
 const plan = threadCaller(planThreadId);
 const fullAccess = threadCaller(fullAccessThreadId);
 const ended = threadCaller(endedThreadId);
+const betweenTurns = threadCaller(betweenTurnsThreadId);
+const switchedAway = threadCaller(switchedAwayThreadId);
+const otherTurn = threadCaller(otherTurnThreadId);
+const stopped = threadCaller(stoppedThreadId);
+// The sessions these callers' credentials belong to are attached in this server.
+for (const caller of [betweenTurns, switchedAway, otherTurn, stopped]) {
+  McpProviderSession.setMcpProviderSession({
+    environmentId: caller.environmentId,
+    threadId: caller.thread!.threadId,
+    providerSessionId: caller.thread!.providerSessionId,
+    providerInstanceId: caller.thread!.providerInstanceId,
+    endpoint: "http://127.0.0.1/mcp",
+    authorizationHeader: "Bearer fixture",
+    browserToolsAvailable: false,
+  });
+}
 const supervisedClient = clientCaller("approval-required");
 const fullAccessClient = clientCaller("full-access");
 const readOnlyClient = clientCaller("read-only");
@@ -246,6 +292,27 @@ it.effect.each([
   // A thread that does not exist is the tool's to report.
   ["writes_threads", supervised, { threadId: "thread:missing" }, "ran"],
 
+  // Between turns the thread's own provider still acts through its attached
+  // session (background agents and workflows outlive their turn); a provider
+  // the thread left, or one whose session is gone, only reads.
+  ["acts_as_caller", betweenTurns, {}, "ran"],
+  ["writes", betweenTurns, {}, "ran"],
+  ["writes_threads", betweenTurns, { threadId: supervisedThreadId }, "ran"],
+  ["starts_threads", betweenTurns, {}, "full-access/default"],
+  ["reads", switchedAway, {}, "ran"],
+  ["acts_as_caller", switchedAway, {}, "parent_not_active"],
+  ["writes_threads", switchedAway, { threadId: supervisedThreadId }, "parent_not_active"],
+  ["starts_threads", switchedAway, {}, "parent_not_active"],
+  ["reads", otherTurn, {}, "ran"],
+  ["acts_as_caller", otherTurn, {}, "parent_not_active"],
+  ["writes", otherTurn, {}, "parent_not_active"],
+  // Stop also stops what the stopped turn left running, until the next message.
+  ["reads", stopped, {}, "ran"],
+  ["acts_as_caller", stopped, {}, "parent_not_active"],
+  ["writes", stopped, {}, "parent_not_active"],
+  ["writes_threads", stopped, { threadId: supervisedThreadId }, "parent_not_active"],
+  ["starts_threads", stopped, {}, "parent_not_active"],
+
   // Starting a thread: the caller's own modes or narrower.
   ["starts_threads", supervised, {}, "approval-required/default"],
   ["starts_threads", supervised, { runtimeMode: "full-access" }, "runtime_mode_escalation_denied"],
@@ -270,6 +337,7 @@ it.effect.each([
       probeServer(
         Layer.mock(ThreadManagement.ThreadManagementService)({
           getThreadShell: (threadId) => Effect.succeed(shells.get(threadId) ?? null),
+          getThreadRecords: (threadId) => Effect.succeed(threadRecords(threadId) as never),
         }),
       ),
     ),

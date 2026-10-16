@@ -78,6 +78,19 @@ describe("resolveOpenInOptions", () => {
     ]);
   });
 
+  it("puts the preferred editor first", () => {
+    expect(
+      resolveOpenInOptions("MacIntel", ["cursor", "vscode", "zed", "file-manager"], "vscode").map(
+        (option) => option.value,
+      ),
+    ).toEqual(["vscode", "cursor", "zed", "file-manager"]);
+    expect(
+      resolveOpenInOptions("MacIntel", ["cursor", "vscode", "zed"], "zed").map(
+        (option) => option.value,
+      ),
+    ).toEqual(["zed", "cursor", "vscode"]);
+  });
+
   it("omits the file manager when unavailable or using remote editors", () => {
     expect(resolveOpenInOptions("MacIntel", ["vscode"])).toEqual([
       expect.objectContaining({ value: "vscode" }),

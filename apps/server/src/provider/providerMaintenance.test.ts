@@ -5,7 +5,11 @@ import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@specweave-studio/contracts";
+import {
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+} from "@specweave-studio/contracts";
 import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
@@ -230,20 +234,57 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       latestVersion: "2.1.117",
       updateCommand: null,
       canUpdate: false,
-      message: "Update the configured executable with its owning installer, then refresh Providers. This installation cannot be updated from Studio.",
+      message:
+        "Update the configured executable with its owning installer, then refresh Providers. This installation cannot be updated from SpecWithCode.",
     });
   });
 
   it.effect("never falls back to self-update for an unverified independent private wrapper", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
-      for (const [provider, packageName, name] of [["codex", "@openai/codex", "codex"], ["claudeAgent", "@anthropic-ai/claude-code", "claude"]] as const) {
-        const wrapper = NodePath.join(NodeOS.homedir(), ".local/share/specweave/providers/bin", name);
-        const capabilities = yield* resolvePackageManagedProviderMaintenance({ provider: driver(provider), npmPackageName: packageName, nativeUpdate: { args: ["update"] } }, {
-          binaryPath: wrapper, resolvedCommandPath: wrapper, realCommandPath: wrapper, env: {}, platform: "darwin",
-        }).pipe(Effect.provideService(FileSystem.FileSystem, { ...fileSystem, realPath: () => Effect.succeed("/unverified-owner") }), Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+      for (const [provider, packageName, name] of [
+        ["codex", "@openai/codex", "codex"],
+        ["claudeAgent", "@anthropic-ai/claude-code", "claude"],
+      ] as const) {
+        const wrapper = NodePath.join(
+          NodeOS.homedir(),
+          ".local/share/specweave/providers/bin",
+          name,
+        );
+        const capabilities = yield* resolvePackageManagedProviderMaintenance(
+          {
+            provider: driver(provider),
+            npmPackageName: packageName,
+            nativeUpdate: { args: ["update"] },
+          },
+          {
+            binaryPath: wrapper,
+            resolvedCommandPath: wrapper,
+            realCommandPath: wrapper,
+            env: {},
+            platform: "darwin",
+          },
+        ).pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fileSystem,
+            realPath: () => Effect.succeed("/unverified-owner"),
+          }),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+        );
         expect(capabilities.update).toBeNull();
-        expect(createProviderVersionAdvisory({ driver: driver(provider), currentVersion: "1.0.0", latestVersion: "2.0.0", maintenanceCapabilities: capabilities })).toMatchObject({ status: "behind_latest", canUpdate: false, canInstallVersion: false, updateCommand: null });
+        expect(
+          createProviderVersionAdvisory({
+            driver: driver(provider),
+            currentVersion: "1.0.0",
+            latestVersion: "2.0.0",
+            maintenanceCapabilities: capabilities,
+          }),
+        ).toMatchObject({
+          status: "behind_latest",
+          canUpdate: false,
+          canInstallVersion: false,
+          updateCommand: null,
+        });
       }
     }),
   );

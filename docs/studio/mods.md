@@ -1,8 +1,8 @@
-# Studio Mods
+# SpecWithCode Mods
 
 Mods customize the workbench: they add command palette entries, a short status in the sidebar, toasts, and panes. They are shaped like [Claude Code mods](https://code.claude.com/docs/en/plugins/mods/overview): one module exports `register(on)`, and every hook is `($, e, next)`.
 
-A mod belongs to a Studio host. Every client of that host (browser, desktop app) runs the same approved mods. In this first version clients run the mods of their primary environment only.
+A mod belongs to a SpecWithCode host. Every client of that host (browser, desktop app) runs the same approved mods. In this first version clients run the mods of their primary environment only.
 
 ## Install a mod
 

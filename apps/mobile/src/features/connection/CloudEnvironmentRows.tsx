@@ -114,7 +114,9 @@ function CloudEnvironmentRowsContent(
     <View collapsable={false} className={cn("gap-3", showHeader && "mt-5")}>
       {showHeader ? (
         <View className="px-1">
-          <Text className="text-sm font-studio-bold uppercase text-foreground-muted">Studio Connect</Text>
+          <Text className="text-sm font-studio-bold uppercase text-foreground-muted">
+            SpecWithCode Connect
+          </Text>
         </View>
       ) : null}
 
@@ -171,7 +173,7 @@ function CloudEnvironmentRowsContent(
       !controller.relayDiscovery.isRefreshing ? (
         <View collapsable={false} className="gap-3 rounded-[24px] bg-grouped-card p-5">
           <Text className="text-base font-studio-bold text-foreground">
-            Could not load Studio Connect environments
+            Could not load SpecWithCode Connect environments
           </Text>
           <Text className="text-sm text-foreground-muted">{controller.relayDiscovery.error}</Text>
           {controller.relayDiscovery.errorTraceId ? (

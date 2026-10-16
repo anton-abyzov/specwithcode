@@ -5,7 +5,6 @@ import type {
   ResolvedKeybindingsConfig,
   ThreadId,
 } from "@specweave-studio/contracts";
-import { AlertTriangleIcon, XIcon } from "lucide-react";
 
 import type { DraftId } from "../../composerDraftStore";
 import { useStudioProjectFileScripts } from "../../hooks/useStudioProjectFileScripts";
@@ -21,19 +20,12 @@ import ProjectScriptsControl, {
   type NewProjectScriptInput,
   type ProjectScriptActionResult,
 } from "../ProjectScriptsControl";
-import { Button } from "../ui/button";
 import type { ComponentProps } from "react";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { OpenInPicker } from "./OpenInPicker";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
-
-interface VersionMismatchIssue {
-  readonly clientVersion: string;
-  readonly serverVersion: string;
-  readonly serverLabel: string;
-}
 
 export interface ThreadDetailsPanelProps extends Pick<
   ComponentProps<typeof ThreadDetailsCard>,
@@ -66,8 +58,6 @@ export interface ThreadDetailsPanelProps extends Pick<
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest: () => void;
   onOpenChanges?: () => void;
-  versionMismatch: VersionMismatchIssue | null;
-  onDismissVersionMismatch: () => void;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
   onUpdateProjectScript: (
@@ -128,27 +118,6 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
             separated={false}
             showHeading={false}
           >
-            {props.versionMismatch ? (
-              <div className="mx-1 mb-2 flex gap-2 rounded-xl border border-warning/30 bg-warning/6 p-3">
-                <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0 text-warning-foreground" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-medium">Client and server versions differ</p>
-                  <p className="mt-1 text-2xs leading-relaxed text-muted-foreground">
-                    Client {props.versionMismatch.clientVersion} ·{" "}
-                    {props.versionMismatch.serverLabel} {props.versionMismatch.serverVersion}
-                  </p>
-                </div>
-                <Button
-                  size="icon-xs"
-                  variant="ghost"
-                  aria-label="Dismiss version mismatch warning"
-                  onClick={props.onDismissVersionMismatch}
-                >
-                  <XIcon className="size-3.5" />
-                </Button>
-              </div>
-            ) : null}
-
             <div className="flex flex-col">
               {density === "full" && showEnvironment ? (
                 <BranchToolbarEnvironmentSelector

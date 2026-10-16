@@ -27,6 +27,13 @@ export interface RepositoryIdentityResolverOptions {
   readonly refine?: (
     identity: RepositoryIdentity,
   ) => Effect.Effect<RepositoryIdentity, SourceControlProviderError>;
+  /**
+   * Answers whether a folder is there before git is asked about it. A missing
+   * folder resolves to `null` without spawning git. Spawning is synchronous on
+   * the event loop and slowest when the machine is busy, and the server's
+   * background sweeps ask about every project, including folders long deleted.
+   */
+  readonly cwdExists?: (cwd: string) => Effect.Effect<boolean>;
 }
 
 export class RepositoryIdentityResolver extends Context.Service<
@@ -179,10 +186,17 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
       onFailure: () => Duration.zero,
     });
 
+  const cwdExists = options.cwdExists;
   const repositoryRootCache = yield* Cache.makeWith<string, string | null>(
     (cwd) =>
-      resolveRepositoryIdentityCacheKey(cwd).pipe(
-        Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+      (cwdExists === undefined ? Effect.succeed(true) : cwdExists(cwd)).pipe(
+        Effect.flatMap((exists) =>
+          exists
+            ? resolveRepositoryIdentityCacheKey(cwd).pipe(
+                Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+              )
+            : Effect.succeed(null),
+        ),
       ),
     { capacity: cacheCapacity, timeToLive },
   );

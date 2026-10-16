@@ -194,4 +194,61 @@ describe("host limit blocks", () => {
     expect(formatAgo(now - 3 * 3_600_000, now)).toBe("3h ago");
     expect(formatAgo(now - 72 * 3_600_000, now)).toBe("3d ago");
   });
+
+  it("grays a window a spent one caps and keeps the peak to account-wide windows", () => {
+    const windows = (weeklyUsed: number, fableUsed: number) => ({
+      checkedAt: at(0),
+      windows: [
+        {
+          id: "five_hour",
+          kind: "session" as const,
+          label: "Session",
+          usedPercent: 0,
+          resetsAt: at(3),
+        },
+        {
+          id: "seven_day",
+          kind: "weekly" as const,
+          label: "Weekly",
+          usedPercent: weeklyUsed,
+          resetsAt: at(39),
+        },
+        {
+          id: "seven_day_fable",
+          kind: "weekly" as const,
+          label: "Weekly · Fable",
+          modelScope: "Fable",
+          usedPercent: fableUsed,
+          resetsAt: at(39),
+        },
+      ],
+    });
+    const rowFor = (weeklyUsed: number, fableUsed: number) =>
+      collectHostLimitBlocks(
+        new Map([
+          [
+            m4,
+            host("m4", "connected", [
+              provider({ driver: "claudeAgent", usageLimits: windows(weeklyUsed, fableUsed) }),
+            ]),
+          ],
+        ]),
+        { projectEnvironmentId: m4, saved: new Map(), driverLabel: label, now },
+      )[0]!.providers[0]!;
+    const spent = rowFor(100, 7);
+    expect(spent.windows.map((window) => window.blockedBy ?? null)).toEqual([
+      { label: "Weekly", resetsAt: Date.parse(at(39)) },
+      null,
+      { label: "Weekly", resetsAt: Date.parse(at(39)) },
+    ]);
+    expect(spent.peak).toBe(100);
+    // A spent Fable weekly stops Fable only: the session stays usable.
+    const fableSpent = rowFor(40, 100);
+    expect(fableSpent.windows.map((window) => window.blockedBy ?? null)).toEqual([
+      null,
+      null,
+      null,
+    ]);
+    expect(fableSpent.peak).toBe(40);
+  });
 });

@@ -23,6 +23,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
@@ -270,11 +271,29 @@ it.effect(
         turnItemTypes: ["user_message"],
       });
       assert.isAbove(fresh.turnItems.at(-1)!.ordinal, 900);
+      const retiredThreads = yield* McpSessionRegistry.McpRetiredThreads.pipe(
+        Effect.provide(McpSessionRegistry.layerRetiredThreads),
+      );
+      const unknownThreadId = ThreadId.make("thread:control-dispatch-unknown");
+      assert.deepEqual(yield* retiredThreads.retiredAmong([threadId, unknownThreadId]), [
+        unknownThreadId,
+      ]);
       yield* orchestrator.dispatch({
         type: "thread.archive",
         commandId: CommandId.make("archive-with-old-history"),
         threadId,
       });
+      // No live provider session is left to detach (as after a server
+      // restart), yet archiving still retires the thread's MCP credentials.
+      const archiveEffects = yield* sql<{ readonly effect_type: string }>`
+        SELECT effect_type FROM orchestration_v2_effect_outbox
+        WHERE command_id = 'archive-with-old-history'
+        ORDER BY effect_id ASC`;
+      assert.deepEqual(
+        archiveEffects.map((effect) => effect.effect_type),
+        ["mcp-credential.invalidate", "terminal.cleanup"],
+      );
+      assert.deepEqual(yield* retiredThreads.retiredAmong([threadId]), [threadId]);
       yield* orchestrator.dispatch({
         type: "thread.delete",
         commandId: CommandId.make("delete-with-old-history"),

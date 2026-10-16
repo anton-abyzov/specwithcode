@@ -193,6 +193,8 @@ export interface ProviderSessionManagerV2Shape {
     readonly providerSessionId: ProviderSessionId;
     readonly reason: ProviderSessionReleaseReason;
     readonly detail?: string;
+    /** Keeps MCP credentials as on server shutdown (a release for a service update). */
+    readonly keepMcpCredentials?: boolean;
   }) => Effect.Effect<void, ProviderSessionManagerV2Error>;
   /**
    * Releases every live session with no turn in flight, as an idle timeout
@@ -200,10 +202,13 @@ export interface ProviderSessionManagerV2Shape {
    * running is left alone: Stop owns it. With `includeBusy`, those are released
    * too, after the caller has stopped their turns. Used before a service update,
    * whose helper refuses while any agent process still runs under the service.
+   * With `keepMcpCredentials`, MCP credentials survive as on server shutdown,
+   * so the restarted server honors them.
    */
   readonly releaseIdle: (input: {
     readonly detail: string;
     readonly includeBusy?: boolean;
+    readonly keepMcpCredentials?: boolean;
   }) => Effect.Effect<number, ProviderSessionManagerV2Error>;
   readonly detach: (input: {
     readonly providerSessionId: ProviderSessionId;
@@ -519,7 +524,12 @@ export const layerWithOptions = (
                 >(["orchestration", "worktree", "pull-requests"]);
                 if (browserToolsAvailable) capabilities.add("preview");
                 if (deviceToolsAvailable) capabilities.add("device");
-                const existing = McpProviderSession.readMcpProviderSession(threadId);
+                // Only this instance's own credential is reused or replaced:
+                // another provider's session for the thread keeps its own.
+                const existing = McpProviderSession.readMcpProviderSession(
+                  threadId,
+                  providerInstanceId,
+                );
                 if (existing !== undefined) {
                   // Reserve before the async resolve so a release cannot
                   // revoke the credential between validation and reservation.
@@ -545,11 +555,17 @@ export const layerWithOptions = (
                     resolved.capabilities.has("preview") === browserToolsAvailable &&
                     resolved.capabilities.has("device") === deviceToolsAvailable
                   ) {
+                    // The thread's next lookup without an instance (a
+                    // provider reading its slot) gets this instance's again.
+                    McpProviderSession.setMcpProviderSession(existing);
                     return { mcpCredentialId: existing.providerSessionId, issued: false };
                   }
                   dropMcpCredentialReservation(threadId, existing.providerSessionId);
                 }
-                yield* mcpSessionRegistry.revokeThread(threadId);
+                // Revoking every instance here 401ed a provider the thread had
+                // switched away from while its background agents still worked,
+                // and their MCP client then dropped SpecWithCode's tools.
+                yield* mcpSessionRegistry.revokeThreadInstance(threadId, providerInstanceId);
                 const credential = yield* mcpSessionRegistry.issue({
                   threadId,
                   providerInstanceId,
@@ -576,18 +592,15 @@ export const layerWithOptions = (
                   Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
                 ),
               )
-          : mcpSessionRegistry.revokeProviderSession(mcpCredentialId).pipe(
-              Effect.tap(() =>
-                Effect.sync(() => {
-                  if (
-                    McpProviderSession.readMcpProviderSession(threadId)?.providerSessionId ===
-                    mcpCredentialId
-                  ) {
-                    McpProviderSession.clearMcpProviderSession(threadId);
-                  }
-                }),
-              ),
-            );
+          : mcpSessionRegistry
+              .revokeProviderSession(mcpCredentialId)
+              .pipe(
+                Effect.tap(() =>
+                  Effect.sync(() =>
+                    McpProviderSession.clearMcpProviderSessionCredential(threadId, mcpCredentialId),
+                  ),
+                ),
+              );
 
       const publishToSubscribers = (
         subscribers: Ref.Ref<
@@ -971,6 +984,8 @@ export const layerWithOptions = (
         readonly cancelIdleFiber?: boolean;
         readonly onlyIfIdleGeneration?: number;
         readonly gracefulSubscribers?: boolean;
+        /** Keep MCP credentials, as a server shutdown does (service update). */
+        readonly keepMcpCredentials?: boolean;
       }) =>
         Effect.acquireUseRelease(
           removeLiveEntry(input),
@@ -1037,6 +1052,13 @@ export const layerWithOptions = (
                     Effect.forEach(
                       entry.mcpCredentialIdByThread,
                       ([threadId, mcpCredentialId]) => {
+                        // A server shutdown keeps credentials: the registry
+                        // persists them and the next server honors them
+                        // (bounded by its liveness window), so an agent or MCP
+                        // bridge that outlives this server keeps working.
+                        if (input.reason === "server_shutdown" || input.keepMcpCredentials) {
+                          return Effect.void;
+                        }
                         // Id-sensitive: a stale record for the same thread but
                         // a DIFFERENT credential (left behind by an old session
                         // the thread rotated away from) must not veto revoking
@@ -1365,6 +1387,39 @@ export const layerWithOptions = (
                     payload: entry.runtime.providerSession,
                   }),
                 );
+              }
+            } else if (
+              options.configureMcp !== false &&
+              (McpProviderSession.readMcpProviderSession(
+                input.threadId,
+                input.providerInstanceId,
+              ) === undefined ||
+                McpProviderSession.readMcpProviderSession(input.threadId)?.providerInstanceId !==
+                  input.providerInstanceId) &&
+              (yield* Ref.get(sessions))
+                .get(sessionKey(input.providerSessionId))
+                ?.attachedThreadIds.has(input.threadId) === true
+            ) {
+              // Still attached, but another provider ran this thread meanwhile (a
+              // limit switch, a scheduled run) and was prepared after it, or this
+              // session's own credential is gone. Make this instance's credential
+              // the thread's current one again (reused while it still resolves),
+              // so this session's next query calls tools as itself; as the other
+              // provider every change it asked for failed with parent_not_active.
+              const prepared = yield* prepareMcpSession(input.threadId, input.providerInstanceId);
+              preparedForCleanup = prepared;
+              if (prepared.mcpCredentialId !== undefined) {
+                const mcpCredentialId = prepared.mcpCredentialId;
+                yield* Ref.update(sessions, (current) => {
+                  const key = sessionKey(input.providerSessionId);
+                  const entry = current.get(key);
+                  if (entry === undefined) return current;
+                  const mcpCredentialIdByThread = new Map(entry.mcpCredentialIdByThread);
+                  mcpCredentialIdByThread.set(input.threadId, mcpCredentialId);
+                  const updated = new Map(current);
+                  updated.set(key, { ...entry, mcpCredentialIdByThread });
+                  return updated;
+                });
               }
             }
           }).pipe(
@@ -1908,6 +1963,7 @@ export const layerWithOptions = (
                   providerSessionId: entry.runtime.providerSessionId,
                   reason: "manual_shutdown",
                   detail: input.detail,
+                  ...(input.keepMcpCredentials === true ? { keepMcpCredentials: true } : {}),
                   ...(input.includeBusy === true
                     ? {}
                     : { onlyIfIdleGeneration: entry.idleGeneration }),
@@ -2330,7 +2386,19 @@ export const layerWithOptions = (
             // entry is already gone: there is no legitimate future re-attach,
             // and the token must not outlive the thread.
             if (input.revokeMcpCredential === true) {
-              yield* clearMcpSession(input.threadId);
+              // Invalidate rather than revoke: advancing the thread's
+              // generation retires the token value itself, so no copy an agent
+              // still holds can be revived by a later issue.
+              // Durability is the `mcp-credential.invalidate` effect's job,
+              // which archive and delete always queue.
+              yield* mcpSessionRegistry
+                .invalidateThread(input.threadId)
+                .pipe(
+                  Effect.catch((error) =>
+                    Effect.logWarning("MCP credential retirement is not stored yet.", { error }),
+                  ),
+                );
+              McpProviderSession.clearMcpProviderSession(input.threadId);
             }
             if (Option.isNone(detached)) {
               return;

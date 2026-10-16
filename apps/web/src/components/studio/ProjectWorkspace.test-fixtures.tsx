@@ -3,7 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import { act } from "react";
+import { act, useSyncExternalStore } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, vi } from "vite-plus/test";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
@@ -15,6 +15,8 @@ vi.mock("../../state/queries", () => ({
 type FixtureProcedure = (...args: any[]) => any;
 const state = vi.hoisted(() => ({
   send: vi.fn<FixtureProcedure>(),
+  /** Renders of the Markdown stand-in whose props changed. */
+  markdownRenders: 0,
   nativeContinue: vi.fn(async (_kind: string, _selection: unknown) => {}),
   nativeError: null as string | null,
   openLink: vi.fn(async () => undefined),
@@ -81,6 +83,8 @@ const state = vi.hoisted(() => ({
   startersError: null as string | null,
   starterReads: 0,
   providers: [] as unknown[],
+  /** The host's server settings; absent until a test needs them. */
+  hostSettings: undefined as unknown,
   /** The host has not sent its configuration (and so its providers) yet. */
   serverConfigPending: false,
   phone: false,
@@ -129,17 +133,52 @@ vi.mock("../settings/useSettingsProjectGroups", () => ({
     { projectKey: "atlas", memberProjects: [state.project, ...state.otherCheckouts] },
   ],
 }));
+const noArchivedSnapshots = vi.hoisted(() => Object.freeze([]));
 vi.mock("../../lib/archivedThreadsState", () => ({
-  useArchivedThreadSnapshots: () => ({ snapshots: [], error: null }),
+  // One list, as the atom answers: a fresh one per read would look like a new archive.
+  useArchivedThreadSnapshots: () => ({ snapshots: noArchivedSnapshots, error: null }),
 }));
 vi.mock("../../state/entities", () => ({
   useAllEnvironmentShellsBootstrapped: () => state.shellsBootstrapped,
   useProjects: () => (state.projectLoaded ? [state.project, ...state.otherCheckouts] : []),
   useThreadShells: () => state.shells,
+  // Like the atoms behind them: a list keeps its identity while nothing it holds changed.
+  useThreadShellsForProjectRefs: (
+    refs: ReadonlyArray<{ environmentId: string; projectId: string }>,
+  ) =>
+    keptList(
+      `shells:${refs.map((ref) => `${ref.environmentId}:${ref.projectId}`).join("|")}`,
+      state.shells.filter((shell) =>
+        refs.some(
+          (ref) => ref.environmentId === shell.environmentId && ref.projectId === shell.projectId,
+        ),
+      ),
+      (kept, next) => kept === next,
+    ),
+  useThreadLinkTargets: (environmentId: string) =>
+    keptList(
+      `links:${environmentId}`,
+      state.shells
+        .filter((shell) => shell.environmentId === environmentId)
+        .map(({ id, projectId, title, deletedAt }) => ({
+          environmentId,
+          id,
+          projectId,
+          title,
+          deletedAt,
+        })),
+      (kept, next) =>
+        kept.id === next.id &&
+        kept.projectId === next.projectId &&
+        kept.title === next.title &&
+        kept.deletedAt === next.deletedAt,
+    ),
   readThreadShells: () => state.shells,
   useThreadProjection: () => ({
     projection: { messages: state.messages, runs: state.runs, turnItems: state.turnItems },
   }),
+  useThreadShell: (ref: { threadId: string } | null) =>
+    ref === null ? null : (state.shells.find((shell) => shell.id === ref.threadId) ?? null),
   useThreadHistory: () => ({ hasMoreHistory: false }),
   useThreadStatus: () => "ready",
 }));
@@ -167,6 +206,7 @@ vi.mock("../../state/environments", () => ({
       ? undefined
       : {
           providers: state.providers,
+          ...(state.hostSettings === undefined ? {} : { settings: state.hostSettings }),
           environment: {
             capabilities: {
               attachmentUploads: state.uploadsSupported,
@@ -178,9 +218,28 @@ vi.mock("../../state/environments", () => ({
         },
   }),
 }));
+const keptLists = vi.hoisted(() => new Map<string, readonly unknown[]>());
+function keptList<T>(key: string, next: readonly T[], same: (kept: T, next: T) => boolean) {
+  const kept = keptLists.get(key) as readonly T[] | undefined;
+  if (kept && kept.length === next.length && kept.every((row, index) => same(row, next[index]!)))
+    return kept;
+  keptLists.set(key, next);
+  return next;
+}
+const uploadListeners = vi.hoisted(() => new Set<() => void>());
+/** Upload progress changed in `state.uploads`: what the real queue's store announces. */
+function notifyUploads() {
+  for (const listener of uploadListeners) listener();
+}
+function subscribeUploads(listener: () => void) {
+  uploadListeners.add(listener);
+  return () => {
+    uploadListeners.delete(listener);
+  };
+}
 vi.mock("../../lib/attachmentUploadQueue", () => ({
   useAttachmentUploadStore: (select: (store: { uploadsByImageId: object }) => unknown) =>
-    select({ uploadsByImageId: state.uploads }),
+    select({ uploadsByImageId: useSyncExternalStore(subscribeUploads, () => state.uploads) }),
   // Like the queue: nothing starts without the right to send, and a second start is a no-op.
   startAttachmentUpload: ({ image }: { image: { id: string } }) => {
     if (!state.canOperate || state.uploadsStarted.includes(image.id)) return;
@@ -232,7 +291,9 @@ vi.mock("../files/AttachmentFilePreview", () => ({
     <div data-file-preview={props.name}>{props.file ? "local bytes" : "no bytes"}</div>
   ),
 }));
-vi.mock("../../state/session", () => ({
+vi.mock("../../state/session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/session")>()),
+  readEnvironmentScope: () => state.canOperate,
   useEnvironmentsWithScope: () => new Set(state.canOperate ? ["host", ...state.recoveryHosts] : []),
   useEnvironmentScope: (_environmentId: string, scope: string) =>
     scope === "source-control:write"
@@ -282,7 +343,9 @@ vi.mock("../../state/assets", () => ({ assetEnvironment: { createUrl: {} } }));
 vi.mock("../../state/use-atom-query-runner", () => ({
   useAtomQueryRunner: () => async () => ({ _tag: "Failure" }),
 }));
-vi.mock("../../state/threads", () => ({ threadEnvironment: { loadEarlierHistory: {} } }));
+vi.mock("../../state/threads", () => ({
+  threadEnvironment: { loadEarlierHistory: {}, updateMetadata: {} },
+}));
 vi.mock("../../hooks/useThreadActions", () => ({
   useThreadActions: () => ({
     settleThread: state.settle,
@@ -297,6 +360,7 @@ vi.mock("../../studio/projectWorkspace", () => ({
     starterSuggestions: () => ({ starters: true }),
     threadReports: () => ({ reports: true }),
     threadReportSave: {},
+    threadIncrementProgress: () => null,
   },
 }));
 vi.mock("@specweave-studio/client-runtime/state/runtime", async (importOriginal) => ({
@@ -333,9 +397,16 @@ vi.mock("../../hooks/useSettings", async () => {
       select: (settings: {
         sendShortcut: string;
         projectCoordinatorMachines: Record<string, string>;
+        timelineDetail: "normal";
+        threadTimelineDetail: Record<string, never>;
       }) => unknown,
     ) =>
-      select({ sendShortcut: state.sendShortcut, projectCoordinatorMachines: state.savedMachines }),
+      select({
+        sendShortcut: state.sendShortcut,
+        projectCoordinatorMachines: state.savedMachines,
+        timelineDetail: "normal",
+        threadTimelineDetail: {},
+      }),
     useClientSettingsHydrationStatus: () => "ready",
     useUpdateClientSettings:
       () => (patch: { projectCoordinatorMachines?: Record<string, string> }) => {
@@ -390,9 +461,11 @@ vi.mock("../ui/sidebar", () => ({
 }));
 vi.mock("../ChatMarkdown", async () => {
   const { parseStudioThreadHref } = await import("../../studio/studioThreadLinks");
+  const { memo, useLayoutEffect } = await import("react");
   // Plain text, except thread links, which go through the caller like the real renderer.
+  // Memoized like the real one, and counted, so tests can tell which messages rendered.
   return {
-    default: ({
+    default: memo(function MarkdownStandIn({
       text,
       renderContextReference,
       renderThreadLink,
@@ -407,36 +480,42 @@ vi.mock("../ChatMarkdown", async () => {
         candidates: readonly string[];
         label: string;
       }) => React.ReactNode | null;
-    }) => (
-      <p>
-        {text
-          .split(/(\[[^\]]+\]\((?:studio-context:\/\/v1\/thread\/|studio:\/\/thread\/)[^)]+\))/)
-          .map((part, index) => {
-            const context = /^\[([^\]]+)\]\(studio-context:\/\/v1\/thread\/([^)]+)\)$/.exec(part);
-            if (context && renderContextReference)
-              return (
-                <span key={index}>
-                  {renderContextReference({
-                    kind: "thread",
-                    contextId: decodeURIComponent(context[2]!),
-                    label: context[1]!,
-                  })}
-                </span>
-              );
-            const thread = /^\[([^\]]+)\]\((studio:\/\/thread\/[^)]+)\)$/.exec(part);
-            const candidates = thread ? parseStudioThreadHref(thread[2]!) : null;
-            if (thread && candidates)
-              return (
-                <span key={index}>
-                  {renderThreadLink?.({ candidates, label: thread[1]! }) ?? (
-                    <span data-fallback-thread-link={candidates[0]}>{thread[1]}</span>
-                  )}
-                </span>
-              );
-            return part;
-          })}
-      </p>
-    ),
+    }) {
+      // Counted once a render commits; a memoized render that was skipped is not.
+      useLayoutEffect(() => {
+        state.markdownRenders += 1;
+      });
+      return (
+        <p>
+          {text
+            .split(/(\[[^\]]+\]\((?:studio-context:\/\/v1\/thread\/|studio:\/\/thread\/)[^)]+\))/)
+            .map((part, index) => {
+              const context = /^\[([^\]]+)\]\(studio-context:\/\/v1\/thread\/([^)]+)\)$/.exec(part);
+              if (context && renderContextReference)
+                return (
+                  <span key={index}>
+                    {renderContextReference({
+                      kind: "thread",
+                      contextId: decodeURIComponent(context[2]!),
+                      label: context[1]!,
+                    })}
+                  </span>
+                );
+              const thread = /^\[([^\]]+)\]\((studio:\/\/thread\/[^)]+)\)$/.exec(part);
+              const candidates = thread ? parseStudioThreadHref(thread[2]!) : null;
+              if (thread && candidates)
+                return (
+                  <span key={index}>
+                    {renderThreadLink?.({ candidates, label: thread[1]! }) ?? (
+                      <span data-fallback-thread-link={candidates[0]}>{thread[1]}</span>
+                    )}
+                  </span>
+                );
+              return part;
+            })}
+        </p>
+      );
+    }),
   };
 });
 vi.mock("./ProjectWorkspaceAttachments", () => ({
@@ -456,8 +535,19 @@ vi.mock("./ProjectWorkspaceSettings", () => ({ ProjectWorkspaceSettings: () => n
 vi.mock("./RemoteWorkerCards", () => ({ RemoteWorkerCards: () => null }));
 vi.mock("../../studio/fleet", () => ({
   useProjectRemoteWorkers: () => ({ workers: [], available: false, refresh: () => {} }),
+  useStudioFleet: () => ({ snapshot: null, loading: false, failed: false, refresh: () => {} }),
 }));
 vi.mock("./shell/LibraryPane", () => ({ LibraryPane: () => <p>Library pane</p> }));
+// The handoff dialog reads the source checkout's git status; these surfaces never open it.
+vi.mock("./useHandoffSourceChanges", () => ({
+  useHandoffSourceChanges: () => ({
+    state: "unknown",
+    fileCount: 0,
+    committing: false,
+    error: null,
+    onCommit: null,
+  }),
+}));
 vi.mock("../ChatView", async () => {
   const { useProjectMessageRouting, routeProjectComposerSend } =
     await import("../../studio/projectMessageRouting");
@@ -594,6 +684,7 @@ beforeEach(() => {
   state.startersError = null;
   state.starterReads = 0;
   state.providers = [];
+  state.hostSettings = undefined;
   state.serverConfigPending = false;
   state.project.defaultModelSelection = { instanceId: "codex-native", model: "worker-model" };
   state.otherCheckouts = [];
@@ -719,6 +810,7 @@ function recreateRoot() {
 }
 
 export {
+  notifyUploads,
   state,
   projectRead,
   root,

@@ -43,6 +43,8 @@ export interface ServerDerivedPaths {
   readonly modsDir: string;
   /** Which mod contents the user approved, kept outside the mods folder. */
   readonly modApprovalsPath: string;
+  /** Unsent composer drafts, one folder per composer. */
+  readonly composerDraftsDir: string;
   readonly providerStatusCacheDir: string;
   readonly worktreesDir: string;
   readonly attachmentsDir: string;
@@ -158,6 +160,7 @@ export const deriveServerPaths = Effect.fn(function* (
     environmentThemesDir: join(stateDir, "themes"),
     modsDir: join(stateDir, "mods"),
     modApprovalsPath: join(stateDir, "mod-approvals.json"),
+    composerDraftsDir: join(stateDir, "composer-drafts"),
     providerStatusCacheDir,
     worktreesDir: join(baseDir, "worktrees"),
     attachmentsDir,

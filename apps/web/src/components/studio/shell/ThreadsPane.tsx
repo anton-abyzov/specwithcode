@@ -11,6 +11,7 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   LaptopIcon,
+  ListChecksIcon,
   RotateCcwIcon,
   SearchIcon,
   SlidersVerticalIcon,
@@ -21,12 +22,17 @@ import { useLocalStorage } from "../../../hooks/useLocalStorage";
 import { PULL_REQUEST_STATE_PRESENTATION } from "../../pullRequest/pullRequestIcons";
 import { useNowMinute } from "../../../hooks/useNowMinute";
 import { sessionStateSince } from "../../../studio/overviewModel";
-import { threadBlocker, type ProjectThreadGroup } from "../../../studio/projectWorkspaceModel";
+import {
+  threadAttentionNote,
+  type ProjectThreadGroup,
+} from "../../../studio/projectWorkspaceModel";
+import { withRunningSubagents } from "../../../studio/threadSubagents";
 import {
   buildThreadPaneGroups,
   compactAge,
   modelLabel,
   nowFromMinute,
+  shortMachineName,
   THREAD_GROUP_PAGE,
   THREAD_GROUP_PAGE_STEP,
   THREAD_GROUPS_FOLDED_BY_DEFAULT,
@@ -42,6 +48,7 @@ import {
   Menu,
   MenuGroup,
   MenuGroupLabel,
+  MenuItem,
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
@@ -50,6 +57,9 @@ import {
 } from "../../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
 import { ModelBadge, useProviderEntriesByEnvironment } from "./ModelBadge";
+import { PlanProgressChip } from "../PlanProgressChip";
+import { compactThreadPlan } from "../../../studio/threadPlanProgress";
+import { useProjectThreadIncrementProgress } from "../../../studio/useThreadIncrementProgress";
 import { ProjectPaneBar, type ProjectPaneBarProps } from "./ProjectPaneBar";
 import { Tip } from "./Tip";
 
@@ -84,6 +94,8 @@ export function ThreadsPane({
 }: {
   environmentId: EnvironmentId;
   threads: readonly EnvironmentThreadShell[];
+  /** Working subagents per `environmentId:threadId`; they roll up into their thread's row. */
+  runningSubagents?: ReadonlyMap<string, number>;
   canChange: boolean;
   findRef: RefObject<HTMLInputElement | null>;
   onOpen: (id: ThreadId, environmentId?: EnvironmentId) => void;
@@ -102,6 +114,16 @@ export function ThreadsPane({
   onFindOpenChange: (open: boolean) => void;
   query: string;
   onQueryChange: (query: string) => void;
+  /** Stop or continue every thread at once; absent where the person cannot change threads. */
+  bulk?:
+    | {
+        readonly running: number;
+        readonly interrupted: number;
+        readonly busy: boolean;
+        readonly onStopAll: () => void;
+        readonly onContinueAll: () => void;
+      }
+    | undefined;
 }) {
   const entriesByEnvironment = useProviderEntriesByEnvironment();
   const now = nowFromMinute(useNowMinute());
@@ -124,14 +146,21 @@ export function ThreadsPane({
   const findShown = findOpen || query !== "";
   const findButtonRef = useRef<HTMLButtonElement>(null);
   const [limits, setLimits] = useState<Partial<Record<ProjectThreadGroup, number>>>({});
+  // With the project on one machine the composer already names it, so rows stay quiet.
+  // Once it lives on several, every row names its own, so rows compare at a glance.
+  const multiMachine =
+    (props.machineLabels?.size ?? 0) > 1 ||
+    Boolean(props.remoteWorkerCount) ||
+    allThreads.some((thread) => thread.environmentId !== props.environmentId);
   const groups = useMemo(
-    () => buildThreadPaneGroups(allThreads, sortBy, query),
-    [allThreads, query, sortBy],
+    () => buildThreadPaneGroups(allThreads, sortBy, query, props.runningSubagents),
+    [allThreads, query, sortBy, props.runningSubagents],
   );
   const matches = groups.reduce((sum, group) => sum + group.threads.length, 0);
   const searching = query.trim() !== "";
   const offerStarters =
     allThreads.length === 0 && props.starters != null && !props.remoteWorkerCount;
+  const incrementProgress = useProjectThreadIncrementProgress(props.environmentId, allThreads);
 
   return (
     <>
@@ -162,6 +191,43 @@ export function ThreadsPane({
                 <SearchIcon aria-hidden />
               </button>
             </Tip>
+            {props.bulk ? (
+              <Menu>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <MenuTrigger
+                        render={
+                          <button
+                            type="button"
+                            className="sws-icon-button"
+                            aria-label="Thread actions"
+                            data-bulk-thread-actions
+                          />
+                        }
+                      />
+                    }
+                  >
+                    <ListChecksIcon aria-hidden />
+                  </TooltipTrigger>
+                  <TooltipPopup side="bottom">Stop or continue all threads</TooltipPopup>
+                </Tooltip>
+                <MenuPopup align="end" side="bottom" className="min-w-56">
+                  <MenuItem
+                    disabled={props.bulk.busy || props.bulk.running === 0}
+                    onClick={props.bulk.onStopAll}
+                  >
+                    Stop all running ({props.bulk.running})
+                  </MenuItem>
+                  <MenuItem
+                    disabled={props.bulk.busy || props.bulk.interrupted === 0}
+                    onClick={props.bulk.onContinueAll}
+                  >
+                    Continue all interrupted ({props.bulk.interrupted})
+                  </MenuItem>
+                </MenuPopup>
+              </Menu>
+            ) : null}
             <Menu>
               <Tooltip>
                 <TooltipTrigger
@@ -293,7 +359,10 @@ export function ThreadsPane({
               ) : (
                 <div className="sws-thread-list" id={listId}>
                   {rows.map((thread) => {
-                    const tone = threadTone(thread);
+                    const subagentsWorking =
+                      props.runningSubagents?.get(`${thread.environmentId}:${thread.id}`) ?? 0;
+                    const ownTone = threadTone(thread);
+                    const tone = subagentsWorking > 0 && ownTone === "idle" ? "working" : ownTone;
                     const entry =
                       entriesByEnvironment
                         .get(thread.environmentId)
@@ -308,15 +377,22 @@ export function ThreadsPane({
                     const action = archived || settled ? "Reopen" : "Resolve";
                     // The group heading already says "Working" or "Waiting on you"; a row
                     // names only a more specific state, such as "Answer needed".
-                    const statusWord = threadStatusWord(thread);
+                    const statusWord = withRunningSubagents(
+                      threadStatusWord(thread),
+                      subagentsWorking,
+                    );
                     const rowStatus = statusWord === group ? null : statusWord;
-                    // This project's own machine goes without saying; name only another one.
-                    const machine =
-                      thread.environmentId === props.environmentId
-                        ? null
-                        : (props.machineLabels?.get(thread.environmentId) ?? null);
+                    const machine = multiMachine
+                      ? (props.machineLabels?.get(thread.environmentId) ?? null)
+                      : null;
                     const showDot = tone === "waiting" || tone === "working" || tone === "failed";
                     const pullRequest = threadPullRequest(thread);
+                    const plan = compactThreadPlan(
+                      thread.environmentId === props.environmentId
+                        ? (incrementProgress.get(thread.id) ?? null)
+                        : null,
+                      thread.planProgress,
+                    );
                     return (
                       <article
                         className="sws-thread-row project-thread-card"
@@ -340,7 +416,7 @@ export function ThreadsPane({
                             <span className="sws-thread-meta">
                               {rowStatus
                                 ? (() => {
-                                    const blocker = threadBlocker(thread);
+                                    const blocker = threadAttentionNote(thread);
                                     const word = (
                                       <span className="sws-thread-status" data-tone={tone}>
                                         {rowStatus}
@@ -361,6 +437,7 @@ export function ThreadsPane({
                                 instanceId={thread.modelSelection.instanceId}
                                 model={thread.modelSelection.model}
                               />
+                              {plan ? <PlanProgressChip plan={plan} /> : null}
                               {pullRequest ? (
                                 <span className="sws-thread-pr" data-state={pullRequest.state}>
                                   <pullRequest.Icon
@@ -373,9 +450,10 @@ export function ThreadsPane({
                                 </span>
                               ) : null}
                               {machine ? (
-                                <span className="sws-thread-machine">
+                                <span className="sws-thread-machine" title={machine}>
                                   <LaptopIcon aria-hidden />
-                                  {machine}
+                                  <span className="sr-only">On </span>
+                                  {shortMachineName(machine)}
                                 </span>
                               ) : null}
                               {thread.runtime?.lastError ? (

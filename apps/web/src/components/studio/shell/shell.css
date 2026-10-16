@@ -351,6 +351,14 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   font-size: 11px;
   color: var(--sidebar-muted-foreground);
 }
+.sws-side-row-namesake {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .sws-side-actions .sws-kbd {
   opacity: 0;
 }
@@ -442,6 +450,9 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   font-size: 12px;
   color: var(--sidebar-muted-foreground);
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 .sws-side-more:hover {
   color: var(--sidebar-foreground);
@@ -478,15 +489,143 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   padding-right: 30px;
 }
 /* A pinned project carries a small pin before its counts. */
-.sws-side-row-pin {
+.sws-side-row > .sws-side-row-pin {
   flex: none;
   width: 12px;
   height: 12px;
+  margin: 0;
   color: var(--sidebar-muted-foreground);
+}
+/* Project rows end in a fixed slot for the count. The row menu covers that
+   slot on hover instead of pushing the name, hint and pin to the left. */
+.sws-side-row-end {
+  flex: none;
+  width: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+@media (hover: hover) {
+  .sws-project-row .sws-side-row,
+  .sws-project-row:is(:hover, :has(.sws-chat-menu:is(:focus-visible, [data-popup-open])))
+    .sws-side-row {
+    padding-right: 4px;
+  }
+  .sws-project-row .sws-chat-menu {
+    right: 4px;
+  }
+  .sws-project-row:is(:hover, :has(.sws-chat-menu:is(:focus-visible, [data-popup-open])))
+    .sws-side-row-end {
+    visibility: hidden;
+  }
+}
+/* The Archived toggle's icon sits in the rows' icon column, so its label
+   lines up with the project names. */
+.sws-side-more:has(.sws-side-more-icon) {
+  gap: 8px;
+}
+.sws-side-more-icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin: 0 2px;
+}
+/* Reordering projects: the row lifts under the pointer, a line marks where it
+   lands and the list keeps a divider between pinned projects and the rest. */
+.sws-project-list {
+  position: relative;
+}
+.sws-project-list[data-dragging] {
+  cursor: grabbing;
+  user-select: none;
+}
+.sws-project-list[data-dragging] .sws-side-row {
+  cursor: grabbing;
+}
+.sws-project-row[data-dragging] {
+  opacity: 0.35;
+}
+.sws-project-pin-divider {
+  height: 9px;
+  margin: 0 8px;
+  display: flex;
+  align-items: center;
+}
+.sws-project-pin-divider::before {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+.sws-project-pin-divider[data-empty] {
+  height: 28px;
+  margin: 0;
+  justify-content: center;
+  border: 1px dashed var(--border);
+  border-radius: 7px;
+  font-size: 11px;
+  color: var(--sidebar-muted-foreground);
+}
+.sws-project-pin-divider[data-empty]::before {
+  display: none;
+}
+.sws-project-insertion {
+  position: absolute;
+  top: -1px;
+  left: 6px;
+  right: 6px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--primary);
+  pointer-events: none;
+}
+.sws-project-insertion::before {
+  content: "";
+  position: absolute;
+  left: -3px;
+  top: -2px;
+  width: 6px;
+  height: 6px;
+  border: 1.5px solid var(--primary);
+  border-radius: 50%;
+  background: var(--sidebar, var(--card));
+}
+.sws-project-lifted {
+  height: 28px;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 7px;
+  color: var(--sidebar-foreground);
+  background: var(--sidebar-row-hover, var(--card));
+  box-shadow:
+    0 0 0 0.5px color-mix(in srgb, var(--foreground) 14%, transparent),
+    0 10px 24px -6px color-mix(in srgb, black 40%, transparent),
+    0 2px 6px color-mix(in srgb, black 18%, transparent);
+  cursor: grabbing;
+  animation: sws-project-lift 160ms cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+}
+@keyframes sws-project-lift {
+  from {
+    transform: scale(1);
+    box-shadow: none;
+  }
+  to {
+    transform: scale(1.03);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sws-project-lifted {
+    animation: none;
+  }
 }
 /* Archived projects keep their rows, quieter than the projects in use. */
 .sws-project-row[data-archived] .sws-side-row-label {
   color: var(--sidebar-muted-foreground);
+}
+.sws-project-row[data-archived] .sws-side-row > :first-child {
+  opacity: 0.7;
 }
 @media (hover: none) {
   .sws-side-row {
@@ -552,6 +691,25 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   border-radius: 999px;
   border: 1px solid var(--border);
   font-size: 11px;
+  color: var(--muted-foreground);
+}
+/* A project another machine runs names that machine beside its title. */
+.sws-project-machine {
+  min-width: 0;
+  max-width: 16em;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11.5px;
+  color: var(--foreground);
+}
+.sws-project-machine svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
   color: var(--muted-foreground);
 }
 .sws-top-actions {
@@ -622,7 +780,8 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   font-weight: 400;
   color: var(--muted-foreground);
 }
-.sws-model-pick .sws-effort-trigger svg[data-composer-control-icon] {
+/* The effort meter carries meaning; only a generic icon is dropped here. */
+.sws-model-pick .sws-effort-trigger svg[data-composer-control-icon]:not([data-effort-glyph]) {
   display: none;
 }
 /* In a narrow column the effort gives way first and trims, so the model stays readable. */
@@ -649,11 +808,61 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 .sws-model-pick-unset .sws-model-trigger:is(:hover, [data-popup-open]) {
   color: var(--foreground);
 }
+/* The limit rule moved the coordinator: a row of its own, above the controls. */
 .sws-model-fallback {
+  order: -1;
+  flex: 1 0 100%;
+  min-width: 0;
+  margin: 0 0 4px;
+  padding: 5px 6px 5px 9px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  font-size: 12.5px;
+  line-height: 18px;
+  color: var(--foreground);
+}
+.sws-model-fallback > svg {
   flex: none;
-  white-space: nowrap;
-  padding: 0 6px;
+  width: 14px;
+  height: 14px;
+  color: var(--warning);
+}
+.sws-model-fallback-text {
+  /* Wraps rather than cutting off which model runs now. */
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.sws-model-fallback-text strong {
+  font-weight: 600;
+}
+.sws-model-fallback-back {
+  flex: none;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
   font-size: 12px;
+  font-weight: 500;
+  color: var(--foreground);
+}
+.sws-model-fallback-back:hover:not(:disabled) {
+  background: var(--accent);
+}
+.sws-model-fallback-back:disabled {
+  opacity: 0.6;
+}
+.sws-model-fallback-back:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+/* The saved model stays in the picker, quieter than the line that says what runs now. */
+.sws-composer-foot[data-model-fallback]
+  .sws-model-pick
+  .sws-model-trigger:not(.sws-effort-trigger) {
   color: var(--muted-foreground);
 }
 
@@ -938,6 +1147,58 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   color: var(--card-foreground);
   font: inherit;
   text-align: left;
+  position: relative;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+/* The whole card opens the thread: its head button stretches over it. */
+.sws-thread-card-head {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.sws-thread-card-head::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+.sws-thread-card-head:focus-visible {
+  outline: none;
+}
+.sws-thread-card:has(.sws-thread-card-head:focus-visible) {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.sws-thread-card-actions {
+  position: relative;
+  z-index: 1;
+}
+.sws-thread-card:hover {
+  border-color: color-mix(in srgb, var(--shell-link) 35%, var(--border));
+  background: color-mix(in srgb, var(--shell-link) 6%, var(--card));
+}
+.sws-thread-card-open {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--muted-foreground);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.sws-thread-card:hover .sws-thread-card-open,
+.sws-thread-card-head:focus-visible .sws-thread-card-open {
+  opacity: 1;
+}
+@media (hover: none) {
+  .sws-thread-card-open {
+    opacity: 0.6;
+  }
 }
 /* A thread that is not doing anything yet reads as an empty circle, as in the chat. */
 .sws-thread-card .sws-dot[data-tone="idle"],
@@ -1123,6 +1384,15 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   justify-content: flex-start;
   gap: 6px;
   padding: 6px 7px 6px 0;
+}
+/* The coordinator's `/` menu opens above its message. */
+.sws-composer .coordinator-slash-menu {
+  margin-bottom: 6px;
+  overflow: hidden;
+  border: 1px solid var(--input);
+  border-radius: 14px;
+  background: var(--popover, var(--card));
+  box-shadow: 0 4px 16px rgb(0 0 0 / 8%);
 }
 .sws-composer-card {
   border: 1px solid var(--input);
@@ -1350,11 +1620,57 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 .sws-composer-foot .sws-model-pick {
   max-width: 100%;
 }
+/* Model, effort and access: their own row under the meta row, packed from the left, so a
+   resize wraps them in place instead of sliding the access picker across the footer. */
+.sws-composer-controls {
+  flex: 1 1 100%;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 2px 2px;
+}
+/* The picker's column (controls over the folder note) flattens into this row. */
+.sws-composer-controls > [data-coordinator-model-controls] {
+  display: contents;
+}
+/* The folder note always takes the line under the controls. */
+.sws-composer-controls [data-coordinator-folder-guidance] {
+  order: 1;
+  flex: 1 1 100%;
+  max-width: none;
+  padding: 0 8px 2px;
+}
+.sws-access-pick {
+  flex: none;
+}
+.sws-access-trigger {
+  height: 28px;
+  /* Sized to the chosen mode, so its chevron sits beside the label. */
+  field-sizing: content;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.sws-access-trigger:is(:hover, :focus-visible):not(:disabled) {
+  background: var(--accent);
+  color: var(--foreground);
+}
+.sws-access-trigger:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
 /* The host name takes only the room left over, so it never pushes the model off the row. */
 .sws-host {
   flex: 1 1 0;
   width: 0;
-  min-width: 0;
+  /* Never only a dot: the machine that runs the next turn stays readable. */
+  min-width: 6.5em;
   max-width: fit-content;
   overflow: hidden;
   display: inline-flex;
@@ -1679,6 +1995,9 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   align-items: center;
   font-variant-numeric: tabular-nums;
 }
+.sws-thread-meta > .sws-thread-plan {
+  flex: none;
+}
 .sws-thread-pr svg {
   width: 12px;
   height: 12px;
@@ -1735,9 +2054,12 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   line-height: inherit;
 }
 .sws-thread-machine {
-  flex: 0 1 auto;
+  /* Low emphasis, and it gives way before the model does. */
+  flex: 0 1000 auto;
+  max-width: 14em;
   overflow: hidden;
   text-overflow: ellipsis;
+  opacity: 0.85;
 }
 .sws-thread-machine svg {
   width: 12px;
@@ -1861,9 +2183,16 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   margin: 0 -2px;
   color: var(--muted-foreground);
 }
+.sws-thread-crumb-back {
+  display: none;
+  width: 15px;
+  height: 15px;
+}
+/* The title outranks every control in the row: it keeps a readable minimum
+   while the chips, panel toggles and labels give way around it. */
 .sws-thread-head-text {
   flex: 1;
-  min-width: 0;
+  min-width: min(9rem, 34cqi);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1878,6 +2207,26 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 }
 .sws-thread-head-tools:empty {
   display: none;
+}
+/* Narrow: the chat's panel toggles fold into the action menu (the slot stays
+   mounted for the chat's portal) and Resolve keeps only its icon. */
+@container (max-width: 600px) {
+  .sws-thread-head-tools {
+    display: none;
+  }
+  .sws-thread-resolve-label {
+    display: none;
+  }
+}
+/* Narrower still, the breadcrumb becomes a back arrow. */
+@container (max-width: 420px) {
+  .sws-thread-crumb-label,
+  .sws-thread-crumb-sep {
+    display: none;
+  }
+  .sws-thread-crumb-back {
+    display: block;
+  }
 }
 .sws-thread-head-text h2 {
   flex: 0 1 auto;
@@ -1909,13 +2258,6 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   .sws-top-button[aria-pressed="true"] {
     outline: 1px solid Highlight;
   }
-}
-
-.sws-threads .project-route-note {
-  padding: 6px 14px;
-  border-bottom: 1px solid var(--border);
-  background: var(--muted);
-  font-size: 11.5px;
 }
 
 .studio-session-main .sws-model {

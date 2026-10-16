@@ -15,6 +15,7 @@ import {
   normalizeCompactToolLabel,
   resolveWorkEntryToolPresentation,
   summarizeToolGroup,
+  summarizeToolGroupChips,
   toolGroupAction,
   toolGroupSummaryKind,
   type ToolGroupSummaryKind,
@@ -564,8 +565,10 @@ type MessagesTimelineRowContent =
       createdAt: string;
       runId: RunId;
       label: string;
-      /** Concise only: what the folded work did, such as "Ran 3 commands". */
+      /** Concise only: what the folded work did, as short counts: "88 commands · 94 thread updates". */
       activitySummary?: string;
+      /** Concise only: the whole sentence the short label stands for, for its tooltip. */
+      activityDetail?: string;
       expanded: boolean;
     }
   | {
@@ -734,6 +737,7 @@ interface TurnFold {
   hiddenEntryIds: ReadonlySet<string>;
   label: string;
   activitySummary?: string;
+  activityDetail?: string;
 }
 
 /**
@@ -988,7 +992,7 @@ function deriveTurnFolds(input: {
   unfoldedRunIds: ReadonlySet<RunId>;
   /** Keeps the latest runless response open; V2 work must not reopen imported turns. */
   runlessWorkActive: boolean;
-  /** Concise: describe the folded tool calls next to the duration. */
+  /** Concise detail: summarise the folded work as short counts beside the duration. */
   includeActivitySummary?: boolean;
 }): ReadonlyMap<string, TurnFold> {
   const interruptedRunIds = new Set<RunId>();
@@ -1152,7 +1156,6 @@ function deriveTurnFolds(input: {
       : duration
         ? `Worked for ${duration}`
         : "Worked";
-
     const foldedTools = input.includeActivitySummary
       ? group.entries.flatMap((entry) =>
           entry.kind === "work" &&
@@ -1163,6 +1166,7 @@ function deriveTurnFolds(input: {
             : [],
         )
       : [];
+
     foldsByAnchorEntryId.set(group.anchorEntryId, {
       runId,
       anchorEntryId: group.anchorEntryId,
@@ -1174,10 +1178,14 @@ function deriveTurnFolds(input: {
         : (group.terminalEntry?.id ?? null),
       createdAt: group.startBoundary ?? firstEntry.createdAt,
       hiddenEntryIds,
-      label,
+      // Concise reads "31m · 88 commands · 94 thread updates"; the sentence is its tooltip.
       ...(foldedTools.length > 0
-        ? { activitySummary: summarizeToolGroup(foldedTools).summary }
-        : {}),
+        ? {
+            label: isLatestInterruptedTurn ? label : (compactDuration(elapsedMs) ?? label),
+            activitySummary: summarizeToolGroupChips(foldedTools).join(" · "),
+            activityDetail: `${label} · ${summarizeToolGroup(foldedTools).summary}`,
+          }
+        : { label }),
     });
   }
   return foldsByAnchorEntryId;
@@ -1573,6 +1581,9 @@ export function deriveMessagesTimelineRows(input: {
         ...(turnFold.activitySummary === undefined
           ? {}
           : { activitySummary: turnFold.activitySummary }),
+        ...(turnFold.activityDetail === undefined
+          ? {}
+          : { activityDetail: turnFold.activityDetail }),
         expanded: isDisclosed(input.expandedRunIds, turnFold.runId, detail),
       });
     }
@@ -2385,6 +2396,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.createdAt === bf.createdAt &&
         a.label === bf.label &&
         a.activitySummary === bf.activitySummary &&
+        a.activityDetail === bf.activityDetail &&
         a.expanded === bf.expanded
       );
     }
@@ -2491,4 +2503,31 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       );
     }
   }
+}
+
+/** "45s", "31m", "1h 5m": a turn's length at a glance; the tooltip keeps the seconds. */
+export function compactDuration(elapsedMs: number | null): string | null {
+  if (elapsedMs === null || !Number.isFinite(elapsedMs) || elapsedMs < 0) return null;
+  const seconds = Math.round(elapsedMs / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return minutes % 60 === 0 ? `${hours}h` : `${hours}h ${minutes % 60}m`;
+}
+
+/** Where the thread's plan stands, so a long turn says which step it is on. */
+export interface WorkingPlanProgress {
+  readonly completed: number;
+  readonly total: number;
+  readonly current: string | null;
+}
+
+/** "Step 3 of 5: Run the harnesses", or null when there is no plan to count. */
+export function workingStepLabel(plan: WorkingPlanProgress | null): string | null {
+  if (plan === null || plan.total === 0) return null;
+  if (plan.current === null) {
+    return plan.completed >= plan.total ? `All ${plan.total} steps done` : null;
+  }
+  return `Step ${Math.min(plan.completed + 1, plan.total)} of ${plan.total}: ${plan.current}`;
 }

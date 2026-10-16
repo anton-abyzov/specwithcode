@@ -13,7 +13,7 @@ describe("orchestrator MCP tool guidance", () => {
   it("asks for a short structured report and a relay instead of a pasted one", () => {
     assert.include(
       DelegateTaskTool.description ?? "",
-      "asking for a final report in your response style: outcome, evidence links or paths, blockers",
+      "asking for a final result in your response style (a plain short message when that is enough)",
     );
     assert.include(
       OrchestratorToolkit.tools.task_status.description ?? "",
@@ -28,7 +28,7 @@ describe("orchestrator MCP tool guidance", () => {
   });
 
   it("directs subagent requests to delegation instead of ordinary threads", () => {
-    assert.include(DelegateTaskTool.description ?? "", "child agent/subagent");
+    assert.include(DelegateTaskTool.description ?? "", "a coordinator's child is a worker");
     assert.include(DelegateTaskTool.description ?? "", "cross-provider");
     assert.include(CreateThreadsTool.description ?? "", "not delegation");
     assert.include(CreateThreadsTool.description ?? "", "call delegate_task");

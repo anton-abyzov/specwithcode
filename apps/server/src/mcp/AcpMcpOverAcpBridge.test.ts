@@ -116,4 +116,42 @@ describe("AcpMcpOverAcpBridge", () => {
       expect(failure.message).toContain("exceeds 8 MiB");
     }),
   );
+  it.effect("retries a rejected message once with the thread's current credentials", () =>
+    Effect.gen(function* () {
+      const seen: Array<string | null> = [];
+      let accepted = "Bearer fresh";
+      let current: { endpoint: string; authorization: string } | undefined = {
+        endpoint: "http://127.0.0.1:1/mcp",
+        authorization: "Bearer fresh",
+      };
+      const bridge = yield* makeAcpMcpOverAcpBridge({
+        endpoint: "http://127.0.0.1:1/mcp",
+        authorization: "Bearer stale",
+        refreshCredentials: Effect.sync(() => current),
+        allocateConnectionId: Effect.succeed("connection-1"),
+        fetchImplementation: async (_url, init) => {
+          const authorization = new Headers(init?.headers).get("authorization");
+          seen.push(authorization);
+          if (authorization !== accepted) return new Response(null, { status: 401 });
+          const body = JSON.parse(String(init?.body)) as { readonly id?: unknown };
+          return new Response(JSON.stringify({ jsonrpc: "2.0", id: body.id, result: { ok: 1 } }), {
+            headers: { "content-type": "application/json" },
+          });
+        },
+      });
+      const { connectionId } = yield* bridge.connect({ serverId: "studio-code" });
+      expect(yield* bridge.message({ connectionId, method: "tools/list" })).toEqual({ ok: 1 });
+      expect(seen).toEqual(["Bearer stale", "Bearer fresh"]);
+
+      // Revoked: the refreshed credential is rejected too, after one retry.
+      seen.length = 0;
+      accepted = "Bearer none";
+      current = { endpoint: "http://127.0.0.1:1/mcp", authorization: "Bearer revoked" };
+      const failure = yield* bridge
+        .message({ connectionId, method: "tools/list" })
+        .pipe(Effect.flip);
+      expect(failure.message).toContain("HTTP 401");
+      expect(seen).toEqual(["Bearer fresh", "Bearer revoked"]);
+    }),
+  );
 });

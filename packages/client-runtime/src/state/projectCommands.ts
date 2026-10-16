@@ -22,9 +22,11 @@ import {
   createEnvironmentRpcQueryAtomFamily,
 } from "./runtime.ts";
 import {
+  type ChangeProjectFolderInput,
   type CreateProjectInput,
   type DeleteProjectInput,
   type UpdateProjectInput,
+  changeProjectFolder,
   createProject,
   deleteProject,
   updateProject,
@@ -32,6 +34,7 @@ import {
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 
 export type {
+  ChangeProjectFolderInput,
   CreateProjectInput,
   DeleteProjectInput,
   UpdateProjectInput,
@@ -110,6 +113,16 @@ export function createProjectEnvironmentAtoms<R, E>(
     update: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:project:update",
       execute: (input: UpdateProjectInput) => updateProject(input),
+      scheduler: projectScheduler,
+      concurrency: projectConcurrency,
+    }),
+    folderCheck: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:folder-check",
+      tag: WS_METHODS.projectsFolderCheck,
+    }),
+    changeFolder: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:project:change-folder",
+      execute: (input: ChangeProjectFolderInput) => changeProjectFolder(input),
       scheduler: projectScheduler,
       concurrency: projectConcurrency,
     }),

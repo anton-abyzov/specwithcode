@@ -103,4 +103,60 @@ describe("connection matrix", () => {
     );
     expect(text()).not.toContain("Access owner");
   });
+  it("offers Enable and Add only where the change can run, and explains the rest", async () => {
+    const onApply = vi.fn();
+    const base = { sourceId: "codex-user", scope: "user", shadowed: false } as const;
+    const actionable: NativeConnectionsSnapshot = {
+      ...snapshot,
+      connections: [
+        {
+          ...base,
+          id: "cu",
+          name: "computer-use",
+          provider: "codex",
+          transport: "stdio",
+          state: "disabled",
+          portable: false,
+          pluginProvided: true,
+        },
+        {
+          ...base,
+          id: "docs",
+          name: "docs",
+          provider: "codex",
+          transport: "stdio",
+          state: "disabled",
+          portable: true,
+        },
+        {
+          ...base,
+          id: "amp",
+          name: "amplitude",
+          provider: "claude",
+          sourceId: "claude-user",
+          transport: "http",
+          state: "configured",
+          portable: true,
+        },
+      ],
+    };
+    await act(() => {
+      renderer = create(<ConnectionMatrix snapshot={actionable} onApply={onApply} />);
+    });
+    const button = (label: string) =>
+      renderer.root.findAll((node) => node.type === "button" && node.props["aria-label"] === label);
+    expect(button("Enable: computer-use")).toHaveLength(0);
+    expect(text()).toContain("so this older entry can stay off");
+    expect(text()).toContain("Claude Code has no equivalent entry");
+    await act(() => button("Enable: docs")[0]!.props.onClick());
+    expect(onApply).toHaveBeenCalledWith({ action: "enable", connectionId: "docs" });
+    await act(() => button("Add to Codex: amplitude")[0]!.props.onClick());
+    expect(onApply).toHaveBeenCalledWith({ action: "copy", connectionId: "amp" });
+    // A disabled declaration is not copied, and nothing is offered without edit access.
+    expect(button("Add to Claude Code: docs")).toHaveLength(0);
+    await act(() => {
+      renderer.update(<ConnectionMatrix snapshot={actionable} />);
+    });
+    expect(button("Enable: docs")).toHaveLength(0);
+  });
 });

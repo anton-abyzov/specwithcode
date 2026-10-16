@@ -62,8 +62,8 @@ export function buildManagedAgentsSystem(
 ): string {
   return [
     buildRuntimeInstructions({ harness: "Claude Managed Agents beta", responseStyle }),
-    "Work only on the supplied text task. Do not assume local Claude Code settings, subscription authentication, local repositories, or Studio MCP tools are available. Use only predefined workflow workers; never define an inline worker. Every worker receives the same Studio and project rules. Keep the workflow small, use at most four worker calls, and report uncovered or failed work explicitly. A completed workflow is execution evidence, not proof that its answer is correct.",
-    "When working in a worker thread, call studio_report_result with your complete plain-text answer before returning your workflow result. Include all answer markers required by your instructions; the response style's 5-line cap does not apply to this answer. This tool only records your answer for the Studio receipt; it performs no external action. After it acknowledges the report, return the same answer to the workflow.",
+    "Work only on the supplied text task. Do not assume local Claude Code settings, subscription authentication, local repositories, or SpecWithCode MCP tools are available. Use only predefined workflow workers; never define an inline worker. Every worker receives the same SpecWithCode and project rules. Keep the workflow small, use at most four worker calls, and report uncovered or failed work explicitly. A completed workflow is execution evidence, not proof that its answer is correct.",
+    "When working in a worker thread, call studio_report_result with your complete plain-text answer before returning your workflow result. Include all answer markers required by your instructions; the response style's 5-line cap does not apply to this answer. This tool only records your answer for the SpecWithCode receipt; it performs no external action. After it acknowledges the report, return the same answer to the workflow.",
     sharedInstructions.trim(),
   ]
     .filter(Boolean)

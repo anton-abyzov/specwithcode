@@ -13,7 +13,7 @@ import { AsyncResult } from "effect/reactivity";
 import { type EnvironmentId, type ProjectIconOverride } from "@specweave-studio/contracts";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
-import { InfoIcon, SparklesIcon, Trash2Icon } from "lucide-react";
+import { SparklesIcon, Trash2Icon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
@@ -28,7 +28,6 @@ import { readProjects, useThreadShells } from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";
 import { ProjectLocation } from "../studio/ProjectLocation";
 import { ProjectFavicon } from "../ProjectFavicon";
-import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -40,7 +39,9 @@ import {
 import { ProjectActionsSettings } from "./ProjectActionsSettings";
 import { ProjectIconPicker, useLatestIconSave } from "./ProjectIconPicker";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
+import { ProjectOverrides } from "./ProjectOverrides";
 import { projectGroupTitleNeedsUpdate } from "./ProjectSettingsPanel.logic";
+import { ProjectCheckoutMissing } from "./ProjectCheckoutMissing";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
 import { logicalCoordinator } from "../../studio/projectDomain";
 
@@ -64,6 +65,16 @@ export function ProjectSettingsPanel({
   const navigate = useNavigate({ from: "/settings" });
   const pathname = useLocation({ select: (location) => location.pathname });
 
+  const { environments } = useEnvironments();
+  const missingCheckoutEnvironments = useMemo(
+    () =>
+      environments.map((environment) => ({
+        environmentId: environment.environmentId,
+        label: environment.label,
+        connected: environment.connection.phase === "connected",
+      })),
+    [environments],
+  );
   const selected = groups.find((group) => group.projectKey === projectKey) ?? null;
   const members = useMemo(
     () =>
@@ -132,9 +143,26 @@ export function ProjectSettingsPanel({
   }
   if (members.length === 0)
     return (
-      <p className="p-8 text-sm text-muted-foreground">
-        This checkout is no longer available in the selected project and environment.
-      </p>
+      <SettingsPageContainer>
+        <ProjectCheckoutMissing
+          group={selected}
+          environments={missingCheckoutEnvironments}
+          environmentId={environmentId}
+          checkoutKey={checkoutKey}
+          onPick={(search) =>
+            void navigate({
+              to: pathname,
+              search: () => ({
+                project: search.project,
+                machine: search.machine,
+                checkout: undefined,
+              }),
+              hash: "",
+              resetScroll: false,
+            })
+          }
+        />
+      </SettingsPageContainer>
     );
   const scopedGroup = {
     ...selected,
@@ -152,6 +180,7 @@ export function ProjectSettingsPanel({
   );
 }
 
+/** Project overrides that still live on their category page, reached with this project kept. */
 function ProjectDetail({
   group,
   domainMembers,
@@ -478,12 +507,6 @@ function ProjectDetail({
     <>
       {deletionDialog}
       <SettingsPageContainer className="gap-6">
-        <Alert variant="info">
-          <InfoIcon aria-hidden />
-          <AlertDescription>
-            Can't find a setting? Keep this project picked above and hop to any other settings page.
-          </AlertDescription>
-        </Alert>
         <SettingsSection id="project-overview" title="Project" hideTitle>
           {!canEditGroup ? (
             <p className="px-3 py-2 text-sm text-muted-foreground sm:px-4">
@@ -564,6 +587,9 @@ function ProjectDetail({
           />
         </SettingsSection>
         <ProjectDefaultsSettings category="project" />
+        <ProjectDefaultsSettings category="source-control" onProjectPage />
+        <ProjectDefaultsSettings category="integrations" onProjectPage />
+        <ProjectOverrides checkouts={group.memberProjects} />
         <ProjectActionsSettings />
         {hasMultipleCheckouts ? checkoutChoices : null}
         <SettingsSection title="Danger">

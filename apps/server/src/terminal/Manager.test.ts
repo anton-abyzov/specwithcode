@@ -33,6 +33,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
+import * as NodeOS from "node:os";
 import { expect } from "vite-plus/test";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -2526,7 +2527,72 @@ it.layer(
       expect(spawnInput).toBeDefined();
       if (!spawnInput) return;
 
-      expect(spawnInput.args).toEqual(["-o", "nopromptsp"]);
+      expect(spawnInput.args).toEqual(
+        (yield* HostProcessPlatform) === "darwin"
+          ? ["-l", "-o", "nopromptsp"]
+          : ["-o", "nopromptsp"],
+      );
+    }),
+  );
+
+  it.effect("opens the account's login shell when the service has no SHELL", () =>
+    Effect.gen(function* () {
+      if ((yield* HostProcessPlatform) !== "darwin") return;
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "" },
+      });
+      yield* manager.open(openInput());
+      const spawnInput = ptyAdapter.spawnInputs[0];
+      expect(spawnInput).toBeDefined();
+      if (!spawnInput) return;
+
+      const loginShell = NodeOS.userInfo().shell || "/bin/zsh";
+      expect(spawnInput.shell).toBe(loginShell);
+      expect(spawnInput.args?.[0]).toBe("-l");
+      expect(spawnInput.env.SHELL).toBe(loginShell);
+    }),
+  );
+
+  it.effect("starts in the fallback folder when the thread's worktree is gone", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, baseDir } = yield* createManager();
+      const path = yield* Path.Path;
+      const projectRoot = path.join(baseDir, "project");
+      const missingWorktree = path.join(baseDir, "worktrees", "removed");
+      yield* makeDirectory(projectRoot);
+      const input = openInput({
+        cwd: missingWorktree,
+        fallbackCwd: projectRoot,
+        worktreePath: missingWorktree,
+      });
+
+      const opened = yield* manager.open(input);
+      assert.equal(opened.cwd, projectRoot);
+      assert.equal(ptyAdapter.spawnInputs[0]?.cwd, projectRoot);
+
+      // Reopening with the same request keeps the running shell.
+      yield* manager.open(input);
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+    }),
+  );
+
+  it.effect("falls back to home when neither the folder nor the project root exists", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "studio-terminal-home-" });
+      const { manager, ptyAdapter, baseDir } = yield* createManager(5, {
+        env: { ...process.env, HOME: home },
+      });
+      const path = yield* Path.Path;
+
+      const opened = yield* manager.open(
+        openInput({
+          cwd: path.join(baseDir, "missing-worktree"),
+          fallbackCwd: path.join(baseDir, "missing-project"),
+        }),
+      );
+      assert.equal(opened.cwd, home);
+      assert.equal(ptyAdapter.spawnInputs[0]?.cwd, home);
     }),
   );
 

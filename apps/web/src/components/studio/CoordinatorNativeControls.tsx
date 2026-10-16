@@ -162,6 +162,7 @@ export function CoordinatorNativeControls({
             onToggleOption={onOption}
             onAdvance={onAdvance}
             onDismiss={onDismiss}
+            onReplyInChat={() => document.getElementById(answerId)?.focus()}
           />
           {progress?.activeQuestion && progress.activeQuestion.allowCustomAnswer !== false ? (
             <label htmlFor={answerId} className="grid gap-2 text-sm">

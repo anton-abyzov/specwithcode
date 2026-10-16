@@ -17,6 +17,7 @@ import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/st
 import { scopedThreadKey, scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import {
   type EnvironmentId,
+  type SidebarProjectOrder,
   PERSONAL_ASSISTANT_DESCRIPTION,
   PERSONAL_ASSISTANT_LABEL,
 } from "@specweave-studio/contracts";
@@ -28,8 +29,6 @@ import {
   ConciergeBellIcon,
   LayoutGridIcon,
   MoreHorizontalIcon,
-  PinIcon,
-  PinOffIcon,
   PlusIcon,
   SearchIcon,
   SlidersVerticalIcon,
@@ -70,14 +69,23 @@ import {
   isArchivedGroup,
   membersToToggle,
   partitionProjectGroups,
-  pinProjectsFirst,
-  togglePinnedProject,
+  sameNameHints,
 } from "../../../studio/projectListVisibility";
 import {
   coordinatorMachineKey,
   resolveCoordinatorMachine,
 } from "../../../studio/projectCoordinatorMachine";
 import { projectCoordinatorRole } from "../../../studio/projectCoordinatorThreads";
+import {
+  arrangeProjects,
+  moveProject,
+  rememberPinnedMembers,
+  resolveProjectOrder,
+  stepProject,
+  toggleProjectPin,
+  type ProjectDropTarget,
+} from "../../../studio/projectOrder";
+import { useSidebarProjectOrder } from "../../../studio/useSidebarProjectOrder";
 import {
   currentSidebarChatKey,
   isAgentOwnedProjectThread,
@@ -108,7 +116,6 @@ import {
 import { resolveThreadRouteTarget } from "../../../threadRoutes";
 import { cn } from "~/lib/utils";
 import { stackedThreadToast, toastManager } from "../../ui/toast";
-import { ProjectFavicon } from "../../ProjectFavicon";
 import { useSettingsProjectGroups } from "../../settings/useSettingsProjectGroups";
 import { SidebarChromeFooter, SidebarChromeHeader } from "../../sidebar/SidebarChrome";
 import {
@@ -129,7 +136,11 @@ import {
 import { SidebarContent, useSidebar } from "../../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
 import { Tip } from "./Tip";
+import { PlanProgressChip } from "../PlanProgressChip";
+import { useSidebarThreadPlans } from "../../sidebar/SidebarPlanProgress";
+import { describeThreadPlan } from "../../../studio/threadPlanProgress";
 import { ModelBadgeMark, useProviderEntriesByEnvironment } from "./ModelBadge";
+import { displayNameOf, ProjectRow, SidebarProjectList } from "./SidebarProjectList";
 
 const CHAT_OPTIONS_STORAGE_KEY = "studio:sidebar-chats:v1";
 const ChatOptionsSchema = Schema.Struct({
@@ -141,10 +152,6 @@ const ChatOptionsSchema = Schema.Struct({
   sortBy: Schema.Literals(CHAT_SORTS),
 });
 type StoredChatOptions = typeof ChatOptionsSchema.Type;
-// Pinned project keys, in the order they were pinned.
-const PINNED_PROJECTS_STORAGE_KEY = "studio:sidebar-pinned-projects:v1";
-const PinnedProjectsSchema = Schema.Array(Schema.String);
-const NO_PINNED_PROJECTS: ReadonlyArray<string> = [];
 const PROJECT_PAGE = 7;
 const CHAT_PAGE = 30;
 
@@ -182,16 +189,17 @@ export default function StudioSidebar() {
     ChatOptionsSchema,
   );
   const options = useMemo(() => parseChatListOptions(storedOptions), [storedOptions]);
-  const [pinnedProjectKeys, setPinnedProjectKeys] = useLocalStorage(
-    PINNED_PROJECTS_STORAGE_KEY,
-    NO_PINNED_PROJECTS,
-    PinnedProjectsSchema,
+  const [savedProjectOrder, saveOrder] = useSidebarProjectOrder();
+  // Saved keys follow projects whose folder moved; saves remember pinned members.
+  const projectOrder = useMemo(
+    () => resolveProjectOrder(savedProjectOrder, projectGroups),
+    [projectGroups, savedProjectOrder],
   );
-  const pinnedProjects = useMemo(() => new Set(pinnedProjectKeys), [pinnedProjectKeys]);
-  const togglePinned = (projectKey: string) =>
-    setPinnedProjectKeys((keys) => togglePinnedProject(keys, projectKey));
+  const saveProjectOrder = (next: SidebarProjectOrder) =>
+    saveOrder(rememberPinnedMembers(next, projectGroups));
   const [showAllProjects, setShowAllProjects] = useState(false);
-  const [showArchived, setShowArchived] = useState(false);
+  // Null follows the open project: the list opens while an archived project is open.
+  const [showArchived, setShowArchived] = useState<boolean | null>(null);
   const serverConfigs = useServerConfigs();
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
   const scratchRootFor = useCallback(
@@ -276,18 +284,15 @@ export default function StudioSidebar() {
     }
     return counts;
   }, [projectByMember, threadByKey, threads]);
-  // The machines' "No project" folders are not projects; archived ones wait below the
-  // list unless they are open or have threads waiting on the person.
-  // Pinned projects lead the main list.
-  const { listed: listedProjects, archived: archivedProjects } = useMemo(() => {
-    const partition = partitionProjectGroups(
-      projectGroups,
-      scratchRootFor,
-      activeProjectKey,
-      (projectKey) => (waitingByProject.get(projectKey) ?? 0) > 0,
-    );
-    return { ...partition, listed: pinProjectsFirst(partition.listed, pinnedProjectKeys) };
-  }, [activeProjectKey, pinnedProjectKeys, projectGroups, scratchRootFor, waitingByProject]);
+  // The machines' "No project" folders are not projects. Archived projects are listed
+  // only under Archived, even while open, and never carry a waiting count: the
+  // person archived them, so nothing in them asks for attention here.
+  const { listed: listedProjects, archived: archivedProjects } = useMemo(
+    () => partitionProjectGroups(projectGroups, scratchRootFor),
+    [projectGroups, scratchRootFor],
+  );
+  const archivedOpen =
+    showArchived ?? archivedProjects.some((group) => group.projectKey === activeProjectKey);
   const chatGroupInput = useMemo(
     () => ({
       now,
@@ -359,6 +364,7 @@ export default function StudioSidebar() {
     () => visibleChatGroups.flatMap((entry) => entry.rows),
     [visibleChatGroups],
   );
+  const { plans: chatPlans, loaders: chatPlanLoaders } = useSidebarThreadPlans(visibleChats);
   // The full-page chat, or on a project page the chat open in its right panel.
   const currentChatKey = currentSidebarChatKey({
     routeThreadKey,
@@ -468,18 +474,41 @@ export default function StudioSidebar() {
   // A personal assistant is not a code project: it sits under Overview, ahead of every
   // project and outside the project paging, so it is always one click away.
   const assistants = listedProjects.filter(isPersonalGroup);
-  const codeProjects = listedProjects.filter((group) => !isPersonalGroup(group));
-  const visibleProjects =
-    showAllProjects || codeProjects.length <= PROJECT_PAGE + 1
-      ? codeProjects
-      : codeProjects.filter(
-          (group, index) =>
-            index < PROJECT_PAGE ||
-            pinnedProjects.has(group.projectKey) ||
-            group.projectKey === activeProjectKey ||
-            (waitingByProject.get(group.projectKey) ?? 0) > 0,
-        );
+  // Pinned projects lead, then the rest, both in the person's order.
+  const arranged = arrangeProjects(
+    listedProjects.filter((group) => !isPersonalGroup(group)),
+    projectOrder,
+  );
+  const codeProjects = [...arranged.pinned, ...arranged.unpinned];
+  const nameHints = sameNameHints(codeProjects, (group) =>
+    displayNameOf(group, displayedCheckouts.get(group.projectKey)),
+  );
+  const listedKeys = {
+    pinned: arranged.pinned.map((group) => group.projectKey),
+    unpinned: arranged.unpinned.map((group) => group.projectKey),
+  };
+  const pinnedKeys = new Set(listedKeys.pinned);
+  const folded = !showAllProjects && codeProjects.length > PROJECT_PAGE + 1;
+  const shownWhenFolded = (group: SidebarProjectSnapshot, index: number) =>
+    index < PROJECT_PAGE ||
+    pinnedKeys.has(group.projectKey) ||
+    group.projectKey === activeProjectKey ||
+    (waitingByProject.get(group.projectKey) ?? 0) > 0;
+  const visibleProjects = folded ? codeProjects.filter(shownWhenFolded) : codeProjects;
   const hiddenProjects = codeProjects.length - visibleProjects.length;
+  const moveProjectTo = (projectKey: string, target: ProjectDropTarget) => {
+    const next = moveProject(projectOrder, listedKeys, projectKey, target);
+    // A project moved into the folded part of the list unfolds it, so it stays in view.
+    if (folded) {
+      const after = arrangeProjects(codeProjects, next);
+      const index = [...after.pinned, ...after.unpinned].findIndex(
+        (group) => group.projectKey === projectKey,
+      );
+      const group = codeProjects.find((entry) => entry.projectKey === projectKey);
+      if (!target.pinned && group && !shownWhenFolded(group, index)) setShowAllProjects(true);
+    }
+    saveProjectOrder(next);
+  };
   const hasAssistant = projectGroups.some(isPersonalGroup);
   const newChatShortcut = shortcutLabelForCommand(keybindings, "chat.new");
   const searchShortcut = shortcutLabelForCommand(keybindings, "commandPalette.toggle");
@@ -569,22 +598,33 @@ export default function StudioSidebar() {
             {codeProjects.length === 0 && archivedProjects.length === 0 ? (
               <p className="sws-side-empty">No projects yet. Create one or open a folder.</p>
             ) : (
-              <ul className="sws-side-list">
-                {visibleProjects.map((group) => (
-                  <ProjectRow
-                    key={group.projectKey}
-                    group={group}
-                    displayedProject={displayedCheckouts.get(group.projectKey)}
-                    archived={isArchivedGroup(group, scratchRootFor)}
-                    pinned={pinnedProjects.has(group.projectKey)}
-                    waiting={waitingByProject.get(group.projectKey) ?? 0}
-                    current={group.projectKey === activeProjectKey}
-                    onOpen={closeMobile}
-                    onPin={() => togglePinned(group.projectKey)}
-                    onArchive={(archived) => void setGroupArchived(group, archived)}
-                  />
-                ))}
-              </ul>
+              <SidebarProjectList
+                visible={{
+                  pinned: visibleProjects.filter((group) => pinnedKeys.has(group.projectKey)),
+                  unpinned: visibleProjects.filter((group) => !pinnedKeys.has(group.projectKey)),
+                }}
+                listedKeys={listedKeys}
+                rowState={(group) => ({
+                  displayedProject: displayedCheckouts.get(group.projectKey),
+                  archived: isArchivedGroup(group, scratchRootFor),
+                  waiting: waitingByProject.get(group.projectKey) ?? 0,
+                  current: group.projectKey === activeProjectKey,
+                  hint: nameHints.get(group.projectKey),
+                })}
+                onOpen={closeMobile}
+                onMove={moveProjectTo}
+                onStep={(projectKey, direction) => {
+                  const target = stepProject(listedKeys, projectKey, direction);
+                  if (target) moveProjectTo(projectKey, target);
+                }}
+                canStep={(projectKey, direction) =>
+                  stepProject(listedKeys, projectKey, direction) !== null
+                }
+                onPin={(projectKey) =>
+                  saveProjectOrder(toggleProjectPin(projectOrder, listedKeys, projectKey))
+                }
+                onArchive={(group, archived) => void setGroupArchived(group, archived)}
+              />
             )}
             {hiddenProjects > 0 || (showAllProjects && codeProjects.length > PROJECT_PAGE + 1) ? (
               <button
@@ -601,13 +641,14 @@ export default function StudioSidebar() {
                 <button
                   type="button"
                   className="sws-side-more"
-                  aria-expanded={showArchived}
+                  aria-expanded={archivedOpen}
                   aria-controls="sws-side-archived"
-                  onClick={() => setShowArchived((value) => !value)}
+                  onClick={() => setShowArchived(!archivedOpen)}
                 >
-                  {showArchived ? "Hide archived" : `Archived (${archivedProjects.length})`}
+                  <ArchiveIcon aria-hidden className="sws-side-more-icon" />
+                  {archivedOpen ? "Hide archived" : `Archived (${archivedProjects.length})`}
                 </button>
-                {showArchived ? (
+                {archivedOpen ? (
                   <ul
                     id="sws-side-archived"
                     className="sws-side-list"
@@ -619,8 +660,8 @@ export default function StudioSidebar() {
                         group={group}
                         displayedProject={displayedCheckouts.get(group.projectKey)}
                         archived
-                        waiting={waitingByProject.get(group.projectKey) ?? 0}
-                        current={false}
+                        waiting={0}
+                        current={group.projectKey === activeProjectKey}
                         onOpen={closeMobile}
                         onArchive={(archived) => void setGroupArchived(group, archived)}
                       />
@@ -638,6 +679,7 @@ export default function StudioSidebar() {
           >
             {/* Mounted once, apart from the groups: a choice that regroups the list must
                 not take the open menu and the keyboard with it. */}
+            {chatPlanLoaders}
             <div className="sws-side-heading">
               <h2 id="sws-side-chats">Chats</h2>
               {chatTools}
@@ -698,11 +740,12 @@ export default function StudioSidebar() {
                         const project = projectByMember.get(
                           `${thread.environmentId}:${thread.projectId}`,
                         );
+                        const plan = chatPlans.get(key) ?? null;
                         return (
                           <li key={key} className="sws-chat-row" data-tone={tone}>
                             <Tip
                               side="right"
-                              label={`${title} · ${label.full}${project ? ` · ${project.displayName}` : ""} · ${compactAge(sessionStateSince(thread), now)}`}
+                              label={`${title} · ${label.full}${project ? ` · ${project.displayName}` : ""} · ${compactAge(sessionStateSince(thread), now)}${plan ? ` · ${describeThreadPlan(plan)}` : ""}`}
                             >
                               <button
                                 type="button"
@@ -716,6 +759,7 @@ export default function StudioSidebar() {
                                   provider={label.provider}
                                 />
                                 <span className="sws-side-row-label">{title}</span>
+                                {plan ? <PlanProgressChip plan={plan} tip={false} /> : null}
                                 <span className="sr-only">
                                   , {label.full}, {THREAD_TONE_LABELS[tone]}
                                 </span>
@@ -808,96 +852,6 @@ export default function StudioSidebar() {
 
 function isPersonalGroup(group: SidebarProjectSnapshot): boolean {
   return group.memberProjects.some((member) => member.workspaceSettings?.kind === "personal");
-}
-
-/** One project in the Projects list, with its Pin and Archive or Restore actions. */
-function ProjectRow(props: {
-  group: SidebarProjectSnapshot;
-  displayedProject: SidebarProjectGroupMember | undefined;
-  archived: boolean;
-  /** Absent in the archived list, which keeps no pinned order. */
-  pinned?: boolean;
-  waiting: number;
-  current: boolean;
-  onOpen: () => void;
-  onPin?: () => void;
-  onArchive: (archived: boolean) => void;
-}) {
-  const { group, archived, pinned, waiting } = props;
-  // The group keeps repository identity; its visible name and icon belong to
-  // the checkout the workspace opens, including an explicit remote checkout.
-  const project = props.displayedProject ?? group;
-  const displayName = group.memberProjects.some(
-    (member) => member.workspaceSettings?.logicalProject,
-  )
-    ? group.displayName
-    : (props.displayedProject?.title ?? group.displayName);
-  const personal = isPersonalGroup(group);
-  return (
-    <li
-      className="sws-project-row"
-      data-archived={archived || undefined}
-      data-pinned={pinned || undefined}
-    >
-      <Tip
-        side="right"
-        label={
-          personal
-            ? `${displayName} · ${PERSONAL_ASSISTANT_LABEL}: ${PERSONAL_ASSISTANT_DESCRIPTION}`
-            : `${displayName} · ${project.workspaceRoot}${archived ? " · Archived" : ""}`
-        }
-      >
-        <Link
-          to="/projects/$projectKey"
-          params={{ projectKey: group.projectKey }}
-          search={
-            props.displayedProject && !props.displayedProject.workspaceSettings?.logicalProject
-              ? { checkout: coordinatorMachineKey(props.displayedProject) }
-              : {}
-          }
-          className="sws-side-row"
-          aria-current={props.current ? "page" : undefined}
-          onClick={props.onOpen}
-        >
-          <ProjectFavicon project={project} className="size-[18px] shrink-0" />
-          <span className="sws-side-row-label">{displayName}</span>
-          {archived ? <span className="sws-side-row-hint">Archived</span> : null}
-          {pinned ? <PinIcon className="sws-side-row-pin" aria-label="Pinned" role="img" /> : null}
-          {waiting > 0 ? (
-            <span className="sws-count sws-count-waiting">
-              {waiting}
-              <span className="sr-only"> waiting on you</span>
-            </span>
-          ) : null}
-        </Link>
-      </Tip>
-      <Menu>
-        <MenuTrigger
-          render={
-            <button
-              type="button"
-              className="sws-icon-button sws-chat-menu"
-              aria-label={`Actions for ${displayName}`}
-            />
-          }
-        >
-          <MoreHorizontalIcon aria-hidden />
-        </MenuTrigger>
-        <MenuPopup align="start" side="bottom">
-          {props.onPin ? (
-            <MenuItem onClick={props.onPin}>
-              {pinned ? <PinOffIcon aria-hidden /> : <PinIcon aria-hidden />}
-              {pinned ? "Unpin project" : "Pin project"}
-            </MenuItem>
-          ) : null}
-          <MenuItem onClick={() => props.onArchive(!archived)}>
-            <ArchiveIcon aria-hidden />
-            {archived ? "Restore project" : "Archive project"}
-          </MenuItem>
-        </MenuPopup>
-      </Menu>
-    </li>
-  );
 }
 
 const FILTER_SECTIONS = [

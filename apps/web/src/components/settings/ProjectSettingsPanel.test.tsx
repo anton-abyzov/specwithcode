@@ -140,6 +140,7 @@ vi.mock("../ui/toast", () => ({
   toastManager: { add: vi.fn() },
   stackedThreadToast: (value: unknown) => value,
 }));
+vi.mock("./ProjectOverrides", () => ({ ProjectOverrides: () => null }));
 vi.mock("../ui/button", () => ({ Button: "button" }));
 vi.mock("../ui/input", () => ({ Input: "input" }));
 vi.mock("../ui/switch", () => ({ Switch: "input" }));

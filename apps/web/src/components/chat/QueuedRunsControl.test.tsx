@@ -16,6 +16,11 @@ vi.mock("@specweave-studio/client-runtime/state/thread-workflows", () => ({
 
 vi.mock("../../state/entities", () => ({
   useThreadProjection: () => state.projection,
+  useThreadShell: () => ({ title: "Release macOS app" }),
+}));
+
+vi.mock("../../hooks/useNowMinute", () => ({
+  useNowMinute: () => "2026-10-15T12:00:00.000Z",
 }));
 
 vi.mock("../../state/threads", () => ({
@@ -207,5 +212,107 @@ describe("QueuedRunsControl attachments and edit mode", () => {
     );
     expect(html).toContain("Queue · waiting to resume");
     expect(html).not.toContain("Queue · after current turn");
+  });
+});
+
+describe("QueuedRunsControl row summaries", () => {
+  it("names the sending thread, reads a report as one line and says how long it waited", () => {
+    state.projection = { projection: { messages: [] } };
+    state.workflow = {
+      activeRun: { id: "run:active" },
+      canPromoteToSteer: true,
+      canReorder: true,
+      queuedRuns: [
+        {
+          run: {
+            id: "run:report",
+            userMessageId: "message:report",
+            requestedAt: "2026-10-15T11:48:00.000Z",
+          },
+          text: "## **Outcome**\n\nSettings 12/12 pass; harnesses next.",
+          attachments: [],
+          senderThreadId: "thread:release",
+          createdBy: "agent",
+        },
+      ],
+    };
+
+    const html = renderToStaticMarkup(
+      <QueuedRunsControl
+        environmentId={"environment:test" as never}
+        optimisticMessages={[]}
+        threadId={"thread:test" as never}
+        editingRunId={null}
+        onEditQueuedRun={() => undefined}
+        onCancelEdit={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('data-queued-sender="thread:release"');
+    expect(html).toContain("Release macOS app");
+    expect(html).toMatch(/data-queued-summary[^>]*>Outcome</);
+    expect(html).toContain("queued 12 min");
+  });
+});
+
+describe("QueuedRunsControl held queue", () => {
+  const heldWorkflow = (held: boolean) => ({
+    activeRun: null,
+    canPromoteToSteer: false,
+    canReorder: true,
+    isHeld: held,
+    queuedRuns: [1, 2].map((index) => ({
+      run: {
+        id: `run:handoff-${index}`,
+        userMessageId: `message:handoff-${index}`,
+        queueHeld: held,
+      },
+      text: `Handoff ${index}`,
+      attachments: [],
+    })),
+  });
+
+  const render = (props: { onResumeHeld?: () => void; resumeBusy?: boolean }) =>
+    renderToStaticMarkup(
+      <QueuedRunsControl
+        environmentId={"environment:test" as never}
+        optimisticMessages={[]}
+        threadId={"thread:test" as never}
+        editingRunId={null}
+        onEditQueuedRun={() => undefined}
+        onCancelEdit={() => undefined}
+        {...props}
+      />,
+    );
+
+  it("says how many messages are held and offers Resume and Discard", () => {
+    state.projection = { projection: { messages: [] } };
+    state.workflow = heldWorkflow(true);
+
+    const html = render({ onResumeHeld: () => undefined });
+
+    expect(html).toContain('data-queue-held="2"');
+    expect(html).toContain("2 queued messages held");
+    expect(html).toContain("not sent until you resume");
+    expect(html).toMatch(/<button[^>]*>Resume<\/button>/);
+    expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>Resume<\/button>/);
+    expect(html).toContain("Discard the 2 held messages");
+    expect(html).toContain("Queue · waiting to resume");
+    expect(html).toContain('data-variant="warning"');
+  });
+
+  it("disables Resume while it cannot act and shows no held row for a waiting queue", () => {
+    state.projection = { projection: { messages: [] } };
+    state.workflow = heldWorkflow(true);
+    expect(render({})).toMatch(/<button[^>]*disabled=""[^>]*>Resume<\/button>/);
+    expect(render({ onResumeHeld: () => undefined, resumeBusy: true })).toMatch(
+      /<button[^>]*disabled=""[^>]*>Resume<\/button>/,
+    );
+
+    state.workflow = heldWorkflow(false);
+    const html = render({ onResumeHeld: () => undefined });
+    expect(html).not.toContain("data-queue-held");
+    expect(html).not.toContain("queued messages held");
+    expect(html).toContain("Queue · after current turn");
   });
 });

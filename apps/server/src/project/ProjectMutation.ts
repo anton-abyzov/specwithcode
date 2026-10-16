@@ -1,9 +1,13 @@
 import { type ProjectMutation } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 
-import { type ProjectService } from "./ProjectService.ts";
+import type { ProjectFolderService } from "./ProjectFolderChange.ts";
+import { ProjectFolderChangeError, type ProjectService } from "./ProjectService.ts";
 
-type ProjectMutations = Pick<ProjectService["Service"], "create" | "delete" | "update">;
+type ProjectMutations = Pick<ProjectService["Service"], "create" | "delete" | "update"> & {
+  /** Absent where the folder service cannot run, such as the offline CLI. */
+  readonly changeFolder?: ProjectFolderService["Service"]["change"];
+};
 
 export const projectMutationOperation = Effect.fn("projectMutationOperation")(function* (
   projects: ProjectMutations,
@@ -30,7 +34,9 @@ export const projectMutationOperation = Effect.fn("projectMutationOperation")(fu
       return yield* projects.update({
         commandId: mutation.commandId,
         projectId: mutation.projectId,
-        ...(mutation.workspaceSettings === undefined ? {} : { workspaceSettings: mutation.workspaceSettings }),
+        ...(mutation.workspaceSettings === undefined
+          ? {}
+          : { workspaceSettings: mutation.workspaceSettings }),
         ...(mutation.title === undefined ? {} : { title: mutation.title }),
         ...(mutation.workspaceRoot === undefined ? {} : { workspaceRoot: mutation.workspaceRoot }),
         ...(mutation.defaultModelSelection === undefined
@@ -49,8 +55,28 @@ export const projectMutationOperation = Effect.fn("projectMutationOperation")(fu
       return yield* projects.delete({
         commandId: mutation.commandId,
         projectId: mutation.projectId,
-        ...(mutation.confirmationTitle === undefined ? {} : { confirmationTitle: mutation.confirmationTitle }),
+        ...(mutation.confirmationTitle === undefined
+          ? {}
+          : { confirmationTitle: mutation.confirmationTitle }),
         ...(mutation.force === undefined ? {} : { force: mutation.force }),
       });
+
+    case "project.folder.change": {
+      if (projects.changeFolder === undefined)
+        return yield* new ProjectFolderChangeError({
+          projectId: mutation.projectId,
+          reason: "folder_missing",
+          detail: "Start SpecWithCode to change a project's folder.",
+        });
+      const changed = yield* projects.changeFolder({
+        commandId: mutation.commandId,
+        projectId: mutation.projectId,
+        workspaceRoot: mutation.workspaceRoot,
+        ...(mutation.confirmDifferentRepository === undefined
+          ? {}
+          : { confirmDifferentRepository: mutation.confirmDifferentRepository }),
+      });
+      return changed.project;
+    }
   }
 });

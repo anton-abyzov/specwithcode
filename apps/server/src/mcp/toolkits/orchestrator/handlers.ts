@@ -88,6 +88,13 @@ const handlers = {
       return yield* service.requestSecret(scope, input);
     }),
   ),
+  ask_user: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      return yield* service.askUser(scope, input);
+    }),
+  ),
   create_threads: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
@@ -187,6 +194,20 @@ const handlers = {
           }),
         interruptRemote,
       ),
+  ),
+  studio_threads_stop_all: McpToolAccess.writes((input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      return yield* service.stopAllThreads(scope, input);
+    }),
+  ),
+  studio_threads_continue_all: McpToolAccess.writes((input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      return yield* service.continueAllThreads(scope, input);
+    }),
   ),
 } satisfies McpToolAccess.Handlers<typeof OrchestratorToolkit.tools>;
 

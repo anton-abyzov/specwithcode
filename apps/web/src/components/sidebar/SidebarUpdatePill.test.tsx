@@ -304,30 +304,24 @@ describe("manual sidebar update checks", () => {
     await click();
     expect(bridge.checkForUpdate).toHaveBeenCalledOnce();
     expect(bridge.downloadUpdate).toHaveBeenCalledOnce();
-    expect(state.announceDownload).toHaveBeenCalledOnce();
+    // The footer Restart to update button is the only announcement.
+    expect(state.announceDownload).not.toHaveBeenCalled();
   });
 
-  it("preserves the confirmed restart action for a downloaded update", async () => {
+  it("leaves a downloaded update to the footer Restart to update button", async () => {
     state.app = {
       ...current,
       status: "downloaded",
       availableVersion: "1.0.11",
       downloadedVersion: "1.0.11",
     };
-    bridge.installUpdate.mockResolvedValue({
-      accepted: true,
-      completed: true,
-      failed: false,
-      state: state.app,
-    });
+    bridge.checkForUpdate.mockResolvedValue({ checked: true, state: state.app });
     render();
 
     await click();
 
-    expect(state.confirm).toHaveBeenCalledWith(expect.stringContaining("Install update 1.0.11"));
-    expect(bridge.installUpdate).toHaveBeenCalledOnce();
-    expect(bridge.checkForUpdate).not.toHaveBeenCalled();
-    expect(state.addToast).not.toHaveBeenCalled();
+    expect(state.confirm).not.toHaveBeenCalled();
+    expect(bridge.installUpdate).not.toHaveBeenCalled();
   });
 
   it("does not report an automatic download failure as a failed release check", async () => {

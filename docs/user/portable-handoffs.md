@@ -20,7 +20,7 @@ agent-written summary.
 ## Two Claude accounts
 
 Moving a thread between two Claude instances with different config homes (two subscriptions) does
-not go through a handoff. Studio copies the native session, `projects/<folder>/<session>.jsonl` and
+not go through a handoff. SpecWithCode copies the native session, `projects/<folder>/<session>.jsonl` and
 its subagent folder, from the home that ran it last into the other home and resumes it there, so
 the whole conversation, tool state included, carries over. Switching back copies the newer
 transcript back. The provider's prompt cache belongs to the account, so the first turn after a

@@ -70,7 +70,7 @@ Leaving an edited form asks before discarding unsaved changes.
 In **Settings → Scheduled tasks**, choose **On webhook**
 as a task's schedule to run it whenever another service calls its URL, such as
 GitHub on a new pull request or a CI job that failed. A public URL needs a
-[Studio Connect](remote-access.md) managed tunnel; after you save the task, copy
+[SpecWithCode Connect](remote-access.md) managed tunnel; after you save the task, copy
 its URL from the editor. Without one, the editor shows only the URL's path.
 **Rotate** replaces the URL and the old one stops working.
 
@@ -92,9 +92,9 @@ requests and the prompt each one produced.
 
 If the environment is offline, the sender gets an error and nothing runs;
 redeliver from the sender, such as GitHub's **Recent Deliveries**, once it is
-back. To have Studio Connect keep requests instead, turn on **Hold webhooks while
-offline** in **Settings → Connections**. Studio Connect then stores requests to a
-Studio Connect URL for up to 24 hours and delivers them when the environment
+back. To have SpecWithCode Connect keep requests instead, turn on **Hold webhooks while
+offline** in **Settings → Connections**. SpecWithCode Connect then stores requests to a
+SpecWithCode Connect URL for up to 24 hours and delivers them when the environment
 returns. Leave it off if you don't want request bodies stored outside your
 machine. To skip requests that waited too long, set **Skip requests older
 than** on the task.
@@ -125,7 +125,7 @@ applies when the project and environment are both on **Inherit**.
 
 ## Worktree location
 
-New worktrees go in the `worktrees` folder of the Studio home directory. To put them somewhere else,
+New worktrees go in the `worktrees` folder of the SpecWithCode home directory. To put them somewhere else,
 such as another drive, set **Settings → Storage → Worktree location** to an absolute path like
 `D:\worktrees` or `~/worktrees`. The setting is per machine. Existing worktrees stay where they
 are, and cleanup covers both the default folder and the custom one.
@@ -142,7 +142,7 @@ manually. Custom applies separate worktree rules to the selected project or chec
 captures and log retention remain machine-wide.
 
 Worktrees can be removed after a chosen number of inactive days, after merging, or when they
-have no commits beyond the default branch. Only Studio-managed worktrees are eligible. Active
+have no commits beyond the default branch. Only SpecWithCode-managed worktrees are eligible. Active
 sessions, shared worktrees, uncommitted changes, and ignored files other than `node_modules`
 prevent removal. Branches and thread history stay; starting another turn recreates the checkout.
 Merge cleanup requires the commits to be included in the remote default branch, so squash merges
@@ -170,7 +170,7 @@ from the icon palette, derived from the saved project name. For example, `Nebula
 
 ## Keep upstream information current
 
-In Source Control, enable **Refresh upstreams at startup** to fetch upstream refs when Studio starts.
+In Source Control, enable **Refresh upstreams at startup** to fetch upstream refs when SpecWithCode starts.
 Choose an environment default or a project override. The mobile Source control settings expose the same choice.
 
 Background refresh never moves HEAD, modifies files, or merges branches. Use **Pull** to update a checkout;

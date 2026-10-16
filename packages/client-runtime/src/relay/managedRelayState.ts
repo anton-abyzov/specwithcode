@@ -127,7 +127,7 @@ export function createManagedRelaySession(input: ManagedRelaySessionInput): Mana
         try: () => readCachedClerkToken(nowMillis),
         catch: (cause) =>
           new ManagedRelaySessionError({
-            message: "Could not obtain the Studio Connect session token.",
+            message: "Could not obtain the SpecWithCode Connect session token.",
             cause,
           }),
       });
@@ -184,7 +184,7 @@ function readSessionClerkToken(
       (token): token is string => Boolean(token),
       () =>
         new ManagedRelaySessionError({
-          message: "The Studio Connect session token is unavailable.",
+          message: "The SpecWithCode Connect session token is unavailable.",
         }),
     ),
   );
@@ -200,7 +200,7 @@ export const deregisterManagedRelayEnvironment = Effect.fn(
   const session = registry.get(managedRelaySessionAtom);
   if (!session || session.accountId !== input.accountId) {
     return yield* new ManagedRelaySessionError({
-      message: "Sign in to Studio Connect before deregistering an environment.",
+      message: "Sign in to SpecWithCode Connect before deregistering an environment.",
     });
   }
   const clerkToken = yield* readSessionClerkToken(session);
@@ -216,7 +216,7 @@ function requireClerkToken(
   if (!session || session.accountId !== accountId) {
     return Effect.fail(
       new ManagedRelaySessionError({
-        message: "Sign in to Studio Connect before loading relay data.",
+        message: "Sign in to SpecWithCode Connect before loading relay data.",
       }),
     );
   }
@@ -291,7 +291,7 @@ export function readManagedRelaySnapshotState<A>(
         ? relayProtectedErrorMessage(cause.relayError)
         : cause instanceof Error
           ? cause.message
-          : "Could not load Studio Connect data.";
+          : "Could not load SpecWithCode Connect data.";
     errorTraceId = findErrorTraceId(cause);
   }
   return {

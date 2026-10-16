@@ -140,6 +140,8 @@ export class ServerSecretStore extends Context.Service<
   {
     /** File-backed stores expose their directory for cross-process credential leases. */
     readonly directory?: string;
+    /** File-backed stores expose where a named secret lives, for out-of-process readers. */
+    readonly pathOf?: (name: string) => string;
     readonly get: (name: string) => Effect.Effect<Option.Option<Uint8Array>, SecretStoreError>;
     readonly set: (name: string, value: Uint8Array) => Effect.Effect<void, SecretStoreError>;
     readonly create: (name: string, value: Uint8Array) => Effect.Effect<void, SecretStoreError>;
@@ -170,6 +172,21 @@ export const make = Effect.gen(function* () {
   );
 
   const resolveSecretPath = (name: string) => path.join(serverConfig.secretsDir, `${name}.bin`);
+
+  // Random secrets (signing keys, salts) are generated once and only replaced
+  // through this store, so their bytes are kept after the first read. Asset URLs
+  // are signed and verified with one on every request; reading the file each time
+  // queued behind other pool work and took 0.4-2.4 s under load. Writes through
+  // `set`, `create` and `remove` drop the entry, and bump a generation so a read
+  // that raced the write cannot put the old bytes back.
+  const randomSecrets = new Map<string, Uint8Array>();
+  const generations = new Map<string, number>();
+  const generationOf = (name: string) => generations.get(name) ?? 0;
+  const forget = (name: string) =>
+    Effect.sync(() => {
+      randomSecrets.delete(name);
+      generations.set(name, generationOf(name) + 1);
+    });
 
   const get: ServerSecretStore["Service"]["get"] = (name) =>
     fileSystem.readFile(resolveSecretPath(name)).pipe(
@@ -220,11 +237,12 @@ export const make = Effect.gen(function* () {
           ),
         );
       }),
+      Effect.ensuring(forget(name)),
       Effect.withSpan("ServerSecretStore.set"),
     );
   };
 
-  const create: ServerSecretStore["Service"]["create"] = (name, value) => {
+  const createUncached = (name: string, value: Uint8Array) => {
     const secretPath = resolveSecretPath(name);
     return Effect.scoped(
       Effect.gen(function* () {
@@ -247,7 +265,10 @@ export const make = Effect.gen(function* () {
     );
   };
 
-  const getOrCreateRandom: ServerSecretStore["Service"]["getOrCreateRandom"] = (name, bytes) =>
+  const create: ServerSecretStore["Service"]["create"] = (name, value) =>
+    createUncached(name, value).pipe(Effect.ensuring(forget(name)));
+
+  const getOrCreateRandomUncached = (name: string, bytes: number) =>
     get(name).pipe(
       Effect.flatMap(
         Option.match({
@@ -262,7 +283,7 @@ export const make = Effect.gen(function* () {
                   }),
               ),
               Effect.flatMap((generated) =>
-                create(name, generated).pipe(
+                createUncached(name, generated).pipe(
                   Effect.as(Uint8Array.from(generated)),
                   Effect.catchIf(isSecretStoreError, (error) =>
                     isSecretAlreadyExistsError(error)
@@ -289,6 +310,20 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("ServerSecretStore.getOrCreateRandom"),
     );
 
+  const getOrCreateRandom: ServerSecretStore["Service"]["getOrCreateRandom"] = (name, bytes) =>
+    Effect.suspend(() => {
+      const cached = randomSecrets.get(name);
+      if (cached !== undefined) return Effect.succeed(Uint8Array.from(cached));
+      const generation = generationOf(name);
+      return getOrCreateRandomUncached(name, bytes).pipe(
+        Effect.tap((value) =>
+          Effect.sync(() => {
+            if (generationOf(name) === generation) randomSecrets.set(name, Uint8Array.from(value));
+          }),
+        ),
+      );
+    });
+
   const remove: ServerSecretStore["Service"]["remove"] = (name) =>
     fileSystem.remove(resolveSecretPath(name)).pipe(
       Effect.catch((cause) =>
@@ -301,11 +336,13 @@ export const make = Effect.gen(function* () {
               }),
             ),
       ),
+      Effect.ensuring(forget(name)),
       Effect.withSpan("ServerSecretStore.remove"),
     );
 
   return ServerSecretStore.of({
     directory: serverConfig.secretsDir,
+    pathOf: resolveSecretPath,
     get,
     set,
     create,

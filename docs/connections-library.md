@@ -2,7 +2,7 @@
 
 Open **Settings → Connections** and select an execution machine. The matrix compares MCP declarations in Codex and Claude Code configuration. Select a cell for its source, scope, other declarations and access owner. **Refresh configurations** reads the selected machine again.
 
-Open a project's **Environment** to include its registered checkout's configuration. User declarations are shared across projects; project and private-project declarations can override them. Existing **Studio-managed connections** retain their own per-project tool grants.
+Open a project's **Environment** to include its registered checkout's configuration. User declarations are shared across projects; project and private-project declarations can override them. Existing **SpecWithCode-managed connections** retain their own per-project tool grants.
 
 ## What the states mean
 
@@ -21,7 +21,7 @@ Codex project tables inherit unspecified fields from same-named user entries. Cl
 
 The protected `connections.nativeRead` RPC requires filesystem read permission on the destination environment. It accepts an optional registered project ID, never a browser-supplied filesystem path. Each source is limited to 2 MiB and 200 declarations. Returned metadata excludes command text, arguments, URLs, headers, environment values and credentials. Discovery launches no server, performs no network probe and changes no native configuration.
 
-Studio grants control Studio-managed calls only. This release does not import native connections into those grants or enforce native-client access through Studio toggles.
+SpecWithCode grants control SpecWithCode-managed calls only. This release does not import native connections into those grants or enforce native-client access through SpecWithCode toggles.
 
 ## Verification
 

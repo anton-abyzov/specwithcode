@@ -108,6 +108,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         `{
           "responseStreamingMode": "token",
           "enableAgentBrowserAccess": false,
+          "projectSettingsSimplified": true,
           "projectSettingsOverrides": {
             "legacy": { "responseStreamingMode": "token", "defaultAutoPull": true },
             "buffered": { "responseStreamingMode": "turn" },
@@ -131,6 +132,26 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       );
       assert.equal(persisted.responseStreamingMode, "turn");
       assert.deepEqual(persisted.projectSettingsOverrides, settings.projectSettingsOverrides);
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("saves a sidebar project order whose pinned or unpinned list is empty", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+
+      const unpinnedOnly = { pinned: [], unpinned: ["project-b", "project-a"] };
+      yield* service.updateSettings({ sidebarProjectOrder: unpinnedOnly });
+      let persisted = yield* decodeServerSettingsJson(
+        yield* fs.readFileString(config.settingsPath),
+      );
+      assert.deepEqual(persisted.sidebarProjectOrder, unpinnedOnly);
+
+      const pinnedOnly = { pinned: ["project-a"], unpinned: [] };
+      yield* service.updateSettings({ sidebarProjectOrder: pinnedOnly });
+      persisted = yield* decodeServerSettingsJson(yield* fs.readFileString(config.settingsPath));
+      assert.deepEqual(persisted.sidebarProjectOrder, pinnedOnly);
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
@@ -425,6 +446,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         customModels: ["claude-custom"],
         launchArgs: "",
         autoCompactWindow: "",
+        idleCompaction: true,
       });
       assert.deepEqual(
         next.textGenerationModelSelection,
@@ -1289,6 +1311,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         customModels: [],
         launchArgs: "",
         autoCompactWindow: "",
+        idleCompaction: true,
       });
       assert.deepEqual(next.providers.opencode, {
         // OpenCode is disabled by default; this update only touches paths.
@@ -2075,7 +2098,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }
       yield* fileSystem.writeFileString(
         serverConfig.settingsPath,
-        `{"projectAgentBrowserAccessOverrides":{"${legacyProject}":false},"projectAutoPullOverrides":{"${scriptedProject}":true},"projectScriptOverrides":{"${legacyProject}":null}}`,
+        `{"projectSettingsSimplified":true,"projectAgentBrowserAccessOverrides":{"${legacyProject}":false},"projectAutoPullOverrides":{"${scriptedProject}":true},"projectScriptOverrides":{"${legacyProject}":null}}`,
       );
 
       const settings = yield* serverSettings.getSettings;
@@ -2112,6 +2135,50 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const persisted = yield* decodeServerSettings(JSON.parse(raw));
       assert.isTrue(persisted.projectSettingsFolded);
       assert.isUndefined(persisted.projectSettingsOverrides[legacyProject]);
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("simplifies project overrides once settings are global", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const sql = yield* SqlClient.SqlClient;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      for (const projectId of ["alpha", "beta"]) {
+        yield* sql`
+          INSERT INTO projection_projects (
+            project_id, title, workspace_root, scripts_json, created_at, updated_at
+          )
+          VALUES (
+            ${projectId}, ${"Project"}, ${`/tmp/${projectId}`}, ${"[]"},
+            ${"2026-08-25T00:00:00.000Z"}, ${"2026-08-25T00:00:00.000Z"}
+          )
+        `;
+      }
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        JSON.stringify({
+          projectSettingsFolded: true,
+          providerLimitAction: "switch",
+          projectSettingsOverrides: {
+            alpha: { providerLimitAction: "ask", defaultThreadEnvMode: "local" },
+            beta: { providerLimitAction: "switch", defaultThreadEnvMode: "local" },
+          },
+        }),
+      );
+
+      const settings = yield* serverSettings.getSettings;
+      assert.isTrue(settings.projectSettingsSimplified);
+      assert.equal(settings.defaultThreadEnvMode, "local");
+      assert.equal(settings.providerLimitAction, "switch");
+      assert.deepEqual(settings.projectSettingsOverrides, {
+        [ProjectId.make("alpha")]: { providerLimitAction: "ask" },
+      });
+      const persisted = yield* decodeServerSettings(
+        JSON.parse(yield* fileSystem.readFileString(serverConfig.settingsPath)),
+      );
+      assert.isTrue(persisted.projectSettingsSimplified);
+      assert.deepEqual(persisted.projectSettingsOverrides, settings.projectSettingsOverrides);
     }).pipe(Effect.provide(layerServerSettings())),
   );
 

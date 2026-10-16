@@ -93,6 +93,7 @@ import {
   replaceTextRange,
 } from "../../composer-logic";
 import { DISCONNECTED_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
+import { COMPOSER_APP_COMMANDS, type ComposerAppCommand } from "../../studio/composerAppCommands";
 import { listContinuationForEnter, listIndentForTab } from "../../composer-list-continuation";
 import {
   deriveComposerSendState,
@@ -282,7 +283,12 @@ import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { ComposerImageThumbnail } from "./ComposerImageThumbnail";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
-import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
+import {
+  ComposerPendingUserInputPanel,
+  type QuestionTextRenderer,
+} from "./ComposerPendingUserInputPanel";
+import ChatMarkdown from "../ChatMarkdown";
+import { linkifyQuestionPaths } from "./questionCard.logic";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import {
   ComposerControl,
@@ -1566,6 +1572,8 @@ export interface ChatComposerProps {
   bannerItems: readonly ComposerBannerStackItem[];
   /** Picking /usage-limits from the menu is the action itself; the draft keeps nothing of it. */
   onUsageLimitsCommand?: (() => void) | undefined;
+  /** Runs `/stop`, `/continue`, `/stop-all`, `/continue-all` and `/status` in the app; absent hides them. */
+  onAppCommand?: ((command: ComposerAppCommand) => void) | undefined;
   environmentUnavailable: {
     readonly label: string;
     readonly connection: EnvironmentConnectionPresentation;
@@ -2653,6 +2661,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     cwd: isPathTrigger ? gitCwd : null,
     query: isPathTrigger ? pathTriggerQuery : null,
   });
+  const hasAppCommands = props.onAppCommand !== undefined;
   const compactSlashCommandAvailable =
     composerTrigger?.kind === "slash-command" &&
     prompt.slice(0, composerTrigger.rangeStart).trim() === "" &&
@@ -2806,8 +2815,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       const visibleProviderSlashCommandItems = providerSlashCommandItems.filter(
         (item) => item.command.name !== "compact" || compactSlashCommandAvailable,
       );
+      const appCommandItems = hasAppCommands
+        ? COMPOSER_APP_COMMANDS.map((entry) => ({
+            id: `app:${entry.command}`,
+            type: "app-command" as const,
+            command: entry.command,
+            label: entry.label,
+            description: entry.description,
+          }))
+        : [];
+      // The app runs these itself; a provider command of the same name is shadowed.
+      const appCommandNames = new Set<string>(appCommandItems.map((item) => item.command));
       const slashCommandItems = slashCommandItemsForPromptPosition(
-        [...builtInSlashCommandItems, ...visibleProviderSlashCommandItems, ...skillItems],
+        [
+          ...builtInSlashCommandItems,
+          ...appCommandItems,
+          ...visibleProviderSlashCommandItems.filter(
+            (item) => !appCommandNames.has(item.command.name),
+          ),
+          ...skillItems,
+        ],
         composerTrigger.rangeStart === 0,
       );
       return searchSlashCommandItems(slashCommandItems, query);
@@ -2881,6 +2908,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThreadId,
     compactSlashCommandAvailable,
     composerTrigger,
+    hasAppCommands,
     environmentId,
     environmentThreadShells,
     exactPullRequestLookup.data,
@@ -2929,6 +2957,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerSuggestionsVisible = composerMenuOpen && !isComposerApprovalState;
   const composerSuggestionListVisible = composerSuggestionsVisible && composerMenuItems.length > 0;
   const activePendingUserInput = pendingUserInputs[0] ?? null;
+  // Question cards link file paths (opened in the app) and URLs (opened outside).
+  const renderPendingQuestionText = useCallback<QuestionTextRenderer>(
+    (text, variant) => (
+      <ChatMarkdown
+        text={linkifyQuestionPaths(text)}
+        cwd={gitCwd ?? undefined}
+        environmentId={environmentId}
+        className={
+          variant === "question"
+            ? "text-sm leading-snug text-foreground"
+            : "text-xs leading-snug text-muted-foreground"
+        }
+      />
+    ),
+    [environmentId, gitCwd],
+  );
+  const replyToPendingQuestionInChat = useCallback(() => {
+    composerEditorRef.current?.focusAtEnd();
+  }, []);
   const isChoiceOnlyPendingQuestion =
     activePendingProgress?.activeQuestion?.allowCustomAnswer === false;
   const showComposerTopDrawer =
@@ -4027,7 +4074,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     };
   }, [readComposerSnapshot, resolveComposerTrigger]);
 
-  const { onUsageLimitsCommand } = props;
+  const { onUsageLimitsCommand, onAppCommand } = props;
   const onSelectComposerItem = useCallback(
     (item: ComposerCommandItem) => {
       if (composerSelectLockRef.current) return;
@@ -4074,6 +4121,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
         if (applied) {
           setComposerHighlightedItemId(null);
+        }
+        return;
+      }
+      if (item.type === "app-command") {
+        const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+          expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+        });
+        if (applied) {
+          setComposerHighlightedItemId(null);
+          onAppCommand?.(item.command);
         }
         return;
       }
@@ -4188,6 +4245,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       handleInteractionModeChange,
       planModeUiEnabled,
       onUsageLimitsCommand,
+      onAppCommand,
       resolveActiveComposerTrigger,
     ],
   );
@@ -6934,6 +6992,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onToggleOption={onSelectActivePendingUserInputOption}
                     onAdvance={onAdvanceActivePendingUserInput}
                     onDismiss={onDismissActivePendingUserInput}
+                    onReplyInChat={replyToPendingQuestionInChat}
+                    renderText={renderPendingQuestionText}
                   />
                 ) : !isComposerCollapsedMobile && showPlanFollowUpPrompt && activeProposedPlan ? (
                   <ComposerPlanFollowUpBanner
@@ -6955,6 +7015,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       onToggleOption={onSelectActivePendingUserInputOption}
                       onAdvance={onAdvanceActivePendingUserInput}
                       onDismiss={onDismissActivePendingUserInput}
+                      onReplyInChat={replyToPendingQuestionInChat}
+                      renderText={renderPendingQuestionText}
                     />
                     {!isChoiceOnlyPendingQuestion ||
                     activePendingProgress?.activeQuestion?.multiSelect ? (

@@ -121,8 +121,8 @@ function formatMcpContent(result: unknown): string {
       if (part?.type === "text" && typeof part.text === "string") texts.push(part.text);
     }
   }
-  // Most Studio tools mirror structuredContent in a text block. Repeating it would
-  // leave Studio's own output parsing two JSON documents instead of one.
+  // Most SpecWithCode tools mirror structuredContent in a text block. Repeating it would
+  // leave SpecWithCode's own output parsing two JSON documents instead of one.
   if (record.structuredContent !== undefined) {
     const structured = JSON.stringify(record.structuredContent);
     if (!texts.includes(structured)) texts.push(structured);
@@ -244,7 +244,7 @@ export default async function studioMcpExtension(pi: ExtensionAPI) {
     if (changed) return replacement;
   });
 
-  // Pi deliberately leaves permission policy to extensions. Studio's injected
+  // Pi deliberately leaves permission policy to extensions. SpecWithCode's injected
   // bridge uses Pi's public blocking tool hook so the shared runtime modes
   // keep their normal meaning without replacing or shadowing Pi's runtime.
   pi.on("tool_call", async (event, ctx) => {
@@ -267,7 +267,7 @@ export default async function studioMcpExtension(pi: ExtensionAPI) {
   const hasStudioMcp = endpoint !== undefined && token !== undefined;
 
   // Deliver the response style (always) and orchestration guidance (with the
-  // Studio MCP server) through pi's real system-prompt channel. Wrapping the
+  // SpecWithCode MCP server) through pi's real system-prompt channel. Wrapping the
   // first user message instead would stop it from starting with "/" and
   // silently break slash-command expansion.
   pi.on("before_agent_start", (event) => ({
@@ -307,7 +307,7 @@ export default async function studioMcpExtension(pi: ExtensionAPI) {
           description,
           promptSnippet: description.split("\\n")[0] ?? name,
           promptGuidelines: [
-            \`Use \${registeredName} from the studio-code MCP server when the user asks for Studio orchestration that this tool covers.\`,
+            \`Use \${registeredName} from the studio-code MCP server when the user asks for SpecWithCode orchestration that this tool covers.\`,
           ],
           parameters: jsonSchemaToTypebox(tool.inputSchema),
           async execute(_toolCallId, params, signal) {

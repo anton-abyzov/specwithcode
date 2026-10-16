@@ -19,6 +19,7 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { useOptionalSettingsScope } from "./SettingsScopeContext";
+import { settingsPageScope } from "./settingsPageScope";
 import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
 import {
   ALL_ENVIRONMENTS_VALUE,
@@ -36,6 +37,7 @@ export const SETTINGS_DEVICE_ONLY_PATHS: ReadonlySet<string> = new Set([
   "/settings/appearance",
   "/settings/snap-shot",
   "/settings/connections",
+  "/settings/chrome",
 ]);
 
 interface SettingsScopeMenuProps {
@@ -47,16 +49,18 @@ interface SettingsScopeMenuProps {
 }
 
 /**
- * "Applying settings for <project> across <environment>" at the top of a settings
- * page. The two pickers are the targets a change is written to. A project is
- * the same project on every environment, so the environment alone decides
- * where a project override is written.
+ * The target line at the top of a settings page. Global pages have none: they
+ * apply to every project on every machine. Machine pages name the machine
+ * once there is more than one. Only the Project pages pick a project.
  */
 export function SettingsScopeSentence() {
   const scope = useOptionalSettingsScope();
   const pathname = useLocation({ select: (location) => location.pathname });
   const { environments } = useEnvironments();
   if (scope === null || SETTINGS_DEVICE_ONLY_PATHS.has(pathname)) return null;
+  const pageScope = settingsPageScope(pathname);
+  if (pageScope === "global") return null;
+  if (pageScope === "machine" && environments.length < 2) return null;
   const props: SettingsScopeMenuProps = {
     value: scope.search,
     singleEnvironment: scope.singleEnvironment,
@@ -64,6 +68,17 @@ export function SettingsScopeSentence() {
     environments,
     onChange: scope.selectScope,
   };
+  const connective =
+    // A legacy checkout link names one environment without `machine`.
+    scope.search.machine || scope.scope.kind === "checkout" ? "on" : "across";
+  if (pageScope === "machine") {
+    return (
+      <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 px-3 text-base text-muted-foreground sm:px-4">
+        <span className="shrink-0">Applying settings {connective}</span>
+        <EnvironmentScopeMenu {...props} />
+      </p>
+    );
+  }
   return (
     <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 px-3 text-base text-muted-foreground sm:px-4">
       {/* Each connective stays with its picker so a wrap never strands "on". */}
@@ -72,10 +87,7 @@ export function SettingsScopeSentence() {
         <ProjectScopeMenu {...props} />
       </span>
       <span className="flex min-w-0 items-center gap-1.5">
-        <span className="shrink-0">
-          {/* A legacy checkout link names one environment without `machine`. */}
-          {scope.search.machine || scope.scope.kind === "checkout" ? "on" : "across"}
-        </span>
+        <span className="shrink-0">{connective}</span>
         <EnvironmentScopeMenu {...props} />
       </span>
     </p>
@@ -124,6 +136,14 @@ function EnvironmentScopeMenu({
   const selected = environments.find(
     (environment) => environment.environmentId === environmentValue,
   );
+  // A picked project only has settings on the environments that check it out.
+  const projectEnvironmentIds = value.project
+    ? new Set(
+        groups
+          .find((group) => group.projectKey === value.project)
+          ?.memberProjects.map((member) => member.environmentId),
+      )
+    : null;
   return (
     <ScopeMenu
       ariaLabel="Environment scope"
@@ -175,9 +195,11 @@ function EnvironmentScopeMenu({
               <span className="min-w-0 flex-1 truncate">
                 {settingsScopeEnvironmentLabel(environment, environments)}
               </span>
-              {environment.connection.phase === "connected" ? null : (
+              {environment.connection.phase !== "connected" ? (
                 <span className="shrink-0 text-xs text-muted-foreground">Offline</span>
-              )}
+              ) : projectEnvironmentIds && !projectEnvironmentIds.has(environment.environmentId) ? (
+                <span className="shrink-0 text-xs text-muted-foreground">No checkout</span>
+              ) : null}
               <MenuRadioItemIndicator />
             </span>
           </MenuRadioItem>

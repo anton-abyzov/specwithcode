@@ -3289,6 +3289,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           harness: "OpenCode",
           model: turnInput.modelSelection.model,
           responseStyle: turnInput.runtimePolicy.responseStyle,
+          agentInstructions: turnInput.runtimePolicy.agentInstructions,
         }),
         studioOrchestrationSystemPrompt(state.mcp !== undefined),
       ]

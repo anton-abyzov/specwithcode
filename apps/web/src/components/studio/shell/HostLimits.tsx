@@ -19,6 +19,7 @@ import {
   type HostLimitBlock,
   type HostProviderRow,
 } from "../../../studio/hostLimitsModel";
+import { blockedLabel, leftPercent, usageLeftLabel } from "../../../studio/usageIndicatorModel";
 import { loadSavedHostReadings, saveHostReadings } from "../../../studio/hostLimitsStorage";
 import { ProviderInstanceIcon } from "../../chat/ProviderInstanceIcon";
 import { getDriverOption } from "../../settings/providerDriverMeta";
@@ -99,23 +100,38 @@ function ProviderRow({ row, now, dim }: { row: HostProviderRow; now: number; dim
           <span className="sws-hl-notice">{row.notice}</span>
         ) : (
           row.windows.map((window) => (
-            <div key={`${window.kind}:${window.id}`} className="sws-hl-window">
+            <div
+              key={`${window.kind}:${window.id}`}
+              className="sws-hl-window"
+              data-blocked={window.blockedBy ? "" : undefined}
+            >
               <span className="sws-hl-window-label">{window.label}</span>
               <span
                 className="sws-hl-bar"
-                data-tone={window.stale ? "stale" : usageToneOf(window.usedPercent)}
+                data-tone={
+                  window.stale || window.blockedBy ? "stale" : usageToneOf(window.usedPercent)
+                }
                 aria-hidden
               >
-                <span style={{ width: `${window.usedPercent}%` }} />
+                <span style={{ width: `${leftPercent(window.usedPercent)}%` }} />
               </span>
-              <span className="sws-hl-window-value">
-                {window.stale ? "reset since" : `${window.usedPercent}%`}
-              </span>
-              <span className="sws-hl-window-reset">
-                {window.resetsAt === null
-                  ? ""
-                  : `resets in ${formatDuration(window.resetsAt - now)}`}
-              </span>
+              {window.blockedBy ? (
+                <span className="sws-hl-window-blocked">{blockedLabel(window.blockedBy, now)}</span>
+              ) : (
+                <>
+                  <span
+                    className="sws-hl-window-value"
+                    data-tone={window.stale ? undefined : usageToneOf(window.usedPercent)}
+                  >
+                    {window.stale ? "reset since" : usageLeftLabel(window.usedPercent)}
+                  </span>
+                  <span className="sws-hl-window-reset">
+                    {window.resetsAt === null
+                      ? ""
+                      : `resets in ${formatDuration(window.resetsAt - now)}`}
+                  </span>
+                </>
+              )}
             </div>
           ))
         )}
@@ -238,7 +254,7 @@ const limited = (block: HostLimitBlock) => block.providers.filter((row) => row.n
 
 /**
  * All hosts at a glance for the usage chip's popover: a row per host, a
- * cell per provider with its fullest window.
+ * cell per provider with what is left in its fullest window.
  */
 export function HostLimitsCompact({
   projectEnvironmentId,
@@ -282,7 +298,7 @@ export function HostLimitsCompact({
                     }`}
                   >
                     <ProviderIcon row={row} size="sm" />
-                    {row.peak === null ? "–" : `${row.peak}%`}
+                    {row.peak === null ? "–" : usageLeftLabel(row.peak)}
                     {row.sharedWith.length > 0 ? <LinkIcon aria-hidden /> : null}
                   </span>
                 ))

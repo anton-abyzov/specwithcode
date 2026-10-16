@@ -154,7 +154,8 @@ export const make = Effect.gen(function* () {
                 repo.localPath,
               ]),
             ],
-            "hex");
+            "hex",
+          );
           const prior = yield* sql<{
             fingerprint: string;
             status: string;

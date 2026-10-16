@@ -196,9 +196,22 @@ describe("restart to update", () => {
     expect(describeInstallOutcome({ ...base, accepted: false, reason: "disabled" })).toContain(
       "off in this build",
     );
+    // A busy updater is named, never "try again".
     expect(describeInstallOutcome({ ...base, accepted: false, reason: "busy" })).toContain(
-      "Try again",
+      "stayed busy",
     );
+    expect(
+      describeInstallOutcome({
+        accepted: false,
+        reason: "busy",
+        state: {
+          ...appDownloaded,
+          status: "downloading",
+          availableVersion: "1.0.33",
+          downloadPercent: 41,
+        },
+      }),
+    ).toBe("SpecWithCode is still downloading 1.0.33 (41%). Restart to update once it finishes.");
   });
 
   it("treats only on-disk service releases as ready", () => {
@@ -458,12 +471,12 @@ describe("service update progress", () => {
     const waiting = {
       ...requested,
       phase: "waiting" as const,
-      message: "Waiting for open Studio terminals and agent processes to close",
+      message: "Waiting for open SpecWithCode terminals and agent processes to close",
     };
     expect(serviceUpdateToast(waiting, false)).toEqual({
       type: "loading",
       title: "Preparing to install SpecWithCode 0.2.5",
-      description: "Waiting for open Studio terminals and agent processes to close",
+      description: "Waiting for open SpecWithCode terminals and agent processes to close",
       action: "update-now",
       cancel: true,
     });
@@ -534,6 +547,18 @@ describe("service update progress", () => {
     expect(describeServiceUpdateStop({ blockers: [], openTerminals: 2 })).toBe(
       "Stop running work and update now?\n2 terminals will close.",
     );
+    // A project that continues threads after restarts keeps its work.
+    const continuing = (kind: ServiceUpdateBlocker["kind"], count: number) =>
+      ({ ...blocker(kind, count), continuesAfterRestart: true }) as ServiceUpdateBlocker;
+    expect(
+      describeServiceUpdateStop({ blockers: [continuing("run", 2), continuing("queued", 3)] }),
+    ).toBe(
+      [
+        "Stop running work and update now?",
+        "2 tasks will be interrupted and continue after the update.",
+        "3 queued messages will wait and send after the update.",
+      ].join("\n"),
+    );
   });
 
   it("does not take the previous attempt's failure as this attempt's answer", () => {
@@ -595,7 +620,7 @@ describe("service update progress", () => {
   });
 
   it("without the agent's write time, compares with the state seen before the request", () => {
-    const before = { ...serviceWaiting, message: "Waiting for open Studio terminals" };
+    const before = { ...serviceWaiting, message: "Waiting for open SpecWithCode terminals" };
     const retry = { ...requested, staleFailure: serviceFailureKey(before), requestedAt: 1_000 };
     expect(advanceServiceUpdateProgress(retry, before, 2_000)).toBe(retry);
     expect(advanceServiceUpdateProgress(retry, before, 1_000 + STALE_FAILURE_MS).phase).toBe(
@@ -630,10 +655,24 @@ describe("describeAppRestartWarning", () => {
       ),
     ).toBe(
       [
-        "Restart to install SpecWithCode 1.0.21 now?",
-        "3 jobs are still running in 2 threads. Restarting interrupts them.",
+        "Restart to install SpecWithCode 1.0.21?",
+        "3 running in 2 threads. Restarting interrupts this work.",
         "Still running: 1 running task in “Fix login”; 2 running tasks in “Docs”.",
-        "Choose Install when idle to let the work finish: SpecWithCode restarts once nothing runs.",
+        "Restart when idle lets it finish first: SpecWithCode restarts once nothing runs, or after the wait set in Settings, and the stopped work continues after the restart.",
+      ].join("\n"),
+    );
+  });
+
+  it("only summarizes when the dialog lists the work itself", () => {
+    expect(
+      describeAppRestartWarning(
+        { blockers: [blocker("run", 1, "Fix login"), blocker("queued", 2, "Docs")] },
+        { version: "1.0.30", listed: true },
+      ),
+    ).toBe(
+      [
+        "Restart to install SpecWithCode 1.0.30?",
+        "1 running, 2 queued in 2 threads. Restarting interrupts this work.",
       ].join("\n"),
     );
   });

@@ -54,6 +54,10 @@ export class ProjectCoordinatorService extends Context.Service<
     readonly send: (
       input: ProjectCoordinatorSendInput,
     ) => Effect.Effect<ProjectCoordinatorResult, ProjectWorkspaceError>;
+    readonly nextTurnModel: (
+      projectId: ProjectId,
+      threadId: ThreadId,
+    ) => Effect.Effect<ModelSelection | undefined>;
   }
 >()("specweave-studio/project/ProjectCoordinatorService") {}
 
@@ -232,12 +236,14 @@ const make = Effect.gen(function* () {
           })
         )
           limited.add(shell.providerInstanceId);
-        // Moved off the saved model: when its last run there failed, which keeps
-        // it off that model until a newer usage read shows room.
+        // Moved off the saved model: when its last run there stopped on a usage
+        // limit, which keeps it off that model until a newer usage read shows
+        // room. Any other failure (a network error, an overloaded API, a crashed
+        // tool) says nothing about the limit and never counts.
         const savedStoppedAtMs =
           shell && shell.modelSelection.instanceId !== saved.instanceId
             ? yield* projections.getThreadRecords(threadId, ["runs"]).pipe(
-                Effect.map(({ runs }) => {
+                Effect.flatMap(({ runs }) => {
                   let last: (typeof runs)[number] | undefined;
                   for (const run of runs)
                     if (
@@ -245,9 +251,22 @@ const make = Effect.gen(function* () {
                       (!last || run.ordinal > last.ordinal)
                     )
                       last = run;
-                  return last?.status === "failed" && last.completedAt
-                    ? DateTime.toEpochMillis(last.completedAt)
-                    : null;
+                  if (last?.status !== "failed" || !last.completedAt) return Effect.succeed(null);
+                  const stoppedAt = DateTime.toEpochMillis(last.completedAt);
+                  return projections
+                    .getThreadRecords(threadId, ["turnItems"], {
+                      turnItemRunIds: [last.id],
+                      turnItemTypes: ["error"],
+                    })
+                    .pipe(
+                      Effect.map(({ turnItems }) =>
+                        turnItems.some(
+                          (item) => item.type === "error" && item.failure.class === "usage_limit",
+                        )
+                          ? stoppedAt
+                          : null,
+                      ),
+                    );
                 }),
                 Effect.orElseSucceed(() => null),
               )
@@ -330,7 +349,20 @@ const make = Effect.gen(function* () {
     }).pipe(mapFailure(input.projectId));
   const start = (input: ProjectCoordinatorStartInput) =>
     input.prompt?.trim() ? send({ ...input, prompt: input.prompt }) : ensure(input);
-  return ProjectCoordinatorService.of({ start, send });
+  /**
+   * The model a message the app sends to this coordinator on its own (a
+   * scheduled task) runs on: the same choice a user message gets. Undefined
+   * when the thread is not the project's coordinator or nothing can be chosen.
+   */
+  const nextTurnModel = (projectId: ProjectId, threadId: ThreadId) =>
+    Effect.gen(function* () {
+      const found = yield* projects.getById(projectId);
+      if (Option.isNone(found)) return undefined;
+      const settings = found.value.workspaceSettings ?? DEFAULT_PROJECT_WORKSPACE_SETTINGS;
+      if (settings.coordinatorThreadId !== threadId) return undefined;
+      return (yield* turnSelection(projectId, threadId, settings)) ?? undefined;
+    }).pipe(Effect.orElseSucceed(() => undefined));
+  return ProjectCoordinatorService.of({ start, send, nextTurnModel });
 });
 export const layer = Layer.effect(ProjectCoordinatorService, make).pipe(
   Layer.provide(ProjectAdmission.layer),

@@ -153,11 +153,14 @@ class InstallNow(AgentCase):
 
     def test_refusal_lines_map_to_messages(self):
         self.fake.add_release()
-        terminals = 'Waiting for open Studio terminals and agent processes to close'
+        terminals = 'Waiting for open SpecWithCode terminals and agent processes to close'
         cases = (('REFUSAL native-work runs=2 requests=1 effects=0 sessions=0', 'waiting-for-quiet',
                   'Waiting for running tasks, queued messages and open questions to finish (2 running tasks, 1 open request)'),
                  ('REFUSAL native-work', 'waiting-for-quiet',
                   'Waiting for running tasks, queued messages and open questions to finish'),
+                 # Queued messages are named as such; held ones never block, so they are not.
+                 ('REFUSAL native-work runs=0 queued=2 requests=0 effects=0 sessions=0 held=13', 'waiting-for-quiet',
+                  'Waiting for running tasks, queued messages and open questions to finish (2 queued messages)'),
                  ('REFUSAL descendants node=1 zsh=2', 'waiting-for-quiet', terminals + ' (node, zsh x2)'),
                  ('REFUSAL descendants no-supervisor', 'waiting-for-quiet', terminals),
                  ('REFUSAL timeout lsof', 'waiting-for-quiet', update_agent.TIMED_OUT),
@@ -165,8 +168,12 @@ class InstallNow(AgentCase):
                  # The structured line wins over an older phrase in the same output.
                  ('AssertionError: Owned service has unexpected descendants\nREFUSAL native-work runs=1',
                   'waiting-for-quiet', 'Waiting for running tasks, queued messages and open questions to finish (1 running task)'),
-                 ('AssertionError: The Studio service is not running\nREFUSAL environment The Studio service is not running',
-                  'error', 'Studio cannot be updated right now: The Studio service is not running'))
+                 ('AssertionError: The SpecWithCode service is not running\nREFUSAL environment The SpecWithCode service is not running',
+                  'error', 'SpecWithCode cannot be updated right now: The SpecWithCode service is not running'),
+                 ('sqlite3.DatabaseError: database disk image is malformed\n'
+                  'REFUSAL environment The SpecWithCode database could not be read (database disk image is malformed)',
+                  'error', 'SpecWithCode cannot be updated right now: '
+                  'The SpecWithCode database could not be read (database disk image is malformed)'))
         for output, status, message in cases:
             with self.subTest(output=output):
                 self.control(snapshotFail=True, snapshotError=output)
@@ -244,7 +251,7 @@ class InstallNow(AgentCase):
         with mock.patch.object(update_agent, 'launchctl', return_value=0), \
                 mock.patch.object(update_agent, 'current_uid', return_value=501):
             self.assertEqual(self.run_agent('--install-launch-agent'), 0)
-        installed = self.home / '.local/share/specweave-studio/updater'
+        installed = self.home / '.specwithcode/install/updater'
         sibling = installed / 'update_agent_cache.py'
         self.assertEqual(sibling.read_bytes(), (HERE / 'update_agent_cache.py').read_bytes())
         self.assertEqual(oct(sibling.stat().st_mode & 0o777), '0o600')

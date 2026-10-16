@@ -4,6 +4,8 @@ import pathlib
 import shlex
 import uuid
 
+import studio_paths
+
 # Second launcher name for the same CLI entry (docs/studio/naming.md). The
 # `specweave-studio` wrapper stays the identity the receipts and services use.
 CLI_ALIAS = 'specwithcode'
@@ -87,8 +89,9 @@ def is_studio_wrapper(value, home):
     if not all('=' in part and not part.startswith('=') for part in prefix[2:-2]):
         return False
     node, entry = pathlib.PurePosixPath(prefix[-2]), pathlib.PurePosixPath(prefix[-1])
-    releases = pathlib.PurePosixPath(str(home)) / '.local/share/specweave-studio/releases'
-    if not node.is_absolute() or entry.name != 'bin.mjs' or entry.parent.parent != releases \
+    releases = {pathlib.PurePosixPath(str(home)) / studio_paths.LEGACY_INSTALL_DIRECTORY / 'releases',
+                pathlib.PurePosixPath(str(home)) / studio_paths.HOME_DIRECTORY / studio_paths.INSTALL_DIRECTORY / 'releases'}
+    if not node.is_absolute() or entry.name != 'bin.mjs' or entry.parent.parent not in releases \
             or entry.parent.name in {'', '.', '..'}:
         return False
     return text in {render_cli(prefix), render_unnamed_cli(prefix), render_legacy_cli(prefix)}

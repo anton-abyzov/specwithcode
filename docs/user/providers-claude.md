@@ -43,7 +43,7 @@ SpecWithCode uses the Claude configuration on the connected server.
 
 ## Compact long conversations
 
-Studio asks Claude to compact at 400,000 tokens unless you change it. Compacting
+SpecWithCode asks Claude to compact at 400,000 tokens unless you change it. Compacting
 replaces the conversation with a short summary. Until it runs, every turn resends
 the whole conversation; most of it is read from the prompt cache, which is cheaper,
 but it still counts toward your usage. On a 1M-context model Claude Code's own
@@ -56,19 +56,19 @@ in practice: it only applies to the 1M-context models where the cost builds up.
 
 To change it, set **Auto-compact after** in the Claude provider settings:
 
-- leave it empty for Studio's default, 400,000;
+- leave it empty for SpecWithCode's default, 400,000;
 - enter an integer from `100000` to `1000000`, for example `600000`, to keep more
   of a long session verbatim before it is summarized;
 - enter `auto` to leave the window to Claude Code's own settings, including
   anything you saved with `/autocompact` in the terminal.
 
-Studio passes a number as a session setting, so inside Studio it takes precedence
+SpecWithCode passes a number as a session setting, so inside SpecWithCode it takes precedence
 over `/autocompact`. Each Claude provider instance keeps its own value, so you can
 keep a second instance for long research sessions with a larger window.
 
-Studio leaves Codex's compaction to Codex. Codex decides when to compact from the
+SpecWithCode leaves Codex's compaction to Codex. Codex decides when to compact from the
 model's own window; to cap it, set `model_auto_compact_token_limit` in
-`~/.codex/config.toml`, and Studio's Codex sessions follow it.
+`~/.codex/config.toml`, and SpecWithCode's Codex sessions follow it.
 
 You can also send `/compact` in an existing conversation. Web and desktop offer
 **Compact context** from the context meter and may suggest it when you return to

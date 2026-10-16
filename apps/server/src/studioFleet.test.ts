@@ -96,6 +96,7 @@ describe("private fleet boundary", () => {
     const snapshot = await discoverFleet(parseFleetConfig(source()), "127.0.0.1", f);
     expect(snapshot.listener).toBe("loopback");
     expect(snapshot.machines[0]?.status).toBe("reachable");
+    expect(snapshot.machines[0]?.machineName).toBe(descriptor("environment-m1").label);
     expect(JSON.stringify(snapshot)).not.toContain("synthetic-private");
     expect(f.mock.calls[0]?.[1]?.headers).toBeUndefined();
     expect(f.mock.calls[0]?.[1]?.redirect).toBe("error");

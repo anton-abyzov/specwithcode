@@ -41,6 +41,17 @@ function allIds(state: ThreadActionMenuState): string[] {
 }
 
 describe("buildThreadActionMenuItems", () => {
+  it("keeps rename and regenerate out of a coordinator-named thread's menu", () => {
+    expect(ids(baseState)).toEqual(expect.arrayContaining(["rename", "regenerate-title"]));
+    const locked = ids({ ...baseState, titleLocked: true });
+    expect(locked).not.toContain("rename");
+    expect(locked).not.toContain("regenerate-title");
+    const markUnread = buildThreadActionMenuItems({ ...baseState, titleLocked: true }).find(
+      (item) => item.id === "mark-unread",
+    );
+    expect(markUnread?.separatorBefore).toBe(true);
+  });
+
   it.each([false, true])(
     "disables both lifecycle directions without permission (reversed: %s)",
     (reversed) => {

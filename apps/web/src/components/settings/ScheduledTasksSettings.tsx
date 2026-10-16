@@ -53,7 +53,8 @@ import {
   useEnvironmentHttpBaseUrl,
   type EnvironmentPresentation,
 } from "../../state/environments";
-import { useProjects } from "../../state/entities";
+import { useProjects, useServerConfigs } from "../../state/entities";
+import { isArchivedMember, projectPickerMembers } from "../../studio/projectListVisibility";
 import { useEnvironmentQuery } from "../../state/query";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -104,6 +105,7 @@ import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
   useRelativeTimeTick,
 } from "./settingsLayout";
+import { ArchivedDisclosure } from "./ArchivedDisclosure";
 
 /** JS day-of-week (0 = Sunday) rendered Monday-first, matching how people read a week. */
 const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const;
@@ -381,6 +383,28 @@ function ScheduledTaskEnvironmentSection({
     matchesScheduledTaskScope(scope, environment.environmentId, task.projectId),
   );
   const linkedTask = tasks?.find((task) => task.id === taskId);
+  const projects = useProjects();
+  const archivedProjectIds = new Set(
+    projects
+      .filter(
+        (project) =>
+          project.environmentId === environment.environmentId && isArchivedMember(project),
+      )
+      .map((project) => project.id),
+  );
+  // A linked task stays in the main list so the deep link still lands on a visible row.
+  const isArchivedTask = (task: ScheduledTask) =>
+    task.projectId != null && archivedProjectIds.has(task.projectId) && task.id !== taskId;
+  const activeTasks = tasks?.filter((task) => !isArchivedTask(task)) ?? [];
+  const archivedTasks = tasks?.filter(isArchivedTask) ?? [];
+  const renderTask = (task: ScheduledTask) => (
+    <ScheduledTaskRow
+      key={task.id}
+      environmentId={environment.environmentId}
+      task={task}
+      onEdit={() => onEdit(environment.environmentId, task)}
+    />
+  );
   const openedLink = useRef(false);
   useEffect(() => {
     if (!openedLink.current && linkedTask) {
@@ -424,14 +448,18 @@ function ScheduledTaskEnvironmentSection({
               description="No tasks match this environment and project selection."
             />
           ) : (
-            tasks.map((task) => (
-              <ScheduledTaskRow
-                key={task.id}
-                environmentId={environment.environmentId}
-                task={task}
-                onEdit={() => onEdit(environment.environmentId, task)}
-              />
-            ))
+            <>
+              {activeTasks.map(renderTask)}
+              {activeTasks.length === 0 ? (
+                <SettingsRow
+                  title="No scheduled tasks for active projects"
+                  description="Every task here belongs to an archived project."
+                />
+              ) : null}
+              <ArchivedDisclosure count={archivedTasks.length}>
+                {archivedTasks.map(renderTask)}
+              </ArchivedDisclosure>
+            </>
           )}
         </>
       )}
@@ -832,14 +860,21 @@ function ScheduledTaskEditorDialog({
     connected ? serverEnvironment.scheduledTasksLive({ environmentId, input: {} }) : null,
   );
   const allProjects = useProjects();
+  const configs = useServerConfigs();
+  // The task's own project stays a choice even once archived, so editing keeps it.
+  const keptProjectId = task?.projectId ?? (preset?.projectId || null);
   const projects = useMemo(
     () =>
-      allProjects.filter(
-        (project) =>
-          project.environmentId === environmentId &&
-          matchesScheduledTaskScope(scope, environmentId, project.id),
+      projectPickerMembers(
+        allProjects.filter(
+          (project) =>
+            project.environmentId === environmentId &&
+            matchesScheduledTaskScope(scope, environmentId, project.id),
+        ),
+        (id) => configs.get(id)?.scratchWorkspaceRoot ?? null,
+        keptProjectId === null ? null : { environmentId, id: keptProjectId as ProjectId },
       ),
-    [allProjects, environmentId, scope],
+    [allProjects, configs, environmentId, keptProjectId, scope],
   );
   const settings = useEnvironmentSettings(environmentId);
   const providers =

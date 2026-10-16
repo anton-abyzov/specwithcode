@@ -45,6 +45,7 @@ export const makeProjectExclusionFilter = Effect.fn(
     return (
       exactRoots.has(candidate) ||
       ancestorRoots.some((root) => candidate.startsWith(root)) ||
+      candidate.includes("/.specwithcode/worktrees/") ||
       candidate.includes("/.specweave-studio/worktrees/")
     );
   };

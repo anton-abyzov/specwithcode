@@ -325,4 +325,42 @@ describe("shared handoff controls", () => {
       expect(document.querySelector('[role="dialog"]')).toBeNull();
     },
   );
+
+  it("shows uncommitted changes inline and offers to commit them", async () => {
+    const onCommit = vi.fn();
+    const changes = { state: "dirty", fileCount: 3, committing: false, error: null, onCommit };
+    await handoff({ sourceChanges: changes as NonNullable<HandoffProps["sourceChanges"]> });
+    const note = document.querySelector('[data-slot="handoff-source-changes"]')!;
+    expect(note.textContent).toContain("3 uncommitted files on MacBook M4.");
+    await click(button("Commit for me"));
+    expect(onCommit).toHaveBeenCalledOnce();
+    await handoff({
+      sourceChanges: { ...changes, committing: true } as NonNullable<HandoffProps["sourceChanges"]>,
+    });
+    expect(button("Committing…").disabled).toBe(true);
+    await handoff({
+      sourceChanges: { ...changes, onCommit: null } as NonNullable<HandoffProps["sourceChanges"]>,
+    });
+    expect(document.body.textContent).not.toContain("Commit for me");
+    await handoff({
+      sourceChanges: { ...changes, state: "clean", fileCount: 0 } as NonNullable<
+        HandoffProps["sourceChanges"]
+      >,
+    });
+    expect(document.querySelector('[data-slot="handoff-source-changes"]')!.textContent).toContain(
+      "No uncommitted changes on MacBook M4.",
+    );
+  });
+
+  it("offers to remember the chosen machine until the preview is frozen", async () => {
+    const onChange = vi.fn();
+    await handoff({ rememberMachine: { label: "MacBook Pro", checked: false, onChange } });
+    const remember = document.querySelector('[data-slot="handoff-remember-machine"]')!;
+    expect(remember.textContent).toContain("Remember this machine");
+    expect(remember.textContent).toContain("Preselect MacBook Pro");
+    await click(remember.querySelector<HTMLElement>('[role="checkbox"]')!);
+    expect(onChange).toHaveBeenCalledExactlyOnceWith(true);
+    await handoff({ phase: "review", preview });
+    expect(document.querySelector('[data-slot="handoff-remember-machine"]')).toBeNull();
+  });
 });

@@ -12,6 +12,7 @@ import {
   type MachineHandoffPrepareResult,
   type MachineHandoffReceiveResult,
   type MachineHandoffBundle,
+  type EnvironmentId,
   type ProjectId,
   ThreadId,
 } from "@specweave-studio/contracts";
@@ -31,6 +32,18 @@ import { MachineHandoffButton, MachineHandoffDialog } from "./MachineHandoffDial
 import { Tip } from "./shell/Tip";
 import { HandoffFolderPicker } from "./HandoffFolderPicker";
 import { isProjectFolder } from "../../studio/projectMachineFolders";
+import { isArchivedMember } from "../../studio/projectListVisibility";
+import { useStudioFleet } from "../../studio/fleet";
+import {
+  handoffMachinePreferenceKey,
+  pickHandoffMachine,
+  readHandoffMachinePreference,
+  readMachinesSeen,
+  recordMachinesSeen,
+  writeHandoffMachinePreference,
+  type HandoffMachine,
+} from "../../studio/handoffMachinePreference";
+import { useHandoffSourceChanges } from "./useHandoffSourceChanges";
 
 function previewInput(projectId: ProjectId, bundle: MachineHandoffBundle) {
   return {
@@ -76,6 +89,10 @@ export function ProjectMachineHandoff({
   };
   useEffect(() => () => onOpenChange?.(false), [onOpenChange]);
   const [selected, setSelected] = useState("");
+  const [pickerMachine, setPickerMachine] = useState<EnvironmentId | null>(null);
+  const preferenceKey = handoffMachinePreferenceKey(project.environmentId, project.id);
+  const [preference, setPreference] = useState(() => readHandoffMachinePreference(preferenceKey));
+  const fleet = useStudioFleet(project.environmentId);
   const [snapshot, setSnapshot] = useState<MachineHandoffPrepareResult | null>(null);
   const [receipt, setReceipt] = useState<MachineHandoffReceiveResult | null>(null);
   const [consent, setConsent] = useState(false);
@@ -96,7 +113,7 @@ export function ProjectMachineHandoff({
       projects.filter(
         (item) =>
           item.environmentId !== project.environmentId &&
-          !item.workspaceSettings?.archived &&
+          !isArchivedMember(item) &&
           isProjectFolder(item.workspaceRoot, item.id) &&
           item.repositoryIdentity != null &&
           repositoryGroupingKeyOf(item.repositoryIdentity) === repositoryKey,
@@ -121,6 +138,39 @@ export function ProjectMachineHandoff({
             : null,
     };
   });
+  const connectedIds = environments
+    .filter((item) => item.connection.phase === "connected")
+    .map((item) => item.environmentId)
+    .toSorted()
+    .join("\n");
+  useEffect(() => {
+    recordMachinesSeen(connectedIds ? connectedIds.split("\n") : []);
+  }, [connectedIds]);
+  const seen = useMemo(() => (open ? readMachinesSeen() : {}), [open]);
+  const machines = environments
+    .filter((item) => item.environmentId !== project.environmentId)
+    .map((item): HandoffMachine & { id: EnvironmentId } => {
+      const online = item.connection.phase === "connected";
+      const status = fleet.snapshot?.machines.find(
+        (machine) => machine.environmentId === item.environmentId,
+      )?.workers?.status;
+      return {
+        id: item.environmentId,
+        label: item.label,
+        online,
+        unavailable: !online
+          ? "Connect first"
+          : !canOperate.has(item.environmentId) ||
+              !canGit.has(item.environmentId) ||
+              !canWrite.has(item.environmentId) ||
+              !canConfigure.has(item.environmentId)
+            ? "Permission required"
+            : null,
+        workersAllowed: status === "allowed" || status === "expiring",
+        hasProjectFolder: candidates.some((entry) => entry.environmentId === item.environmentId),
+        lastOnlineAt: seen[item.environmentId] ?? null,
+      };
+    });
   const source = environments.find((item) => item.environmentId === project.environmentId);
   const sourceReady =
     source?.connection.phase === "connected" &&
@@ -131,6 +181,7 @@ export function ProjectMachineHandoff({
   useEffect(() => {
     if (!requestedTarget) return;
     setSelected(requestedTarget);
+    setPickerMachine(null);
     setSnapshot(null);
     setReceipt(null);
     setConsent(false);
@@ -193,6 +244,7 @@ export function ProjectMachineHandoff({
       });
       if (acknowledged._tag === "Failure") throw squashAtomCommandFailure(acknowledged);
     }
+    setPreference(writeHandoffMachinePreference(preferenceKey, { lastUsed: target.environmentId }));
     setReceipt(completed);
     setPhase("complete");
     forgetCompleted();
@@ -355,6 +407,15 @@ export function ProjectMachineHandoff({
     }
   };
 
+  const sourceChanges = useHandoffSourceChanges({
+    environmentId: project.environmentId,
+    workspaceRoot: project.workspaceRoot,
+    enabled: open && phase === "choose",
+    canCommit: canGit.has(project.environmentId),
+  });
+  const rememberedId = target?.environmentId ?? pickerMachine;
+  const rememberedCandidate = machines.find((machine) => machine.id === rememberedId) ?? null;
+
   return (
     <>
       <Tip
@@ -371,9 +432,22 @@ export function ProjectMachineHandoff({
             if (!snapshot) {
               try {
                 const pending = parsePendingMachineHandoff(localStorage.getItem(storageKey));
-                setSelected(
-                  pending?.targetKey ?? destinations.find((item) => !item.unavailable)?.key ?? "",
+                const saved = readHandoffMachinePreference(preferenceKey);
+                setPreference(saved);
+                const preferred = pickHandoffMachine(machines, saved);
+                const preferredFolder = destinations.find(
+                  (item) => item.environmentId === preferred && !item.unavailable,
                 );
+                // The preferred machine wins; without a saved folder there, the picker opens on it.
+                const choice =
+                  pending?.targetKey ??
+                  preferredFolder?.key ??
+                  (preferred === null
+                    ? destinations.find((item) => !item.unavailable)?.key
+                    : undefined) ??
+                  "";
+                setSelected(choice);
+                setPickerMachine(choice ? null : (preferred as EnvironmentId | null));
                 setError(null);
               } catch (cause) {
                 setSelected("");
@@ -390,27 +464,42 @@ export function ProjectMachineHandoff({
         projectTitle={logicalProjectTitle(project)}
         destinations={destinations}
         selected={selected}
-        onSelect={setSelected}
+        onSelect={(key) => {
+          setSelected(key);
+          setPickerMachine(null);
+        }}
+        sourceChanges={sourceChanges}
+        rememberMachine={
+          rememberedCandidate
+            ? {
+                label: rememberedCandidate.label,
+                checked: preference.remembered === rememberedCandidate.id,
+                onChange: (checked) =>
+                  setPreference(
+                    writeHandoffMachinePreference(preferenceKey, {
+                      remembered: checked ? rememberedCandidate.id : null,
+                    }),
+                  ),
+              }
+            : null
+        }
         folderPicker={
           phase === "choose" ? (
             <HandoffFolderPicker
+              // Each opening, and each machine, starts from a fresh folder.
+              key={`${open}:${pickerMachine ?? ""}`}
               title={logicalProjectTitle(project)}
               existingFolders={projects}
-              machines={environments
-                .filter((e) => e.environmentId !== project.environmentId)
-                .map((e) => ({
-                  id: e.environmentId,
-                  label: e.label,
-                  unavailable:
-                    e.connection.phase !== "connected"
-                      ? "Connect first"
-                      : !canOperate.has(e.environmentId) ||
-                          !canGit.has(e.environmentId) ||
-                          !canWrite.has(e.environmentId) ||
-                          !canConfigure.has(e.environmentId)
-                        ? "Permission required"
-                        : null,
-                }))}
+              machines={machines}
+              machine={pickerMachine}
+              onMachineChange={(machine) => {
+                setPickerMachine(machine);
+                if (machine) setSelected("");
+              }}
+              defaultOpen={
+                pickerMachine !== null || !destinations.some((item) => !item.unavailable)
+              }
+              sourceFolder={project.workspaceRoot}
               onSaved={(environmentId, projectId) => {
                 setSelected(`${environmentId}:${projectId}`);
                 setError(null);

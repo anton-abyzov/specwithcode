@@ -92,7 +92,94 @@ export type RoutedReply<At = string> = {
   readonly createdAt: At | null;
   /** What the coordinator said next, once it has answered. */
   readonly answer: string | null;
+  /** Threads that answer links to, in order: where the coordinator says it sent the message. */
+  readonly answerThreadIds: readonly string[];
 };
+
+const THREAD_LINK = /studio:\/\/thread\/([^)\s"'>]+)/g;
+
+function linkedThreadIds(markdown: string): string[] {
+  const ids: string[] = [];
+  for (const match of markdown.matchAll(THREAD_LINK)) {
+    let id = match[1]!;
+    try {
+      id = decodeURIComponent(id);
+    } catch {
+      // Keep the encoded form; it still differs from every other thread's ID.
+    }
+    if (!ids.includes(id)) ids.push(id);
+  }
+  return ids;
+}
+
+export type RoutedReplyNote = {
+  readonly id: string;
+  readonly text: string;
+  /** pending: the coordinator has not answered; sent: delivered to another thread; answered: kept in the coordinator. */
+  readonly kind: "pending" | "sent" | "answered";
+  readonly targetThreadId: string | null;
+};
+
+/**
+ * What a worker thread shows for the messages the person typed in it. A message
+ * the coordinator delivered back to this thread already appears in its timeline
+ * as the person's own, so it gets no note; only a message that went elsewhere,
+ * or is still on its way, does.
+ */
+export function routedReplyNotes(
+  replies: readonly RoutedReply<unknown>[],
+  threadMessages: readonly Pick<Message, "role" | "senderThreadId" | "text">[],
+  threadId: string,
+  coordinatorThreadId: string,
+): RoutedReplyNote[] {
+  const notes: RoutedReplyNote[] = [];
+  for (const reply of replies) {
+    const words = reply.text.trim();
+    const deliveredHere = threadMessages.some(
+      (message) =>
+        message.role === "user" &&
+        message.senderThreadId === coordinatorThreadId &&
+        words !== "" &&
+        message.text.includes(words),
+    );
+    if (deliveredHere) continue;
+    const elsewhere = reply.answerThreadIds.find(
+      (id) => id !== threadId && id !== coordinatorThreadId,
+    );
+    if (elsewhere !== undefined) {
+      notes.push({ id: reply.id, text: words, kind: "sent", targetThreadId: elsewhere });
+    } else if (reply.answer === null || reply.answerThreadIds.includes(threadId)) {
+      // Not answered yet, or answered with a link back here: the delivery is on its way.
+      notes.push({ id: reply.id, text: words, kind: "pending", targetThreadId: null });
+    } else {
+      notes.push({ id: reply.id, text: words, kind: "answered", targetThreadId: null });
+    }
+  }
+  return notes;
+}
+
+/**
+ * Places messages the person typed in a worker, and that never came back to it,
+ * into its timeline at the time they were typed.
+ */
+export function withRoutedMessages<
+  E extends { readonly createdAt: string },
+  M extends { readonly id: string; readonly createdAt: string },
+>(entries: readonly E[], messages: readonly M[] | undefined): readonly E[] {
+  if (!messages?.length) return entries;
+  const merged: Array<E> = [...entries];
+  for (const message of messages) {
+    const entry = {
+      id: message.id,
+      kind: "message",
+      createdAt: message.createdAt,
+      message,
+    } as unknown as E;
+    const at = merged.findIndex((existing) => existing.createdAt > message.createdAt);
+    merged.splice(at === -1 ? merged.length : at, 0, entry);
+  }
+  return merged;
+}
 
 /**
  * What the person typed inside one thread. Those messages are stored on the
@@ -111,6 +198,7 @@ export function routedRepliesForThread<At = string>(
     const display = projectCoordinatorMessageDisplay(message, project, [thread]);
     if (display.sourceThread === null) return;
     let answer: string | null = null;
+    let answerThreadIds: string[] = [];
     for (const next of messages.slice(index + 1)) {
       if (next.role === "user" && next.createdBy === "user") break;
       if (next.role === "assistant" && !next.streaming && next.text.trim() !== "") {
@@ -121,6 +209,7 @@ export function routedRepliesForThread<At = string>(
           .replace(/\s+/g, " ")
           .trim();
         answer = plain.length > 240 ? `${plain.slice(0, 239)}…` : plain;
+        answerThreadIds = linkedThreadIds(next.text);
         break;
       }
     }
@@ -129,6 +218,7 @@ export function routedRepliesForThread<At = string>(
       text: display.text,
       createdAt: message.createdAt ?? null,
       answer,
+      answerThreadIds,
     });
   });
   return replies;

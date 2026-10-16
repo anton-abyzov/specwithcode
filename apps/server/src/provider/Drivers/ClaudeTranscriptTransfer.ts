@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import type * as PlatformError from "effect/PlatformError";
 import * as Option from "effect/Option";
+import { encodeClaudeProjectDir } from "../../usage/projectFolderSessions.ts";
 
 export const CLAUDE_HOME_CONTINUATION_KEY_PREFIX = "claude:home:";
 
@@ -86,27 +87,23 @@ const copyTree = (
     }
   });
 
+const modifiedAt = (stat: FileSystem.File.Info) =>
+  Option.getOrElse(stat.mtime, () => DateTime.toDateUtc(DateTime.makeUnsafe(0))).getTime();
+
 /**
- * Copy the session's transcript (and its subagent folder) from one Claude
- * home to another when the source is newer. Switching back and forth keeps
- * working: whichever home ran the session last holds the newest file and is
- * the source next time. The transcript is published by rename, so a partial
+ * Copy one transcript and its subagent folder into `targetDir` unless the copy
+ * there is at least as new. The transcript is published by rename, so a partial
  * copy never replaces a good one.
  */
-export const transferClaudeTranscript = Effect.fn("transferClaudeTranscript")(function* (input: {
-  readonly fromHome: string;
-  readonly toHome: string;
+const copyTranscriptInto = Effect.fn("copyClaudeTranscriptInto")(function* (input: {
+  readonly source: ClaudeTranscriptLocation;
+  readonly targetDir: string;
   readonly sessionId: string;
 }) {
   const fs = yield* FileSystem.FileSystem;
-  const source = yield* findClaudeTranscript({ home: input.fromHome, sessionId: input.sessionId });
-  if (source === null) return { status: "missing" } satisfies ClaudeTranscriptTransferResult;
-  const targetDir = NodePath.join(input.toHome, "projects", source.projectSlug);
-  const target = NodePath.join(targetDir, `${input.sessionId}.jsonl`);
-  const sourceStat = yield* fs.stat(source.file);
+  const target = NodePath.join(input.targetDir, `${input.sessionId}.jsonl`);
+  const sourceStat = yield* fs.stat(input.source.file);
   const targetStat = yield* fs.stat(target).pipe(Effect.catch(() => Effect.succeed(null)));
-  const modifiedAt = (stat: FileSystem.File.Info) =>
-    Option.getOrElse(stat.mtime, () => DateTime.toDateUtc(DateTime.makeUnsafe(0))).getTime();
   if (
     targetStat?.type === "File" &&
     modifiedAt(targetStat) >= modifiedAt(sourceStat) &&
@@ -114,14 +111,57 @@ export const transferClaudeTranscript = Effect.fn("transferClaudeTranscript")(fu
   ) {
     return { status: "current", file: target } satisfies ClaudeTranscriptTransferResult;
   }
-  yield* fs.makeDirectory(targetDir, { recursive: true });
+  yield* fs.makeDirectory(input.targetDir, { recursive: true });
   const partial = `${target}.${process.pid}.partial`;
-  yield* fs.copyFile(source.file, partial);
+  yield* fs.copyFile(input.source.file, partial);
   yield* fs.rename(partial, target);
-  const subagents = NodePath.join(NodePath.dirname(source.file), input.sessionId);
+  const subagents = NodePath.join(NodePath.dirname(input.source.file), input.sessionId);
   const subagentStat = yield* fs.stat(subagents).pipe(Effect.catch(() => Effect.succeed(null)));
   if (subagentStat?.type === "Directory") {
-    yield* copyTree(fs, subagents, NodePath.join(targetDir, input.sessionId));
+    yield* copyTree(fs, subagents, NodePath.join(input.targetDir, input.sessionId));
   }
   return { status: "copied", file: target } satisfies ClaudeTranscriptTransferResult;
+});
+
+/**
+ * Copy the session's transcript (and its subagent folder) from one Claude
+ * home to another when the source is newer. Switching back and forth keeps
+ * working: whichever home ran the session last holds the newest file and is
+ * the source next time.
+ */
+export const transferClaudeTranscript = Effect.fn("transferClaudeTranscript")(function* (input: {
+  readonly fromHome: string;
+  readonly toHome: string;
+  readonly sessionId: string;
+}) {
+  const source = yield* findClaudeTranscript({ home: input.fromHome, sessionId: input.sessionId });
+  if (source === null) return { status: "missing" } satisfies ClaudeTranscriptTransferResult;
+  return yield* copyTranscriptInto({
+    source,
+    targetDir: NodePath.join(input.toHome, "projects", source.projectSlug),
+    sessionId: input.sessionId,
+  });
+});
+
+/**
+ * Claude Code looks a session up under the directory named after the cwd it
+ * runs in. When a thread's folder changes, copy the session into the new
+ * folder's directory in the same home so the next turn still resumes it. The
+ * old copy stays, so nothing is lost if the folder changes back.
+ */
+export const relocateClaudeTranscript = Effect.fn("relocateClaudeTranscript")(function* (input: {
+  readonly home: string;
+  readonly sessionId: string;
+  readonly toCwd: string;
+}) {
+  const source = yield* findClaudeTranscript({ home: input.home, sessionId: input.sessionId });
+  if (source === null) return { status: "missing" } satisfies ClaudeTranscriptTransferResult;
+  const projectSlug = encodeClaudeProjectDir(input.toCwd);
+  if (source.projectSlug === projectSlug)
+    return { status: "current", file: source.file } satisfies ClaudeTranscriptTransferResult;
+  return yield* copyTranscriptInto({
+    source,
+    targetDir: NodePath.join(input.home, "projects", projectSlug),
+    sessionId: input.sessionId,
+  });
 });

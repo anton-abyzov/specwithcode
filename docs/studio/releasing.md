@@ -37,6 +37,19 @@ blockmaps, `latest-mac.yml`, and `SpecWithCode-arm64.dmg`, the same installer un
 the version. Upload all of them. Updaters download the zip that `latest-mac.yml` names and never
 read the version-free DMG.
 
+Build release DMGs with `--signed`: Developer ID Application, team `NMCB2JZ7QG`, hardened runtime,
+notarized and stapled. The environment is in [desktop app](./desktop-app.md#signing-and-notarization).
+macOS ties the `studio Safe Storage` Keychain item and the privacy grants to the app's designated
+requirement. An unsigned build is signed ad hoc, its requirement is its code hash, and every update
+then asks for the login keychain password again. Before uploading, check both the DMG and the zip:
+
+```sh
+node scripts/studio-projects/mac-signature.mjs release/SpecWithCode-$V-arm64.dmg release/SpecWithCode-$V-arm64.zip
+```
+
+Never publish a macOS build it refuses. Keep the team and bundle id fixed: changing either makes the
+next update a different app to macOS.
+
 ## Rollback copies
 
 Never leave a copy of the desktop app as a loose `.app`, anywhere. Spotlight lists it as another
@@ -85,4 +98,4 @@ The service updater's `pre-*` database backups are separate and stay where they 
 
 Official release builds must receive both `STUDIO_GOOGLE_OAUTH_CLIENT_ID` and `STUDIO_GOOGLE_OAUTH_CLIENT_SECRET`. Isolated worktrees do not inherit another checkout's ignored `.env`. Inject only this pair into the build environment from the approved release configuration; never copy the full `.env`, print its contents or put it in an artifact. The server build embeds the Desktop-app OAuth client; no Google account refresh token belongs in the build.
 
-After building, run `STUDIO_TEST_REQUIRE_BUILTIN_GOOGLE=1 node scripts/studio-google/verify.mjs <fresh-evidence-directory>`. The private test server has no runtime Google client variables and must report its compiled Studio client as configured. The headless check also verifies the optional own-client override and that removing it restores the compiled client. An official release without this receipt must not be published. Real account access additionally requires the user's Google consent and per-project grants.
+After building, run `STUDIO_TEST_REQUIRE_BUILTIN_GOOGLE=1 node scripts/studio-google/verify.mjs <fresh-evidence-directory>`. The private test server has no runtime Google client variables and must report its compiled SpecWithCode client as configured. The headless check also verifies the optional own-client override and that removing it restores the compiled client. An official release without this receipt must not be published. Real account access additionally requires the user's Google consent and per-project grants.

@@ -5,6 +5,7 @@ import {
   MessageId,
   type ModelSelection,
   NodeId,
+  RuntimeRequestId,
   TurnItemId,
   type OrchestrationV2Run,
   type OrchestrationV2Subagent,
@@ -19,6 +20,8 @@ import {
   type OrchestratorMcpDelegateTaskResult,
   type OrchestratorMcpInteractionMode,
   type OrchestratorMcpDeleteScheduledTaskInput,
+  type OrchestratorMcpAskUserInput,
+  type OrchestratorMcpAskUserResult,
   type OrchestratorMcpRequestSecretInput,
   type OrchestratorMcpRequestSecretResult,
   type OrchestratorMcpDeleteScheduledTaskResult,
@@ -36,6 +39,10 @@ import {
   type OrchestratorMcpThreadDetail,
   type OrchestratorMcpThreadInterruptInput,
   type OrchestratorMcpThreadInterruptResult,
+  type OrchestratorMcpBulkThreadResult,
+  type OrchestratorMcpThreadsBulkResult,
+  type OrchestratorMcpThreadsContinueAllInput,
+  type OrchestratorMcpThreadsStopAllInput,
   type OrchestratorMcpThreadListInput,
   type OrchestratorMcpThreadListResult,
   type OrchestratorMcpThreadReadInput,
@@ -55,7 +62,10 @@ import {
   type ServerProvider,
   ThreadId,
 } from "@specweave-studio/contracts";
-import { runRanAfter } from "@specweave-studio/shared/orchestrationV2ThreadError";
+import {
+  heldQueuedRunCount,
+  runRanAfter,
+} from "@specweave-studio/shared/orchestrationV2ThreadError";
 import { formatStudioThreadLink } from "@specweave-studio/shared/studioThreadLinks";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -81,6 +91,12 @@ import {
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { listProjectThreadInventory, threadSettlement } from "./OrchestratorMcpThreadList.ts";
+import { afterStop, callerLiveness, lastTurnWasStopped } from "./McpCallerLiveness.ts";
+import {
+  BULK_CONTINUE_TEXT,
+  bulkContinueTargets,
+  bulkStopTargets,
+} from "./OrchestratorMcpBulkThreads.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import {
@@ -161,6 +177,14 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpRequestSecretInput,
   ) => Effect.Effect<OrchestratorMcpRequestSecretResult, OrchestratorMcpFailure>;
+  /**
+   * Shows a question card in the calling thread and returns at once. The
+   * user's answer arrives in that thread as a message.
+   */
+  readonly askUser: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpAskUserInput,
+  ) => Effect.Effect<OrchestratorMcpAskUserResult, OrchestratorMcpFailure>;
   readonly listThreads: (
     scope: McpInvocationScope,
     input: OrchestratorMcpThreadListInput,
@@ -186,6 +210,16 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpThreadInterruptInput,
   ) => Effect.Effect<OrchestratorMcpThreadInterruptResult, OrchestratorMcpFailure>;
+  /** Stops every running thread in a project but the caller's, as the user's Stop would. */
+  readonly stopAllThreads: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpThreadsStopAllInput,
+  ) => Effect.Effect<OrchestratorMcpThreadsBulkResult, OrchestratorMcpFailure>;
+  /** Continues every thread in a project, but the caller's, whose latest run was interrupted. */
+  readonly continueAllThreads: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpThreadsContinueAllInput,
+  ) => Effect.Effect<OrchestratorMcpThreadsBulkResult, OrchestratorMcpFailure>;
 }
 
 export class OrchestratorMcpService extends Context.Service<
@@ -608,7 +642,53 @@ function threadTitle(input: {
 function taskPrompt(input: OrchestratorMcpDelegateTaskInput): string {
   return input.role === undefined || input.role === "general"
     ? input.task
-    : `Act as the ${input.role} sub-agent for this task.\n\n${input.task}`;
+    : `Act as the ${input.role} worker for this task.\n\n${input.task}`;
+}
+
+/** `heldQueuedMessages` for a thread whose queue holds messages; nothing otherwise. */
+export function heldQueuedMessagesField(
+  runs: ReadonlyArray<Pick<OrchestrationV2Run, "status" | "queueHeld">>,
+): { readonly heldQueuedMessages?: number } {
+  const heldQueuedMessages = heldQueuedRunCount(runs);
+  return heldQueuedMessages > 0 ? { heldQueuedMessages } : {};
+}
+
+/**
+ * What a sender is told when its message did not simply reach the thread: it
+ * joined a held queue (not delivered), or it released one (those run after it).
+ */
+export function threadSendHeldQueueReport(input: {
+  readonly run: Pick<OrchestrationV2Run, "status" | "queueHeld">;
+  readonly runs: ReadonlyArray<Pick<OrchestrationV2Run, "status" | "queueHeld">>;
+  readonly releasedHeldMessages: number;
+}): Pick<
+  OrchestratorMcpThreadSendResult,
+  "queueHeld" | "heldQueuedMessages" | "releasedHeldMessages" | "notice"
+> {
+  const held = heldQueuedRunCount(input.runs);
+  const plural = (count: number) => `${count} queued message${count === 1 ? "" : "s"}`;
+  if (input.run.status === "queued" && input.run.queueHeld === true) {
+    const others = held - 1;
+    return {
+      queueHeld: true,
+      heldQueuedMessages: held,
+      notice: `Not delivered: this thread's queue is held${
+        others > 0 ? ` (${plural(others)} wait ahead of or with it)` : ""
+      }, so the message waits until the queue is resumed by the user, by studio_queue_resume, or by another message sent there.`,
+    };
+  }
+  if (input.releasedHeldMessages > 0)
+    return {
+      releasedHeldMessages: input.releasedHeldMessages,
+      ...(held > 0 ? { heldQueuedMessages: held } : {}),
+      notice: `${plural(input.releasedHeldMessages)} held on this thread will run after this one, in order.`,
+    };
+  if (held > 0)
+    return {
+      heldQueuedMessages: held,
+      notice: `This thread's queue is held: ${plural(held)} will not run until the queue is resumed.`,
+    };
+  return {};
 }
 
 function threadDetail(
@@ -648,6 +728,7 @@ function threadDetail(
     pendingRequestCount: projection.runtimeRequests.filter(
       (request) => request.status === "pending",
     ).length,
+    ...heldQueuedMessagesField(projection.runs),
     archived: projection.thread.archivedAt !== null,
     ...threadSettlement(projection.thread),
     createdAt: DateTime.formatIso(projection.thread.createdAt),
@@ -934,7 +1015,7 @@ const make = Effect.gen(function* () {
         : Effect.fail(
             failure(
               "target_required",
-              "Pass projectId: this MCP client is not running inside a Studio thread.",
+              "Pass projectId: this MCP client is not running inside a SpecWithCode thread.",
             ),
           );
 
@@ -962,7 +1043,7 @@ const make = Effect.gen(function* () {
       if (parent === undefined)
         return yield* failure(
           "invalid_request",
-          "forwardMessageId needs a caller running inside a Studio thread.",
+          "forwardMessageId needs a caller running inside a SpecWithCode thread.",
         );
       const { messages } = yield* threadManagement
         .getThreadRecords(parent.thread.id, ["messages"], { messageIds: [messageId] })
@@ -977,6 +1058,37 @@ const make = Effect.gen(function* () {
       if (text === "")
         return yield* failure("invalid_request", `Message ${messageId} has no text to forward.`);
       return text;
+    });
+
+  /** The latest follow-up the user typed in the target thread that this message quotes whole. */
+  const quotedFollowUpId = (
+    parent: Pick<OrchestrationV2ThreadProjection, "thread"> | undefined,
+    targetThreadId: ThreadId,
+    message: string,
+  ) =>
+    Effect.gen(function* () {
+      if (parent === undefined || parent.thread.id === targetThreadId) return undefined;
+      const { messages } = yield* threadManagement
+        .getThreadRecords(parent.thread.id, ["messages"])
+        .pipe(Effect.mapError(threadManagementFailure));
+      for (const candidate of messages.toReversed()) {
+        if (
+          candidate.role !== "user" ||
+          candidate.createdBy !== "user" ||
+          candidate.senderThreadId !== targetThreadId
+        )
+          continue;
+        const words = workerFollowUpText(candidate)?.trim();
+        // A short reply such as "ok" counts only when it stands alone or is quoted.
+        if (
+          words &&
+          (message.trim() === words ||
+            message.includes(`"${words}"`) ||
+            (words.length >= 20 && message.includes(words)))
+        )
+          return candidate.id;
+      }
+      return undefined;
     });
 
   const loadScopedThread = (scope: McpInvocationScope, threadId: ThreadId) =>
@@ -1015,16 +1127,105 @@ const make = Effect.gen(function* () {
   const assertLiveCaller = (
     scope: McpInvocationScope,
     parent: Pick<OrchestrationV2ThreadProjection, "thread" | "runs">,
-  ) => {
-    const activeRun = ThreadManagementService.latestActiveRun(parent);
-    return parent.thread.archivedAt !== null ||
-      activeRun === undefined ||
-      activeRun.providerInstanceId !== scope.thread?.providerInstanceId
-      ? Effect.fail(
-          failure("parent_not_active", "The calling provider no longer owns an active thread run."),
-        )
-      : Effect.void;
-  };
+  ) =>
+    liveParent(scope, parent).pipe(
+      Effect.flatMap((verdict) =>
+        verdict.live ? Effect.void : Effect.fail(failure("parent_not_active", verdict.message)),
+      ),
+    );
+
+  /** Whether the calling thread's provider may still act; see `callerLiveness`. */
+  const parentLiveness = (
+    scope: McpInvocationScope,
+    parent: Pick<OrchestrationV2ThreadProjection, "thread" | "runs">,
+  ) =>
+    scope.thread === undefined
+      ? ({ live: false, message: "The calling provider has no thread." } as const)
+      : callerLiveness({
+          thread: parent.thread,
+          activeTurnProviderInstanceId:
+            ThreadManagementService.latestActiveRun(parent)?.providerInstanceId,
+          caller: scope.thread,
+        });
+
+  /**
+   * `parentLiveness` once Stop is counted: between turns, an agent a stopped
+   * turn left running changes nothing until the thread's next message.
+   */
+  const liveParent = (
+    scope: McpInvocationScope,
+    parent: Pick<OrchestrationV2ThreadProjection, "thread" | "runs">,
+  ) =>
+    Effect.gen(function* () {
+      const verdict = parentLiveness(scope, parent);
+      if (!verdict.live || verdict.turn === "active") return verdict;
+      const { turnItems } = yield* threadManagement
+        .getThreadRecords(parent.thread.id, ["turnItems"], {
+          turnItemTypes: ["run_interrupt_request"],
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            failure(
+              "orchestration_error",
+              `Unable to read thread ${parent.thread.id}: ${errorMessage(error)}`,
+            ),
+          ),
+        );
+      return afterStop(
+        verdict,
+        parent.thread.id,
+        lastTurnWasStopped({ runs: parent.runs, turnItems }),
+      );
+    });
+
+  /**
+   * The run whose timeline records what the caller starts: its live turn, or
+   * between turns (a provider's background agent or workflow calling after
+   * its turn ended) the thread's last turn. `delegate` needs that turn to have
+   * completed, so the task's result can wake the thread; anything else that
+   * ended it (Stop, a failure, a rollback) keeps it from taking new work.
+   */
+  const callerRun = (
+    scope: McpThreadInvocationScope,
+    parent: Pick<OrchestrationV2ThreadProjection, "thread" | "runs">,
+    use: "delegate" | "record",
+  ) =>
+    Effect.gen(function* () {
+      const verdict = yield* liveParent(scope, parent);
+      if (!verdict.live) return yield* failure("parent_not_active", verdict.message);
+      const activeRun = ThreadManagementService.latestActiveRun(parent);
+      if (activeRun !== undefined) {
+        if (activeRun.rootNodeId === null) {
+          return yield* failure(
+            "parent_not_active",
+            `Thread ${parent.thread.id}'s turn is still starting. Retry in a few seconds.`,
+          );
+        }
+        return { ...activeRun, rootNodeId: activeRun.rootNodeId };
+      }
+      const lastTurn = parent.runs
+        .filter((run) => run.status !== "queued" && run.rootNodeId !== null)
+        .toSorted((left, right) => right.ordinal - left.ordinal)[0];
+      const disposition = lastTurn?.delegatedCompletion?.disposition;
+      if (
+        lastTurn === undefined ||
+        lastTurn.rootNodeId === null ||
+        (use === "delegate" &&
+          (lastTurn.status !== "completed" ||
+            disposition === "stopped" ||
+            disposition === "disposed"))
+      ) {
+        return yield* failure(
+          "parent_not_active",
+          lastTurn === undefined
+            ? `Thread ${parent.thread.id} has no turn to record this in yet.`
+            : `Thread ${parent.thread.id}'s last turn ended with status ${lastTurn.status}${
+                disposition === "stopped" ? " and was stopped" : ""
+              }, so it takes no new delegated tasks until its next message. Use studio_thread_launch to start the work as its own thread instead.`,
+        );
+      }
+      return { ...lastTurn, rootNodeId: lastTurn.rootNodeId };
+    });
 
   const loadReadableThread = (scope: McpInvocationScope, threadId: ThreadId) =>
     Effect.gen(function* () {
@@ -1328,6 +1529,7 @@ const make = Effect.gen(function* () {
         status,
         workState,
         hasPendingChildRuns: hasPendingChildRuns(childProjection, childRun),
+        ...heldQueuedMessagesField(childControls.runs),
         providerInstanceId: task.providerInstanceId,
         model: task.model,
         ...effortField(childControls.thread.modelSelection),
@@ -1520,7 +1722,7 @@ const make = Effect.gen(function* () {
           return yield* failure(
             "invalid_request",
             parent === undefined
-              ? "bindToCurrentThread needs an agent running inside a Studio thread."
+              ? "bindToCurrentThread needs an agent running inside a SpecWithCode thread."
               : "bindToCurrentThread binds to this thread, which belongs to a different project.",
           );
         }
@@ -1593,7 +1795,7 @@ const make = Effect.gen(function* () {
           return yield* failure(
             "invalid_request",
             parent === undefined
-              ? "bindToCurrentThread needs an agent running inside a Studio thread."
+              ? "bindToCurrentThread needs an agent running inside a SpecWithCode thread."
               : "bindToCurrentThread binds to this thread, which belongs to a different project.",
           );
         }
@@ -1659,9 +1861,12 @@ const make = Effect.gen(function* () {
           run.rootNodeId === null ||
           run.providerInstanceId !== threadScope.thread.providerInstanceId
         ) {
+          const verdict = parentLiveness(threadScope, parent);
           return yield* failure(
             "parent_not_active",
-            "Asking for a secret requires an active run owned by this MCP provider session.",
+            verdict.live
+              ? "Asking for a secret needs a live turn of this thread, and this call came between turns. Ask for it in the thread's next turn."
+              : verdict.message,
           );
         }
         const runId = run.id;
@@ -1781,6 +1986,70 @@ const make = Effect.gen(function* () {
         }
         return { status, secretRef: secretRef.value };
       }).pipe(Effect.withSpan("OrchestratorMcpService.requestSecret")),
+    askUser: (scope, input) =>
+      Effect.gen(function* () {
+        const { scope: threadScope, parent } = yield* loadThreadCaller(scope, "ask_user");
+        const threadId = threadScope.thread.threadId;
+        const run = ThreadManagementService.latestActiveRun(parent);
+        if (
+          run === undefined ||
+          run.rootNodeId === null ||
+          run.providerInstanceId !== threadScope.thread.providerInstanceId
+        ) {
+          const verdict = parentLiveness(threadScope, parent);
+          return yield* failure(
+            "parent_not_active",
+            verdict.live
+              ? "Asking the user needs a live turn of this thread, and this call came between turns. Put the question in your reply instead."
+              : verdict.message,
+          );
+        }
+        const key = yield* requestKey(input.clientRequestId);
+        // Ids are global; scope the key to this thread so a retry finds its card.
+        const suffix = `${stablePart(threadId)}:${stablePart(key)}`;
+        const requestId = RuntimeRequestId.make(`ask-user:${suffix}`);
+        const existing = parent.runtimeRequests.find((request) => request.id === requestId);
+        if (existing !== undefined) {
+          return {
+            requestId,
+            status:
+              existing.status === "pending"
+                ? ("asked" as const)
+                : existing.status === "resolved" && existing.answers !== undefined
+                  ? ("answered" as const)
+                  : ("dismissed" as const),
+          };
+        }
+        yield* threadManagement
+          .dispatch({
+            type: "user_input_request.record",
+            commandId: stableCommandId({ scope, requestKey: key, operation: "ask-user" }),
+            threadId,
+            runId: run.id,
+            nodeId: run.rootNodeId,
+            requestNodeId: NodeId.make(`node:ask-user:${suffix}`),
+            requestId,
+            turnItemId: TurnItemId.make(`turn-item:ask-user:${suffix}`),
+            questions: input.questions.map((question, index) => ({
+              id: `q${index + 1}`,
+              header: question.header ?? "Question",
+              question: question.question,
+              options: question.options.map((option) => ({
+                label: option.label,
+                description: option.description ?? option.label,
+                ...(option.recommended === true ? { recommended: true } : {}),
+              })),
+              ...(question.multiSelect === true ? { multiSelect: true } : {}),
+              allowCustomAnswer: true,
+            })),
+          })
+          .pipe(
+            Effect.mapError((error) =>
+              failure("orchestration_error", `Could not show the question: ${errorMessage(error)}`),
+            ),
+          );
+        return { requestId, status: "asked" as const };
+      }).pipe(Effect.withSpan("OrchestratorMcpService.askUser")),
 
     capabilities: (scope) =>
       Effect.gen(function* () {
@@ -1830,19 +2099,7 @@ const make = Effect.gen(function* () {
     delegateTask: (callerScope, input) =>
       Effect.gen(function* () {
         const { scope, parent } = yield* loadThreadCaller(callerScope, "delegate_task");
-        const parentRun = parent.runs
-          .filter(ThreadManagementService.isActiveRun)
-          .toSorted((left, right) => right.ordinal - left.ordinal)[0];
-        if (
-          parentRun === undefined ||
-          parentRun.rootNodeId === null ||
-          parentRun.providerInstanceId !== scope.thread.providerInstanceId
-        ) {
-          return yield* failure(
-            "parent_not_active",
-            "Delegated tasks require an active run owned by this MCP provider session.",
-          );
-        }
+        const parentRun = yield* callerRun(scope, parent, "delegate");
         const parentNodeId = parentRun.rootNodeId;
         const project = yield* requireProject(parent.thread.projectId);
         const providers = yield* loadProviders;
@@ -2040,6 +2297,7 @@ const make = Effect.gen(function* () {
               commandId,
               threadId: current.childThreadId,
               ...(reason === undefined ? {} : { reason }),
+              cause: "delegated_cancel",
             })
             .pipe(
               Effect.mapError((error) =>
@@ -2122,17 +2380,7 @@ const make = Effect.gen(function* () {
     createThreads: (callerScope, input) =>
       Effect.gen(function* () {
         const { scope, parent } = yield* loadThreadCaller(callerScope, "create_threads");
-        const parentRun = ThreadManagementService.latestActiveRun(parent);
-        if (
-          parentRun === undefined ||
-          parentRun.rootNodeId === null ||
-          parentRun.providerInstanceId !== scope.thread.providerInstanceId
-        ) {
-          return yield* failure(
-            "parent_not_active",
-            "Thread creation requires an active run owned by this MCP provider session.",
-          );
-        }
+        const parentRun = yield* callerRun(scope, parent, "record");
         const parentNodeId = parentRun.rootNodeId;
         const project = yield* requireProject(parent.thread.projectId);
         const providers = yield* loadProviders;
@@ -2412,12 +2660,24 @@ const make = Effect.gen(function* () {
           }
         }
 
-        const forwarded =
-          input.forwardMessageId === undefined
+        if (input.message !== undefined && input.forwardMessageId !== undefined)
+          return yield* failure(
+            "invalid_request",
+            "Pass either message or forwardMessageId to studio_thread_send.",
+          );
+        // A relay that quotes the user's follow-up back to its own thread carries
+        // only the user's words: the wrapper and any brief around them are dropped.
+        const forwardMessageId =
+          input.forwardMessageId ??
+          (input.message === undefined
             ? undefined
-            : yield* forwardedUserText(parent, input.forwardMessageId);
+            : yield* quotedFollowUpId(parent, target.thread.id, input.message));
+        const forwarded =
+          forwardMessageId === undefined
+            ? undefined
+            : yield* forwardedUserText(parent, forwardMessageId);
         const text = forwarded ?? input.message;
-        if (text === undefined || (input.message !== undefined && forwarded !== undefined))
+        if (text === undefined)
           return yield* failure(
             "invalid_request",
             "Pass either message or forwardMessageId to studio_thread_send.",
@@ -2426,10 +2686,9 @@ const make = Effect.gen(function* () {
         const mode = input.mode ?? "auto";
         // A forwarded message has one delivery per target, however often it is retried.
         const key = yield* requestKey(
-          input.clientRequestId ??
-            (input.forwardMessageId === undefined
-              ? undefined
-              : `forward:${input.forwardMessageId}:${input.threadId}`),
+          forwardMessageId === undefined
+            ? input.clientRequestId
+            : `forward:${forwardMessageId}:${input.threadId}`,
         );
         const messageId = stableOperationMessageId({
           scope,
@@ -2470,6 +2729,11 @@ const make = Effect.gen(function* () {
           runId: result.run.id,
           status: result.run.status,
           delivery: result.delivery,
+          ...threadSendHeldQueueReport({
+            run: result.run,
+            runs: result.projection.runs,
+            releasedHeldMessages: result.releasedHeldRuns ?? 0,
+          }),
         } satisfies OrchestratorMcpThreadSendResult;
       }),
     forwardedMessageText: (scope, messageId) =>
@@ -2538,8 +2802,161 @@ const make = Effect.gen(function* () {
           status: result.type === "already_terminal" ? result.run.status : "interrupt_requested",
         } satisfies OrchestratorMcpThreadInterruptResult;
       }),
+    stopAllThreads: (scope, input) =>
+      Effect.gen(function* () {
+        const { parent, limits } = yield* loadCaller(scope);
+        const projectId = yield* resolveProjectTarget(parent, input.projectId);
+        const shells = yield* threadManagement
+          .listProjectThreads({ projectId, includeSubagents: false })
+          .pipe(Effect.mapError(threadManagementFailure));
+        const threads: Array<OrchestratorMcpBulkThreadResult> = [];
+        for (const { shell, runId } of bulkStopTargets(shells, parent?.thread.id ?? null)) {
+          const row = {
+            threadId: shell.id,
+            title: shell.title,
+            threadLink: formatStudioThreadLink(shell.id, shell.title),
+            runId,
+          };
+          // One stop per run, however often the call is retried.
+          const commandId = stableCommandId({
+            scope,
+            requestKey: `${shell.id}:${runId}`,
+            operation: "threads-stop-all",
+          });
+          const outcome = yield* withinCallerModes(limits, shell).pipe(
+            Effect.andThen(
+              threadManagement.dispatch({
+                type: "thread.stop",
+                commandId,
+                threadId: shell.id,
+                ...(input.reason === undefined ? {} : { reason: input.reason }),
+                // An explicit stop request: like the user's Stop, it never resumes on its own.
+                cause: "user",
+              }),
+            ),
+            Effect.andThen(
+              threadManagement.stopDelegatedTasks({
+                threadId: shell.id,
+                commandId,
+                reason: input.reason,
+              }),
+            ),
+            Effect.provideService(DispatchModeLimit, limits),
+            Effect.as({ ...row, status: "stop_requested" as const }),
+            Effect.catch((error) => Effect.succeed(bulkFailure(row, error))),
+          );
+          threads.push(outcome);
+        }
+        return {
+          projectId,
+          count: threads.filter((thread) => thread.status === "stop_requested").length,
+          threads,
+        } satisfies OrchestratorMcpThreadsBulkResult;
+      }),
+    continueAllThreads: (scope, input) =>
+      Effect.gen(function* () {
+        const { parent, limits } = yield* loadCaller(scope);
+        const projectId = yield* resolveProjectTarget(parent, input.projectId);
+        // An agent must not keep driving workers after the user paused or archived the project.
+        const project = yield* projects
+          .getById(projectId)
+          .pipe(
+            Effect.mapError((error) =>
+              failure("orchestration_error", `Unable to read project: ${error.message}`),
+            ),
+          );
+        const settings = Option.isSome(project) ? project.value.workspaceSettings : undefined;
+        if (settings?.paused || settings?.archived) {
+          return yield* failure(
+            "invalid_request",
+            "Resume or restore the project before continuing its threads.",
+          );
+        }
+        const shells = yield* threadManagement
+          .listProjectThreads({ projectId, includeSubagents: false })
+          .pipe(Effect.mapError(threadManagementFailure));
+        const threads: Array<OrchestratorMcpBulkThreadResult> = [];
+        for (const { shell, runId } of bulkContinueTargets(shells, parent?.thread.id ?? null)) {
+          const row = {
+            threadId: shell.id,
+            title: shell.title,
+            threadLink: formatStudioThreadLink(shell.id, shell.title),
+            runId,
+          };
+          // One continuation per interrupted run, however often the call is retried.
+          const requestKey = `${shell.id}:${runId}`;
+          const outcome = yield* withinCallerModes(limits, shell).pipe(
+            Effect.andThen(
+              threadManagement.dispatch({
+                type: "message.dispatch",
+                commandId: stableCommandId({
+                  scope,
+                  requestKey,
+                  operation: "threads-continue-all",
+                }),
+                messageId: stableOperationMessageId({
+                  scope,
+                  requestKey,
+                  operation: "threads-continue-all",
+                }),
+                threadId: shell.id,
+                ...(parent === undefined ? {} : { senderThreadId: parent.thread.id }),
+                manualContinuationOfRunId: runId,
+                text: BULK_CONTINUE_TEXT,
+                attachments: [],
+                dispatchMode: { type: "start_immediately" },
+                createdBy: "agent",
+                creationSource: "mcp",
+              }),
+            ),
+            Effect.provideService(DispatchModeLimit, limits),
+            Effect.as({ ...row, status: "continued" as const }),
+            Effect.catch((error) => Effect.succeed(bulkFailure(row, error))),
+          );
+          threads.push(outcome);
+        }
+        return {
+          projectId,
+          count: threads.filter((thread) => thread.status === "continued").length,
+          threads,
+        } satisfies OrchestratorMcpThreadsBulkResult;
+      }),
   });
 });
+
+/** A bulk operation acts only on threads within the caller's modes; others are skipped. */
+const withinCallerModes = (
+  limits: { readonly runtimeMode: RuntimeMode; readonly interactionMode: ProviderInteractionMode },
+  target: { readonly runtimeMode: RuntimeMode; readonly interactionMode: ProviderInteractionMode },
+) =>
+  resolveRuntimeMode(limits.runtimeMode, target.runtimeMode).pipe(
+    Effect.andThen(resolveInteractionMode(limits.interactionMode, target.interactionMode)),
+    Effect.asVoid,
+  );
+
+/** A decider's rejection says why in `cause`; other failures carry their own message. */
+function bulkErrorMessage(error: unknown): string {
+  const cause =
+    error !== null && typeof error === "object" && "cause" in error ? error.cause : undefined;
+  return typeof cause === "string" && cause.length > 0 ? cause : errorMessage(error);
+}
+
+function bulkFailure(
+  row: Omit<OrchestratorMcpBulkThreadResult, "status" | "message">,
+  error: unknown,
+): OrchestratorMcpBulkThreadResult {
+  const escalation =
+    error instanceof OrchestratorMcpFailure &&
+    (error.code === "runtime_mode_escalation_denied" ||
+      error.code === "interaction_mode_escalation_denied");
+  return {
+    ...row,
+    status: escalation ? "skipped" : "failed",
+    message: escalation
+      ? "This thread runs in broader modes than the caller."
+      : bulkErrorMessage(error).slice(0, 1_000),
+  };
+}
 
 export const layer: Layer.Layer<
   OrchestratorMcpService,

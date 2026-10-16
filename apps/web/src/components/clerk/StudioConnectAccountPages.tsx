@@ -15,7 +15,7 @@ export const STUDIO_CONNECT_ACCOUNT_PAGES = [
     content: <MobileClientsUserProfilePage />,
   },
   {
-    label: "Studio Connect",
+    label: "SpecWithCode Connect",
     url: "studio-connect",
     icon: <ServerIcon className="size-4" />,
     content: <StudioConnectUserProfilePage />,

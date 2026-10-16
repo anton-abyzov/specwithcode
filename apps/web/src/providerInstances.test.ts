@@ -667,7 +667,7 @@ describe("provider icon metadata", () => {
     expect(local?.acpRegistryIconUrl).toBeUndefined();
     expect(managed?.acpRegistryAgentId).toBe("github-copilot-cli");
     expect(local?.displayName).toBe("GitHub Copilot (your install)");
-    expect(managed?.displayName).toBe("Copilot (Studio-managed)");
+    expect(managed?.displayName).toBe("Copilot (SpecWithCode-managed)");
   });
 
   it("does not repeat a source the name already states", () => {

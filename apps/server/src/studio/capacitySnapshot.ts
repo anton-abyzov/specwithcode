@@ -2,9 +2,23 @@ import * as DateTime from "effect/DateTime";
 // @effect-diagnostics nodeBuiltinImport:off -- Pure native-home comparison; no filesystem or credential access.
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { ProviderDriverKind, type ProviderInstanceConfig, type ProviderInstanceId, type ServerProvider, type ServerProviderUsageLimits, type ServerSettings } from "@specweave-studio/contracts";
-import { StudioCapacityAccountId, StudioCapacityMode, StudioCapacityProvider, StudioCapacityWindow, StudioCapacityQuotaWindow,
-  StudioCapacityAccount, type StudioCapacitySnapshot } from "@specweave-studio/contracts/studio";
+import {
+  ProviderDriverKind,
+  type ProviderInstanceConfig,
+  type ProviderInstanceId,
+  type ServerProvider,
+  type ServerProviderUsageLimits,
+  type ServerSettings,
+} from "@specweave-studio/contracts";
+import {
+  StudioCapacityAccountId,
+  StudioCapacityMode,
+  StudioCapacityProvider,
+  StudioCapacityWindow,
+  StudioCapacityQuotaWindow,
+  StudioCapacityAccount,
+  type StudioCapacitySnapshot,
+} from "@specweave-studio/contracts/studio";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 
@@ -16,12 +30,16 @@ import { hasNativeUsageEvidence } from "../provider/providerUsageLimits.ts";
 export const CAPACITY_MAX_AGE_MS = 15 * 60 * 1000;
 const FUTURE_SKEW_MS = 5000;
 const NativeConfig = Schema.Struct({
-  homePath: Schema.optionalKey(Schema.String), shadowHomePath: Schema.optionalKey(Schema.String),
-  setupMode: Schema.optionalKey(Schema.String), enabled: Schema.optionalKey(Schema.Boolean),
+  homePath: Schema.optionalKey(Schema.String),
+  shadowHomePath: Schema.optionalKey(Schema.String),
+  setupMode: Schema.optionalKey(Schema.String),
+  enabled: Schema.optionalKey(Schema.Boolean),
 });
 const RawAccount = Schema.Struct({
-  id: StudioCapacityAccountId, provider: StudioCapacityProvider,
-  authenticated: Schema.NullOr(Schema.Boolean), status: Schema.String,
+  id: StudioCapacityAccountId,
+  provider: StudioCapacityProvider,
+  authenticated: Schema.NullOr(Schema.Boolean),
+  status: Schema.String,
   authKind: Schema.optionalKey(Schema.NullOr(Schema.String)),
   authError: Schema.optionalKey(Schema.NullOr(Schema.String)),
   quota: Schema.optionalKey(Schema.Unknown),
@@ -29,29 +47,36 @@ const RawAccount = Schema.Struct({
 });
 const RawSnapshot = Schema.Struct({
   accounts: Schema.Array(RawAccount).check(Schema.isMaxLength(7)),
-  policy: Schema.Struct({ mode: StudioCapacityMode,
+  policy: Schema.Struct({
+    mode: StudioCapacityMode,
     preferredProvider: Schema.optionalKey(Schema.NullOr(StudioCapacityProvider)),
     selectedAccount: Schema.optionalKey(Schema.NullOr(StudioCapacityAccountId)),
   }),
 });
 const RawQuota = Schema.Struct({
-  window: Schema.optionalKey(Schema.Unknown), weekly: Schema.optionalKey(Schema.Unknown),
+  window: Schema.optionalKey(Schema.Unknown),
+  weekly: Schema.optionalKey(Schema.Unknown),
   observedAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
   expiresAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
   source: Schema.optionalKey(Schema.NullOr(Schema.Literals(["native-app-server", "manual"]))),
   ordinaryUsageAllowed: Schema.optionalKey(Schema.NullOr(Schema.Boolean)),
   spendControlReached: Schema.optionalKey(Schema.NullOr(Schema.Boolean)),
   denied: Schema.optionalKey(Schema.Boolean),
-  credits: Schema.optionalKey(Schema.Unknown), resetCredits: Schema.optionalKey(Schema.Unknown),
+  credits: Schema.optionalKey(Schema.Unknown),
+  resetCredits: Schema.optionalKey(Schema.Unknown),
   windows: Schema.optionalKey(Schema.Unknown),
   rateLimitReachedType: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 const decodeRaw = Schema.decodeUnknownOption(RawSnapshot);
 const decodeQuota = Schema.decodeUnknownOption(RawQuota);
 const decodeWindow = Schema.decodeUnknownOption(StudioCapacityWindow);
-const decodeExtraWindows = Schema.decodeUnknownOption(Schema.Array(StudioCapacityQuotaWindow).check(Schema.isMaxLength(32)));
+const decodeExtraWindows = Schema.decodeUnknownOption(
+  Schema.Array(StudioCapacityQuotaWindow).check(Schema.isMaxLength(32)),
+);
 const decodeCredits = Schema.decodeUnknownOption(StudioCapacityAccount.fields.quota.fields.credits);
-const decodeResets = Schema.decodeUnknownOption(StudioCapacityAccount.fields.quota.fields.resetCredits);
+const decodeResets = Schema.decodeUnknownOption(
+  StudioCapacityAccount.fields.quota.fields.resetCredits,
+);
 const decodeConfig = Schema.decodeUnknownOption(NativeConfig);
 
 export function freshObservation(value: string | null | undefined, now: number): boolean {
@@ -59,30 +84,51 @@ export function freshObservation(value: string | null | undefined, now: number):
   return Number.isFinite(at) && at <= now + FUTURE_SKEW_MS && now - at <= CAPACITY_MAX_AGE_MS;
 }
 /** Unknown quota is not a denial; Claude stream refusals require a full read to clear. */
-export function nativeQuotaDenied(limits: ServerProviderUsageLimits | undefined, now: number): boolean {
-  if (!limits || (limits.unavailable?.reason === "unsupported" && !limits.nativeDenialRequiresFullRead)) return false;
-  const negative = limits.ordinaryUsageAllowed === false || limits.spendControlReached === true
-    || (!!limits.rateLimitReachedType && limits.ordinaryUsageAllowed !== true);
+export function nativeQuotaDenied(
+  limits: ServerProviderUsageLimits | undefined,
+  now: number,
+): boolean {
+  if (
+    !limits ||
+    (limits.unavailable?.reason === "unsupported" && !limits.nativeDenialRequiresFullRead)
+  )
+    return false;
+  const negative =
+    limits.ordinaryUsageAllowed === false ||
+    limits.spendControlReached === true ||
+    (!!limits.rateLimitReachedType && limits.ordinaryUsageAllowed !== true);
   return (
-    negative && (limits.nativeDenialRequiresFullRead === true
-    || freshObservation(limits.nativeAllowanceObservedAt, now) || freshObservation(limits.nativeDenialObservedAt, now)));
+    negative &&
+    (limits.nativeDenialRequiresFullRead === true ||
+      freshObservation(limits.nativeAllowanceObservedAt, now) ||
+      freshObservation(limits.nativeDenialObservedAt, now))
+  );
 }
 /** Claude get_usage windows can support manual retry, not automatic allowance.
  * Complete, current non-exhausted windows can contradict an expired error, but
  * only permit a deliberate retry; they do not turn unknown capacity into ready.
  */
-function claudeWindowsPermitManualRetry(limits: ServerProviderUsageLimits | undefined, now: number): boolean {
+function claudeWindowsPermitManualRetry(
+  limits: ServerProviderUsageLimits | undefined,
+  now: number,
+): boolean {
   if (limits?.unavailable) {
     // A confirmed unsupported lookup is no quota observation. It permits only
     // the expired, wholly unobserved companion-error fallback below. Retained
     // windows or permission history must never be discarded by this exception.
     return (
-      limits.unavailable.reason === "unsupported" && !limits.unavailable.invalidResponse
-      && !hasNativeUsageEvidence(limits) && freshObservation(limits.checkedAt, now)
+      limits.unavailable.reason === "unsupported" &&
+      !limits.unavailable.invalidResponse &&
+      !hasNativeUsageEvidence(limits) &&
+      freshObservation(limits.checkedAt, now)
     );
   }
   if (!limits?.windows.length) return true;
-  if (!freshObservation(limits.checkedAt, now) || !freshObservation(limits.nativeAllowanceObservedAt, now)) return false;
+  if (
+    !freshObservation(limits.checkedAt, now) ||
+    !freshObservation(limits.nativeAllowanceObservedAt, now)
+  )
+    return false;
   return completeClaudeUsageWindows(limits.windows, now);
 }
 function iso(value: string | null | undefined): string | null {
@@ -93,28 +139,61 @@ function window(value: unknown): StudioCapacityAccount["quota"]["window"] {
   const decoded = decodeWindow(value);
   return Option.isSome(decoded) ? decoded.value : null;
 }
-export function nativeConfigForInstance(settings: ServerSettings, instanceId: ProviderInstanceId): ProviderInstanceConfig | undefined {
+export function nativeConfigForInstance(
+  settings: ServerSettings,
+  instanceId: ProviderInstanceId,
+): ProviderInstanceConfig | undefined {
   const explicit = settings.providerInstances[instanceId];
   if (explicit) return explicit;
-  if (instanceId === "codex") return { driver: ProviderDriverKind.make("codex"), config: settings.providers.codex };
-  if (instanceId === "claudeAgent") return { driver: ProviderDriverKind.make("claudeAgent"), config: settings.providers.claudeAgent };
+  if (instanceId === "codex")
+    return { driver: ProviderDriverKind.make("codex"), config: settings.providers.codex };
+  if (instanceId === "claudeAgent")
+    return {
+      driver: ProviderDriverKind.make("claudeAgent"),
+      config: settings.providers.claudeAgent,
+    };
   return undefined;
 }
 
 /** Exact canonical native home only. Instance slugs and display labels prove nothing. */
-export function nativeCapacityBinding(entry: ProviderInstanceConfig | undefined, baseEnv: NodeJS.ProcessEnv): StudioCapacityAccount["id"] | null {
-  if (!entry || entry.enabled === false || hasExplicitProviderApiEnvironment(entry.environment, entry.driver === "codex" ? "codex" : "claudeAgent")) return null;
+export function nativeCapacityBinding(
+  entry: ProviderInstanceConfig | undefined,
+  baseEnv: NodeJS.ProcessEnv,
+): StudioCapacityAccount["id"] | null {
+  if (
+    !entry ||
+    entry.enabled === false ||
+    hasExplicitProviderApiEnvironment(
+      entry.environment,
+      entry.driver === "codex" ? "codex" : "claudeAgent",
+    )
+  )
+    return null;
   const config = decodeConfig(entry.config ?? {});
-  if (Option.isNone(config) || config.value.enabled === false || config.value.setupMode === "managed") return null;
+  if (
+    Option.isNone(config) ||
+    config.value.enabled === false ||
+    config.value.setupMode === "managed"
+  )
+    return null;
   if (entry.driver !== "codex" && entry.driver !== "claudeAgent") return null;
-  const own = entry.environment?.findLast((variable) => variable.name === (entry.driver === "codex" ? "CODEX_HOME" : "CLAUDE_CONFIG_DIR"));
+  const own = entry.environment?.findLast(
+    (variable) => variable.name === (entry.driver === "codex" ? "CODEX_HOME" : "CLAUDE_CONFIG_DIR"),
+  );
   if (entry.driver === "claudeAgent") {
     // Setting even the default path changes native Keychain scope. Preserve unset.
-    if (!config.value.homePath?.trim() && own === undefined && baseEnv.CLAUDE_CONFIG_DIR === undefined) return "claude-1";
+    if (
+      !config.value.homePath?.trim() &&
+      own === undefined &&
+      baseEnv.CLAUDE_CONFIG_DIR === undefined
+    )
+      return "claude-1";
     const home = config.value.homePath?.trim() || own?.value || baseEnv.CLAUDE_CONFIG_DIR;
     if (!home) return null;
     for (const n of [2, 3] as const) {
-      if (NodePath.resolve(expandHomePath(home)) === NodePath.join(NodeOS.homedir(), ".local/share/specweave/account-profiles", `claude-${n}`)
+      if (
+        NodePath.resolve(expandHomePath(home)) ===
+        NodePath.join(NodeOS.homedir(), ".local/share/specweave/account-profiles", `claude-${n}`)
       )
         return `claude-${n}`;
     }
@@ -519,11 +598,11 @@ export function capacitySnapshot(input: {
       ? "Explicit account preference retained"
       : policy.mode === "reset-first"
         ? Number.isFinite(reset)
-          ? `Earliest eligible observed reset: ${DateTime.formatIso(DateTime.makeUnsafe(reset * 1000))}; equal resets prefer more used quota`
+          ? `Earliest eligible observed reset: ${DateTime.formatIso(DateTime.makeUnsafe(reset * 1000))}; equal resets prefer the one with less left`
           : "Eligible native permission; next reset unknown"
         : policy.mode === "spend-first"
-          ? "Most used eligible quota"
-          : "Least used eligible quota";
+          ? "Eligible quota with the least left"
+          : "Eligible quota with the most left";
     return {
       provider,
       id: selected?.id ?? null,

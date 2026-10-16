@@ -17,6 +17,7 @@ import tarfile
 import time
 import urllib.error
 import urllib.request
+import studio_paths
 from installation_descriptor import InstallationDescriptor, WEB_SESSION_POLICIES, installation_lock
 from launcher import render_cli, runtime_path
 from release_policy import validate_manifest, validate_package
@@ -47,15 +48,15 @@ for origin in args.trusted_origin:
     assert origin.startswith(('http://127.0.0.1:', 'https://')) and '*' not in origin
 digest = hashlib.sha256(archive.read_bytes()).hexdigest()
 assert digest == args.sha256, 'Archive hash mismatch'
-base = home / '.local/share/specweave-studio'
-for relative_root in ['.local/share/specweave-studio/releases', '.specweave-studio']:
+base = studio_paths.install_root(home)
+studio_home = studio_paths.identity_home(home, args.identity)
+for root in [base / 'releases', studio_home.parent]:
     ancestor = home
-    for part in pathlib.Path(relative_root).parts:
+    for part in root.relative_to(home).parts:
         ancestor = ancestor / part
         assert not ancestor.is_symlink(), 'Studio root has a symlink ancestor'
 release = base / 'releases' / digest[:20]
 stage = release.with_name(release.name + '.stage-' + str(os.getpid()))
-studio_home = home / '.specweave-studio' / args.identity
 state = studio_home / 'userdata'
 launcher = studio_home / 'launch.sh'
 stdout = studio_home / 'stdout.log'

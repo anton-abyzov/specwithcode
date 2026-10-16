@@ -29,7 +29,7 @@ export function relayRequestError(cause: unknown): RelayRequestError {
     ? cause
     : new RelayRequestError({
         rejection: "unavailable",
-        description: `Could not complete the Studio Connect relay request. ${isHttpClientError(cause) ? `The relay request failed (${cause.reason._tag}).` : "The relay returned an unexpected response."} Check this machine's network connection and relay availability, then retry.`,
+        description: `Could not complete the SpecWithCode Connect relay request. ${isHttpClientError(cause) ? `The relay request failed (${cause.reason._tag}).` : "The relay returned an unexpected response."} Check this machine's network connection and relay availability, then retry.`,
       });
 }
 
@@ -40,7 +40,7 @@ export const shouldRetryRelayRequest = (error: unknown): boolean =>
 function recoveryHint(error: RelayProtectedError): string {
   switch (error._tag) {
     case "RelayEnvironmentLinkLimitExceededError":
-      return "Unlink an unused environment in Studio Connect, then restart SpecWithCode on this machine.";
+      return "Unlink an unused environment in SpecWithCode Connect, then restart SpecWithCode on this machine.";
     case "RelayAuthInvalidError":
       return "Run `specweave-studio connect login` to check this machine's authorization. If the stored credential was revoked, sign out with `specweave-studio connect logout`, then run `specweave-studio connect` again. Restart SpecWithCode after signing in.";
     case "RelayEnvironmentLinkProofExpiredError":
@@ -62,8 +62,8 @@ export const filterRelayResponse = Effect.fn("cloud.filter_relay_response")(func
   const ray = response.headers["cf-ray"];
   const requestId = ray && /^[a-zA-Z0-9-]{1,128}$/.test(ray) ? ` Cloudflare Ray ID: ${ray}.` : "";
   const description = Option.isSome(decoded)
-    ? `Studio Connect: ${decoded.value.message}. ${recoveryHint(decoded.value)} Trace ID: ${decoded.value.traceId}.`
-    : `Studio Connect relay returned HTTP ${response.status} without a recognized error response. Check relay access and any proxy or firewall restrictions, then restart SpecWithCode.${requestId}`;
+    ? `SpecWithCode Connect: ${decoded.value.message}. ${recoveryHint(decoded.value)} Trace ID: ${decoded.value.traceId}.`
+    : `SpecWithCode Connect relay returned HTTP ${response.status} without a recognized error response. Check relay access and any proxy or firewall restrictions, then restart SpecWithCode.${requestId}`;
 
   if (response.status === 401) {
     return yield* new RelayRequestError({ rejection: "unauthorized", description });

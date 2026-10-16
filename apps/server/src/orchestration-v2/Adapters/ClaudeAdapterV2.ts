@@ -387,6 +387,15 @@ export interface ClaudeAgentSdkQuerySession {
   ) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly interrupt: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly close: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
+  /**
+   * Reconnects the named MCP server when the live process has given up on it
+   * ("failed" or "needs-auth", as after a 401), and reports whether it did.
+   * A process keeps a server it gave up on disconnected for the rest of its
+   * life, so a credential that works again would never be used again.
+   */
+  readonly reconnectMcpServerIfDown?: (
+    serverName: string,
+  ) => Effect.Effect<boolean, ClaudeAgentSdkQueryRunnerError>;
 }
 
 type ClaudeQueryStreamExit = Exit.Exit<void, ClaudeAgentSdkQueryRunnerError>;
@@ -461,6 +470,23 @@ function queryRunnerError(cause: unknown, method: string): ClaudeAgentSdkQueryRu
     : new ClaudeAgentSdkQueryRunnerError({ cause, method });
 }
 
+/**
+ * Reconnects `serverName` when the Claude process gave up on it ("failed", or
+ * "needs-auth" after a 401), and resolves to the status it had; undefined
+ * when it was not down.
+ */
+export async function reconnectClaudeMcpServerIfDown(
+  queryRuntime: Pick<ClaudeQuery, "mcpServerStatus" | "reconnectMcpServer">,
+  serverName: string,
+): Promise<"failed" | "needs-auth" | undefined> {
+  const status = (await queryRuntime.mcpServerStatus()).find(
+    (server) => server.name === serverName,
+  )?.status;
+  if (status !== "failed" && status !== "needs-auth") return undefined;
+  await queryRuntime.reconnectMcpServer(serverName);
+  return status;
+}
+
 function closeClaudeQuery(queryRuntime: ClaudeQuery) {
   return Effect.try({
     try: () => queryRuntime.close(),
@@ -522,6 +548,15 @@ export type ClaudeAgentSdkProtocolLogEvent =
       readonly payload: {
         readonly type: "query.set_model";
         readonly model: string;
+      };
+    }
+  | {
+      readonly direction: "outgoing";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "query.reconnect_mcp_server";
+        readonly serverName: string;
+        readonly status: string;
       };
     }
   | {
@@ -751,6 +786,22 @@ export const layerQueryRunner: Layer.Layer<
                   },
                 }),
               ),
+            ),
+          reconnectMcpServerIfDown: (serverName) =>
+            Effect.tryPromise({
+              try: () => reconnectClaudeMcpServerIfDown(queryRuntime, serverName),
+              catch: (cause) => queryRunnerError(cause, "reconnectMcpServer"),
+            }).pipe(
+              Effect.tap((status) =>
+                status === undefined
+                  ? Effect.void
+                  : logProtocolEvent({
+                      direction: "outgoing",
+                      stage: "decoded",
+                      payload: { type: "query.reconnect_mcp_server", serverName, status },
+                    }),
+              ),
+              Effect.map((status) => status !== undefined),
             ),
           interrupt: Effect.tryPromise({
             try: () => queryRuntime.interrupt(),
@@ -1037,6 +1088,9 @@ export function withInheritedSubagentModel(
 /** How long Stop waits for the CLI to acknowledge an interrupt before closing it. */
 export const CLAUDE_INTERRUPT_ACK_TIMEOUT = "10 seconds";
 
+/** The name SpecWithCode's MCP server is attached under in every Claude query. */
+const STUDIO_MCP_SERVER_NAME = "studio-code";
+
 export const CLAUDE_STUDIO_MCP_TOOL_WILDCARD = "mcp__studio-code__*";
 
 // Must stay in sync with the Tool.Readonly annotations on OrchestratorToolkit;
@@ -1082,13 +1136,22 @@ export const CLAUDE_STUDIO_MCP_TOOL_TIMEOUT_MS = 65 * 60 * 1_000;
 // threads or scheduled tasks.
 export function claudeMcpQueryOverrides(input: {
   readonly threadId: ThreadId;
+  /**
+   * The instance this query runs on. Its own credential is the only one it
+   * may carry: another provider's would make every tool call look like that
+   * provider's, and every change it asked for would be refused.
+   */
+  readonly providerInstanceId?: ProviderInstanceId;
   readonly readOnlySandbox: boolean;
   readonly allowedTools?: ReadonlyArray<string>;
 }): {
   readonly allowedTools?: ReadonlyArray<string>;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
 } {
-  const session = McpProviderSession.readMcpProviderSession(input.threadId);
+  const session = McpProviderSession.readMcpProviderSession(
+    input.threadId,
+    input.providerInstanceId,
+  );
   if (session === undefined) {
     return input.allowedTools === undefined ? {} : { allowedTools: input.allowedTools };
   }
@@ -1098,7 +1161,7 @@ export function claudeMcpQueryOverrides(input: {
   return {
     allowedTools: Array.from(new Set([...(input.allowedTools ?? []), ...mcpAllowedTools])),
     mcpServers: {
-      "studio-code": {
+      [STUDIO_MCP_SERVER_NAME]: {
         type: "http",
         url: session.endpoint,
         headers: {
@@ -2682,7 +2745,10 @@ function providerFailureFromResult(
       : terminalResultError(message.terminal_reason, failureHint);
   if (message.subtype !== "success") {
     return makeProviderFailure({
-      message: listedError ?? structuredError ?? message.errors.join("\n"),
+      message:
+        listedError ??
+        structuredError ??
+        (message.errors.join("\n").trim() || claudeResultSubtypeMessage(message.subtype)),
       code: message.subtype,
       class: failureClass,
     });
@@ -2702,9 +2768,25 @@ function providerFailureFromResult(
   });
 }
 
+/** Claude's result subtype names the reason when its error list is empty. */
+export function claudeResultSubtypeMessage(subtype: string): string | undefined {
+  switch (subtype) {
+    case "error_max_turns":
+      return "Claude stopped because the turn reached its maximum number of steps.";
+    case "error_max_budget_usd":
+      return "Claude stopped because the turn reached its spending limit.";
+    case "error_max_structured_output_retries":
+      return "Claude stopped after repeated attempts to produce the required structured output.";
+    case "error_during_execution":
+      return "Claude reported an error while running this turn but gave no details. Send your message again to continue.";
+    default:
+      return undefined;
+  }
+}
+
 /** Shown when the Claude process exits, or Studio restarts, while a turn is running. */
 export const CLAUDE_PROCESS_ENDED_MESSAGE =
-  "The Claude process stopped before this turn finished, for example because Studio restarted for an update. Send your message again to continue.";
+  "The Claude process stopped before this turn finished, for example because SpecWithCode restarted for an update. Send your message again to continue.";
 
 function providerFailureFromApiRetry(message: SDKAPIRetryMessage): OrchestrationV2ProviderFailure {
   const errorName = message.error.replaceAll("_", " ");
@@ -7286,6 +7368,7 @@ export function makeClaudeAdapterV2(
           const queryPolicy = claudeRuntimeQueryPolicyForRuntimePolicy(turnInput.runtimePolicy);
           const mcpOverrides = claudeMcpQueryOverrides({
             threadId: turnInput.threadId,
+            providerInstanceId: adapterOptions.instanceId,
             readOnlySandbox:
               sandboxPolicyKindForClaudeRuntimePolicy(turnInput.runtimePolicy) === "readOnly",
             ...(queryPolicy.allowedTools === undefined
@@ -7307,6 +7390,32 @@ export function makeClaudeAdapterV2(
           const catalog = adapterOptions.modelCatalog?.() ?? BUNDLED_CLAUDE_MODEL_CATALOG;
           const compiledSelection = compileClaudeModelSelection(turnInput.modelSelection, catalog);
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
+          // A reused process may have given up on SpecWithCode's MCP server
+          // after a 401 (its credential was revoked for a while, as when the
+          // thread ran on another provider). The credential it carries is the
+          // thread's current one again, so reconnect instead of leaving the
+          // agent without its tools until the process is replaced.
+          const reconnectStudioMcp = (live: ClaudeLiveQueryContext) =>
+            mcpOverrides.mcpServers === undefined ||
+            live.query.reconnectMcpServerIfDown === undefined
+              ? Effect.void
+              : live.query.reconnectMcpServerIfDown(STUDIO_MCP_SERVER_NAME).pipe(
+                  Effect.timeout("10 seconds"),
+                  Effect.tap((reconnected) =>
+                    reconnected
+                      ? Effect.logInfo("claude.studio-mcp.reconnected", {
+                          threadId: turnInput.threadId,
+                        })
+                      : Effect.void,
+                  ),
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning("claude.studio-mcp.reconnect-failed", {
+                      threadId: turnInput.threadId,
+                      cause,
+                    }),
+                  ),
+                  Effect.asVoid,
+                );
           if (
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
@@ -7320,6 +7429,7 @@ export function makeClaudeAdapterV2(
               yield* existing.query.setPermissionMode(existing.openedPermissionMode);
               existing.permissionMode = existing.openedPermissionMode;
             }
+            yield* reconnectStudioMcp(existing);
             return existing;
           }
 
@@ -7347,6 +7457,7 @@ export function makeClaudeAdapterV2(
                 yield* existing.query.setPermissionMode(existing.openedPermissionMode);
                 existing.permissionMode = existing.openedPermissionMode;
               }
+              yield* reconnectStudioMcp(existing);
               return existing;
             }
             return yield* new ClaudeBackgroundWorkBlocksQueryReplacementError();

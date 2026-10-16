@@ -16,7 +16,6 @@ import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state
 import * as Schema from "effect/Schema";
 import {
   ChevronDownIcon,
-  ChevronLeftIcon,
   ChevronRightIcon,
   ExternalLinkIcon,
   FileIcon,
@@ -31,7 +30,7 @@ import {
   SearchIcon,
   SparklesIcon,
 } from "lucide-react";
-import { type ReactNode, useId, useMemo, useRef, useState } from "react";
+import { useId, useMemo, useRef, useState } from "react";
 
 import { isWebUrl } from "../../../browser/browserLinkTarget";
 import { useOpenLink } from "../../../browser/useOpenLink";
@@ -51,9 +50,8 @@ import {
   LIBRARY_TYPE_FILTERS,
   type LibraryTypeFilter,
 } from "../../../studio/projectPaneModel";
-import ChatMarkdown from "../../ChatMarkdown";
 import { useDirectoryEntries } from "../../files/useDirectoryEntries";
-import { useProjectFileQuery } from "../../files/projectFilesQueryState";
+import { LibraryFileViewer, type LibraryViewerFile } from "./LibraryFileViewer";
 import {
   Menu,
   MenuGroup,
@@ -134,7 +132,7 @@ export function LibraryPane({
   const [findOpen, setFindOpen] = useState(false);
   const [query, setQuery] = useState("");
   const findRef = useRef<HTMLInputElement>(null);
-  const [opened, setOpened] = useState<{ path: string; name: string } | null>(null);
+  const [opened, setOpened] = useState<LibraryViewerFile | null>(null);
   const [adding, setAdding] = useState(false);
   const data: ProjectLibrarySnapshot | null = library.data ?? null;
   const now = new Date();
@@ -240,7 +238,7 @@ export function LibraryPane({
       if (isWebUrl(row.location)) void openLink(row.location).catch(() => undefined);
       return;
     }
-    setOpened({ path: row.location, name: row.name });
+    setOpened({ path: row.location, name: row.name, modifiedAt: row.modifiedAt });
   };
 
   const refresh = () => {
@@ -272,20 +270,24 @@ export function LibraryPane({
     </>
   );
 
-  if (opened) {
-    return (
-      <>
-        <ProjectPaneBar {...bar} tools={tools} />
-        <LibraryFilePreview
-          environmentId={environmentId}
-          workspaceRoot={workspaceRoot}
-          path={opened.path}
-          name={opened.name}
-          onBack={() => setOpened(null)}
-        />
-      </>
-    );
-  }
+  // Files open in the app's viewer overlay, the Library's other files a step away.
+  const viewerFiles = visible.flatMap((row) =>
+    row.kind === "file" && row.location !== null && !row.missing
+      ? [{ path: row.location, name: row.name, modifiedAt: row.modifiedAt }]
+      : [],
+  );
+  const viewer = opened ? (
+    <LibraryFileViewer
+      environmentId={environmentId}
+      workspaceRoot={workspaceRoot}
+      files={viewerFiles.some((file) => file.path === opened.path) ? viewerFiles : [opened]}
+      path={opened.path}
+      onPath={(path) =>
+        setOpened(viewerFiles.find((file) => file.path === path) ?? { path, name: path })
+      }
+      onClose={() => setOpened(null)}
+    />
+  ) : null;
 
   return (
     <>
@@ -528,6 +530,7 @@ export function LibraryPane({
           </div>
         )}
       </div>
+      {viewer}
     </>
   );
 }
@@ -590,72 +593,5 @@ function AddArtifactForm(props: {
         </button>
       </div>
     </form>
-  );
-}
-
-function LibraryFilePreview(props: {
-  environmentId: EnvironmentId;
-  workspaceRoot: string;
-  path: string;
-  name: string;
-  onBack: () => void;
-}) {
-  const type = libraryFileType(props.path);
-  const readable = type !== "images" && !/\.(pdf|docx?|pptx?|xlsx?)$/i.test(props.path);
-  const file = useProjectFileQuery(props.environmentId, props.workspaceRoot, props.path, readable);
-  let body: ReactNode;
-  if (!readable) {
-    body = <p className="sws-empty">No preview for this kind of file. It is at {props.path}.</p>;
-  } else if (file.error) {
-    body = (
-      <p className="project-notice" role="alert">
-        {file.error}
-      </p>
-    );
-  } else if (!file.data) {
-    body = (
-      <p className="sws-empty" role="status">
-        Loading…
-      </p>
-    );
-  } else if (/\.(md|mdx|markdown)$/i.test(props.path)) {
-    body = (
-      <div className="sws-library-markdown">
-        <ChatMarkdown text={file.data.contents} cwd={props.workspaceRoot} />
-      </div>
-    );
-  } else {
-    body = <pre className="sws-library-text">{file.data.contents}</pre>;
-  }
-  return (
-    <div
-      className="sws-threads-body sws-library"
-      id="sws-pane-library"
-      role="tabpanel"
-      aria-labelledby="sws-pane-tab-library"
-    >
-      <div className="sws-library-preview-head">
-        <Tip label="Back to the Library">
-          <button
-            type="button"
-            className="sws-icon-button"
-            aria-label="Back to the Library"
-            onClick={props.onBack}
-          >
-            <ChevronLeftIcon aria-hidden />
-          </button>
-        </Tip>
-        <div>
-          <h2>{props.name}</h2>
-          <p>{props.path}</p>
-        </div>
-      </div>
-      {file.data?.truncated ? (
-        <p className="project-notice" role="status">
-          Showing the start of a large file.
-        </p>
-      ) : null}
-      {body}
-    </div>
   );
 }

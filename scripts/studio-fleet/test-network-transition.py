@@ -31,7 +31,7 @@ class TransitionTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='studio-network-transition-')
         self.home = pathlib.Path(self.temp.name).resolve()
-        self.network = self.home / '.specweave-studio/m4/network'; self.network.mkdir(parents=True)
+        self.network = self.home / '.specwithcode/m4/network'; self.network.mkdir(parents=True)
         (self.home / 'Library/LaunchAgents').mkdir(parents=True)
         self.old = 'a' * 64; self.new = 'b' * 64; self.dns = 'fixture.tail-test.ts.net'
         self.serve = {}; self.pid_changed = False; self.commands = []
@@ -109,7 +109,7 @@ class TransitionTests(unittest.TestCase):
     def test_mixed_artifact_fleet_is_rejected(self):
         self.proof['hosts']['m1']['finalSnapshot']['archiveSha256'] = self.old; self.assert_rejected_unchanged()
     def heartbeat(self):
-        directory = self.home / '.specweave-studio/m4/userdata'; directory.mkdir(parents=True)
+        directory = self.home / '.specwithcode/m4/userdata'; directory.mkdir(parents=True)
         self.before_timestamp = '2026-10-08T07:18:54.222Z'
         self.after_timestamp = '2026-10-08T08:38:00.749Z'
         db = sqlite3.connect(str(directory / 'statev2.sqlite'))
@@ -166,7 +166,7 @@ class TransitionTests(unittest.TestCase):
         self.assert_rejected_unchanged()
     def remote_worker(self, identity='m1'):
         """A worker's state in a separate home; the streamed verifier runs there for real."""
-        home = (self.home / ('remote-' + identity)).resolve(); state = home / '.specweave-studio' / identity / 'userdata'
+        home = (self.home / ('remote-' + identity)).resolve(); state = home / '.specwithcode' / identity / 'userdata'
         state.mkdir(parents=True)
         db = sqlite3.connect(str(state / 'statev2.sqlite'))
         db.executescript("CREATE TABLE checkpoint_diff_blobs(id INTEGER PRIMARY KEY, body BLOB); INSERT INTO checkpoint_diff_blobs(body) VALUES (x'abcd');")
@@ -244,7 +244,7 @@ class TransitionTests(unittest.TestCase):
         self.heartbeat(); self.proof['authHeartbeatWitnesses']['m1'] = self.proof['authHeartbeatWitnesses']['m4']; self.assert_rejected_unchanged()
         del self.proof['authHeartbeatWitnesses']['m1']; self.proof['authHeartbeatWitnesses']['m4']['sessionId'] = 'foreign'; self.assert_rejected_unchanged()
     def restart_heartbeat(self, later=False, second=False):
-        state = self.home / '.specweave-studio/m4/userdata'; state.mkdir(parents=True)
+        state = self.home / '.specwithcode/m4/userdata'; state.mkdir(parents=True)
         path = state / 'statev2.sqlite'; db = sqlite3.connect(path)
         db.execute('CREATE TABLE auth_sessions(session_id TEXT PRIMARY KEY,method TEXT,client_surface TEXT,issued_at TEXT,expires_at TEXT,last_connected_at TEXT,revoked_at TEXT,credential BLOB)')
         now = datetime.datetime.now(datetime.timezone.utc)

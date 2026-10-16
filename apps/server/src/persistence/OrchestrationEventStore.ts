@@ -407,9 +407,16 @@ const makeEventStore = Effect.gen(function* () {
         correlation_id
       FROM orchestration_events
       ${
-        input.onlyAgentEvents === true
-          ? sql``
-          : sql`INDEXED BY idx_orchestration_events_application_high_water`
+        // A command touches a handful of events. Without the hint the planner
+        // prefers the (application_event_version, sequence) range and reads
+        // every V2 event to find them: 117 ms median (1.6 s cold) on a
+        // 197k-event store, against 0.03 ms through the command index.
+        // Coordinator sends and command replays both read by command id.
+        input.commandId !== undefined
+          ? sql`INDEXED BY idx_orch_events_command_id`
+          : input.onlyAgentEvents === true
+            ? sql``
+            : sql`INDEXED BY idx_orchestration_events_application_high_water`
       }
       WHERE sequence > ${input.afterSequence}
         AND sequence <= ${input.throughSequence ?? Number.MAX_SAFE_INTEGER}

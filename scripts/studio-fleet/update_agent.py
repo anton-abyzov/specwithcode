@@ -38,6 +38,7 @@ import update_agent_cache as cache  # noqa: E402  Shipped beside this file.
 import update_request  # noqa: E402  Shipped beside this file.
 import update_agent_recovery as recovery  # noqa: E402  Shipped beside this file.
 import installation_descriptor  # noqa: E402  Shipped beside this file.
+import studio_paths  # noqa: E402  Shipped beside this file.
 
 AGENT_VERSION = 1
 PRODUCT = 'SpecWeave Studio'
@@ -75,20 +76,20 @@ SYSTEM_PYTHON = '/usr/bin/python3'
 GH_PATHS = ('/opt/homebrew/bin/gh', '/usr/local/bin/gh')
 LOOPBACK = ('127.0.0.1', 'localhost', '::1')
 SIGN_IN = 'Sign in with `gh auth login` so Studio can read private releases.'
-WAITING = 'Waiting for running sessions and open Studio terminals to finish'
+WAITING = 'Waiting for running sessions and open SpecWithCode terminals to finish'
 TIMED_OUT = "The updater's check took too long; retrying"
 CANCELLED = 'Update cancelled'
 # What the snapshot helper's refusal means, in the words the app shows. The helper's
 # output is read only for its REFUSAL line or these phrases; it is never logged or kept.
 WAITING_REASONS = (
     ('Native work is not idle', 'Waiting for running tasks, queued messages and open questions to finish'),
-    ('has unexpected descendants', 'Waiting for open Studio terminals and agent processes to close'),
-    ('unexpected or missing descendants', 'Waiting for open Studio terminals and agent processes to close'),
+    ('has unexpected descendants', 'Waiting for open SpecWithCode terminals and agent processes to close'),
+    ('unexpected or missing descendants', 'Waiting for open SpecWithCode terminals and agent processes to close'),
 )
 # `REFUSAL <code> <detail>`, the helper's structured reason; details are counts and names only.
 REFUSAL_LINE = re.compile(r'^REFUSAL ([a-z][a-z-]{0,31})(?: ([ -~]{0,400}))?$', re.M)
-WORK_NOUNS = (('runs', 'running task'), ('requests', 'open request'), ('effects', 'finishing step'),
-              ('sessions', 'active session'))
+WORK_NOUNS = (('runs', 'running task'), ('queued', 'queued message'), ('requests', 'open request'),
+              ('effects', 'finishing step'), ('sessions', 'active session'))
 STATUSES = ('disabled', 'up-to-date', 'available', 'downloading', 'downloaded', 'waiting-for-quiet',
             'installing', 'installed', 'manual-required', 'error')
 LIMITS = {'list': 10 << 20, PLAN_ASSET: 256 << 10, SUMS_ASSET: 256 << 10, MANIFEST_ASSET: 4 << 20,
@@ -342,7 +343,7 @@ def select_upgrade(plan, source_commit):
     for upgrade in plan['service']['upgrades']:
         if source_commit in upgrade['fromSourceCommits']:
             return list(upgrade.get('args', []))
-    raise ManualRequired('Studio %s needs a manual upgrade from this installation (%s).'
+    raise ManualRequired('SpecWithCode %s needs a manual upgrade from this installation (%s).'
                          % (plan['version'], source_commit[:12]))
 
 def select_release(releases, channel, installed):
@@ -455,7 +456,7 @@ def safe_extract(archive, stage, root, expected, home):
 # ---------------------------------------------------------------- installation and config
 
 def studio_home(home, identity):
-    return home / '.specweave-studio' / identity
+    return studio_paths.identity_home(home, identity)
 
 def load_installation(home, identity):
     try:
@@ -610,7 +611,7 @@ def refusal_reason(refusal, outcome):
     if code == 'timeout':
         return 'waiting-for-quiet', TIMED_OUT
     if code == 'environment':
-        return 'error', 'Studio cannot be updated right now: ' + (detail or 'the service does not match its installation')
+        return 'error', 'SpecWithCode cannot be updated right now: ' + (detail or 'the service does not match its installation')
     if code == 'native-work':
         counts = {key: int(value) for key, value in re.findall(r'([a-z]+)=(\d{1,6})', detail)}
         parts = ['%d %s%s' % (counts[key], noun, '' if counts[key] == 1 else 's')
@@ -935,8 +936,8 @@ class Agent(object):
         try:
             value = read_json(path, self.home)
         except AgentError:
-            return {'reason': 'Studio %s failed verification' % version}
-        return value if isinstance(value, dict) else {'reason': 'Studio %s failed verification' % version}
+            return {'reason': 'SpecWithCode %s failed verification' % version}
+        return value if isinstance(value, dict) else {'reason': 'SpecWithCode %s failed verification' % version}
 
     # -- helper execution
 
@@ -1058,7 +1059,7 @@ class Agent(object):
             os.replace(str(newest), str(baseline_path))
             baseline = snapshot
         self.state['quietSince'] = baseline['observedAt']
-        return self.finish('waiting-for-quiet', 'Waiting for a quiet moment before installing Studio %s' % version)
+        return self.finish('waiting-for-quiet', 'Waiting for a quiet moment before installing SpecWithCode %s' % version)
 
     def apply(self, verified, helper_dir, prestate, baseline_path, install_request, may_retry=False):
         """Run the verified helper once. None means it refused before the restart and put every
@@ -1083,7 +1084,7 @@ class Agent(object):
         write_json(self.marker_path, {'version': version, 'receipt': str(receipt), 'at': iso(utcnow()),
                                       'sourceCommit': verified['sourceCommit'],
                                       'previousSourceCommit': verified['binding']['installedSourceCommit']}, self.home)
-        self.set_status('installing', 'Installing Studio %s' % version)
+        self.set_status('installing', 'Installing SpecWithCode %s' % version)
         ended = self.withdrawn(version) if install_request else recovery.automatic_withdrawn(self, verified)
         if ended:  # A settings change that raced the status write above.
             return remove_path(self.marker_path, self.home) or self.finish(*ended)
@@ -1142,18 +1143,18 @@ class Agent(object):
             self.state['checkedAt'] = None  # Discover the next verified hop on a later pass.
             self.state['automaticRetry'] = None
             self.cleanup_versions(version_tuple(inst['version']))
-            return 'installed', 'Studio %s is installed' % version
+            return 'installed', 'SpecWithCode %s is installed' % version
         self.state['lastInstall'] = {'version': version, 'at': now, 'result': 'failed', 'receipt': str(receipt),
                                     'sourceCommit': expected_source, 'previousSourceCommit': previous_source}
         current = inst['version'] if inst is not None else 'its previous version'
         if outcome == 'failed':
             self.ensure_failure_receipt(version, receipt, current)
         if outcome == 'timeout':
-            return 'error', ('Installing Studio %s is taking longer than 15 minutes; it was left to finish. '
+            return 'error', ('Installing SpecWithCode %s is taking longer than 15 minutes; it was left to finish. '
                              'See the update receipt.' % version)
         if outcome == 'interrupted':
-            return 'error', 'The install of Studio %s was interrupted; Studio is on %s.' % (version, current)
-        return 'error', 'Studio %s did not install; Studio stayed on %s. See the update receipt.' % (version, current)
+            return 'error', 'The install of SpecWithCode %s was interrupted; SpecWithCode is on %s.' % (version, current)
+        return 'error', 'SpecWithCode %s did not install; SpecWithCode stayed on %s. See the update receipt.' % (version, current)
 
     def ensure_failure_receipt(self, version, receipt, current):
         """A helper that failed before writing its receipt still leaves one with its cause."""
@@ -1259,7 +1260,7 @@ class Agent(object):
             if install_request:
                 state['handledInstallRequestAt'] = config['installRequestedAt']
             if last.get('version') == self.inst['version'] and self.failed_switch_stands(last):
-                return self.finish('error', 'Updating to Studio %s failed. See the update receipt.' % last['version'])
+                return self.finish('error', 'Updating to SpecWithCode %s failed. See the update receipt.' % last['version'])
             return self.finish('up-to-date', None)
         refused = install_request and update_request.refuse(config, state, meta['version'])  # Bound to another version.
         if meta.get('manual') or meta.get('rejected') or not meta.get('plan') or refused:
@@ -1278,8 +1279,8 @@ class Agent(object):
             if rejected and not fresh:
                 if install_request:
                     state['handledInstallRequestAt'] = config['installRequestedAt']
-                return self.finish('error', rejected.get('reason') or 'Studio %s failed verification' % version)
-            self.set_status('downloading', 'Downloading Studio %s' % version)
+                return self.finish('error', rejected.get('reason') or 'SpecWithCode %s failed verification' % version)
+            self.set_status('downloading', 'Downloading SpecWithCode %s' % version)
             try:
                 verified = self.download_and_verify(meta)
             except AgentError as error:
@@ -1317,7 +1318,7 @@ def run_once(home, identity, test_mode, out):
     load_installation(home, identity)  # Refuse before creating locks, logs or update state.
     own = owned(studio_home(home, identity), home)
     if not own.is_dir():
-        raise AgentError('Studio %s is not installed' % identity)
+        raise AgentError('SpecWithCode %s is not installed' % identity)
     updates = ensure_dir(own / 'updates', home)
     os.chmod(str(updates), 0o700)
     lock_fd = acquire_lock(updates / 'agent.lock', home)
@@ -1376,11 +1377,12 @@ def install_launch_agent(home, identity, out):
     label = agent_label(identity)
     lock_fd = acquire_lock(updates / 'agent.lock', home)
     try:
-        target_dir = ensure_dir(home / '.local' / 'share' / 'specweave-studio' / 'updater', home)
+        target_dir = ensure_dir(studio_paths.updater_root(home), home)
         os.chmod(str(target_dir), 0o700)
         files = [(owned(target_dir / os.path.basename(name), home), pathlib.Path(os.path.abspath(name)).read_bytes())
-                 for name in (update_request.__file__, recovery.__file__, installation_descriptor.__file__,
-                              pathlib.Path(__file__).with_name('managed_updates.py'), __file__)]  # Modules first.
+                 for name in (studio_paths.__file__, update_request.__file__, recovery.__file__,
+                              installation_descriptor.__file__, pathlib.Path(__file__).with_name('managed_updates.py'),
+                              pathlib.Path(__file__).with_name('migrate_home.py'), __file__)]  # Modules first.
 
         def same(path, data):
             return path.is_file() and not path.is_symlink() and read_owned(path, home, 8 << 20) == data

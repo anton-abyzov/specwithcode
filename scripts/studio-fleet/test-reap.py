@@ -377,7 +377,7 @@ class UpdateReapMode(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.home = pathlib.Path(directory.name).resolve()
-        self.own = self.home / '.specweave-studio' / 'm4'
+        self.own = self.home / '.specwithcode' / 'm4'
         (self.own / 'updates').mkdir(parents=True)
         self.service = {'owner': mock.Mock(uid=501), 'home': self.home, 'own': self.own, 'node': pathlib.Path(NODE),
                         'content': {'ProgramArguments': ARGS},
@@ -497,7 +497,7 @@ class UpdateReapMode(unittest.TestCase):
 
     def test_snapshot_still_reads_the_same_verified_service(self):
         self.assertIn('_service(identity)', pathlib.Path(HERE / 'update.py').read_text())
-        with mock.patch.object(update, '_service', side_effect=AssertionError('The Studio service is not running')):
+        with mock.patch.object(update, '_service', side_effect=AssertionError('The SpecWithCode service is not running')):
             with self.assertRaises(AssertionError):
                 update.snapshot('m4')
 

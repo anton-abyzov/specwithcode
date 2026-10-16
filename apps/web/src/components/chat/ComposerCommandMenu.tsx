@@ -23,6 +23,7 @@ import {
 import { memo, useLayoutEffect, useRef } from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
+import type { ComposerAppCommand } from "../../studio/composerAppCommands";
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
 import { Command, CommandGroup, CommandItem, CommandList } from "../ui/command";
@@ -43,6 +44,14 @@ export type ComposerCommandItem =
       id: string;
       type: "slash-command";
       command: ComposerSlashCommand;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
+      /** Run by the app itself, without a model turn. */
+      type: "app-command";
+      command: ComposerAppCommand;
       label: string;
       description: string;
     }

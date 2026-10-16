@@ -44,12 +44,6 @@ export function effortRank(value: string): number | undefined {
   return LADDER.find(([, , aliases]) => aliases.includes(key))?.[0];
 }
 
-/** "xhigh" → "Extra High"; values off the ladder are returned unchanged. */
-export function formatEffortLabel(value: string): string {
-  const rank = effortRank(value);
-  return rank === undefined ? value : LADDER.find(([candidate]) => candidate === rank)![1];
-}
-
 const choiceRank = (choice: { readonly id: string; readonly label: string }) =>
   effortRank(choice.id) ?? effortRank(choice.label);
 
@@ -158,24 +152,4 @@ export function modelSelectionEffortValue(
 ): string | undefined {
   const value = selection?.options?.find((option) => isEffortId(option.id))?.value;
   return typeof value === "string" ? value : undefined;
-}
-
-/** The effort a model selection runs at: its explicit option, else the model default. */
-export function modelSelectionEffortLabel(
-  selection: Pick<ModelSelection, "options"> | null | undefined,
-  descriptors?: ReadonlyArray<ProviderOptionDescriptor> | null,
-): string | undefined {
-  const descriptor = findEffortDescriptor(descriptors);
-  const explicit = selection?.options?.find((option) =>
-    descriptor === undefined ? isEffortId(option.id) : option.id === descriptor.id,
-  )?.value;
-  const value =
-    typeof explicit === "string"
-      ? explicit
-      : (descriptor?.currentValue ?? descriptor?.options.find((choice) => choice.isDefault)?.id);
-  if (value === undefined) return undefined;
-  const choice = descriptor?.options.find((candidate) => candidate.id === value);
-  return choice !== undefined && choice.label !== choice.id
-    ? choice.label
-    : formatEffortLabel(value);
 }

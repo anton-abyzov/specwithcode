@@ -10,6 +10,7 @@ import type {
 } from "@specweave-studio/contracts/studio";
 import {
   absoluteTime,
+  attentionLabel,
   canSelectCapacity,
   capacityLabel,
   capacitySummary,
@@ -318,7 +319,10 @@ describe("native shells and explicit instance selection", () => {
   it("preserves real approval/input priority and background waiting semantics", () => {
     const views = deriveSessions(
       [
-        shell({ id: ThreadId.make("waiting"), runtime: { status: "idle" } as EnvironmentThreadShell["runtime"] }),
+        shell({
+          id: ThreadId.make("waiting"),
+          runtime: { status: "idle" } as EnvironmentThreadShell["runtime"],
+        }),
         shell({
           id: ThreadId.make("approval"),
           hasPendingApprovals: true,
@@ -333,6 +337,31 @@ describe("native shells and explicit instance selection", () => {
     expect(views[0]?.working).toBe(true);
     expect(views.find((s) => s.thread.id === "input")?.attention).toBe("input");
     expect(views.find((s) => s.thread.id === "waiting")?.state).toBe("Waiting for background work");
+  });
+  it("asks the user about a held queue on a quiet thread, even a resolved one", () => {
+    const views = deriveSessions(
+      [
+        shell({
+          id: ThreadId.make("held"),
+          heldQueuedCount: 13,
+          settledOverride: "settled",
+          latestRun: { status: "completed" } as EnvironmentThreadShell["latestRun"],
+        }),
+        shell({
+          id: ThreadId.make("held-working"),
+          heldQueuedCount: 1,
+          runtime: { status: "running" } as EnvironmentThreadShell["runtime"],
+        }),
+      ],
+      [],
+      new Set(["host"]),
+    );
+    const held = views.find((s) => s.thread.id === "held");
+    expect(held?.attention).toBe("held");
+    expect(held?.state).toBe("13 queued messages held · Resume or discard");
+    expect(attentionLabel("held")).toBe("Queued messages held");
+    // While it works the run speaks for the thread; the held row shows once it stops.
+    expect(views.find((s) => s.thread.id === "held-working")?.attention).not.toBe("held");
   });
   it("shows actionable native plans and scoped projects without marking a successful run settled", () => {
     const projects = [
@@ -352,6 +381,35 @@ describe("native shells and explicit instance selection", () => {
     expect(view?.attention).toBe("plan");
     expect(view?.project?.title).toBe("Correct host");
     expect(view?.settled).toBe(false);
+  });
+  it("lists a quiet running thread as stalled and names what a long one waits on", () => {
+    const now = Date.parse("2026-10-15T12:00:00.000Z");
+    const running = { status: "running" } as EnvironmentThreadShell["runtime"];
+    const views = deriveSessions(
+      [
+        shell({
+          id: "stuck" as never,
+          runtime: running,
+          updatedAt: "2026-10-15T11:30:00.000Z",
+          activeWork: null,
+        }),
+        shell({
+          id: "tests" as never,
+          runtime: running,
+          updatedAt: "2026-10-15T11:30:00.000Z",
+          activeWork: { label: "pnpm test", startedAt: "2026-10-15T11:48:00.000Z" },
+        }),
+      ],
+      [],
+      new Set(["host"]),
+      now,
+    );
+    const stuck = views.find((s) => s.thread.id === "stuck");
+    expect(stuck?.attention).toBe("stalled");
+    expect(stuck?.state).toBe("No activity for 30m");
+    const tests = views.find((s) => s.thread.id === "tests");
+    expect(tests?.attention).toBeNull();
+    expect(tests?.state).toBe("Waiting on pnpm test · 12m");
   });
   it("keeps the time a limited run stopped when the service restart bumps the thread", () => {
     const limited = shell({
@@ -411,7 +469,7 @@ describe("native shells and explicit instance selection", () => {
     );
     expect(disconnected.map((view) => view.thread.updatedAt)).toEqual([recent, recent]);
 
-    const reconnected = deriveSessions(shells, [], new Set(["host"]));
+    const reconnected = deriveSessions(shells, [], new Set(["host"]), now);
     expect(reconnected.find((view) => view.thread.id === "working")?.working).toBe(true);
     expect(reconnected.find((view) => view.thread.id === "working")?.state).toBe("Working");
     expect(reconnected.find((view) => view.thread.id === "approval")?.attention).toBe("approval");
@@ -419,8 +477,14 @@ describe("native shells and explicit instance selection", () => {
 });
 
 it("fresh explicit native allowance supports missing windows without treating credit metadata as permission", () => {
-  const a = account(); Object.assign(a.quota, { window: null, weekly: null, ordinaryUsageAllowed: true });
-  expect(quotaFresh(a, now)).toBe(true); expect(canSelectCapacity(a, now)).toBe(true);
-  Object.assign(a.quota, { ordinaryUsageAllowed: null, credits: { hasCredits: true, unlimited: true } });
-  expect(quotaFresh(a, now)).toBe(false); expect(canSelectCapacity(a, now)).toBe(false);
+  const a = account();
+  Object.assign(a.quota, { window: null, weekly: null, ordinaryUsageAllowed: true });
+  expect(quotaFresh(a, now)).toBe(true);
+  expect(canSelectCapacity(a, now)).toBe(true);
+  Object.assign(a.quota, {
+    ordinaryUsageAllowed: null,
+    credits: { hasCredits: true, unlimited: true },
+  });
+  expect(quotaFresh(a, now)).toBe(false);
+  expect(canSelectCapacity(a, now)).toBe(false);
 });

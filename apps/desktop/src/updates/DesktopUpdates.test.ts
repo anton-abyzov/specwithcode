@@ -608,6 +608,69 @@ describe("DesktopUpdates", () => {
     }),
   );
 
+  it.effect("installs a download whose updater promise never settles", () =>
+    Effect.gen(function* () {
+      const downloadStarted = yield* Deferred.make<void>();
+      // As seen on 1.0.33: an error event at 100%, "update-downloaded", and a
+      // download promise that stays pending, which used to hold the updater.
+      const harness = makeHarness({
+        downloadUpdate: Deferred.succeed(downloadStarted, undefined).pipe(
+          Effect.andThen(Effect.never),
+        ),
+      });
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          harness.emit("update-available", { version: "1.2.4" });
+          yield* flushCallbacks;
+          yield* updates.download.pipe(Effect.forkScoped);
+          yield* Deferred.await(downloadStarted);
+          harness.emit("error", new Error("download reported an error"));
+          harness.emit("update-downloaded", { version: "1.2.4" });
+          yield* flushCallbacks;
+
+          const result = yield* updates.installPrepared("1.2.4");
+          assert.isTrue(result.accepted);
+          assert.notEqual(result.reason, "busy");
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    }),
+  );
+
+  it.effect("gives up a download that stops responding so the updater is free again", () =>
+    Effect.gen(function* () {
+      const downloadStarted = yield* Deferred.make<void>();
+      const harness = makeHarness({
+        downloadUpdate: Deferred.succeed(downloadStarted, undefined).pipe(
+          Effect.andThen(Effect.never),
+        ),
+      });
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          harness.emit("update-available", { version: "1.2.4" });
+          yield* flushCallbacks;
+          const download = yield* updates.download.pipe(Effect.forkScoped);
+          yield* Deferred.await(downloadStarted);
+          yield* Effect.yieldNow;
+          yield* TestClock.adjust(Duration.minutes(31));
+          const outcome = yield* Fiber.join(download);
+          assert.isFalse(outcome.completed);
+          const state = yield* updates.getState;
+          assert.equal(state.message, "The update download stopped responding.");
+          // The lock is free: a new download starts.
+          yield* updates.download.pipe(Effect.forkScoped);
+          yield* Effect.yieldNow;
+          assert.equal((yield* updates.getState).status, "downloading");
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    }),
+  );
+
   it.effect("clears quitting state after an unexpected install setup failure", () => {
     const harness = makeHarness({
       stopBackend: Effect.die(new Error("backend stop failed")),

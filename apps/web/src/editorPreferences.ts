@@ -13,13 +13,32 @@ import {
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
-import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "./hooks/useLocalStorage";
+import { getLocalStorageItem, useLocalStorage } from "./hooks/useLocalStorage";
 import { useCallback, useMemo } from "react";
 import { shellEnvironment } from "./state/shell";
 import { useAtomCommand } from "./state/use-atom-command";
 import { readEnvironmentScope } from "./state/session";
 
-const LAST_EDITOR_KEY = "studio:last-editor";
+/**
+ * Only an editor the user picked is stored. The old `studio:last-editor` key also
+ * held auto-persisted fallbacks (Cursor, first in the catalog), so it is not read.
+ */
+const PREFERRED_EDITOR_KEY = "studio:preferred-editor";
+
+/** VS Code is the default; the remaining editors keep their catalog order. */
+const DEFAULT_EDITOR_ORDER: ReadonlyArray<EditorId> = [
+  "vscode",
+  ...EDITORS.map((editor) => editor.id).filter((id) => id !== "vscode"),
+];
+
+/** The user's stored choice when it is installed, else VS Code, else the first installed editor. */
+export function resolvePreferredEditor(
+  stored: EditorId | null,
+  availableEditors: ReadonlyArray<EditorId>,
+): EditorId | null {
+  if (stored && availableEditors.includes(stored)) return stored;
+  return DEFAULT_EDITOR_ORDER.find((id) => availableEditors.includes(id)) ?? null;
+}
 
 export class PreferredEditorEnvironmentRequiredError extends Schema.TaggedError<PreferredEditorEnvironmentRequiredError>()(
   "PreferredEditorEnvironmentRequiredError",
@@ -46,23 +65,14 @@ export class PreferredEditorUnavailableError extends Schema.TaggedError<Preferre
 }
 
 export function usePreferredEditor(availableEditors: ReadonlyArray<EditorId>) {
-  const [lastEditor, setLastEditor] = useLocalStorage(LAST_EDITOR_KEY, null, EditorId);
+  const [storedEditor, setStoredEditor] = useLocalStorage(PREFERRED_EDITOR_KEY, null, EditorId);
 
-  const effectiveEditor = useMemo(() => {
-    if (lastEditor && availableEditors.includes(lastEditor)) return lastEditor;
-    return EDITORS.find((editor) => availableEditors.includes(editor.id))?.id ?? null;
-  }, [lastEditor, availableEditors]);
+  const effectiveEditor = useMemo(
+    () => resolvePreferredEditor(storedEditor, availableEditors),
+    [storedEditor, availableEditors],
+  );
 
-  return [effectiveEditor, setLastEditor] as const;
-}
-
-function resolveAndPersistPreferredEditor(availableEditors: readonly EditorId[]): EditorId | null {
-  const availableEditorIds = new Set(availableEditors);
-  const stored = getLocalStorageItem(LAST_EDITOR_KEY, EditorId);
-  if (stored && availableEditorIds.has(stored)) return stored;
-  const editor = EDITORS.find((editor) => availableEditorIds.has(editor.id))?.id ?? null;
-  if (editor) setLocalStorageItem(LAST_EDITOR_KEY, editor, EditorId);
-  return editor ?? null;
+  return [effectiveEditor, setStoredEditor] as const;
 }
 
 export function useOpenInPreferredEditor(
@@ -105,7 +115,10 @@ export function useOpenInPreferredEditor(
           ),
         );
       }
-      const editor = resolveAndPersistPreferredEditor(availableEditors);
+      const editor = resolvePreferredEditor(
+        getLocalStorageItem(PREFERRED_EDITOR_KEY, EditorId),
+        availableEditors,
+      );
       if (!editor) {
         return AsyncResult.failure(
           Cause.fail(

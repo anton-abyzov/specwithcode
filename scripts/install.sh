@@ -8,7 +8,8 @@
 #   STUDIO_CHANNEL           release train to follow: stable, nightly, or preview
 #                            (default: stable; preview is a maintainers' test train)
 #   STUDIO_VERSION           exact version to install (overrides STUDIO_CHANNEL)
-#   STUDIO_HOME              Studio home directory (default: ~/.specweave-studio)
+#   STUDIO_HOME              Studio home directory (default: ~/.specwithcode; an
+#                            existing real ~/.specweave-studio is kept until migrated)
 #   STUDIO_INSTALL_BIN_DIR   where the `specweave-studio` symlink goes (default: ~/.local/bin)
 #   STUDIO_RELEASE_BASE_URL  mirror for releases/download (default: GitHub)
 #
@@ -19,7 +20,13 @@ set -eu
 
 repo="anton-abyzov/specwithcode"
 base_url="${STUDIO_RELEASE_BASE_URL:-https://github.com/${repo}/releases/download}"
-studio_home="${STUDIO_HOME:-$HOME/.specweave-studio}"
+# ~/.specwithcode, unless only a real (unmigrated) legacy ~/.specweave-studio exists.
+# A migrated legacy root is a link to the branded one.
+default_studio_home="$HOME/.specwithcode"
+if [ -d "$HOME/.specweave-studio" ] && [ ! -L "$HOME/.specweave-studio" ] && [ ! -e "$HOME/.specwithcode" ]; then
+  default_studio_home="$HOME/.specweave-studio"
+fi
+studio_home="${STUDIO_HOME:-$default_studio_home}"
 # Same spelling the CLI resolves STUDIO_HOME to, so both writers of the
 # launcher agree on its target.
 studio_home="$(printf '%s' "$studio_home" | tr -s /)"
@@ -38,6 +45,10 @@ launcher="${bin_dir}/specweave-studio"
 if [ -e "$launcher" ] || [ -L "$launcher" ]; then
   case "$(readlink "$launcher" 2>/dev/null | tr -s /)" in
     "${studio_home}/runtime/versions/"*) ;;
+    # A launcher written before the move still targets the linked legacy root.
+    "$(printf '%s' "$HOME/.specweave-studio" | tr -s /)/runtime/versions/"*)
+      [ -z "${STUDIO_HOME:-}" ] && [ -L "$HOME/.specweave-studio" ] ||
+        fail "${launcher} already exists and is not a SpecWithCode launcher for ${studio_home}; move it, or set STUDIO_INSTALL_BIN_DIR to another directory" ;;
     *) fail "${launcher} already exists and is not a SpecWithCode launcher for ${studio_home}; move it, or set STUDIO_INSTALL_BIN_DIR to another directory" ;;
   esac
 fi

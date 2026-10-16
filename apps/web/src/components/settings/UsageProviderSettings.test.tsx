@@ -127,7 +127,7 @@ async function render(
     root.render(
       <UsageProviderSettings
         environmentId={environmentId}
-        environmentLabel="Studio Mac"
+        environmentLabel="SpecWithCode Mac"
         sources={(props.sources ?? {}) as never}
         cursorKeychainUsageEnabled={false}
         readOnly={props.readOnly ?? false}
@@ -144,7 +144,7 @@ it("offers a detected hub and adds it without the browser handling a key", async
     value: { hubs: [hub({ sourceId: "cliproxy-127.0.0.1-8317" as never })] },
   });
   await render([hub()]);
-  expect(container.textContent).toContain("CLIProxyAPI found on Studio Mac");
+  expect(container.textContent).toContain("CLIProxyAPI found on SpecWithCode Mac");
   expect(container.textContent).toContain("http://127.0.0.1:8317 · Running");
   expect(container.textContent).not.toContain("No hubs configured.");
   await act(async () => button("Add this hub")!.click());
@@ -180,7 +180,7 @@ it("separates a configured quota source from chat setup on the selected machine"
   });
   expect(container.textContent).toContain("Usage reporting only");
   expect(container.textContent).toContain(
-    "Adding a hub does not connect its models to Studio chats.",
+    "Adding a hub does not connect its models to SpecWithCode chats.",
   );
   expect(container.textContent).toContain("CLIProxyAPI · Usage reporting");
   await act(async () => button("Set up chat providers")!.click());

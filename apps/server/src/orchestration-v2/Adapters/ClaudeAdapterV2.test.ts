@@ -906,6 +906,73 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
     }
   });
 
+  it("carries only its own instance's MCP credential when another provider was prepared last", () => {
+    const threadId = ThreadId.make("thread-claude-mcp-own-instance");
+    const claude = ProviderInstanceId.make("claudeAgent");
+    const config = (providerInstanceId: ProviderInstanceId, token: string) => ({
+      environmentId: EnvironmentId.make("environment-claude-mcp"),
+      threadId,
+      providerSessionId: `mcp-session-${providerInstanceId}`,
+      providerInstanceId,
+      endpoint: "http://127.0.0.1:43123/mcp",
+      authorizationHeader: `Bearer ${token}`,
+      browserToolsAvailable: true,
+    });
+    const authorization = (providerInstanceId: ProviderInstanceId) =>
+      (
+        ClaudeAdapterV2.claudeMcpQueryOverrides({
+          threadId,
+          providerInstanceId,
+          readOnlySandbox: false,
+        }).mcpServers?.["studio-code"] as { readonly headers?: Record<string, string> } | undefined
+      )?.headers?.Authorization;
+    try {
+      McpProviderSession.setMcpProviderSession(config(claude, "claude-token"));
+      // A routine or a limit switch ran the thread on Copilot meanwhile.
+      McpProviderSession.setMcpProviderSession(
+        config(ProviderInstanceId.make("acpRegistry_copilot"), "copilot-token"),
+      );
+      assert.equal(authorization(claude), "Bearer claude-token");
+      // An instance with no credential of its own gets none, never another's.
+      assert.isUndefined(authorization(ProviderInstanceId.make("claudeAgent-2")));
+    } finally {
+      McpProviderSession.clearMcpProviderSession(threadId);
+    }
+  });
+
+  it.effect("reconnects SpecWithCode's MCP server only when the process gave up on it", () =>
+    Effect.gen(function* () {
+      const reconnect = (status: "connected" | "failed" | "needs-auth" | "pending") =>
+        Effect.promise(async () => {
+          const reconnected: Array<string> = [];
+          const result = await ClaudeAdapterV2.reconnectClaudeMcpServerIfDown(
+            {
+              mcpServerStatus: async () =>
+                [
+                  { name: "other", status: "failed" },
+                  { name: "studio-code", status },
+                ] as never,
+              reconnectMcpServer: async (name: string) => {
+                reconnected.push(name);
+              },
+            },
+            "studio-code",
+          );
+          return { result, reconnected };
+        });
+      assert.deepEqual(yield* reconnect("connected"), { result: undefined, reconnected: [] });
+      assert.deepEqual(yield* reconnect("pending"), { result: undefined, reconnected: [] });
+      assert.deepEqual(yield* reconnect("failed"), {
+        result: "failed",
+        reconnected: ["studio-code"],
+      });
+      assert.deepEqual(yield* reconnect("needs-auth"), {
+        result: "needs-auth",
+        reconnected: ["studio-code"],
+      });
+    }),
+  );
+
   it.effect("writes Claude Agent SDK protocol frames to the native provider log", () =>
     Effect.gen(function* () {
       const writes: Array<{

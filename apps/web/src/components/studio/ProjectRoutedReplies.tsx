@@ -1,79 +1,98 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo } from "react";
 import * as DateTime from "effect/DateTime";
-import type { ThreadId } from "@specweave-studio/contracts";
+import { MessageId, ThreadId } from "@specweave-studio/contracts";
 import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
-import { useThreadProjection } from "../../state/entities";
-import { routedRepliesForThread } from "../../studio/projectCoordinatorMessageDisplay";
-import { formatRelativeTimeLabel } from "../../timestampFormat";
+import { useThreadProjection, useThreadShell } from "../../state/entities";
+import {
+  routedRepliesForThread,
+  routedReplyNotes,
+} from "../../studio/projectCoordinatorMessageDisplay";
+import type { ChatMessage, RoutedMessageNote } from "../../types";
 
 /**
- * What the person typed inside this thread. Each message went to the coordinator and
- * is kept on its conversation, so the thread shows that record instead of losing it.
+ * Messages the person typed in this worker that did not come back to it. Each
+ * one goes to the coordinator first; one delivered back here is already in the
+ * timeline as the person's own, so only the rest are returned, to sit in the
+ * timeline where they were typed with a note on where they went.
  */
-export function ProjectRoutedReplies({
-  project,
-  coordinatorId,
-  thread,
-  onOpenCoordinator,
-}: {
-  project: { readonly id: string; readonly environmentId: EnvironmentThreadShell["environmentId"] };
-  coordinatorId: ThreadId;
-  thread: EnvironmentThreadShell;
-  /** Leaves this thread for the coordinator's conversation in the main column. */
-  onOpenCoordinator: () => void;
-}) {
-  const ref = useMemo(
-    () => scopeThreadRef(project.environmentId, coordinatorId),
+export function useRoutedThreadMessages(
+  project: { readonly id: string; readonly environmentId: EnvironmentThreadShell["environmentId"] },
+  coordinatorId: ThreadId | null,
+  thread: EnvironmentThreadShell,
+): readonly ChatMessage[] {
+  const coordinatorRef = useMemo(
+    () => (coordinatorId ? scopeThreadRef(project.environmentId, coordinatorId) : null),
     [project.environmentId, coordinatorId],
   );
-  const coordinator = useThreadProjection(ref);
-  const messages = coordinator?.projection.messages;
-  const replies = useMemo(
-    () => (messages ? routedRepliesForThread(messages, project, thread) : []),
-    [messages, project, thread],
+  const threadRef = useMemo(
+    () => scopeThreadRef(thread.environmentId, thread.id),
+    [thread.environmentId, thread.id],
   );
-  const [open, setOpen] = useState(false);
-  // A message sent just now is the one the person is looking for.
-  const seen = useRef(replies.length);
-  useEffect(() => {
-    if (replies.length > seen.current) setOpen(true);
-    seen.current = replies.length;
-  }, [replies.length]);
-  if (replies.length === 0) return null;
+  const coordinatorMessages = useThreadProjection(coordinatorRef)?.projection.messages;
+  const threadMessages = useThreadProjection(threadRef)?.projection.messages;
+  return useMemo(() => {
+    if (!coordinatorId || !coordinatorMessages) return [];
+    const replies = routedRepliesForThread(coordinatorMessages, project, thread);
+    const notes = routedReplyNotes(replies, threadMessages ?? [], thread.id, coordinatorId);
+    return notes.flatMap((note): ChatMessage[] => {
+      const reply = replies.find((candidate) => candidate.id === note.id);
+      if (!reply?.createdAt) return [];
+      const at = DateTime.formatIso(reply.createdAt);
+      return [
+        {
+          id: MessageId.make(note.id),
+          role: "user",
+          text: note.text,
+          runId: null,
+          streaming: false,
+          createdBy: "user",
+          createdAt: at,
+          updatedAt: at,
+          routedNote: {
+            kind: note.kind,
+            targetThreadId:
+              note.targetThreadId === null ? null : ThreadId.make(note.targetThreadId),
+          },
+        },
+      ];
+    });
+  }, [coordinatorId, coordinatorMessages, threadMessages, project, thread]);
+}
+
+/** One muted line under the person's message: where the coordinator sent it. */
+export function RoutedMessageNoteLine({
+  note,
+  environmentId,
+  onOpenThread,
+  onOpenCoordinator,
+}: {
+  note: RoutedMessageNote;
+  environmentId: EnvironmentThreadShell["environmentId"];
+  onOpenThread: (threadId: ThreadId) => void;
+  onOpenCoordinator: (() => void) | undefined;
+}) {
+  const target = useThreadShell(
+    useMemo(
+      () =>
+        note.targetThreadId === null ? null : scopeThreadRef(environmentId, note.targetThreadId),
+      [environmentId, note.targetThreadId],
+    ),
+  );
+  const link = "rounded-sm underline-offset-2 hover:text-foreground hover:underline";
   return (
-    <details
-      className="project-routed"
-      open={open}
-      onToggle={(event) => setOpen(event.currentTarget.open)}
-    >
-      <summary>
-        {replies.length === 1
-          ? "1 message you sent from this thread"
-          : `${replies.length} messages you sent from this thread`}
-      </summary>
-      <ol aria-label="Messages you sent from this thread">
-        {replies.map((reply) => (
-          <li key={reply.id}>
-            <p className="project-routed-text">{reply.text.trim()}</p>
-            <p className="project-routed-answer">
-              {reply.createdAt
-                ? `${formatRelativeTimeLabel(DateTime.formatIso(reply.createdAt))} · `
-                : ""}
-              {reply.answer === null
-                ? "Waiting for the coordinator"
-                : `Coordinator: ${reply.answer}`}
-            </p>
-          </li>
-        ))}
-      </ol>
-      <button
-        type="button"
-        className="project-control project-text-link"
-        onClick={onOpenCoordinator}
-      >
-        Show in the coordinator chat
-      </button>
-    </details>
+    <p className="me-1 text-2xs text-muted-foreground" data-routed-note={note.kind}>
+      {note.kind === "sent" && note.targetThreadId !== null ? (
+        <button type="button" className={link} onClick={() => onOpenThread(note.targetThreadId!)}>
+          → Sent to {target?.title ?? "another thread"}
+        </button>
+      ) : note.kind === "pending" ? (
+        "Sending via coordinator…"
+      ) : (
+        <button type="button" className={link} onClick={onOpenCoordinator}>
+          → Answered in the coordinator
+        </button>
+      )}
+    </p>
   );
 }

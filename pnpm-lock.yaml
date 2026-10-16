@@ -108,6 +108,7 @@ patchedDependencies:
   '@react-native-menu/menu@2.0.0': a4866ecfcd44f318043de839d20110c17e14909004900f002ffe12050376f2ba
   '@react-navigation/native-stack@7.17.6': e667c3cef8c78bb9ff4882ee5bd23a432247b843060a9499eb5f07e9e2295552
   alchemy@2.0.0-beta.80: bea1b6c0c0b23157fd5f439a1d7feff430f28ac1621ba135d8a13eeec60ccacd
+  app-builder-lib@26.15.6: 4688f96749e3d76cf27bc535d874470bf264610a331db13644df7715d699acf1
   dbus-next@0.10.2: 77d68b2ee4f26cc99b0d946353761149a9940a4c339ceeb2d4821e5c1dfbaec8
   effect@4.0.1: a33cba07c41f32374c2aaa86ea4a84d3ab9a872a78c94b65e929b19f8361856f
   expo-audio@58.0.4: c20cb927d6848c53e7bf6ec14fe12f19daae9210165d2dbaf4e0f97ce31e8742
@@ -313,7 +314,7 @@ importers:
         version: link:../../packages/contracts
       '@specweave-studio/mobile-markdown-text':
         specifier: file:./modules/studio-markdown-text
-        version: file:apps/mobile/modules/studio-markdown-text(afae94297d61d3a65abc2214f9b05422)
+        version: file:apps/mobile/modules/studio-markdown-text(db966ed54b0732dc85844abd1d523a92)
       '@specweave-studio/mobile-review-diff-native':
         specifier: file:./modules/studio-review-diff
         version: file:apps/mobile/modules/studio-review-diff
@@ -522,12 +523,6 @@ importers:
 
   apps/server:
     dependencies:
-      '@muse-code/sdk':
-        specifier: 1.4.8
-        version: 1.4.8(@types/node@24.12.4)
-      '@modelcontextprotocol/sdk':
-        specifier: 1.29.0
-        version: 1.29.0(zod@4.6.5)
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.3.276
         version: 0.3.276(@anthropic-ai/sdk@0.93.0(zod@4.6.5))(@modelcontextprotocol/sdk@1.29.0(zod@4.6.5))(zod@4.6.5)
@@ -543,6 +538,12 @@ importers:
       '@ff-labs/fff-node':
         specifier: 0.9.4
         version: 0.9.4(patch_hash=c4e3cc2420ceb9dc650f9d189e9c24baf7e83f342998bacda5f459a4ce7927a8)
+      '@modelcontextprotocol/sdk':
+        specifier: 1.29.0
+        version: 1.29.0(zod@4.6.5)
+      '@muse-code/sdk':
+        specifier: 1.4.8
+        version: 1.4.8(@types/node@24.12.4)
       '@napi-rs/keyring':
         specifier: ^1.3.0
         version: 1.3.0
@@ -594,6 +595,9 @@ importers:
       yauzl:
         specifier: ^3.4.0
         version: 3.4.0
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
     devDependencies:
       '@effect/vitest':
         specifier: 4.0.1
@@ -601,6 +605,12 @@ importers:
       '@specweave-studio/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@specweave-studio/effect-acp':
+        specifier: workspace:*
+        version: link:../../packages/effect-acp
+      '@specweave-studio/effect-codex-app-server':
+        specifier: workspace:*
+        version: link:../../packages/effect-codex-app-server
       '@specweave-studio/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -622,12 +632,6 @@ importers:
       '@types/yauzl':
         specifier: ^3.4.0
         version: 3.4.0
-      '@specweave-studio/effect-acp':
-        specifier: workspace:*
-        version: link:../../packages/effect-acp
-      '@specweave-studio/effect-codex-app-server':
-        specifier: workspace:*
-        version: link:../../packages/effect-codex-app-server
       vite-plus:
         specifier: 1.0.0
         version: 1.0.0(@types/node@24.12.4)(@vitest/ui@5.0.1(vitest@5.0.1))(bufferutil@4.1.0)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(msw@2.12.11(@types/node@24.12.4)(typescript@7.0.2))(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
@@ -1154,15 +1158,6 @@ importers:
         version: 1.0.0(@types/node@24.12.4)(@vitest/ui@5.0.1(vitest@5.0.1))(bufferutil@4.1.0)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(msw@2.12.11(@types/node@24.12.4)(typescript@7.0.2))(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
 
 packages:
-
-  '@muse-code/sdk@1.4.8':
-    resolution: {integrity: sha512-Aub03JxS9ajz9q7T5FsLr+nR+5nWQdzIS2squoxwvrmBIG1sQwqPcEaxW9Nv5RYARZKvK96g7BAD1DVPvDtwbw==}
-    engines: {node: '>=20'}
-    peerDependencies:
-      '@types/node': 24.12.4
-    peerDependenciesMeta:
-      '@types/node':
-        optional: true
 
   2g@0.4.4:
     resolution: {integrity: sha512-ZwH02IRQicm+92YzJZMS8imSAJaqTPI+VASb1zMnisotnWcEP4e7nb57Mr8C2dGAA5G8ZmialbMmpkGLWgAY/w==}
@@ -3518,6 +3513,15 @@ packages:
     resolution: {integrity: sha512-VVPPgHyQ6ShqnrmDWuxjmUIsO9gWyOZFmuOfLd9LfBGQJwZfy0gvv9pbHSJuoFNIYC7ZDX9aoFwowjcdSC4E8w==}
     engines: {node: '>=18'}
 
+  '@muse-code/sdk@1.4.8':
+    resolution: {integrity: sha512-Aub03JxS9ajz9q7T5FsLr+nR+5nWQdzIS2squoxwvrmBIG1sQwqPcEaxW9Nv5RYARZKvK96g7BAD1DVPvDtwbw==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      '@types/node': 24.12.4
+    peerDependenciesMeta:
+      '@types/node':
+        optional: true
+
   '@napi-rs/keyring-darwin-arm64@1.3.0':
     resolution: {integrity: sha512-pl76hJvdYUBn6I24bXiOBMA9nbDapo3I5B+f3OorjDU4dUMSypXeKbOVehJe8fhgTiH24flMyTS3aAIy43xegQ==}
     engines: {node: '>= 10'}
@@ -5020,6 +5024,26 @@ packages:
     resolution: {integrity: sha512-R8Rdn8Hy72KKcebgLiv8jQcQkXoLMOGGv5uI1/k0l+snqkOzQ1R0ChUBCxWMlBsFMekWjq0wRudIweFs7sKT5A==}
     engines: {node: '>=14.0.0'}
 
+  '@specweave-studio/mobile-markdown-text@file:apps/mobile/modules/studio-markdown-text':
+    resolution: {directory: apps/mobile/modules/studio-markdown-text, type: directory}
+    peerDependencies:
+      '@specweave-studio/client-runtime': '*'
+      '@specweave-studio/shared': '*'
+      expo: '*'
+      expo-asset: '*'
+      expo-clipboard: '*'
+      expo-haptics: '*'
+      expo-symbols: '*'
+      react: '*'
+      react-native: '*'
+      react-native-nitro-markdown: '*'
+
+  '@specweave-studio/mobile-review-diff-native@file:apps/mobile/modules/studio-review-diff':
+    resolution: {directory: apps/mobile/modules/studio-review-diff, type: directory}
+
+  '@specweave-studio/mobile-terminal-native@file:apps/mobile/modules/studio-terminal':
+    resolution: {directory: apps/mobile/modules/studio-terminal, type: directory}
+
   '@stablelib/base64@1.0.1':
     resolution: {integrity: sha512-1bnPQqSxSuc3Ii6MhBysoWCg58j97aUjuCSZrGSmDxNqtytIi0k8utUenAwTZN4V5mXXYGsVUI9zeBqy+jBOSQ==}
 
@@ -5042,26 +5066,6 @@ packages:
   '@szmarczak/http-timer@4.0.6':
     resolution: {integrity: sha512-4BAffykYOgO+5nzBWYwE3W90sBgLJoUPRWWcL8wlyiM8IB8ipJz3UMJ9KXQd1RKQXpKp8Tutn80HZtWsu2u76w==}
     engines: {node: '>=10'}
-
-  '@specweave-studio/mobile-markdown-text@file:apps/mobile/modules/studio-markdown-text':
-    resolution: {directory: apps/mobile/modules/studio-markdown-text, type: directory}
-    peerDependencies:
-      '@specweave-studio/client-runtime': '*'
-      '@specweave-studio/shared': '*'
-      expo: '*'
-      expo-asset: '*'
-      expo-clipboard: '*'
-      expo-haptics: '*'
-      expo-symbols: '*'
-      react: '*'
-      react-native: '*'
-      react-native-nitro-markdown: '*'
-
-  '@specweave-studio/mobile-review-diff-native@file:apps/mobile/modules/studio-review-diff':
-    resolution: {directory: apps/mobile/modules/studio-review-diff, type: directory}
-
-  '@specweave-studio/mobile-terminal-native@file:apps/mobile/modules/studio-terminal':
-    resolution: {directory: apps/mobile/modules/studio-terminal, type: directory}
 
   '@tabler/icons-react-native@3.44.0':
     resolution: {integrity: sha512-/Ppp68bpl9vQQsI/c+YiDC9dnLq4JUo0YI5qP72OQMC1WmCaRzdYn3CU79q01M2L3MfXO9a8WctWN8ay1Odkow==}
@@ -11603,10 +11607,6 @@ packages:
 
 snapshots:
 
-  '@muse-code/sdk@1.4.8(@types/node@24.12.4)':
-    optionalDependencies:
-      '@types/node': 24.12.4
-
   2g@0.4.4(typescript@7.0.2):
     optionalDependencies:
       typescript: 7.0.2
@@ -14336,6 +14336,10 @@ snapshots:
       strict-event-emitter: 0.5.1
     optional: true
 
+  '@muse-code/sdk@1.4.8(@types/node@24.12.4)':
+    optionalDependencies:
+      '@types/node': 24.12.4
+
   '@napi-rs/keyring-darwin-arm64@1.3.0':
     optional: true
 
@@ -15496,6 +15500,23 @@ snapshots:
       tslib: 2.8.1
     optional: true
 
+  '@specweave-studio/mobile-markdown-text@file:apps/mobile/modules/studio-markdown-text(db966ed54b0732dc85844abd1d523a92)':
+    dependencies:
+      '@specweave-studio/client-runtime': link:packages/client-runtime
+      '@specweave-studio/shared': link:packages/shared
+      expo: 58.0.2(56fc8ddb8129740412739f0f0a6ee025)
+      expo-asset: 58.0.10(expo@58.0.2)(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)(typescript@7.0.2)
+      expo-clipboard: 58.0.3(expo@58.0.2)(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)
+      expo-haptics: 58.0.4(expo@58.0.2)
+      expo-symbols: 58.0.3(expo-font@58.0.5(expo@58.0.2)(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0))(expo@58.0.2)(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)
+      react: 19.3.0
+      react-native: 0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6)
+      react-native-nitro-markdown: 0.5.8(patch_hash=642b47830730acff3761fe29cf54271d18b493c0070c750097850b7ea032e00c)(react-native-nitro-modules@0.35.9(patch_hash=daf4a639ce3f951af630a3711e4082d58e3a11e5a79f45efb0b59925327ebde2)(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0))(react-native-svg@15.15.5(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0))(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)
+
+  '@specweave-studio/mobile-review-diff-native@file:apps/mobile/modules/studio-review-diff': {}
+
+  '@specweave-studio/mobile-terminal-native@file:apps/mobile/modules/studio-terminal': {}
+
   '@stablelib/base64@1.0.1': {}
 
   '@standard-schema/spec@1.1.0': {}
@@ -15515,23 +15536,6 @@ snapshots:
   '@szmarczak/http-timer@4.0.6':
     dependencies:
       defer-to-connect: 2.0.1
-
-  '@specweave-studio/mobile-markdown-text@file:apps/mobile/modules/studio-markdown-text(afae94297d61d3a65abc2214f9b05422)':
-    dependencies:
-      '@specweave-studio/client-runtime': link:packages/client-runtime
-      '@specweave-studio/shared': link:packages/shared
-      expo: 58.0.2(56fc8ddb8129740412739f0f0a6ee025)
-      expo-asset: 58.0.10(expo@58.0.2)(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)(typescript@7.0.2)
-      expo-clipboard: 58.0.3(expo@58.0.2)(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)
-      expo-haptics: 58.0.4(expo@58.0.2)
-      expo-symbols: 58.0.3(expo-font@58.0.5(expo@58.0.2)(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0))(expo@58.0.2)(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)
-      react: 19.3.0
-      react-native: 0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6)
-      react-native-nitro-markdown: 0.5.8(patch_hash=642b47830730acff3761fe29cf54271d18b493c0070c750097850b7ea032e00c)(react-native-nitro-modules@0.35.9(patch_hash=daf4a639ce3f951af630a3711e4082d58e3a11e5a79f45efb0b59925327ebde2)(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0))(react-native-svg@15.15.5(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0))(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)
-
-  '@specweave-studio/mobile-review-diff-native@file:apps/mobile/modules/studio-review-diff': {}
-
-  '@specweave-studio/mobile-terminal-native@file:apps/mobile/modules/studio-terminal': {}
 
   '@tabler/icons-react-native@3.44.0(react-native-svg@15.15.5(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0))(react@19.3.0)':
     dependencies:
@@ -15684,7 +15688,7 @@ snapshots:
       '@tanstack/virtual-file-routes': 1.162.0
       chokidar: 5.0.0
       unplugin: 3.0.0
-      zod: 4.4.3
+      zod: 4.6.5
     optionalDependencies:
       '@tanstack/react-router': 1.170.10(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       vite: '@voidzero-dev/vite-plus-core@1.0.0(@types/node@24.12.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(yaml@2.9.0)'
@@ -16814,7 +16818,7 @@ snapshots:
   anynum@1.0.1:
     optional: true
 
-  app-builder-lib@26.15.6(dmg-builder@26.15.6)(electron-builder-squirrel-windows@26.15.6):
+  app-builder-lib@26.15.6(patch_hash=4688f96749e3d76cf27bc535d874470bf264610a331db13644df7715d699acf1)(dmg-builder@26.15.6)(electron-builder-squirrel-windows@26.15.6):
     dependencies:
       '@electron/asar': 3.4.1
       '@electron/fuses': 1.8.0
@@ -17862,7 +17866,7 @@ snapshots:
 
   dmg-builder@26.15.6(electron-builder-squirrel-windows@26.15.6):
     dependencies:
-      app-builder-lib: 26.15.6(dmg-builder@26.15.6)(electron-builder-squirrel-windows@26.15.6)
+      app-builder-lib: 26.15.6(patch_hash=4688f96749e3d76cf27bc535d874470bf264610a331db13644df7715d699acf1)(dmg-builder@26.15.6)(electron-builder-squirrel-windows@26.15.6)
       builder-util: 26.15.3
       fs-extra: 10.1.0
       js-yaml: 4.3.2
@@ -17954,7 +17958,7 @@ snapshots:
 
   electron-builder-squirrel-windows@26.15.6(dmg-builder@26.15.6):
     dependencies:
-      app-builder-lib: 26.15.6(dmg-builder@26.15.6)(electron-builder-squirrel-windows@26.15.6)
+      app-builder-lib: 26.15.6(patch_hash=4688f96749e3d76cf27bc535d874470bf264610a331db13644df7715d699acf1)(dmg-builder@26.15.6)(electron-builder-squirrel-windows@26.15.6)
       builder-util: 26.15.3
       electron-winstaller: 5.4.0
     transitivePeerDependencies:
@@ -17963,7 +17967,7 @@ snapshots:
 
   electron-builder@26.15.6(electron-builder-squirrel-windows@26.15.6):
     dependencies:
-      app-builder-lib: 26.15.6(dmg-builder@26.15.6)(electron-builder-squirrel-windows@26.15.6)
+      app-builder-lib: 26.15.6(patch_hash=4688f96749e3d76cf27bc535d874470bf264610a331db13644df7715d699acf1)(dmg-builder@26.15.6)(electron-builder-squirrel-windows@26.15.6)
       builder-util: 26.15.3
       builder-util-runtime: 9.7.0
       chalk: 4.1.2

@@ -1,5 +1,6 @@
-import { WS_METHODS } from "@specweave-studio/contracts";
+import { WS_METHODS, WsNativeConnectionsRpcGroup } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
+import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import * as Connections from "./ProjectConnectionService.ts";
 export const handlers = Effect.gen(function* () {
   const service = yield* Connections.ProjectConnectionService;
@@ -11,3 +12,12 @@ export const handlers = Effect.gen(function* () {
     [WS_METHODS.projectsConnectionRevoke]: service.revoke,
   };
 });
+
+export const layerNativeApplyHandlers = WsNativeConnectionsRpcGroup.middleware(
+  RpcInstrumentation,
+).toLayer(
+  Effect.gen(function* () {
+    const service = yield* Connections.ProjectConnectionService;
+    return { [WS_METHODS.nativeConnectionApply]: service.applyNative };
+  }),
+);

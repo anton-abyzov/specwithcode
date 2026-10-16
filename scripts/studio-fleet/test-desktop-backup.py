@@ -28,7 +28,7 @@ class DesktopBackupTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.home = pathlib.Path(self.tmp.name) / 'home'
-        self.backups = self.home / '.specweave-studio' / 'backups'
+        self.backups = self.home / '.specwithcode' / 'backups'
         self.backups.mkdir(parents=True)
         self.unregistered = []
         patcher = patch.object(desktop_backup, 'unregister', self.unregistered.append)

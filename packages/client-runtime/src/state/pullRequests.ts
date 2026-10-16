@@ -277,6 +277,26 @@ export function createPullRequestEnvironmentAtoms<R, E>(
           return yield* loader.load(prepared.value, input);
         }),
     }),
+    /** The failing tail of one CI check's log, read on demand for a fix-it hand-off. */
+    checkFailureLog: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:pull-requests:check-failure-log",
+      tag: WS_METHODS.pullRequestsCheckFailureLog,
+      execute: (input) => routedRequest(WS_METHODS.pullRequestsCheckFailureLog, input),
+      scheduler: commandScheduler,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([
+            environmentId,
+            input.projectId,
+            input.host?.toLowerCase() ?? null,
+            input.repository,
+            input.number,
+            input.checkName,
+            input.checkUrl,
+          ]),
+      },
+    }),
     diffFileContents: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:diff-file-contents",
       tag: WS_METHODS.pullRequestsDiffFileContents,

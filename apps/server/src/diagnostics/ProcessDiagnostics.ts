@@ -94,7 +94,7 @@ export const make = Effect.fn("makeProcessDiagnostics")(function* () {
           pid: input.pid,
           signal: input.signal,
           signaled: false,
-          message: Option.some("Refusing to signal the Studio server process."),
+          message: Option.some("Refusing to signal the SpecWithCode server process."),
         };
       }
       const current = yield* telemetry.refresh.pipe(Effect.option);
@@ -128,7 +128,7 @@ export const make = Effect.fn("makeProcessDiagnostics")(function* () {
           signal: input.signal,
           signaled: false,
           message: Option.some(
-            `Process ${input.pid} is not a signalable Studio backend descendant.`,
+            `Process ${input.pid} is not a signalable SpecWithCode backend descendant.`,
           ),
         };
       }

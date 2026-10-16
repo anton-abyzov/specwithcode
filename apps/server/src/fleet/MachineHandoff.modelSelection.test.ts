@@ -262,6 +262,7 @@ const fixture = Effect.gen(function* () {
   };
   const coordinator = ProjectCoordinatorService.ProjectCoordinatorService.of({
     start: () => Effect.die("Machine handoff must call send"),
+    nextTurnModel: () => Effect.succeed(undefined),
     send: (request) =>
       Effect.gen(function* () {
         state.sends++;
@@ -369,7 +370,15 @@ for (const choice of [laterChoice, null])
         const interrupted = ServerSettings.ServerSettingsService.of({
           ...settings,
           updateSettings: (patch) => {
-            if (failSettings) {
+            // A new project's finish-action seed is best effort and must not use up
+            // the one failure meant for the handoff's own settings write.
+            const seedsFinishActionOnly =
+              Object.keys(patch).length === 1 &&
+              patch.projectSettingsOverrides !== undefined &&
+              Object.values(patch.projectSettingsOverrides).every(
+                (entry) => entry != null && "threadFinishAction" in entry,
+              );
+            if (failSettings && !seedsFinishActionOnly) {
               failSettings = false;
               return Effect.fail(
                 new ServerSettingsError({

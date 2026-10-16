@@ -10,6 +10,7 @@ import {
 import { canSnooze, effectiveSnoozed } from "@specweave-studio/client-runtime/state/thread-settled";
 import {
   AuthOrchestrationOperateScope,
+  type ContextMenuItem,
   type ScopedThreadRef,
   type ThreadId,
 } from "@specweave-studio/contracts";
@@ -48,7 +49,22 @@ import { threadRuntimeCanArchive } from "@specweave-studio/client-runtime/state/
 import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { useClientSettings } from "./useSettings";
+import { isCoordinatorNamedThread } from "../studio/threadTitles";
 import { useThreadActions } from "./useThreadActions";
+
+/**
+ * A header control folded into the menu when its row is too narrow to show it:
+ * listed first, above the thread's own actions.
+ */
+export interface ThreadMenuOverflowItem {
+  readonly label: string;
+  readonly icon?: string;
+  readonly checked?: boolean;
+  readonly disabled?: boolean;
+  readonly onSelect: () => void;
+}
+
+type OverflowMenuId = `overflow:${number}`;
 
 function failureToast(title: string, error: unknown) {
   toastManager.add(
@@ -130,7 +146,7 @@ export function useThreadActionMenu(input: {
   });
 
   const openMenu = useCallback(
-    (position: { x: number; y: number }) => {
+    (position: { x: number; y: number }, overflow: ReadonlyArray<ThreadMenuOverflowItem> = []) => {
       if (threadRef === null) return;
       void (async () => {
         const api = readLocalApi();
@@ -167,14 +183,33 @@ export function useThreadActionMenu(input: {
           isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),
           canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
           isRegeneratingTitle,
+          titleLocked: isCoordinatorNamedThread(thread),
           isRunning: !threadRuntimeCanArchive(thread.runtime),
           canOpenProjectWindow: canOpenProjectWindowFor(menuProjectKey),
           supports,
           snoozePresets,
         });
-        const clicked = await settlePromise(() => api.contextMenu.show(items, position));
+        const overflowItems: ReadonlyArray<ContextMenuItem<OverflowMenuId>> = overflow.map(
+          (item, index) => ({
+            id: `overflow:${index}`,
+            label: item.label,
+            ...(item.icon ? { icon: item.icon } : {}),
+            ...(item.checked === undefined ? {} : { checked: item.checked }),
+            ...(item.disabled ? { disabled: true } : {}),
+          }),
+        );
+        const [firstItem, ...restItems] = items;
+        const menu: ReadonlyArray<ContextMenuItem<ThreadActionMenuId | OverflowMenuId>> =
+          overflowItems.length === 0 || firstItem === undefined
+            ? items
+            : [...overflowItems, { ...firstItem, separatorBefore: true }, ...restItems];
+        const clicked = await settlePromise(() => api.contextMenu.show(menu, position));
         if (clicked._tag === "Failure" || clicked.value === null) return;
-        const action: ThreadActionMenuId = clicked.value;
+        if (clicked.value.startsWith("overflow:")) {
+          overflow[Number(clicked.value.slice("overflow:".length))]?.onSelect();
+          return;
+        }
+        const action = clicked.value as ThreadActionMenuId;
         if (
           threadActionRequiresOperate(action) &&
           !readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)
@@ -245,10 +280,14 @@ export function useThreadActionMenu(input: {
             return;
           }
           case "settle":
-            await reportFailure(THREAD_LIFECYCLE_LABELS.failedResolve, () => settleThread(threadRef));
+            await reportFailure(THREAD_LIFECYCLE_LABELS.failedResolve, () =>
+              settleThread(threadRef),
+            );
             return;
           case "unsettle":
-            await reportFailure(THREAD_LIFECYCLE_LABELS.failedReopen, () => unsettleThread(threadRef));
+            await reportFailure(THREAD_LIFECYCLE_LABELS.failedReopen, () =>
+              unsettleThread(threadRef),
+            );
             return;
           case "unsnooze":
             await reportFailure("Failed to wake thread", () => unsnoozeThread(threadRef));
@@ -267,10 +306,10 @@ export function useThreadActionMenu(input: {
             );
             return;
           case "rename":
-            onStartRename();
+            if (!isCoordinatorNamedThread(thread)) onStartRename();
             return;
           case "regenerate-title":
-            if (isRegeneratingTitle) return;
+            if (isRegeneratingTitle || isCoordinatorNamedThread(thread)) return;
             await reportFailure("Failed to regenerate thread title", () =>
               updateThreadMetadata({
                 environmentId: threadRef.environmentId,

@@ -84,10 +84,18 @@ export function ConfirmDialogHost() {
             </AlertDialogDescription>
           ) : null}
         </AlertDialogHeader>
+        {state.status !== "idle" && state.details ? (
+          <div className="px-6 pb-4">{state.details}</div>
+        ) : null}
         <AlertDialogFooter>
           <AlertDialogClose render={<Button variant="outline" />}>
             {(state.status === "idle" ? undefined : state.cancelLabel) ?? "Cancel"}
           </AlertDialogClose>
+          {state.status !== "idle" && state.alternateLabel ? (
+            <Button variant="outline" onClick={() => respondToConfirmDialog("alternate")}>
+              {state.alternateLabel}
+            </Button>
+          ) : null}
           <Button variant={confirmVariant} onClick={onConfirm}>
             {(state.status === "idle" ? undefined : state.confirmLabel) ?? "Confirm"}
           </Button>

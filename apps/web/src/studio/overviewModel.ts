@@ -4,6 +4,7 @@ import type {
   EnvironmentThreadShell,
 } from "@specweave-studio/client-runtime/state/shell";
 import { threadRuntimeIsActive } from "@specweave-studio/client-runtime/state/shell";
+import { threadRunHealth } from "@specweave-studio/client-runtime/state/models";
 import type { ModelSelection, ServerProvider } from "@specweave-studio/contracts";
 import type {
   StudioCapacityAccount,
@@ -11,7 +12,14 @@ import type {
 } from "@specweave-studio/contracts/studio";
 import { resolveSidebarThreadStatus } from "../components/Sidebar.logic";
 
-export type AttentionKind = "approval" | "input" | "plan" | "limited" | "failed";
+export type AttentionKind =
+  | "approval"
+  | "input"
+  | "plan"
+  | "held"
+  | "limited"
+  | "failed"
+  | "stalled";
 export type SessionView = {
   readonly thread: EnvironmentThreadShell;
   readonly project: EnvironmentProject | null;
@@ -25,8 +33,10 @@ const ATTENTION_LABELS: Record<AttentionKind, string> = {
   approval: "Approval requested",
   input: "Answer needed",
   plan: "Plan ready to review",
+  held: "Queued messages held",
   limited: "Usage limit reached",
   failed: "Run needs review",
+  stalled: "No recent activity",
 };
 
 export const attentionLabel = (kind: AttentionKind) => ATTENTION_LABELS[kind];
@@ -36,6 +46,7 @@ export function deriveSessions(
   threads: readonly EnvironmentThreadShell[],
   projects: readonly EnvironmentProject[],
   connectedEnvironmentIds: ReadonlySet<string>,
+  nowMs: number = Date.now(),
 ): SessionView[] {
   const projectByKey = new Map(projects.map((p) => [`${p.environmentId}:${p.id}`, p]));
   return threads
@@ -43,24 +54,42 @@ export function deriveSessions(
     .map((thread): SessionView => {
       const status = resolveSidebarThreadStatus(thread);
       const observedWorking = threadRuntimeIsActive(thread.runtime);
+      // Disconnected shells cannot prove activity, so they cannot prove a stall.
+      const health = connectedEnvironmentIds.has(thread.environmentId)
+        ? threadRunHealth(thread, nowMs)
+        : null;
       const observedAttention =
         status === "approval" || status === "input"
           ? status
-          : !observedWorking && thread.hasActionableProposedPlan
-            ? "plan"
-            : status === "limited" || status === "failed"
-              ? status
-              : null;
+          : health?.state === "stalled"
+            ? "stalled"
+            : !observedWorking && thread.hasActionableProposedPlan
+              ? "plan"
+              : status === "limited" || status === "failed"
+                ? status
+                : // A held queue starts only when someone resumes it.
+                  !observedWorking && (thread.heldQueuedCount ?? 0) > 0
+                  ? "held"
+                  : null;
       const settled = thread.settledOverride === "settled";
-      const observedState = observedAttention
-        ? attentionLabel(observedAttention)
-        : status === "waiting"
-          ? "Waiting for background work"
-          : observedWorking
-            ? "Working"
-            : settled
-              ? THREAD_LIFECYCLE_LABELS.resolved
-              : "Ready";
+      const observedState =
+        health?.state === "stalled" && observedAttention === "stalled"
+          ? `No activity for ${formatMinutes(health.idleMs)}${
+              health.label === null ? "" : ` on ${health.label}`
+            }`
+          : observedAttention === "held"
+            ? `${heldQueueCountLabel(thread.heldQueuedCount ?? 0)} · Resume or discard`
+            : observedAttention
+              ? attentionLabel(observedAttention)
+              : status === "waiting"
+                ? "Waiting for background work"
+                : health?.state === "waiting" && health.waitingMs >= 60_000
+                  ? `Waiting on ${health.label} · ${formatMinutes(health.waitingMs)}`
+                  : observedWorking
+                    ? "Working"
+                    : settled
+                      ? THREAD_LIFECYCLE_LABELS.resolved
+                      : "Ready";
       // Disconnected shells retain navigation and history, but cannot prove current activity.
       const connected = connectedEnvironmentIds.has(thread.environmentId);
       return {
@@ -90,6 +119,15 @@ export function sessionStateSince(thread: EnvironmentThreadShell): string {
   return thread.runtime?.status === "failed"
     ? (thread.latestRun?.completedAt ?? thread.updatedAt)
     : thread.updatedAt;
+}
+
+function heldQueueCountLabel(count: number): string {
+  return `${count} queued message${count === 1 ? "" : "s"} held`;
+}
+
+function formatMinutes(ms: number): string {
+  const minutes = Math.max(1, Math.floor(ms / 60_000));
+  return minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
 function validTimestamp(value: string | null | undefined): number {
@@ -153,7 +191,9 @@ export function quotaFresh(account: StudioCapacityAccount, now = Date.now()): bo
     observed <= now + 5_000 &&
     expires > now &&
     now - observed <= 15 * 60_000 &&
-    (windows.length > 0 || (account.quota.source === "native-app-server" && account.quota.ordinaryUsageAllowed === true)) &&
+    (windows.length > 0 ||
+      (account.quota.source === "native-app-server" &&
+        account.quota.ordinaryUsageAllowed === true)) &&
     windows.every((window) => window.resetsAt !== null && window.resetsAt * 1_000 > now)
   );
 }

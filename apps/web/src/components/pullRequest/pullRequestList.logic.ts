@@ -40,7 +40,7 @@ export interface EnvironmentPullRequestError extends PullRequestListProjectError
   readonly environmentId: EnvironmentId;
 }
 
-export type PullRequestGroupKey = "reviewRequested" | "authored" | "others";
+export type PullRequestGroupKey = "reviewRequested" | "authored" | "others" | "recentlyMerged";
 
 export interface PullRequestGroup<Entry extends PullRequestListEntry = PullRequestListEntry> {
   readonly key: PullRequestGroupKey;
@@ -73,9 +73,10 @@ const pullRequestViewerKey = (entry: ScopedEntry): string =>
   `${entry.environmentId ?? ""} ${entry.host}`;
 
 const GROUP_LABELS: Record<PullRequestGroupKey, string> = {
-  reviewRequested: "Review requested",
-  authored: "Authored",
+  reviewRequested: "Needs my review",
+  authored: "Authored by me",
   others: "Others",
+  recentlyMerged: "Recently merged",
 };
 
 function normalize(value: string | null | undefined): string | null {
@@ -410,6 +411,7 @@ export function groupPullRequestsByInvolvement<Entry extends ScopedEntry>(
     reviewRequested: [],
     authored: [],
     others: [],
+    recentlyMerged: [],
   };
   for (const entry of entries) {
     if (isAuthoredByViewer(entry, viewers)) {
@@ -1261,4 +1263,26 @@ export function settlePullRequestOverrides<Entry extends PullRequestListEntry>(
     if (!agrees && !outranked) kept.set(key, override);
   }
   return kept.size === overrides.size ? overrides : kept;
+}
+
+/**
+ * The merged rows worth a glance under the open ones: newest first, none already listed above
+ * (a pull request merged a moment ago can still be in the open feed's last answer), at most
+ * `limit` of them.
+ */
+export function recentlyMergedGroup<Entry extends PullRequestListEntry>(
+  merged: ReadonlyArray<Entry>,
+  shown: ReadonlyArray<PullRequestGroup<Entry>>,
+  limit: number,
+): PullRequestGroup<Entry> | null {
+  const listed = new Set(
+    shown.flatMap((group) => group.entries.map((entry) => pullRequestEntryKey(entry))),
+  );
+  const entries = merged
+    .filter((entry) => entry.state === "merged" && !listed.has(pullRequestEntryKey(entry)))
+    .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .slice(0, limit);
+  return entries.length === 0
+    ? null
+    : { key: "recentlyMerged", label: GROUP_LABELS.recentlyMerged, entries };
 }
