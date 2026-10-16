@@ -143,4 +143,26 @@ describe("idle compaction policy", () => {
       ),
     ).toEqual({ minTokens: 200_000 });
   });
+
+  it("stays off when the thread's cache lives 5 minutes or not at all", () => {
+    const withEnvironment = (name: string, value: string) =>
+      claudeIdleCompactionPolicy(
+        {
+          ...DEFAULT_SERVER_SETTINGS,
+          providerInstances: {
+            claude_api: {
+              driver: "claudeAgent",
+              environment: [{ name, value, sensitive: false }],
+              config: {},
+            },
+          } as never,
+        },
+        ProviderInstanceId.make("claude_api"),
+      );
+    expect(withEnvironment("FORCE_PROMPT_CACHING_5M", "1")).toBeNull();
+    expect(withEnvironment("CLAUDE_CODE_PROMPT_CACHE_TTL", "5m")).toBeNull();
+    expect(withEnvironment("ENABLE_PROMPT_CACHING_1H", "0")).toBeNull();
+    expect(withEnvironment("DISABLE_PROMPT_CACHING", "1")).toBeNull();
+    expect(withEnvironment("CLAUDE_CODE_PROMPT_CACHE_TTL", "1h")).not.toBeNull();
+  });
 });

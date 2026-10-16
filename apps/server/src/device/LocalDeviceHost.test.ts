@@ -7,18 +7,29 @@ import {
   HostProcessUserId,
 } from "@specweave-studio/shared/hostProcess";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as FileSystem from "effect/FileSystem";
+import * as Queue from "effect/Queue";
+import * as Scope from "effect/Scope";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as LocalDeviceHost from "./LocalDeviceHost.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient } from "effect/http";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as NetService from "@specweave-studio/shared/Net";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
+import { awaitGateOpen, makeGatedHold } from "../serviceUpdate/UpdateInstallGate.testkit.ts";
+import { AGENT_DEVICE_VERSION, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
 
 const diagnose = (
   files: ReadonlyArray<string>,
@@ -220,3 +231,283 @@ it.effect(
       expect(yield* fs.exists(`${baseDir}/tools`)).toBe(false);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+const makeLifecycleFixture = (hold: ServiceUpdateHold.ServiceUpdateHoldShape) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "device-update-lifecycle-" });
+    const hostScope = yield* Scope.make();
+    yield* Effect.addFinalizer(() => Scope.close(hostScope, Exit.void));
+    const waits = yield* Queue.unbounded<void>();
+    const resumed = yield* Queue.unbounded<void>();
+    const spawns = yield* Queue.unbounded<void>();
+    const hubs: Array<{ readonly exit: Effect.Effect<boolean>; closed: boolean }> = [];
+    const commands: Array<ProcessRunner.ProcessRunInput> = [];
+    const hooks = { beforeReserve: Effect.void };
+    const entries = [
+      ["expo-device-hub", DEVICE_HUB_VERSION, "dist/server/cli.mjs"],
+      ["agent-device", AGENT_DEVICE_VERSION, "bin/agent-device.mjs"],
+    ] as const;
+    for (const [name, version, entry] of entries) {
+      const directory = path.join(baseDir, "tools", name, version);
+      const entryPath = path.join(directory, "node_modules", name, entry);
+      yield* fs.makeDirectory(path.dirname(entryPath), { recursive: true });
+      yield* fs.writeFileString(entryPath, "// fixture only; never executed\n");
+      yield* fs.writeFileString(path.join(directory, ".install-complete"), version);
+    }
+    const runner: ProcessRunner.ProcessRunner["Service"] = {
+      run: (input) =>
+        Effect.gen(function* () {
+          commands.push(input);
+          if (input.args.includes("devices")) {
+            yield* fs
+              .writeFileString(
+                path.join(input.env!.AGENT_DEVICE_STATE_DIR!, "daemon.json"),
+                JSON.stringify({ httpPort: 4999, token: "test-token" }),
+              )
+              .pipe(Effect.orDie);
+          }
+          return {
+            stdout: "",
+            stderr: "",
+            code: ChildProcessSpawner.ExitCode(0),
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          };
+        }),
+    };
+    const host = yield* LocalDeviceHost.make().pipe(
+      Effect.provide(ServerConfig.layerTest(baseDir, baseDir)),
+      Effect.provideService(Scope.Scope, hostScope),
+      Effect.provideService(HostProcessEnvironment, { HOME: baseDir, PATH: "" }),
+      Effect.provideService(HostProcessPlatform, "darwin"),
+      Effect.provideService(HostProcessIsExecutable, false),
+      Effect.provideService(ProcessRunner.ProcessRunner, runner),
+      Effect.provideService(ServiceUpdateHold.ServiceUpdateHold, {
+        ...hold,
+        awaitReleased: Effect.gen(function* () {
+          if (yield* hold.isHeld) yield* Queue.offer(waits, undefined);
+          yield* hold.awaitReleased;
+          yield* Queue.offer(resumed, undefined);
+        }),
+      }),
+      Effect.provideService(NetService.NetService, {
+        canListenOnHost: () => Effect.succeed(true),
+        isPortAvailableOnLoopback: () => Effect.succeed(true),
+        hasListenerOnHost: () => Effect.succeed(false),
+        findAvailablePort: (port) => Effect.succeed(port),
+        reserveLoopbackPort: () =>
+          Effect.suspend(() => hooks.beforeReserve).pipe(Effect.as(4100 + hubs.length)),
+      }),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response("ok"))),
+        ),
+      ),
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() =>
+          Effect.gen(function* () {
+            const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+            const child = {
+              exit: Deferred.succeed(exited, ChildProcessSpawner.ExitCode(0)),
+              closed: false,
+            };
+            hubs.push(child);
+            yield* Effect.addFinalizer(() =>
+              Effect.sync(() => {
+                child.closed = true;
+              }).pipe(Effect.andThen(child.exit)),
+            );
+            yield* Queue.offer(spawns, undefined);
+            return ChildProcessSpawner.makeHandle({
+              // Deliberately outside the OS PID range: no fixture PID can name a live process.
+              pid: ChildProcessSpawner.ProcessId(2_000_000_000 + hubs.length),
+              exitCode: Deferred.await(exited),
+              isRunning: Deferred.isDone(exited).pipe(Effect.map((done) => !done)),
+              kill: () => child.exit.pipe(Effect.asVoid),
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.drain,
+              stdout: Stream.empty,
+              stderr: Stream.empty,
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            });
+          }),
+        ),
+      ),
+    );
+    return { host, hostScope, baseDir, hubs, commands, hooks, waits, resumed, spawns };
+  });
+
+const makeHold = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const directory = yield* fs.makeTempDirectoryScoped({ prefix: "device-update-hold-" });
+  return yield* ServiceUpdateHold.makeWithOptions({ agentStatePath: `${directory}/state.json` });
+});
+
+const noPhase = () => Effect.void;
+
+it.layer(NodeServices.layer)("LocalDeviceHost during a service update", (it) => {
+  for (const mode of ["hold", "install gate"] as const) {
+    it.effect(`refuses initial hub and agent starts during an ${mode}`, () =>
+      Effect.gen(function* () {
+        const gated = mode === "install gate" ? yield* makeGatedHold() : null;
+        const hold = gated?.hold ?? (yield* makeHold);
+        if (!gated) yield* hold.acquire();
+        const fixture = yield* makeLifecycleFixture(hold);
+        for (const start of [fixture.host.ensureReady, fixture.host.ensureAgentReady]) {
+          const error = yield* start(noPhase).pipe(Effect.flip);
+          expect(error._tag).toBe("DeviceHostError");
+          if (error._tag === "DeviceHostError") {
+            expect(error.cause).toBeInstanceOf(ServiceUpdateHold.ServiceUpdateInProgressError);
+          }
+        }
+        expect(fixture.hubs).toHaveLength(0);
+        expect(fixture.commands).toHaveLength(0);
+        if (gated) {
+          yield* gated.clear;
+          expect(yield* awaitGateOpen(hold)).toBe(true);
+        } else {
+          yield* hold.release("test-resume");
+        }
+        yield* fixture.host.ensureReady(noPhase);
+        expect(fixture.hubs).toHaveLength(1);
+      }).pipe(Effect.scoped),
+    );
+  }
+
+  it.effect("pauses a reaped hub and resumes its normal restart after release", () =>
+    Effect.gen(function* () {
+      const hold = yield* makeHold;
+      const fixture = yield* makeLifecycleFixture(hold);
+      yield* fixture.host.ensureReady(noPhase);
+      yield* Queue.take(fixture.spawns);
+      yield* hold.acquire();
+      yield* fixture.hubs[0]!.exit;
+      yield* Queue.take(fixture.waits);
+      expect(fixture.hubs).toHaveLength(1);
+      yield* hold.release("test-resume");
+      yield* Queue.take(fixture.spawns);
+      // Readiness serializes behind the restart and proves the replacement was published.
+      const ready = yield* fixture.host.ensureReady(noPhase);
+      expect(ready.hub.origin).toBe("http://127.0.0.1:4101");
+      expect(fixture.hubs).toHaveLength(2);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("scope finalization stops a host while its supervisor waits for release", () =>
+    Effect.gen(function* () {
+      const hold = yield* makeHold;
+      const fixture = yield* makeLifecycleFixture(hold);
+      yield* fixture.host.ensureReady(noPhase);
+      yield* hold.acquire();
+      yield* fixture.hubs[0]!.exit;
+      yield* Queue.take(fixture.waits);
+      yield* Scope.close(fixture.hostScope, Exit.void);
+      expect(yield* fixture.host.current).toBeNull();
+      yield* hold.release("test-resume");
+      expect(fixture.hubs).toHaveLength(1);
+      expect(fixture.hubs[0]!.closed).toBe(true);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("does not resurrect a stopped hub when the hold ends", () =>
+    Effect.gen(function* () {
+      const hold = yield* makeHold;
+      const fixture = yield* makeLifecycleFixture(hold);
+      yield* fixture.host.ensureReady(noPhase);
+      yield* hold.acquire();
+      yield* fixture.hubs[0]!.exit;
+      yield* Queue.take(fixture.waits);
+      yield* fixture.host.stop;
+      yield* hold.release("test-resume");
+      yield* Queue.take(fixture.resumed);
+      // The test scheduler drains the resumed supervisor without wall-clock sleeps.
+      yield* TestClock.adjust(0);
+      expect(yield* fixture.host.current).toBeNull();
+      expect(fixture.hubs).toHaveLength(1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("rechecks a hold acquired while preparing the replacement spawn", () =>
+    Effect.gen(function* () {
+      const hold = yield* makeHold;
+      const fixture = yield* makeLifecycleFixture(hold);
+      yield* fixture.host.ensureReady(noPhase);
+      yield* Queue.take(fixture.spawns);
+      fixture.hooks.beforeReserve = Effect.gen(function* () {
+        fixture.hooks.beforeReserve = Effect.void;
+        yield* hold.acquire();
+      });
+      yield* fixture.hubs[0]!.exit;
+      yield* Queue.take(fixture.waits);
+      expect(fixture.hubs).toHaveLength(1);
+      yield* hold.release("test-resume");
+      yield* Queue.take(fixture.spawns);
+      yield* fixture.host.ensureReady(noPhase);
+      expect(fixture.hubs).toHaveLength(2);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("rechecks initial hub and agent starts after phase callbacks yield", () =>
+    Effect.gen(function* () {
+      const hold = yield* makeHold;
+      const fixture = yield* makeLifecycleFixture(hold);
+      const acquireDuringStart = () => hold.acquire().pipe(Effect.asVoid);
+      yield* fixture.host.ensureReady(acquireDuringStart).pipe(Effect.flip);
+      expect(fixture.hubs).toHaveLength(0);
+      yield* hold.release("test-resume");
+      yield* fixture.host.ensureReady(noPhase);
+      yield* fixture.host.ensureAgentReady(acquireDuringStart).pipe(Effect.flip);
+      expect(fixture.commands.some((command) => command.args.includes("devices"))).toBe(false);
+      yield* hold.release("test-resume");
+      yield* fixture.host.ensureAgentReady(noPhase);
+      expect(fixture.commands.filter((command) => command.args.includes("devices"))).toHaveLength(
+        1,
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("does not install missing tools if an update starts after consent", () =>
+    Effect.gen(function* () {
+      const hold = yield* makeHold;
+      const fixture = yield* makeLifecycleFixture(hold);
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.remove(`${fixture.baseDir}/tools`, { recursive: true });
+      const error = yield* fixture.host
+        .ensureReady((phase) => {
+          expect(phase).toBe("installing");
+          return hold.acquire().pipe(Effect.asVoid);
+        })
+        .pipe(Effect.flip);
+      expect(error._tag).toBe("DeviceHostError");
+      expect(fixture.hubs).toHaveLength(0);
+      expect(fixture.commands).toHaveLength(0);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("blocks commands from old ready endpoints but still permits daemon teardown", () =>
+    Effect.gen(function* () {
+      const hold = yield* makeHold;
+      const fixture = yield* makeLifecycleFixture(hold);
+      const ready = yield* fixture.host.ensureAgentReady(noPhase);
+      const beforeHold = fixture.commands.length;
+      yield* hold.acquire();
+      expect((yield* ready.run("node", ["old-helper.mjs"])).code).not.toBe(0);
+      yield* fixture.host.ensureAgentReady(noPhase).pipe(Effect.flip);
+      expect(fixture.commands).toHaveLength(beforeHold);
+      yield* fixture.host.stopAgent;
+      expect(fixture.commands.at(-1)?.args).toContain("stop");
+      expect(fixture.commands).toHaveLength(beforeHold + 1);
+      yield* hold.release("test-resume");
+      expect((yield* ready.run("node", ["old-helper.mjs"])).code).toBe(0);
+    }).pipe(Effect.scoped),
+  );
+});

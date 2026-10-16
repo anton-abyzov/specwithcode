@@ -26,17 +26,23 @@ import type { CodexScanState, UsageRecord, UsageSpeed } from "./usageTranscripts
 // v4: records carry Claude fast mode, which v3 rows never captured.
 // v5: Codex records carry their service tier. v4 rows store speed the same
 // way, so v4 entries still load; see `decodeScanCache` for v4 Codex entries.
-const USAGE_SCAN_CACHE_VERSION = 5 as const;
+// v6: Claude records carry their 1-hour cache writes; v5 Claude entries load
+// the same way as v4 Codex ones.
+const USAGE_SCAN_CACHE_VERSION = 6 as const;
 const SPEED_COMPATIBLE_SINCE_VERSION = 4;
 
 /**
  * Each cache version writes its own file in the state directory. An older
  * server sharing that directory cannot read a newer cache and would replace
  * it, dropping saved usage for deleted transcripts. Separate files keep both.
- * A v5 server reads the legacy (v4) file once, when its own file is missing.
+ * A v6 server reads the newest older file once, when its own file is missing.
  */
-export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v5.json";
-export const LEGACY_SCAN_CACHE_FILE_NAME = "usage-scan-cache.json";
+export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v6.json";
+/** Older cache files, newest first. */
+export const LEGACY_SCAN_CACHE_FILE_NAMES = [
+  "usage-scan-cache-v5.json",
+  "usage-scan-cache.json",
+] as const;
 
 /** Serialised as the index into this list. */
 const SPEEDS: readonly UsageSpeed[] = ["standard", "fast", "ultrafast"];
@@ -79,6 +85,7 @@ type SerializedRecord = readonly [
   dedupeKey: string | null,
   reportedCostUsd: number | null,
   speed: number,
+  oneHourCacheCreationTokens?: number,
 ];
 
 interface SerializedFile {
@@ -125,19 +132,24 @@ function intern(table: string[], index: Map<string, number>, value: string): num
 }
 
 function serializeFile(entry: CachedFile, tables: InternTables): SerializedFile {
-  const serializeRecord = (record: UsageRecord): SerializedRecord => [
-    record.timestampMs,
-    intern(tables.models, tables.modelIndex, record.model),
-    intern(tables.sessions, tables.sessionIndex, record.sessionId),
-    record.totals.uncachedInputTokens,
-    record.totals.cachedInputTokens,
-    record.totals.cacheCreationTokens,
-    record.totals.outputTokens,
-    record.totals.reasoningTokens,
-    record.dedupeKey,
-    record.reportedCostUsd,
-    SPEEDS.indexOf(record.speed),
-  ];
+  const serializeRecord = (record: UsageRecord): SerializedRecord => {
+    const row = [
+      record.timestampMs,
+      intern(tables.models, tables.modelIndex, record.model),
+      intern(tables.sessions, tables.sessionIndex, record.sessionId),
+      record.totals.uncachedInputTokens,
+      record.totals.cachedInputTokens,
+      record.totals.cacheCreationTokens,
+      record.totals.outputTokens,
+      record.totals.reasoningTokens,
+      record.dedupeKey,
+      record.reportedCostUsd,
+      SPEEDS.indexOf(record.speed),
+    ] as const;
+    return record.oneHourCacheCreationTokens === undefined
+      ? row
+      : [...row, record.oneHourCacheCreationTokens];
+  };
   return {
     s: entry.size,
     m: entry.mtimeMs,
@@ -258,6 +270,7 @@ export function decodeScanCache(document: unknown): ScanCache {
         dedupeKey,
         reportedCostUsd,
         speedIndex,
+        oneHourCacheCreationTokens,
       ] = row as SerializedRecord;
       const speed = typeof speedIndex === "number" ? SPEEDS[speedIndex] : undefined;
 
@@ -291,6 +304,11 @@ export function decodeScanCache(document: unknown): ScanCache {
         reportedCostUsd: typeof reportedCostUsd === "number" ? reportedCostUsd : null,
         speed,
         dedupeKey: typeof dedupeKey === "string" ? dedupeKey : null,
+        ...(typeof oneHourCacheCreationTokens === "number" &&
+        Number.isFinite(oneHourCacheCreationTokens) &&
+        oneHourCacheCreationTokens > 0
+          ? { oneHourCacheCreationTokens }
+          : {}),
       });
     }
     return records;
@@ -320,10 +338,13 @@ export function decodeScanCache(document: unknown): ScanCache {
     ) {
       continue;
     }
-    // v4 Codex records predate service tiers, so they all priced as standard.
-    // Keep them, because the rollout may be gone, but make a live rollout
-    // re-parse whole: no file has size -1, and a zero position cannot resume.
-    const legacyCodex = entry.p === "codex" && version < USAGE_SCAN_CACHE_VERSION;
+    // v4 Codex records predate service tiers, so they all priced as standard;
+    // v5 Claude records predate the 1-hour cache split, so every cache write
+    // priced at the 5-minute rate. Keep them, because the transcript may be
+    // gone, but make a live one re-parse whole: no file has size -1, and a
+    // zero position cannot resume.
+    const legacy = (entry.p === "codex" && version < 5) || (entry.p === "claude" && version < 6);
+    const legacyCodex = legacy && entry.p === "codex";
     const codexState = legacyCodex ? null : decodeCodexState(entry.cs);
     if (codexState === undefined) continue;
 
@@ -333,12 +354,12 @@ export function decodeScanCache(document: unknown): ScanCache {
     if (records === null || tailRecords === null) continue;
 
     cache.set(path, {
-      size: legacyCodex ? -1 : entry.s,
+      size: legacy ? -1 : entry.s,
       mtimeMs: entry.m,
       provider,
       records,
       tailRecords,
-      position: legacyCodex
+      position: legacy
         ? { resumeOffset: 0, guardLength: 0, guardHash: 0, codexState: null }
         : { resumeOffset: entry.o, guardLength: entry.gl, guardHash: entry.gh, codexState },
     });

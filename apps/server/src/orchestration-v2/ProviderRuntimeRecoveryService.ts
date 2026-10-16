@@ -64,6 +64,9 @@ export class ProviderRuntimeRecoveryService extends Context.Service<
       trigger: "startup" | "shutdown",
     ) => Effect.Effect<ProviderRuntimeReconciliationSummary, ProviderRuntimeRecoveryError>;
     readonly prepareForShutdown: Effect.Effect<void, ProviderRuntimeRecoveryError>;
+    /** Continues update-interrupted turns and queues update-cancelled messages again. */
+    readonly resumeAfterUpdate: Effect.Effect<void, ProviderRuntimeRecoveryError>;
+    /** Startup reconcile followed by `resumeAfterUpdate`. */
     readonly recover: Effect.Effect<ProviderRuntimeRecoverySummary, ProviderRuntimeRecoveryError>;
   }
 >()("specweave-studio/orchestration-v2/ProviderRuntimeRecoveryService") {}
@@ -930,14 +933,24 @@ export const make = Effect.gen(function* () {
     Effect.mapError((cause) => new ProviderRuntimeRecoveryError({ operation: "reconcile", cause })),
   );
 
+  // Continues the turns an update interrupted and queues again the messages it
+  // cancelled. Startup defers this while an update's install gate is live.
+  const resumeAfterUpdate = continueUpdateInterruptedRuns.pipe(
+    Effect.andThen(requeueUpdateCancelledRuns),
+  );
+
   const recover = Effect.gen(function* () {
     const summary = yield* reconcile("startup");
-    yield* continueUpdateInterruptedRuns;
-    yield* requeueUpdateCancelledRuns;
+    yield* resumeAfterUpdate;
     return summary satisfies ProviderRuntimeRecoverySummary;
   });
 
-  return ProviderRuntimeRecoveryService.of({ reconcile, prepareForShutdown, recover });
+  return ProviderRuntimeRecoveryService.of({
+    reconcile,
+    prepareForShutdown,
+    resumeAfterUpdate,
+    recover,
+  });
 });
 
 export const layer = Layer.effect(ProviderRuntimeRecoveryService, make);

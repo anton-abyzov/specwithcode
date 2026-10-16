@@ -34,6 +34,11 @@ export interface UsageRecord {
    * unique and needs no dedup.
    */
   readonly dedupeKey: string | null;
+  /**
+   * Of `totals.cacheCreationTokens`, the tokens Claude wrote to its 1-hour
+   * cache, which bill at 2x base input instead of 1.25x. Absent when none.
+   */
+  readonly oneHourCacheCreationTokens?: number;
 }
 
 const EMPTY_TOTALS: UsageTokenTotals = {
@@ -138,6 +143,11 @@ export function parseClaudeRecord(parsed: unknown): UsageRecord | null {
     messageId === null && requestId === null ? null : `${messageId ?? ""}:${requestId ?? ""}`;
 
   const cost = record["costUSD"];
+  const cacheCreation = usageRecord["cache_creation"];
+  const oneHourCacheCreationTokens =
+    typeof cacheCreation === "object" && cacheCreation !== null
+      ? int((cacheCreation as Record<string, unknown>)["ephemeral_1h_input_tokens"])
+      : 0;
 
   return {
     provider: "claude",
@@ -155,6 +165,7 @@ export function parseClaudeRecord(parsed: unknown): UsageRecord | null {
     reportedCostUsd: typeof cost === "number" && Number.isFinite(cost) ? cost : null,
     speed: usageRecord["speed"] === "fast" ? "fast" : "standard",
     dedupeKey,
+    ...(oneHourCacheCreationTokens > 0 ? { oneHourCacheCreationTokens } : {}),
   };
 }
 

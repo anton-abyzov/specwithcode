@@ -32,6 +32,7 @@ import * as EffectWorker from "./orchestration-v2/EffectWorker.ts";
 import * as LegacyV1ThreadImporter from "./orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as ProviderRuntimeRecovery from "./orchestration-v2/ProviderRuntimeRecoveryService.ts";
+import * as ServiceUpdateHold from "./serviceUpdate/ServiceUpdateHold.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunch from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
@@ -342,6 +343,7 @@ export function runOrderedV2StartupPhases<
   DelegationContext,
   WorkerContext,
   BootstrapContext,
+  ResumeError = never,
 >(input: {
   readonly importLegacyShells: Effect.Effect<Import, ImportError, ImportContext>;
   readonly recover: Effect.Effect<Recovery, RecoveryError, RecoveryContext>;
@@ -349,12 +351,49 @@ export function runOrderedV2StartupPhases<
   readonly recoverDelegatedTasks: Effect.Effect<void, DelegationError, DelegationContext>;
   readonly startEffectWorker: Effect.Effect<void, WorkerError, WorkerContext>;
   readonly autoBootstrap: Effect.Effect<Bootstrap, BootstrapError, BootstrapContext>;
+  /**
+   * Set when the service starts behind a live update install gate. The update
+   * helper is then proving that history did not change, and any write rolls
+   * the update back, so startup only reconciles. Once the gate opens it resumes
+   * update-interrupted threads, recovers delegated tasks and only then starts the
+   * effect worker, keeping the ungated order so a continued turn never races the
+   * delivery of its children's results.
+   */
+  readonly updateGate?: {
+    readonly reconcile: Effect.Effect<Recovery, RecoveryError, RecoveryContext>;
+    readonly resumeAfterUpdate: Effect.Effect<void, ResumeError, RecoveryContext>;
+    readonly awaitReleased: Effect.Effect<void>;
+    /** Called when the deferred worker cannot start, as a failed startup would be. */
+    readonly onWorkerStartFailure: (cause: Cause.Cause<unknown>) => Effect.Effect<void>;
+  };
 }) {
   return Effect.gen(function* () {
     yield* input.importLegacyShells;
-    const recovery = yield* input.recover;
-    yield* input.recoverDelegatedTasks;
-    yield* input.startEffectWorker;
+    const gate = input.updateGate;
+    if (gate === undefined) {
+      const recovery = yield* input.recover;
+      yield* input.recoverDelegatedTasks;
+      yield* input.startEffectWorker;
+      const bootstrap = yield* input.autoBootstrap;
+      return { recovery, bootstrap } as const;
+    }
+    const recovery = yield* gate.reconcile;
+    // Runs in the background, tied to the server's lifetime. Each recovery step
+    // is independent, so one failing does not skip the next.
+    yield* Effect.gen(function* () {
+      yield* gate.awaitReleased;
+      yield* gate.resumeAfterUpdate.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Resuming threads after the update failed", { cause }),
+        ),
+      );
+      yield* input.recoverDelegatedTasks.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Delegated-task recovery after the update failed", { cause }),
+        ),
+      );
+      yield* input.startEffectWorker.pipe(Effect.catchCause(gate.onWorkerStartFailure));
+    }).pipe(Effect.forkScoped);
     const bootstrap = yield* input.autoBootstrap;
     return { recovery, bootstrap } as const;
   });
@@ -366,6 +405,7 @@ const make = (options?: StartupOptions) =>
     const keybindings = yield* Keybindings.Keybindings;
     const legacyV1ThreadImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
     const providerRuntimeRecovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
+    const updateHold = yield* ServiceUpdateHold.optional;
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const agentAwarenessRelay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
@@ -451,6 +491,10 @@ const make = (options?: StartupOptions) =>
           },
         });
       }
+      const heldForUpdate = yield* updateHold.isHeld;
+      if (heldForUpdate) {
+        yield* Effect.logInfo("Starting behind an update install gate; deferring update resume");
+      }
       const { recovery, bootstrap: bootstrapTargets } = yield* runOrderedV2StartupPhases({
         importLegacyShells: runStartupPhase(
           "orchestration-v2.legacy-v1.import-shells",
@@ -463,6 +507,32 @@ const make = (options?: StartupOptions) =>
           ),
         ),
         recover: runStartupPhase("orchestration-v2.recovery", providerRuntimeRecovery.recover),
+        ...(heldForUpdate
+          ? {
+              updateGate: {
+                reconcile: runStartupPhase(
+                  "orchestration-v2.recovery",
+                  providerRuntimeRecovery.reconcile("startup"),
+                ),
+                resumeAfterUpdate: runStartupPhase(
+                  "orchestration-v2.recovery.resume-after-update",
+                  providerRuntimeRecovery.resumeAfterUpdate,
+                ),
+                awaitReleased: updateHold.awaitReleased,
+                onWorkerStartFailure: (cause) => {
+                  const error = new ServerRuntimeStartupError({
+                    mode: serverConfig.mode,
+                    host: serverConfig.host ?? null,
+                    port: serverConfig.port,
+                    cause,
+                  });
+                  return Effect.logError("effect worker failed to start after the update", {
+                    cause: Cause.pretty(cause),
+                  }).pipe(Effect.andThen(options?.abort?.(error) ?? Effect.void));
+                },
+              },
+            }
+          : {}),
         recoverDelegatedTasks: runStartupPhase(
           "orchestration-v2.delegated-tasks.recover",
           orchestrator.recoverDelegatedTasks,

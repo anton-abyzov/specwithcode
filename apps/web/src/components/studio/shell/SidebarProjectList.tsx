@@ -93,6 +93,13 @@ interface Insertion {
   top: number;
 }
 
+// Outside the component: the React Compiler cannot compile optional chains in
+// a logical test, and would skip the whole list.
+function sameInsertion(a: Insertion | null, b: Insertion | null): boolean {
+  if (a === null || b === null) return a === b;
+  return a.top === b.top && a.target.pinned === b.target.pinned;
+}
+
 export function SidebarProjectList(props: {
   /** The rows shown, each group in order; collapsed lists leave some out. */
   visible: ArrangedProjects<SidebarProjectSnapshot>;
@@ -129,14 +136,22 @@ export function SidebarProjectList(props: {
     motionRef.current = node === null || !canAnimate() ? null : createSidebarListMotion(node);
     motionRef.current?.update(false);
   }, []);
-  // Rows that change places glide there; reduced motion makes them jump.
+  // Rows that change places glide there; reduced motion makes them jump. Rows
+  // move only when the order changes; measuring them after every render forced
+  // a layout of the whole window each time the open project changed.
+  const rowOrder = [
+    ...visible.pinned.map((group) => group.projectKey),
+    "",
+    ...visible.unpinned.map((group) => group.projectKey),
+  ].join("\n");
   useLayoutEffect(() => {
     motionRef.current?.update(true);
     const key = focusAfterMove.current;
     if (key === null) return;
     focusAfterMove.current = null;
     rowNode(listRef.current, key)?.querySelector<HTMLElement>(".sws-side-row")?.focus();
-  });
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Measures only when rows reorder.
+  }, [rowOrder]);
 
   const allVisible = [...visible.pinned, ...visible.unpinned];
   const dragged = dragKey ? allVisible.find((group) => group.projectKey === dragKey) : undefined;
@@ -190,9 +205,7 @@ export function SidebarProjectList(props: {
   const onDragMove = (event: DragMoveEvent) => {
     const next = locate(event);
     insertionRef.current = next;
-    setInsertion((current) =>
-      current?.top === next?.top && current?.target.pinned === next?.target.pinned ? current : next,
-    );
+    setInsertion((current) => (sameInsertion(current, next) ? current : next));
   };
   const onDragEnd = (event: DragEndEvent) => {
     const key = String(event.active.id);

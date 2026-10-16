@@ -684,18 +684,20 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   );
   const restoringThreadPosition = positionedThreadKey !== listIdentityKey;
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
-  const listIdentityRef = useRef(listIdentityKey);
   const previousLatestRunRef = useRef(latestRun);
+  const listIdentityChanged = useListIdentityChanged(
+    listIdentityKey,
+    previousLatestRunRef,
+    latestRun,
+  );
   // The list stays mounted across thread switches. Its first end pins on the
   // new thread must snap, not glide, even if that thread is mid-turn.
   const [settlingListIdentity, setSettlingListIdentity] = useState<string | null>(null);
   let paintedExpandedRunIds = expandedRunIds;
   let paintedExpandedWorkGroupIds = expandedWorkGroupIds;
   let paintedExpandedAttemptIds = expandedAttemptIds;
-  if (listIdentityRef.current !== listIdentityKey) {
-    listIdentityRef.current = listIdentityKey;
+  if (listIdentityChanged) {
     setPositionedThreadKey(null);
-    previousLatestRunRef.current = latestRun;
     setSettlingListIdentity(listIdentityKey);
     paintedExpandedRunIds = rememberedDisclosures?.runs ?? new Set();
     paintedExpandedWorkGroupIds = rememberedDisclosures?.workGroups ?? new Set();
@@ -916,39 +918,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     });
   }, [latestRun, timelineDetail]);
 
-  const rowsProjectionRef = useRef<{
-    readonly threadKey: string;
-    readonly workspaceRoot: string | undefined;
-    readonly projection: MessagesTimelineRowsProjection;
-  } | null>(null);
-  const rawRows = useMemo(() => {
-    const previous = rowsProjectionRef.current;
-    const projection = deriveMessagesTimelineRowsWithState(
-      {
-        timelineEntries,
-        latestRun,
-        runningRunId,
-        expandedRunIds,
-        expandedAttemptIds,
-        expandedWorkGroupIds,
-        isWorking,
-        runlessWorkActive,
-        activeTurnStartedAt,
-        turnDiffSummaries,
-        supportsConversationRollback,
-        worktreeSetup,
-        timelineDetail,
-      },
-      previous?.threadKey === listIdentityKey && previous.workspaceRoot === workspaceRoot
-        ? previous.projection
-        : null,
-    );
-    rowsProjectionRef.current = { threadKey: listIdentityKey, workspaceRoot, projection };
-    return projection.rows;
-  }, [
-    rowsProjectionRef,
-    listIdentityKey,
-    workspaceRoot,
+  const rawRows = useTimelineRowsProjection(listIdentityKey, workspaceRoot, {
     timelineEntries,
     latestRun,
     runningRunId,
@@ -962,7 +932,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     supportsConversationRollback,
     worktreeSetup,
     timelineDetail,
-  ]);
+  });
   const rows = useStableRows(rawRows, listIdentityKey);
   // Run status/timestamps churn on every stream event; the shared row context
   // must not change with them or every timeline row re-renders per event.
@@ -1062,7 +1032,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           });
           return;
         }
-        if (++stableFrames >= 2) {
+        stableFrames += 1;
+        if (stableFrames >= 2) {
           setPositionedThreadKey(listIdentityKey);
         } else {
           settleFrame = requestAnimationFrame(reconcile);
@@ -5048,6 +5019,116 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
       )}
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Render-time ref hooks. Each reads or writes a ref while rendering, which the
+// React Compiler rejects, so they live outside MessagesTimeline: only these
+// small hooks go unoptimized and the list owner compiles.
+// ---------------------------------------------------------------------------
+
+/** True for the render that first sees a new list identity. That render also
+ *  starts the new thread's latest-run tracking from its current run. */
+function useListIdentityChanged(
+  listIdentityKey: string,
+  previousLatestRunRef: React.RefObject<TimelineLatestRun | null>,
+  latestRun: TimelineLatestRun | null,
+): boolean {
+  const listIdentityRef = useRef(listIdentityKey);
+  if (listIdentityRef.current === listIdentityKey) return false;
+  listIdentityRef.current = listIdentityKey;
+  previousLatestRunRef.current = latestRun;
+  return true;
+}
+
+type TimelineRowsInput = Required<
+  Pick<
+    Parameters<typeof deriveMessagesTimelineRowsWithState>[0],
+    | "timelineEntries"
+    | "latestRun"
+    | "runningRunId"
+    | "expandedRunIds"
+    | "expandedAttemptIds"
+    | "expandedWorkGroupIds"
+    | "isWorking"
+    | "runlessWorkActive"
+    | "activeTurnStartedAt"
+    | "turnDiffSummaries"
+    | "supportsConversationRollback"
+    | "worktreeSetup"
+    | "timelineDetail"
+  >
+>;
+
+/** The timeline's rows, reusing the previous projection of the same thread and
+ *  workspace so unchanged turns keep their row objects. */
+function useTimelineRowsProjection(
+  threadKey: string,
+  workspaceRoot: string | undefined,
+  input: TimelineRowsInput,
+): MessagesTimelineRow[] {
+  const rowsProjectionRef = useRef<{
+    readonly threadKey: string;
+    readonly workspaceRoot: string | undefined;
+    readonly projection: MessagesTimelineRowsProjection;
+  } | null>(null);
+  const {
+    timelineEntries,
+    latestRun,
+    runningRunId,
+    expandedRunIds,
+    expandedAttemptIds,
+    expandedWorkGroupIds,
+    isWorking,
+    runlessWorkActive,
+    activeTurnStartedAt,
+    turnDiffSummaries,
+    supportsConversationRollback,
+    worktreeSetup,
+    timelineDetail,
+  } = input;
+  return useMemo(() => {
+    const previous = rowsProjectionRef.current;
+    const projection = deriveMessagesTimelineRowsWithState(
+      {
+        timelineEntries,
+        latestRun,
+        runningRunId,
+        expandedRunIds,
+        expandedAttemptIds,
+        expandedWorkGroupIds,
+        isWorking,
+        runlessWorkActive,
+        activeTurnStartedAt,
+        turnDiffSummaries,
+        supportsConversationRollback,
+        worktreeSetup,
+        timelineDetail,
+      },
+      previous?.threadKey === threadKey && previous.workspaceRoot === workspaceRoot
+        ? previous.projection
+        : null,
+    );
+    rowsProjectionRef.current = { threadKey, workspaceRoot, projection };
+    return projection.rows;
+  }, [
+    rowsProjectionRef,
+    threadKey,
+    workspaceRoot,
+    timelineEntries,
+    latestRun,
+    runningRunId,
+    expandedRunIds,
+    expandedAttemptIds,
+    expandedWorkGroupIds,
+    isWorking,
+    runlessWorkActive,
+    activeTurnStartedAt,
+    turnDiffSummaries,
+    supportsConversationRollback,
+    worktreeSetup,
+    timelineDetail,
+  ]);
 }
 
 // ---------------------------------------------------------------------------
