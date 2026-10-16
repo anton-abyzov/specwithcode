@@ -156,7 +156,7 @@ async function refuseSymlinks(root: string): Promise<void> {
     if (stat?.isSymbolicLink()) {
       throw new ProjectLibraryProblem(
         "invalid",
-        `${relative} is a symlink; Studio will not read or write through it.`,
+        `${relative} is a symlink; SpecWithCode will not read or write through it.`,
       );
     }
   }

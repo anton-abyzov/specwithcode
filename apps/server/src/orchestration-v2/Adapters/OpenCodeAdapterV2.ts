@@ -3268,6 +3268,7 @@ export function makeOpenCodeAdapterV2(
                   harness: "OpenCode",
                   model: turnInput.modelSelection.model,
                   responseStyle: turnInput.runtimePolicy.responseStyle,
+                  agentInstructions: turnInput.runtimePolicy.agentInstructions,
                 }),
               ]
                 .filter(Boolean)

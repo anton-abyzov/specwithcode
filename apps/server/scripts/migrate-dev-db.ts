@@ -2,11 +2,11 @@
 
 /**
  * Rebuild an isolated dev database from a pruned snapshot of the real
- * ~/.specweave-studio database, then run this checkout's migrations against it.
+ * ~/.specwithcode (legacy ~/.specweave-studio) database, then run this checkout's migrations against it.
  *
  * `vp run migrate-dev-db` from a worktree:
- *   1. Nukes `<worktree>/.specweave-studio/userdata/statev2.sqlite`.
- *   2. Snapshots the real db (`~/.specweave-studio/userdata/statev2.sqlite`, read-only
+ *   1. Nukes `<worktree>/.specwithcode/userdata/statev2.sqlite`.
+ *   2. Snapshots the real db (`~/.specwithcode/userdata/statev2.sqlite`, read-only
  *      VACUUM INTO) and prunes it to the most recently updated projects and,
  *      per project, the most recent threads that have fully stopped, with
  *      their forks and subagents. Working, settled, and archived threads, and
@@ -28,6 +28,11 @@
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
+import {
+  LEGACY_STUDIO_HOME_DIRECTORY,
+  STUDIO_HOME_DIRECTORY,
+  studioRootDirectory,
+} from "@specweave-studio/shared/studioIdentity";
 import { resolveWorktreeStudioHome } from "@specweave-studio/shared/devHome";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
@@ -48,7 +53,7 @@ export class MigrateDevDbNotInWorktreeError extends Schema.TaggedError<MigrateDe
   {},
 ) {
   override get message(): string {
-    return "Not inside a linked git worktree. Pass --base-dir to target an isolated .specweave-studio directory.";
+    return "Not inside a linked git worktree. Pass --base-dir to target an isolated .specwithcode directory.";
   }
 }
 
@@ -57,7 +62,7 @@ export class MigrateDevDbSharedHomeError extends Schema.TaggedError<MigrateDevDb
   {},
 ) {
   override get message(): string {
-    return "Refusing to rebuild the shared ~/.specweave-studio database. Use an isolated --base-dir.";
+    return "Refusing to rebuild the shared ~/.specwithcode database. Use an isolated --base-dir.";
   }
 }
 
@@ -143,10 +148,20 @@ export class MigrateDevDbPhaseError extends Schema.TaggedError<MigrateDevDbPhase
   }
 }
 
+/** The shared homes a dev rebuild must never target; the first is the default source. */
+const sharedStudioHomes = (explicit: string | undefined, path: Path.Path): ReadonlyArray<string> =>
+  explicit !== undefined
+    ? [path.resolve(explicit)]
+    : [
+        studioRootDirectory(NodeOS.homedir()),
+        path.join(NodeOS.homedir(), STUDIO_HOME_DIRECTORY),
+        path.join(NodeOS.homedir(), LEGACY_STUDIO_HOME_DIRECTORY),
+      ];
+
 export interface RunMigrateDevDbInput {
-  /** Isolated .specweave-studio directory. Defaults to `<worktree>/.specweave-studio` of the cwd. */
+  /** Isolated .specwithcode directory. Defaults to `<worktree>/.specwithcode` of the cwd. */
   readonly baseDir?: string | undefined;
-  /** Source database. Defaults to `~/.specweave-studio/userdata/statev2.sqlite`. */
+  /** Source database. Defaults to `~/.specwithcode/userdata/statev2.sqlite`. */
   readonly source?: string | undefined;
   readonly projects: number;
   readonly threadsPerProject: number;
@@ -403,9 +418,10 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  const sharedHome = path.resolve(options.sharedHome ?? path.join(NodeOS.homedir(), ".specweave-studio"));
+  // Without an explicit shared home, both the branded root and the legacy one are shared.
+  const sharedHomes = sharedStudioHomes(options.sharedHome, path);
   const sourcePath = path.resolve(
-    input.source ?? path.join(sharedHome, "userdata", "statev2.sqlite"),
+    input.source ?? path.join(sharedHomes[0]!, "userdata", "statev2.sqlite"),
   );
 
   const baseDir =
@@ -422,11 +438,11 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
   if (!(yield* fs.exists(sourcePath))) {
     return yield* new MigrateDevDbSourceMissingError({ sourcePath });
   }
-  const [canonicalBaseDir, canonicalSharedHome] = yield* Effect.all([
-    fs.realPath(baseDir).pipe(Effect.orElseSucceed(() => baseDir)),
+  const canonicalBaseDir = yield* fs.realPath(baseDir).pipe(Effect.orElseSucceed(() => baseDir));
+  const canonicalSharedHomes = yield* Effect.forEach(sharedHomes, (sharedHome) =>
     fs.realPath(sharedHome).pipe(Effect.orElseSucceed(() => sharedHome)),
-  ]);
-  if (canonicalBaseDir === canonicalSharedHome) {
+  );
+  if (canonicalSharedHomes.includes(canonicalBaseDir)) {
     return yield* new MigrateDevDbSharedHomeError();
   }
   // The destination db and snapshot both get deleted below; a --source that
@@ -565,11 +581,13 @@ export const migrateDevDbCommand = Command.make(
     ),
     baseDir: Flag.String("base-dir").pipe(
       Flag.optional,
-      Flag.withDescription("Isolated .specweave-studio directory. Defaults to the current worktree's .specweave-studio."),
+      Flag.withDescription(
+        "Isolated .specwithcode directory. Defaults to the current worktree's .specwithcode.",
+      ),
     ),
     source: Flag.String("source").pipe(
       Flag.optional,
-      Flag.withDescription("Source database. Defaults to ~/.specweave-studio/userdata/statev2.sqlite."),
+      Flag.withDescription("Source database. Defaults to ~/.specwithcode/userdata/statev2.sqlite."),
     ),
   },
   ({ projects, threadsPerProject, baseDir, source }) =>
@@ -596,7 +614,7 @@ export const migrateDevDbCommand = Command.make(
     }),
 ).pipe(
   Command.withDescription(
-    "Rebuild the worktree dev database from a pruned snapshot of the real ~/.specweave-studio data, then run migrations.",
+    "Rebuild the worktree dev database from a pruned snapshot of the real ~/.specwithcode data, then run migrations.",
   ),
 );
 

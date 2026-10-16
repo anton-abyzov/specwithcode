@@ -23,6 +23,7 @@ export const PROTECTED_HOME_FOLDERS = [
   ".netrc",
   ".claude",
   ".codex",
+  ".specwithcode",
   ".specweave-studio",
   "Library/Keychains",
 ] as const;

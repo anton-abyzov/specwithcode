@@ -151,6 +151,36 @@ describe("v2 thread shell lists", () => {
     }
   });
 
+  it("keeps link targets while only live state changes, and follows a rename", () => {
+    const { registry, threads, snapshotAtom } = makeHarness();
+    const snapshot = {
+      ...v2ShellSnapshot,
+      threads: ["a", "b"].map((id) => ({ ...v2ThreadShell, id: ThreadId.make(id) })),
+    };
+    registry.set(snapshotAtom(environmentId), snapshot);
+    const targetsAtom = threads.environmentThreadLinkTargetsAtom(environmentId);
+    const dispose = registry.mount(targetsAtom);
+    try {
+      const before = registry.get(targetsAtom);
+      expect(before.map((target) => target.id)).toEqual(["a", "b"]);
+      registry.set(snapshotAtom(environmentId), {
+        ...snapshot,
+        threads: [snapshot.threads[0]!, { ...snapshot.threads[1]!, status: "running" as const }],
+      });
+      expect(registry.get(targetsAtom)).toBe(before);
+      registry.set(snapshotAtom(environmentId), {
+        ...snapshot,
+        threads: [snapshot.threads[0]!, { ...snapshot.threads[1]!, title: "Renamed" }],
+      });
+      const renamed = registry.get(targetsAtom);
+      expect(renamed).not.toBe(before);
+      expect(renamed[1]?.title).toBe("Renamed");
+    } finally {
+      dispose();
+      registry.dispose();
+    }
+  });
+
   it("preserves project memberships on updates and keeps the same thread separate per environment", () => {
     const harness = makeHarness([environmentId, remoteEnvironmentId]);
     const otherThread = {

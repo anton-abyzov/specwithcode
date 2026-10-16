@@ -1,5 +1,10 @@
 import type { ReactElement } from "react";
-import { ProviderInstanceId, ProviderDriverKind, type ProviderAuthState, type ServerProvider } from "@specweave-studio/contracts";
+import {
+  ProviderInstanceId,
+  ProviderDriverKind,
+  type ProviderAuthState,
+  type ServerProvider,
+} from "@specweave-studio/contracts";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { visitElements } from "../../test/reactElementTree";
 import { reactHookHarness as hooks } from "../../test/reactHookHarness";

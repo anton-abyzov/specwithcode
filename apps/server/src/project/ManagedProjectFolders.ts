@@ -16,6 +16,7 @@ import {
   type ThreadId,
 } from "@specweave-studio/contracts";
 import { newProjectFolderName } from "@specweave-studio/shared/path";
+import { canonicalStudioPath } from "@specweave-studio/shared/studioIdentity";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -30,6 +31,8 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- The account home only canonicalizes paths recorded under a migrated legacy root.
+import { homedir } from "node:os";
 
 import * as ServerConfig from "../config.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
@@ -273,7 +276,7 @@ const make = Effect.gen(function* () {
     }
   });
 
-  // Inside a checkout (a dev worktree's .specweave-studio, a dotfiles home) the folder would
+  // Inside a checkout (a dev worktree's .specwithcode, a dotfiles home) the folder would
   // inherit the repo's git status and checkpoints, so Scratch is offered only
   // when the data dir is outside any work tree. Probed once; detection
   // failures hide Scratch rather than failing callers. An interrupted probe
@@ -348,7 +351,12 @@ const make = Effect.gen(function* () {
   const isScratchProject = (projectId: ProjectId, root: string) =>
     projects.getById(projectId).pipe(
       Effect.map(
-        Option.exists((project) => path.resolve(project.workspaceRoot) === path.resolve(root)),
+        // A Scratch project recorded under a since-migrated legacy root is still Scratch.
+        Option.exists(
+          (project) =>
+            canonicalStudioPath(path.resolve(project.workspaceRoot), homedir()) ===
+            path.resolve(root),
+        ),
       ),
       // An unreadable project is not Scratch; the launch reports its own
       // project lookup failure.

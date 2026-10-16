@@ -5,6 +5,8 @@ import type {
 import type { EnvironmentId, ProjectId, ThreadId } from "@specweave-studio/contracts";
 import { projectThreads } from "./projectWorkspaceModel";
 import { isOrchestratorThreadId } from "./projectCoordinatorThreads";
+import { modelLabel, shortMachineName, type ProviderNameSource } from "./shellModel";
+import { isNestedSubagentThread } from "./threadSubagents";
 
 export interface ProjectExecutionScope {
   environmentId: EnvironmentId;
@@ -107,11 +109,15 @@ export function logicalProjectThreads(
       projectThreads(threads, scope.environmentId, scope.projectId, scope.coordinatorThreadId),
     );
   const refs = new Set(scopes.map((scope) => `${scope.environmentId}:${scope.projectId}`));
+  const coordinators = new Set(
+    scopes.flatMap((scope) => (scope.coordinatorThreadId ? [scope.coordinatorThreadId] : [])),
+  );
   return threads.filter(
     (thread) =>
       thread.deletedAt === null &&
       refs.has(`${thread.environmentId}:${thread.projectId}`) &&
       !isOrchestratorThreadId(thread.id) &&
+      !isNestedSubagentThread(thread, coordinators) &&
       !scopes.some(
         (scope) =>
           scope.environmentId === thread.environmentId && scope.coordinatorThreadId === thread.id,
@@ -119,12 +125,24 @@ export function logicalProjectThreads(
   );
 }
 
-/** History labels use the run that actually executed the request, never today's model picker. */
+/**
+ * History labels use the run that actually executed the request, never today's
+ * model picker. They read as the thread rows do: "MacBook M4MAX · Claude Code · Opus 5.5".
+ * A message outside any run (the task a subagent was given) ran on its thread's own model,
+ * which `unrunModel` names.
+ */
 export function requestExecutionLabel(
   message: { runId?: string | null },
   runs: readonly { id: string; modelSelection?: { instanceId: string; model: string } }[],
   machine: string,
+  entries?: ReadonlyMap<string, ProviderNameSource>,
+  unrunModel?: { instanceId: string; model: string } | null,
 ): string {
   const run = message.runId ? runs.find((candidate) => candidate.id === message.runId) : undefined;
-  return `${machine} · ${run?.modelSelection ? `${run.modelSelection.instanceId} · ${run.modelSelection.model}` : "Model not recorded"}`;
+  const selection = run?.modelSelection ?? (message.runId ? undefined : (unrunModel ?? undefined));
+  const model = selection
+    ? modelLabel(entries?.get(selection.instanceId) ?? null, selection.instanceId, selection.model)
+        .full
+    : "Model not recorded";
+  return `${shortMachineName(machine)} · ${model}`;
 }

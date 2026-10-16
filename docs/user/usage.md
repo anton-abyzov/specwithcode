@@ -17,14 +17,14 @@ Totals depend on the history available on each server. Grok turns without a save
 record are missing from the totals.
 
 OpenCode reads its SQLite database and older JSON history. Antigravity reads local conversation
-databases, including Studio-managed profiles. Set `OPENCODE_DATA_DIR` or `ANTIGRAVITY_DATA_DIR` on the
+databases, including SpecWithCode-managed profiles. Set `OPENCODE_DATA_DIR` or `ANTIGRAVITY_DATA_DIR` on the
 server to read a different data directory; comma-separated paths read multiple directories.
 
 Cursor reads account usage from Cursor's dashboard API using the CLI login saved on the server.
-This includes headless Studio sessions and desktop usage across machines; the same account counts
-once across connected environments. Without an accessible CLI login, Studio shows a
-notice instead of incomplete local totals. Studio does not estimate missing tokens from conversation text.
-On macOS, choose **Enable Cursor usage** on Usage to allow Studio to read your existing CLI login
+This includes headless SpecWithCode sessions and desktop usage across machines; the same account counts
+once across connected environments. Without an accessible CLI login, SpecWithCode shows a
+notice instead of incomplete local totals. SpecWithCode does not estimate missing tokens from conversation text.
+On macOS, choose **Enable Cursor usage** on Usage to allow SpecWithCode to read your existing CLI login
 from Keychain. You can turn it off in **Settings → Providers → Usage providers**. macOS may ask
 you to allow access on the server Mac.
 
@@ -83,7 +83,7 @@ when the next reset lands and how much it hands back. The hatched
 part of a segment is what that reset restores. Tap a segment or account row for the account's plan,
 where it is signed in, and its reset time. On web, you can hover too. Codex and Claude accounts
 with banked reset credits show a ticket count and the **Use reset** action in the account details.
-On macOS, Studio reads Claude's login from the Keychain item Claude Code keeps there, the same way
+On macOS, SpecWithCode reads Claude's login from the Keychain item Claude Code keeps there, the same way
 Claude Code does; if macOS asks, allow it on that Mac. On narrow screens, numbered rows below
 the bar show each account's quota, countdown, and credits. Tap a row to open its details.
 
@@ -100,7 +100,7 @@ closes when you dismiss it or send your next message. It uses the same snapshot 
 anything. The command is offered only for providers that appear under **Usage → Limits**.
 
 OpenCode Go reports its session, weekly, and monthly allowance when OpenCode runs locally in
-the environment. Studio cannot report limits for external OpenCode servers because their credentials
+the environment. SpecWithCode cannot report limits for external OpenCode servers because their credentials
 belong to the remote server. Cursor reports
 its monthly allowance, including separate Auto and API usage, using the CLI login or
 `CURSOR_AUTH_TOKEN`. On macOS, this includes the default Keychain login after you enable Cursor
@@ -120,12 +120,12 @@ When a turn stops on a usage limit, the banner above the composer counts down to
 offers **Resume at reset**, **Check now** and, when another signed-in provider can take the thread,
 **Continue with Codex** (or whichever provider is the fallback). Continuing hands the thread over with its context, in the
 same worktree, and the stopped turn picks up where it left off. A thread the limit stopped on its
-very first message has nothing to continue, so Studio sends that message again on the fallback. See
+very first message has nothing to continue, so SpecWithCode sends that message again on the fallback. See
 [Context in portable handoffs](portable-handoffs.md) for what the handoff carries. Switching back
 works the same way from the model picker.
 
 When another device has the same project and a provider there has room (its own account, below
-**Switch before the limit**), the banner also offers **Continue on** that device. Studio starts a
+**Switch before the limit**), the banner also offers **Continue on** that device. SpecWithCode starts a
 new thread there with a written handoff: the thread's title, its branch, the first request and the
 latest messages. The thread runs in a new worktree from the branch as pushed, so the other device's
 own checkout is never switched; anything this device had not pushed stays behind. A device signed
@@ -134,11 +134,11 @@ in to the same full account is not offered, and a Claude instance billed per tok
 The **When a provider runs out** rows under **Usage limits** in a project's settings (General tab)
 set the rule for that project; the same rows under **Settings → General** set it for every project:
 
-- **Switch automatically** (default): Studio continues a limited turn on the fallback without asking.
+- **Switch automatically** (default): SpecWithCode continues a limited turn on the fallback without asking.
 - **Offer the fallback**: the banner shows the continue action and nothing switches by itself.
 - **Wait for the reset**: the banner keeps its resume actions only.
 
-**Fallback model** picks the provider and model to continue on. Without one, Studio picks another
+**Fallback model** picks the provider and model to continue on. Without one, SpecWithCode picks another
 signed-in provider that is not full. A thread already running on the fallback goes back to the
 project's default model. A Claude instance billed per token (its own API key, a token for another
 endpoint, or Amazon Bedrock) is never picked as "another signed-in provider", because its turns
@@ -150,7 +150,7 @@ takes a thread only as the **Fallback model** you chose, as the project's defaul
 which the thread moves on. With **Switch automatically**, an idle thread moves to the fallback
 before its next turn. It never switches mid-turn, moves a thread once per usage window, and only to
 a provider below the same share, so two full providers never trade a thread back and forth. If you
-switch back by hand, Studio keeps your choice until the window resets. With **Offer the fallback**,
+switch back by hand, SpecWithCode keeps your choice until the window resets. With **Offer the fallback**,
 the thread suggests the switch above the composer at that share instead (**Switch to Codex** or
 **Not now**, once per usage window).
 
@@ -158,7 +158,7 @@ the thread suggests the switch above the composer at that share instead (**Switc
 that is full resets soon: finishing on the same provider after a short wait beats moving the work.
 When every window at or past the threshold resets within that time, nothing switches early, the
 suggestion stays hidden, and a turn that stops on the limit is not switched, redeemed or paid for.
-The banner says the thread waits, and Studio resumes it at the reset even where auto-resume is
+The banner says the thread waits, and SpecWithCode resumes it at the reset even where auto-resume is
 off. If the thread is still stopped 10 minutes after the reset, the rule acts as usual. A window
 without a reset time, or a full weekly window next to a nearly reset session one, counts as far
 off. **Never wait** turns this off.
@@ -167,20 +167,20 @@ Three more rows run before any fallback, under **Offer the fallback** and **Swit
 alike (never under **Wait for the reset**), and all are off until you turn them on:
 
 - **Redeem a banked reset first**: when a turn stops on the limit and the account holds a banked
-  reset (Claude's and Codex's own reset grants, the ones **Use reset** redeems by hand), Studio
+  reset (Claude's and Codex's own reset grants, the ones **Use reset** redeems by hand), SpecWithCode
   redeems one and continues the stopped turn on the same provider. Turning it on asks you to
-  confirm, because a redeemed reset is gone. Before redeeming, Studio re-reads the account's usage
+  confirm, because a redeemed reset is gone. Before redeeming, SpecWithCode re-reads the account's usage
   and redeems only when that fresh read shows a window at its limit (a stopped turn alone is not
   proof); it redeems at most once per limit window, and never while `STUDIO_SIMULATE_USAGE_LIMIT`
   is set. If the limit is still there afterwards, the fallback rule takes over on the next sweep.
 - **Spend Codex credits first**: when a Codex turn stops on the plan limit and the account holds
-  paid credits (**Credits** on ChatGPT's usage page), Studio continues that turn on credits. Turning
+  paid credits (**Credits** on ChatGPT's usage page), SpecWithCode continues that turn on credits. Turning
   it on asks you to confirm, because credits cost money. The continuation is the same one-request
   permission as **Send using credits** in the composer: Codex re-reads the account before the turn
-  and refuses if the account, model or balance changed. Studio never buys credits and never touches
+  and refuses if the account, model or balance changed. SpecWithCode never buys credits and never touches
   ChatGPT's **Automatic reload** setting. Claude's pay-as-you-go extra usage is a ChatGPT-style
   billing setting on the Claude side with no CLI switch; the Claude equivalent is the next row.
-- **Use API credits first**: when a Claude subscription turn stops on the limit, Studio continues
+- **Use API credits first**: when a Claude subscription turn stops on the limit, SpecWithCode continues
   that turn on a Claude instance that has its own Anthropic API key, so it is billed to that key's
   API organization (for example the monthly API credits a Max plan includes once an API
   organization is linked). It runs after a banked reset and before any fallback. The thread stays
@@ -189,17 +189,17 @@ alike (never under **Wait for the reset**), and all are off until you turn them 
   [Two Claude accounts](portable-handoffs.md#two-claude-accounts). Turning it on asks you to
   confirm, because API usage costs money, and the row names the instance it will use.
 
-  Studio moves a turn only when all of this holds: the stop is current (its reset time is still
+  SpecWithCode moves a turn only when all of this holds: the stop is current (its reset time is still
   ahead, or, when Claude named none, it happened in the last five hours) and happened on the
   subscription the thread is on, the thread is not snoozed, the stop was not a simulated one, the
   API-key instance lists the thread's model, and a usage read taken at that moment, past the cache,
   shows the subscription at its limit. With **Snooze limited threads** on, every stop is snoozed
   until its reset, so there a snooze until the reset does not hold the turn back; snooze the
   thread to another time, or turn this row off, to keep it waiting. A usage read that fails moves
-  nothing; Studio tries it again on the next two sweeps and then leaves that stop alone. A banked
+  nothing; SpecWithCode tries it again on the next two sweeps and then leaves that stop alone. A banked
   reset is tried the same way before any API credit is spent. A stop on a limit the usage read
   does not show as full (some per-model weekly limits, or a window read just under 100%) is not
-  confirmed, so that turn stays stopped and you continue it yourself. Just before it moves the turn, Studio looks at
+  confirmed, so that turn stays stopped and you continue it yourself. Just before it moves the turn, SpecWithCode looks at
   the thread again, so one you snoozed, settled or moved in the meantime stays put. It never moves
   while `STUDIO_SIMULATE_USAGE_LIMIT` is set.
 
@@ -209,17 +209,17 @@ alike (never under **Wait for the reset**), and all are off until you turn them 
   minutes when Claude named no reset time, and at once when you turn the row off. It does not move
   while it is working, while its session still hosts background work, or while a message is queued
   for it. A thread you moved to the
-  API-key instance yourself stays there, and so does one you move back there after Studio
+  API-key instance yourself stays there, and so does one you move back there after SpecWithCode
   returned it. Two limits remain: a thread you settled while it was on the API-key instance goes
   back only after its next turn, and a thread or scheduled task started from a moved thread
-  starts on the API-key instance and stays there until you change its model. Studio cannot read
+  starts on the API-key instance and stays there until you change its model. SpecWithCode cannot read
   or cap the API organization's balance: set a spend limit in the Claude Console.
 
   To set it up, link the API organization and create a key in the Claude Console, then add a
   second Claude instance under **Settings → Providers** with an environment variable named
   `ANTHROPIC_API_KEY`, marked sensitive, holding the key, and no custom endpoint
   (`ANTHROPIC_BASE_URL`) or other token. Leave its config home empty to share sessions with your
-  subscription instance. Studio keeps the value in its server secret store, not in the settings
+  subscription instance. SpecWithCode keeps the value in its server secret store, not in the settings
   file. An instance that reaches Claude through a router or proxy token is never used by this
   row.
 
@@ -228,10 +228,10 @@ the thread now runs on. The thread keeps its permission mode: in **Supervised**,
 read-only sandbox and asks before writing, so a continued turn that must edit files needs the
 thread in **Auto-accept edits** or above, as it would on Codex from the start.
 
-Studio sets `SPECWEAVE_STUDIO_THREAD_ID` for Claude and Codex turns. SpecWeave's
-`auto-handoff` hooks see it and only write local checkpoints inside Studio (the latest one for a
-thread at `~/.specweave/checkpoints/studio/<thread>.json`); Studio itself decides when to switch,
-so the CLI and Studio never both hand off the same turn. When the thread moves to another
+SpecWithCode sets `SPECWEAVE_STUDIO_THREAD_ID` for Claude and Codex turns. SpecWeave's
+`auto-handoff` hooks see it and only write local checkpoints inside SpecWithCode (the latest one for a
+thread at `~/.specweave/checkpoints/studio/<thread>.json`); SpecWithCode itself decides when to switch,
+so the CLI and SpecWithCode never both hand off the same turn. When the thread moves to another
 provider, the handoff starts with that checkpoint note (the increment, the task, what to do next
 and where the diff is), ahead of the conversation history, as long as it belongs to the thread's
 worktree and fits in the handoff budget.
@@ -253,7 +253,7 @@ balance. No hub plugin is required.
 ### A hub on the same machine
 
 When CLIProxyAPI is installed on the machine an environment runs on, **Usage providers** lists it as
-**CLI Proxy found on** that environment, with its loopback address and whether it is running. Studio
+**CLI Proxy found on** that environment, with its loopback address and whether it is running. SpecWithCode
 looks in `~/.local/share/specweave/proxy`, `~/.cli-proxy-api` and Homebrew's `etc` folder, and reads
 the port from the hub's own config.
 
@@ -270,17 +270,17 @@ settings section when you no longer need it.
 
 The management key is the most powerful secret in this setup. CLIProxyAPI's `api-call` management
 endpoint makes requests with any pooled account's OAuth token, so whoever holds the key can use
-every account on the hub. Studio keeps the key in its secret store and never sends it to a browser.
+every account on the hub. SpecWithCode keeps the key in its secret store and never sends it to a browser.
 It also protects the key in two ways:
 
-- Studio sends the key only over https, loopback (`127.0.0.1`, `localhost`, `[::1]`) or a Tailscale
+- SpecWithCode sends the key only over https, loopback (`127.0.0.1`, `localhost`, `[::1]`) or a Tailscale
   address (`*.ts.net`, `100.64.0.0/10`, `fd7a:115c:a1e0::/48`). A plain-http LAN address is refused.
 - Changing the hub's URL to a different origin discards the saved key. Enter it again for the new
   hub.
 
 Keep the hub itself private: bind CLIProxyAPI to `127.0.0.1`, leave remote management off, and use
 a long random management key and client API keys. Read
-[Studio security boundaries](../studio/security.md) before you route subscription accounts through
+[SpecWithCode security boundaries](../studio/security.md) before you route subscription accounts through
 a hub.
 
 ## Usage in a project
@@ -296,9 +296,9 @@ project's **Usage** tab.
 ## Subscription usage widget
 
 Add **Subscription usage** from your iOS or Android widget gallery to see remaining Codex and
-Claude quotas. Tap it to open **Usage → Limits**; on Android this works while Studio is running in
+Claude quotas. Tap it to open **Usage → Limits**; on Android this works while SpecWithCode is running in
 the background, otherwise open the app from the launcher. On iOS, use **Edit Widget** to choose
-Session, Weekly, or both for each provider. Reopen Studio to refresh expired readings.
+Session, Weekly, or both for each provider. Reopen SpecWithCode to refresh expired readings.
 
 ## Keyboard shortcuts
 

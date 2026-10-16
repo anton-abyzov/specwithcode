@@ -23,12 +23,10 @@ import { CircleArrowUpIcon } from "lucide-react";
 import { type ComponentProps, useRef, useState } from "react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
-import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useEnvironmentSettings } from "~/hooks/useSettings";
 import { serverEnvironment, updateOutdatedServer } from "~/state/server";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { manualServerUpdateSteps } from "~/versionSkew";
 import { Button } from "./ui/button";
 import { toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
@@ -217,7 +215,6 @@ export function ServerUpdateAction({
   environmentId,
   serverLabel,
   selfUpdate,
-  installation,
   desktopAppUpdate = false,
   threadContinuation = false,
   targetVersion,
@@ -235,24 +232,6 @@ export function ServerUpdateAction({
     (settings) => settings.continueThreadsAfterServerUpdate,
   );
   const update = useServerUpdate();
-  const { copyToClipboard } = useCopyToClipboard({
-    target: "update steps",
-    onCopy: () => {
-      toastManager.add({
-        type: "success",
-        title: "Update steps copied",
-        description: `${serverLabel} cannot update itself, and no package registry carries specweave-studio. Follow the copied steps on that machine.`,
-      });
-    },
-    onError: (error) => {
-      toastManager.add({
-        type: "error",
-        title: "Could not copy update steps",
-        description: error.message,
-      });
-    },
-  });
-
   const handleUpdate = async () => {
     if (
       !canUpdateServer(appAtomRegistry.get(sessionStateAtom)) ||
@@ -292,11 +271,12 @@ export function ServerUpdateAction({
     );
   }
 
-  const manualSteps =
-    selfUpdate === null ? manualServerUpdateSteps(targetVersion, installation) : null;
-  const actionLabel = manualSteps !== null ? "Copy update steps" : label;
-  const onClick =
-    manualSteps !== null ? () => copyToClipboard(manualSteps) : () => void handleUpdate();
+  // A server that cannot update itself gets no action here: the local Studio
+  // service updates with the app (Restart to update), and copied shell steps
+  // for another machine were never a real update path.
+  if (selfUpdate === null) return null;
+  const actionLabel = label;
+  const onClick = () => void handleUpdate();
 
   if (appearance === "icon") {
     return (
@@ -308,7 +288,7 @@ export function ServerUpdateAction({
               variant="ghost-muted"
               className={className}
               aria-label={`${actionLabel} for ${serverLabel}`}
-              disabled={manualSteps === null && !canUpdate}
+              disabled={!canUpdate}
               onClick={onClick}
             />
           }
@@ -325,7 +305,7 @@ export function ServerUpdateAction({
       size={size}
       variant={variant}
       className={className}
-      disabled={manualSteps === null && !canUpdate}
+      disabled={!canUpdate}
       onClick={onClick}
     >
       {actionLabel}

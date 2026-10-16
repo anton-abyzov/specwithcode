@@ -47,8 +47,8 @@ const receipts = {
 };
 (window as unknown as { __coordinatorReviewReceipts: unknown }).__coordinatorReviewReceipts =
   receipts;
-export const useThreadShells = () =>
-  base.useThreadShells().map((thread) =>
+const withScenario = <T extends { id: string }>(threads: readonly T[]) =>
+  threads.map((thread) =>
     thread.id !== "coord"
       ? thread
       : {
@@ -58,6 +58,11 @@ export const useThreadShells = () =>
           hasActionableProposedPlan: scenario === "plan",
         },
   );
+export const useThreadShells = () => withScenario(base.useThreadShells());
+// The project page reads the coordinator from its own project's shells.
+export const useThreadShellsForProjectRefs = (
+  refs: Parameters<typeof base.useThreadShellsForProjectRefs>[0],
+) => withScenario(base.useThreadShellsForProjectRefs(refs));
 const item = {
   id: "fixture-command",
   threadId: "coord",

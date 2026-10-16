@@ -25,6 +25,7 @@ import * as ThreadLaunchService from "../../../orchestration-v2/ThreadLaunchServ
 import * as Crypto from "effect/Crypto";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
+import * as ProjectActionRequests from "../../../project/ProjectActionRequests.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
@@ -81,18 +82,50 @@ const ProjectCreateTool = Tool.make("studio_project_create", {
 const ProjectUpdateTool = Tool.make("studio_project_update", {
   ...shared,
   description:
-    "Update a registered project's settings. Omitted fields are preserved. Uses the same project service as the app.",
+    "Update a registered project's settings. Omitted fields are preserved. Uses the same project service as the app. To move a project to another folder, or to archive, restore or delete it, use studio_project_request: the user approves those.",
   parameters: Schema.Struct({ projectId: ProjectId, ...ProjectUpdatePayload.fields }),
+}).annotate(Tool.Destructive, true);
+const ProjectRequestResult = Schema.Struct({
+  requestId: Schema.String,
+  status: Schema.Literal("awaiting_user"),
+  message: Schema.String,
+});
+const requestDependencies = [...shared.dependencies, ProjectActionRequests.ProjectActionRequests];
+const ProjectRequestTool = Tool.make("studio_project_request", {
+  ...shared,
+  description:
+    "Ask the user to archive, restore (unarchive), delete or move a project to another folder. SpecWithCode shows an approval card in your thread; only the user can answer it, and SpecWithCode makes the change itself when they approve. End your turn after calling: the decision and its outcome arrive as the user's answer to the card. For change_folder pass workspaceRoot, an existing folder; the card says whether it is a checkout of the same repository, and the change is refused while the project has other running work. Deleting removes the project's threads, memory, plans and routines but never its folders or Git branches.",
+  parameters: Schema.Struct({
+    action: ProjectActionRequests.ProjectAction,
+    projectId: Schema.optional(
+      ProjectId.annotate({ description: "Omitted means the calling thread's project." }),
+    ),
+    workspaceRoot: Schema.optional(
+      TrimmedNonEmptyString.annotate({
+        description: "For change_folder: the absolute folder the project should use.",
+      }),
+    ),
+    reason: TrimmedNonEmptyString.annotate({
+      description: "One sentence the user reads on the card: why this change is needed.",
+    }),
+  }),
+  success: ProjectRequestResult,
+  dependencies: requestDependencies,
 }).annotate(Tool.Destructive, true);
 const ProjectDeleteTool = Tool.make("studio_project_delete", {
   ...shared,
   description:
-    "Delete a project using the existing project deletion lifecycle. Nonempty projects require force=true and confirmationTitle matching the current project title. This does not delete the repository directory or promise a deleted-thread count.",
+    "Ask the user to delete a project. Same as studio_project_request with action delete: SpecWithCode shows an approval card in your thread and deletes the project only if the user approves. End your turn after calling. Deleting removes the project's threads, memory, plans and routines but never its folders or Git branches.",
   parameters: Schema.Struct({
     projectId: ProjectId,
-    force: Schema.optionalKey(Schema.Boolean),
-    confirmationTitle: Schema.optionalKey(Schema.String),
+    reason: Schema.optional(
+      TrimmedNonEmptyString.annotate({
+        description: "One sentence the user reads on the card: why the project should go.",
+      }),
+    ),
   }),
+  success: ProjectRequestResult,
+  dependencies: requestDependencies,
 }).annotate(Tool.Destructive, true);
 const ProjectCloneTool = Tool.make("studio_project_clone", {
   ...shared,
@@ -110,7 +143,7 @@ const ProjectCloneTool = Tool.make("studio_project_clone", {
 const ThreadLaunchTool = Tool.make("studio_thread_launch", {
   ...shared,
   description:
-    'Create an ordinary TOP-LEVEL thread with an explicit workspace binding before its agent starts. Use this when the user requests independent work, a new thread, or a PR stack in its own worktree; use delegate_task for child subagents. Set workspaceStrategy to {type:"worktree",baseRef:"parent-branch",branch:"new-branch",startFromOrigin:false} for a new worktree based on local commits, or {type:"existing_worktree",worktreePath:"/absolute/path",branch:"existing-branch"} to use an existing checkout. For upstream commits, set startFromOrigin:true. Omitted workspaceStrategy means the project root, NOT the caller\'s worktree. Pass effort when the user names one (\"extra high\" is xhigh). Omit projectId/modelSelection/modes to inherit those settings from the calling thread (a project coordinator uses the project worker model default); a caller outside a Studio thread must pass projectId and gets the project\'s default model. Set scratch:true instead of projectId for a thread without a project: it runs in a fresh folder of its own, outside any repository. Put the task in message. Do not ask the agent to create its own worktree via shell: that does not update the thread binding. Each call creates a new launch with no retry key; retain threadId and use studio_thread_read/studio_thread_wait to follow preparation. After errors or lost responses, inspect studio_thread_list before retrying. Attachments must be pending uploads. The new thread may not run with broader runtime or interaction modes than the caller: the calling Studio thread\'s own modes, or the permission mode an outside agent was approved with.',
+    'Create an ordinary TOP-LEVEL thread with an explicit workspace binding before its agent starts. Use this when the user requests independent work, a new thread, or a PR stack in its own worktree; use delegate_task for child subagents. Set workspaceStrategy to {type:"worktree",baseRef:"parent-branch",branch:"new-branch",startFromOrigin:false} for a new worktree based on local commits, or {type:"existing_worktree",worktreePath:"/absolute/path",branch:"existing-branch"} to use an existing checkout. For upstream commits, set startFromOrigin:true. When the project holds nested repositories, add repository (an id from the project\'s environment repositories, or that checkout\'s absolute path) so git runs in that repository instead of the project root; a baseRef missing there fails rather than falling back to another branch. Omitted workspaceStrategy means the project root, NOT the caller\'s worktree. Pass effort when the user names one (\"extra high\" is xhigh). Omit projectId/modelSelection/modes to inherit those settings from the calling thread (a project coordinator uses the project worker model default); a caller outside a SpecWithCode thread must pass projectId and gets the project\'s default model. Set scratch:true instead of projectId for a thread without a project: it runs in a fresh folder of its own, outside any repository. Put the task in message. Do not ask the agent to create its own worktree via shell: that does not update the thread binding. Each call creates a new launch with no retry key; retain threadId and use studio_thread_read/studio_thread_wait to follow preparation. After errors or lost responses, inspect studio_thread_list before retrying. Attachments must be pending uploads. The new thread may not run with broader runtime or interaction modes than the caller: the calling SpecWithCode thread\'s own modes, or the permission mode an outside agent was approved with.',
   parameters: Schema.Struct({
     machine: Schema.optional(
       OrchestratorMcpMachineTarget.annotate({
@@ -150,7 +183,7 @@ const ThreadLaunchTool = Tool.make("studio_thread_launch", {
     workspaceStrategy: Schema.optional(
       OrchestrationV2ThreadLaunchWorkspaceStrategy.annotate({
         description:
-          "Choose where this thread runs before starting its agent: worktree creates and binds a new checkout from baseRef; existing_worktree binds worktreePath, which must be one of the project's git worktrees; root uses the project checkout. Omitted means root, not the caller's worktree. For a PR stack use the parent branch as baseRef and startFromOrigin:false. Uncommitted changes are not copied.",
+          "Choose where this thread runs before starting its agent: worktree creates and binds a new checkout from baseRef; existing_worktree binds worktreePath, which must be one of the project's git worktrees; root uses the project checkout. On worktree and existing_worktree, repository picks one of the project's environment repositories (id or checkout path) to run git in; without it git runs in the project root. Omitted means root, not the caller's worktree. For a PR stack use the parent branch as baseRef and startFromOrigin:false. Uncommitted changes are not copied.",
       }),
     ),
     message: Schema.optional(
@@ -201,6 +234,7 @@ export const ProjectToolkit = Toolkit.make(
   ProjectReadTool,
   ProjectCreateTool,
   ProjectUpdateTool,
+  ProjectRequestTool,
   ProjectDeleteTool,
   ProjectCloneTool,
 );

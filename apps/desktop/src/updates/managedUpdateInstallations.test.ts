@@ -34,7 +34,7 @@ const owner: ManagedInstallationOwner = {
   homeDirectory: "/Users/Owner Space",
 };
 const receipt = (id = "work-mac", who = owner) => {
-  const home = Path.join(who.homeDirectory, ".specweave-studio", id);
+  const home = Path.join(who.homeDirectory, ".specwithcode", id);
   return {
     schemaVersion: 1,
     identity: id,
@@ -59,7 +59,7 @@ const receipt = (id = "work-mac", who = owner) => {
 const parse = (record: object, id = "work-mac", who = owner) =>
   parseManagedLocalInstallation(JSON.stringify(record), id, who);
 const service = (id = "work-mac"): AttachedLocalService => ({
-  baseDir: Path.join(owner.homeDirectory, ".specweave-studio", id),
+  baseDir: Path.join(owner.homeDirectory, ".specwithcode", id),
   runtime: { pid: 77, port: 8320, origin: "http://127.0.0.1:8320", serviceManaged: true },
   descriptor: {
     environmentId: "environment-7",
@@ -100,8 +100,8 @@ describe("managed update installation candidates", () => {
   it("supports a generic installation under UID502 with spaces and a receipt-bound port", () => {
     expect(parse(receipt())).toEqual({
       installationId: "work-mac",
-      studioHome: `${owner.homeDirectory}/.specweave-studio/work-mac`,
-      stateDir: `${owner.homeDirectory}/.specweave-studio/work-mac/userdata`,
+      studioHome: `${owner.homeDirectory}/.specwithcode/work-mac`,
+      stateDir: `${owner.homeDirectory}/.specwithcode/work-mac/userdata`,
       release: receipt().release,
       port: 8320,
       version: "1.0.17",
@@ -208,15 +208,15 @@ describe("managed update installation candidates", () => {
         FS.writeFileSync(Path.join(record.studioHome, "installation.json"), JSON.stringify(record));
       }
       FS.symlinkSync(
-        Path.join(home, ".specweave-studio/alpha"),
-        Path.join(home, ".specweave-studio/alias"),
+        Path.join(home, ".specwithcode/alpha"),
+        Path.join(home, ".specwithcode/alias"),
       );
       expect(findManagedUpdateInstallations(actual).map((value) => value.installationId)).toEqual([
         "alpha",
         "beta",
       ]);
       expect(
-        isOwnedManagedPath(Path.join(home, ".specweave-studio/alias/installation.json"), actual),
+        isOwnedManagedPath(Path.join(home, ".specwithcode/alias/installation.json"), actual),
       ).toBe(false);
       const helper = Path.join(home, "managed_updates.py");
       for (const name of MAC_SERVICE_UPDATER_FILES)
@@ -239,6 +239,51 @@ describe("managed update installation candidates", () => {
       }
       FS.chmodSync(helper, 0o666);
       expect(selectManagedUpdateHelper([helper], actual)).toBeNull();
+    } finally {
+      FS.rmSync(home, { recursive: true, force: true });
+    }
+  });
+  it("accepts a release under the branded install directory", () => {
+    const record = {
+      ...receipt(),
+      release: Path.join(owner.homeDirectory, ".specwithcode/install/releases", "a".repeat(20)),
+    };
+    expect(parse(record)?.release).toBe(record.release);
+    expect(
+      parse({ ...record, release: Path.join(owner.homeDirectory, "elsewhere", "a".repeat(20)) }),
+    ).toBeNull();
+  });
+  it("discovers an unmigrated legacy service beside a fresh branded profile, branded first", () => {
+    const home = FS.realpathSync(
+      FS.mkdtempSync(Path.join(OS.userInfo().homedir, ".managed-installations-legacy-test-")),
+    );
+    try {
+      const actual = { ...owner, uid: process.getuid!(), homeDirectory: home };
+      FS.mkdirSync(Path.join(home, ".specwithcode/userdata"), { recursive: true });
+      const write = (root: string, id: string) => {
+        const studioHome = Path.join(home, root, id);
+        FS.mkdirSync(studioHome, { recursive: true });
+        FS.writeFileSync(
+          Path.join(studioHome, "installation.json"),
+          JSON.stringify({
+            ...receipt(id, actual),
+            studioHome,
+            stateDir: Path.join(studioHome, "userdata"),
+          }),
+        );
+      };
+      write(".specweave-studio", "gamma");
+      write(".specwithcode", "beta");
+      write(".specweave-studio", "beta");
+      expect(
+        findManagedUpdateInstallations(actual).map((value) => [
+          value.installationId,
+          value.studioHome,
+        ]),
+      ).toEqual([
+        ["beta", Path.join(home, ".specwithcode/beta")],
+        ["gamma", Path.join(home, ".specweave-studio/gamma")],
+      ]);
     } finally {
       FS.rmSync(home, { recursive: true, force: true });
     }

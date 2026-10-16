@@ -63,6 +63,7 @@ export default defineConfig({
     environment: "node",
     exclude: [
       "**/.repos/**",
+      "**/.specwithcode/**",
       "**/.specweave-studio/**",
       "**/node_modules/**",
       "**/dist/**",
@@ -94,6 +95,7 @@ export default defineConfig({
       "pnpm-lock.yaml",
       "*.tsbuildinfo",
       "**/routeTree.gen.ts",
+      "**/*.generated.ts",
       "apps/mobile/android/**",
       "apps/mobile/ios/**",
       "apps/mobile/uniwind-types.d.ts",
@@ -119,6 +121,7 @@ export default defineConfig({
       "pnpm-lock.yaml",
       "*.tsbuildinfo",
       "**/routeTree.gen.ts",
+      "**/*.generated.ts",
       "apps/mobile/android/**",
       "apps/mobile/ios/**",
       "apps/mobile/uniwind-types.d.ts",

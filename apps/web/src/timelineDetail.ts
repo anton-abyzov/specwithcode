@@ -1,9 +1,13 @@
-import type { TimelineDetail } from "@specweave-studio/contracts";
+import type { ClientSettings, TimelineDetail } from "@specweave-studio/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect } from "react";
 
 import { toastManager } from "./components/ui/toast";
-import { getClientSettings, persistClientSettingsPatch } from "./hooks/useSettings";
+import {
+  getClientSettings,
+  persistClientSettingsPatch,
+  useClientSettings,
+} from "./hooks/useSettings";
 import { resolveShortcutCommand } from "./keybindings";
 import { isTerminalFocused } from "./lib/terminalFocus";
 import { primaryServerKeybindingsAtom } from "./state/server";
@@ -24,7 +28,7 @@ export const TIMELINE_DETAIL_LABELS: Record<TimelineDetail, string> = {
 };
 
 export const TIMELINE_DETAIL_DESCRIPTIONS: Record<TimelineDetail, string> = {
-  concise: "Hide thinking and in-between messages; one summary per turn",
+  concise: "Hide thinking and in-between messages; one line per finished turn",
   normal: "Fold finished turns and tool groups",
   verbose: "Open every turn, tool call and thought",
 };
@@ -49,6 +53,67 @@ export function setTimelineDetail(detail: TimelineDetail, options: { announce?: 
       timeout: 1500,
     });
   }
+}
+
+/** Threads with their own level that are remembered; the oldest choice is dropped first. */
+export const MAX_THREAD_TIMELINE_DETAILS = 300;
+
+type DetailSettings = Pick<ClientSettings, "timelineDetail" | "threadTimelineDetail">;
+
+/** The thread's own level when it has one, otherwise the default for every thread. */
+export function resolveTimelineDetail(
+  settings: DetailSettings,
+  threadKey: string | null | undefined,
+): TimelineDetail {
+  return (
+    (threadKey ? settings.threadTimelineDetail[threadKey] : undefined) ?? settings.timelineDetail
+  );
+}
+
+export function threadHasOwnTimelineDetail(
+  settings: DetailSettings,
+  threadKey: string | null | undefined,
+): boolean {
+  return threadKey ? settings.threadTimelineDetail[threadKey] !== undefined : false;
+}
+
+/** The thread overrides with `detail` set, or without it for null; newest last. */
+export function nextThreadTimelineDetails(
+  current: Readonly<Record<string, TimelineDetail>>,
+  threadKey: string,
+  detail: TimelineDetail | null,
+): Record<string, TimelineDetail> {
+  const next: Record<string, TimelineDetail> = {};
+  for (const [key, value] of Object.entries(current)) {
+    if (key !== threadKey) next[key] = value;
+  }
+  if (detail !== null) next[threadKey] = detail;
+  const keys = Object.keys(next);
+  for (const key of keys.slice(0, Math.max(0, keys.length - MAX_THREAD_TIMELINE_DETAILS))) {
+    delete next[key];
+  }
+  return next;
+}
+
+/** Gives one thread its own level, or null to follow the default again. */
+export function setThreadTimelineDetail(threadKey: string, detail: TimelineDetail | null) {
+  const threadTimelineDetail = nextThreadTimelineDetails(
+    getClientSettings().threadTimelineDetail,
+    threadKey,
+    detail,
+  );
+  void persistClientSettingsPatch({ threadTimelineDetail }).catch(() => {
+    toastManager.add({
+      type: "error",
+      title: "Couldn't save timeline detail",
+      description: "Try again.",
+    });
+  });
+}
+
+/** The level a thread's timeline shows; re-renders when either setting changes. */
+export function useTimelineDetail(threadKey: string | null | undefined): TimelineDetail {
+  return useClientSettings((settings) => resolveTimelineDetail(settings, threadKey));
 }
 
 /** Moves to the next level and announces it, for the keyboard shortcut. */

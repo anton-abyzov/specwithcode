@@ -9,7 +9,10 @@ import {
   isSettingsSearchScopeAvailable,
   searchableSetting,
   searchSettings,
+  SETTINGS_NAV_GROUPS,
   SETTINGS_SEARCH_ITEMS,
+  SETTINGS_SECTION_LABELS,
+  settingsSearchDestination,
   type SettingsSearchItem,
 } from "./settingsSearch";
 
@@ -574,6 +577,21 @@ describe("settings sidebar scope", () => {
     expect(isSettingsOverviewVisible({ machine: "remote" })).toBe(false);
     expect(isSettingsOverviewVisible({ project: "project" })).toBe(true);
     expect(isSettingsOverviewVisible({ project: "project", checkout: "checkout" })).toBe(true);
+  });
+
+  it("groups every section exactly once, in label order", () => {
+    const paths = SETTINGS_NAV_GROUPS.flatMap((group) => group.paths);
+    expect(paths).toEqual(Object.keys(SETTINGS_SECTION_LABELS));
+  });
+
+  it("opens project-overridable rows on the Project page while a project is picked", () => {
+    const model = { id: "default-model", to: "/settings/general" } as const;
+    expect(settingsSearchDestination(model, {})).toBe("/settings/general");
+    expect(settingsSearchDestination(model, { machine: "m1" })).toBe("/settings/general");
+    expect(settingsSearchDestination(model, { project: "p" })).toBe("/settings/projects");
+    expect(
+      settingsSearchDestination({ id: "word-wrap", to: "/settings/appearance" }, { project: "p" }),
+    ).toBe("/settings/appearance");
   });
 });
 

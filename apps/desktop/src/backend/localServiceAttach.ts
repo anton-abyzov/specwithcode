@@ -4,6 +4,8 @@
 // SQLite store, so the desktop discovers the running owner and talks to it as
 // its local environment instead of starting a second backend.
 
+import { canonicalStudioPath } from "@specweave-studio/shared/studioIdentity";
+
 export interface RunningServerRuntimeState {
   readonly pid: number;
   readonly port: number;
@@ -42,7 +44,10 @@ export function parseServerRuntimeState(text: string): RunningServerRuntimeState
   return { pid, port, origin: url.origin, serviceManaged: record.serviceManaged === true };
 }
 
-/** A Studio home the fleet installer created under `~/.specweave-studio/<identity>`. */
+/**
+ * A Studio home the fleet installer created under `~/.specwithcode/<identity>`
+ * (or an unmigrated `~/.specweave-studio/<identity>`).
+ */
 export interface StudioInstallation {
   readonly identity: string;
   readonly studioHome: string;
@@ -51,10 +56,11 @@ export interface StudioInstallation {
 }
 
 /**
- * Parses `~/.specweave-studio/<identity>/installation.json`. The installed
- * launchd service runs with its own home (`STUDIO_HOME=~/.specweave-studio/<identity>`),
- * so the desktop finds it here rather than in the default home. A receipt that
- * points anywhere but its own folder is ignored.
+ * Parses `<root>/<identity>/installation.json`, where `<root>` is `~/.specwithcode`
+ * or an unmigrated `~/.specweave-studio`. The installed launchd service runs with its
+ * own home (`STUDIO_HOME=<root>/<identity>`), so the desktop finds it here rather than
+ * in the default home. A receipt that points anywhere but its own folder is ignored;
+ * `canonical` maps a path recorded under a since-migrated legacy root to the branded one.
  */
 export function parseStudioInstallation(
   text: string,
@@ -62,6 +68,7 @@ export function parseStudioInstallation(
     readonly studioRoot: string;
     readonly directoryName: string;
     readonly join: (first: string, ...segments: string[]) => string;
+    readonly canonical?: (path: string) => string;
   },
 ): StudioInstallation | null {
   let value: unknown;
@@ -74,10 +81,16 @@ export function parseStudioInstallation(
   const record = value as Record<string, unknown>;
   const studioHome = expected.join(expected.studioRoot, expected.directoryName);
   const stateDir = expected.join(studioHome, "userdata");
+  // By default a receipt written under the legacy root before it became a link to the
+  // branded root still describes the same folder.
+  const userHome = expected.studioRoot.replace(/[\\/]+[^\\/]+[\\/]*$/, "");
+  const canonical = expected.canonical ?? ((path: string) => canonicalStudioPath(path, userHome));
   if (
     record.schemaVersion !== 1 ||
-    record.studioHome !== studioHome ||
-    record.stateDir !== stateDir
+    typeof record.studioHome !== "string" ||
+    typeof record.stateDir !== "string" ||
+    canonical(record.studioHome) !== canonical(studioHome) ||
+    canonical(record.stateDir) !== canonical(stateDir)
   ) {
     return null;
   }

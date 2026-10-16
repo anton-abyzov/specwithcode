@@ -10,6 +10,7 @@ import importlib.util
 import io
 import json
 import pathlib
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -42,7 +43,7 @@ class RefusalLine(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.home = pathlib.Path(temporary.name).resolve()
-        self.state = self.home / '.specweave-studio' / 'm4' / 'userdata'
+        self.state = self.home / '.specwithcode' / 'm4' / 'userdata'
         self.state.mkdir(parents=True)
         db = sqlite3.connect(str(self.state / 'statev2.sqlite'))
         db.executescript(SCHEMA)
@@ -80,13 +81,44 @@ class RefusalLine(unittest.TestCase):
         self.assertEqual(bare, [])
 
     def test_native_work_counts_each_check_and_agrees_with_the_snapshot(self):
-        self.assertEqual(update.native_work_counts(self.state), {'runs': 0, 'requests': 0, 'effects': 0, 'sessions': 0})
+        self.assertEqual(update.native_work_counts(self.state),
+                         {'runs': 0, 'queued': 0, 'requests': 0, 'effects': 0, 'sessions': 0, 'held': 0})
         update._rows_snapshot(self.state, False)  # Idle: the authority agrees.
         self.add_work()
         with self.assertRaisesRegex(AssertionError, 'Native work is not idle'):
             update._rows_snapshot(self.state, False)
         line = update.refusal_line('m4', AssertionError('Native work is not idle'))
-        self.assertEqual(line, 'REFUSAL native-work runs=2 requests=1 effects=2 sessions=1')
+        self.assertEqual(line, 'REFUSAL native-work runs=2 queued=0 requests=1 effects=2 sessions=1 held=0')
+        self.assert_safe(line)
+
+    def test_a_held_queue_is_not_work_but_a_waiting_queue_is(self):
+        # 13 handoffs held after a restart once kept an update waiting forever: a held queue
+        # starts only when someone resumes it, so the snapshot must not wait for it.
+        db = sqlite3.connect(str(self.state / 'statev2.sqlite'))
+        db.execute('ALTER TABLE orchestration_v2_projection_runs ADD COLUMN payload_json TEXT')
+        db.executemany("INSERT INTO orchestration_v2_projection_runs VALUES (?, ?, 'queued', ?)",
+                       [('h%d' % index, SECRET, json.dumps({'status': 'queued', 'queueHeld': True, 'text': SECRET}))
+                        for index in range(13)] + [('bad', SECRET, 'not json')])
+        db.commit()
+        db.close()
+        # The malformed payload is not provably held, so it still counts as a queued message.
+        self.assertEqual(update.native_work_counts(self.state),
+                         {'runs': 0, 'queued': 1, 'requests': 0, 'effects': 0, 'sessions': 0, 'held': 13})
+        db = sqlite3.connect(str(self.state / 'statev2.sqlite'))
+        db.execute("DELETE FROM orchestration_v2_projection_runs WHERE run_id = 'bad'")
+        db.commit()
+        db.close()
+        update._rows_snapshot(self.state, False)  # Only held runs left: idle.
+        self.assertEqual(update.native_work_counts(self.state)['held'], 13)
+        db = sqlite3.connect(str(self.state / 'statev2.sqlite'))
+        db.execute("INSERT INTO orchestration_v2_projection_runs VALUES ('q', ?, 'queued', ?)",
+                   (SECRET, json.dumps({'status': 'queued', 'queueHeld': False})))
+        db.commit()
+        db.close()
+        with self.assertRaisesRegex(AssertionError, 'Native work is not idle'):
+            update._rows_snapshot(self.state, False)
+        line = update.refusal_line('m4', AssertionError('Native work is not idle'))
+        self.assertEqual(line, 'REFUSAL native-work runs=0 queued=1 requests=0 effects=0 sessions=0 held=13')
         self.assert_safe(line)
 
     def test_descendants_are_named_by_executable_basename_only(self):
@@ -123,8 +155,8 @@ class RefusalLine(unittest.TestCase):
                  (AssertionError('Process executable unavailable'), 'REFUSAL busy AssertionError'),
                  (AssertionError('Supervisor arguments unavailable'), 'REFUSAL busy AssertionError'),
                  (AssertionError('Invalid supervisor argument size'), 'REFUSAL busy AssertionError'),
-                 (AssertionError('The Studio service is not running'),
-                  'REFUSAL environment The Studio service is not running'),
+                 (AssertionError('The SpecWithCode service is not running'),
+                  'REFUSAL environment The SpecWithCode service is not running'),
                  (AssertionError('Port belongs to another process'), 'REFUSAL environment Port belongs to another process'),
                  (AssertionError('Release at /Users/x/token=abc differs'),
                   'REFUSAL environment A Studio installation check failed'),
@@ -150,9 +182,121 @@ class RefusalLine(unittest.TestCase):
         self.assertEqual(caught.exception.code, 1)
         lines = err.getvalue().strip().splitlines()
         self.assertIn('AssertionError: Native work is not idle', lines)
-        self.assertEqual(lines[-1], 'REFUSAL native-work runs=2 requests=1 effects=2 sessions=1')
+        self.assertEqual(lines[-1], 'REFUSAL native-work runs=2 queued=0 requests=1 effects=2 sessions=1 held=0')
         self.assertFalse(target.exists())
 
+
+HOLDER = """
+import sqlite3, sys
+db = sqlite3.connect(sys.argv[1], isolation_level=None)
+db.execute('PRAGMA journal_mode=WAL')
+db.execute('CREATE TABLE IF NOT EXISTS orchestration_events(stream_id TEXT, payload TEXT)')
+db.execute("INSERT INTO orchestration_events VALUES ('t', 'x')")
+print('ready', flush=True)
+sys.stdin.read()
+db.execute("INSERT INTO orchestration_events VALUES ('t', 'y')")
+"""
+
+
+# On the service's own SQLite (node:sqlite): Apple's system SQLite keeps its locks when another
+# descriptor closes, so a /usr/bin/python3 dropper could not stand in for the service.
+LOCK_DROPPER = """
+import * as fs from "node:fs";
+import { DatabaseSync } from "node:sqlite";
+const db = new DatabaseSync(process.argv[1]);
+db.prepare("SELECT count(*) AS n FROM orchestration_events").get();
+for (const name of [process.argv[1] + "-shm", process.argv[1]]) fs.closeSync(fs.openSync(name, "r"));
+process.stdout.write("ready\\n");
+process.stdin.resume();
+process.stdin.on("end", () => process.exit(0));
+"""
+
+
+class DatabaseRefusals(unittest.TestCase):
+    """m4, October 15, 2026: another connection deleted statev2.sqlite-wal and -shm while the
+    service held them, so every snapshot read raced the service's private log and failed with
+    'database disk image is malformed', reported only as 'Unexpected snapshot failure
+    (DatabaseError)'. The refusal names the cause."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.state = pathlib.Path(temporary.name).resolve() / 'userdata'
+        self.state.mkdir()
+
+    def test_an_unreadable_database_is_named_with_sqlites_reason(self):
+        (self.state / 'statev2.sqlite').write_bytes(b'not a database ' * 512)
+        with self.assertRaises(sqlite3.DatabaseError) as caught:
+            update._rows_snapshot(self.state, False)
+        self.assertNotIsInstance(caught.exception, sqlite3.OperationalError)
+        self.assertEqual(update.refusal_line('m4', caught.exception),
+                         'REFUSAL environment The SpecWithCode database could not be read (file is not a database)')
+        cases = [(sqlite3.DatabaseError('database disk image is malformed'),
+                  'REFUSAL environment The SpecWithCode database could not be read (database disk image is malformed)'),
+                 (sqlite3.IntegrityError('UNIQUE constraint failed: auth_sessions.token'),
+                  'REFUSAL environment The SpecWithCode database could not be read (IntegrityError)'),
+                 # Not a database fault: still the generic line.
+                 (RuntimeError('boom'), 'REFUSAL environment Unexpected snapshot failure (RuntimeError)')]
+        for error, expected in cases:
+            with self.subTest(error=repr(error)):
+                self.assertEqual(update.refusal_line('m4', error), expected)
+
+    @unittest.skipUnless(pathlib.Path('/usr/sbin/lsof').exists(), 'needs lsof')
+    def test_a_deleted_log_the_service_still_writes_is_refused(self):
+        database = self.state / 'statev2.sqlite'
+        holder = subprocess.Popen([sys.executable, '-B', '-c', HOLDER, str(database)], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, text=True)
+        self.addCleanup(holder.wait, 10)
+        self.addCleanup(holder.stdin.close)
+        self.addCleanup(holder.stdout.close)
+        self.assertEqual(holder.stdout.readline().strip(), 'ready')
+        update.assert_database_attached(holder.pid, self.state)  # The files on disk are the open ones.
+        for name in ('statev2.sqlite-wal', 'statev2.sqlite-shm'):
+            (self.state / name).unlink()
+        reader = sqlite3.connect(str(database))  # Recreates an empty -wal and -shm, as on m4.
+        # Its commits live only in the deleted log: a new reader cannot see them.
+        self.assertEqual(reader.execute('SELECT count(*) FROM sqlite_master').fetchone()[0], 0)
+        reader.close()
+        self.assertTrue((self.state / 'statev2.sqlite-wal').exists())
+        with self.assertRaises(AssertionError) as caught:
+            update.assert_database_attached(holder.pid, self.state)
+        self.assertEqual(str(caught.exception), update.DETACHED_DATABASE)
+        self.assertEqual(update.refusal_line('m4', caught.exception), 'REFUSAL environment ' + update.DETACHED_DATABASE)
+
+    def test_a_service_that_lost_its_database_locks_is_refused(self):
+        """m4, October 16, 2026: the service had dropped its own POSIX locks on statev2.sqlite and
+        -shm, so the next read-only open rebuilt -shm under it and it died with SIGBUS. A snapshot
+        must not be the open that does that."""
+        database = self.state / 'statev2.sqlite'
+        holder = subprocess.Popen([sys.executable, '-B', '-c', HOLDER, str(database)], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, text=True)
+        self.addCleanup(holder.wait, 10)
+        self.addCleanup(holder.stdin.close)
+        self.addCleanup(holder.stdout.close)
+        self.assertEqual(holder.stdout.readline().strip(), 'ready')
+        update.assert_database_locked(self.state)
+        node = shutil.which('node')
+        if node is None:
+            self.skipTest('needs Node 22 for the service\'s own SQLite')
+        dropper = subprocess.Popen([node, '--no-warnings', '--input-type=module', '--eval', LOCK_DROPPER, str(database)],
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+        self.addCleanup(dropper.wait, 10)
+        self.addCleanup(dropper.stdin.close)
+        self.addCleanup(dropper.stdout.close)
+        self.assertEqual(dropper.stdout.readline().strip(), 'ready')
+        holder.stdin.close()  # Only the dropper holds the database now, without its locks.
+        holder.wait(10)
+        with self.assertRaises(AssertionError) as caught:
+            update.assert_database_locked(self.state)
+        self.assertEqual(str(caught.exception), update.LOCKS_LOST)
+        self.assertEqual(update.refusal_line('m4', caught.exception), 'REFUSAL environment ' + update.LOCKS_LOST)
+
+    def test_the_snapshot_checks_the_open_database_before_reading_it(self):
+        tree = ast.parse((HERE / 'update.py').read_text())
+        body = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == '_snapshot')
+        calls = [node.func.id for node in ast.walk(body) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)]
+        self.assertLess(calls.index('assert_database_attached'), calls.index('_read_state'))
+        self.assertLess(calls.index('assert_database_locked'), calls.index('_read_state'))
 
 
 class ApplyBudget(unittest.TestCase):

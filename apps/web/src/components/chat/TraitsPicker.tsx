@@ -17,6 +17,7 @@ import {
   isClaudeUltrathinkPrompt,
   normalizeModelSlug,
 } from "@specweave-studio/shared/model";
+import { findEffortDescriptor } from "@specweave-studio/shared/effortLevel";
 import { Fragment, memo, useCallback } from "react";
 import { BrainIcon } from "lucide-react";
 import {
@@ -40,6 +41,12 @@ import {
   type ComposerControlSize,
 } from "./ComposerControl";
 import { useComposerMenuProps } from "./composerEventScope";
+import {
+  EffortGlyph,
+  effortGlyphLevel,
+  effortLevelDescription,
+  effortLevelLabel,
+} from "./EffortGlyph";
 import { useComposerMenuState } from "./useComposerMenuState";
 
 type ProviderOptions = ReadonlyArray<ProviderOptionSelection>;
@@ -361,6 +368,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     allowPromptInjectedEffort,
     planModeEnabled,
   });
+  const effortDescriptorId = findEffortDescriptor(selectDescriptors)?.id ?? null;
   const updateDescriptors = (nextDescriptors: ReadonlyArray<ProviderOptionDescriptor>) => {
     updateModelOptions(buildProviderOptionSelectionsFromDescriptors(nextDescriptors));
   };
@@ -441,38 +449,56 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                 value={selectedValue}
                 onValueChange={(value) => handleSelectChange(descriptor, value)}
               >
-                {descriptor.options.map((option) => (
-                  <MenuRadioItem
-                    key={option.id}
-                    value={option.id}
-                    hideIndicator
-                    // Base UI keeps radio menus open by default. Close on pick so
-                    // the traits menu behaves like the model picker.
-                    closeOnClick
-                    disabled={ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id}
-                  >
-                    <span className="flex w-full min-w-0 flex-col">
-                      <span className="flex w-full min-w-0 items-center justify-between gap-3">
-                        <span className="min-w-0 truncate">
-                          {option.label}
-                          {traitOptionBadges(descriptor.id, option, recommendedOptionValues).map(
-                            (badge) => (
-                              <Fragment key={badge}>
-                                {" "}
-                                {badge === "Default" ? <DefaultBadge /> : <RecommendedBadge />}
-                              </Fragment>
-                            ),
-                          )}
+                {descriptor.options.map((option) => {
+                  const isEffort = descriptor.id === effortDescriptorId;
+                  const showGlyph = isEffort && effortGlyphLevel(option.id) !== null;
+                  const description =
+                    (isEffort ? effortLevelDescription(option.id) : null) ?? option.description;
+                  return (
+                    <MenuRadioItem
+                      key={option.id}
+                      value={option.id}
+                      hideIndicator
+                      // Base UI keeps radio menus open by default. Close on pick so
+                      // the traits menu behaves like the model picker.
+                      closeOnClick
+                      disabled={
+                        ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id
+                      }
+                    >
+                      <span className="flex w-full min-w-0 items-start gap-2">
+                        {showGlyph ? (
+                          <EffortGlyph
+                            value={option.id}
+                            className="mt-0.5 size-4 text-muted-foreground in-data-checked:text-foreground"
+                          />
+                        ) : null}
+                        <span className="flex w-full min-w-0 flex-col">
+                          <span className="flex w-full min-w-0 items-center justify-between gap-3">
+                            <span className="min-w-0 truncate">
+                              {isEffort ? effortLevelLabel(option.id, option.label) : option.label}
+                              {traitOptionBadges(
+                                descriptor.id,
+                                option,
+                                recommendedOptionValues,
+                              ).map((badge) => (
+                                <Fragment key={badge}>
+                                  {" "}
+                                  {badge === "Default" ? <DefaultBadge /> : <RecommendedBadge />}
+                                </Fragment>
+                              ))}
+                            </span>
+                          </span>
+                          {description ? (
+                            <span className="max-w-56 text-pretty text-muted-foreground text-xs">
+                              {description}
+                            </span>
+                          ) : null}
                         </span>
                       </span>
-                      {option.description ? (
-                        <span className="max-w-56 text-pretty text-muted-foreground text-xs">
-                          {option.description}
-                        </span>
-                      ) : null}
-                    </span>
-                  </MenuRadioItem>
-                ))}
+                    </MenuRadioItem>
+                  );
+                })}
               </MenuRadioGroup>
             </MenuGroup>
           </div>
@@ -594,6 +620,79 @@ export function buildTraitsTriggerDisplay(input: {
   return { label: labels.join(" · ") };
 }
 
+export interface TraitsTriggerParts {
+  /** The full trait summary, for the tooltip and accessible name. */
+  readonly label: string;
+  /** The effort level, shown with its meter and kept visible in a narrow composer. */
+  readonly effort: { readonly value: string; readonly label: string } | null;
+  /** Context window, thinking and speed, shortened; hidden first when space runs out. */
+  readonly details: string;
+}
+
+/** Split the trigger into the effort level and a compact summary of the other traits. */
+export function buildTraitsTriggerParts(
+  input: Parameters<typeof buildTraitsTriggerDisplay>[0],
+): TraitsTriggerParts {
+  const { label } = buildTraitsTriggerDisplay(input);
+  const descriptor = findEffortDescriptor(input.descriptors);
+  const ultrathink =
+    input.ultrathinkPromptControlled && descriptor?.id === input.primarySelectDescriptorId;
+  const value = !descriptor
+    ? null
+    : ultrathink
+      ? "ultrathink"
+      : getProviderOptionCurrentValue(
+          descriptor,
+          input.modelSelection,
+          input.reportedModelSelection,
+        );
+  const effortLabel = !descriptor
+    ? null
+    : ultrathink
+      ? "Ultrathink"
+      : getProviderOptionCurrentLabel(
+          descriptor,
+          input.modelSelection,
+          input.reportedModelSelection,
+        );
+  if (!descriptor || typeof value !== "string" || !effortLabel || !effortGlyphLevel(value)) {
+    return { label, effort: null, details: "" };
+  }
+  const details: Array<string> = [];
+  for (const other of input.descriptors) {
+    if (other.id === descriptor.id) continue;
+    if (other.type === "boolean") {
+      if (other.id === "fastMode") {
+        if (other.currentValue === true) details.push("Fast");
+      } else if (other.id === "thinking") {
+        details.push(other.currentValue === true ? "Thinking" : "No thinking");
+      } else {
+        details.push(`${other.label} ${other.currentValue === true ? "On" : "Off"}`);
+      }
+      continue;
+    }
+    const current = getProviderOptionCurrentValue(other);
+    // A standard service tier is the normal speed, not worth a word.
+    if (
+      other.id === "serviceTier" &&
+      (current === "default" || other.options.find(({ id }) => id === current)?.isDefault)
+    ) {
+      continue;
+    }
+    const otherLabel = getProviderOptionCurrentLabel(
+      other,
+      input.modelSelection,
+      input.reportedModelSelection,
+    );
+    if (typeof otherLabel === "string" && otherLabel.length > 0) details.push(otherLabel);
+  }
+  return {
+    label,
+    effort: { value, label: effortLevelLabel(value, effortLabel) },
+    details: details.join(" · "),
+  };
+}
+
 export const TraitsPicker = memo(function TraitsPicker({
   provider,
   instanceId,
@@ -646,7 +745,11 @@ export const TraitsPicker = memo(function TraitsPicker({
     return null;
   }
 
-  const { label: triggerLabel } = buildTraitsTriggerDisplay({
+  const {
+    label: triggerLabel,
+    effort: triggerEffort,
+    details: triggerDetails,
+  } = buildTraitsTriggerParts({
     provider,
     descriptors,
     primarySelectDescriptorId: primarySelectDescriptor?.id ?? null,
@@ -697,12 +800,50 @@ export const TraitsPicker = memo(function TraitsPicker({
                 size === "xs" ? "gap-1" : "gap-1.5",
               )}
             >
-              <ComposerControlIcon icon={BrainIcon} size={size} />
-              <span data-composer-control-label className="min-w-0 truncate">
-                {triggerLabel}
-              </span>
+              {triggerEffort ? (
+                <>
+                  <EffortGlyph
+                    value={triggerEffort.value}
+                    className={size === "xs" ? "size-3.5" : "size-4"}
+                    data-composer-control-icon
+                  />
+                  <span data-composer-control-effort className="shrink-0">
+                    {triggerEffort.label}
+                  </span>
+                  {triggerDetails ? (
+                    <span
+                      data-composer-control-label
+                      className="min-w-0 truncate font-normal text-muted-foreground"
+                    >
+                      {triggerDetails}
+                    </span>
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  <ComposerControlIcon icon={BrainIcon} size={size} />
+                  <span data-composer-control-label className="min-w-0 truncate">
+                    {triggerLabel}
+                  </span>
+                </>
+              )}
               <ComposerControlChevron size={size} />
             </span>
+          ) : triggerEffort ? (
+            <>
+              <EffortGlyph
+                value={triggerEffort.value}
+                className={size === "xs" ? "size-3.5" : "size-4"}
+                data-composer-control-icon
+              />
+              <span data-composer-control-effort>{triggerEffort.label}</span>
+              {triggerDetails ? (
+                <span data-composer-control-label className="font-normal text-muted-foreground">
+                  {triggerDetails}
+                </span>
+              ) : null}
+              <ComposerControlChevron size={size} />
+            </>
           ) : (
             <>
               <ComposerControlIcon icon={BrainIcon} size={size} />
@@ -711,7 +852,11 @@ export const TraitsPicker = memo(function TraitsPicker({
             </>
           )}
         </TooltipTrigger>
-        <TooltipPopup side="top">{triggerLabel}</TooltipPopup>
+        <TooltipPopup side="top">
+          {triggerEffort
+            ? [`${triggerEffort.label} effort`, triggerDetails].filter(Boolean).join(" · ")
+            : triggerLabel}
+        </TooltipPopup>
       </Tooltip>
       <MenuPopup align="start" {...(isComposerOwned ? composerFloatingLayerProps : {})}>
         <TraitsMenuContent

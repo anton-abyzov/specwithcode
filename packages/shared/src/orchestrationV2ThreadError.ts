@@ -32,11 +32,18 @@ export function latestRootProviderFailure(
   return latest?.failure ?? null;
 }
 
-/** A distinct session failure supersedes the turn's classification. */
+/**
+ * A distinct session failure supersedes the turn's classification, unless the
+ * latest run finished cleanly after it: a session's lastError outlives the
+ * turn that set it, so a completed or cancelled latest run makes it history.
+ */
 export function threadErrorSummary(
   failure: OrchestrationV2ProviderFailure | null,
-  sessionError: string | null,
+  latestSessionError: string | null,
+  latestRunStatus?: OrchestrationV2Run["status"] | "idle" | null,
 ) {
+  const sessionError =
+    latestRunStatus === "completed" || latestRunStatus === "cancelled" ? null : latestSessionError;
   const currentFailure =
     sessionError !== null && sessionError !== failure?.message ? null : failure;
   return {
@@ -121,4 +128,94 @@ export function latestUnheldRun(
     if (latest === null || run.ordinal > latest.ordinal) latest = run;
   }
   return latest;
+}
+
+/**
+ * How many queued messages wait in a held queue: they start only when someone
+ * resumes the queue (or sends the thread a message), so a thread that has them
+ * is waiting on the user. The SQL thread shell counts the same runs.
+ */
+export function heldQueuedRunCount(
+  runs: ReadonlyArray<Pick<OrchestrationV2Run, "status" | "queueHeld">>,
+): number {
+  let count = 0;
+  for (const run of runs) if (run.status === "queued" && run.queueHeld === true) count += 1;
+  return count;
+}
+
+/**
+ * How long a failed turn's error stays a live banner. After that, or once a
+ * newer run exists or the thread is resolved, the error is history: the
+ * timeline keeps a quiet note with its cause and no banner appears.
+ */
+export const LIVE_THREAD_ERROR_WINDOW_MS = 30 * 60_000;
+
+function epochMillis(value: string | DateTime.DateTime | null | undefined): number | null {
+  if (value === null || value === undefined) return null;
+  const millis = typeof value === "string" ? Date.parse(value) : DateTime.toEpochMillis(value);
+  return Number.isFinite(millis) ? millis : null;
+}
+
+/** Whether a thread-level error belongs to the current turn and may show as a banner. */
+export function threadErrorIsLive(input: {
+  /** When the failing run ended; null while it is still running. */
+  readonly errorAt: string | DateTime.DateTime | null | undefined;
+  readonly settled: boolean;
+  readonly nowMs: number;
+}): boolean {
+  if (input.settled) return false;
+  const errorAt = epochMillis(input.errorAt);
+  return errorAt === null || input.nowMs - errorAt <= LIVE_THREAD_ERROR_WINDOW_MS;
+}
+
+/**
+ * Whether a failed turn's timeline entry is history rather than the thread's
+ * current problem: a newer run superseded it, the thread is resolved, or it
+ * is older than the live window.
+ */
+export function timelineFailureIsHistory(input: {
+  readonly runId: string | null;
+  readonly latestRunId: string | null;
+  readonly occurredAt: string | DateTime.DateTime | null | undefined;
+  readonly settled: boolean;
+  readonly nowMs: number;
+}): boolean {
+  if (input.settled) return true;
+  if (input.runId !== null && input.latestRunId !== null && input.runId !== input.latestRunId) {
+    return true;
+  }
+  const occurredAt = epochMillis(input.occurredAt);
+  return occurredAt !== null && input.nowMs - occurredAt > LIVE_THREAD_ERROR_WINDOW_MS;
+}
+
+/** Older builds stored this when a provider gave no reason; it is never shown as-is. */
+export const LEGACY_GENERIC_PROVIDER_FAILURE_MESSAGE = "Provider turn failed.";
+
+/** The most specific explanation available when a provider sent no message. */
+export function providerFailureFallbackMessage(
+  failureClass: OrchestrationV2ProviderFailure["class"],
+): string {
+  switch (failureClass) {
+    case "transport_error":
+      return "The connection to the provider closed before this turn finished. Send your message again to continue.";
+    case "permission_error":
+      return "The provider refused this turn because of a permission or sign-in problem. Check the provider's sign-in, then send your message again.";
+    case "validation_error":
+      return "The provider rejected the request for this turn. Check the model and provider settings, then send your message again.";
+    case "usage_limit":
+      return "The provider's usage limit was reached.";
+    case "provider_error":
+    case "unknown":
+      return "The provider ended this turn with an error but sent no details. Send your message again; if it keeps failing, check the provider setup.";
+  }
+}
+
+/** A failure's message for display, replacing the legacy generic text with its class's explanation. */
+export function providerFailureDisplayMessage(
+  failure: Pick<OrchestrationV2ProviderFailure, "class" | "message">,
+): string {
+  const message = failure.message.trim();
+  return message === "" || message === LEGACY_GENERIC_PROVIDER_FAILURE_MESSAGE
+    ? providerFailureFallbackMessage(failure.class)
+    : failure.message;
 }

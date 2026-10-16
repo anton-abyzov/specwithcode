@@ -16,6 +16,10 @@ import type { TextGenerationPolicy } from "./TextGenerationPolicy.ts";
 
 const EARLIER_CONTENT_TRUNCATION_MARKER = "[Earlier content truncated]\n\n";
 
+// GeneratedTextLint also enforces this after generation; asking up front keeps the fix-ups rare.
+const PLAIN_TEXT_RULE =
+  "- plain text: no em dashes, curly quotes, emoji, sign-offs, or agent credits (Co-authored-by trailers, 'Generated with' footers, session links)";
+
 function policyInstruction(instruction: string | undefined): ReadonlyArray<string> {
   const trimmed = instruction?.trim();
   return trimmed ? ["", "Additional instructions:", limitSection(trimmed, 20_000)] : [];
@@ -48,6 +52,7 @@ export function buildCommitMessagePrompt(input: CommitMessagePromptInput) {
       ? ["- branch must be a short semantic git branch fragment for this change"]
       : []),
     "- capture the primary user-visible or developer-visible change",
+    PLAIN_TEXT_RULE,
     ...policyInstruction(input.policy?.commitInstructions),
     "",
     `Branch: ${input.branch ?? "(detached)"}`,
@@ -113,6 +118,7 @@ export function buildPrContentPrompt(input: PrContentPromptInput) {
     "Rules:",
     "- title should be concise and specific",
     ...bodyRules,
+    PLAIN_TEXT_RULE,
     ...policyInstruction(input.policy?.changeRequestInstructions),
     ...(changeRequestTemplate
       ? ["", "Repository change request template:", limitSection(changeRequestTemplate, 8_000)]

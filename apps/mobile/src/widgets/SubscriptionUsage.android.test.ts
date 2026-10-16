@@ -68,25 +68,25 @@ describe("SubscriptionUsage Android layout", () => {
       ...snapshot,
       providers: [{ ...provider, expiresAt: now - 1 }],
     });
-    expect(tree).toContain("Open Studio to refresh");
+    expect(tree).toContain("Open SpecWithCode to refresh");
     expect(tree).not.toContain("LinearProgressIndicator");
-    expect(tree).not.toContain("more in Studio");
+    expect(tree).not.toContain("more in SpecWithCode");
   });
 
   it("counts the quotas that did not fit", () => {
     const tree = render({ ...snapshot, providers: [{ ...provider, totalWindows: 5 }] });
-    expect(tree).toContain("3 more in Studio");
+    expect(tree).toContain("3 more in SpecWithCode");
   });
 
   it("keeps quotas without an expiry deadline visible", () => {
     const tree = render({ ...snapshot, providers: [{ ...provider, expiresAt: 0 }] });
     expect(tree).toContain("5 hours · 60% left");
-    expect(tree).not.toContain("Open Studio to refresh");
+    expect(tree).not.toContain("Open SpecWithCode to refresh");
   });
 
   it("invites connecting when nothing has been checked", () => {
     const tree = render({ checkedAt: 0, providers: [] }, "light");
-    expect(tree).toContain("Tap to connect in Studio");
+    expect(tree).toContain("Tap to connect in SpecWithCode");
     expect(tree).not.toContain("As of ");
     expect(tree).toContain('"containerColor":"light-surface"');
   });

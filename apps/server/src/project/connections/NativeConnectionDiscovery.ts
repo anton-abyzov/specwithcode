@@ -2,7 +2,12 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
-import type { NativeConnection, NativeConnectionsSnapshot } from "@specweave-studio/contracts";
+import {
+  type NativeConnection,
+  type NativeConnectionApplyInput,
+  NativeConnectionsError,
+  type NativeConnectionsSnapshot,
+} from "@specweave-studio/contracts";
 import { HostProcessEnvironment } from "@specweave-studio/shared/hostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
@@ -11,6 +16,14 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { parse } from "smol-toml";
+import {
+  addClaudeServer,
+  appendCodexServer,
+  codexPluginProvides,
+  enableCodexServer,
+  parseNativeConfig,
+  portableDeclaration,
+} from "./NativeConnectionEdit.ts";
 
 /** Config locations belong to the execution host, never to browser input. */
 export class NativeConnectionPaths extends Context.Service<
@@ -25,6 +38,10 @@ export class NativeConnectionDiscovery extends Context.Service<
   NativeConnectionDiscovery,
   {
     readonly read: (workspaceRoot?: string) => Effect.Effect<NativeConnectionsSnapshot>;
+    /** Edits user-scope declarations only; project files belong to the repository. */
+    readonly apply: (
+      input: NativeConnectionApplyInput,
+    ) => Effect.Effect<NativeConnectionsSnapshot, NativeConnectionsError>;
   }
 >()("studio/connections/NativeConnectionDiscovery") {}
 
@@ -122,6 +139,7 @@ const make = Effect.gen(function* () {
         sourceId: string,
         scope: Source["scope"],
         previous: ObjectValue = {},
+        root: ObjectValue = {},
       ) => {
         const configs = object(raw);
         if (raw !== undefined && (raw === null || typeof raw !== "object" || Array.isArray(raw))) {
@@ -160,6 +178,12 @@ const make = Effect.gen(function* () {
             transport,
             state: !valid ? "invalid" : config.enabled === false ? "disabled" : "configured",
             shadowed: false,
+            ...(scope === "user" && valid
+              ? { portable: portableDeclaration(provider, value) !== null }
+              : {}),
+            ...(provider === "codex" && codexPluginProvides(root, name)
+              ? { pluginProvided: true }
+              : {}),
           });
         }
         return configs;
@@ -171,7 +195,7 @@ const make = Effect.gen(function* () {
         "user",
         true,
       );
-      const userCodex = add(codex.mcp_servers, "codex", "codex-user", "user");
+      const userCodex = add(codex.mcp_servers, "codex", "codex-user", "user", {}, codex);
       const claude = yield* file(paths.claudeFile, "claude-user", "claude", "user");
       add(claude.mcpServers, "claude", "claude-user", "user");
       if (workspaceRoot) {
@@ -182,7 +206,7 @@ const make = Effect.gen(function* () {
           "project",
           true,
         );
-        add(projectCodex.mcp_servers, "codex", "codex-project", "project", userCodex);
+        add(projectCodex.mcp_servers, "codex", "codex-project", "project", userCodex, codex);
         const projectClaude = yield* file(
           NodePath.join(workspaceRoot, ".mcp.json"),
           "claude-project",
@@ -244,23 +268,80 @@ const make = Effect.gen(function* () {
       return {
         observedAt: DateTime.formatIso(yield* DateTime.now),
         sources,
-        connections: entries.map(
-          ({ id, name, provider, sourceId, scope, transport, state, shadowed }) => ({
-            id,
-            name,
-            provider,
-            sourceId,
-            scope,
-            transport,
-            state,
-            shadowed,
-          }),
-        ),
+        connections: entries.map(({ key: _key, ...connection }) => connection),
         truncated,
         runtime: "unverified" as const,
       };
     });
-  return NativeConnectionDiscovery.of({ read });
+  const failure = (code: NativeConnectionsError["code"]) => new NativeConnectionsError({ code });
+  /** The real file behind a possibly symlinked config, its text and mode; null when absent. */
+  const readConfig = (path: string) =>
+    Effect.gen(function* () {
+      if (!(yield* fs.exists(path))) return null;
+      const real = yield* fs.realPath(path);
+      const info = yield* fs.stat(real);
+      if (info.type !== "File" || Number(info.size) > MAX_BYTES)
+        return yield* failure("write_failed");
+      return { path: real, mode: info.mode & 0o777, text: yield* fs.readFileString(real) };
+    }).pipe(Effect.catchTags({ PlatformError: () => Effect.fail(failure("unavailable")) }));
+  /** Replace the file only if nobody wrote it since it was read; the rename keeps readers whole. */
+  const writeConfig = (
+    path: string,
+    before: { readonly path: string; readonly mode: number; readonly text: string } | null,
+    next: string,
+  ) =>
+    Effect.gen(function* () {
+      const current = yield* readConfig(path);
+      if ((current?.text ?? null) !== (before?.text ?? null)) return yield* failure("changed");
+      const target = before?.path ?? path;
+      const temporary = `${target}.specwithcode-${NodeCrypto.randomUUID()}.tmp`;
+      yield* fs.writeFileString(temporary, next, { mode: before?.mode ?? 0o600 }).pipe(
+        Effect.flatMap(() => fs.rename(temporary, target)),
+        Effect.tapError(() => fs.remove(temporary).pipe(Effect.ignore)),
+        Effect.mapError(() => failure("write_failed")),
+      );
+    });
+  const apply = (input: NativeConnectionApplyInput) =>
+    Effect.gen(function* () {
+      const [provider, sourceId, hash] = input.connectionId.split(":");
+      if (
+        (provider !== "codex" && provider !== "claude") ||
+        sourceId !== `${provider}-user` ||
+        !hash
+      )
+        return yield* failure("not_found");
+      const codexPath = NodePath.join(paths.codexHome, "config.toml");
+      const sourcePath = provider === "codex" ? codexPath : paths.claudeFile;
+      const source = yield* readConfig(sourcePath);
+      if (source === null) return yield* failure("not_found");
+      const parsed = parseNativeConfig(provider, source.text);
+      if (parsed === null) return yield* failure("write_failed");
+      const servers = object(provider === "codex" ? parsed.mcp_servers : parsed.mcpServers);
+      const key = Object.keys(servers).find((name) => digest(name) === hash);
+      if (key === undefined) return yield* failure("not_found");
+      if (input.action === "enable") {
+        if (provider !== "codex") return yield* failure("not_portable");
+        const next = enableCodexServer(source.text, key);
+        if (next === null) return yield* failure("write_failed");
+        yield* writeConfig(sourcePath, source, next);
+        return yield* read();
+      }
+      const declaration = portableDeclaration(provider, servers[key]);
+      if (declaration === null) return yield* failure("not_portable");
+      const targetPath = provider === "codex" ? paths.claudeFile : codexPath;
+      const target = yield* readConfig(targetPath);
+      const targetText = target?.text ?? (provider === "codex" ? "{}" : "");
+      if (parseNativeConfig(provider === "codex" ? "claude" : "codex", targetText) === null)
+        return yield* failure("write_failed");
+      const next =
+        provider === "codex"
+          ? addClaudeServer(targetText, key, declaration)
+          : appendCodexServer(targetText, key, declaration);
+      if (next === null) return yield* failure("exists");
+      yield* writeConfig(targetPath, target, next);
+      return yield* read();
+    });
+  return NativeConnectionDiscovery.of({ read, apply });
 });
 export const layer = Layer.effect(NativeConnectionDiscovery, make);
 export const layerHost = layer.pipe(

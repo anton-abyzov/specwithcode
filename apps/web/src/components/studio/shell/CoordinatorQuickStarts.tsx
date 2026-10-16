@@ -18,7 +18,7 @@ export const COORDINATOR_QUICK_STARTS: readonly CoordinatorQuickStart[] = [
     icon: ZapIcon,
     kind: "prompt",
     prompt:
-      "Set up this project from my recent work. Start with the sessions on this machine (Claude Code, Codex and Studio threads for this folder), then recent commits, open branches and pull requests; look at cloud sessions only for what the local ones don't cover. Save the project's goal, instructions and memory, then tell me what is in flight and which threads to start first.",
+      "Set up this project from my recent work. Start with the sessions on this machine (Claude Code, Codex and SpecWithCode threads for this folder), then recent commits, open branches and pull requests; look at cloud sessions only for what the local ones don't cover. Save the project's goal, instructions and memory, then tell me what is in flight and which threads to start first.",
   },
   { id: "connect-tools", label: "Connect tools", icon: BlocksIcon, kind: "connections" },
   {

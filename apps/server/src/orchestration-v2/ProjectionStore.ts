@@ -1,4 +1,5 @@
 import {
+  heldQueuedRunCount,
   latestRootProviderFailure,
   latestUnheldRun,
   threadErrorSummary,
@@ -62,7 +63,10 @@ import {
   isOrchestrationV2SupersededInterrupt,
   isOrchestrationV2TurnItemVisible,
 } from "@specweave-studio/shared/orchestrationV2Timeline";
-import { derivePendingBackgroundWork } from "@specweave-studio/shared/orchestrationV2PendingBackgroundWork";
+import {
+  deriveActiveRunWork,
+  derivePendingBackgroundWork,
+} from "@specweave-studio/shared/orchestrationV2PendingBackgroundWork";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -73,6 +77,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type * as Statement from "effect/sql/Statement";
 
 import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
+import { summarizeTodoPlanPayload } from "@specweave-studio/shared/planProgress";
 import {
   isThreadHistoryUserTurn,
   isThreadHistoryTurnStart,
@@ -137,7 +142,11 @@ export type ProjectionRecoveryKind =
   | "queued-runs"
   | "runtime"
   | "subagent-results"
-  | "delegated-completions";
+  | "delegated-completions"
+  // Latest run was stopped for a service update and has not been continued.
+  | "update-interrupted"
+  // A service update cancelled queued messages that the restart queues again.
+  | "update-requeue";
 
 /** Persisted state needed for limit recovery, without transcript or fork history. */
 export type ProjectionLimitRecoveryCandidate = Pick<
@@ -510,6 +519,23 @@ function needsRecovery(
       );
     case "delegated-completions":
       return projection.runs.some((run) => run.delegatedCompletion?.delivery != null);
+    case "update-interrupted": {
+      const latest = projection.runs.findLast((run) => run.status !== "queued");
+      return (
+        latest?.status === "interrupted" &&
+        projection.turnItems.some(
+          (item) =>
+            item.runId === latest.id &&
+            item.type === "run_interrupt_request" &&
+            item.cause === "service_update",
+        )
+      );
+    }
+    case "update-requeue":
+      return (
+        projection.thread.archivedAt === null &&
+        projection.runs.some((run) => run.status === "cancelled" && run.cancelledForUpdate === true)
+      );
     case "subagent-results": {
       const parentThreadId = projection.thread.lineage.parentThreadId;
       return (
@@ -550,6 +576,14 @@ function needsRecovery(
         )
       );
   }
+}
+
+/** The shell's held-queue count, omitted when nothing is held (as the SQL shell does). */
+function heldQueuedCountField(runs: ReadonlyArray<OrchestrationV2Run>): {
+  readonly heldQueuedCount?: number;
+} {
+  const heldQueuedCount = heldQueuedRunCount(runs);
+  return heldQueuedCount > 0 ? { heldQueuedCount } : {};
 }
 
 function upsertById<T extends { readonly id: string }>(items: ReadonlyArray<T>, next: T): Array<T> {
@@ -929,8 +963,10 @@ type ShellThreadRow = {
   readonly latest_assistant_message_at: string | null;
   readonly latest_assistant_text: string | null;
   readonly has_actionable_proposed_plan: number;
+  readonly latest_todo_plan_json: string | null;
   readonly item_count: number;
   readonly runless_item_count: number;
+  readonly held_queued_count: number;
 };
 
 type ShellRunRow = {
@@ -1434,6 +1470,11 @@ export function threadShellFromProjection(
     runs: projection.runs,
     pullRequests: projection.thread.pullRequests,
   });
+  const activeWork = deriveActiveRunWork<DateTime.Utc, OrchestrationV2TurnItem>({
+    activeRunId: activeRun?.id ?? null,
+    turnItems: projection.turnItems,
+    toMillis: DateTime.toEpochMillis,
+  });
   return {
     createdBy: projection.thread.createdBy,
     creationSource: projection.thread.creationSource,
@@ -1472,10 +1513,12 @@ export function threadShellFromProjection(
       activityRun === null
         ? (subagentActivity?.startedAt ?? null)
         : orchestrationV2RunWorkStartedAt(activityRun),
+    activeWork,
     status: latestRun?.status ?? "idle",
     ...threadErrorSummary(
       latestRootProviderFailure(latestRun, projection.turnItems),
       providerSession?.lastError ?? null,
+      latestRun?.status ?? null,
     ),
     pendingRuntimeRequest:
       pendingRuntimeRequest === null
@@ -1494,6 +1537,7 @@ export function threadShellFromProjection(
     hasActionableProposedPlan: projection.plans.some(
       (plan) => plan.kind === "proposed_plan" && plan.status === "active",
     ),
+    planProgress: summarizeTodoPlanPayload(latestTodoPlan(projection)),
     reportedBlocker: shellReportedBlocker({
       text: latestAssistantMessage?.text ?? null,
       reportedAt:
@@ -1512,6 +1556,7 @@ export function threadShellFromProjection(
       projection.providerThreads,
       projection.thread.activeProviderThreadId,
     ),
+    ...heldQueuedCountField(projection.runs),
     itemCount: activeLocalTurnItems(projection).length,
     visibleItemCount: projection.visibleTurnItems.length,
     createdAt: projection.thread.createdAt,
@@ -1591,6 +1636,7 @@ type ShellThreadState = {
   readonly activeRunId: RunId | null;
   readonly activityRunStatus: ShellActivityRunStatus | null;
   readonly activityRunStartedAt: DateTime.Utc | null;
+  readonly activeWork: NonNullable<OrchestrationV2ThreadShell["activeWork"]> | null;
   readonly lastError: string | null;
   readonly lastErrorClass: OrchestrationV2ThreadShell["lastErrorClass"];
   readonly usageLimitResetAt: OrchestrationV2ThreadShell["usageLimitResetAt"];
@@ -1598,16 +1644,44 @@ type ShellThreadState = {
   readonly latestUserMessageAt: DateTime.Utc | null;
   readonly latestUserAuthoredMessageAt: DateTime.Utc | null;
   readonly hasActionableProposedPlan: boolean;
+  readonly planProgress: OrchestrationV2ThreadShell["planProgress"];
   readonly reportedBlocker: string | null;
   readonly pendingBackgroundTasks: OrchestrationV2ThreadShell["pendingBackgroundTasks"];
   readonly providerInstanceHistory: OrchestrationV2ThreadShell["providerInstanceHistory"];
   readonly goal: OrchestrationV2ThreadShell["goal"];
   readonly itemCount: number;
   readonly runlessItemCount: number;
+  readonly heldQueuedCount: number;
   readonly updatedAt: OrchestrationV2ThreadProjection["updatedAt"];
   readonly runOrdinalById: ReadonlyMap<RunId, number>;
   readonly itemCountByRunId: ReadonlyMap<RunId, number>;
 };
+
+/** The todo list of the thread's newest run that has one; the last listed breaks a tie. */
+function latestTodoPlan(projection: OrchestrationV2ThreadProjection) {
+  const ordinals = new Map(projection.runs.map((run) => [run.id, run.ordinal]));
+  let latest: OrchestrationV2ThreadProjection["plans"][number] | null = null;
+  let latestOrdinal = -1;
+  for (const plan of projection.plans) {
+    if (plan.kind !== "todo_list") continue;
+    const ordinal = plan.runId === null ? -1 : (ordinals.get(plan.runId) ?? -1);
+    if (latest === null || ordinal >= latestOrdinal) {
+      latest = plan;
+      latestOrdinal = ordinal;
+    }
+  }
+  return latest;
+}
+
+/** The shell's todo-list summary from a stored plan payload; unreadable reads as none. */
+function todoPlanProgressFromJson(json: string | null): OrchestrationV2ThreadShell["planProgress"] {
+  if (json === null) return null;
+  try {
+    return summarizeTodoPlanPayload(JSON.parse(json));
+  } catch {
+    return null;
+  }
+}
 
 /**
  * The blocker the thread's last report names, until someone writes to the
@@ -1768,6 +1842,7 @@ function shellFromState(input: {
     activeRunId: input.state.activeRunId,
     activityRunStatus: input.state.activityRunStatus,
     activityRunStartedAt: input.state.activityRunStartedAt,
+    activeWork: input.state.activeWork,
     status: input.state.latestRunStatus,
     lastError: input.state.lastError,
     lastErrorClass: input.state.lastErrorClass,
@@ -1784,10 +1859,12 @@ function shellFromState(input: {
     latestUserMessageAt: input.state.latestUserMessageAt,
     latestUserAuthoredMessageAt: input.state.latestUserAuthoredMessageAt,
     hasActionableProposedPlan: input.state.hasActionableProposedPlan,
+    planProgress: input.state.planProgress,
     reportedBlocker: input.state.reportedBlocker,
     pendingBackgroundTasks: input.state.pendingBackgroundTasks,
     providerInstanceHistory: input.state.providerInstanceHistory,
     goal: input.state.goal,
+    ...(input.state.heldQueuedCount > 0 ? { heldQueuedCount: input.state.heldQueuedCount } : {}),
     itemCount: input.state.itemCount,
     visibleItemCount: input.visibleItemCount,
     createdAt: input.state.thread.createdAt,
@@ -3590,6 +3667,37 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   )
                   ELSE 0 END
               `;
+            case "update-interrupted":
+              return sql`
+                SELECT latest.thread_id FROM orchestration_v2_projection_runs AS latest
+                WHERE latest.status = 'interrupted'
+                  -- An update restarts within minutes; older stops stay put.
+                  AND latest.completed_at >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-1 day')
+                  AND NOT EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_runs AS later
+                    WHERE later.thread_id = latest.thread_id
+                      AND later.status <> 'queued'
+                      AND later.ordinal > latest.ordinal
+                  )
+                  AND EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_turn_items AS item
+                    WHERE item.run_id = latest.run_id
+                      AND item.type = 'run_interrupt_request'
+                      AND CASE WHEN json_valid(item.payload_json)
+                        THEN json_extract(item.payload_json, '$.cause') = 'service_update'
+                        ELSE 0 END
+                  )
+              `;
+            case "update-requeue":
+              return sql`
+                SELECT thread_id FROM orchestration_v2_projection_runs
+                WHERE status = 'cancelled'
+                  -- An update restarts within minutes; older cancellations stay put.
+                  AND completed_at >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-1 day')
+                  AND CASE WHEN json_valid(payload_json)
+                    THEN json_extract(payload_json, '$.cancelledForUpdate') = 1
+                    ELSE 0 END
+              `;
             case "runtime":
               return sql`
                 WITH pending_provider_threads AS MATERIALIZED (
@@ -3657,7 +3765,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           SELECT thread_id FROM orchestration_v2_projection_threads
           WHERE deleted_at IS NULL
             AND thread_id IN (${candidates})
-            ${kind === "queued-runs" ? sql`AND archived_at IS NULL` : sql``}
+            ${kind === "queued-runs" || kind === "update-interrupted" || kind === "update-requeue" ? sql`AND archived_at IS NULL` : sql``}
           ORDER BY updated_at ASC, thread_id ASC
         `;
         return rows.map((row) => ThreadId.make(row.thread_id));
@@ -5168,6 +5276,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   AND plan.kind = 'proposed_plan'
                   AND plan.status = 'active'
               ) AS has_actionable_proposed_plan,
+              -- The newest run's todo list, matching latestTodoPlan; within a run the
+              -- first-inserted row order (kept across updates) breaks the tie.
+              (
+                SELECT plan.payload_json
+                FROM orchestration_v2_projection_plans plan
+                LEFT JOIN orchestration_v2_projection_runs plan_run
+                  ON plan_run.run_id = plan.run_id
+                WHERE plan.thread_id = t.thread_id
+                  AND plan.kind = 'todo_list'
+                ORDER BY COALESCE(plan_run.ordinal, -1) DESC, plan.rowid DESC
+                LIMIT 1
+              ) AS latest_todo_plan_json,
               -- Count per run on the covering (thread_id, run_id) index, then
               -- look up each run once, instead of one run lookup per item.
               (
@@ -5187,7 +5307,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 FROM orchestration_v2_projection_turn_items i
                 WHERE i.thread_id = t.thread_id
                   AND i.run_id IS NULL
-              ) AS runless_item_count
+              ) AS runless_item_count,
+              -- Queued messages in a held queue, matching heldQueuedRunCount.
+              (
+                SELECT COUNT(*)
+                FROM orchestration_v2_projection_runs held
+                WHERE held.thread_id = t.thread_id
+                  AND held.status = 'queued'
+                  AND json_extract(held.payload_json, '$.queueHeld') IS 1
+              ) AS held_queued_count
             FROM orchestration_v2_projection_threads t
             -- The newest run not waiting in a held queue, matching latestUnheldRun.
             LEFT JOIN orchestration_v2_projection_runs presented ON presented.run_id = (
@@ -5632,6 +5760,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           latestRunStartedAt,
           latestRunCompletedAt,
           activeRunId: row.active_run_id === null ? null : RunId.make(row.active_run_id),
+          activeWork: deriveActiveRunWork<DateTime.Utc, OrchestrationV2TurnItem>({
+            activeRunId: row.active_run_id,
+            turnItems: pendingTurnItemsByThreadId.get(thread.id) ?? [],
+            toMillis: DateTime.toEpochMillis,
+          }),
           activityRunStartedAt:
             row.activity_run_started_at === null
               ? null
@@ -5646,6 +5779,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ...threadErrorSummary(
             terminalFailureItem?.type === "error" ? terminalFailureItem.failure : null,
             row.last_error,
+            latestRunStatus,
           ),
           pendingRuntimeRequest,
           latestUserMessageAt:
@@ -5657,6 +5791,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ? null
               : DateTime.makeUnsafe(row.latest_user_authored_message_at),
           hasActionableProposedPlan: row.has_actionable_proposed_plan === 1,
+          planProgress: todoPlanProgressFromJson(row.latest_todo_plan_json),
           reportedBlocker: shellReportedBlocker({
             text: row.latest_assistant_text,
             reportedAt: row.latest_assistant_message_at,
@@ -5673,6 +5808,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ),
           itemCount: row.item_count,
           runlessItemCount: row.runless_item_count,
+          heldQueuedCount: Number(row.held_queued_count ?? 0),
           updatedAt: thread.updatedAt,
           runOrdinalById: runOrdinalsByThreadId.get(ThreadId.make(row.thread_id)) ?? new Map(),
           itemCountByRunId: itemCountsByThreadId.get(ThreadId.make(row.thread_id)) ?? new Map(),

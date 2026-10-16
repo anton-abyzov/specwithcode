@@ -44,6 +44,8 @@ describe("V2 preview upgrade", () => {
         [61, "ProjectPlan"],
         [62, "ProjectEnvironmentPreparations"],
         [63, "ProjectConnections"],
+        [64, "ThreadIncrementLinks"],
+        [65, "ProjectActionRequests"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -130,6 +132,8 @@ describe("V2 preview upgrade", () => {
         [61, "ProjectPlan"],
         [62, "ProjectEnvironmentPreparations"],
         [63, "ProjectConnections"],
+        [64, "ThreadIncrementLinks"],
+        [65, "ProjectActionRequests"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

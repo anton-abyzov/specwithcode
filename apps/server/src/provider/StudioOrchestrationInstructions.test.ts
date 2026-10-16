@@ -7,12 +7,12 @@ import {
   studioOrchestrationSystemPrompt,
 } from "./StudioOrchestrationInstructions.ts";
 
-describe("Studio orchestration provider instructions", () => {
+describe("SpecWithCode orchestration provider instructions", () => {
   it("distinguishes delegated subagents from ordinary top-level threads", () => {
     assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "Use `delegate_task`");
     assert.include(
       STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
-      "ordinary top-level Studio conversations",
+      "ordinary top-level SpecWithCode conversations",
     );
     assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "Never use them merely");
     assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "cross-provider");
@@ -27,15 +27,27 @@ describe("Studio orchestration provider instructions", () => {
     assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "Reports from delegated work");
     assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "Follow the `<response_style>` rules");
     assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "Claude's Agent tool");
+    // The style decides between a plain short result and a labeled report.
     assert.include(
       STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
-      "outcome, evidence paths or links, and blockers",
+      "ask for its final result in that style and pass the style on",
+    );
+    assert.notInclude(
+      STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
+      "so SpecWithCode shows it as a document",
+    );
+    assert.include(
+      STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
+      "A result that fits in a few lines stays a plain message.",
     );
     assert.include(
       STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
       "long inventories, tables and logs in a file, referenced by path",
     );
-    assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "Studio marks that thread Blocked");
+    assert.include(
+      STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
+      "SpecWithCode marks that thread Blocked",
+    );
     assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "do not paste the whole report");
     assert.include(
       STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
@@ -75,7 +87,7 @@ describe("Studio orchestration provider instructions", () => {
     );
   });
 
-  it("only exposes the system prompt when the Studio MCP server is attached", () => {
+  it("only exposes the system prompt when the SpecWithCode MCP server is attached", () => {
     assert.equal(studioOrchestrationSystemPrompt(false), undefined);
     assert.equal(studioOrchestrationSystemPrompt(true), STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS);
   });

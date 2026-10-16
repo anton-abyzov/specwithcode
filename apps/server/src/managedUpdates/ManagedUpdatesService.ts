@@ -7,6 +7,7 @@ import {
   type ManagedUpdateMutation,
   type ManagedUpdateTarget,
 } from "@specweave-studio/contracts";
+import { studioInstallDirectory } from "@specweave-studio/shared/studioIdentity";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as FileSystem from "effect/FileSystem";
@@ -44,7 +45,7 @@ export const resolveManagedUpdateHelper = (input: {
     if (!path.isAbsolute(input.home) || !path.isAbsolute(input.entry)) return null;
     const candidates = [
       path.join(path.dirname(input.entry), "studio-updater", "managed_updates.py"),
-      path.join(input.home, ".local/share/specweave-studio/updater/managed_updates.py"),
+      path.join(studioInstallDirectory(input.home), "updater", "managed_updates.py"),
     ];
     for (const candidate of candidates) {
       const valid = yield* Effect.gen(function* () {

@@ -27,9 +27,9 @@ describe("UpdatePreferencesSection.logic", () => {
     ).toBe("Version 0.1.4. Version 0.2.0 installs once no session has worked for a while.");
     expect(
       describeServiceUpdate(
-        state({ status: "manual-required", message: "Studio 0.2.0 needs a manual upgrade." }),
+        state({ status: "manual-required", message: "SpecWithCode 0.2.0 needs a manual upgrade." }),
       ),
-    ).toBe("Studio 0.2.0 needs a manual upgrade.");
+    ).toBe("SpecWithCode 0.2.0 needs a manual upgrade.");
   });
 
   it("offers install when a release is waiting and check otherwise", () => {

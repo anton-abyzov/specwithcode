@@ -20,7 +20,10 @@ import {
 } from "@specweave-studio/client-runtime/connection";
 import { bootstrapRemoteBearerSession } from "@specweave-studio/client-runtime/authorization";
 import { fetchRemoteEnvironmentDescriptor } from "@specweave-studio/client-runtime/environment";
-import { managedRelayAccountChanges, managedRelaySessionAtom } from "@specweave-studio/client-runtime/relay";
+import {
+  managedRelayAccountChanges,
+  managedRelaySessionAtom,
+} from "@specweave-studio/client-runtime/relay";
 import { EnvironmentRpcRequestObserver } from "@specweave-studio/client-runtime/rpc";
 import {
   AuthStandardClientScopes,
@@ -59,6 +62,7 @@ import {
 } from "./desktopLocal";
 import * as ConnectionStorage from "./storage";
 import { clientPresentationMetadata } from "./clientMetadata";
+import { createApplicationActiveGate } from "./applicationActiveGate";
 
 let nextObservedRpcRequestId = 0;
 
@@ -131,10 +135,12 @@ const layerWakeups = Wakeups.layer({
       Stream.callback<"application-active">((queue) =>
         Effect.acquireRelease(
           Effect.sync(() => {
+            const gate = createApplicationActiveGate({
+              desktop: typeof window !== "undefined" && window.desktopBridge !== undefined,
+            });
             const listener = () => {
-              if (document.visibilityState === "visible") {
-                Queue.offerUnsafe(queue, "application-active");
-              }
+              if (document.visibilityState !== "visible") gate.hidden();
+              else if (gate.shown()) Queue.offerUnsafe(queue, "application-active");
             };
             document.addEventListener("visibilitychange", listener);
             return listener;
@@ -238,7 +244,7 @@ const layerCapabilities = Layer.effectContext(
         if (session === null) {
           return yield* new ConnectionBlockedError({
             reason: "authentication",
-            detail: "Sign in to Studio Connect to connect this environment.",
+            detail: "Sign in to SpecWithCode Connect to connect this environment.",
           });
         }
         const token = yield* session.readClerkToken().pipe(
@@ -253,7 +259,7 @@ const layerCapabilities = Layer.effectContext(
         if (token === null) {
           return yield* new ConnectionBlockedError({
             reason: "authentication",
-            detail: "The Studio Connect session is unavailable.",
+            detail: "The SpecWithCode Connect session is unavailable.",
           });
         }
         return token;

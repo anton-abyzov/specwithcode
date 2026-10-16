@@ -13,6 +13,7 @@ import urllib.error
 import urllib.request
 from zoneinfo import ZoneInfo
 from fleet_hosts import worker_plans
+import studio_paths
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--research-dir', required=True)
@@ -31,7 +32,7 @@ ssh = ['/usr/bin/ssh', '-F', '/dev/null', '-i', str(key), '-o', 'IdentitiesOnly=
        '-o', 'UserKnownHostsFile=' + str(known), '-o', 'ConnectTimeout=5', '-o', 'ControlMaster=no']
 remote = {identity: user + '@' + host for identity, user, host, _tunnel, _https in worker_plans()}
 helper = pathlib.Path(__file__).with_name('readback.py')
-remote_helper = home / '.local/share/specweave-studio/incoming/t04-b9827593/readback.py'
+remote_helper = studio_paths.incoming_root(home) / 't04-b9827593/readback.py'
 
 def run_json(command, stdin=None):
     result = subprocess.run(command, input=stdin, capture_output=True, text=True, timeout=45)
@@ -79,7 +80,7 @@ for identity in hosts:
             assert all(pid in live['listeners'][port] for pid in pids), 'Original visible listener changed'
     hosts[identity]['liveBindAndUnauthProof'] = live
 
-network = home / '.specweave-studio/m4/network'
+network = studio_paths.identity_home(home, 'm4') / 'network'
 progress = json.loads((network / 'progress.json').read_text())
 for identity, port in [('m1', 18319), ('m3', 28319)]:
     label = 'com.specweave.studio.tunnel-' + identity

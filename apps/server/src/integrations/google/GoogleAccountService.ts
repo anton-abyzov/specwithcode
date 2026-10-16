@@ -74,6 +74,7 @@ import {
   summarizeDriveFile,
   summarizeGmailMessage,
   truncateText,
+  personalProjectAccess,
   withProjectAccess,
   type CalendarEvent,
   type DriveFile,
@@ -248,7 +249,8 @@ const make = Effect.gen(function* () {
     secrets.set(GOOGLE_STATE_SECRET, textEncoder.encode(encodeState(state))).pipe(
       Effect.andThen(Ref.set(stateRef, state)),
       Effect.mapError(
-        () => new GoogleAccountError({ detail: "Studio could not save the Google settings." }),
+        () =>
+          new GoogleAccountError({ detail: "SpecWithCode could not save the Google settings." }),
       ),
     );
 
@@ -265,7 +267,7 @@ const make = Effect.gen(function* () {
     yield* persistState({ ...initialState, email: null, clientId: null, services: [] }).pipe(
       Effect.ignore,
     );
-    yield* Ref.set(lastErrorRef, "Studio's Google client changed. Connect again.");
+    yield* Ref.set(lastErrorRef, "SpecWithCode's Google client changed. Connect again.");
   }
 
   const status: Effect.Effect<GoogleAccountStatus> = Effect.gen(function* () {
@@ -337,7 +339,8 @@ const make = Effect.gen(function* () {
           )
           .pipe(
             Effect.mapError(
-              () => new GoogleAccountError({ detail: "Studio could not save the OAuth client." }),
+              () =>
+                new GoogleAccountError({ detail: "SpecWithCode could not save the OAuth client." }),
             ),
           );
         yield* Ref.set(
@@ -367,7 +370,7 @@ const make = Effect.gen(function* () {
         .randomBytes(64)
         .pipe(
           Effect.mapError(
-            () => new GoogleAccountError({ detail: "Studio could not start sign-in." }),
+            () => new GoogleAccountError({ detail: "SpecWithCode could not start sign-in." }),
           ),
         );
       const codeVerifier = base64Url(random.slice(0, 32));
@@ -376,7 +379,7 @@ const make = Effect.gen(function* () {
         .digest("SHA-256", textEncoder.encode(codeVerifier))
         .pipe(
           Effect.mapError(
-            () => new GoogleAccountError({ detail: "Studio could not start sign-in." }),
+            () => new GoogleAccountError({ detail: "SpecWithCode could not start sign-in." }),
           ),
         );
       const authorizationUrl = buildAuthorizationUrl({
@@ -411,7 +414,9 @@ const make = Effect.gen(function* () {
         const pending = yield* Ref.get(pendingRef);
         const now = yield* Clock.currentTimeMillis;
         if (pending === null || pending.state !== params.state) {
-          return yield* fail("This sign-in is not the one Studio started. Start sign-in again.");
+          return yield* fail(
+            "This sign-in is not the one SpecWithCode started. Start sign-in again.",
+          );
         }
         if (pending.expiresAt <= now) {
           yield* Ref.set(pendingRef, null);
@@ -440,13 +445,23 @@ const make = Effect.gen(function* () {
           );
         if (tokens.refreshToken === null) {
           return yield* fail(
-            "Google did not return a refresh token. Remove Studio under Google Account > Security > Third-party access, then sign in again.",
+            "Google did not return a refresh token. Remove SpecWithCode under Google Account > Security > Third-party access, then sign in again.",
           );
         }
         const refreshToken = tokens.refreshToken;
         const services = servicesFromScope(tokens.scope);
         const email = emailFromIdToken(tokens.idToken);
         const previous = yield* Ref.get(stateRef);
+        // Switches were given for one person's data. A new or different account starts
+        // with its personal projects only; reconnecting the same account keeps them.
+        const newAccount =
+          previous.email !== email && (previous.email !== null || previous.projects.length === 0);
+        const projectAccess = newAccount
+          ? personalProjectAccess(
+              yield* projects.list().pipe(Effect.orElseSucceed(() => [])),
+              services,
+            )
+          : previous.projects;
         // Under the token lock, so a refresh of the previous sign-in cannot overwrite this one.
         yield* tokenLock.withPermits(1)(
           Effect.gen(function* () {
@@ -454,7 +469,8 @@ const make = Effect.gen(function* () {
               .set(GOOGLE_REFRESH_TOKEN_SECRET, textEncoder.encode(Redacted.value(refreshToken)))
               .pipe(
                 Effect.mapError(
-                  () => new GoogleAccountError({ detail: "Studio could not save the sign-in." }),
+                  () =>
+                    new GoogleAccountError({ detail: "SpecWithCode could not save the sign-in." }),
                 ),
               );
             yield* Ref.set(refreshRef, Option.some(refreshToken));
@@ -469,8 +485,7 @@ const make = Effect.gen(function* () {
           email,
           clientId: client.value.clientId,
           services,
-          // Project switches were given for one person's data; another account starts with none.
-          projects: previous.email !== null && previous.email !== email ? [] : previous.projects,
+          projects: projectAccess,
         });
         yield* Ref.set(lastErrorRef, null);
         return yield* status;
@@ -482,7 +497,7 @@ const make = Effect.gen(function* () {
       Effect.map((result) =>
         callbackPage({
           ok: true,
-          message: `Studio can now read ${result.services.map((s) => SERVICE_LABEL[s]).join(", ") || "nothing yet"}${result.email ? ` for ${result.email}` : ""}. Choose which projects may use it in Studio's settings. You can close this tab.`,
+          message: `SpecWithCode can now read ${result.services.map((s) => SERVICE_LABEL[s]).join(", ") || "nothing yet"}${result.email ? ` for ${result.email}` : ""}. Personal projects can use it now; turn it on for other projects in SpecWithCode's settings. You can close this tab.`,
         }),
       ),
       Effect.catch((error) => Effect.succeed(callbackPage({ ok: false, message: error.detail }))),
@@ -560,9 +575,12 @@ const make = Effect.gen(function* () {
                   // Revoked or expired at Google, or obtained by a client Studio no longer
                   // uses; a new sign-in is the only fix.
                   yield* forgetSignIn;
-                  yield* Ref.set(lastErrorRef, "Google ended Studio's access. Sign in again.");
+                  yield* Ref.set(
+                    lastErrorRef,
+                    "Google ended SpecWithCode's access. Sign in again.",
+                  );
                   return yield* fail(
-                    "Google ended Studio's access. The user needs to sign in again under Settings > Google.",
+                    "Google ended SpecWithCode's access. The user needs to sign in again under Settings > Google.",
                   );
                 }
                 yield* Ref.set(lastErrorRef, error.message);
@@ -769,7 +787,7 @@ const make = Effect.gen(function* () {
         return {
           file: summary,
           content: null,
-          note: "Studio reads Google Docs, Sheets, Slides and text files. This file type was not read.",
+          note: "SpecWithCode reads Google Docs, Sheets, Slides and text files. This file type was not read.",
         };
       }
       const content = yield* withToken((token) =>

@@ -12,6 +12,7 @@ import {
   PositiveInt,
   ProjectId,
   RunId,
+  RuntimeRequestId,
   ScheduledTaskId,
   SecretRef,
   ThreadId,
@@ -250,6 +251,12 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   status: OrchestratorMcpDelegatedTaskStatus,
   workState: Schema.Literals(["working", "waiting_for_children", "result_available"]),
   hasPendingChildRuns: Schema.Boolean,
+  heldQueuedMessages: Schema.optional(
+    NonNegativeInt.annotate({
+      description:
+        "Queued messages waiting in this thread's held queue (after Stop, a restart or a provider failure). They are not delivered until the queue is resumed: by the user's Resume, by studio_queue_resume, or by another message sent to the thread. Omitted when nothing is held.",
+    }),
+  ),
   latestTerminalRunId: Schema.NullOr(RunId),
   latestTerminalStatus: Schema.NullOr(OrchestratorMcpTerminalDelegatedTaskStatus),
   latestTerminalSummary: Schema.NullOr(Schema.String),
@@ -347,7 +354,7 @@ export type OrchestratorMcpThreadStatus = typeof OrchestratorMcpThreadStatus.Typ
 const OrchestratorMcpProjectTarget = Schema.optional(
   ProjectId.annotate({
     description:
-      "Project to act on. Omit for the calling thread's project; required when the caller is not a Studio thread.",
+      "Project to act on. Omit for the calling thread's project; required when the caller is not a SpecWithCode thread.",
   }),
 );
 
@@ -400,6 +407,12 @@ export const OrchestratorMcpThreadListItem = Schema.Struct({
   parentThreadId: Schema.NullOr(ThreadId),
   relationshipToParent: Schema.NullOr(Schema.Literals(["fork", "subagent"])),
   itemCount: NonNegativeInt,
+  heldQueuedMessages: Schema.optional(
+    NonNegativeInt.annotate({
+      description:
+        "Queued messages waiting in this thread's held queue (after Stop, a restart or a provider failure). They are not delivered until the queue is resumed: by the user's Resume, by studio_queue_resume, or by another message sent to the thread. Omitted when nothing is held.",
+    }),
+  ),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -469,6 +482,12 @@ export const OrchestratorMcpThreadDetail = Schema.Struct({
   runCount: NonNegativeInt,
   itemCount: NonNegativeInt,
   pendingRequestCount: NonNegativeInt,
+  heldQueuedMessages: Schema.optional(
+    NonNegativeInt.annotate({
+      description:
+        "Queued messages waiting in this thread's held queue (after Stop, a restart or a provider failure). They are not delivered until the queue is resumed: by the user's Resume, by studio_queue_resume, or by another message sent to the thread. Omitted when nothing is held.",
+    }),
+  ),
   archived: Schema.Boolean,
   settled: Schema.Boolean,
   settledAt: Schema.NullOr(IsoDateTime),
@@ -540,6 +559,24 @@ export const OrchestratorMcpThreadSendResult = Schema.Struct({
   runId: RunId,
   status: OrchestrationV2RunStatus,
   delivery: Schema.Literals(["started", "queued", "steered", "restarted"]),
+  queueHeld: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "True when the message joined the target's held queue: it was NOT delivered and waits until the queue is resumed. Tell whoever needs it, or resume the queue with studio_queue_resume when that is yours to decide.",
+    }),
+  ),
+  heldQueuedMessages: Schema.optional(
+    NonNegativeInt.annotate({
+      description:
+        "Queued messages waiting in this thread's held queue (after Stop, a restart or a provider failure). They are not delivered until the queue is resumed: by the user's Resume, by studio_queue_resume, or by another message sent to the thread. Omitted when nothing is held.",
+    }),
+  ),
+  releasedHeldMessages: Schema.optional(
+    NonNegativeInt.annotate({
+      description: "Held queued messages this send released: they run after it, in their order.",
+    }),
+  ),
+  notice: Schema.optional(Schema.String),
 });
 export type OrchestratorMcpThreadSendResult = typeof OrchestratorMcpThreadSendResult.Type;
 
@@ -580,6 +617,37 @@ export const OrchestratorMcpThreadInterruptResult = Schema.Struct({
   ]),
 });
 export type OrchestratorMcpThreadInterruptResult = typeof OrchestratorMcpThreadInterruptResult.Type;
+
+export const OrchestratorMcpThreadsStopAllInput = Schema.Struct({
+  projectId: OrchestratorMcpProjectTarget,
+  reason: Schema.optional(Schema.String.check(Schema.isMaxLength(2_000))),
+});
+export type OrchestratorMcpThreadsStopAllInput = typeof OrchestratorMcpThreadsStopAllInput.Type;
+
+export const OrchestratorMcpThreadsContinueAllInput = Schema.Struct({
+  projectId: OrchestratorMcpProjectTarget,
+});
+export type OrchestratorMcpThreadsContinueAllInput =
+  typeof OrchestratorMcpThreadsContinueAllInput.Type;
+
+/** One thread a bulk stop or continue acted on, or skipped and why. */
+export const OrchestratorMcpBulkThreadResult = Schema.Struct({
+  threadId: ThreadId,
+  title: Schema.String,
+  threadLink: Schema.String,
+  runId: Schema.NullOr(RunId),
+  status: Schema.Literals(["stop_requested", "continued", "skipped", "failed"]),
+  message: Schema.optional(Schema.String),
+});
+export type OrchestratorMcpBulkThreadResult = typeof OrchestratorMcpBulkThreadResult.Type;
+
+export const OrchestratorMcpThreadsBulkResult = Schema.Struct({
+  projectId: ProjectId,
+  /** Threads stopped or continued; skipped and failed threads are listed but not counted. */
+  count: NonNegativeInt,
+  threads: Schema.Array(OrchestratorMcpBulkThreadResult),
+});
+export type OrchestratorMcpThreadsBulkResult = typeof OrchestratorMcpThreadsBulkResult.Type;
 
 export const OrchestratorMcpProviderCapability = Schema.Struct({
   providerInstanceId: ProviderInstanceId,
@@ -724,7 +792,7 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
   /** For webhook tasks: the public Studio Connect URL. Absent when this environment has no managed tunnel. */
   webhookUrl: Schema.optional(Schema.String).annotate({
     description:
-      "Public URL to give the sender. Absent when this environment has no Studio Connect managed tunnel; the user must enable Studio Connect remote access first.",
+      "Public URL to give the sender. Absent when this environment has no SpecWithCode Connect managed tunnel; the user must enable SpecWithCode Connect remote access first.",
   }),
   webhookSignature: Schema.optional(Schema.Literals(["none", "set"])).annotate({
     description: "Whether requests must carry a valid signature.",
@@ -739,7 +807,7 @@ export const OrchestratorMcpListScheduledTasksInput = Schema.Struct({
   projectId: Schema.optional(
     ProjectId.annotate({
       description:
-        "Only list this project's tasks. Omit for the calling thread's project, or for every project when the caller is not a Studio thread.",
+        "Only list this project's tasks. Omit for the calling thread's project, or for every project when the caller is not a SpecWithCode thread.",
     }),
   ),
 });
@@ -800,6 +868,55 @@ export const OrchestratorMcpRequestSecretResult = Schema.Union([
   }),
 ]);
 export type OrchestratorMcpRequestSecretResult = typeof OrchestratorMcpRequestSecretResult.Type;
+
+const OrchestratorMcpAskUserOption = Schema.Struct({
+  label: TrimmedNonEmptyString.annotate({
+    description: "A short choice, e.g. 'Clear caches'. Shown in bold after its letter (A, B, C).",
+  }),
+  description: Schema.optional(TrimmedNonEmptyString).annotate({
+    description:
+      "One line on what this choice does. Markdown links, URLs and `path/to/file` are clickable.",
+  }),
+  recommended: Schema.optional(Schema.Boolean).annotate({
+    description: "Mark the one choice you recommend; it gets a Recommended badge.",
+  }),
+});
+
+const OrchestratorMcpAskUserQuestion = Schema.Struct({
+  question: TrimmedNonEmptyString.annotate({
+    description:
+      "The question, shown as the card's title. Markdown links, URLs and `path/to/file` are clickable.",
+  }),
+  header: Schema.optional(TrimmedNonEmptyString).annotate({
+    description: "A one or two word topic, e.g. 'Disk space'. Defaults to 'Question'.",
+  }),
+  options: Schema.Array(OrchestratorMcpAskUserOption).check(Schema.isMaxLength(9)).annotate({
+    description:
+      "Two to five distinct choices. Leave empty for a free-text answer; the user can always reply in chat instead.",
+  }),
+  multiSelect: Schema.optional(Schema.Boolean).annotate({
+    description: "Let the user pick more than one option.",
+  }),
+});
+
+export const OrchestratorMcpAskUserInput = Schema.Struct({
+  questions: Schema.Array(OrchestratorMcpAskUserQuestion)
+    .check(Schema.isMinLength(1), Schema.isMaxLength(4))
+    .annotate({ description: "Usually one question; at most four asked together." }),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId).annotate({
+    description: "Reuse when retrying a call that lost its result, so the user sees one card.",
+  }),
+});
+export type OrchestratorMcpAskUserInput = typeof OrchestratorMcpAskUserInput.Type;
+
+export const OrchestratorMcpAskUserResult = Schema.Struct({
+  requestId: RuntimeRequestId,
+  status: Schema.Literals(["asked", "answered", "dismissed"]).annotate({
+    description:
+      "asked: the card is waiting; the user's answer arrives as your next user message, so end your turn or carry on with other work. answered/dismissed: a retried clientRequestId found a card already closed.",
+  }),
+});
+export type OrchestratorMcpAskUserResult = typeof OrchestratorMcpAskUserResult.Type;
 
 export const OrchestratorMcpDeleteScheduledTaskInput = Schema.Struct({
   scheduledTaskId: ScheduledTaskId,

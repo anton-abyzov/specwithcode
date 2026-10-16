@@ -12,9 +12,10 @@ import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 
-const { newThread, prepareThread, coordinatorHandoff, refresh, Wrapper, Trigger } = vi.hoisted(
-  () => ({
+const { newThread, prepareThread, coordinatorHandoff, refresh, startWorker, Wrapper, Trigger } =
+  vi.hoisted(() => ({
     newThread: vi.fn(),
+    startWorker: vi.fn(),
     coordinatorHandoff: vi.fn(),
     prepareThread: vi.fn(),
     refresh: vi.fn(),
@@ -25,8 +26,16 @@ const { newThread, prepareThread, coordinatorHandoff, refresh, Wrapper, Trigger 
         {children}
       </>
     ),
+  }));
+vi.mock("./codeReview/useStartPullRequestWorker", () => ({
+  useStartPullRequestWorker: () => ({
+    start: startWorker,
+    pending: null,
+    usableEntries: [],
+    defaultModel: null,
   }),
-);
+  workerModelFor: () => null,
+}));
 vi.mock("~/state/session", async (original) => ({
   ...(await original<typeof import("~/state/session")>()),
   useEnvironmentScope: () => true,
@@ -218,6 +227,7 @@ let renderer: ReactTestRenderer;
 
 beforeEach(() => {
   coordinatorHandoff.mockReset().mockResolvedValue({ kind: "standalone" });
+  startWorker.mockReset().mockResolvedValue(null);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", { addEventListener: vi.fn(), removeEventListener: vi.fn() });
   useComposerDraftStore.setState({ draftsByThreadKey: {} });
@@ -324,6 +334,22 @@ describe.each([
   });
 
   it.each(actions)("%s writes to the correct composer", async (action) => {
+    if (action === "Fix check" && !target) {
+      // On the page a failing check starts its own worker, with the log, in one press.
+      await act(async () => render());
+      await click("Fix check");
+      expect(startWorker).toHaveBeenCalledWith(
+        expect.stringContaining("finding:check:"),
+        expect.objectContaining({
+          verb: "Fix",
+          checkout: true,
+          url: detail.url,
+          prompt: expect.stringContaining("fails on pull request"),
+        }),
+      );
+      expect(newThread).not.toHaveBeenCalled();
+      return;
+    }
     if (target) useComposerDraftStore.getState().setPrompt(target, "Keep my draft");
     await act(async () => render());
     if (action === "Add to agent") await click("Code");
@@ -350,7 +376,7 @@ describe.each([
   });
 });
 
-it.each(["Ask a question", "Resolve conflicts", "Fix check", "Fix findings in a thread"])(
+it.each(["Ask a question", "Resolve conflicts", "Fix findings in a thread"])(
   "modern standalone %s stages coordinator input without opening/preparing a thread",
   async (action) => {
     coordinatorHandoff.mockResolvedValue({ kind: "opened", threadId: "coordinator" });

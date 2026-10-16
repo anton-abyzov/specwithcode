@@ -107,6 +107,36 @@ function DialogPopup({
   );
 }
 
+/**
+ * The app's viewer overlay: a card over nearly the whole window, above a
+ * backdrop that dims everything behind it. Use with `modal={false}`.
+ */
+function DialogOverlayPopup({
+  className,
+  children,
+  onBackdropClick,
+  ...props
+}: DialogPrimitive.Popup.Props & {
+  onBackdropClick: () => void;
+}) {
+  return (
+    <DialogPortal>
+      <DialogPrimitive.Backdrop
+        forceRender
+        className="viewer-overlay-backdrop"
+        onClick={onBackdropClick}
+      />
+      <DialogPrimitive.Popup
+        className={cn("viewer-overlay fixed z-50 text-popover-foreground", className)}
+        data-slot="dialog-popup"
+        {...props}
+      >
+        {children}
+      </DialogPrimitive.Popup>
+    </DialogPortal>
+  );
+}
+
 function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -192,6 +222,7 @@ export {
   DialogBackdrop as DialogOverlay,
   DialogPopup,
   DialogPopup as DialogContent,
+  DialogOverlayPopup,
   DialogHeader,
   DialogFooter,
   DialogTitle,

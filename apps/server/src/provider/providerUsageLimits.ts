@@ -50,10 +50,20 @@ export function makeUnavailableUsageLimits(input: {
 
 /** Any prior quota or permission evidence prevents an empty-lookup fallback. */
 export function hasNativeUsageEvidence(limits: ServerProviderUsageLimits): boolean {
-  return limits.windows.length > 0 || [limits.nativeAllowanceObservedAt, limits.nativeDenialObservedAt,
-    limits.nativeDenialRequiresFullRead, limits.nativeCreditDenialObservedAt,
-    limits.ordinaryUsageAllowed, limits.spendControlReached, limits.rateLimitReachedType,
-    limits.credits, limits.resetCredits].some((value) => value !== undefined);
+  return (
+    limits.windows.length > 0 ||
+    [
+      limits.nativeAllowanceObservedAt,
+      limits.nativeDenialObservedAt,
+      limits.nativeDenialRequiresFullRead,
+      limits.nativeCreditDenialObservedAt,
+      limits.ordinaryUsageAllowed,
+      limits.spendControlReached,
+      limits.rateLimitReachedType,
+      limits.credits,
+      limits.resetCredits,
+    ].some((value) => value !== undefined)
+  );
 }
 
 /**
@@ -77,7 +87,8 @@ export function applyUsageLimitsUpdate(input: {
   const creditNegative = update.nativeCreditDenied === true;
   if (
     (!negative && !creditNegative && update.windows.length === 0) ||
-    (previous?.unavailable?.reason === "unsupported" && !(negative && update.nativeDenialRequiresFullRead))
+    (previous?.unavailable?.reason === "unsupported" &&
+      !(negative && update.nativeDenialRequiresFullRead))
   ) {
     return previous;
   }
@@ -96,6 +107,9 @@ export function applyUsageLimitsUpdate(input: {
         : {}),
       ...(window.windowDurationMins === undefined && existing?.windowDurationMins !== undefined
         ? { windowDurationMins: existing.windowDurationMins }
+        : {}),
+      ...(window.modelScope === undefined && existing?.modelScope !== undefined
+        ? { modelScope: existing.modelScope }
         : {}),
     };
     if (existing === undefined || !usageWindowEquals(existing, next)) {
@@ -117,7 +131,8 @@ export function applyUsageLimitsUpdate(input: {
       ? { nativeDenialObservedAt: previous.nativeDenialObservedAt }
       : {}),
     ...(previous?.nativeDenialRequiresFullRead || (negative && update.nativeDenialRequiresFullRead)
-      ? { nativeDenialRequiresFullRead: true as const } : {}),
+      ? { nativeDenialRequiresFullRead: true as const }
+      : {}),
     ...(previous?.nativeCreditDenialObservedAt !== undefined
       ? { nativeCreditDenialObservedAt: previous.nativeCreditDenialObservedAt }
       : {}),
@@ -184,7 +199,8 @@ function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageW
     a.label === b.label &&
     a.usedPercent === b.usedPercent &&
     a.resetsAt === b.resetsAt &&
-    a.windowDurationMins === b.windowDurationMins
+    a.windowDurationMins === b.windowDurationMins &&
+    a.modelScope === b.modelScope
   );
 }
 
@@ -205,11 +221,17 @@ export function resolveUsageLimitsAfterProbe(input: {
   readonly probed: ServerProviderUsageLimits | undefined;
 }): ServerProviderUsageLimits | undefined {
   const { published, probed } = input;
-  const invalidEvidence = probed?.unavailable?.invalidResponse ? probed.unavailable
-    : published?.unavailable?.invalidResponse ? published.unavailable : undefined;
+  const invalidEvidence = probed?.unavailable?.invalidResponse
+    ? probed.unavailable
+    : published?.unavailable?.invalidResponse
+      ? published.unavailable
+      : undefined;
   if (input.driver === "claudeAgent" && published) {
-    if (published.unavailable?.reason === "unsupported" && !hasNativeUsageEvidence(published)
-      && (probed === undefined || probed.unavailable?.reason === "probeFailed")) {
+    if (
+      published.unavailable?.reason === "unsupported" &&
+      !hasNativeUsageEvidence(published) &&
+      (probed === undefined || probed.unavailable?.reason === "probeFailed")
+    ) {
       // A failed follow-up cannot reuse a successful empty lookup to admit a
       // manual retry. Keep failures explicit until another successful read.
       return { ...published, unavailable: invalidEvidence ?? { reason: "probeFailed" } };
@@ -218,19 +240,33 @@ export function resolveUsageLimitsAfterProbe(input: {
     if (probed.unavailable?.reason === "probeFailed" && published.unavailable)
       return { ...published, unavailable: invalidEvidence ?? published.unavailable };
   }
-  if (input.driver === "claudeAgent" && probed?.unavailable?.reason === "unsupported" && published) {
+  if (
+    input.driver === "claudeAgent" &&
+    probed?.unavailable?.reason === "unsupported" &&
+    published
+  ) {
     // A lookup without quota data cannot erase Claude's last observed windows,
     // malformed response, or denial. Keep that history until a valid full read;
     // checkedAt records this lookup, not a new native allowance observation.
-    return { ...published, checkedAt: probed.checkedAt, unavailable: invalidEvidence ?? probed.unavailable };
+    return {
+      ...published,
+      checkedAt: probed.checkedAt,
+      unavailable: invalidEvidence ?? probed.unavailable,
+    };
   }
   if (probed === undefined && invalidEvidence) return published;
-  if (probed?.unavailable?.reason === "probeFailed" && published && (!published.unavailable || invalidEvidence)) {
+  if (
+    probed?.unavailable?.reason === "probeFailed" &&
+    published &&
+    (!published.unavailable || invalidEvidence)
+  ) {
     if (probed.nativeRouteVerified !== undefined || invalidEvidence)
       return {
         ...published,
         ...(invalidEvidence ? { unavailable: invalidEvidence } : {}),
-        ...(probed.nativeRouteVerified !== undefined ? { nativeRouteVerified: probed.nativeRouteVerified } : {}),
+        ...(probed.nativeRouteVerified !== undefined
+          ? { nativeRouteVerified: probed.nativeRouteVerified }
+          : {}),
         ...(probed.nativeRouteObservedAt !== undefined
           ? { nativeRouteObservedAt: probed.nativeRouteObservedAt }
           : {}),
@@ -243,8 +279,11 @@ export function resolveUsageLimitsAfterProbe(input: {
       ? published?.nativeDenialObservedAt
       : undefined,
   ].filter((value): value is string => value !== undefined);
-  if (published && denialObservations.length > 0
-    && (probed?.unavailable?.reason !== "unsupported" || published.nativeDenialRequiresFullRead)) {
+  if (
+    published &&
+    denialObservations.length > 0 &&
+    (probed?.unavailable?.reason !== "unsupported" || published.nativeDenialRequiresFullRead)
+  ) {
     const probeAt = probed ? Date.parse(probed.checkedAt) : NaN;
     const fullAt = probed?.nativeAllowanceObservedAt
       ? Date.parse(probed.nativeAllowanceObservedAt)

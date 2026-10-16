@@ -7,7 +7,8 @@
 #   STUDIO_CHANNEL           release train to follow: stable, nightly, or preview
 #                            (default: stable; preview is a maintainers' test train)
 #   STUDIO_VERSION           exact version to install (overrides STUDIO_CHANNEL)
-#   STUDIO_HOME              Studio home directory (default: ~\.specweave-studio)
+#   STUDIO_HOME              Studio home directory (default: ~\.specwithcode; an
+#                            existing real ~\.specweave-studio is kept until migrated)
 #   STUDIO_INSTALL_BIN_DIR   where specweave-studio.exe is linked (default: ~\.local\bin)
 #   STUDIO_RELEASE_BASE_URL  mirror for releases/download (default: GitHub)
 #
@@ -18,7 +19,13 @@ $ErrorActionPreference = "Stop"
 
 $repo = "anton-abyzov/specwithcode"
 $baseUrl = if ($env:STUDIO_RELEASE_BASE_URL) { $env:STUDIO_RELEASE_BASE_URL.TrimEnd("/") } else { "https://github.com/$repo/releases/download" }
-$studioHome = if ($env:STUDIO_HOME) { $env:STUDIO_HOME } else { Join-Path $HOME ".specweave-studio" }
+# ~\.specwithcode, unless only a real (unmigrated) legacy ~\.specweave-studio exists.
+# A migrated legacy root is a link to the branded one.
+$legacyStudioHome = Join-Path $HOME ".specweave-studio"
+$brandedStudioHome = Join-Path $HOME ".specwithcode"
+$legacyItem = Get-Item -LiteralPath $legacyStudioHome -Force -ErrorAction SilentlyContinue
+$defaultStudioHome = if ($legacyItem -and $legacyItem.PSIsContainer -and -not $legacyItem.LinkType -and -not (Test-Path -LiteralPath $brandedStudioHome)) { $legacyStudioHome } else { $brandedStudioHome }
+$studioHome = if ($env:STUDIO_HOME) { $env:STUDIO_HOME } else { $defaultStudioHome }
 $binDir = if ($env:STUDIO_INSTALL_BIN_DIR) { $env:STUDIO_INSTALL_BIN_DIR } else { Join-Path $HOME ".local\bin" }
 
 function Fail([string] $message) {

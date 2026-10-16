@@ -21,9 +21,9 @@
     "storage": "32gb"
   },
   "containerEnv": {
-    // Keep all runtime state inside the (gitignored) workspace .specweave-studio, matching
+    // Keep all runtime state inside the (gitignored) workspace .specwithcode, matching
     // the worktree default. An explicit --home-dir still wins.
-    "STUDIO_HOME": "${containerWorkspaceFolder}/.specweave-studio"
+    "STUDIO_HOME": "${containerWorkspaceFolder}/.specwithcode"
   },
   "mounts": [
     // vp keeps the pnpm content-addressable store and metadata cache under
@@ -61,6 +61,7 @@
         // burns CPU and file handles.
         "files.watcherExclude": {
           "**/.repos/**": true,
+          "**/.specwithcode/**": true,
           "**/.specweave-studio/**": true
         },
         "search.exclude": {

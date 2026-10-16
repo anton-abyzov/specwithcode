@@ -69,3 +69,53 @@ describe("ComposerPendingUserInputPanel", () => {
     expect(markup).toContain("Big bang");
   });
 });
+
+describe("ComposerPendingUserInputPanel question card", () => {
+  it("letters the options, badges the recommended one and offers reply in chat", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerPendingUserInputPanel
+        pendingUserInputs={[
+          {
+            ...prompt,
+            questions: [
+              {
+                ...prompt.questions[0]!,
+                options: [
+                  {
+                    label: "Incremental",
+                    description: "Move one module at a time",
+                    recommended: true,
+                  },
+                  {
+                    label: "Big bang (Recommended)",
+                    description: "Move everything in one release",
+                  },
+                  { label: "Wait", description: "Wait" },
+                ],
+              },
+            ],
+          },
+        ]}
+        respondingRequestIds={[]}
+        answers={{}}
+        questionIndex={0}
+        onToggleOption={() => {}}
+        onAdvance={() => {}}
+        onDismiss={() => {}}
+        onReplyInChat={() => {}}
+      />,
+    );
+
+    expect(markup).toContain('data-question-option="A"');
+    expect(markup).toContain('data-question-option="B"');
+    expect(markup).toContain('data-question-option="C"');
+    expect(markup).toContain('role="radiogroup"');
+    expect(markup.match(/data-question-recommended/g)).toHaveLength(2);
+    expect(markup).not.toContain("(Recommended)");
+    expect(markup).toContain("data-question-reply-in-chat");
+  });
+
+  it("hides reply in chat when there is nowhere to reply", () => {
+    expect(renderPanel()).not.toContain("data-question-reply-in-chat");
+  });
+});

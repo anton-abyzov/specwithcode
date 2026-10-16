@@ -543,5 +543,96 @@ class AutomaticRecovery(RecoveryCase):
                 self.assertIsNone(agent.state['automaticRetry'])
 
 
+class NewerReleaseRecovery(RecoveryCase):
+    """A post-restart failure that was fully rolled back holds its own version, while a newer
+    release (with newer helpers) gets one automatic attempt (M1/M3 stuck on 1.0.29 after 1.0.30)."""
+
+    def rolled_back_once(self, failures=1, receipt=None):
+        self.fake.add_release()
+        self.config(quietMinutes=0)
+        self.pointers()
+        self.control(applyRolledBack=failures, rolledBackReceipt=receipt or {}, newVersion='0.3.0')
+        self.run_agent()
+        self.run_agent()
+        self.assertEqual(len(self.apply_calls()), 1)
+        last = self.state()['lastInstall']
+        self.assertEqual((last['version'], last['result']), ('0.2.0', 'failed'))
+        self.run_agent()
+        self.assertEqual(self.state()['status'], 'error')
+        self.assertIn('0.2.0 did not install automatically', self.state()['message'])
+        self.assertEqual(len(self.apply_calls()), 1)  # The failed version itself stays held.
+
+    def offer_newer(self):
+        self.fake.add_release('0.3.0')
+        self.config(quietMinutes=0, checkRequestedAt=update_agent.iso(update_agent.utcnow()))
+        self.run_agent()
+        self.run_agent()
+
+    def test_a_newer_release_installs_automatically_after_a_rolled_back_failure(self):
+        self.rolled_back_once()
+        self.offer_newer()
+        self.assertEqual(len(self.apply_calls()), 2)
+        self.assertEqual(self.state()['status'], 'installed')
+        self.assertEqual(self.state()['lastInstall']['version'], '0.3.0')
+
+    def test_a_newer_release_that_fails_too_is_held_after_one_attempt(self):
+        self.rolled_back_once(failures=2)
+        self.offer_newer()
+        self.assertEqual(len(self.apply_calls()), 2)
+        self.assertEqual(self.state()['lastInstall']['version'], '0.3.0')
+        for _ in range(3):
+            self.offset += datetime.timedelta(minutes=30)
+            self.run_agent()
+        self.assertEqual(len(self.apply_calls()), 2)
+        self.assertEqual(self.state()['status'], 'error')
+        self.assertIn('0.3.0 did not install automatically', self.state()['message'])
+
+    def test_an_incomplete_or_unproven_rollback_never_starts_a_newer_release(self):
+        self.rolled_back_once()
+        receipt = pathlib.Path(self.state()['lastInstall']['receipt'])
+        clean = json.loads(receipt.read_text())
+        self.fake.add_release('0.3.0')
+        self.config(quietMinutes=0, checkRequestedAt=update_agent.iso(update_agent.utcnow()))
+        for change in ({'rollbackError': 'AssertionError: Owned service did not stop for the state restore'},
+                       {'rollback': 'held-new-release-state-restore-failed'},
+                       {'rollback': 'held-for-safe-review'}, {'rollback': None},
+                       {'pointers': 'new-release'}, {'pointers': 'mixed-see-backup'},
+                       {'identity': 'm1'}, {'result': 'updated'}):
+            with self.subTest(change=change):
+                receipt.write_text(json.dumps(dict(clean, **change)))
+                self.run_agent()
+                self.run_agent()
+                self.assertEqual(len(self.apply_calls()), 1)
+                self.assertEqual(self.state()['status'], 'error')
+        receipt.write_text('not json')
+        self.run_agent()
+        self.assertEqual(len(self.apply_calls()), 1)
+        receipt.write_text(json.dumps(clean))  # The proven rollback alone lets 0.3.0 install.
+        self.run_agent()
+        self.run_agent()
+        self.assertEqual(len(self.apply_calls()), 2)
+        self.assertEqual(self.state()['status'], 'installed')
+
+    def test_a_changed_installation_or_receipt_location_holds_the_newer_release(self):
+        self.rolled_back_once()
+        self.fake.add_release('0.3.0')
+        agent = self.agent()
+        agent.state['checkedAt'] = None
+        verified = {'version': '0.3.0', 'binding': {'installedSourceCommit': fixture.OLD_COMMIT}}
+        self.assertTrue(recovery.newer_release_after_rollback(agent, verified))
+        self.assertFalse(recovery.newer_release_after_rollback(agent, dict(verified, version='0.2.0')))
+        self.assertFalse(recovery.newer_release_after_rollback(agent, dict(verified, version='0.1.9')))
+        self.assertFalse(recovery.newer_release_after_rollback(
+            agent, dict(verified, binding={'installedSourceCommit': fixture.OTHER_COMMIT})))
+        last = agent.state['lastInstall']
+        for change in ({'previousSourceCommit': fixture.OTHER_COMMIT}, {'result': 'updated'}, {'version': None},
+                       {'receipt': None}, {'receipt': str(self.home / 'elsewhere.json')}):
+            with self.subTest(change=change):
+                agent.state['lastInstall'] = dict(last, **change)
+                self.assertFalse(recovery.newer_release_after_rollback(agent, verified))
+        agent.state['lastInstall'] = last
+        self.assertTrue(recovery.newer_release_after_rollback(agent, verified))
+
+
 if __name__ == '__main__':
     unittest.main()

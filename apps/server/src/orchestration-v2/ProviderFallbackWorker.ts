@@ -24,6 +24,7 @@ import {
   resolveProviderFallback,
   shouldSwitchBeforeTurn,
 } from "@specweave-studio/shared/providerFallback";
+import { windowAppliesToModel } from "@specweave-studio/shared/usageWindows";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -114,9 +115,15 @@ export const ProviderFallbackEnv = Context.Reference<Readonly<Record<string, str
 );
 
 /** The window the switch belongs to, so a thread moves once per usage window. */
-function usageWindowKey(provider: ServerProvider | undefined, nowMs: number): string {
-  const used = provider === undefined ? null : providerUsedPercent(provider, nowMs);
-  const window = provider?.usageLimits?.windows.find((w) => w.usedPercent === used);
+function usageWindowKey(
+  provider: ServerProvider | undefined,
+  nowMs: number,
+  model?: string | null,
+): string {
+  const used = provider === undefined ? null : providerUsedPercent(provider, nowMs, model);
+  const window = provider?.usageLimits?.windows.find(
+    (w) => w.usedPercent === used && windowAppliesToModel(w, model),
+  );
   return window?.resetsAt ?? "open";
 }
 
@@ -130,6 +137,8 @@ function usageWindowKey(provider: ServerProvider | undefined, nowMs: number): st
 export function reachedLimitWindow(
   provider: ServerProvider | undefined,
   nowMs: number,
+  /** The model the thread runs on: a spent model-scoped window limits only its own models. */
+  model?: string | null,
 ): string | null {
   const limits = provider?.usageLimits;
   if (limits === undefined || limits.unavailable !== undefined) return null;
@@ -137,14 +146,16 @@ export function reachedLimitWindow(
     const resetsAt = window.resetsAt === undefined ? Number.NaN : Date.parse(window.resetsAt);
     return !(Number.isFinite(resetsAt) && resetsAt <= nowMs);
   });
-  const full = live.filter((window) => window.usedPercent >= 100);
+  const full = live.filter(
+    (window) => window.usedPercent >= 100 && windowAppliesToModel(window, model),
+  );
   if (full.length > 0) {
     const resets = full
       .map((window) => window.resetsAt)
       .filter((at): at is string => at !== undefined);
     return resets.length === 0 ? "open" : resets.sort()[0]!;
   }
-  if (limits.ordinaryUsageAllowed === false) return usageWindowKey(provider, nowMs);
+  if (limits.ordinaryUsageAllowed === false) return usageWindowKey(provider, nowMs, model);
   return null;
 }
 
@@ -191,7 +202,15 @@ export function providerFallbackCommand(
       creationSource: "server",
     };
   }
-  if (!shouldSwitchBeforeTurn({ provider: current, rule, nowMs })) return null;
+  if (
+    !shouldSwitchBeforeTurn({
+      provider: current,
+      model: thread.modelSelection.model,
+      rule,
+      nowMs,
+    })
+  )
+    return null;
   const target = resolveProviderFallback({
     providers,
     currentInstanceId: thread.providerInstanceId,
@@ -205,7 +224,7 @@ export function providerFallbackCommand(
   return {
     type: "thread.model-selection.set",
     commandId: CommandId.make(
-      `limit-preswitch:${thread.id}:${thread.providerInstanceId}:${usageWindowKey(current, nowMs)}`,
+      `limit-preswitch:${thread.id}:${thread.providerInstanceId}:${usageWindowKey(current, nowMs, thread.modelSelection.model)}`,
     ),
     threadId: thread.id,
     modelSelection: target,
@@ -518,7 +537,7 @@ export function apiCreditReturnCommand(
     limits !== undefined &&
     limits.unavailable === undefined &&
     limits.windows.length > 0 &&
-    reachedLimitWindow(subscription, nowMs) === null;
+    reachedLimitWindow(subscription, nowMs, origin.modelSelection.model) === null;
   const resetMs = Date.parse(origin.resetAt ?? "");
   const waitedOut = Number.isFinite(resetMs)
     ? resetMs <= nowMs
@@ -615,7 +634,7 @@ export const makeSweep = Effect.gen(function* () {
     const fresh = yield* freshRead(instanceId, nowMs, reads);
     if (fresh === undefined)
       return yield* skipReset(thread, instanceId, "unread").pipe(Effect.as("unread" as const));
-    const window = reachedLimitWindow(fresh, nowMs);
+    const window = reachedLimitWindow(fresh, nowMs, thread.modelSelection.model);
     if (window === null) return yield* skipReset(thread, instanceId, "not-limited");
     // The step is only taken for an account that showed a banked reset, so a
     // read without the count is one whose reset lookup failed, not an answer.
@@ -663,7 +682,7 @@ export const makeSweep = Effect.gen(function* () {
     const outcome =
       fresh === undefined
         ? "unread"
-        : reachedLimitWindow(fresh, nowMs) !== null
+        : reachedLimitWindow(fresh, nowMs, thread.modelSelection.model) !== null
           ? "limited"
           : "not-limited";
     if (outcome !== "limited")
@@ -829,10 +848,16 @@ export const makeSweep = Effect.gen(function* () {
     const simulated = simulatedUsageLimitInstances(env).length > 0;
     const snapshot = yield* projections.getShellSnapshot({ unsettledOnly: true });
     const reads: Reads = new Map();
+    // Many threads share a project: read each one once per sweep, not per thread.
+    const projectsById = new Map<string, Effect.Success<ReturnType<typeof projects.getById>>>();
     for (const thread of snapshot.threads) {
-      const found = yield* projects
-        .getById(thread.projectId)
-        .pipe(Effect.catchCause(() => Effect.succeed(Option.none())));
+      let found = projectsById.get(thread.projectId);
+      if (found === undefined) {
+        found = yield* projects
+          .getById(thread.projectId)
+          .pipe(Effect.catchCause(() => Effect.succeedNone));
+        projectsById.set(thread.projectId, found);
+      }
       // Unknown project grants cannot authorize an automatic provider switch.
       if (Option.isNone(found)) continue;
       const project = found.value;

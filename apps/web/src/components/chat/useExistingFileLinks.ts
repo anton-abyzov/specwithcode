@@ -2,7 +2,11 @@ import type { EnvironmentId } from "@specweave-studio/contracts";
 import { executeAtomQuery } from "@specweave-studio/client-runtime/state/runtime";
 import { useEffect, useMemo, useState } from "react";
 
-import { fileLinkMetaAtPath, type MarkdownFileLinkMeta } from "../../markdown-links";
+import {
+  fileLinkMetaAtPath,
+  type MarkdownFileLinkMeta,
+  mayBeDirectory,
+} from "../../markdown-links";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { projectEnvironment } from "../../state/projects";
 
@@ -12,13 +16,18 @@ function parentAndName(path: string): { parent: string; name: string } | null {
   return { parent: path.slice(0, index), name: path.slice(index + 1) };
 }
 
-async function existsOnHost(
+type EntryKind = "file" | "directory";
+type Settled =
+  | { readonly path: string; readonly kind: EntryKind }
+  | { readonly unresolved: ReadonlyArray<string> };
+
+/** What the host has at `path`, read from its parent folder's listing. */
+async function entryKindOnHost(
   environmentId: EnvironmentId,
   path: string,
-  directory: boolean,
-): Promise<boolean> {
+): Promise<EntryKind | null> {
   const split = parentAndName(path);
-  if (!split) return false;
+  if (!split) return null;
   const result = await executeAtomQuery(
     appAtomRegistry,
     projectEnvironment.listEntries({
@@ -27,58 +36,118 @@ async function existsOnHost(
     }),
     { reportFailure: false, reportDefect: false },
   );
+  if (result?._tag !== "Success") return null;
+  return result.value.entries.find((entry) => entry.path === split.name)?.kind ?? null;
+}
+
+/** Links the host must settle: where they are, or whether they are folders. */
+function needsHostCheck(meta: MarkdownFileLinkMeta): boolean {
   return (
-    result?._tag === "Success" &&
-    result.value.entries.some(
-      (entry) => entry.path === split.name && entry.kind === (directory ? "directory" : "file"),
-    )
+    (meta.candidates?.length ?? 0) > 1 ||
+    meta.search !== undefined ||
+    (!meta.directory && mayBeDirectory(meta))
   );
 }
 
+const SEARCH_LIMIT = 50;
+
 /**
- * Settles links that may point to more than one place (see
- * `MarkdownFileLinkMeta.candidates`) on the first path that exists on the
- * host, so the chip's tooltip, viewer and file manager all use the real file.
- * Until the host answers, or when none exists, the most likely path stays.
+ * A file the message named by a path the candidates do not hold, found by
+ * name in the roots it may live under: the match whose path ends with what
+ * the message wrote, the shortest first. `CoordinatorConversation.tsx` finds
+ * `apps/web/src/components/studio/CoordinatorConversation.tsx`.
  */
-export function useExistingFileLinks(
-  metaByText: ReadonlyMap<string, MarkdownFileLinkMeta>,
+async function searchOnHost(
+  environmentId: EnvironmentId,
+  search: NonNullable<MarkdownFileLinkMeta["search"]>,
+): Promise<string | null> {
+  const name = search.path.split("/").at(-1) ?? search.path;
+  if (name.length === 0) return null;
+  for (const root of search.roots) {
+    const result = await executeAtomQuery(
+      appAtomRegistry,
+      projectEnvironment.searchEntries({
+        environmentId,
+        input: { cwd: root, query: name, limit: SEARCH_LIMIT },
+      }),
+      { reportFailure: false, reportDefect: false },
+    );
+    if (result?._tag !== "Success") continue;
+    const match = result.value.entries
+      .filter((entry) => entry.path === search.path || entry.path.endsWith(`/${search.path}`))
+      .toSorted((left, right) => left.path.length - right.path.length)[0];
+    if (match) return `${root}/${match.path}`;
+  }
+  return null;
+}
+
+/**
+ * Settles links on what the host has: a link that may point to more than one
+ * place (see `MarkdownFileLinkMeta.candidates`) on the first path that exists,
+ * and an extensionless path (`../specweave-wt-code-captures`) on whether it is
+ * a folder, so the chip opens the file manager rather than a file viewer that
+ * cannot show it. Until the host answers, the authored path stays.
+ */
+export function useExistingFileLinks<Key>(
+  metaByKey: ReadonlyMap<Key, MarkdownFileLinkMeta>,
   environmentId: EnvironmentId | null,
   cwd: string | undefined,
-): ReadonlyMap<string, MarkdownFileLinkMeta> {
-  const [existing, setExisting] = useState<ReadonlyMap<string, string>>(new Map());
-  const ambiguous = useMemo(
-    () => [...metaByText].filter(([, meta]) => (meta.candidates?.length ?? 0) > 1),
-    [metaByText],
+): ReadonlyMap<Key, MarkdownFileLinkMeta> {
+  const [found, setFound] = useState<ReadonlyMap<Key, Settled>>(new Map());
+  const unsettled = useMemo(
+    () => [...metaByKey].filter(([, meta]) => needsHostCheck(meta)),
+    [metaByKey],
   );
 
   useEffect(() => {
-    if (environmentId === null || ambiguous.length === 0) return;
+    if (environmentId === null || unsettled.length === 0) return;
     let active = true;
     void (async () => {
-      const found = new Map<string, string>();
-      for (const [text, meta] of ambiguous) {
-        for (const candidate of meta.candidates!) {
-          if (await existsOnHost(environmentId, candidate, meta.directory === true)) {
-            found.set(text, candidate);
-            break;
-          }
+      const next = new Map<Key, Settled>();
+      for (const [key, meta] of unsettled) {
+        const candidates = meta.candidates ?? [meta.filePath];
+        let settled: Settled | null = null;
+        for (const candidate of candidates) {
+          const kind = await entryKindOnHost(environmentId, candidate);
+          if (kind === null || (meta.directory && kind !== "directory")) continue;
+          settled = { path: candidate, kind };
+          break;
         }
+        if (settled === null && meta.search && !meta.directory) {
+          const found = await searchOnHost(environmentId, meta.search).catch(() => null);
+          if (found !== null) settled = { path: found, kind: "file" };
+        }
+        next.set(key, settled ?? { unresolved: candidates });
       }
-      if (active) setExisting(found);
+      if (active) setFound(next);
     })();
     return () => {
       active = false;
     };
-  }, [ambiguous, environmentId]);
+  }, [unsettled, environmentId]);
 
   return useMemo(() => {
-    if (existing.size === 0) return metaByText;
-    const settled = new Map(metaByText);
-    for (const [text, path] of existing) {
-      const meta = metaByText.get(text);
-      if (meta && meta.filePath !== path) settled.set(text, fileLinkMetaAtPath(meta, path, cwd));
+    if (found.size === 0) return metaByKey;
+    const settled = new Map(metaByKey);
+    for (const [key, entry] of found) {
+      const meta = metaByKey.get(key);
+      if (!meta) continue;
+      if ("unresolved" in entry) {
+        // Nothing on the host: an extensionless path may still be a folder
+        // the host cannot list, so only a file is marked as not found.
+        if (!mayBeDirectory(meta)) settled.set(key, { ...meta, unresolved: entry.unresolved });
+        continue;
+      }
+      const { directory: _directory, ...rest } = meta;
+      settled.set(
+        key,
+        fileLinkMetaAtPath(
+          entry.kind === "directory" ? { ...rest, directory: true } : rest,
+          entry.path,
+          cwd,
+        ),
+      );
     }
     return settled;
-  }, [cwd, existing, metaByText]);
+  }, [cwd, found, metaByKey]);
 }

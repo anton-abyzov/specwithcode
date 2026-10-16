@@ -2715,8 +2715,10 @@ export function parseGitHubRemoteRepository(remoteUrl: string): string | undefin
 }
 
 // Releases are published from the private development repository to the
-// public one, so builds from either checkout read the public release feed.
+// public one, so builds from either checkout read the public release feed. The
+// private repository was renamed from specweave-studio; old clones keep that origin.
 const RELEASE_FEED_REPOSITORIES: Readonly<Record<string, string>> = {
+  "anton-abyzov/specwithcode": "anton-abyzov/specwithcode",
   "anton-abyzov/specwithcode": "anton-abyzov/specwithcode",
 };
 
@@ -3731,6 +3733,12 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     serverDist: path.join(repoRoot, "apps/server/dist"),
   };
   const bundledClientEntry = path.join(distDirs.serverDist, "client/index.html");
+
+  if (options.platform === "mac" && !options.signed) {
+    yield* Effect.logWarning(
+      "[desktop-artifact] Unsigned macOS build: do not publish it. Each update of an ad-hoc build asks for the login keychain again; release with --signed (docs/studio/releasing.md).",
+    );
+  }
 
   if (!options.skipBuild) {
     yield* Effect.log("[desktop-artifact] Building desktop/server/web artifacts...");

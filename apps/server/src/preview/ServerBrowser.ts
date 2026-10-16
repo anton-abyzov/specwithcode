@@ -38,6 +38,10 @@ import {
 } from "@specweave-studio/contracts";
 import { HostProcessEnvironment } from "@specweave-studio/shared/hostProcess";
 import { normalizePreviewUrl } from "@specweave-studio/shared/preview";
+import {
+  hasProjectSettingsOverrides,
+  resolveProjectSettings,
+} from "@specweave-studio/shared/projectSettings";
 import { resolvePreviewViewport } from "@specweave-studio/shared/previewViewport";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
@@ -68,6 +72,7 @@ import * as ServerConfig from "../config.ts";
 import { resolveRootCliCommand } from "../cli/invocation.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as PreviewAutomationBroker from "../mcp/PreviewAutomationBroker.ts";
 import * as DesktopBrowserChannel from "./DesktopBrowserChannel.ts";
 import * as PreviewManager from "./Manager.ts";
@@ -447,20 +452,32 @@ const make = Effect.gen(function* () {
   const previewBrowser = yield* PreviewBrowser.PreviewBrowser;
   const desktopChannel = yield* DesktopBrowserChannel.DesktopBrowserChannel;
   const settingsService = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
-  /** The profile the user chose for agents, or undefined for throwaway per-tab storage. */
-  const agentProfileId = Option.match(settingsService, {
-    onNone: () => Effect.succeed<string | undefined>(undefined),
-    onSome: (service) =>
-      service.getSettings.pipe(
-        Effect.map(({ agentBrowserProfileId }) =>
-          agentBrowserProfileId === null || agentBrowserProfileId === INCOGNITO_BROWSER_PROFILE_ID
+  const engine = yield* Effect.serviceOption(Orchestrator.OrchestratorV2);
+  /**
+   * The profile the user chose for agents in this thread's project (or for
+   * the environment), or undefined for throwaway per-tab storage.
+   */
+  const agentProfileId = (threadId: ThreadId) =>
+    Option.match(settingsService, {
+      onNone: () => Effect.succeed<string | undefined>(undefined),
+      onSome: (service) =>
+        Effect.gen(function* () {
+          const settings = yield* service.getSettings;
+          const projectId = hasProjectSettingsOverrides(settings)
+            ? Option.isSome(engine)
+              ? ((yield* engine.value.getThreadShell(threadId))?.projectId ?? null)
+              : null
+            : null;
+          const { agentBrowserProfileId } = resolveProjectSettings(settings, projectId).settings;
+          return agentBrowserProfileId === null ||
+            agentBrowserProfileId === INCOGNITO_BROWSER_PROFILE_ID
             ? undefined
-            : agentBrowserProfileId,
+            : agentBrowserProfileId;
+        }).pipe(
+          // Unreadable settings fall back to isolation, never to a signed-in profile.
+          Effect.orElseSucceed(() => undefined),
         ),
-        // Unreadable settings fall back to isolation, never to a signed-in profile.
-        Effect.orElseSucceed(() => undefined),
-      ),
-  });
+    });
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
   const launchServices = yield* Effect.context<ChildProcessSpawner.ChildProcessSpawner>();
   // The fix every host error names, rendered for how this server was launched.
@@ -1526,7 +1543,9 @@ const make = Effect.gen(function* () {
           closeIdleAgentTabs();
           assertTabCapacity(request.agentSessionId);
         }
-        const profileId = existing ? undefined : await Effect.runPromise(agentProfileId);
+        const profileId = existing
+          ? undefined
+          : await Effect.runPromise(agentProfileId(request.threadId));
         const tab =
           existing ??
           (await ensureTab(
@@ -2153,7 +2172,7 @@ const make = Effect.gen(function* () {
     (yield* PreviewBrowserHost.sandboxBlocked)
   ) {
     yield* Effect.logWarning(
-      `This host blocks the sandbox Studio's browser runs in, so browser tabs and HTML previews will not start. Run \`${setupCommand}\` once to allow it.`,
+      `This host blocks the sandbox SpecWithCode's browser runs in, so browser tabs and HTML previews will not start. Run \`${setupCommand}\` once to allow it.`,
     );
   }
   // The desktop took its page back (closed, swapped, crashed, or devtools opened).

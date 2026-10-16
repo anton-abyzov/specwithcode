@@ -122,7 +122,7 @@ export function UsageProviderSettings({
       >
         <SettingsRow
           title="Usage reporting only"
-          description="CLIProxyAPI hubs report account quotas. Adding a hub does not connect its models to Studio chats."
+          description="CLIProxyAPI hubs report account quotas. Adding a hub does not connect its models to SpecWithCode chats."
           control={
             !readOnly && canManageProviders ? (
               <Button

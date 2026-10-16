@@ -573,6 +573,55 @@ const projectRenameCommand = Command.make("rename", {
 );
 
 /**
+ * Moves a project to another folder. Its threads, memory and history stay with
+ * it and run in the new folder from their next turn. Needs SpecWithCode running,
+ * which checks the folder, refuses while work is running and rebinds threads.
+ */
+const projectMoveCommand = Command.make("move", {
+  ...projectLocationFlags,
+  project: Argument.String("project").pipe(
+    Argument.withDescription("Project id or current workspace root."),
+  ),
+  workspaceRoot: Argument.String("folder").pipe(
+    Argument.withDescription("The folder the project should use."),
+  ),
+  confirmDifferentRepository: Flag.Boolean("confirm-different-repository").pipe(
+    Flag.withDescription("Use the folder even when it is not a checkout of the same repository."),
+    Flag.withDefault(false),
+  ),
+}).pipe(
+  Command.withDescription(
+    "Move a project to another folder, keeping its threads, memory and history.",
+  ),
+  Command.withHandler((flags) =>
+    runProjectMutation(
+      flags,
+      Effect.fn("projectMoveMutation")(function* ({
+        snapshot,
+        dispatch,
+      }: {
+        readonly snapshot: ProjectSnapshot;
+        readonly dispatch: (
+          command: ProjectCliDispatchCommand,
+        ) => Effect.Effect<void, Error, FileSystem.FileSystem | HttpClient.HttpClient | Path.Path>;
+      }) {
+        const project = yield* findActiveProjectTarget({ snapshot, identifier: flags.project });
+        const path = yield* Path.Path;
+        const workspaceRoot = path.resolve(flags.workspaceRoot);
+        yield* dispatch({
+          type: "project.folder.change",
+          commandId: CommandId.make(yield* projectCommandUuid),
+          projectId: project.id,
+          workspaceRoot,
+          ...(flags.confirmDifferentRepository ? { confirmDifferentRepository: true } : {}),
+        });
+        return `Moved project ${project.id} (${project.title}) from ${project.workspaceRoot} to ${workspaceRoot}.`;
+      }),
+    ),
+  ),
+);
+
+/**
  * Archives or restores a project. An archived project keeps its threads, memory,
  * plans and folder, and project lists fold it away. Its existing threads stop too:
  * they take no new messages, cannot delegate, skip environment setup, and are not
@@ -635,6 +684,7 @@ export const projectCommand = Command.make("project").pipe(
     projectAddCommand,
     projectRemoveCommand,
     projectRenameCommand,
+    projectMoveCommand,
     makeProjectArchiveCommand(true),
     makeProjectArchiveCommand(false),
   ]),

@@ -245,7 +245,7 @@ export function resolveInitialMainWindowBounds(
 }
 
 const CONNECTING_TO_WSL_LABEL = "Connecting to WSL…";
-const WAITING_FOR_SERVICE_UPDATE_LABEL = "Waiting for the Studio service update…";
+const WAITING_FOR_SERVICE_UPDATE_LABEL = "Waiting for the SpecWithCode service update…";
 
 // A self-contained splash, shown immediately in wsl-only mode while the WSL
 // backend (which serves the renderer) cold-boots, or while the installed

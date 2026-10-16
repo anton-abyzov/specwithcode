@@ -5,24 +5,40 @@ import {
   type ProjectSkillRow,
   type ProjectSkillsSnapshot,
 } from "@specweave-studio/contracts";
-import { CheckIcon, CopyIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
+import {
+  BadgeCheckIcon,
+  CheckIcon,
+  CopyIcon,
+  ExternalLinkIcon,
+  RefreshCwIcon,
+  SearchIcon,
+  XIcon,
+} from "lucide-react";
 import { type ReactNode, useMemo, useRef, useState } from "react";
 
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { cn } from "~/lib/utils";
 import { useEnvironmentQuery } from "../../state/query";
 import { projectWorkspace } from "../../studio/projectWorkspace";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Sheet, SheetDescription, SheetHeader, SheetPopup, SheetTitle } from "../ui/sheet";
 import { Spinner } from "../ui/spinner";
 import { Switch } from "../ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   filterProjectSkillRows,
   projectSkillAttentionCount,
+  projectSkillFacets,
+  projectSkillLevel,
+  projectSkillLevels,
   projectSkillProviderBadges,
+  projectSkillSourceLinks,
   projectSkillStatusBadge,
+  type ProjectSkillFacetOption,
 } from "./ProjectSkillsSettings.logic";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsScopeNotice } from "./SettingsScopeNotice";
@@ -119,13 +135,108 @@ function Hinted({
   );
 }
 
-function SkillRow({ row }: { row: ProjectSkillRow }) {
+function ExternalLink({
+  href,
+  label,
+  className,
+  children,
+}: {
+  href: string;
+  label: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer noopener"
+      aria-label={label}
+      className={cn(
+        "inline-flex min-w-0 items-center gap-1 underline-offset-2 hover:text-foreground hover:underline",
+        className,
+      )}
+      onClick={(event) => event.stopPropagation()}
+    >
+      {children}
+    </a>
+  );
+}
+
+function TierCell({ row }: { row: ProjectSkillRow }) {
+  const tier = row.lock?.tier;
+  if (!tier) return <span className="text-muted-foreground">—</span>;
+  const registryUrl = projectSkillSourceLinks(row)?.registryUrl ?? null;
+  const verified = tier.toUpperCase() === "VERIFIED";
+  const badge = (
+    <Badge size="sm" variant={verified ? "success" : "outline"}>
+      {verified ? <BadgeCheckIcon aria-hidden /> : null}
+      {tier}
+    </Badge>
+  );
+  return registryUrl ? (
+    <ExternalLink href={registryUrl} label={`Open ${row.name} on verified-skill.com`}>
+      {badge}
+    </ExternalLink>
+  ) : (
+    badge
+  );
+}
+
+function SourceCell({ row }: { row: ProjectSkillRow }) {
+  const source = row.lock?.source;
+  if (!source) return <span className="text-muted-foreground">—</span>;
+  const links = projectSkillSourceLinks(row);
+  if (!links?.repoUrl) {
+    return (
+      <Hinted hint={source} className="block truncate text-muted-foreground">
+        {source}
+      </Hinted>
+    );
+  }
+  return (
+    <ExternalLink
+      href={links.repoUrl}
+      label={`Open the source of ${row.name}: ${source}`}
+      className="max-w-full text-muted-foreground"
+    >
+      <span className="truncate">{links.label}</span>
+      <ExternalLinkIcon aria-hidden className="size-3 shrink-0" />
+    </ExternalLink>
+  );
+}
+
+function StatusBadge({ row }: { row: ProjectSkillRow }) {
   const status = projectSkillStatusBadge(row);
+  const badge = (
+    <Badge size="sm" variant={status.variant}>
+      {status.label}
+    </Badge>
+  );
+  return row.issues.length > 0 ? <Hinted hint={row.issues.join("\n")}>{badge}</Hinted> : badge;
+}
+
+function SkillRow({ row, onOpen }: { row: ProjectSkillRow; onOpen: (name: string) => void }) {
   const issue = row.issues[0];
   return (
-    <TableRow data-skill={row.name} data-status={row.status}>
+    <TableRow
+      data-skill={row.name}
+      data-status={row.status}
+      className="cursor-pointer"
+      onClick={(event) => {
+        if ((event.target as HTMLElement).closest("a,button,[role=switch]")) return;
+        onOpen(row.name);
+      }}
+    >
       <TableCell className="max-w-64 whitespace-normal">
-        <div className="truncate font-medium text-foreground">{row.name}</div>
+        <button
+          type="button"
+          className="block max-w-full truncate text-left font-medium text-foreground hover:underline focus-visible:underline focus-visible:outline-none"
+          aria-label={`Show details for ${row.name}`}
+          onClick={() => onOpen(row.name)}
+        >
+          {row.name}
+        </button>
         {row.attention && issue ? (
           <div className="line-clamp-2 text-muted-foreground">{issue}</div>
         ) : row.description ? (
@@ -153,33 +264,180 @@ function SkillRow({ row }: { row: ProjectSkillRow }) {
       <TableCell>
         <span className="font-mono">{row.lock?.version ?? "—"}</span>
       </TableCell>
-      <TableCell>{row.lock?.tier ?? "—"}</TableCell>
+      <TableCell>
+        <TierCell row={row} />
+      </TableCell>
       <TableCell className="max-w-56">
-        {row.lock?.source ? (
-          <Hinted hint={row.lock.source} className="block truncate text-muted-foreground">
-            {row.lock.source}
-          </Hinted>
-        ) : (
-          <span className="text-muted-foreground">—</span>
-        )}
+        <SourceCell row={row} />
       </TableCell>
       <TableCell>
-        {row.issues.length > 0 ? (
-          <Hinted hint={row.issues.join("\n")}>
-            <Badge size="sm" variant={status.variant}>
-              {status.label}
-            </Badge>
-          </Hinted>
-        ) : (
-          <Badge size="sm" variant={status.variant}>
-            {status.label}
-          </Badge>
-        )}
+        <StatusBadge row={row} />
       </TableCell>
       <TableCell className="w-8 text-right">
         <CopyPathButton row={row} />
       </TableCell>
     </TableRow>
+  );
+}
+
+function DetailItem({ term, children }: { term: string; children: ReactNode }) {
+  return (
+    <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] gap-2 py-1">
+      <dt className="text-muted-foreground">{term}</dt>
+      <dd className="min-w-0 break-all text-foreground">{children}</dd>
+    </div>
+  );
+}
+
+const DRIFT_LABELS: Readonly<Record<ProjectSkillRow["drift"], string>> = {
+  match: "Matches the locked version",
+  drift: "Changed since vskill installed it",
+  unknown: "Cannot compare with the lock",
+  unlocked: "Not installed by vskill",
+};
+
+/** Everything known about one skill: where each agent loads it from, its lock and its problems. */
+function SkillDetails({ row }: { row: ProjectSkillRow }) {
+  const links = projectSkillSourceLinks(row);
+  const problems = [...new Set([...row.issues, ...row.doctor])];
+  return (
+    <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 pb-6 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <StatusBadge row={row} />
+        {row.lock?.tier ? <TierCell row={row} /> : null}
+        {projectSkillLevels(row).map((level) => (
+          <Badge key={level} size="sm" variant="outline">
+            {level}
+          </Badge>
+        ))}
+      </div>
+      {links?.registryUrl || links?.repoUrl ? (
+        <div className="flex flex-wrap gap-2">
+          {links.registryUrl ? (
+            <Button
+              size="xs"
+              variant="outline"
+              render={<a href={links.registryUrl} target="_blank" rel="noreferrer noopener" />}
+            >
+              <BadgeCheckIcon aria-hidden />
+              View on verified-skill.com
+            </Button>
+          ) : null}
+          {links.repoUrl ? (
+            <Button
+              size="xs"
+              variant="outline"
+              render={<a href={links.repoUrl} target="_blank" rel="noreferrer noopener" />}
+            >
+              <ExternalLinkIcon aria-hidden />
+              Source repository
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+      {problems.length > 0 ? (
+        <section aria-label="Problems" className="space-y-1">
+          <h3 className="font-medium text-foreground">Needs attention</h3>
+          <ul className="list-disc space-y-1 ps-5 text-muted-foreground">
+            {problems.map((problem) => (
+              <li key={problem}>{problem}</li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+      <section aria-label="Loaded by" className="space-y-1">
+        <h3 className="font-medium text-foreground">Loaded by</h3>
+        {row.providers.length === 0 ? (
+          <p className="text-muted-foreground">No agent loads this skill in this folder.</p>
+        ) : (
+          <ul className="space-y-2">
+            {row.providers.map((presence) => (
+              <li key={`${presence.instanceId}:${presence.path}`} className="space-y-0.5">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="font-medium text-foreground">{presence.label}</span>
+                  <Badge size="sm" variant="outline">
+                    {projectSkillLevel(presence.scope)}
+                  </Badge>
+                  {presence.enabled ? null : (
+                    <Badge size="sm" variant="secondary">
+                      off
+                    </Badge>
+                  )}
+                </div>
+                <div className="break-all font-mono text-xs text-muted-foreground">
+                  {presence.path}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+        {row.copies > 1 ? (
+          <p className="text-xs text-muted-foreground">
+            {row.copies} separate copies on disk
+            {row.divergent ? ", and their contents differ." : ", all identical."}
+          </p>
+        ) : null}
+      </section>
+      <section aria-label="Install" className="space-y-1">
+        <h3 className="font-medium text-foreground">Install</h3>
+        <dl>
+          <DetailItem term="Source">{row.lock?.source ?? "—"}</DetailItem>
+          <DetailItem term="Version">{row.lock?.version ?? "—"}</DetailItem>
+          <DetailItem term="Tier">{row.lock?.tier ?? "—"}</DetailItem>
+          <DetailItem term="Installed">
+            {row.lock?.installedAt ? new Date(row.lock.installedAt).toLocaleString() : "—"}
+          </DetailItem>
+          <DetailItem term="Lockfile">
+            {row.lock ? `${row.lock.lockPath} (${row.lock.lockScope})` : "—"}
+          </DetailItem>
+          <DetailItem term="Locked sha">
+            <span className="font-mono">{row.lock?.sha || "—"}</span>
+          </DetailItem>
+          <DetailItem term="On disk">{DRIFT_LABELS[row.drift]}</DetailItem>
+        </dl>
+      </section>
+    </div>
+  );
+}
+
+function FacetGroup({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  options: ReadonlyArray<ProjectSkillFacetOption>;
+  value: ReadonlyArray<string>;
+  onChange: (next: Array<string>) => void;
+}) {
+  if (options.length < 2 && value.length === 0) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <ToggleGroup
+        aria-label={`Filter by ${label.toLowerCase()}`}
+        variant="default"
+        size="compact"
+        multiple
+        className="flex-wrap"
+        value={[...value]}
+        onValueChange={(next) => onChange(next as Array<string>)}
+      >
+        {options.map((option) => (
+          <Toggle
+            key={option.value}
+            value={option.value}
+            variant="outline"
+            size="compact"
+            data-facet={option.value}
+          >
+            {option.label}
+            <span className="ms-1 text-muted-foreground tabular-nums">{option.count}</span>
+          </Toggle>
+        ))}
+      </ToggleGroup>
+    </div>
   );
 }
 
@@ -229,14 +487,33 @@ export function ProjectSkillsView({
   );
   const [search, setSearch] = useState("");
   const [problemsOnly, setProblemsOnly] = useState(false);
+  const [providers, setProviders] = useState<ReadonlyArray<string>>([]);
+  const [levels, setLevels] = useState<ReadonlyArray<string>>([]);
+  const [tiers, setTiers] = useState<ReadonlyArray<string>>([]);
+  const [openSkill, setOpenSkill] = useState<string | null>(null);
   // The first Rescan switches the query key; keep showing the last result while it scans.
   const lastSnapshot = useRef(query.data);
   if (query.data) lastSnapshot.current = query.data;
   const snapshot = query.data ?? lastSnapshot.current;
   const rows = useMemo(
-    () => (snapshot ? filterProjectSkillRows(snapshot.rows, { query: search, problemsOnly }) : []),
-    [snapshot, search, problemsOnly],
+    () =>
+      snapshot
+        ? filterProjectSkillRows(snapshot.rows, {
+            query: search,
+            problemsOnly,
+            providers,
+            levels,
+            tiers,
+          })
+        : [],
+    [snapshot, search, problemsOnly, providers, levels, tiers],
   );
+  const facets = useMemo(() => projectSkillFacets(snapshot?.rows ?? []), [snapshot]);
+  const chipsActive = providers.length + levels.length + tiers.length > 0;
+  const filtered = chipsActive || problemsOnly || search.trim() !== "";
+  const detailRow = openSkill
+    ? (snapshot?.rows.find((candidate) => candidate.name === openSkill) ?? null)
+    : null;
   const attention = snapshot ? projectSkillAttentionCount(snapshot.rows) : 0;
 
   return (
@@ -262,12 +539,13 @@ export function ProjectSkillsView({
         <p className="text-xs text-muted-foreground">
           Which skills each agent loads in{" "}
           <span className="break-all font-mono text-foreground/80">{folder}</span>, and whether each
-          still matches the version vskill installed.
+          still matches the version vskill installed. Filter by agent or by level: project skills
+          live in this folder, user skills apply to every project. Click a skill for details.
         </p>
         {snapshot ? (
           <p className="text-sm text-foreground" role="status" data-testid="skills-summary">
             {summarizeProjectSkills(snapshot.rows)}
-            {search.trim() || problemsOnly ? (
+            {filtered ? (
               <span className="text-muted-foreground"> · showing {rows.length}</span>
             ) : null}
           </p>
@@ -296,6 +574,35 @@ export function ProjectSkillsView({
             Only problems{attention > 0 ? ` (${attention})` : ""}
           </label>
         </div>
+        {snapshot && snapshot.rows.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2" data-testid="skills-filters">
+            <FacetGroup
+              label="Agent"
+              options={facets.providers}
+              value={providers}
+              onChange={setProviders}
+            />
+            <FacetGroup label="Level" options={facets.levels} value={levels} onChange={setLevels} />
+            <FacetGroup label="Tier" options={facets.tiers} value={tiers} onChange={setTiers} />
+            {filtered ? (
+              <Button
+                size="xs"
+                variant="ghost-muted"
+                type="button"
+                onClick={() => {
+                  setSearch("");
+                  setProblemsOnly(false);
+                  setProviders([]);
+                  setLevels([]);
+                  setTiers([]);
+                }}
+              >
+                <XIcon />
+                Clear filters
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
       {query.error && !snapshot ? (
         <p role="alert" className="px-3 py-4 text-sm text-destructive-foreground sm:px-4">
@@ -341,19 +648,39 @@ export function ProjectSkillsView({
                   <TableRow>
                     <TableCell colSpan={8}>
                       <p className="py-2 text-center text-muted-foreground">
-                        {problemsOnly && !search.trim()
+                        {problemsOnly && !search.trim() && !chipsActive
                           ? "Nothing needs attention."
-                          : "No skills match this search."}
+                          : "No skills match these filters."}
                       </p>
                     </TableCell>
                   </TableRow>
                 ) : (
-                  rows.map((row) => <SkillRow key={row.name} row={row} />)
+                  rows.map((row) => <SkillRow key={row.name} row={row} onOpen={setOpenSkill} />)
                 )}
               </TableBody>
             </Table>
           </div>
           <SkillsFootnotes snapshot={snapshot} />
+          <Sheet
+            open={detailRow !== null}
+            onOpenChange={(open) => {
+              if (!open) setOpenSkill(null);
+            }}
+          >
+            <SheetPopup className="max-w-lg" data-testid="skill-details">
+              {detailRow ? (
+                <>
+                  <SheetHeader>
+                    <SheetTitle className="me-8 break-all">{detailRow.name}</SheetTitle>
+                    {detailRow.description ? (
+                      <SheetDescription>{detailRow.description}</SheetDescription>
+                    ) : null}
+                  </SheetHeader>
+                  <SkillDetails row={detailRow} />
+                </>
+              ) : null}
+            </SheetPopup>
+          </Sheet>
         </>
       )}
     </SettingsSection>

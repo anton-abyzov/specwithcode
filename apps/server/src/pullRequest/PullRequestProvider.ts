@@ -284,6 +284,12 @@ export interface ProviderDiffFileContents {
   readonly newContents: string;
 }
 
+export interface ProviderCheckFailureLog {
+  readonly log: string | null;
+  readonly truncated: boolean;
+  readonly source: string | null;
+}
+
 export interface ProviderFilesViewed {
   readonly files: ReadonlyArray<PullRequestFileViewed>;
   /** The host has more files than were read, so the ones missing here are not "unviewed". */
@@ -520,6 +526,18 @@ export interface PullRequestProviderApi {
       readonly newPath: string;
     },
   ) => Effect.Effect<ProviderDiffFileContents, PullRequestProviderError>;
+
+  /**
+   * The failing tail of one CI check's log. Optional: a provider without it answers no log, and
+   * so does one that has it for a check it cannot read (a third-party status, a run still going).
+   */
+  readonly getCheckFailureLog?: (
+    input: ProviderRepositoryRef & {
+      readonly number: number;
+      readonly checkName: string;
+      readonly checkUrl: string | null;
+    },
+  ) => Effect.Effect<ProviderCheckFailureLog, PullRequestProviderError>;
 
   /**
    * Which files the reader has already cleared. Only called when `capabilities.viewedFiles` is

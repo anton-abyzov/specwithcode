@@ -277,7 +277,7 @@ it("explains reset priority, the local next reset and retained account/cache aff
   state.snapshot = snapshot;
   await render();
   expect(container.textContent).toContain(
-    "Use eligible quota that resets soonest; equal resets prefer more used quota.",
+    "Use eligible quota that resets soonest; equal resets prefer the one with less left.",
   );
   expect(container.textContent).toContain(
     "Existing sessions keep their account and provider to preserve cache affinity.",
@@ -492,7 +492,7 @@ it("shows included usage, reported credits and banked resets as separate observa
   });
   state.snapshot = f;
   await render();
-  expect(container.textContent).toContain("15-minute window · 100% used");
+  expect(container.textContent).toContain("15-minute window · limit reached");
   expect(container.textContent).toContain("0% left");
   expect(container.textContent).toContain("Provider allows new work");
   expect(container.textContent).toContain("42.5 extra credits reported");

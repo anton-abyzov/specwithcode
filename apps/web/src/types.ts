@@ -105,6 +105,16 @@ export interface ChatMessage {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly inputIntent?: OrchestrationV2UserMessageInputIntent | undefined;
+  /**
+   * Shown in a worker's timeline for a message the person typed there and the
+   * coordinator has not delivered back to it: where it went instead.
+   */
+  readonly routedNote?: RoutedMessageNote | undefined;
+}
+
+export interface RoutedMessageNote {
+  readonly kind: "pending" | "sent" | "answered";
+  readonly targetThreadId: ThreadId | null;
 }
 
 export interface ProposedPlan {

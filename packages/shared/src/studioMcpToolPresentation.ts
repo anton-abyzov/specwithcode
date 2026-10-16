@@ -21,6 +21,8 @@ export type StudioMcpToolSummaryAction =
   | "thread-send"
   | "thread-wait"
   | "thread-interrupt"
+  | "thread-stop-all"
+  | "thread-continue-all"
   | "thread-configuration"
   | "thread-configure"
   | "thread-fork"
@@ -35,6 +37,7 @@ export type StudioMcpToolSummaryAction =
   | "queue-cancel"
   | "queue-reorder"
   | "queue-steer"
+  | "queue-resume"
   | "question-list"
   | "question-read"
   | "question-respond"
@@ -132,15 +135,30 @@ const STUDIO_MCP_TOOLS: Readonly<Record<string, StudioMcpToolDefinition>> = {
     "schedule-delete",
   ),
   request_secret: tool(["Ask for", "Asking for", "Asked for", "a secret"], "secret-request"),
-  create_threads: tool(["Create", "Creating", "Created", "Studio threads"], "thread-create"),
-  studio_thread_start: tool(["Start", "Starting", "Started", "a Studio thread"], "thread-create"),
-  studio_thread_list: tool(["List", "Listing", "Listed", "Studio threads"], "thread-list"),
-  studio_thread_read: tool(["Read", "Reading", "Read", "a Studio thread"], "thread-read"),
-  studio_thread_send: tool(["Send", "Sending", "Sent", "to a Studio thread"], "thread-send"),
-  studio_thread_wait: tool(["Wait", "Waiting", "Waited", "for a Studio thread"], "thread-wait"),
+  ask_user: tool(["Ask", "Asking", "Asked", "the user"], "question-respond"),
+  create_threads: tool(["Create", "Creating", "Created", "SpecWithCode threads"], "thread-create"),
+  studio_thread_start: tool(
+    ["Start", "Starting", "Started", "a SpecWithCode thread"],
+    "thread-create",
+  ),
+  studio_thread_list: tool(["List", "Listing", "Listed", "SpecWithCode threads"], "thread-list"),
+  studio_thread_read: tool(["Read", "Reading", "Read", "a SpecWithCode thread"], "thread-read"),
+  studio_thread_send: tool(["Send", "Sending", "Sent", "to a SpecWithCode thread"], "thread-send"),
+  studio_thread_wait: tool(
+    ["Wait", "Waiting", "Waited", "for a SpecWithCode thread"],
+    "thread-wait",
+  ),
   studio_thread_interrupt: tool(
-    ["Interrupt", "Interrupting", "Requested an interrupt of", "a Studio thread"],
+    ["Interrupt", "Interrupting", "Requested an interrupt of", "a SpecWithCode thread"],
     "thread-interrupt",
+  ),
+  studio_threads_stop_all: tool(
+    ["Stop", "Stopping", "Stopped", "all running SpecWithCode threads"],
+    "thread-stop-all",
+  ),
+  studio_threads_continue_all: tool(
+    ["Continue", "Continuing", "Continued", "all interrupted SpecWithCode threads"],
+    "thread-continue-all",
   ),
   studio_worktree_handoff: tool(
     ["Hand off", "Handing off", "Handed off", "thread to a git worktree"],
@@ -269,6 +287,7 @@ const STUDIO_MCP_TOOLS: Readonly<Record<string, StudioMcpToolDefinition>> = {
     ["Steer with", "Steering with", "Requested steering with", "a queued message"],
     "queue-steer",
   ),
+  studio_queue_resume: tool(["Resume", "Resuming", "Resumed", "a held queue"], "queue-resume"),
   studio_pending_request_list: tool(
     ["List", "Listing", "Listed", "pending questions"],
     "question-list",
@@ -307,7 +326,7 @@ const STUDIO_MCP_TOOLS: Readonly<Record<string, StudioMcpToolDefinition>> = {
     "thread-organize",
   ),
   studio_thread_update: tool(
-    ["Update", "Updating", "Updated", "Studio thread metadata"],
+    ["Update", "Updating", "Updated", "SpecWithCode thread metadata"],
     "thread-update",
   ),
   studio_worktree_list: tool(["List", "Listing", "Listed", "workspace branches"], "worktree-list"),
@@ -333,7 +352,14 @@ const STUDIO_MCP_TOOLS: Readonly<Record<string, StudioMcpToolDefinition>> = {
     "project-create",
   ),
   studio_project_update: tool(["Update", "Updating", "Updated", "a project"], "project-update"),
-  studio_project_delete: tool(["Delete", "Deleting", "Deleted", "a project"], "project-delete"),
+  studio_project_request: tool(
+    ["Ask to change", "Asking to change", "Asked to change", "a project"],
+    "project-update",
+  ),
+  studio_project_delete: tool(
+    ["Ask to delete", "Asking to delete", "Asked to delete", "a project"],
+    "project-delete",
+  ),
   studio_project_clone: tool(["Clone", "Cloning", "Cloned", "a repository"], "project-clone"),
   studio_attachment_prepare_upload: tool(
     ["Prepare", "Preparing", "Prepared", "an attachment upload"],

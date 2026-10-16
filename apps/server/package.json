@@ -1,6 +1,6 @@
 {
   "name": "specweave-studio",
-  "version": "1.0.24",
+  "version": "1.0.35",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -52,7 +52,8 @@
     "stream-chain": "^4.2.5",
     "stream-json": "3.6.0",
     "yaml": "catalog:",
-    "yauzl": "^3.4.0"
+    "yauzl": "^3.4.0",
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

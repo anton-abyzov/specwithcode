@@ -1,0 +1,136 @@
+:root {
+  color-scheme: light dark;
+  --accent: #5b6cff;
+  --ok: #2f9e44;
+  --warn: #e8590c;
+  --bad: #e03131;
+  --muted: #868e96;
+  font:
+    13px/1.45 system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+}
+
+body {
+  width: 340px;
+  margin: 0;
+  padding: 14px 16px;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+h1 {
+  font-size: 15px;
+  margin: 0;
+}
+
+.status {
+  margin: 12px 0 2px;
+  font-weight: 600;
+}
+
+.status[data-phase="connected"] {
+  color: var(--ok);
+}
+
+.status[data-phase="rejected"],
+.status[data-phase="disconnected"] {
+  color: var(--bad);
+}
+
+.status[data-phase="paused"],
+.status[data-phase="connecting"] {
+  color: var(--warn);
+}
+
+.detail,
+footer,
+dt {
+  color: var(--muted);
+}
+
+.detail {
+  margin: 0 0 10px;
+  min-height: 1em;
+}
+
+dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 12px;
+  margin: 0 0 10px;
+}
+
+dd {
+  margin: 0;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+form {
+  display: grid;
+  gap: 6px;
+  border-top: 1px solid color-mix(in srgb, var(--muted) 30%, transparent);
+  padding-top: 10px;
+}
+
+label {
+  font-weight: 600;
+}
+
+textarea,
+input {
+  font:
+    12px ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  padding: 6px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--muted) 60%, transparent);
+  background: transparent;
+  color: inherit;
+  resize: vertical;
+}
+
+input {
+  font-family: inherit;
+}
+
+button {
+  font: inherit;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 0;
+  background: var(--accent);
+  color: white;
+  cursor: pointer;
+}
+
+button.quiet {
+  background: transparent;
+  color: var(--bad);
+  border: 1px solid currentColor;
+}
+
+.row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.error {
+  color: var(--bad);
+  margin: 0;
+  min-height: 1em;
+}
+
+footer {
+  margin-top: 10px;
+  font-size: 12px;
+}

@@ -129,6 +129,8 @@ export interface ThreadManagementSendResult {
   /** Null for queued sends: the user turn item materializes when the queued turn starts. */
   readonly turnItem: Extract<OrchestrationV2TurnItem, { readonly type: "user_message" }> | null;
   readonly delivery: "started" | "queued" | "steered" | "restarted";
+  /** Held queued runs this send released (a message that starts a turn resumes a held queue). */
+  readonly releasedHeldRuns?: number;
 }
 
 export interface ThreadManagementWaitInput {
@@ -647,7 +649,17 @@ const make = Effect.gen(function* () {
             : input.mode === "restart"
               ? "restarted"
               : "steered";
-      return { dispatch, projection, message, run, turnItem, delivery };
+      const heldBefore = new Set(
+        target.runs.flatMap((candidate) =>
+          candidate.status === "queued" && candidate.queueHeld === true ? [candidate.id] : [],
+        ),
+      );
+      const releasedHeldRuns = projection.runs.filter(
+        (candidate) =>
+          heldBefore.has(candidate.id) &&
+          !(candidate.status === "queued" && candidate.queueHeld === true),
+      ).length;
+      return { dispatch, projection, message, run, turnItem, delivery, releasedHeldRuns };
     });
 
   const waitForThread: ThreadManagementServiceShape["waitForThread"] = (input) =>
@@ -781,6 +793,8 @@ const make = Effect.gen(function* () {
         threadId: input.threadId,
         runId: interruptibleRun.id,
         ...(input.reason === undefined ? {} : { reason: input.reason }),
+        // Only agents interrupt through here (studio_thread_interrupt).
+        cause: "agent",
       });
       return { type: "interrupt_requested", run: interruptibleRun, dispatch } as const;
     });

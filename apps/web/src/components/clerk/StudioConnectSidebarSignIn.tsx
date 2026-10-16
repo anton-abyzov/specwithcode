@@ -58,7 +58,7 @@ function ConfiguredStudioConnectSidebarSignIn() {
         <SidebarMenuItem>
           <SidebarMenuButton onClick={openAuthPrompt}>
             <LogInIcon />
-            <span>Sign in to Studio Connect</span>
+            <span>Sign in to SpecWithCode Connect</span>
           </SidebarMenuButton>
         </SidebarMenuItem>
       </SidebarMenu>

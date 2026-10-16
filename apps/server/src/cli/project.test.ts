@@ -316,7 +316,7 @@ it.layer(NodeServices.layer)("project deletion with native V2 threads", (it) => 
         }),
       );
 
-      assert.include(error.message, "not empty");
+      assert.include(error.message, "still has threads");
       assert.deepEqual(
         (yield* readProjects(baseDir)).projects.map((entry) => entry.id),
         [project.id],

@@ -35,6 +35,7 @@ import {
   workEntryReadOutput,
   workEntryIsVisibleInGroup,
   withTurnFoldEnds,
+  workingStepLabel,
 } from "./MessagesTimeline.logic";
 import type { WorkLogEntry } from "../../session-logic";
 
@@ -5124,7 +5125,7 @@ describe("timelineDetail", () => {
       ).toEqual(["cmd-1", "cmd-2", "cmd-3"]);
     });
 
-    it("summarizes a finished turn's folded work in its label", () => {
+    it("folds a finished turn into one duration line, without listing its tools", () => {
       const timelineEntries = [
         user("user", 0),
         assistant("note", 1),
@@ -5144,8 +5145,9 @@ describe("timelineDetail", () => {
         timelineDetail: "concise",
       });
       expect(rows.find((row) => row.kind === "turn-fold")).toMatchObject({
-        label: "Worked for 20s",
-        activitySummary: "Ran 2 commands",
+        label: "20s",
+        activitySummary: "2 commands",
+        activityDetail: "Worked for 20s · Ran 2 commands",
       });
       expect(rows.map((row) => row.id)).toEqual(["user", `turn-fold:${runId}`, "final"]);
     });
@@ -5438,5 +5440,18 @@ describe("withTurnFoldEnds", () => {
     expect(ids(withTurnFoldEnds(folded, new Map([[run, "final"]])))).toEqual(ids(folded));
     const short = [fold(true), plain("a"), plain("b"), plain("final")];
     expect(ids(withTurnFoldEnds(short, new Map([[run, "final"]])))).toEqual(ids(short));
+  });
+});
+
+describe("workingStepLabel", () => {
+  it("names the step in progress out of the plan's total", () => {
+    expect(workingStepLabel({ completed: 2, total: 5, current: "Run the harnesses" })).toBe(
+      "Step 3 of 5: Run the harnesses",
+    );
+    expect(workingStepLabel({ completed: 5, total: 5, current: null })).toBe("All 5 steps done");
+  });
+  it("says nothing without a plan", () => {
+    expect(workingStepLabel(null)).toBeNull();
+    expect(workingStepLabel({ completed: 0, total: 0, current: null })).toBeNull();
   });
 });

@@ -86,7 +86,9 @@ describe("logical project execution", () => {
     });
     expect(projectPaneThread(threads, scope, "same-thread", "unrelated").kind).toBe("elsewhere");
     expect(
-      parseProjectWorkspaceSearch({ ...projectWorkspaceSearch(ThreadId.make("same-thread"), null, "m1") }),
+      parseProjectWorkspaceSearch({
+        ...projectWorkspaceSearch(ThreadId.make("same-thread"), null, "m1"),
+      }),
     ).toEqual({ thread: "same-thread", threadEnvironment: "m1" });
   });
   it("labels historical requests from the recorded run, preserving unknown provenance", () => {
@@ -94,8 +96,17 @@ describe("logical project execution", () => {
       { id: "old", modelSelection: { instanceId: "claude", model: "old-model" } },
       { id: "now", modelSelection: { instanceId: "codex", model: "new-model" } },
     ];
-    expect(requestExecutionLabel({ runId: "old" }, runs, "M4")).toBe("M4 · claude · old-model");
+    expect(requestExecutionLabel({ runId: "old" }, runs, "M4")).toBe(
+      "M4 · Claude Code · Old Model",
+    );
     expect(requestExecutionLabel({}, runs, "M1")).toBe("M1 · Model not recorded");
+    expect(
+      requestExecutionLabel(
+        { runId: "old" },
+        [{ id: "old", modelSelection: { instanceId: "claudeAgent", model: "claude-opus-5-5" } }],
+        "Anton's MacBook M4MAX (149)",
+      ),
+    ).toBe("MacBook M4MAX (149) · Claude Code · Opus 5.5");
   });
 });
 

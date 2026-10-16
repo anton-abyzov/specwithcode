@@ -16,6 +16,7 @@ import {
   type ServerProvider,
   type ThreadId,
 } from "@specweave-studio/contracts";
+import { effectiveUsedPercent, isLiveWindow, windowAppliesToModel } from "./usageWindows.ts";
 
 export interface ProviderFallbackRule {
   readonly providerLimitAction: ProviderLimitAction;
@@ -36,15 +37,18 @@ export interface ProviderFallbackRule {
   readonly defaultModelSelection: ModelSelection | null;
 }
 
-/** The fullest usage window that has not reset yet, or null when the provider reports none. */
-export function providerUsedPercent(provider: ServerProvider, nowMs: number): number | null {
-  let top: number | null = null;
-  for (const window of provider.usageLimits?.windows ?? []) {
-    const resetsAt = window.resetsAt === undefined ? Number.NaN : Date.parse(window.resetsAt);
-    if (Number.isFinite(resetsAt) && resetsAt <= nowMs) continue;
-    top = top === null ? window.usedPercent : Math.max(top, window.usedPercent);
-  }
-  return top;
+/**
+ * The fullest usage window that has not reset yet and applies to `model`, or
+ * null when the provider reports none. A model-scoped window (Claude's Fable
+ * weekly) counts only for its own models: without a model, only the
+ * account-wide windows do, so a spent Fable weekly never makes Opus "full".
+ */
+export function providerUsedPercent(
+  provider: ServerProvider,
+  nowMs: number,
+  model?: string | null,
+): number | null {
+  return effectiveUsedPercent(provider.usageLimits?.windows ?? [], nowMs, model);
 }
 
 /** Match native admission's denial signals; window percentages cannot override them. */
@@ -110,7 +114,11 @@ export function isPerTokenProvider(provider: ServerProvider | undefined): boolea
 
 /** Suggestions need a recent successful observation, not merely an installed CLI. */
 export const FALLBACK_USAGE_MAX_AGE_MS = 5 * 60_000;
-export function hasUsableFallbackCapacity(provider: ServerProvider, nowMs: number): boolean {
+export function hasUsableFallbackCapacity(
+  provider: ServerProvider,
+  nowMs: number,
+  model?: string | null,
+): boolean {
   const limits = provider.usageLimits;
   if (
     !canTakeTurn(provider) ||
@@ -139,7 +147,7 @@ export function hasUsableFallbackCapacity(provider: ServerProvider, nowMs: numbe
     )
   )
     return false;
-  const used = providerUsedPercent(provider, nowMs);
+  const used = providerUsedPercent(provider, nowMs, model);
   // A reset passing is not evidence of renewed allowance. Refresh first.
   return used !== null && Number.isFinite(used) && used >= 0 && used < 100;
 }
@@ -207,14 +215,17 @@ export function resolveProviderFallback(input: {
   /** Instances known to be limited whatever their usage read says (a current limit stop). */
   readonly limitedInstanceIds?: ReadonlySet<string>;
 }): ModelSelection | null {
-  const usable = (provider: ServerProvider | undefined): provider is ServerProvider => {
+  const usable = (
+    provider: ServerProvider | undefined,
+    model: string | undefined,
+  ): provider is ServerProvider => {
     if (provider === undefined || provider.instanceId === input.currentInstanceId) return false;
     if (
       input.limitedInstanceIds?.has(provider.instanceId) ||
-      !hasUsableFallbackCapacity(provider, input.nowMs)
+      !hasUsableFallbackCapacity(provider, input.nowMs, model)
     )
       return false;
-    const used = providerUsedPercent(provider, input.nowMs);
+    const used = providerUsedPercent(provider, input.nowMs, model);
     return used !== null && (input.belowPercent == null || used < input.belowPercent);
   };
   for (const selection of [
@@ -224,7 +235,7 @@ export function resolveProviderFallback(input: {
     if (selection === null) continue;
     const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
     if (
-      usable(provider) &&
+      usable(provider, selection.model) &&
       provider.models.some((model) => model.slug === selection.model && !model.isCustom)
     )
       return selection;
@@ -238,16 +249,20 @@ export function resolveProviderFallback(input: {
     input.currentModel !== undefined &&
     provider.models.some((model) => model.slug === input.currentModel && !model.isCustom);
   // Lower is cheaper: the same model elsewhere, the same driver, then headroom.
+  const candidateModel = (provider: ServerProvider) =>
+    sameModel(provider) ? input.currentModel : defaultModel(provider);
   const rank = (provider: ServerProvider): [number, number] => [
     sameModel(provider) ? 0 : provider.driver === driver ? 1 : 2,
-    providerUsedPercent(provider, input.nowMs) ?? 101,
+    providerUsedPercent(provider, input.nowMs, candidateModel(provider)) ?? 101,
   ];
   const candidates = input.providers
-    .filter((provider) => usable(provider) && !isPerTokenProvider(provider))
+    .filter(
+      (provider) => usable(provider, candidateModel(provider)) && !isPerTokenProvider(provider),
+    )
     .map((provider, order) => ({ provider, order, rank: rank(provider) }))
     .sort((a, b) => a.rank[0] - b.rank[0] || a.rank[1] - b.rank[1] || a.order - b.order);
   for (const { provider } of candidates) {
-    const model = sameModel(provider) ? input.currentModel : defaultModel(provider);
+    const model = candidateModel(provider);
     if (model !== undefined) return { instanceId: provider.instanceId, model };
   }
   return null;
@@ -268,11 +283,12 @@ export function usageResetAt(
   provider: ServerProvider | undefined,
   threshold: number,
   nowMs: number,
+  model?: string | null,
 ): number | null {
   let latest: number | null = null;
   for (const window of provider?.usageLimits?.windows ?? []) {
     const resetsAt = window.resetsAt === undefined ? Number.NaN : Date.parse(window.resetsAt);
-    if (Number.isFinite(resetsAt) && resetsAt <= nowMs) continue;
+    if (!isLiveWindow(window, nowMs) || !windowAppliesToModel(window, model)) continue;
     if (window.usedPercent < threshold) continue;
     if (!Number.isFinite(resetsAt)) return null;
     latest = latest === null ? resetsAt : Math.max(latest, resetsAt);
@@ -290,10 +306,11 @@ export function usageResetsSoon(input: {
   readonly threshold: number;
   readonly waitUnderMinutes: number | undefined;
   readonly nowMs: number;
+  readonly model?: string | null | undefined;
 }): boolean {
   const wait = waitMs(input.waitUnderMinutes);
   if (wait === 0) return false;
-  const resetAt = usageResetAt(input.provider, input.threshold, input.nowMs);
+  const resetAt = usageResetAt(input.provider, input.threshold, input.nowMs, input.model);
   return resetAt !== null && resetAt - input.nowMs <= wait;
 }
 
@@ -321,6 +338,8 @@ export function limitStopWaitsForReset(input: {
  */
 export function shouldSwitchBeforeTurn(input: {
   readonly provider: ServerProvider | undefined;
+  /** The model the turn runs on: model-scoped windows count only for it. */
+  readonly model?: string | null | undefined;
   readonly rule: Pick<
     ProviderFallbackRule,
     "providerLimitAction" | "providerLimitSwitchAtPercent" | "providerLimitWaitUnderMinutes"
@@ -338,6 +357,8 @@ export function shouldSwitchBeforeTurn(input: {
  */
 export function usageAtThreshold(input: {
   readonly provider: ServerProvider | undefined;
+  /** The model the turn runs on: model-scoped windows count only for it. */
+  readonly model?: string | null | undefined;
   readonly rule: Pick<
     ProviderFallbackRule,
     "providerLimitSwitchAtPercent" | "providerLimitWaitUnderMinutes"
@@ -346,13 +367,14 @@ export function usageAtThreshold(input: {
 }): boolean {
   const threshold = input.rule.providerLimitSwitchAtPercent;
   if (threshold === null || input.provider === undefined) return false;
-  const used = providerUsedPercent(input.provider, input.nowMs);
+  const used = providerUsedPercent(input.provider, input.nowMs, input.model);
   if (used === null || used < threshold) return false;
   return !usageResetsSoon({
     provider: input.provider,
     threshold,
     waitUnderMinutes: input.rule.providerLimitWaitUnderMinutes,
     nowMs: input.nowMs,
+    model: input.model,
   });
 }
 
@@ -440,11 +462,11 @@ export function resolveCoordinatorTurnSelection(input: {
 }): { readonly selection: ModelSelection; readonly reason: CoordinatorTurnSelectionReason } {
   const threshold = input.rule.providerLimitSwitchAtPercent ?? 100;
   const limited = input.limitedInstanceIds ?? new Set<string>();
-  const full = (provider: ServerProvider | undefined): boolean => {
+  const full = (provider: ServerProvider | undefined, model: string): boolean => {
     if (provider === undefined) return false;
     if (limited.has(provider.instanceId)) return true;
     if (usageDeniesTurn(provider)) return true;
-    const used = providerUsedPercent(provider, input.nowMs);
+    const used = providerUsedPercent(provider, input.nowMs, model);
     return used !== null && used >= threshold;
   };
   const savedProvider = input.providers.find(
@@ -458,12 +480,13 @@ export function resolveCoordinatorTurnSelection(input: {
     stoppedAt !== null &&
     readAt > stoppedAt &&
     savedProvider.usageLimits?.unavailable === undefined &&
-    providerUsedPercent(savedProvider, input.nowMs) !== null;
+    providerUsedPercent(savedProvider, input.nowMs, input.saved.model) !== null;
   const stoppedRecently =
     stoppedAt !== null &&
     input.nowMs - stoppedAt < COORDINATOR_LIMIT_STOP_MAX_AGE_MS &&
     !readSinceStop;
-  if (!stoppedRecently && !full(savedProvider)) return { selection: input.saved, reason: "saved" };
+  if (!stoppedRecently && !full(savedProvider, input.saved.model))
+    return { selection: input.saved, reason: "saved" };
   if (
     !stoppedRecently &&
     !limited.has(input.saved.instanceId) &&
@@ -472,6 +495,7 @@ export function resolveCoordinatorTurnSelection(input: {
       threshold,
       waitUnderMinutes: input.rule.providerLimitWaitUnderMinutes,
       nowMs: input.nowMs,
+      model: input.saved.model,
     })
   )
     return { selection: input.saved, reason: "saved-resets-soon" };
@@ -480,7 +504,7 @@ export function resolveCoordinatorTurnSelection(input: {
     const current = input.providers.find((provider) => provider.instanceId === thread.instanceId);
     // Never keeps paying per token unless the rule allows API credits.
     const paid = isPerTokenProvider(current) && input.rule.providerLimitUseApiCredits !== true;
-    if (current !== undefined && !paid && canTakeTurn(current) && !full(current))
+    if (current !== undefined && !paid && canTakeTurn(current) && !full(current, thread.model))
       return { selection: thread, reason: "staying-on-fallback" };
   }
   if (input.rule.providerLimitAction !== "switch")
@@ -505,4 +529,24 @@ export function resolveCoordinatorTurnSelection(input: {
   return target === null
     ? { selection: input.saved, reason: "no-fallback" }
     : { selection: target, reason: "fallback" };
+}
+
+/**
+ * Whether a coordinator that runs on another model than its saved one is
+ * there because the saved provider has no room: the same test its next turn
+ * makes. A coordinator moved for any other reason (a scheduled run, a turn
+ * whose limit has since reset) returns to the saved model with its next
+ * message, so nothing should say its limit was reached.
+ */
+export function coordinatorOnLimitFallback(input: {
+  readonly saved: ModelSelection;
+  readonly thread: ModelSelection;
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly rule: ProviderFallbackRule;
+  readonly nowMs: number;
+  readonly limitedInstanceIds?: ReadonlySet<string>;
+}): boolean {
+  if (input.thread.instanceId === input.saved.instanceId) return false;
+  const { reason } = resolveCoordinatorTurnSelection(input);
+  return reason !== "saved" && reason !== "saved-resets-soon";
 }

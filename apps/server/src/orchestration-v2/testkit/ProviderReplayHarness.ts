@@ -130,6 +130,7 @@ export function makeReplayServerConfig(
       keybindingsConfigPath: path.join(stateDir, "keybindings.json"),
       modsDir: path.join(stateDir, "mods"),
       modApprovalsPath: path.join(stateDir, "mod-approvals.json"),
+      composerDraftsDir: path.join(stateDir, "composer-drafts"),
       settingsPath: path.join(stateDir, "settings.json"),
       providerStatusCacheDir,
       worktreesDir,

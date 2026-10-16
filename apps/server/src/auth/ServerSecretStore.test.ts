@@ -264,4 +264,70 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
       assert.equal((error.cause as PlatformError.PlatformError).reason._tag, "PermissionDenied");
     }).pipe(Effect.provide(layerRemoveFailureSecretStore())),
   );
+  it.effect("keeps a random secret in memory after the first read", () => {
+    let reads = 0;
+    const layerCountingFileSystem = Layer.effect(
+      FileSystem.FileSystem,
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        return {
+          ...fileSystem,
+          readFile: (path) =>
+            Effect.suspend(() => {
+              if (/[\\/]asset-signing-key\.bin$/.test(String(path))) reads++;
+              return fileSystem.readFile(path);
+            }),
+        } satisfies FileSystem.FileSystem;
+      }),
+    ).pipe(Layer.provide(NodeServices.layer));
+
+    return Effect.gen(function* () {
+      const secretStore = yield* ServerSecretStore.ServerSecretStore;
+
+      const first = yield* secretStore.getOrCreateRandom("asset-signing-key", 32);
+      // The one read that found no file, before the secret was created.
+      assert.equal(reads, 1);
+      first.fill(0);
+      const again = yield* Effect.all(
+        Array.from({ length: 5 }, () => secretStore.getOrCreateRandom("asset-signing-key", 32)),
+      );
+      assert.equal(reads, 1);
+      // A plain get still reads the file: other processes may write those secrets.
+      const persisted = Option.getOrThrow(yield* secretStore.get("asset-signing-key"));
+      assert.equal(reads, 2);
+      for (const value of again) assert.deepEqual(Array.from(value), Array.from(persisted));
+      // Callers get copies: zeroing one result must not change the cached key.
+      assert.notDeepEqual(Array.from(first), Array.from(persisted));
+    }).pipe(
+      Effect.provide(
+        ServerSecretStore.layer.pipe(
+          Layer.provide(layerServerConfig()),
+          Layer.provideMerge(layerCountingFileSystem),
+        ),
+      ),
+    );
+  });
+
+  it.effect("forgets a cached random secret when it is replaced or removed", () =>
+    Effect.gen(function* () {
+      const secretStore = yield* ServerSecretStore.ServerSecretStore;
+
+      const original = yield* secretStore.getOrCreateRandom("rotating-key", 32);
+      const replacement = Uint8Array.from({ length: 32 }, (_, index) => index);
+      yield* secretStore.set("rotating-key", replacement);
+      assert.deepEqual(
+        Array.from(yield* secretStore.getOrCreateRandom("rotating-key", 32)),
+        Array.from(replacement),
+      );
+
+      yield* secretStore.remove("rotating-key");
+      const regenerated = yield* secretStore.getOrCreateRandom("rotating-key", 32);
+      assert.notDeepEqual(Array.from(regenerated), Array.from(replacement));
+      assert.notDeepEqual(Array.from(regenerated), Array.from(original));
+      assert.deepEqual(
+        Array.from(Option.getOrThrow(yield* secretStore.get("rotating-key"))),
+        Array.from(regenerated),
+      );
+    }).pipe(Effect.provide(layerServerSecretStore())),
+  );
 });

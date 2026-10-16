@@ -2,6 +2,7 @@ import { parseJson, stringifyJson } from "../json.ts";
 import * as DateTime from "effect/DateTime";
 import {
   NativeConnectionsError,
+  type NativeConnectionApplyInput,
   type NativeConnectionsInput,
   type NativeConnectionsSnapshot,
 } from "@specweave-studio/contracts";
@@ -32,6 +33,9 @@ export class ProjectConnectionService extends Context.Service<
   {
     discoverNative: (
       input: NativeConnectionsInput,
+    ) => Effect.Effect<NativeConnectionsSnapshot, NativeConnectionsError>;
+    applyNative: (
+      input: NativeConnectionApplyInput,
     ) => Effect.Effect<NativeConnectionsSnapshot, NativeConnectionsError>;
     read: (input: {
       projectId: ProjectId;
@@ -242,7 +246,15 @@ const make = Effect.gen(function* () {
         return yield* new NativeConnectionsError({ code: "project_not_found" });
       return yield* discovery.read(target.value.workspaceRoot);
     });
-  return ProjectConnectionService.of({ read, save, check, revoke, call, discoverNative });
+  return ProjectConnectionService.of({
+    read,
+    save,
+    check,
+    revoke,
+    call,
+    discoverNative,
+    applyNative: discovery.apply,
+  });
 });
 export const layerWithDiscovery = Layer.effect(ProjectConnectionService, make).pipe(
   Layer.provide(ProjectAdmission.layer),

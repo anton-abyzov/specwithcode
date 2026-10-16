@@ -302,3 +302,146 @@ function pullRequestWatchTasks(
         ],
   );
 }
+
+/** What a running turn is waiting on: its newest unfinished tool or subagent. */
+export interface ActiveRunWork<Time = unknown> {
+  readonly label: string;
+  readonly startedAt: Time;
+  /** The thread a `studio_thread_wait` waits on, so the UI can link it. */
+  readonly waitThreadId?: string;
+}
+
+/** Tools that wait on other work: a legitimate wait, never a stall of this thread. */
+function waitTarget(item: {
+  readonly type: string;
+}): { readonly label: string; readonly threadId?: string } | null {
+  if (item.type !== "dynamic_tool") return null;
+  const toolName = Reflect.get(item, "toolName");
+  if (typeof toolName !== "string") return null;
+  // `mcp__studio-code__studio_thread_wait` and the bare name are the same tool.
+  const tool = toolName.split("__").at(-1) ?? toolName;
+  if (tool === "studio_thread_wait") {
+    const input = Reflect.get(item, "input");
+    const threadId =
+      input !== null && typeof input === "object" ? Reflect.get(input, "threadId") : undefined;
+    return typeof threadId === "string" && threadId.trim().length > 0
+      ? { label: "another thread", threadId: threadId.trim() }
+      : { label: "another thread" };
+  }
+  if (tool === "task_status" || tool === "delegate_task") return { label: "a delegated task" };
+  return null;
+}
+
+const ACTIVE_WORK_LABEL_MAX = 60;
+
+/**
+ * The newest unfinished command, tool or subagent of the active run, or null
+ * when the run is between steps. A long test suite shows here; a turn that
+ * finished but never ended does not.
+ */
+export function deriveActiveRunWork<
+  Time,
+  Item extends {
+    readonly type: OrchestrationV2TurnItem["type"];
+    readonly status: OrchestrationV2TurnItem["status"];
+    readonly runId?: OrchestrationV2Run["id"] | string | null;
+    readonly startedAt: Time | null;
+    readonly updatedAt: Time;
+  },
+>(input: {
+  readonly activeRunId: OrchestrationV2Run["id"] | string | null;
+  readonly turnItems: ReadonlyArray<Item>;
+  readonly toMillis: (time: Time) => number;
+}): ActiveRunWork<Time> | null {
+  if (input.activeRunId === null) return null;
+  let newest: Item | null = null;
+  for (const item of input.turnItems) {
+    if (String(item.runId ?? "") !== String(input.activeRunId)) continue;
+    if (!BACKGROUND_TURN_ITEM_TYPES.has(item.type)) continue;
+    if (!isOrchestrationV2WorkActive(item.status)) continue;
+    if (
+      newest === null ||
+      input.toMillis(item.startedAt ?? item.updatedAt) >=
+        input.toMillis(newest.startedAt ?? newest.updatedAt)
+    ) {
+      newest = item;
+    }
+  }
+  if (newest === null) return null;
+  const wait = waitTarget(newest);
+  if (wait !== null) {
+    return {
+      label: wait.label,
+      startedAt: newest.startedAt ?? newest.updatedAt,
+      ...(wait.threadId === undefined ? {} : { waitThreadId: wait.threadId }),
+    };
+  }
+  const description =
+    descriptionFromTurnItem(newest as unknown as PendingBackgroundWorkTurnItem)
+      ?.split("\n")[0]
+      ?.trim() ?? "";
+  const fallback = newest.type === "subagent" ? "a subagent" : "a tool";
+  const label =
+    description.length === 0
+      ? fallback
+      : description.length > ACTIVE_WORK_LABEL_MAX
+        ? `${description.slice(0, ACTIVE_WORK_LABEL_MAX - 1)}…`
+        : description;
+  return { label, startedAt: newest.startedAt ?? newest.updatedAt };
+}
+
+/** A running turn with nothing in flight and no events for this long is stalled. */
+export const RUN_STALL_IDLE_MS = 10 * 60_000;
+/** A turn waiting on a command may stay quiet much longer: test suites, builds. */
+export const RUN_STALL_WAITING_IDLE_MS = 2 * 60 * 60_000;
+
+export type RunHealth =
+  | { readonly state: "working"; readonly idleMs: number }
+  | {
+      readonly state: "waiting";
+      readonly idleMs: number;
+      readonly label: string;
+      readonly waitingMs: number;
+      /** Set when the wait is on another thread, which the UI links. */
+      readonly waitThreadId?: string;
+    }
+  | { readonly state: "stalled"; readonly idleMs: number; readonly label: string | null };
+
+/**
+ * Tells a long legitimate turn from a stuck one. `lastActivityMs` is the
+ * thread's last provider event. Null when the turn is not running.
+ */
+export function classifyRunHealth(input: {
+  readonly running: boolean;
+  readonly lastActivityMs: number;
+  readonly activeWork: {
+    readonly label: string;
+    readonly startedAtMs: number;
+    readonly waitThreadId?: string | undefined;
+  } | null;
+  /**
+   * True when the source cannot say what is in flight (a server older than
+   * `activeWork`): quiet then means as little as a long command would.
+   */
+  readonly activeWorkUnknown?: boolean;
+  readonly nowMs: number;
+}): RunHealth | null {
+  if (!input.running) return null;
+  const idleMs = Math.max(0, input.nowMs - input.lastActivityMs);
+  if (input.activeWork === null) {
+    const limit = input.activeWorkUnknown === true ? RUN_STALL_WAITING_IDLE_MS : RUN_STALL_IDLE_MS;
+    return idleMs >= limit ? { state: "stalled", idleMs, label: null } : { state: "working", idleMs };
+  }
+  const waitThreadId = input.activeWork.waitThreadId;
+  // Waiting on another thread is that thread's progress, not this one stalling.
+  if (waitThreadId === undefined && idleMs >= RUN_STALL_WAITING_IDLE_MS) {
+    return { state: "stalled", idleMs, label: input.activeWork.label };
+  }
+  return {
+    state: "waiting",
+    idleMs,
+    label: input.activeWork.label,
+    waitingMs: Math.max(0, input.nowMs - input.activeWork.startedAtMs),
+    ...(waitThreadId === undefined ? {} : { waitThreadId }),
+  };
+}

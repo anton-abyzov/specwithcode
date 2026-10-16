@@ -182,6 +182,33 @@ export function withProjectAccess(
   };
 }
 
+/**
+ * The switches a newly connected account starts with: every granted service for each
+ * live personal project, nothing anywhere else. Reading someone's mail is opt-in.
+ */
+export function personalProjectAccess(
+  projects: ReadonlyArray<{
+    readonly projectId: string;
+    readonly deletedAt: string | null;
+    readonly workspaceSettings?:
+      | { readonly kind?: string | undefined; readonly archived?: boolean | undefined }
+      | null
+      | undefined;
+  }>,
+  services: ReadonlyArray<GoogleService>,
+): GoogleAccountState["projects"] {
+  const ordered = orderedServices(services);
+  if (ordered.length === 0) return [];
+  return projects
+    .filter(
+      (project) =>
+        project.deletedAt === null &&
+        project.workspaceSettings?.kind === "personal" &&
+        project.workspaceSettings.archived !== true,
+    )
+    .map((project) => ({ projectId: project.projectId, services: ordered }));
+}
+
 /** What a project may read now: its switches limited to what Google granted. */
 export function projectServices(state: GoogleAccountState, projectId: string): GoogleService[] {
   const entry = state.projects.find((candidate) => candidate.projectId === projectId);
@@ -195,7 +222,7 @@ export function projectServices(state: GoogleAccountState, projectId: string): G
 export const truncateText = (text: string, limit: number): string =>
   text.length <= limit
     ? text
-    : `${text.slice(0, limit)}\n[Truncated by Studio at ${limit} characters.]`;
+    : `${text.slice(0, limit)}\n[Truncated by SpecWithCode at ${limit} characters.]`;
 
 interface GmailHeader {
   readonly name?: string;

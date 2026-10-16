@@ -33,6 +33,14 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     type: Schema.Literal("provider-runtime.continue"),
     sourceRunId: RunId,
   }),
+  /**
+   * After a restart: queue again the messages a service update cancelled and,
+   * with `releaseHeld`, start the queue recovery held while it was only waiting.
+   */
+  Schema.Struct({
+    type: Schema.Literal("provider-runtime.resume-queue"),
+    releaseHeld: Schema.optional(Schema.Boolean),
+  }),
   Schema.Struct({
     type: Schema.Literal("provider-session.detach"),
     providerSessionId: ProviderSessionId,
@@ -96,6 +104,13 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("terminal.cleanup"),
   }),
+  /**
+   * Follows an archive or delete: retires the thread's MCP credentials for
+   * good, including ones restored after a restart whose session is stopped.
+   */
+  Schema.Struct({
+    type: Schema.Literal("mcp-credential.invalidate"),
+  }),
   Schema.Struct({
     type: Schema.Literal("attachment.cleanup"),
     attachmentIds: Schema.Array(Schema.String),
@@ -125,6 +140,15 @@ export const UNINTERRUPTED_BY_UPDATE_EFFECT_TYPES = [
   "checkpoint.capture",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
 
+/**
+ * Effects a service update never cancels, pending or running: they are short,
+ * bounded by the worker's attempt limit, and dropping one would keep honoring
+ * an archived or deleted thread's MCP credential until the next restart.
+ */
+export const KEPT_ACROSS_UPDATE_EFFECT_TYPES = [
+  "mcp-credential.invalidate",
+] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
+
 export interface CancelledEffect {
   readonly effectId: string;
   readonly effectType: string;
@@ -134,10 +158,12 @@ export interface CancelledEffect {
 
 export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "provider-runtime.continue",
+  "provider-runtime.resume-queue",
   "provider-session.detach",
   "provider-thread.rollback",
   "checkpoint.capture",
   "terminal.cleanup",
+  "mcp-credential.invalidate",
   "attachment.cleanup",
   "thread-title.generate",
   "delegated-tasks.stop",
@@ -238,6 +264,7 @@ export interface EffectOutboxV2Shape {
    * once. Used before a service update, whose helper refuses while any is left.
    * A running effect in `UNINTERRUPTED_BY_UPDATE_EFFECT_TYPES` is left to finish:
    * stopping it partway would leave its files or git state half done.
+   * `KEPT_ACROSS_UPDATE_EFFECT_TYPES` are left alone in any status.
    */
   readonly cancelAllUnsettled: (input: {
     readonly reason: string;
@@ -361,7 +388,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
                 AND active.rowid < candidate.rowid
                 AND ${
                   excludeRestartContinuations
-                    ? sql`active.effect_type != 'provider-runtime.continue'`
+                    ? sql`active.effect_type NOT IN ('provider-runtime.continue', 'provider-runtime.resume-queue')`
                     : sql`1 = 1`
                 }
               )
@@ -528,6 +555,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
                 status = 'running'
                 AND effect_type IN ${sql.in(UNINTERRUPTED_BY_UPDATE_EFFECT_TYPES)}
               )
+              AND effect_type NOT IN ${sql.in(KEPT_ACROSS_UPDATE_EFFECT_TYPES)}
             RETURNING effect_id, effect_type, command_id, thread_id
           `;
           return rows.map((row): CancelledEffect => ({
@@ -608,7 +636,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
               SELECT candidate.effect_id
               FROM orchestration_v2_effect_outbox AS candidate
               WHERE ${claimableCandidatePredicate(nowIso, excludeRestartContinuations)}
-                AND ${excludeRestartContinuations ? sql`candidate.effect_type != 'provider-runtime.continue'` : sql`1 = 1`}
+                AND ${excludeRestartContinuations ? sql`candidate.effect_type NOT IN ('provider-runtime.continue', 'provider-runtime.resume-queue')` : sql`1 = 1`}
               ORDER BY candidate.available_at ASC, candidate.created_at ASC, candidate.effect_id ASC
               LIMIT 1
             )

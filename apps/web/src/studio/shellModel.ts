@@ -13,6 +13,7 @@ import {
   threadActivityAt,
   type ProjectThreadGroup,
   threadBlocker,
+  threadHeldQueue,
 } from "./projectWorkspaceModel";
 
 /** The slice of a provider instance that names it; `ProviderInstanceEntry` satisfies it. */
@@ -145,6 +146,17 @@ export function modelLabel(
     ? model
     : `${provider} · ${model}`;
   return { provider, model, full };
+}
+
+/**
+ * A machine's name for a tight line: "Anton's MacBook M4MAX (149)" reads as
+ * "MacBook M4MAX (149)". Every machine is the user's own, so the owner adds
+ * nothing; the full name stays for the tooltip.
+ */
+export function shortMachineName(label: string): string {
+  const trimmed = label.trim();
+  const rest = trimmed.replace(/^[^\s'’]+['’]s\s+/u, "");
+  return rest === "" ? trimmed : rest;
 }
 
 // ── Chats: the sidebar's list of sessions ────────────────────────────────────
@@ -407,7 +419,16 @@ export function buildThreadPaneGroups(
   threads: readonly EnvironmentThreadShell[],
   sortBy: ThreadSort,
   query = "",
+  /** Working subagents per `environmentId:threadId`: an idle thread with one is still working. */
+  runningSubagents?: ReadonlyMap<string, number>,
 ): ThreadPaneGroup[] {
+  const groupOf = (thread: EnvironmentThreadShell) => {
+    const group = projectThreadGroup(thread);
+    return group === "Idle" &&
+      (runningSubagents?.get(`${thread.environmentId}:${thread.id}`) ?? 0) > 0
+      ? "Working"
+      : group;
+  };
   const needle = query.trim().toLowerCase();
   const compare =
     sortBy === "model"
@@ -423,7 +444,7 @@ export function buildThreadPaneGroups(
     const rows = threads
       .filter(
         (thread) =>
-          projectThreadGroup(thread) === group &&
+          groupOf(thread) === group &&
           (needle === "" || thread.title.toLowerCase().includes(needle)),
       )
       .sort(compare);
@@ -486,6 +507,7 @@ export function threadStatusWord(thread: EnvironmentThreadShell): string | null 
   if (status === "input") return "Answer needed";
   if (status === "limited") return "Usage limit reached";
   if (status === "failed") return "Needs review";
+  if (threadHeldQueue(thread) !== null) return "Queue held";
   if (threadBlocker(thread) !== null) return "Blocked";
   const tone = threadTone(thread);
   if (tone === "waiting") return thread.hasActionableProposedPlan ? "Plan ready" : "Waiting on you";

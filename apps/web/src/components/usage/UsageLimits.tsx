@@ -9,6 +9,7 @@ import {
   UsageProviderKind,
 } from "@specweave-studio/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import { blockingWindow, isLiveWindow } from "@specweave-studio/shared/usageWindows";
 import { useNavigate } from "@tanstack/react-router";
 import {
   elapsedShare,
@@ -22,6 +23,7 @@ import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
 import { Fragment, type ReactNode, useState } from "react";
 
 import { usePrimarySettings } from "../../hooks/useSettings";
+import { blockedLabel, usageToneTextClass } from "../../studio/usageIndicatorModel";
 import { environmentPresentations } from "../../state/presentation";
 import { useEnvironmentScope, readEnvironmentScope } from "../../state/session";
 import { serverEnvironment } from "../../state/server";
@@ -178,12 +180,38 @@ export function LimitWindows({
       {windows.map((window) => {
         const pace = paceOf(window, now);
         const resetsIn = formatResetsIn(window, now);
+        const blocker = blockingWindow(
+          window,
+          windows.filter((other) => isLiveWindow(other, now)),
+          now,
+        );
+        if (blocker) {
+          const at = blocker.resetsAt === undefined ? NaN : Date.parse(blocker.resetsAt);
+          return (
+            <Fragment key={window.id}>
+              <span className="flex min-w-0 items-center gap-2 text-xs opacity-60">
+                <span className="truncate text-muted-foreground">{window.label}</span>
+              </span>
+              <div className="opacity-40">
+                <WindowBar color={color} window={window} now={now} />
+              </div>
+              <span className="truncate text-xs text-muted-foreground">
+                {blockedLabel(
+                  { label: blocker.label, resetsAt: Number.isFinite(at) ? at : null },
+                  now,
+                )}
+              </span>
+            </Fragment>
+          );
+        }
         return (
           <Fragment key={window.id}>
             <span className="flex min-w-0 items-center gap-2 text-xs">
               <span className="truncate text-muted-foreground">{window.label}</span>
-              <span className="ms-auto shrink-0 font-medium text-foreground tabular-nums">
-                {remainingPercent(window)}% left
+              <span
+                className={`ms-auto shrink-0 font-medium tabular-nums ${usageToneTextClass(remainingPercent(window))}`}
+              >
+                {window.usedPercent >= 100 ? "Limit reached" : `${remainingPercent(window)}% left`}
               </span>
             </span>
             <WindowBar color={color} window={window} now={now} />

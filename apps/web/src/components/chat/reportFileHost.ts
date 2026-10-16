@@ -8,6 +8,12 @@ export interface ReportFileTarget {
   readonly cwd: string;
   readonly path: string;
   readonly line: number | undefined;
+  /** Every path that was looked in, when the file was found in none of them. */
+  readonly tried?: ReadonlyArray<string>;
+  readonly openInEditor?: () => void;
+  readonly reveal?: () => void;
+  /** "Reveal in Finder" and the like, for `reveal`. */
+  readonly revealLabel?: string;
 }
 
 /**

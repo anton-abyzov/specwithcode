@@ -105,25 +105,21 @@ function click(title: string) {
   );
 }
 
-it("toggles checks from their heading and resets sections for another pull request", () => {
+it("lists checks in the rail and resets collapsed sections for another pull request", () => {
   act(() => {
     renderer = create(render());
   });
-  expect(
-    renderer.root.findAllByType("span").some((span) => span.children.includes("Unit tests")),
-  ).toBe(false);
-  click("Checks");
-  expect(
-    renderer.root.findAllByType("span").some((span) => span.children.includes("Unit tests")),
-  ).toBe(true);
-  click("Checks");
-  expect(heading("Checks").props["aria-expanded"]).toBe(false);
-  click("Checks");
+  const rail = renderer.root
+    .findAllByType("aside")
+    .find((node) => node.props["data-pull-request-rail"] !== undefined)!;
+  expect(rail.findAllByType("span").some((span) => span.children.includes("Unit tests"))).toBe(
+    true,
+  );
   click("Description");
+  expect(heading("Description").props["aria-expanded"]).toBe(false);
   act(() =>
     renderer.update(render({ ...detail, url: "https://github.com/owner/repo/pull/2", number: 2 })),
   );
-  expect(heading("Checks").props["aria-expanded"]).toBe(false);
   expect(heading("Description").props["aria-expanded"]).toBe(true);
 });
 

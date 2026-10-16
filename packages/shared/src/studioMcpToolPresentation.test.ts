@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { STUDIO_MCP_TOOL_NAMES, resolveStudioMcpToolPresentation } from "./studioMcpToolPresentation.ts";
+import {
+  STUDIO_MCP_TOOL_NAMES,
+  resolveStudioMcpToolPresentation,
+} from "./studioMcpToolPresentation.ts";
 
 describe("resolveStudioMcpToolPresentation", () => {
-  it("recognizes every Studio tool across provider prefixes and completion suffixes", () => {
+  it("recognizes every SpecWithCode tool across provider prefixes and completion suffixes", () => {
     for (const tool of STUDIO_MCP_TOOL_NAMES) {
       const presentation = resolveStudioMcpToolPresentation(tool);
       for (const prefix of [
@@ -27,35 +30,35 @@ describe("resolveStudioMcpToolPresentation", () => {
       expect(resolveStudioMcpToolPresentation(`mcp__another-server__${tool}`), tool).toBeNull();
     }
   });
-  it("pretty prints Claude and Cursor Studio MCP tool names", () => {
+  it("pretty prints Claude and Cursor SpecWithCode MCP tool names", () => {
     expect(resolveStudioMcpToolPresentation("mcp__studio-code__studio_thread_read")).toEqual({
-      displayName: "Read a Studio thread",
+      displayName: "Read a SpecWithCode thread",
       logo: "studio-code",
     });
   });
 
-  it("pretty prints Codex Studio MCP tool names", () => {
+  it("pretty prints Codex SpecWithCode MCP tool names", () => {
     expect(resolveStudioMcpToolPresentation("studio-code.create_threads")).toEqual({
-      displayName: "Create Studio threads",
+      displayName: "Create SpecWithCode threads",
       logo: "studio-code",
     });
   });
 
   it("pretty prints thread metadata updates", () => {
     expect(resolveStudioMcpToolPresentation("mcp__studio-code__studio_thread_update")).toEqual({
-      displayName: "Update Studio thread metadata",
+      displayName: "Update SpecWithCode thread metadata",
       logo: "studio-code",
     });
   });
 
-  it("pretty prints bare Studio MCP toolkit names", () => {
+  it("pretty prints bare SpecWithCode MCP toolkit names", () => {
     expect(resolveStudioMcpToolPresentation("list_scheduled_tasks")).toEqual({
       displayName: "List scheduled tasks",
       logo: "studio-code",
     });
   });
 
-  it("pretty prints worktree Studio MCP tool names", () => {
+  it("pretty prints worktree SpecWithCode MCP tool names", () => {
     expect(resolveStudioMcpToolPresentation("mcp__studio-code__studio_worktree_handoff")).toEqual({
       displayName: "Hand off thread to a git worktree",
       logo: "studio-code",
@@ -66,7 +69,7 @@ describe("resolveStudioMcpToolPresentation", () => {
     });
   });
 
-  it("pretty prints preview Studio MCP tool names", () => {
+  it("pretty prints preview SpecWithCode MCP tool names", () => {
     expect(resolveStudioMcpToolPresentation("Studio-code.preview_open")).toEqual({
       displayName: "Open a page in the preview browser",
       logo: "studio-code",
@@ -94,9 +97,12 @@ describe("resolveStudioMcpToolPresentation", () => {
 
   it("matches OpenCode 2's per-thread server names, whose thread ids hold underscores", () => {
     expect(
-      resolveStudioMcpToolPresentation("studio-code-thread_opencode2-adapter_delegate_task")?.displayName,
+      resolveStudioMcpToolPresentation("studio-code-thread_opencode2-adapter_delegate_task")
+        ?.displayName,
     ).toBe("Delegate a child task");
-    expect(resolveStudioMcpToolPresentation("studio-code-thread_opencode2-adapter_not_a_tool")).toBeNull();
+    expect(
+      resolveStudioMcpToolPresentation("studio-code-thread_opencode2-adapter_not_a_tool"),
+    ).toBeNull();
   });
 
   it("keeps unknown MCP tools on the generic renderer path", () => {

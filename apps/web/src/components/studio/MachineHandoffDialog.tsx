@@ -23,6 +23,22 @@ export interface HandoffDestination {
   readonly unavailable: string | null;
 }
 
+/** Uncommitted work in the source checkout; committed Git state is what moves. */
+export interface HandoffSourceChanges {
+  readonly state: "unknown" | "clean" | "dirty";
+  readonly fileCount: number;
+  readonly committing: boolean;
+  readonly error: string | null;
+  /** Commits every change with a generated message; null when this connection cannot. */
+  readonly onCommit: (() => void) | null;
+}
+
+export interface HandoffRememberMachine {
+  readonly label: string;
+  readonly checked: boolean;
+  readonly onChange: (checked: boolean) => void;
+}
+
 export interface HandoffPreview {
   readonly repositories: ReadonlyArray<{ readonly relativePath: string; readonly head: string }>;
   readonly messageCount: number;
@@ -63,8 +79,12 @@ export function MachineHandoffDialog({
   onOpenDestination,
   onRestart,
   folderPicker,
+  sourceChanges = null,
+  rememberMachine = null,
 }: {
   readonly folderPicker?: ReactNode;
+  readonly sourceChanges?: HandoffSourceChanges | null;
+  readonly rememberMachine?: HandoffRememberMachine | null;
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly sourceLabel: string;
@@ -109,6 +129,9 @@ export function MachineHandoffDialog({
             </div>
           ) : (
             <>
+              {!preview && (
+                <SourceChangesNote changes={sourceChanges} sourceLabel={sourceLabel} busy={busy} />
+              )}
               <fieldset disabled={busy || preview !== null} className="min-w-0 space-y-2">
                 <legend className="mb-2 text-sm font-medium">Continue on</legend>
                 <RadioGroup
@@ -120,7 +143,9 @@ export function MachineHandoffDialog({
                 >
                   {destinations.length === 0 ? (
                     <p className="text-sm text-muted-foreground">
-                      Add this project on another connected machine to hand off work.
+                      {folderPicker
+                        ? "No saved folder for this project on another machine yet. Choose one below."
+                        : "Add this project on another connected machine to hand off work."}
                     </p>
                   ) : (
                     groupMachineFolders(destinations).map((machine) => (
@@ -177,6 +202,26 @@ export function MachineHandoffDialog({
                 </RadioGroup>
               </fieldset>
               {folderPicker}
+              {rememberMachine && !preview && (
+                <label
+                  className="flex cursor-pointer items-start gap-3 py-1 text-sm"
+                  data-slot="handoff-remember-machine"
+                >
+                  <span className="flex h-5 shrink-0 items-center">
+                    <Checkbox
+                      checked={rememberMachine.checked}
+                      disabled={busy}
+                      onCheckedChange={(value) => rememberMachine.onChange(value === true)}
+                    />
+                  </span>
+                  <span className="min-w-0 wrap-anywhere leading-5">
+                    Remember this machine
+                    <span className="block text-xs text-muted-foreground">
+                      Preselect {rememberMachine.label} for this project’s handoffs.
+                    </span>
+                  </span>
+                </label>
+              )}
               {preview ? (
                 <div className="space-y-3 text-sm">
                   <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-start gap-2 font-medium">
@@ -229,12 +274,7 @@ export function MachineHandoffDialog({
                     </span>
                   </label>
                 </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  Save and commit your changes first. We’ll check both checkouts before transferring
-                  code and context.
-                </p>
-              )}
+              ) : null}
             </>
           )}
           {error && (
@@ -286,5 +326,56 @@ export function MachineHandoffDialog({
         </DialogFooter>
       </DialogPopup>
     </Dialog>
+  );
+}
+
+function SourceChangesNote({
+  changes,
+  sourceLabel,
+  busy,
+}: {
+  readonly changes: HandoffSourceChanges | null;
+  readonly sourceLabel: string;
+  readonly busy: boolean;
+}) {
+  if (!changes || changes.state === "unknown")
+    return (
+      <p className="text-sm text-muted-foreground" data-slot="handoff-source-changes">
+        Save and commit your changes first. We’ll check both checkouts before transferring code and
+        context.
+      </p>
+    );
+  if (changes.state === "clean")
+    return (
+      <p className="text-sm text-muted-foreground" data-slot="handoff-source-changes">
+        No uncommitted changes on {sourceLabel}. We’ll check both checkouts before transferring code
+        and context.
+      </p>
+    );
+  return (
+    <div
+      className="space-y-2 rounded-lg border border-warning/40 bg-warning/8 p-3 text-sm"
+      data-slot="handoff-source-changes"
+    >
+      <p className="wrap-anywhere">
+        {changes.fileCount === 1 ? "1 uncommitted file" : `${changes.fileCount} uncommitted files`}{" "}
+        on {sourceLabel}. Only committed work moves; commit before handing off.
+      </p>
+      {changes.onCommit && (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={busy || changes.committing}
+          onClick={changes.onCommit}
+        >
+          {changes.committing ? "Committing…" : "Commit for me"}
+        </Button>
+      )}
+      {changes.error && (
+        <p role="alert" className="wrap-anywhere text-destructive-foreground">
+          {changes.error}
+        </p>
+      )}
+    </div>
   );
 }

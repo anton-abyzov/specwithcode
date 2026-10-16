@@ -394,6 +394,69 @@ if (rowsFixture)
       ],
     }),
   ];
+// `?subagents`: a worker that started subagents of its own, the way the Claude Agent tool and a
+// worker's delegate_task do. Only the worker is a thread; its subagents show inside it.
+const subagentsFixture = new URLSearchParams(window.location.search).has("subagents");
+const subagentOf = (parentThreadId) => ({
+  relationshipToParent: "subagent",
+  parentThreadId,
+  rootThreadId: "coord",
+});
+if (subagentsFixture)
+  shells = [
+    shell("coord", "Project coordinator"),
+    shell("warn", "Warn before restart", {
+      lineage: subagentOf("coord"),
+      modelSelection: { instanceId: "claudeAgent", model: "claude-opus-5-5" },
+    }),
+    shell("bulk", "Bulk thread slash command", {
+      lineage: subagentOf("warn"),
+      runtime: { status: "running" },
+      modelSelection: { instanceId: "claudeAgent", model: "claude-opus-5-5" },
+    }),
+    shell("rea", "REA Claude desktop artifacts", {
+      lineage: subagentOf("warn"),
+      creationSource: "provider",
+      modelSelection: { instanceId: "claudeAgent", model: "claude-sonnet-5-5" },
+    }),
+    shell("grep", "Grep the app bundle", {
+      lineage: subagentOf("rea"),
+      creationSource: "provider",
+      runtime: { status: "running" },
+      modelSelection: { instanceId: "claudeAgent", model: "claude-haiku-5-5" },
+    }),
+    shell("polish", "Polish onboarding"),
+  ];
+const fixtureSubagents = subagentsFixture
+  ? [
+      {
+        id: "node:bulk",
+        childThreadId: "bulk",
+        title: "Bulk thread slash command",
+        prompt: "Work only in the git worktree studio-bulk-threads-slash.",
+        status: "running",
+        origin: "app_owned",
+        providerInstanceId: "claudeAgent",
+        model: "claude-opus-5-5",
+        result: null,
+        startedAt: DateTime.makeUnsafe(Date.now() - 74_000),
+        completedAt: null,
+      },
+      {
+        id: "node:rea",
+        childThreadId: "rea",
+        title: "REA Claude desktop artifacts",
+        prompt: "Research task (read-only): how Claude.app renders artifacts.",
+        status: "completed",
+        origin: "provider_native",
+        providerInstanceId: "claudeAgent",
+        model: "claude-sonnet-5-5",
+        result: "Artifacts render in a sandboxed iframe fed by a postMessage bridge.",
+        startedAt: DateTime.makeUnsafe(Date.now() - 600_000),
+        completedAt: DateTime.makeUnsafe(Date.now() - 42_000),
+      },
+    ]
+  : [];
 const historyFixture = new URLSearchParams(window.location.search).has("history");
 let historyShells = historyFixture
   ? [
@@ -437,6 +500,28 @@ export const useSettingsProjectGroups = () => [
 export const useProjects = () => memberProjects;
 export const useThreadShells = () => useSyncExternalStore(subscribeShells, () => shells);
 export const readThreadShells = () => shells;
+// The project page reads its own project's shells, and a host's threads for its links.
+export const useThreadShellsForProjectRefs = (
+  refs: ReadonlyArray<{ environmentId: string; projectId: string }>,
+) => {
+  const all = useThreadShells();
+  return React.useMemo(
+    () =>
+      all.filter((thread) =>
+        refs.some(
+          (ref) => ref.environmentId === thread.environmentId && ref.projectId === thread.projectId,
+        ),
+      ),
+    [all, refs],
+  );
+};
+export const useThreadLinkTargets = (environmentId: string | null) => {
+  const all = useThreadShells();
+  return React.useMemo(
+    () => all.filter((thread) => thread.environmentId === environmentId),
+    [all, environmentId],
+  );
+};
 const activityItem = (id, runId, ordinal, type, fields = {}) => ({
   id,
   runId,
@@ -531,7 +616,67 @@ const activityProjection = {
     }),
   ],
 };
-export const useThreadProjection = () => ({
+// `?fallback`: the project runs on another machine, and the usage-limit rule moved
+// its coordinator off the saved Claude model onto Codex and resent the request.
+const fallbackFixture = new URLSearchParams(window.location.search).has("fallback");
+const fallbackRequest = 'Start a thread titled "Pick up the handoff" and report what is left.';
+const fallbackProjection = {
+  messages: [
+    {
+      id: "f1",
+      role: "user",
+      createdBy: "user",
+      runId: "run-claude",
+      text: fallbackRequest,
+      createdAt: minutesAgo(3),
+      attachments: [],
+    },
+    {
+      id: "limit-fallback:coord:run-claude",
+      role: "user",
+      createdBy: "user",
+      runId: "run-codex",
+      text: fallbackRequest,
+      createdAt: minutesAgo(2.9),
+      attachments: [],
+    },
+    {
+      id: "f2",
+      role: "assistant",
+      runId: "run-codex",
+      text: "Opened the handoff thread with instructions to resume increment 0029.",
+      createdAt: minutesAgo(2),
+      attachments: [],
+    },
+  ],
+  runs: [
+    {
+      id: "run-claude",
+      status: "failed",
+      ordinal: 1,
+      requestedAt: minutesAgo(3),
+      modelSelection: { instanceId: "claudeAgent", model: "claude-opus-5-5" },
+    },
+    {
+      id: "run-codex",
+      status: "completed",
+      ordinal: 2,
+      requestedAt: minutesAgo(2.9),
+      modelSelection: { instanceId: "codex", model: "gpt-6.1-sol" },
+    },
+  ],
+  turnItems: [],
+};
+if (fallbackFixture) {
+  project.workspaceSettings = {
+    ...settings,
+    coordinatorModelSelection: { instanceId: "claudeAgent", model: "claude-opus-5-5" },
+  };
+  shells = shells.map((s) =>
+    s.id === "coord" ? { ...s, modelSelection: { instanceId: "codex", model: "gpt-6.1-sol" } } : s,
+  );
+}
+const baseThreadProjection = () => ({
   projection: recovery
     ? {
         messages: [
@@ -603,6 +748,19 @@ export const useThreadProjection = () => ({
                     ],
           },
 });
+export const useThreadProjection = (ref) => {
+  if (fallbackFixture) return { projection: fallbackProjection };
+  const base = baseThreadProjection();
+  return subagentsFixture
+    ? {
+        ...base,
+        projection: {
+          ...base.projection,
+          subagents: ref?.threadId === "warn" ? fixtureSubagents : [],
+        },
+      }
+    : base;
+};
 export const useThreadHistory = () => ({ hasMoreHistory: false });
 export const useThreadStatus = () => "ready";
 export const useEnvironment = (environmentId) => ({
@@ -767,11 +925,20 @@ export const useEnvironmentQuery = (q) => ({
                     { id: "foreign", projectId: "other", title: "Foreign routine", enabled: true },
                   ],
                 }
-              : q?.kind === "starters"
-                ? starters
-                : q?.kind === "threadReports"
-                  ? reportSnapshot()
-                  : { settings, memory: fresh !== null ? { files: [], totalBytes: 0 } : memory },
+              : q?.kind === "threadIncrementProgress"
+                ? { threads: [] }
+                : q?.kind === "starters"
+                  ? starters
+                  : q?.kind === "threadReports"
+                    ? reportSnapshot()
+                    : q?.kind === "read" || q?.kind === undefined
+                      ? {
+                          settings,
+                          memory: fresh !== null ? { files: [], totalBytes: 0 } : memory,
+                          // Real VCS status atoms land here too: an empty working tree.
+                          workingTree: { files: [] },
+                        }
+                      : undefined,
   refresh: () => {},
   isPending: false,
 });
@@ -788,6 +955,31 @@ export const useAtomCommand = (command) => async (args) => {
       });
     }
     return { _tag: "Success", value: reportSnapshot() };
+  }
+  if (command === "folderCheck") {
+    const target = args.input.workspaceRoot;
+    return {
+      _tag: "Success",
+      value: {
+        targetRoot: target,
+        currentRoot: project.workspaceRoot,
+        unchanged: target === project.workspaceRoot,
+        targetExists: !target.includes("missing"),
+        conflictingProject: target.includes("taken")
+          ? { id: "p2", title: "SpecWeave umbrella", threadCount: 4, archived: true }
+          : null,
+        sameRepository: !target.includes("other"),
+        currentRepository: "github.com/example/atlas",
+        targetRepository: target.includes("other")
+          ? "github.com/example/other"
+          : "github.com/example/atlas",
+        threadCount: 12,
+        keptInPlaceCount: target.includes("other") ? 3 : 0,
+        reboundWorktreeCount: 2,
+        activeThreads: target.includes("busy") ? [{ id: "t1", title: "Fix budget totals" }] : [],
+        specweaveWorkspace: true,
+      },
+    };
   }
   if (command === "update" && args.input.workspaceSettings) {
     Object.assign(settings, args.input.workspaceSettings, { revision: settings.revision + 1 });
@@ -831,7 +1023,15 @@ export const useAtomCommand = (command) => async (args) => {
   }
   return { _tag: "Success", value: { threadId: "coord", created: false } };
 };
-export const projectWorkspace = {
+// Any atom or command the fixture does not model resolves to an inert query or command.
+const withFallback = <T extends object>(known: T): T =>
+  new Proxy(known, {
+    get: (target, key) =>
+      key in target || typeof key !== "string"
+        ? (target as Record<PropertyKey, unknown>)[key]
+        : Object.assign(() => ({ kind: key }), { toString: () => key }),
+  }) as T;
+export const projectWorkspace = withFallback({
   environmentRead: () => ({ kind: "environment" }),
   environmentPrepare: "environmentPrepare",
   connections: () => ({ kind: "connections" }),
@@ -841,20 +1041,30 @@ export const projectWorkspace = {
   read: () => ({ kind: "read" }),
   starterSuggestions: () => ({ kind: "starters" }),
   threadReports: () => ({ kind: "threadReports" }),
+  threadIncrementProgress: () => ({ kind: "threadIncrementProgress" }),
   threadReportSave: "threadReportSave",
   memoryRead: () => ({ kind: "memory" }),
   usage: () => ({ kind: "usage" }),
   send: "send",
   memoryWrite: "memoryWrite",
   memoryDelete: "memoryDelete",
-};
-export const projectEnvironment = { update: "update", delete: "delete" };
-export const serverEnvironment = {
+});
+export const projectEnvironment = withFallback({
+  update: "update",
+  delete: "delete",
+  folderCheck: "folderCheck",
+  changeFolder: "changeFolder",
+});
+export const serverEnvironment = withFallback({
   scheduledTasksLive: () => ({ kind: "routines" }),
   setScheduledTaskEnabled: "routineToggle",
   runScheduledTaskNow: "routineRun",
-};
-export const threadEnvironment = { loadEarlierHistory: "history" };
+});
+export const threadEnvironment = withFallback({
+  loadEarlierHistory: "history",
+  updateMetadata: "update-metadata",
+  interruptTurn: "interruptTurn",
+});
 export const useThreadActions = () => ({
   settleThread: (ref) => settleFixture(ref, "settled"),
   unsettleThread: (ref) => settleFixture(ref, "active"),
@@ -919,13 +1129,27 @@ function ThreadRightPanelFixture({ environmentId, threadId }) {
     </>
   );
 }
-export function NativeThreadFixture({ environmentId, threadId }) {
+export function NativeThreadFixture({ environmentId, threadId, transcriptOnly = false }) {
   const routing = useProjectMessageRouting();
   const selected = useContext(SelectedThreadShell);
   const live =
     useThreadShells().find((s) => s.environmentId === environmentId && s.id === threadId) ?? null;
   const readable = resolveSelectedThreadShell({ environmentId, threadId }, live, selected);
   const [prompt, setPrompt] = useState("");
+  // A subagent's peek: its transcript only, with no composer.
+  if (transcriptOnly) {
+    const task = fixtureSubagents.find((agent) => agent.childThreadId === threadId);
+    return (
+      <div className="flex flex-col p-5 gap-4" data-transcript-only="true">
+        <small>Native thread fixture · {threadId}</small>
+        <div className="self-end max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground">
+          {task?.prompt ?? `Task for ${live?.title ?? threadId}`}
+        </div>
+        <p>Ran 12 commands and read 4 files.</p>
+        {task?.result ? <p>{task.result}</p> : <p>Still working…</p>}
+      </div>
+    );
+  }
   return (
     <div className="flex flex-col p-5 gap-4">
       <small>Native thread fixture · {threadId}</small>
@@ -1042,6 +1266,7 @@ export const useArchivedThreadSnapshots = () => {
 export const useAssetUrlState = () => ({ _tag: "Loading" });
 export const useAssetUrlRefresh = () => async () => null;
 export const AttachmentFilePreview = () => <p>Attachment preview fixture</p>;
+export const ReadOnlySourcePreview = () => <p>Source preview fixture</p>;
 
 /* Connected hosts for the per-machine limits: the project's device, a second
    Mac signed in to the same Claude account, and an offline laptop. */
@@ -1183,7 +1408,7 @@ export const useEnvironments = () => ({
   environments: [],
   presentationById: new Map(),
 });
-export const usePrimaryEnvironmentId = () => "host";
+export const usePrimaryEnvironmentId = () => (fallbackFixture ? "this-mac" : "host");
 export const usePrimaryEnvironment = () => ({ environmentId: "host" });
 export const useServerConfigs = () => new Map();
 export const environmentProjects = fixtureAnything("environmentProjects");
@@ -1192,7 +1417,10 @@ export const environmentThreadShells = fixtureAnything("environmentThreadShells"
 export const projectContentSearch = fixtureAnything("projectContentSearch");
 export const readProjects = fixtureAnything("readProjects");
 export const readThreadShell = fixtureAnything("readThreadShell");
-export const useThreadShell = fixtureAnything("useThreadShell");
+export const useThreadShell = (ref) =>
+  useThreadShells().find(
+    (shell) => shell.environmentId === ref?.environmentId && shell.id === ref?.threadId,
+  ) ?? null;
 export const readEnvironmentSupportsAutoSettleOptOut = fixtureAnything(
   "readEnvironmentSupportsAutoSettleOptOut",
 );
@@ -1270,3 +1498,5 @@ export const useEnvironmentSettings = () => ({
     },
   },
 });
+
+export const formatEnvironmentQueryError = () => "The environment request failed.";

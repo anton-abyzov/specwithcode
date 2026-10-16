@@ -215,6 +215,12 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
     threadId: command.threadId,
     request: { type: "terminal.cleanup" },
   });
+  effects.push({
+    id: `effect:${command.commandId}:mcp-credential.invalidate`,
+    commandId: command.commandId,
+    threadId: command.threadId,
+    request: { type: "mcp-credential.invalidate" },
+  });
   const attachmentIds = Array.from(new Set(input.attachmentIds));
   if (attachmentIds.length > 0) {
     effects.push({

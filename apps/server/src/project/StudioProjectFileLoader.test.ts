@@ -23,7 +23,9 @@ const makeTempDir = Effect.gen(function* () {
 const writeProjectFile = Effect.fn("writeProjectFile")(function* (cwd: string, contents: string) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  yield* fileSystem.writeFileString(path.join(cwd, "specweave-studio.json"), contents).pipe(Effect.orDie);
+  yield* fileSystem
+    .writeFileString(path.join(cwd, "specweave-studio.json"), contents)
+    .pipe(Effect.orDie);
 });
 
 it.layer(layerTest)("StudioProjectFileLoader", (it) => {

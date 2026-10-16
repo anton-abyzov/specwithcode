@@ -10383,6 +10383,152 @@ describe("AcpAdapterV2", () => {
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("finalizes a settled turn when a mid-turn background end said no wake follows", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const path = yield* Path.Path;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+      const promptGate = yield* Deferred.make<EffectAcpSchema.PromptResponse>();
+      const capturedMutation: {
+        current:
+          | ((mutation: {
+              readonly sessionId: string;
+              readonly taskId: string;
+              readonly status: "running" | "completed" | "failed";
+              readonly willWake?: boolean;
+            }) => Effect.Effect<void>)
+          | null;
+      } = { current: null };
+      const instanceId = ProviderInstanceId.make("acp-test");
+      const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          deferFinalizeForBackgroundWork: true,
+          enablePostSettleContinuation: true,
+          extractBackgroundTaskId: (toolCall) =>
+            toolCall.toolCallId === "call-bg-1" ? "call-bg-1" : undefined,
+          registerExtensions: (context) =>
+            Effect.sync(() => {
+              capturedMutation.current = context.applyBackgroundTaskMutation;
+            }),
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            environment: { STUDIO_ACP_HANG_PROMPT_FOREVER: "1" },
+            protocolEvents,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleSessionUpdate: (handler) =>
+                Effect.sync(() => {
+                  sessionUpdateHandler = handler;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+              prompt: () => Deferred.await(promptGate),
+            }),
+          }),
+        },
+        fileSystem,
+        idAllocator,
+        serverConfig,
+        selfInvocation,
+        continuationRequests: { offer: () => Effect.void },
+      });
+      const threadId = ThreadId.make("thread-acp-no-wake-background-end");
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-no-wake-background-end"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) => Queue.offer(events, event)),
+        Effect.forkScoped,
+      );
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* runtime
+        .startTurn(
+          makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 1 }),
+        )
+        .pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      assert.isDefined(sessionUpdateHandler);
+      const applyMutation = capturedMutation.current;
+      if (applyMutation === null) {
+        return yield* Effect.die("registerExtensions must capture applyBackgroundTaskMutation");
+      }
+
+      // A command Grok moved to the background after its timeout, which the
+      // agent then waited on in-turn through a poll Studio did not recognise.
+      yield* sessionUpdateHandler!({
+        sessionId: "mock-session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "call-bg-1",
+          title: "[bg] python3 build.py",
+          kind: "execute",
+          status: "in_progress",
+          rawInput: {},
+        },
+      });
+      yield* applyMutation({ sessionId: "mock-session-1", taskId: "call-bg-1", status: "running" });
+      yield* applyMutation({
+        sessionId: "mock-session-1",
+        taskId: "call-bg-1",
+        status: "completed",
+        willWake: false,
+      });
+
+      yield* Deferred.succeed(promptGate, { stopReason: "end_turn" });
+      yield* TestClock.adjust("5 seconds");
+
+      const providerTurnId = idAllocator.derive.providerTurn({
+        driver: ACP_TEST_DRIVER,
+        nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:1"),
+      });
+      let terminalStatus: string | null = null;
+      let toolStatusSeen: string | null = null;
+      while (terminalStatus === null) {
+        const event = yield* Queue.take(events);
+        if (
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "command_execution" &&
+          event.turnItem.status !== "running"
+        ) {
+          toolStatusSeen = event.turnItem.status;
+        }
+        if (event.type === "turn.terminal" && event.providerTurnId === providerTurnId) {
+          terminalStatus = event.status;
+        }
+      }
+      assert.equal(terminalStatus, "completed");
+      assert.equal(toolStatusSeen, "completed", "the ended background tool must not stay running");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect(
     "staggered pre-settle completion keeps midTurn marks until last background task ends post-finalize",
     () =>

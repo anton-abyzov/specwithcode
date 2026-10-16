@@ -6,7 +6,10 @@ import { useCallback, useEffect, useState } from "react";
 import { Platform, Pressable, RefreshControl, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { reportAtomCommandResult, settlePromise } from "@specweave-studio/client-runtime/state/runtime";
+import {
+  reportAtomCommandResult,
+  settlePromise,
+} from "@specweave-studio/client-runtime/state/runtime";
 import { AndroidSheetHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
@@ -86,7 +89,7 @@ function ConfiguredConnectOnboardingRouteScreen() {
     <View collapsable={false} className="flex-1 bg-sheet">
       {Platform.OS === "android" ? (
         <AndroidSheetHeader
-          title="Set up Studio Connect"
+          title="Set up SpecWithCode Connect"
           actions={[{ accessibilityLabel: "Close", icon: "xmark", onPress: handleClose }]}
         />
       ) : (
@@ -119,7 +122,7 @@ function ConfiguredConnectOnboardingRouteScreen() {
         ) : (
           <View collapsable={false} className="rounded-[24px] bg-grouped-card p-5">
             <Text className="text-sm leading-normal text-foreground-muted">
-              Sign in to your Studio account to set up Studio Connect.
+              Sign in to your SpecWithCode account to set up SpecWithCode Connect.
             </Text>
           </View>
         )}

@@ -272,6 +272,7 @@ export const make = Effect.gen(function* () {
         ? { desktopBrowserChannel: true }
         : {}),
       agentBrowserProfile: true,
+      projectAgentBrowserProfile: true,
     },
   };
 

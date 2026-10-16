@@ -60,7 +60,7 @@ export function useScopedSettingSource(keys: readonly (keyof ServerSettings)[]) 
   return scopedSettingsSource(targets, keys);
 }
 
-function useRunScopedPlan() {
+export function useRunScopedPlan() {
   const persistServer = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
   return useCallback(
     (plan: ReturnType<typeof planScopedSettingsPatch>) => {

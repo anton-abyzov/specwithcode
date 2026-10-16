@@ -1,6 +1,6 @@
 # Updates
 
-Studio keeps two things current on a Mac: the desktop app and the Studio service that the fleet installer runs under launchd. The desktop app reads releases from the public `anton-abyzov/specwithcode` repository; the service agent reads the repository named in its config (`anton-abyzov/specwithcode` by default). Settings > About controls both.
+SpecWithCode keeps two things current on a Mac: the desktop app and the SpecWithCode service that the fleet installer runs under launchd. The desktop app reads releases from the public `anton-abyzov/specwithcode` repository; the service agent reads the repository named in its config (`anton-abyzov/specwithcode` by default). Settings > About controls both.
 
 ## Settings
 
@@ -11,7 +11,7 @@ Studio keeps two things current on a Mac: the desktop app and the Studio service
 | Install automatically           | On      | The app installs the next time you quit it. The service installs once no session has worked for 10 minutes; a thread that is only waiting on a usage limit does not count as working. Off means you install from Settings. |
 | Update track                    | Stable  | Stable takes plain versions such as `0.2.1`, even when GitHub marks the release as a prerelease. Nightly takes `-nightly` builds.                                                                                          |
 
-The Studio service row shows the installed version, what the agent is doing and a **Check now** or **Install now** button. Install now and the sidebar's **Update now** do the same thing: they do not wait for quiet.
+The SpecWithCode service row shows the installed version, what the agent is doing and a **Check now** or **Install now** button. Install now and the sidebar's **Update now** do the same thing: they do not wait for quiet.
 
 ## Update now
 
@@ -23,11 +23,11 @@ Update now installs a downloaded service release while work is still running. If
 
 `update.py`'s checks are unchanged: the forced path only drains the service until those checks pass. **Cancel update** releases the hold and writes `installCancelledAt`; the agent stops retrying and reports "Update cancelled". The hold also ends on its own when the agent reports an error or finishes, and after 15 minutes.
 
-Self-update is on by default and reads only Studio's own releases; the app never accepts the original upstream feed. `STUDIO_DISABLE_AUTO_UPDATE=true` forces it off for a machine. While it is off, the switches in Settings > About show off and cannot be turned on (they report what the service's `updates/config.json` holds), the Studio service row says automatic checks are off, and Check now and Install now still work.
+Self-update is on by default and reads only SpecWithCode's own releases; the app never accepts the original upstream feed. `SPECWITHCODE_DISABLE_AUTO_UPDATE=true` (or the older `STUDIO_DISABLE_AUTO_UPDATE=true`) forces it off for a machine. While it is off, the switches in Settings > About show off and cannot be turned on (they report what the service's `updates/config.json` holds), the SpecWithCode service row says automatic checks are off, and Check now and Install now still work.
 
 ## Private releases
 
-Studio stores no GitHub token. Each check uses `STUDIO_UPDATE_TOKEN`, `GH_TOKEN` or `GITHUB_TOKEN` when set, otherwise it asks the `gh` login on the Mac (`gh auth token`). The token stays in memory and goes only to `api.github.com`; asset downloads that redirect to GitHub's storage host get no token. If checks say the releases are private, run `gh auth login` once on that Mac.
+SpecWithCode stores no GitHub token. Each check uses `STUDIO_UPDATE_TOKEN`, `GH_TOKEN` or `GITHUB_TOKEN` when set, otherwise it asks the `gh` login on the Mac (`gh auth token`). The token stays in memory and goes only to `api.github.com`; asset downloads that redirect to GitHub's storage host get no token. If checks say the releases are private, run `gh auth login` once on that Mac.
 
 ## The desktop app
 
@@ -37,16 +37,16 @@ Releases before 1.0.0 installed as `SpecWeave Studio (Alpha).app`. The update to
 
 After an unsigned swap macOS may ask again for permissions such as Accessibility or Screen Recording, because an ad-hoc signature changes with every build. Signing removes that.
 
-## The Studio service
+## The SpecWithCode service
 
 The managed service updater defaults to the public `anton-abyzov/specwithcode` release feed. Public releases can be checked and downloaded without signing in to GitHub. An explicit `repository` in `updates/config.json` is preserved, including a private feed that requires its own GitHub access. Updating the helper does not rewrite existing settings or enable opted-out updates. Macs without a config file use the public default on their next pass after the new helper is installed through the supported bootstrap command below.
 
-The service cannot replace itself, so the desktop installs a small agent beside it: `scripts/studio-fleet/update_agent.py` and the modules it imports, `update_agent_reap.py`, `update_agent_cache.py`, `update_agent_recovery.py` and `update_request.py`, copied together to `~/.local/share/specweave-studio/updater/` and run by the launchd job `com.specweave.studio.<identity>.updater` every 10 minutes. It reads `<studioHome>/updates/config.json` (written by the desktop) and writes `state.json` (read by Settings). On each pass it:
+The service cannot replace itself, so the desktop installs a small agent beside it: `scripts/studio-fleet/update_agent.py` and the modules it imports, `update_agent_reap.py`, `update_agent_cache.py`, `update_agent_recovery.py` and `update_request.py`, copied together to `~/.specwithcode/install/updater/` (`~/.local/share/specweave-studio/updater/` before the home migration) and run by the launchd job `com.specweave.studio.<identity>.updater` every 10 minutes. It reads `<studioHome>/updates/config.json` (written by the desktop) and writes `state.json` (read by Settings). On each pass it:
 
 1. searches the newest 30 releases on the chosen track for the highest newer release whose verified `studio-update.json` supports the installed source;
 2. refuses the release unless the plan lists the installed source commit, so only reviewed upgrade paths run on their own;
 3. downloads the runtime and helper archives and checks them against `SHA256SUMS` and the helper manifest;
-4. waits until two snapshots 10 minutes apart show no running session and no change; an open Studio terminal also counts as busy (an install request retries the snapshot every 10 seconds instead, for 2 minutes, or until `installHoldUntil` for Update now);
+4. waits until two snapshots 10 minutes apart show no running session and no change; an open SpecWithCode terminal also counts as busy (an install request retries the snapshot every 10 seconds instead, for 2 minutes, or until `installHoldUntil` for Update now);
 5. runs that release's own `update.py` with the plan's arguments.
 
 An automatic install refused before any restart or installation change can receive at most two retries, after 10 and then 20 minutes, within a 24-hour window. Each retry requires an intact refusal receipt, unchanged installation and fresh quiet checks. Other failed installs remain held for Install now. A verified intermediate upgrade is followed by a new discovery pass; the agent never installs several releases in one loop.

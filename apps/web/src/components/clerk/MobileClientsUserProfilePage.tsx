@@ -94,8 +94,8 @@ function EmptyMobileClients() {
       <EmptyHeader>
         <EmptyTitle>No mobile clients</EmptyTitle>
         <EmptyDescription>
-          Install SpecWithCode on your phone and sign in to Studio Connect to get push notifications
-          and Live Activities.
+          Install SpecWithCode on your phone and sign in to SpecWithCode Connect to get push
+          notifications and Live Activities.
         </EmptyDescription>
       </EmptyHeader>
     </Empty>

@@ -14,7 +14,8 @@ import hashlib
 import json
 import pathlib
 import re
-import sqlite3
+
+import live_database
 
 
 def encoded(value):
@@ -88,7 +89,7 @@ def bind_rows(capture, rows):
 
 
 def _read_database(state, rows, include_auth):
-    db = sqlite3.connect((pathlib.Path(state) / 'statev2.sqlite').as_uri() + '?mode=ro', uri=True)
+    db = live_database.connect(pathlib.Path(state) / 'statev2.sqlite')
     try:
         db.execute('BEGIN')
         capture = capture_connection(db)

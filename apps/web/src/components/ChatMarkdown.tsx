@@ -67,6 +67,7 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import React, {
   Children,
+  lazy,
   Suspense,
   type CSSProperties,
   type ComponentProps,
@@ -162,6 +163,7 @@ import { MermaidDiagram } from "./chat/MermaidDiagram";
 import { useTheme } from "../hooks/useTheme";
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import { remarkDisplayDates } from "../markdown-display-dates";
+import { remarkBareDomainLinks } from "../markdown-bare-domains";
 import { MarkdownTable } from "./MarkdownTable";
 import { chatMarkdownClipboardPayload } from "../markdown-clipboard";
 import { remarkNormalizeListItemIndentation } from "../markdown-list-indentation";
@@ -170,6 +172,7 @@ import {
   isWindowsDrivePathHref,
   normalizeMarkdownLinkDestination,
   resolveInlineCodeFileLinkMeta,
+  mayBeDirectory,
   resolveInlineCodeFileLinks,
   resolveMarkdownFileLinkMeta,
   rewriteMarkdownFileUriHref,
@@ -180,6 +183,11 @@ import {
 import { isMarkdownFileLinkLabel } from "@specweave-studio/client-runtime/markdown-links";
 import { readLocalApi } from "../localApi";
 import { useExistingFileLinks } from "./chat/useExistingFileLinks";
+import {
+  MARKDOWN_DOCUMENT_PATTERN,
+  MarkdownDocumentReader,
+  type MarkdownDocumentTarget,
+} from "./chat/MarkdownDocumentReader";
 import { useAssetUrlRefresh, useAssetUrlState } from "../assets/assetUrls";
 import { cn } from "../lib/utils";
 import { useRemoteOpenResolution, type RemoteOpenMode } from "../remoteOpen";
@@ -580,6 +588,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
 
 const CHAT_MARKDOWN_REMARK_PLUGINS = [
   remarkGfm,
+  remarkBareDomainLinks,
   remarkKeepWindowsPathDestinations,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
@@ -590,6 +599,7 @@ const CHAT_MARKDOWN_REMARK_PLUGINS = [
 
 const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
   remarkGfm,
+  remarkBareDomainLinks,
   remarkKeepWindowsPathDestinations,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
@@ -1290,6 +1300,8 @@ interface MarkdownFileLinkProps {
   openInEditorMenuLabel: string;
   onOpenInBrowser?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
   onOpenMedia?: (() => void) | undefined;
+  /** Opens a markdown file as a document, docked beside the conversation. */
+  onOpenDocument?: (() => void) | undefined;
   onReveal?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
   /** Platform-specific menu label ("Reveal in Finder", ...); required for the
       reveal item to show. */
@@ -1355,6 +1367,10 @@ function buildFileLinkParentSuffixByPath(filePaths: ReadonlyArray<string>): Map<
 
   return suffixByPath;
 }
+
+const MessageFileViewer = lazy(() =>
+  import("./chat/ThreadArtifacts").then((module) => ({ default: module.MessageFileViewer })),
+);
 
 const FENCED_CODE_SEGMENT_PATTERN = /(```[\s\S]*?(?:```|$))/;
 const INLINE_CODE_SPAN_PATTERN = /`([^`\n]+)`/g;
@@ -2036,6 +2052,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   openInEditorMenuLabel,
   onOpenInBrowser,
   onOpenMedia,
+  onOpenDocument,
   onReveal,
   revealLabel,
 }: MarkdownFileLinkProps) {
@@ -2078,6 +2095,10 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   }, [onOpen, targetPath]);
 
   const handleOpenInFilePreview = useCallback(() => {
+    if (onOpenDocument) {
+      onOpenDocument();
+      return;
+    }
     // An image or video opens in the media viewer, over whatever is on screen;
     // the files panel shows only its bytes, and behind a modal it is hidden.
     if (onOpenMedia) {
@@ -2089,7 +2110,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       return;
     }
     handleOpenInEditor();
-  }, [handleOpenInEditor, line, onOpenInPanel, onOpenMedia, panelPath, threadRef]);
+  }, [handleOpenInEditor, line, onOpenDocument, onOpenInPanel, onOpenMedia, panelPath, threadRef]);
 
   const handleOpenInBrowser = useCallback(() => {
     if (!onOpenInBrowser) {
@@ -2378,6 +2399,7 @@ function areMarkdownFileLinkPropsEqual(
     previous.openInEditorMenuLabel === next.openInEditorMenuLabel &&
     previous.onOpenInBrowser === next.onOpenInBrowser &&
     previous.onOpenMedia === next.onOpenMedia &&
+    previous.onOpenDocument === next.onOpenDocument &&
     previous.onReveal === next.onReveal &&
     previous.revealLabel === next.revealLabel
   );
@@ -2403,6 +2425,8 @@ function useChatMarkdownState({
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const [localMediaPreview, setLocalMediaPreview] = useState<ExpandedImagePreview | null>(null);
+  const [documentTarget, setDocumentTarget] = useState<MarkdownDocumentTarget | null>(null);
+  const [viewerTarget, setViewerTarget] = useState<MarkdownFileLinkMeta | null>(null);
   const markdownRef = useRef<HTMLDivElement>(null);
   const expandMedia = onImageExpand ?? setLocalMediaPreview;
   const mediaRequestId = useRef(0);
@@ -2539,7 +2563,7 @@ function useChatMarkdownState({
     [environmentId, openInEditor],
   );
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
-  const markdownFileLinkMetaByHref = useMemo(() => {
+  const authoredMarkdownFileLinks = useMemo(() => {
     const metaByHref = new Map<
       string,
       NonNullable<ReturnType<typeof resolveMarkdownFileLinkMeta>>
@@ -2555,6 +2579,11 @@ function useChatMarkdownState({
     }
     return metaByHref;
   }, [cwd, imageBaseDir, text]);
+  const markdownFileLinkMetaByHref = useExistingFileLinks(
+    authoredMarkdownFileLinks,
+    environmentId,
+    cwd,
+  );
   const authoredInlineCodeFileLinks = useMemo(
     () => resolveInlineCodeFileLinks(extractInlineCodeSpans(text), cwd, imageBaseDir ?? cwd),
     [cwd, imageBaseDir, text],
@@ -2563,6 +2592,15 @@ function useChatMarkdownState({
     authoredInlineCodeFileLinks,
     environmentId,
     cwd,
+  );
+  // The message's file links in the order it names them, for the viewer.
+  const viewerLinks = useMemo(
+    () =>
+      [...markdownFileLinkMetaByHref.values(), ...inlineCodeFileLinkMetaByText.values()]
+        .map((meta) => [text.indexOf(meta.basename), meta] as const)
+        .toSorted((left, right) => left[0] - right[0])
+        .map(([, meta]) => meta),
+    [inlineCodeFileLinkMetaByText, markdownFileLinkMetaByHref, text],
   );
   const fileLinkParentSuffixByPath = useMemo(() => {
     const filePaths = [
@@ -2724,10 +2762,28 @@ function useChatMarkdownState({
       // Claimed on every open so a synchronous one supersedes a lookup already
       // in flight.
       const isLatestLookup = claimWorkspaceBasenameLookup();
-      const openAt = (path: string) =>
-        reportFileHost
-          ? reportFileHost.open({ threadRef, cwd: cwd ?? "", path, line })
-          : useRightPanelStore.getState().openFile(threadRef, path, line);
+      const openAt = (path: string) => {
+        if (!reportFileHost) {
+          useRightPanelStore.getState().openFile(threadRef, path, line);
+          return;
+        }
+        const hostPath = cwd && !isAbsolutePath(path) ? resolvePathLinkTarget(path, cwd) : path;
+        reportFileHost.open({
+          threadRef,
+          cwd: cwd ?? "",
+          path,
+          line,
+          ...(canUseShellActions
+            ? { openInEditor: () => void openInPreferredEditor(hostPath) }
+            : {}),
+          ...(canUseShellActions && revealInFileManagerLabel !== undefined
+            ? {
+                reveal: () => void revealFileInFileManager(hostPath),
+                revealLabel: revealInFileManagerLabel,
+              }
+            : {}),
+        });
+      };
       if (!cwd || !needsWorkspaceBasenameLookup(panelPath)) {
         openAt(panelPath);
         return;
@@ -2738,7 +2794,16 @@ function useChatMarkdownState({
         openAt(match ?? panelPath);
       })();
     },
-    [cwd, findWorkspaceBasenameMatch, reportFileHost, threadRef],
+    [
+      canUseShellActions,
+      cwd,
+      findWorkspaceBasenameMatch,
+      openInPreferredEditor,
+      reportFileHost,
+      revealFileInFileManager,
+      revealInFileManagerLabel,
+      threadRef,
+    ],
   );
   const revealMarkdownFileInFileManager = useCallback(
     async (fileLinkMeta: MarkdownFileLinkMeta) => {
@@ -2751,8 +2816,33 @@ function useChatMarkdownState({
     },
     [cwd, findWorkspaceBasenameMatch, revealFileInFileManager],
   );
+  // A file found nowhere still gets an answer: every place that was looked
+  // in, beside the report or in a notice, never an empty viewer.
+  const showUnresolvedFile = useCallback(
+    (meta: MarkdownFileLinkMeta, ref: ScopedThreadRef) => {
+      const tried = meta.unresolved ?? [meta.filePath];
+      if (reportFileHost) {
+        reportFileHost.open({
+          threadRef: ref,
+          cwd: cwd ?? "",
+          path: meta.filePath,
+          line: meta.line,
+          tried,
+        });
+        return;
+      }
+      toastManager.add(
+        stackedThreadToast({
+          type: "warning",
+          title: `${meta.basename} was not found`,
+          description: `Looked in:\n${tried.join("\n")}`,
+        }),
+      );
+    },
+    [cwd, reportFileHost],
+  );
   const fileLinkChip = useCallback(
-    (fileLinkMeta: MarkdownFileLinkMeta, copyMarkdown: string, mediaSource?: string) => {
+    (fileLinkMeta: MarkdownFileLinkMeta, copyMarkdown: string, _mediaSource?: string) => {
       const parentSuffix = fileLinkParentSuffixByPath.get(
         fileLinkMeta.filePath.replaceAll("\\", "/"),
       );
@@ -2762,14 +2852,25 @@ function useChatMarkdownState({
       }
       if (fileLinkMeta.line) {
         labelParts.push(
-          `L${fileLinkMeta.line}${fileLinkMeta.column ? `:C${fileLinkMeta.column}` : ""}`,
+          `L${fileLinkMeta.line}${fileLinkMeta.column ? `:C${fileLinkMeta.column}` : ""}${fileLinkMeta.endLine ? `–${fileLinkMeta.endLine}` : ""}`,
         );
       }
+      const label = fileLinkMeta.label ?? labelParts.join(" · ");
       // A settled candidate path replaces the authored one.
-      const mediaPath = fileLinkMeta.candidates
-        ? fileLinkMeta.filePath
-        : (mediaSource ?? fileLinkMeta.filePath);
-      const isDirectory = fileLinkMeta.directory === true;
+      const mediaPath = fileLinkMeta.filePath;
+      // An extensionless path the host has not settled yet opens in the file
+      // manager too: a folder shows, and a file opens in its default app.
+      const isDirectory = mayBeDirectory(fileLinkMeta);
+      // A file opens in the app's viewer overlay: markdown as a document, the
+      // rest with the message's other files a step away. Inside a report
+      // reader its file pane shows it instead.
+      const opensInViewer =
+        !isDirectory &&
+        !reportFileHost &&
+        threadRef !== undefined &&
+        isAbsolutePath(fileLinkMeta.filePath);
+      const isMarkdownDocument =
+        opensInViewer && MARKDOWN_DOCUMENT_PATTERN.test(fileLinkMeta.basename);
       const canPreviewMedia =
         !isDirectory &&
         mediaMimeTypeFromExtension(
@@ -2792,7 +2893,7 @@ function useChatMarkdownState({
           displayPath={fileLinkMeta.displayPath}
           panelPath={panelPath}
           line={fileLinkMeta.line}
-          label={labelParts.join(" · ")}
+          label={label}
           copyMarkdown={copyMarkdown}
           theme={resolvedTheme}
           threadRef={threadRef}
@@ -2802,6 +2903,15 @@ function useChatMarkdownState({
               ? { onOpen: openInPreferredEditor }
               : {})}
           onOpenInPanel={openFileInPanel}
+          onOpenDocument={
+            fileLinkMeta.unresolved && threadRef
+              ? () => showUnresolvedFile(fileLinkMeta, threadRef)
+              : isMarkdownDocument
+                ? () => setDocumentTarget({ path: fileLinkMeta.filePath })
+                : opensInViewer
+                  ? () => setViewerTarget(fileLinkMeta)
+                  : undefined
+          }
           onOpenMedia={
             threadRef && canPreviewMedia
               ? () => openMarkdownMedia(mediaPath, fileLinkMeta.filePath)
@@ -2830,10 +2940,14 @@ function useChatMarkdownState({
     [
       canUseShellActions,
       canOperatePreview,
+      cwd,
       fileLinkParentSuffixByPath,
       openFileInPanel,
       openFolder,
       openInPreferredEditor,
+      setDocumentTarget,
+      setViewerTarget,
+      showUnresolvedFile,
       openMarkdownFileInPreview,
       openMarkdownMedia,
       preferredEditorMenuLabel,
@@ -2922,6 +3036,13 @@ function useChatMarkdownState({
     markdownUrlTransform,
     localMediaPreview,
     setLocalMediaPreview,
+    documentTarget,
+    setDocumentTarget,
+    viewerTarget,
+    setViewerTarget,
+    viewerLinks,
+    openFileInPanel,
+    openFolder,
   };
 }
 
@@ -3564,6 +3685,13 @@ function ChatMarkdown({
     markdownUrlTransform,
     localMediaPreview,
     setLocalMediaPreview,
+    documentTarget,
+    setDocumentTarget,
+    viewerTarget,
+    setViewerTarget,
+    viewerLinks,
+    openFileInPanel,
+    openFolder,
   } = useChatMarkdownState({ text, ...props });
   const incrementalParsing =
     props.isStreaming === true &&
@@ -3608,6 +3736,39 @@ function ChatMarkdown({
         <ExpandedImageDialog
           preview={localMediaPreview}
           onClose={() => setLocalMediaPreview(null)}
+        />
+      ) : null}
+      {viewerTarget && props.threadRef ? (
+        <Suspense fallback={null}>
+          <MessageFileViewer
+            threadRef={props.threadRef}
+            cwd={props.cwd}
+            target={viewerTarget}
+            links={viewerLinks}
+            onClose={() => setViewerTarget(null)}
+            onOpenInPanel={(meta) =>
+              openFileInPanel(meta.workspaceRelativePath ?? meta.filePath, meta.line)
+            }
+          />
+        </Suspense>
+      ) : null}
+      {documentTarget && props.threadRef && props.cwd ? (
+        <MarkdownDocumentReader
+          environmentId={props.threadRef.environmentId}
+          cwd={props.cwd}
+          target={documentTarget}
+          onClose={() => setDocumentTarget(null)}
+          onOpenExternally={() => void openFolder(documentTarget.path)}
+          threadRef={props.threadRef}
+          renderMarkdown={(markdown, baseDir) => (
+            <ChatMarkdown
+              text={markdown}
+              cwd={props.cwd}
+              imageBaseDir={baseDir}
+              threadRef={props.threadRef}
+              isStreaming={false}
+            />
+          )}
         />
       ) : null}
     </div>

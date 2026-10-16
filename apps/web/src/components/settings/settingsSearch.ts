@@ -10,6 +10,7 @@ import {
   type ResolvedSettingsScope,
   type SettingsScopeSearch,
 } from "./settingsScope";
+import { searchSettingsGrouped, type GroupedSettingsSearchResult } from "./settingsSearchModel";
 
 export type SettingsPath =
   | "/settings/projects"
@@ -29,6 +30,7 @@ export type SettingsPath =
   | "/settings/messaging"
   | "/settings/google"
   | "/settings/connections"
+  | "/settings/chrome"
   | "/settings/archived";
 
 /**
@@ -96,22 +98,68 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/projects": "Project",
   "/settings/skills": "Skills",
   "/settings/general": "General",
-  "/settings/privacy": "Data & privacy",
-  "/settings/agents": "Agents",
   "/settings/appearance": "Appearance",
   "/settings/keybindings": "Keybindings",
   "/settings/snap-shot": "SnapShots",
+  "/settings/privacy": "Data & privacy",
+  "/settings/archived": "Archive",
+  "/settings/agents": "Agents",
   "/settings/providers": "Providers",
-  "/settings/integrations": "Integrations",
   "/settings/scheduled-tasks": "Scheduled Tasks",
+  "/settings/mods": "Mods",
   "/settings/source-control": "Source Control",
   "/settings/storage": "Storage",
-  "/settings/mods": "Mods",
+  "/settings/connections": "Connections",
+  "/settings/chrome": "Chrome",
+  "/settings/integrations": "Integrations",
   "/settings/messaging": "Messaging",
   "/settings/google": "Google account",
-  "/settings/connections": "Connections",
-  "/settings/archived": "Archive",
 };
+
+/**
+ * Sidebar sections grouped by what they configure: the picked project, this
+ * app, agents, code and machines, then outside accounts. Every path appears
+ * exactly once.
+ */
+export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
+  readonly label: string;
+  readonly paths: readonly SettingsPath[];
+}> = [
+  { label: "Project", paths: ["/settings/projects", "/settings/skills"] },
+  {
+    label: "App",
+    paths: [
+      "/settings/general",
+      "/settings/appearance",
+      "/settings/keybindings",
+      "/settings/snap-shot",
+      "/settings/privacy",
+      "/settings/archived",
+    ],
+  },
+  {
+    label: "Agents",
+    paths: [
+      "/settings/agents",
+      "/settings/providers",
+      "/settings/scheduled-tasks",
+      "/settings/mods",
+    ],
+  },
+  {
+    label: "Code & machines",
+    paths: [
+      "/settings/source-control",
+      "/settings/storage",
+      "/settings/connections",
+      "/settings/chrome",
+    ],
+  },
+  {
+    label: "Accounts & integrations",
+    paths: ["/settings/integrations", "/settings/messaging", "/settings/google"],
+  },
+];
 
 /** Anchor id of the first row bound to `command` on the Keybindings page. */
 export function keybindingSearchAnchorId<Command extends KeybindingCommand>(command: Command) {
@@ -722,6 +770,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["allow disable enable open drive preview tools sessions project override"],
   },
   {
+    id: "agent-browser-profile",
+    title: "Browser profile for agents",
+    to: "/settings/integrations",
+    scope: "project-defaults",
+    searchTerms: [
+      "logins signed in cookies account isolated incognito work personal project override",
+    ],
+  },
+  {
     id: "device-hosts",
     title: "Device hosts",
     to: "/settings/integrations",
@@ -833,6 +890,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["pull request merge squash rebase last selected"],
   },
   {
+    id: "thread-finish-action",
+    title: "When a thread finishes",
+    to: "/settings/source-control",
+    scope: "project-defaults",
+    searchTerms: [
+      "pull request auto-merge merge branch default develop main done finished worktree",
+    ],
+  },
+  {
     id: "source-control",
     title: "Source control",
     to: "/settings/source-control",
@@ -912,6 +978,23 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "chrome-browser-extension",
+    title: "SpecWithCode Browser extension",
+    to: "/settings/chrome",
+    targetId: "chrome-browser-extension",
+    searchTerms: [
+      "browser extension chrome profile pair pairing code load unpacked install add to chrome web store agents tabs stop reconnect test codex grok gemini copilot meta muse claude",
+    ],
+  },
+  {
+    id: "chrome-for-agents",
+    title: "Chrome for agents",
+    to: "/settings/chrome",
+    searchTerms: [
+      "browser extension claude in chrome connect reconnect test profile login linkedin youtube publish codex copilot gemini mcp",
+    ],
+  },
+  {
     id: "environment-icon",
     title: "Environment icon",
     to: "/settings/connections",
@@ -958,7 +1041,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "studio-connect",
     localEnvironmentOnly: true,
-    title: "Studio Connect",
+    title: "SpecWithCode Connect",
     to: "/settings/connections",
     targetId: "connections-environment",
     searchTerms: ["managed tunnel cloud other devices remote"],
@@ -1069,6 +1152,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/google": null,
   "/settings/privacy": null,
   "/settings/connections": "connections",
+  "/settings/chrome": null,
   "/settings/scheduled-tasks": null,
   "/settings/archived": "project-defaults",
 };
@@ -1164,6 +1248,35 @@ export function isSettingsOverviewVisible(search: SettingsScopeSearch): boolean 
 }
 
 /**
+ * Rows a picked project edits on its Project page. Their category pages keep
+ * the defaults every project inherits and point here instead.
+ */
+const PROJECT_PAGE_SEARCH_IDS: ReadonlySet<string> = new Set([
+  "project-defaults",
+  "new-threads",
+  "default-model",
+  "default-permissions",
+  "worktree-submodules",
+  "start-from-origin",
+  "automatic-pull",
+  "remove-agent-credits-on-merge",
+  "pull-request-merge-method",
+  "thread-finish-action",
+  "agent-browser-access",
+  "agent-browser-profile",
+]);
+
+/** Where a search result opens: the Project page while a project is picked, else its category. */
+export function settingsSearchDestination(
+  item: Pick<SettingsSearchItem, "id" | "to">,
+  search: SettingsScopeSearch,
+): SettingsPath {
+  return isSettingsOverviewVisible(search) && PROJECT_PAGE_SEARCH_IDS.has(item.id)
+    ? "/settings/projects"
+    : item.to;
+}
+
+/**
  * `id` and `title` props for the element a search item anchors to. Panels
  * spread (or pick from) this instead of restating the strings, so the catalog
  * and the rendered settings cannot drift apart.
@@ -1194,6 +1307,34 @@ export function filterAvailableSettingsSearchItems(
   );
 }
 
+function isSettingsSearchItemOnPlatform(item: SettingsSearchItem, platform: string) {
+  if (!isElectron && item.desktopOnly === true) return false;
+  if (item.macOnly && !isMacPlatform(platform)) return false;
+  if (item.windowsOnly && !isWindowsPlatform(platform)) return false;
+  return true;
+}
+
+export type SettingsSearchResult = GroupedSettingsSearchResult<SettingsPath, SettingsSearchItem>;
+
+/**
+ * Sections first as roots, each followed by its matching rows. `sections` are
+ * the sections this surface can open, in sidebar order.
+ */
+export function searchSettingsBySection(
+  query: string,
+  items: ReadonlyArray<SettingsSearchItem> = SETTINGS_SEARCH_ITEMS,
+  sections: ReadonlyArray<SettingsPath> = SETTINGS_NAV_GROUPS.flatMap((group) => group.paths),
+): SettingsSearchResult[] {
+  const platform = typeof navigator === "undefined" ? "" : navigator.platform;
+  const open = new Set(sections);
+  return searchSettingsGrouped(
+    query,
+    sections.map((section) => ({ section, label: SETTINGS_SECTION_LABELS[section] })),
+    items.filter((item) => open.has(item.to) && isSettingsSearchItemOnPlatform(item, platform)),
+    (item) => item.to,
+  );
+}
+
 export function searchSettings(
   query: string,
   items: ReadonlyArray<SettingsSearchItem> = SETTINGS_SEARCH_ITEMS,
@@ -1205,9 +1346,7 @@ export function searchSettings(
 
   return items
     .flatMap((item, index) => {
-      if (!isElectron && item.desktopOnly === true) return [];
-      if (item.macOnly && !isMacPlatform(platform)) return [];
-      if (item.windowsOnly && !isWindowsPlatform(platform)) return [];
+      if (!isSettingsSearchItemOnPlatform(item, platform)) return [];
 
       const title = normalizeSearchText(item.title);
       const fields = [

@@ -1,9 +1,10 @@
+import { ThreadArtifactsMenu } from "./ThreadArtifacts";
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
   type ThreadId,
 } from "@specweave-studio/contracts";
-import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import {
   isAtomCommandInterrupted,
@@ -29,6 +30,8 @@ import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
+import { readThreadShell } from "../../state/entities";
+import { isCoordinatorNamedThread } from "../../studio/threadTitles";
 import { ProjectFavicon } from "../ProjectFavicon";
 import {
   WorkspaceBreadcrumb,
@@ -40,6 +43,8 @@ import { cn } from "~/lib/utils";
 import { TimelineDetailMenu } from "./TimelineDetailMenu";
 
 interface ChatHeaderProps {
+  /** Where the thread works, so the paths its replies name resolve there. */
+  artifactsCwd?: string | null;
   activeThreadEnvironmentId: EnvironmentId;
   activeThreadId: ThreadId;
   activeThreadTitle: string;
@@ -81,6 +86,7 @@ export const ChatHeader = memo(function ChatHeader({
   rightPanelOpen,
   onNewThreadInProject,
   onOpenProjectSettings,
+  artifactsCwd,
 }: ChatHeaderProps) {
   const activeProjectName = activeProject?.title;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
@@ -121,7 +127,9 @@ export const ChatHeader = memo(function ChatHeader({
   const startRename = useCallback(() => {
     if (
       !isServerThread ||
-      !readEnvironmentScope(activeThreadEnvironmentId, AuthOrchestrationOperateScope)
+      !readEnvironmentScope(activeThreadEnvironmentId, AuthOrchestrationOperateScope) ||
+      // Its coordinator names a worker thread; the title is read-only here.
+      isCoordinatorNamedThread(readThreadShell(activeThreadRef))
     )
       return;
     renameCommittedRef.current = false;
@@ -130,7 +138,13 @@ export const ChatHeader = memo(function ChatHeader({
       threadId: activeThreadId,
       title: activeThreadTitle,
     });
-  }, [activeThreadEnvironmentId, activeThreadId, activeThreadTitle, isServerThread]);
+  }, [
+    activeThreadEnvironmentId,
+    activeThreadId,
+    activeThreadRef,
+    activeThreadTitle,
+    isServerThread,
+  ]);
   const commitRename = useCallback(
     (title: string) => {
       setRenaming(null);
@@ -356,7 +370,11 @@ export const ChatHeader = memo(function ChatHeader({
           )}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
-      <TimelineDetailMenu />
+      <ThreadArtifactsMenu
+        threadRef={activeThreadRef}
+        cwd={artifactsCwd ?? activeProjectCwd ?? undefined}
+      />
+      <TimelineDetailMenu threadKey={scopedThreadKey(activeThreadRef)} />
     </div>
   );
 });

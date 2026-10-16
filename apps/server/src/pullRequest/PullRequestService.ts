@@ -37,6 +37,8 @@ import {
   type PullRequestChecks,
   type PullRequestDiffFileContentsInput,
   type PullRequestDiffFileContentsResult,
+  type PullRequestCheckFailureLogInput,
+  type PullRequestCheckFailureLogResult,
   type PullRequestDiffStat,
   type PullRequestDiffInput,
   type PullRequestFilesViewedResult,
@@ -253,6 +255,10 @@ export class PullRequestService extends Context.Service<
     readonly diffFileContents: (
       input: PullRequestDiffFileContentsInput,
     ) => Effect.Effect<PullRequestDiffFileContentsResult, PullRequestError>;
+    /** The failing tail of one check's log; no log, rather than a failure, where none is readable. */
+    readonly checkFailureLog: (
+      input: PullRequestCheckFailureLogInput,
+    ) => Effect.Effect<PullRequestCheckFailureLogResult, PullRequestError>;
     readonly filesViewed: (
       input: PullRequestRef,
     ) => Effect.Effect<PullRequestFilesViewedResult, PullRequestError>;
@@ -623,6 +629,9 @@ function withRateLimitBackoff(
     ...(api.getDiffFileContents === undefined
       ? {}
       : { getDiffFileContents: wrap("getDiffFileContents", api.getDiffFileContents) }),
+    ...(api.getCheckFailureLog === undefined
+      ? {}
+      : { getCheckFailureLog: wrap("getCheckFailureLog", api.getCheckFailureLog) }),
     ...(api.getFilesViewed === undefined
       ? {}
       : { getFilesViewed: wrap("getFilesViewed", api.getFilesViewed) }),
@@ -1898,6 +1907,23 @@ export const make = Effect.gen(function* () {
                 detail: "This host cannot expand unchanged pull request lines.",
               }),
             );
+      }),
+    );
+
+  const checkFailureLog: PullRequestService["Service"]["checkFailureLog"] = (input) =>
+    requireProject(input).pipe(
+      Effect.flatMap((project) => {
+        const read = project.api.getCheckFailureLog;
+        return read === undefined
+          ? Effect.succeed({ log: null, truncated: false, source: null })
+          : read({
+              cwd: project.project.workspaceRoot,
+              repository: project.repository,
+              host: project.host,
+              number: input.number,
+              checkName: input.checkName,
+              checkUrl: input.checkUrl,
+            }).pipe(Effect.mapError(toPullRequestError("checkFailureLog")));
       }),
     );
 
@@ -3388,6 +3414,7 @@ export const make = Effect.gen(function* () {
     threadComments,
     diff: credentialCached(diff),
     diffFileContents,
+    checkFailureLog,
     filesViewed: credentialCached(filesViewed),
     setFilesViewed,
     runAction: runActionAndInvalidate,

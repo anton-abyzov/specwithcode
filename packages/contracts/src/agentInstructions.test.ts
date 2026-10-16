@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 import {
+  DEFAULT_AGENT_INSTRUCTIONS,
   AgentInstructions,
   ClaudeWorkflowMode,
+  LIVE_DATABASE_INSTRUCTIONS,
   resolveAgentInstructions,
   ResponseStyle,
+  withServiceInstructions,
 } from "./agentInstructions.ts";
 import { ServerSettings, ServerSettingsPatch } from "./settings.ts";
 
@@ -28,9 +31,19 @@ describe("shared agent instructions", () => {
     expect(resolveAgentInstructions({})).toBe("");
   });
 
+  it("always ends with the live database rule, even when the user wrote nothing", () => {
+    expect(withServiceInstructions("")).toBe(LIVE_DATABASE_INSTRUCTIONS);
+    expect(withServiceInstructions(" ## Environment instructions\nAlways verify ")).toBe(
+      `## Environment instructions\nAlways verify\n\n${LIVE_DATABASE_INSTRUCTIONS}`,
+    );
+    expect(LIVE_DATABASE_INSTRUCTIONS).toContain("not even read-only");
+    expect(LIVE_DATABASE_INSTRUCTIONS).toContain("specweave-studio db snapshot");
+    expect(LIVE_DATABASE_INSTRUCTIONS).toContain("specweave-studio db query");
+  });
+
   it("decodes older settings with conservative workflow defaults", () => {
     const settings = decodeServerSettings({});
-    expect(settings.agentInstructions).toBe("");
+    expect(settings.agentInstructions).toBe(DEFAULT_AGENT_INSTRUCTIONS);
     expect(settings.claudeWorkflowMode).toBe("on-request");
     expect(settings.responseStyle).toBe("concise");
     expect(settings.projectSettingsOverrides).toEqual({});

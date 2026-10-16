@@ -7,6 +7,7 @@ import * as NodeSqliteClient from "@specweave-studio/shared/nodeSqliteClient";
 
 import { runMigrations } from "./Migrations.ts";
 import { initializeV2Database } from "./initializeV2Database.ts";
+import { registerLiveDatabase } from "./liveDatabaseGuard.ts";
 import * as ServerConfig from "../config.ts";
 
 // Size the -wal file is cut back to on the first commit after a WAL reset.
@@ -40,8 +41,21 @@ export const layerFromPath = Effect.fn("makeSqlitePersistenceLive")(function* (d
         "service.name": "studio-server",
       },
     }),
-  );
+  ).pipe(Layer.merge(layerLiveDatabaseRegistration(dbPath)));
 }, Layer.unwrap);
+
+/**
+ * While the connection is open, node:fs in this process refuses the database
+ * files (see liveDatabaseGuard.ts): a plain open and close of one of them
+ * would drop SQLite's locks on it.
+ */
+const layerLiveDatabaseRegistration = (dbPath: string) =>
+  Layer.effectDiscard(
+    Effect.acquireRelease(
+      Effect.sync(() => registerLiveDatabase(dbPath)),
+      (unregister) => Effect.sync(unregister),
+    ),
+  );
 
 export const layerMemory = Layer.provideMerge(
   layerSetup,

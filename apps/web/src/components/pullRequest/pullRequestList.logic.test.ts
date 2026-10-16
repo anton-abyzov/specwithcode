@@ -835,7 +835,7 @@ describe("default merge-readiness ranking", () => {
     });
     const sorted = sortPullRequestGroups(
       [
-        { key: "authored", label: "Authored", entries: [authoredWaiting, authoredReady] },
+        { key: "authored", label: "Authored by me", entries: [authoredWaiting, authoredReady] },
         { key: "others", label: "Others", entries: [otherReady] },
       ],
       "ready",
@@ -867,7 +867,7 @@ describe("default merge-readiness ranking", () => {
     });
     const sorted = sortPullRequestGroups(
       [
-        { key: "authored", label: "Authored", entries: [olderLarger, newerSmaller] },
+        { key: "authored", label: "Authored by me", entries: [olderLarger, newerSmaller] },
         { key: "others", label: "Others", entries: [entry({ number: 3 })] },
       ],
       sort,
@@ -951,8 +951,8 @@ describe("blocked-on-me ranking", () => {
       entry({ number: 6, isDraft: true }),
     ];
     const groups = [
-      { key: "authored", label: "Authored", entries: authored },
-      { key: "reviewRequested", label: "Review requested", entries: reviewing },
+      { key: "authored", label: "Authored by me", entries: authored },
+      { key: "reviewRequested", label: "Needs my review", entries: reviewing },
       { key: "others", label: "Others", entries: others },
     ] as const;
 

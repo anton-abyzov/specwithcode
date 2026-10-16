@@ -315,7 +315,7 @@ const make = Effect.gen(function* () {
     const lines = [`Project: ${active.project.title}`];
     if (active.project.workspaceSettings?.paused === true) lines.push("The project is paused.");
     if (coordinatorThreadId === null) {
-      lines.push("The coordinator has not started yet. Open the project in Studio once.");
+      lines.push("The coordinator has not started yet. Open the project in SpecWithCode once.");
       return lines.join("\n");
     }
     const records = yield* threads
@@ -335,12 +335,12 @@ const make = Effect.gen(function* () {
   const forward = (chatId: number, text: string, updateId: number) =>
     Effect.gen(function* () {
       const active = yield* activeProject;
-      if (active === null) return yield* send(chatId, "The channel is off in Studio.");
+      if (active === null) return yield* send(chatId, "The channel is off in SpecWithCode.");
       const coordinatorThreadId = active.project.workspaceSettings?.coordinatorThreadId ?? null;
       if (coordinatorThreadId === null) {
         return yield* send(
           chatId,
-          `“${active.project.title}” has no coordinator yet. Open the project in Studio once so it starts.`,
+          `“${active.project.title}” has no coordinator yet. Open the project in SpecWithCode once so it starts.`,
         );
       }
       const token = yield* Ref.get(tokenRef);
@@ -369,7 +369,7 @@ const make = Effect.gen(function* () {
         });
         return yield* send(
           chatId,
-          `Studio did not take the message: ${error instanceof Error ? error.message : "unknown error"}`,
+          `SpecWithCode did not take the message: ${error instanceof Error ? error.message : "unknown error"}`,
         );
       }
       if (result.value.delivery === "queued") {
@@ -516,7 +516,7 @@ const make = Effect.gen(function* () {
       const title = shell.title.trim() === "" ? "A thread" : `“${shell.title.trim()}”`;
       yield* send(
         active.chatId,
-        `${title} in ${active.project.title} is waiting for your approval or answer in Studio.`,
+        `${title} in ${active.project.title} is waiting for your approval or answer in SpecWithCode.`,
       );
     });
 

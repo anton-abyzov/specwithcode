@@ -1,0 +1,280 @@
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
+import { afterEach, describe, expect, it } from "vite-plus/test";
+
+import { specweaveStudioCheckpointPath } from "../orchestration-v2/SpecweaveCheckpoint.ts";
+import {
+  criteriaWithState,
+  listProjectIncrements,
+  readThreadIncrementProgress,
+  specweaveStudioThreadBindingPath,
+} from "./ThreadIncrementProgress.ts";
+
+const roots: string[] = [];
+const NOW = Date.parse("2026-10-15T12:00:00Z");
+
+async function temp(prefix: string): Promise<string> {
+  const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), prefix));
+  roots.push(root);
+  return root;
+}
+
+const SPEC = `# Studio plan card
+
+## Acceptance criteria
+- [ ] AC-01: The card shows done, current and next
+- [ ] AC-02: Lists show 3/5
+- [ ] AC-03: Nobody cites this one
+
+## Tasks
+### T-01 Contract
+**AC**: AC-01
+### T-02 Reader
+**AC**: AC-01, AC-02
+### T-03 Card
+**AC**: AC-02
+### T-04 Docs
+`;
+
+function line(event: Record<string, string>): string {
+  return `${JSON.stringify(event)}\n`;
+}
+
+async function increment(root: string, id: string, ledger: string) {
+  const folder = NodePath.join(root, ".specweave/increments", id);
+  await NodeFSP.mkdir(folder, { recursive: true });
+  await NodeFSP.writeFile(NodePath.join(folder, "spec.md"), SPEC);
+  await NodeFSP.writeFile(NodePath.join(folder, "ledger.jsonl"), ledger);
+  await NodeFSP.writeFile(
+    NodePath.join(folder, "metadata.json"),
+    JSON.stringify({ status: "active", title: "Plan card" }),
+  );
+  return folder;
+}
+
+const LEDGER = [
+  line({ t: "T-01", e: "claim", by: "claude@m4", at: "2026-10-15T10:00:00Z" }),
+  line({ t: "T-01", e: "done", by: "claude@m4", at: "2026-10-15T10:30:00Z", evidence: "abc123" }),
+  // Done without evidence does not count.
+  line({ t: "T-02", e: "done", by: "claude@m4", at: "2026-10-15T10:40:00Z" }),
+  line({ t: "T-02", e: "claim", by: "claude@m4", at: "2026-10-15T11:30:00Z" }),
+  line({ t: "T-04", e: "skip", by: "claude@m4", at: "2026-10-15T11:00:00Z", note: "Out of scope" }),
+].join("");
+
+afterEach(async () => {
+  await Promise.all(
+    roots.splice(0).map((root) => NodeFSP.rm(root, { recursive: true, force: true })),
+  );
+});
+
+describe("readThreadIncrementProgress", () => {
+  it("binds a thread by the increment number in its branch and folds the ledger", async () => {
+    const root = await temp("studio-plan-root-");
+    const home = await temp("studio-plan-home-");
+    await increment(root, "0930-studio-plan-card", LEDGER);
+    await increment(root, "0931-other", "");
+    const [progress, ...rest] = await readThreadIncrementProgress(
+      root,
+      [
+        {
+          threadId: "t1",
+          title: "Plan card",
+          branch: "feat/0930-plan-card",
+          worktreePath: null,
+          home,
+        },
+        { threadId: "t2", title: "Unrelated", branch: "main", worktreePath: null, home },
+      ],
+      NOW,
+    );
+    expect(rest).toEqual([]);
+    expect(progress).toMatchObject({
+      threadId: "t1",
+      incrementId: "0930-studio-plan-card",
+      binding: "name",
+      boundTaskId: null,
+      title: "Plan card",
+      status: "active",
+      readable: true,
+    });
+    expect(progress!.specPath).toBe(
+      NodePath.join(root, ".specweave/increments/0930-studio-plan-card/spec.md"),
+    );
+    expect(progress!.tasks.map((task) => [task.id, task.status])).toEqual([
+      ["T-01", "done"],
+      ["T-02", "claimed"],
+      ["T-03", "planned"],
+      ["T-04", "skipped"],
+    ]);
+    expect(progress!.tasks.find((task) => task.id === "T-04")!.note).toBe("Out of scope");
+    expect(progress!.criteria).toEqual([
+      { id: "AC-01", text: "The card shows done, current and next", met: false },
+      { id: "AC-02", text: "Lists show 3/5", met: false },
+      { id: "AC-03", text: "Nobody cites this one", met: false },
+    ]);
+  });
+
+  it("prefers SpecWeave's checkpoint pointer and reads the thread's worktree ledger", async () => {
+    const root = await temp("studio-plan-root-");
+    const worktree = await temp("studio-plan-worktree-");
+    const home = await temp("studio-plan-home-");
+    await increment(root, "0930-studio-plan-card", "");
+    await increment(
+      worktree,
+      "0930-studio-plan-card",
+      line({ t: "T-03", e: "done", by: "codex@m4", at: "2026-10-15T11:00:00Z", evidence: "x" }),
+    );
+    const pointer = specweaveStudioCheckpointPath("t1", home);
+    await NodeFSP.mkdir(NodePath.dirname(pointer), { recursive: true });
+    await NodeFSP.writeFile(pointer, JSON.stringify({ incrementId: "0930-studio-plan-card" }));
+    const [progress] = await readThreadIncrementProgress(
+      root,
+      // Title and branch name nothing; only the pointer binds the thread.
+      [{ threadId: "t1", title: "Untitled", branch: null, worktreePath: worktree, home }],
+      NOW,
+    );
+    expect(progress!.incrementPath).toBe(
+      NodePath.join(worktree, ".specweave/increments/0930-studio-plan-card"),
+    );
+    expect(progress!.binding).toBe("checkpoint");
+    expect(progress!.tasks.find((task) => task.id === "T-03")!.status).toBe("done");
+  });
+
+  it("prefers the increment the thread wrote to, and refuses a binding outside its checkout", async () => {
+    const root = await temp("studio-plan-root-");
+    const elsewhere = await temp("studio-plan-elsewhere-");
+    const home = await temp("studio-plan-home-");
+    await increment(root, "0930-studio-plan-card", LEDGER);
+    await increment(root, "0931-other", "");
+    await increment(elsewhere, "0932-foreign", "");
+    const bind = async (bindingRoot: string, incrementId: string) => {
+      const file = specweaveStudioThreadBindingPath("t1", home);
+      await NodeFSP.mkdir(NodePath.dirname(file), { recursive: true });
+      await NodeFSP.writeFile(
+        file,
+        JSON.stringify({
+          version: 1,
+          threadId: "t1",
+          incrementId,
+          root: bindingRoot,
+          taskId: "T-02",
+          event: "claim",
+          at: "2026-10-15T11:30:00Z",
+        }),
+      );
+    };
+    // The branch names 0931, but the agent claimed in 0930: the claim wins.
+    await bind(root, "0930-studio-plan-card");
+    const source = {
+      threadId: "t1",
+      title: "x",
+      branch: "feat/0931-other",
+      worktreePath: null,
+      home,
+    };
+    const [claimed] = await readThreadIncrementProgress(root, [source], NOW);
+    expect(claimed).toMatchObject({
+      incrementId: "0930-studio-plan-card",
+      binding: "claim",
+      boundTaskId: "T-02",
+    });
+    // A binding into another checkout is ignored; the branch decides instead.
+    await bind(elsewhere, "0932-foreign");
+    const [fallback] = await readThreadIncrementProgress(root, [source], NOW);
+    expect(fallback).toMatchObject({ incrementId: "0931-other", binding: "name" });
+  });
+
+  it("puts a link made by hand above every other binding, and hides the increment for none", async () => {
+    const root = await temp("studio-plan-root-");
+    const home = await temp("studio-plan-home-");
+    await increment(root, "0930-studio-plan-card", LEDGER);
+    await increment(root, "0931-other", "");
+    const file = specweaveStudioThreadBindingPath("t1", home);
+    await NodeFSP.mkdir(NodePath.dirname(file), { recursive: true });
+    await NodeFSP.writeFile(
+      file,
+      JSON.stringify({
+        version: 1,
+        threadId: "t1",
+        incrementId: "0930-studio-plan-card",
+        root,
+        taskId: "T-02",
+        event: "claim",
+        at: "2026-10-15T11:30:00Z",
+      }),
+    );
+    const source = {
+      threadId: "t1",
+      title: "x",
+      branch: "feat/0930-plan",
+      worktreePath: null,
+      home,
+    };
+    const [other] = await readThreadIncrementProgress(
+      root,
+      [{ ...source, link: { incrementId: "0931-other" } }],
+      NOW,
+    );
+    // The claim names another increment, so its task is not this thread's here.
+    expect(other).toMatchObject({
+      incrementId: "0931-other",
+      binding: "manual",
+      boundTaskId: null,
+    });
+    const [same] = await readThreadIncrementProgress(
+      root,
+      [{ ...source, link: { incrementId: "0930-studio-plan-card" } }],
+      NOW,
+    );
+    expect(same).toMatchObject({ binding: "manual", boundTaskId: "T-02" });
+    expect(
+      await readThreadIncrementProgress(root, [{ ...source, link: { incrementId: null } }], NOW),
+    ).toEqual([]);
+  });
+
+  it("lists the checkout's increments newest first", async () => {
+    const root = await temp("studio-plan-root-");
+    await increment(root, "0930-studio-plan-card", "");
+    await increment(root, "1002-later", "");
+    await NodeFSP.mkdir(NodePath.join(root, ".specweave/increments/_archive"), { recursive: true });
+    expect(await listProjectIncrements(root, null)).toEqual([
+      { incrementId: "1002-later", title: "Plan card", status: "active" },
+      { incrementId: "0930-studio-plan-card", title: "Plan card", status: "active" },
+    ]);
+  });
+
+  it("reports an unreadable ledger instead of folding it as nothing done", async () => {
+    const root = await temp("studio-plan-root-");
+    const home = await temp("studio-plan-home-");
+    const folder = await increment(root, "0930-studio-plan-card", "");
+    await NodeFSP.rm(NodePath.join(folder, "ledger.jsonl"));
+    await NodeFSP.mkdir(NodePath.join(folder, "ledger.jsonl"));
+    const [progress] = await readThreadIncrementProgress(
+      root,
+      [{ threadId: "t1", title: "0930", branch: null, worktreePath: null, home }],
+      NOW,
+    );
+    expect(progress).toMatchObject({ readable: false, tasks: [] });
+  });
+});
+
+describe("criteriaWithState", () => {
+  it("meets a criterion only when every citing task is finished", () => {
+    expect(
+      criteriaWithState(
+        [
+          { id: "AC-01", text: "a" },
+          { id: "AC-02", text: "b" },
+        ],
+        [
+          { status: "done", criteria: ["AC-01", "AC-02"] },
+          { status: "skipped", criteria: ["AC-01"] },
+          { status: "claimed", criteria: ["AC-02"] },
+        ],
+      ).map((criterion) => criterion.met),
+    ).toEqual([true, false]);
+  });
+});

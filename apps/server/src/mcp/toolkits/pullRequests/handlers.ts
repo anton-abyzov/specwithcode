@@ -4,6 +4,7 @@ import {
 } from "@specweave-studio/shared/threadPullRequests";
 import {
   CommandId,
+  isProjectCoordinatorThreadId,
   pullRequestHostOf,
   type OrchestrationProjectShell,
   type OrchestrationV2ThreadShell,
@@ -232,7 +233,12 @@ const make = Effect.gen(function* () {
       threadPullRequestsOf(shell).find(
         (link) => link.source !== "stack-dismissed" && threadPullRequestKeysEqual(link, target),
       );
-    if (watching && thread.lineage.relationshipToParent === "subagent") {
+    // A coordinator's worker owns its pull requests; only a thread's own subagents defer to it.
+    if (
+      watching &&
+      thread.lineage.relationshipToParent === "subagent" &&
+      !(project && isProjectCoordinatorThreadId(thread.lineage.parentThreadId, project))
+    ) {
       return yield* new PullRequestWatchFromSubagentError();
     }
     const before = watchedLink(thread);

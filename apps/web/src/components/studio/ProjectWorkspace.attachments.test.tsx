@@ -15,6 +15,7 @@ import {
   sized,
   sendButton,
   alertText,
+  notifyUploads,
 } from "./ProjectWorkspace.test-fixtures";
 
 describe("coordinator image attachments", () => {
@@ -299,6 +300,7 @@ describe("coordinator image attachments", () => {
       [two!]: { status: "uploading", environmentId: "host", progress: 0.42 },
       [three!]: { status: "failed", environmentId: "host", reason: "offline" },
     };
+    await act(async () => notifyUploads());
     await paste([]);
     await prompt("x");
     const tiles = [...container.querySelectorAll(".sws-attachment")];

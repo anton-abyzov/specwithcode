@@ -4,7 +4,13 @@ import type { TerminalSummary } from "@specweave-studio/contracts";
 import { DEFAULT_TERMINAL_ID, TerminalOpenInput } from "@specweave-studio/contracts";
 import * as Schema from "effect/Schema";
 
-import { getTerminalLabel, nextTerminalId, resolveTerminalSessionLabel } from "./terminalLabels.ts";
+import {
+  getTerminalLabel,
+  nextTerminalId,
+  resolveTerminalSessionLabel,
+  resolveTerminalTabTitle,
+  terminalFolderName,
+} from "./terminalLabels.ts";
 
 const decodeTerminalOpen = Schema.decodeUnknownSync(TerminalOpenInput);
 
@@ -72,5 +78,40 @@ describe("nextTerminalId", () => {
         cwd: "/workspace",
       }),
     ).toMatchObject({ terminalId: second });
+  });
+});
+
+describe("resolveTerminalTabTitle", () => {
+  it("names the folder the shell runs in", () => {
+    expect(
+      resolveTerminalTabTitle("term-1", { label: "", cwd: "/Users/me/github/studio-finish-merge" }),
+    ).toBe("Terminal 1 · studio-finish-merge");
+    expect(resolveTerminalTabTitle("term-2", { label: "vim", cwd: "/work/repo/" })).toBe(
+      "vim · repo",
+    );
+  });
+
+  it("keeps the plain label without a known folder", () => {
+    expect(resolveTerminalTabTitle("term-3", null)).toBe("Terminal 3");
+  });
+
+  it("decodes a fallback folder on open", () => {
+    expect(
+      decodeTerminalOpen({
+        threadId: "thread-1",
+        terminalId: "term-1",
+        cwd: "/missing/worktree",
+        fallbackCwd: "/workspace",
+      }),
+    ).toMatchObject({ fallbackCwd: "/workspace" });
+  });
+});
+
+describe("terminalFolderName", () => {
+  it("handles roots, Windows paths and blanks", () => {
+    expect(terminalFolderName("/")).toBe("/");
+    expect(terminalFolderName("C:\\Users\\me\\repo")).toBe("repo");
+    expect(terminalFolderName("  ")).toBeNull();
+    expect(terminalFolderName(undefined)).toBeNull();
   });
 });

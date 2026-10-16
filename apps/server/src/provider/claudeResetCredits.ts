@@ -73,7 +73,7 @@ const RESET_CREDIT_FAILURES = {
   malformedCredit: "Claude returned a malformed reset credit.",
   loginUnreadable: "Claude could not read its login.",
   keychainPending:
-    "Allow Studio to read Claude's login in the Keychain prompt on this Mac, then try again.",
+    "Allow SpecWithCode to read Claude's login in the Keychain prompt on this Mac, then try again.",
   accountUnreadable: "Claude could not read its account.",
   signedOut: "Sign in to Claude again to redeem resets.",
   rateLimited: "Claude is rate limiting resets. Try again soon.",
@@ -188,8 +188,7 @@ export interface ClaudeLogin {
 export const claudeKeychainService = (keychainConfigDir: string | undefined) =>
   keychainConfigDir === undefined
     ? "Claude Code-credentials"
-    : `Claude Code-credentials-${sha256([keychainConfigDir.normalize("NFC")], "hex")
-        .slice(0, 8)}`;
+    : `Claude Code-credentials-${sha256([keychainConfigDir.normalize("NFC")], "hex").slice(0, 8)}`;
 
 const KEYCHAIN_ITEM_MISSING = 44;
 

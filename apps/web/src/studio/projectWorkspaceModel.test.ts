@@ -8,6 +8,8 @@ import {
   projectThreadGroup,
   projectThreadReference,
   projectThreads,
+  threadAttentionNote,
+  threadHeldQueue,
 } from "./projectWorkspaceModel";
 import { linkedThreadIds } from "./projectThreadMentions";
 import { formatStudioThreadHref, formatStudioThreadLink } from "./studioThreadLinks";
@@ -47,11 +49,33 @@ describe("Project thread lifecycle", () => {
       ),
     ).toBe("Resolved");
   });
-  it.each(["usage_limit", "provider_error"])("resolves historical %s failures until reopened", (lastErrorClass) => {
-    const failed = thread({ runtime: { status: "failed", lastErrorClass } as EnvironmentThreadShell["runtime"] });
-    expect(projectThreadGroup(failed)).toBe("Waiting on you");
-    expect(projectThreadGroup({ ...failed, settledOverride: "settled" })).toBe("Resolved");
-    expect(projectThreadGroup({ ...failed, settledOverride: "active" })).toBe("Waiting on you");
+  it.each(["usage_limit", "provider_error"])(
+    "resolves historical %s failures until reopened",
+    (lastErrorClass) => {
+      const failed = thread({
+        runtime: { status: "failed", lastErrorClass } as EnvironmentThreadShell["runtime"],
+      });
+      expect(projectThreadGroup(failed)).toBe("Waiting on you");
+      expect(projectThreadGroup({ ...failed, settledOverride: "settled" })).toBe("Resolved");
+      expect(projectThreadGroup({ ...failed, settledOverride: "active" })).toBe("Waiting on you");
+    },
+  );
+  it("waits on the user while a quiet thread holds queued messages", () => {
+    const held = thread({ heldQueuedCount: 13, settledOverride: "settled" });
+    expect(projectThreadGroup(held)).toBe("Waiting on you");
+    expect(threadHeldQueue(held)).toBe("13 queued messages held");
+    expect(threadAttentionNote(held)).toBe(
+      "13 queued messages held. Open the thread to resume or discard them.",
+    );
+    expect(threadHeldQueue(thread({ heldQueuedCount: 1 }))).toBe("1 queued message held");
+    // A running thread is working; the hold shows once it stops.
+    const working = thread({
+      heldQueuedCount: 2,
+      runtime: { status: "running" } as EnvironmentThreadShell["runtime"],
+    });
+    expect(projectThreadGroup(working)).toBe("Working");
+    expect(threadHeldQueue(working)).toBeNull();
+    expect(threadHeldQueue(thread())).toBeNull();
   });
   it("prioritizes real attention above resolution and runtime", () => {
     expect(

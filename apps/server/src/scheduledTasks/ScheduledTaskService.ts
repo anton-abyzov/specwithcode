@@ -42,6 +42,7 @@ import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as Metrics from "../observability/Metrics.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import { ProjectCoordinatorService } from "../project/ProjectCoordinatorService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
@@ -149,6 +150,9 @@ export const layer = Layer.effect(
     const crypto = yield* Crypto.Crypto;
     const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+    const coordinators = Option.getOrUndefined(
+      yield* Effect.serviceOption(ProjectCoordinatorService),
+    );
     const secretRequests = yield* SecretRequests.SecretRequests;
     const scheduler = yield* Scheduler.Scheduler;
     const updateHold = yield* ServiceUpdateHold.optional;
@@ -604,16 +608,30 @@ export const layer = Layer.effect(
                   assertTaskAdmission(active).pipe(
                     Effect.provideService(ProjectStore.ProjectStoreV2, projects),
                     Effect.provideService(SqlClient.SqlClient, sql),
+                    // A run in an existing thread never moves it to another
+                    // provider: the task's model is a snapshot of whatever the
+                    // thread ran on when the task was made, and switching the
+                    // thread to it hands the conversation over mid-stream. A
+                    // coordinator takes the model a user message would get;
+                    // any other thread keeps its own.
                     Effect.andThen(
+                      coordinators === undefined
+                        ? Effect.succeed(undefined)
+                        : coordinators.nextTurnModel(
+                            active.projectId,
+                            ThreadId.make(active.threadId),
+                          ),
+                    ),
+                    Effect.flatMap((modelSelection) =>
                       threadManagement.sendToThread({
                         projectId: active.projectId,
                         commandId,
-                        threadId: ThreadId.make(active.threadId),
+                        threadId: ThreadId.make(active.threadId!),
                         messageId,
                         scheduledTaskId: active.id,
                         text: prompt,
                         attachments: [],
-                        modelSelection: active.modelSelection,
+                        ...(modelSelection === undefined ? {} : { modelSelection }),
                         // Scheduled prompts must not interrupt tools in the bound thread.
                         mode: "queue",
                         createdBy: active.createdBy,

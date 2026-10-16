@@ -95,12 +95,26 @@ describe("resolveGitWorktreePath", () => {
 });
 
 describe("resolveWorktreeStudioHome", () => {
-  it.effect("answers with .specweave-studio before the dev runner creates it", () =>
+  it.effect("answers with .specwithcode before the dev runner creates it", () =>
     Effect.gen(function* () {
       const { root, nested } = yield* makeRepo("worktree");
       const home = yield* resolveWorktreeStudioHome(nested);
-      assert.equal(home, NodePath.join(NodePath.resolve(root), ".specweave-studio"));
+      assert.equal(home, NodePath.join(NodePath.resolve(root), ".specwithcode"));
       assert.isFalse(NodeFS.existsSync(home ?? ""));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps an existing legacy .specweave-studio until a .specwithcode exists", () =>
+    Effect.gen(function* () {
+      const { root, nested } = yield* makeRepo("worktree");
+      const legacy = NodePath.join(NodePath.resolve(root), ".specweave-studio");
+      NodeFS.mkdirSync(legacy);
+      assert.equal(yield* resolveWorktreeStudioHome(nested), legacy);
+      NodeFS.mkdirSync(NodePath.join(NodePath.resolve(root), ".specwithcode"));
+      assert.equal(
+        yield* resolveWorktreeStudioHome(nested),
+        NodePath.join(NodePath.resolve(root), ".specwithcode"),
+      );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "SpecWithCode Browser",
+  "short_name": "SpecWithCode",
+  "version": "1.0.0",
+  "description": "Let your SpecWithCode agents (Claude, Codex, Grok, Gemini, Copilot, Muse) use this Chrome profile, on this computer only.",
+  "minimum_chrome_version": "120",
+  "permissions": ["debugger", "tabs", "tabGroups", "storage", "alarms"],
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "SpecWithCode Browser",
+    "default_popup": "src/popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  }
+}

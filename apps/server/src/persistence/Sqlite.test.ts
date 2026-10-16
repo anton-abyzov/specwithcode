@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { liveDatabaseFile } from "./liveDatabaseGuard.ts";
 import { WAL_SIZE_LIMIT_BYTES } from "./Sqlite.ts";
 import * as SqlitePersistence from "./Sqlite.ts";
 
@@ -40,6 +41,31 @@ const spawnWriteLockHolder = (dbPath: string, holdMs: number) =>
         );
       }),
   );
+
+it.effect("names its files to the live database guard only while the connection is open", () => {
+  const tempDir = NodeFS.realpathSync(
+    NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-sqlite-guard-")),
+  );
+  const dbPath = NodePath.join(tempDir, "state.sqlite");
+
+  return Effect.gen(function* () {
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`SELECT 1`;
+        assert.equal(liveDatabaseFile(`${dbPath}-shm`), `${dbPath}-shm`);
+        assert.equal(liveDatabaseFile(dbPath), dbPath);
+      }).pipe(
+        Effect.provide(
+          SqlitePersistence.layerFromPath(dbPath).pipe(Layer.provide(NodeServices.layer)),
+        ),
+      ),
+    );
+    assert.isUndefined(liveDatabaseFile(`${dbPath}-shm`));
+  }).pipe(
+    Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
+  );
+});
 
 it.effect("waits out a concurrent writer instead of failing with SQLITE_BUSY", () => {
   const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-sqlite-busy-"));

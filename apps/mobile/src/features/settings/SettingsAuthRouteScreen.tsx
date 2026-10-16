@@ -11,7 +11,7 @@ import { StudioConnectProfilePage } from "../cloud/StudioConnectProfilePage";
 const USER_PROFILE_CUSTOM_PAGES = [
   {
     path: "studio-connect",
-    label: "Studio Connect",
+    label: "SpecWithCode Connect",
     icon: "globe",
     content: <StudioConnectProfilePage />,
   },

@@ -5,6 +5,7 @@ import {
   ProviderInstanceId,
   resolveAgentInstructions,
   type RuntimeMode,
+  withServiceInstructions,
 } from "@specweave-studio/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -148,10 +149,12 @@ export const layerFromProjectStore: Layer.Layer<
           runtimeMode: providerRuntimeMode(input.thread.runtimeMode, supportedRuntimeModes),
           interactionMode: input.thread.interactionMode,
           cwd,
-          agentInstructions: resolveAgentInstructions({
-            globalInstructions: settings.agentInstructions,
-            projectInstructions: projectOverrides?.agentInstructions,
-          }),
+          agentInstructions: withServiceInstructions(
+            resolveAgentInstructions({
+              globalInstructions: settings.agentInstructions,
+              projectInstructions: projectOverrides?.agentInstructions,
+            }),
+          ),
           claudeWorkflowMode: projectOverrides?.claudeWorkflowMode ?? settings.claudeWorkflowMode,
           responseStyle: projectOverrides?.responseStyle ?? settings.responseStyle,
         });

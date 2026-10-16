@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, afterEach, it, expect, vi } from "vite-plus/test";
 import { DEFAULT_SERVER_SETTINGS } from "@specweave-studio/contracts";
-import { CoordinatorAccessPicker } from "./CoordinatorAccessPicker";
+import { CoordinatorAccessPicker, CoordinatorComposerControls } from "./CoordinatorAccessPicker";
 const mocks = vi.hoisted(() => ({ allowed: true, save: vi.fn() }));
 vi.mock("../../hooks/useSettings", () => ({
   useEnvironmentSettings: () => DEFAULT_SERVER_SETTINGS,
@@ -61,4 +61,26 @@ it("requires settings write scope", async () => {
   expect(container.querySelector("select")!.disabled).toBe(true);
   await choose();
   expect(mocks.save).not.toHaveBeenCalled();
+});
+
+it("keeps access in the controls row, right after the model and effort", async () => {
+  await act(async () =>
+    root.render(
+      <div className="sws-composer-foot">
+        <span className="sws-composer-meta">meta</span>
+        <CoordinatorComposerControls
+          project={{ environmentId: "host" as never, id: "project" as never }}
+          fallback={null}
+        >
+          <span data-coordinator-model-controls="">model and effort</span>
+        </CoordinatorComposerControls>
+      </div>,
+    ),
+  );
+  const row = container.querySelector("[data-coordinator-composer-controls]")!;
+  expect(row.parentElement?.className).toBe("sws-composer-foot");
+  const [model, access] = row.children;
+  expect(row.children).toHaveLength(2);
+  expect(model?.textContent).toBe("model and effort");
+  expect(access?.querySelector("select")?.getAttribute("aria-label")).toBe("Project permissions");
 });

@@ -246,7 +246,7 @@ export function applyProviderInstanceSettings(
 const GITHUB_COPILOT_AGENT_ID = "github-copilot-cli";
 const ACP_SOURCE_QUALIFIERS = {
   local: { label: "your install", present: /\b(?:your|local|install(?:ed)?)\b/iu },
-  registry: { label: "Studio-managed", present: /\bmanaged\b/iu },
+  registry: { label: "SpecWithCode-managed", present: /\bmanaged\b/iu },
 } as const;
 
 /**

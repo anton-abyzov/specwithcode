@@ -31,6 +31,7 @@ vi.mock("../../state/entities", async () => {
   return {
     useThreadProjection: (ref: unknown) => state.projection(ref),
     useThreadHistory: () => useSyncExternalStore(subscribe, () => state.history),
+    useServerConfigs: () => new Map(),
   };
 });
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => state.load }));
@@ -123,7 +124,7 @@ it("loads the selected predecessor lazily with its exact machine scope and recor
     "You",
     "Coordinator",
   ]);
-  expect(container.textContent).toContain("M1 · claude-native · recorded-old-model");
+  expect(container.textContent).toContain("M1 · Claude Code · Recorded Old Model");
   expect(container.querySelector("textarea")).toBeNull();
 });
 

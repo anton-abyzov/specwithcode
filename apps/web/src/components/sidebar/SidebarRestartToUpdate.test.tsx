@@ -19,6 +19,9 @@ const state = vi.hoisted(() => ({
   closeToast: vi.fn(),
   announce: vi.fn(),
   prepare: vi.fn(),
+  navigate: vi.fn(),
+  // What the update feed answers when the restart asks it again; null keeps the download.
+  feed: null as DesktopUpdateState | null,
 }));
 
 vi.mock("../../env", () => ({ isElectron: true }));
@@ -32,6 +35,9 @@ vi.mock("../ui/toast", () => ({
   hiddenToastActionProps: { children: null },
 }));
 vi.mock("../../state/environments", () => ({ usePrimaryEnvironmentId: () => "env-1" }));
+vi.mock("@tanstack/react-router", () => ({ useNavigate: () => state.navigate }));
+vi.mock("../../state/entities", () => ({ useProjects: () => [] }));
+vi.mock("../ProjectFavicon", () => ({ ProjectFavicon: () => null }));
 vi.mock("../../state/server", () => ({ serverEnvironment: { prepareServiceUpdate: {} } }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => state.prepare }));
 vi.mock("../desktopUpdate.toast", () => ({ showDesktopUpdateDownloadedToast: state.announce }));
@@ -96,6 +102,9 @@ function prepareCall(input: ServerPrepareServiceUpdateInput): string {
 }
 
 const bridge: {
+  checkForUpdate: ReturnType<typeof vi.fn>;
+  downloadUpdate: ReturnType<typeof vi.fn>;
+  getUpdateState: ReturnType<typeof vi.fn>;
   getServiceUpdateState: ReturnType<typeof vi.fn<() => Promise<StudioServiceUpdateState>>>;
   installUpdate: ReturnType<typeof vi.fn>;
   installServiceUpdate: ReturnType<
@@ -104,6 +113,25 @@ const bridge: {
   cancelServiceUpdate?: ReturnType<typeof vi.fn<() => Promise<StudioServiceUpdateState>>>;
   getUpdatePreferences: ReturnType<typeof vi.fn>;
 } = {
+  checkForUpdate: vi.fn(async () => {
+    if (state.feed !== null) {
+      calls.push(`check:${state.feed.availableVersion}`);
+      state.app = state.feed;
+    }
+    return { checked: true, state: state.app ?? downloaded };
+  }),
+  downloadUpdate: vi.fn(async () => {
+    const current = state.app ?? downloaded;
+    calls.push(`download:${current.availableVersion}`);
+    state.app = {
+      ...current,
+      status: "downloaded",
+      downloadedVersion: current.availableVersion,
+      downloadPercent: 100,
+    };
+    return { accepted: true, completed: true, state: state.app };
+  }),
+  getUpdateState: vi.fn(async () => state.app ?? downloaded),
   getServiceUpdateState: vi.fn(async () => agent),
   installUpdate: vi.fn(async (options?: { expectedVersion?: string }) => {
     calls.push(`installUpdate:${options?.expectedVersion ?? ""}`);
@@ -184,6 +212,10 @@ beforeEach(() => {
   state.updateToast.mockReset();
   state.closeToast.mockReset();
   state.announce.mockReset();
+  state.navigate.mockReset();
+  state.feed = null;
+  bridge.checkForUpdate.mockClear();
+  bridge.downloadUpdate.mockClear();
   agent = serviceWaiting;
   checked = { idle: true, stoppedThreads: 0, blockers: [] };
   prepared = { idle: true, stoppedThreads: 0, blockers: [], held: true };
@@ -261,7 +293,7 @@ describe("SidebarRestartToUpdate", () => {
     expect(label()).toBe("Restart to update");
     await click();
     // Nothing runs, so the restart goes ahead without asking.
-    expect(calls).toEqual(["prepare:false", "installUpdate:0.2.5"]);
+    expect(calls).toEqual(["prepare:false", "prepare:true+hold", "installUpdate:0.2.5"]);
     expect(readConfirmDialogState()).toMatchObject({ status: "idle" });
     expect(label()).toBe("Restarting…");
     expect(state.addToast).not.toHaveBeenCalled();
@@ -279,16 +311,53 @@ describe("SidebarRestartToUpdate", () => {
     const dialog = readConfirmDialogState();
     expect(dialog).toMatchObject({
       status: "confirming",
-      confirmLabel: "Restart anyway",
-      cancelLabel: "Install when idle",
+      confirmLabel: "Restart when idle",
+      alternateLabel: "Restart now",
+      cancelLabel: "Cancel",
     });
     expect(dialog.status === "confirming" && dialog.message).toContain(
-      "2 jobs are still running, 1 message is queued in 1 thread",
+      "2 running, 1 queued in 1 thread",
     );
+    // The work is listed under the summary, grouped by project.
+    expect(dialog.status === "confirming" && dialog.details).toBeTruthy();
     await act(async () => {
-      respondToConfirmDialog(true);
+      respondToConfirmDialog("alternate");
     });
-    expect(calls).toEqual(["prepare:false", "installUpdate:0.2.5"]);
+    expect(calls).toEqual(["prepare:false", "prepare:true+hold", "installUpdate:0.2.5"]);
+  });
+
+  it("installs the newest release instead of an older download", async () => {
+    state.feed = {
+      ...downloaded,
+      status: "available",
+      availableVersion: "0.2.7",
+      downloadedVersion: null,
+    };
+    checked = { idle: false, stoppedThreads: 0, blockers: [blocker("run", 1, "Fix login")] };
+    registerConfirmDialogHost();
+    render();
+    await click();
+    const dialog = readConfirmDialogState();
+    // The dialog names the version that will actually be installed.
+    expect(dialog.status === "confirming" && dialog.message).toContain("SpecWithCode 0.2.7");
+    await act(async () => {
+      respondToConfirmDialog("alternate");
+    });
+    expect(calls).toEqual([
+      "check:0.2.7",
+      "download:0.2.7",
+      "prepare:false",
+      "prepare:true+hold",
+      "installUpdate:0.2.7",
+    ]);
+  });
+
+  it("keeps the downloaded update when the feed has nothing newer", async () => {
+    render();
+    await click();
+    expect(bridge.checkForUpdate).toHaveBeenCalled();
+    expect(bridge.downloadUpdate).not.toHaveBeenCalled();
+    expect(calls).toEqual(["prepare:false", "prepare:true+hold", "installUpdate:0.2.5"]);
   });
 
   it("restarts on its own once the work the user let finish is done", async () => {
@@ -297,27 +366,78 @@ describe("SidebarRestartToUpdate", () => {
     render();
     await click();
     await act(async () => {
-      respondToConfirmDialog(false);
+      respondToConfirmDialog(true);
     });
     expect(calls).toEqual(["prepare:false"]);
-    expect(label()).toBe("Restarts when idle");
+    expect(label()).toBe("Restarts when idle, or in 2:00");
     // Still running at the next check: nothing restarts.
     await act(async () => {
       vi.advanceTimersByTime(15_000);
     });
     expect(calls).toEqual(["prepare:false", "prepare:false"]);
     checked = { idle: true, stoppedThreads: 0, blockers: [] };
-    await act(async () => {
-      vi.advanceTimersByTime(15_000);
-    });
+    await advance(15_000);
     expect(calls).toEqual([
       "prepare:false",
       "prepare:false",
       "prepare:false",
+      "prepare:true+hold",
       "installUpdate:0.2.5",
     ]);
     expect(readConfirmDialogState().status).not.toBe("confirming");
     expect(label()).toBe("Restarting…");
+  });
+
+  it("stops the work and restarts once the hold window passes", async () => {
+    checked = { idle: false, stoppedThreads: 0, blockers: [blocker("run", 1, "Fix login")] };
+    registerConfirmDialogHost();
+    render();
+    await click();
+    await act(async () => {
+      respondToConfirmDialog(true);
+    });
+    await advance(60_000);
+    expect(label()).toBe("Restarts when idle, or in 1:00");
+    expect(calls).not.toContain("installUpdate:0.2.5");
+    // Still running at two minutes: the work is stopped for the update, not waited on.
+    await advance(60_000);
+    expect(calls.slice(-2)).toEqual(["prepare:true+hold", "installUpdate:0.2.5"]);
+    expect(label()).toBe("Restarting…");
+  });
+
+  it("uses the hold window from Settings", async () => {
+    bridge.getUpdatePreferences.mockResolvedValueOnce({
+      checkAutomatically: true,
+      downloadAutomatically: true,
+      installAutomatically: true,
+      forceInstallAfterMinutes: 5,
+    });
+    checked = { idle: false, stoppedThreads: 0, blockers: [blocker("run", 1, "Fix login")] };
+    registerConfirmDialogHost();
+    render();
+    await advance(0);
+    await click();
+    await act(async () => {
+      respondToConfirmDialog(true);
+    });
+    expect(label()).toBe("Restarts when idle, or in 5:00");
+    await advance(4 * 60_000);
+    expect(calls).not.toContain("installUpdate:0.2.5");
+    await advance(60_000);
+    expect(calls.at(-1)).toBe("installUpdate:0.2.5");
+  });
+
+  it("leaves a fleet-installed service running through an app restart", async () => {
+    state.service = {
+      ...serviceWaiting,
+      status: "up-to-date",
+      availableVersion: null,
+      downloadedVersion: null,
+    };
+    render();
+    await click();
+    expect(calls).not.toContain("prepare:true+hold");
+    expect(calls.at(-1)).toBe("installUpdate:0.2.5");
   });
 
   it("says so when the app is still open a minute after an accepted install", async () => {
@@ -328,7 +448,7 @@ describe("SidebarRestartToUpdate", () => {
     });
     expect(label()).toBe("Restart to update");
     expect(state.addToast).toHaveBeenCalledWith(
-      expect.objectContaining({ title: "Studio did not restart" }),
+      expect.objectContaining({ title: "SpecWithCode did not restart" }),
     );
   });
 
@@ -355,6 +475,20 @@ describe("SidebarRestartToUpdate", () => {
     expect(button()?.props.disabled).toBe(false);
   });
 
+  it("waits while the updater finishes another step instead of failing", async () => {
+    // The 1.0.33 case: the updater still held a finished download.
+    installResult = { accepted: false, completed: false, reason: "busy" };
+    render();
+    await click();
+    expect(label()).toBe("Finishing update step…");
+    expect(button()?.props.disabled).toBe(true);
+    installResult = { accepted: true, completed: false };
+    await advance(1_000);
+    expect(calls.filter((call) => call === "installUpdate:0.2.5")).toHaveLength(2);
+    expect(label()).toBe("Restarting…");
+    expect(state.addToast).not.toHaveBeenCalled();
+  });
+
   it("shows why a refused install did not happen and re-enables the button", async () => {
     installResult = { accepted: false, completed: false, reason: "no-download" };
     render();
@@ -363,6 +497,14 @@ describe("SidebarRestartToUpdate", () => {
     expect(state.addToast).toHaveBeenCalledWith(
       expect.objectContaining({ description: expect.stringContaining("newer release") }),
     );
+    // The drained work may start again: the app did not restart.
+    await advance(0);
+    expect(calls).toEqual([
+      "prepare:false",
+      "prepare:true+hold",
+      "installUpdate:0.2.5",
+      "prepare:release",
+    ]);
   });
 
   it("keeps the button during a background check", () => {
@@ -371,19 +513,23 @@ describe("SidebarRestartToUpdate", () => {
     expect(label()).toBe("Restart to update");
   });
 
-  it("announces a background download once it is ready", () => {
+  it("does nothing when the restart warning is cancelled", async () => {
+    checked = { idle: false, stoppedThreads: 0, blockers: [blocker("run", 1, "Fix login")] };
+    registerConfirmDialogHost();
     render();
-    expect(state.announce).toHaveBeenCalledWith(bridge, downloaded);
+    await click();
+    await act(async () => {
+      respondToConfirmDialog(false);
+    });
+    expect(calls).toEqual(["prepare:false"]);
+    expect(label()).toBe("Restart to update");
   });
 
-  it("waits to announce until a background window is focused", () => {
-    focused = false;
+  it("shows the button without a separate downloaded toast", () => {
     render();
+    expect(label()).toBe("Restart to update");
     expect(state.announce).not.toHaveBeenCalled();
-    act(() => {
-      for (const listener of [...focusListeners]) listener();
-    });
-    expect(state.announce).toHaveBeenCalledWith(bridge, downloaded);
+    expect(state.addToast).not.toHaveBeenCalled();
   });
 
   describe("service only", () => {
@@ -409,7 +555,7 @@ describe("SidebarRestartToUpdate", () => {
       expect(label()).toBe("Update now");
       expect(button()?.props.disabled).toBe(false);
 
-      agent = { ...serviceWaiting, status: "installing", message: "Installing Studio 0.2.5" };
+      agent = { ...serviceWaiting, status: "installing", message: "Installing SpecWithCode 0.2.5" };
       await advance(2_000);
       expect(label()).toBe("Installing…");
       expect(button()?.props.disabled).toBe(true);
@@ -508,7 +654,7 @@ describe("SidebarRestartToUpdate", () => {
     it("offers Update now and Cancel while waiting, before any notice", async () => {
       agent = {
         ...serviceWaiting,
-        message: "Waiting for open Studio terminals and agent processes to close",
+        message: "Waiting for open SpecWithCode terminals and agent processes to close",
         updatedAt: new Date(Date.now() + 1_000).toISOString(),
       };
       render();
@@ -517,7 +663,7 @@ describe("SidebarRestartToUpdate", () => {
       const toast = lastToast();
       expect(toast).toMatchObject({
         type: "loading",
-        description: "Waiting for open Studio terminals and agent processes to close",
+        description: "Waiting for open SpecWithCode terminals and agent processes to close",
         actionProps: { children: "Update now" },
         data: { secondaryActionProps: { children: "Cancel update" } },
       });
@@ -575,6 +721,40 @@ describe("SidebarRestartToUpdate", () => {
       agent = { ...agent, message: "Retrying (attempt 2)", updatedAt: new Date().toISOString() };
       await advance(2_000);
       expect(lastToast().description).toBe("Retrying (attempt 2)");
+    });
+
+    it("renews a request the agent let lapse while work wound down, then gives up", async () => {
+      const expired = "The update request expired before it could start; choose Update now again.";
+      render();
+      await click();
+      expect(calls).toEqual(STOP_AND_INSTALL);
+      const lapse = async () => {
+        agent = {
+          ...serviceWaiting,
+          status: "waiting-for-quiet",
+          message: "Waiting for open Studio terminals and agent processes to close (copilot)",
+          updatedAt: new Date().toISOString(),
+        };
+        await advance(2_000);
+        agent = {
+          ...agent,
+          status: "error",
+          message: expired,
+          updatedAt: new Date().toISOString(),
+        };
+        await advance(2_000);
+      };
+      for (let renewal = 1; renewal <= 3; renewal += 1) {
+        calls.length = 0;
+        await lapse();
+        // Asked again, still holding the work: no failure shown.
+        expect(calls).toEqual(["prepare:true+hold", "installServiceUpdate:force"]);
+        expect(lastToast().type).not.toBe("error");
+      }
+      calls.length = 0;
+      await lapse();
+      expect(calls).not.toContain("installServiceUpdate:force");
+      expect(lastToast()).toMatchObject({ type: "error", description: expired });
     });
 
     it("keeps following the agent while a check hangs", async () => {
@@ -719,13 +899,13 @@ describe("SidebarRestartToUpdate", () => {
       agent = {
         ...serviceWaiting,
         status: "error",
-        message: "Studio 0.2.5 did not install; Studio stayed on 0.2.4.",
+        message: "SpecWithCode 0.2.5 did not install; SpecWithCode stayed on 0.2.4.",
       };
       await advance(2_000);
       expect(label()).toBe("Retry update");
       expect(lastToast()).toMatchObject({
         type: "error",
-        description: "Studio 0.2.5 did not install; Studio stayed on 0.2.4.",
+        description: "SpecWithCode 0.2.5 did not install; SpecWithCode stayed on 0.2.4.",
         actionProps: { children: "Try again" },
       });
       expect(button()?.props.disabled).toBe(false);

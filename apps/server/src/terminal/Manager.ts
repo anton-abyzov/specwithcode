@@ -43,7 +43,8 @@ import {
 import { makeKeyedCoalescingWorker } from "@specweave-studio/shared/KeyedCoalescingWorker";
 import * as KeyedLock from "@specweave-studio/shared/KeyedLock";
 import { HostProcessArchitecture, HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
-import { mergePathEntries } from "@specweave-studio/shared/shell";
+import { listLoginShellCandidates, mergePathEntries } from "@specweave-studio/shared/shell";
+import * as NodeOS from "node:os";
 
 import { acpRegistryManagedBinaryDirectories } from "../provider/acp/AcpRegistrySupport.ts";
 import { getTerminalLabel } from "@specweave-studio/shared/terminalLabels";
@@ -506,7 +507,9 @@ function defaultShellResolver(platform: NodeJS.Platform, env: NodeJS.ProcessEnv)
   if (platform === "win32") {
     return "pwsh.exe";
   }
-  return env.SHELL ?? "bash";
+  // A service started by launchd has no SHELL; the account's login shell
+  // (zsh on macOS) is what the user's own terminal would open.
+  return listLoginShellCandidates(platform, env.SHELL)[0] ?? "bash";
 }
 
 function normalizeShellCommand(
@@ -554,11 +557,15 @@ function shellCandidateFromCommand(
   if (platform === "win32" && (shellName === "pwsh.exe" || shellName === "powershell.exe")) {
     return { shell: command, args: ["-NoLogo"] };
   }
+  // macOS terminals open login shells, so ~/.zprofile and friends load.
+  const login = platform === "darwin" && LOGIN_SHELL_NAMES.has(shellName) ? ["-l"] : [];
   if (platform !== "win32" && shellName === "zsh") {
-    return { shell: command, args: ["-o", "nopromptsp"] };
+    return { shell: command, args: [...login, "-o", "nopromptsp"] };
   }
-  return { shell: command };
+  return login.length > 0 ? { shell: command, args: login } : { shell: command };
 }
+
+const LOGIN_SHELL_NAMES = new Set(["zsh", "bash", "fish", "ksh", "sh", "dash"]);
 
 function windowsSystemRoot(env: NodeJS.ProcessEnv): string {
   return env.SystemRoot?.trim() || env.windir?.trim() || "C:\\Windows";
@@ -620,7 +627,9 @@ function resolveShellCandidates(
 
   return uniqueShellCandidates([
     requested,
-    shellCandidateFromCommand(normalizeShellCommand(env.SHELL, platform), platform),
+    ...listLoginShellCandidates(platform, env.SHELL).map((shell) =>
+      shellCandidateFromCommand(normalizeShellCommand(shell, platform), platform),
+    ),
     shellCandidateFromCommand("/bin/zsh", platform),
     shellCandidateFromCommand("/bin/bash", platform),
     shellCandidateFromCommand("/bin/sh", platform),
@@ -1500,6 +1509,29 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const baseEnv = options.env ?? process.env;
   const shellResolver = options.shellResolver ?? (() => defaultShellResolver(platform, baseEnv));
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const isDirectory = (candidate: string) =>
+    fileSystem.stat(candidate).pipe(
+      Effect.map((stats) => stats.type === "Directory"),
+      Effect.orElseSucceed(() => false),
+    );
+  // A client that sends `fallbackCwd` accepts a nearby folder when the thread's
+  // own one is gone (a removed worktree): the project root, then home. Without
+  // it a missing cwd stays an error.
+  const resolveLaunchCwd = <
+    Input extends TerminalOpenInput | TerminalAttachInput | TerminalRestartInput,
+  >(
+    input: Input,
+  ): Effect.Effect<Input> =>
+    Effect.gen(function* () {
+      if (input.cwd === undefined || input.fallbackCwd === undefined) return input;
+      const home = baseEnv.HOME?.trim() || NodeOS.homedir();
+      for (const candidate of [input.cwd, input.fallbackCwd, home]) {
+        if (yield* isDirectory(candidate)) {
+          return candidate === input.cwd ? input : { ...input, cwd: candidate };
+        }
+      }
+      return input;
+    });
   const resolveLaunchInputEnvironment = Effect.fn("terminal.resolveLaunchInputEnvironment")(
     function* <Input extends TerminalOpenInput | TerminalAttachInput | TerminalRestartInput>(
       input: Input,
@@ -1507,15 +1539,16 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       Input,
       TerminalProviderInstanceNotFoundError | TerminalProviderEnvironmentError
     > {
-      if (input.providerInstanceId === undefined) return input;
+      const located = yield* resolveLaunchCwd(input);
+      if (located.providerInstanceId === undefined) return located;
       const resolver = options.resolveProviderInstanceEnvironment;
       if (resolver === undefined) {
         return yield* new TerminalProviderInstanceNotFoundError({
-          providerInstanceId: ProviderInstanceId.make(input.providerInstanceId),
+          providerInstanceId: ProviderInstanceId.make(located.providerInstanceId),
         });
       }
-      const env = yield* resolver(input.providerInstanceId, input.env);
-      return { ...input, env };
+      const env = yield* resolver(located.providerInstanceId, located.env);
+      return { ...located, env };
     },
   );
   // One process-table snapshot per poll tick, shared across every terminal.
@@ -2200,7 +2233,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         cwd: session.cwd,
         cols: session.cols,
         rows: session.rows,
-        env: spawnEnv,
+        env:
+          platform === "win32" || spawnEnv.SHELL
+            ? spawnEnv
+            : { ...spawnEnv, SHELL: candidate.shell },
       }),
     );
 

@@ -3,7 +3,10 @@ import * as NodeFSP from "node:fs/promises";
 
 import type { AntigravityAuthMethod, ProviderInstanceId } from "@specweave-studio/contracts";
 import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
-import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@specweave-studio/shared/nodeRuntime";
+import {
+  resolveNodeExecutable,
+  nodeRuntimeUnavailableMessage,
+} from "@specweave-studio/shared/nodeRuntime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
@@ -341,7 +344,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
     helperExecutable.includes("%s")
   ) {
     return yield* authSupportError(
-      "The Studio runtime path cannot be used to suppress Antigravity browser launches.",
+      "The SpecWithCode runtime path cannot be used to suppress Antigravity browser launches.",
     );
   }
 

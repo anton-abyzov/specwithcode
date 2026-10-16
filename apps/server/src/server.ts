@@ -5,6 +5,8 @@ import * as Semaphore from "effect/Semaphore";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as PullRequestWatchReactor from "./orchestration-v2/PullRequestWatchReactor.ts";
+import * as ClaudeIdleCompactionReactor from "./orchestration-v2/ClaudeIdleCompactionReactor.ts";
+import * as ThreadManagementService from "./orchestration-v2/ThreadManagementService.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeHttp from "node:http";
 
@@ -15,6 +17,7 @@ import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -67,13 +70,16 @@ import * as PortScanner from "./preview/PortScanner.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as DesktopBrowserChannel from "./preview/DesktopBrowserChannel.ts";
 import * as ServerBrowserStream from "./preview/ServerBrowserStream.ts";
+import * as BrowserExtension from "./browserExtension/BrowserExtension.ts";
 import * as PreviewBrowser from "./preview/PreviewBrowser.ts";
 import * as ProcessRunner from "./processRunner.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as StudioMods from "./mods/StudioMods.ts";
+import * as ComposerDrafts from "./composerDrafts/ComposerDrafts.ts";
 import * as TelegramBotApi from "./channels/TelegramBotApi.ts";
 import * as TelegramChannel from "./channels/TelegramChannel.ts";
+import * as StatusMonitor from "./statusPage/StatusMonitor.ts";
 import * as GoogleAccountService from "./integrations/google/GoogleAccountService.ts";
 import * as GoogleApi from "./integrations/google/GoogleApi.ts";
 import * as GoogleOAuthRoute from "./integrations/google/googleOAuthRoute.ts";
@@ -172,6 +178,9 @@ import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
 import * as ResourceCleanupService from "./orchestration-v2/ResourceCleanupService.ts";
 import * as ThreadSettlementService from "./orchestration-v2/ThreadSettlementService.ts";
+import * as ThreadFinishActionService from "./orchestration-v2/ThreadFinishActionService.ts";
+import * as IdAllocator from "./orchestration-v2/IdAllocator.ts";
+import * as StaleRunWatchdog from "./orchestration-v2/StaleRunWatchdog.ts";
 import * as ThreadPullRequestService from "./orchestration-v2/ThreadPullRequestService.ts";
 import * as ThreadReportService from "./project/ThreadReportService.ts";
 import * as RunFinalizationService from "./orchestration-v2/RunFinalizationService.ts";
@@ -297,7 +306,16 @@ const layerRepositoryIdentityResolver = Layer.effect(
   RepositoryIdentityResolver.RepositoryIdentityResolver,
   Effect.gen(function* () {
     const registry = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
+    const fileSystem = yield* FileSystem.FileSystem;
     return yield* RepositoryIdentityResolver.make({
+      // Pull request and enrichment sweeps resolve every project each minute.
+      // On a working Mac 14 of 24 projects had no repository, no remote or no
+      // folder at all, and re-asking git about them every minute was 3 in 4 of
+      // the server's git spawns. Clone, publish and PR discovery pass
+      // `refresh: true`, so they never wait for this.
+      negativeCacheTtl: Duration.minutes(5),
+      // An unreadable folder still goes to git, which reports why.
+      cwdExists: (cwd) => fileSystem.exists(cwd).pipe(Effect.orElseSucceed(() => true)),
       refine: Effect.fn(function* (identity: RepositoryIdentity) {
         const remote = ForgejoCli.parseForgejoRemote(identity.locator.remoteUrl);
         if (
@@ -497,6 +515,16 @@ const layerThreadSettlementWorker = Layer.effectDiscard(
   Layer.provide(RuntimeLayer.layerEventSink),
 );
 
+// When a thread finishes: leave its branch, open a pull request, or merge it.
+const layerThreadFinishActionWorker = Layer.effectDiscard(
+  ThreadFinishActionService.make.pipe(Effect.flatMap((service) => service.start())),
+).pipe(
+  Layer.provide(IdAllocator.layer),
+  Layer.provide(layerPullRequestService),
+  Layer.provide(ProjectionStoreV2.layer),
+  Layer.provide(RuntimeLayer.layerEventSink),
+);
+
 const layerThreadPullRequestWorker = Layer.effectDiscard(
   ThreadPullRequestService.make.pipe(Effect.flatMap((service) => service.start())),
 ).pipe(Layer.provide(layerPullRequestService));
@@ -549,9 +577,16 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // Asks Studio Connect to deliver webhooks it held while this environment was offline.
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,
+  layerThreadFinishActionWorker,
+  // Ends runs a provider finished but never reported ended (stuck Working).
+  Layer.effectDiscard(
+    StaleRunWatchdog.make.pipe(Effect.flatMap((watchdog) => watchdog.start())),
+  ).pipe(Layer.provide(ProjectionStoreV2.layer)),
   Layer.effectDiscard(StorageCleanup.make.pipe(Effect.flatMap((service) => service.start()))).pipe(
     Layer.provide(ProjectionStoreV2.layer),
   ),
+  // Unsent drafts of deleted threads and projects.
+  ComposerDrafts.layerCleanup.pipe(Layer.provide(ProjectionStoreV2.layer)),
   layerThreadPullRequestWorker,
   layerThreadReportFiling,
   Layer.effectDiscard(
@@ -574,6 +609,15 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.provide(layerPullRequestService),
     Layer.provide(ProjectionStoreV2.layer),
   ),
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      const service = yield* ClaudeIdleCompactionReactor.ClaudeIdleCompactionReactor;
+      yield* service.start();
+    }),
+  ).pipe(
+    Layer.provide(ClaudeIdleCompactionReactor.layer),
+    Layer.provide(ThreadManagementService.layer),
+  ),
   // Talks to a project coordinator from Telegram; polls outbound only.
   Layer.effectDiscard(
     Effect.gen(function* () {
@@ -581,6 +625,10 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
       yield* service.start();
     }),
   ).pipe(Layer.provideMerge(TelegramChannel.layer), Layer.provide(TelegramBotApi.layer)),
+  // Status page checks: public provider feeds and this host's services, in the background.
+  StatusMonitor.layerStart.pipe(
+    Layer.provideMerge(StatusMonitor.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
+  ),
   // Read-only Gmail, Calendar and Drive for the projects the person turns them on for.
   GoogleAccountService.layer.pipe(Layer.provide(GoogleApi.layer)),
   // Subscribes to `account.rate-limits.updated` so usage bars track live
@@ -725,6 +773,7 @@ const layerMakeRoutes = Layer.mergeAll(
     GoogleOAuthRoute.layer,
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,
+    BrowserExtension.routeLayer,
     ServerHttp.layerStaticAndDevRoute,
     layerWebSocketRoutes,
   ),
@@ -741,6 +790,8 @@ const layerMakeRoutes = Layer.mergeAll(
   // Both transports consume the same service instance, so caches single-flight across clients
   // and mutations observed on WebSocket invalidate patches subsequently read over HTTP.
   Layer.provide(layerPullRequestService),
+  // The relay route, the Settings RPCs and the chrome_* MCP tools share one hub.
+  Layer.provide(BrowserExtension.layer),
   // The stream route and the WebSocket RPCs share one browser.
   Layer.provide(ServerBrowser.layer.pipe(Layer.provide(DesktopBrowserChannel.layer))),
   // Server browser tabs and HTML render previews install and run the same headless browser.
@@ -1118,7 +1169,10 @@ const layerMakeServer = Layer.unwrap(
       Layer.provideMerge(layerRuntimeServices),
       Layer.provideMerge(
         McpSessionRegistry.layer.pipe(
-          Layer.provide(ServerEnvironment.layer.pipe(Layer.provide(ServerSecretStore.layer))),
+          Layer.provide(ServerEnvironment.layer.pipe(Layer.provideMerge(ServerSecretStore.layer))),
+          Layer.provide(
+            McpSessionRegistry.layerRetiredThreads.pipe(Layer.provide(layerPersistence)),
+          ),
         ),
       ),
       Layer.provide(layerActivation),

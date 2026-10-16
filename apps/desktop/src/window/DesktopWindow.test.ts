@@ -1491,7 +1491,7 @@ describe("DesktopWindow", () => {
         yield* desktopWindow.showServiceUpdateSplash;
         assert.equal(yield* Ref.get(scenario.createCalls), 1);
         const [url] = splash.loadURL.mock.calls[0] as unknown as [string];
-        assert.include(decodeURIComponent(url), "Waiting for the Studio service update…");
+        assert.include(decodeURIComponent(url), "Waiting for the SpecWithCode service update…");
         assert.notInclude(decodeURIComponent(url), "Connecting to WSL");
 
         // A Dock click while the app waits brings the splash back, not nothing.

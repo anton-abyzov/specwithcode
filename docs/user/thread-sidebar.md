@@ -24,7 +24,7 @@ from the machine menu to move it there. To move a draft into a project, pick the
 project in the heading.
 
 Each thread without a project works in its own folder under `~/.specweave-studio/scratch` (the
-`scratch` folder of your Studio data directory), named after its date, the first words
+`scratch` folder of your SpecWithCode data directory), named after its date, the first words
 of its first message, and a short id, like
 `2026-09-25-convert-these-pngs-to-webp-a1b2c3d4`. Deleting a thread keeps its
 folder, so the files the agent wrote stay until you delete them. Branch, worktree, and diff controls stay hidden because

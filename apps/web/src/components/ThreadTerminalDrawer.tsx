@@ -28,7 +28,7 @@ import {
   type ScopedThreadRef,
   type ThreadId,
 } from "@specweave-studio/contracts";
-import { getTerminalLabel } from "@specweave-studio/shared/terminalLabels";
+import { getTerminalLabel, terminalFolderName } from "@specweave-studio/shared/terminalLabels";
 import * as Schema from "effect/Schema";
 import {
   type PointerEvent as ReactPointerEvent,
@@ -336,6 +336,8 @@ interface TerminalViewportProps {
   terminalId: string;
   terminalLabel: string;
   cwd: string;
+  /** Where the shell starts when `cwd` is gone (the project root). */
+  fallbackCwd?: string;
   worktreePath?: string | null;
   runtimeEnv?: Record<string, string>;
   providerInstanceId?: ProviderInstanceId;
@@ -362,6 +364,7 @@ export function TerminalViewport({
   terminalId,
   terminalLabel,
   cwd,
+  fallbackCwd,
   worktreePath,
   runtimeEnv,
   providerInstanceId,
@@ -439,6 +442,7 @@ export function TerminalViewport({
       threadId,
       terminalId,
       cwd,
+      ...(fallbackCwd !== undefined ? { fallbackCwd } : {}),
       ...(worktreePath !== undefined ? { worktreePath } : {}),
       ...(runtimeEnv ? { env: runtimeEnv } : {}),
       ...(providerInstanceId ? { providerInstanceId } : {}),
@@ -1059,6 +1063,8 @@ interface ThreadTerminalDrawerProps {
   threadRef: ScopedThreadRef;
   threadId: ThreadId;
   cwd: string;
+  /** Where shells start when their folder is gone (the project root). */
+  fallbackCwd?: string;
   worktreePath?: string | null;
   runtimeEnv?: Record<string, string>;
   visible?: boolean;
@@ -1135,6 +1141,7 @@ export default function ThreadTerminalDrawer({
   threadRef,
   threadId,
   cwd,
+  fallbackCwd,
   worktreePath,
   runtimeEnv,
   visible = true,
@@ -1513,6 +1520,7 @@ export default function ThreadTerminalDrawer({
   }
 
   const activeTerminalLaunchLocation = resolveTerminalLaunchLocation(resolvedActiveTerminalId);
+  const activeTerminalFolder = terminalFolderName(activeTerminalLaunchLocation.cwd);
 
   return (
     <aside
@@ -1537,6 +1545,18 @@ export default function ThreadTerminalDrawer({
       {!hasTerminalSidebar && (
         <div className="pointer-events-none absolute right-2 top-2 z-20">
           <div className="pointer-events-auto inline-flex items-center overflow-hidden rounded-md border border-border/80 bg-background shadow-xs">
+            {activeTerminalFolder ? (
+              <>
+                <span
+                  data-terminal-cwd
+                  className="max-w-48 truncate px-1.5 text-muted-foreground text-xs"
+                  title={activeTerminalLaunchLocation.cwd}
+                >
+                  {activeTerminalFolder}
+                </span>
+                <div className="h-4 w-px bg-border/80" />
+              </>
+            ) : null}
             <TerminalActionButton
               disabled={!canOperateTerminal}
               className={`p-1 text-foreground/90 transition-colors ${
@@ -1633,6 +1653,7 @@ export default function ThreadTerminalDrawer({
                           terminalId={terminalId}
                           terminalLabel={terminalLabelById.get(terminalId) ?? "Terminal"}
                           cwd={terminalLaunchLocation.cwd}
+                          {...(fallbackCwd !== undefined ? { fallbackCwd } : {})}
                           {...(terminalLaunchLocation.worktreePath !== undefined
                             ? { worktreePath: terminalLaunchLocation.worktreePath }
                             : {})}
@@ -1663,6 +1684,7 @@ export default function ThreadTerminalDrawer({
                   terminalId={resolvedActiveTerminalId}
                   terminalLabel={terminalLabelById.get(resolvedActiveTerminalId) ?? "Terminal"}
                   cwd={activeTerminalLaunchLocation.cwd}
+                  {...(fallbackCwd !== undefined ? { fallbackCwd } : {})}
                   {...(activeTerminalLaunchLocation.worktreePath !== undefined
                     ? { worktreePath: activeTerminalLaunchLocation.worktreePath }
                     : {})}
@@ -1801,6 +1823,7 @@ export default function ThreadTerminalDrawer({
                                 type="button"
                                 className="flex min-w-0 flex-1 cursor-pointer items-center gap-1 text-left"
                                 onClick={() => onActiveTerminalChange(terminalId)}
+                                title={resolveTerminalLaunchLocation(terminalId).cwd}
                               >
                                 <span className="truncate">{terminalLabel}</span>
                               </button>

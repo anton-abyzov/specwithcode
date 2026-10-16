@@ -158,9 +158,16 @@ describe("ProjectSkillsView", () => {
       "project",
       "1.2.0",
       "VERIFIED",
-      "github:acme/deploy",
+      "acme/deploy",
       "ok",
     ]);
+    expect(
+      deploy.querySelector<HTMLAnchorElement>("a[aria-label='Open deploy on verified-skill.com']")
+        ?.href,
+    ).toBe("https://verified-skill.com/skills/acme/deploy/deploy");
+    expect(
+      deploy.querySelector<HTMLAnchorElement>("a[href='https://github.com/acme/deploy']"),
+    ).not.toBeNull();
     expect(container.textContent).toContain("Cursor: Not installed.");
     expect(container.textContent).toContain("vskill doctor is not available here");
   });
@@ -181,7 +188,69 @@ describe("ProjectSkillsView", () => {
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
     expect(bodyRows()).toEqual([]);
-    expect(container.textContent).toContain("No skills match this search.");
+    expect(container.textContent).toContain("No skills match these filters.");
+  });
+
+  it("filters by agent and level chips and clears every filter at once", async () => {
+    state.data = {
+      ...snapshot,
+      rows: [
+        ...snapshot.rows,
+        row("gws", {
+          scopes: ["user"],
+          providers: [
+            {
+              instanceId: ProviderInstanceId.make("codex"),
+              driver: ProviderDriverKind.make("codex"),
+              label: "Codex",
+              path: "/home/me/.agents/skills/gws/SKILL.md",
+              scope: "user",
+              enabled: true,
+            },
+          ],
+        }),
+      ],
+    };
+    await render();
+    const chip = (group: string, value: string) =>
+      container.querySelector<HTMLElement>(
+        `[aria-label='Filter by ${group}'] [data-facet='${value}']`,
+      )!;
+    await act(async () => chip("agent", "Codex").click());
+    expect(bodyRows()).toEqual(["gws"]);
+    await act(async () => chip("agent", "Codex").click());
+    await act(async () => chip("level", "project").click());
+    expect(bodyRows()).toEqual(["deploy", "review"]);
+    await act(async () => chip("tier", "VERIFIED").click());
+    expect(bodyRows()).toEqual(["deploy"]);
+
+    const clear = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "Clear filters",
+    )!;
+    await act(async () => clear.click());
+    expect(bodyRows()).toEqual(["deploy", "review", "ghost", "gws"]);
+  });
+
+  it("opens a details panel with links, problems and where each agent loads the skill", async () => {
+    await render();
+    await act(async () =>
+      container.querySelector<HTMLElement>("button[aria-label='Show details for deploy']")!.click(),
+    );
+    const panel = document.querySelector("[data-testid=skill-details]")!;
+    expect(panel.textContent).toContain("deploy");
+    expect(panel.textContent).toContain("/work/app/.claude/skills/deploy/SKILL.md");
+    expect(panel.textContent).toContain("/work/app/vskill.lock (project)");
+    expect(panel.textContent).toContain("Matches the locked version");
+    const links = [...panel.querySelectorAll<HTMLAnchorElement>("a")].map((link) => link.href);
+    expect(links).toContain("https://verified-skill.com/skills/acme/deploy/deploy");
+    expect(links).toContain("https://github.com/acme/deploy");
+
+    await act(async () =>
+      (container.querySelector("tr[data-skill=review] td:nth-child(3)") as HTMLElement).click(),
+    );
+    expect(document.querySelector("[data-testid=skill-details]")?.textContent).toContain(
+      "SKILL.md changed since vskill installed it.",
+    );
   });
 
   it("copies the SKILL.md path and disables copy when nothing loads the skill", async () => {

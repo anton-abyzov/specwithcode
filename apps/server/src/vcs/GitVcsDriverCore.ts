@@ -28,7 +28,10 @@ import {
   type ReviewDiffPreviewSource,
   type VcsRef,
 } from "@specweave-studio/contracts";
-import { dedupeRemoteBranchesWithLocalMatches, normalizeGitRemoteUrl } from "@specweave-studio/shared/git";
+import {
+  dedupeRemoteBranchesWithLocalMatches,
+  normalizeGitRemoteUrl,
+} from "@specweave-studio/shared/git";
 import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { compactTraceAttributes } from "@specweave-studio/shared/observability";
 import { decodeJsonResult } from "@specweave-studio/shared/schemaJson";
@@ -168,6 +171,8 @@ interface ExecuteGitOptions {
   timeoutMs?: number | null | undefined;
   allowNonZeroExit?: boolean | undefined;
   fallbackErrorDetail?: string | undefined;
+  /** Append git's last `fatal:` line to the error detail, with any URL credentials removed. */
+  includeFatalLine?: boolean | undefined;
   env?: NodeJS.ProcessEnv | undefined;
   maxOutputBytes?: number | undefined;
   appendTruncationMarker?: boolean | undefined;
@@ -473,6 +478,21 @@ const GIT_DIAGNOSTIC_LINE_PATTERN = /^(?:fatal|error):|^!\s|^\s+!\s/;
 // cause is credentials, so these specific refusals are classified too.
 const SSH_TRANSPORT_REFUSAL_PATTERN =
   /Permission denied \((?:publickey|password|keyboard-interactive)|Permission denied, please try again|Host key verification failed/i;
+
+/** git's last `fatal:` line, with URL credentials removed; null when there is none. */
+function withFatalLine(detail: string, stderr: string): string {
+  const fatal = lastGitFatalLine(stderr);
+  return fatal ? `${detail}: ${fatal}` : detail;
+}
+
+export function lastGitFatalLine(stderr: string): string | null {
+  const line = stderr
+    .split(/\r?\n/)
+    .map((entry) => entry.trim())
+    .filter((entry) => /^fatal:/.test(entry))
+    .at(-1);
+  return line ? line.replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^/@\s]+@/gi, "$1") : null;
+}
 
 function classifyGitFailure(stderr: string): GitCommandFailureReason | null {
   const diagnostics = stderr
@@ -1090,7 +1110,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           new GitCommandError({
             ...gitCommandContext({ operation, cwd, args }),
             ...(reason === null ? {} : { reason }),
-            detail: options.fallbackErrorDetail ?? "Git command exited with a non-zero status.",
+            detail: withFatalLine(
+              options.fallbackErrorDetail ?? "Git command exited with a non-zero status.",
+              options.includeFatalLine ? result.stderr : "",
+            ),
             ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
             stdoutLength: result.stdout.length,
             stderrLength: result.stderr.length,
@@ -3382,6 +3405,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ["-c", `checkout.workers=${checkoutWorkers}`, ...args],
       {
         fallbackErrorDetail: "git worktree add failed",
+        includeFatalLine: true,
         timeoutMs: WORKTREE_ADD_TIMEOUT_MS,
         ...(onCheckoutProgress
           ? {
@@ -3420,21 +3444,27 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           options?.submodules ?? null,
           options?.submodules != null
             ? null
-            : yield* fileSystem.readFileString(path.join(worktreePath, STUDIO_PROJECT_FILE_NAME)).pipe(
-                Effect.flatMap((contents) => {
-                  const file = parseStudioProjectFile(contents);
-                  return file === null
-                    ? Effect.logWarning("specweave-studio.json is invalid; initializing submodules recursively", {
-                        worktreePath,
-                      }).pipe(Effect.as(null))
-                    : Effect.succeed(file);
-                }),
-                Effect.orElseSucceed(() => null),
-              ),
+            : yield* fileSystem
+                .readFileString(path.join(worktreePath, STUDIO_PROJECT_FILE_NAME))
+                .pipe(
+                  Effect.flatMap((contents) => {
+                    const file = parseStudioProjectFile(contents);
+                    return file === null
+                      ? Effect.logWarning(
+                          "specweave-studio.json is invalid; initializing submodules recursively",
+                          {
+                            worktreePath,
+                          },
+                        ).pipe(Effect.as(null))
+                      : Effect.succeed(file);
+                  }),
+                  Effect.orElseSucceed(() => null),
+                ),
         );
     if (hasSubmodules && submoduleMode.value === "none" && progress?.onSubmodulesDisabled) {
       yield* progress.onSubmodulesDisabled({
-        source: submoduleMode.source === "specweave-studio.json" ? "specweave-studio.json" : "settings",
+        source:
+          submoduleMode.source === "specweave-studio.json" ? "specweave-studio.json" : "settings",
       });
     }
     if (submoduleMode.value !== "none") {

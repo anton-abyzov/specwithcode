@@ -55,6 +55,7 @@ import {
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { useEnvironmentSessionState } from "../../state/session";
 import { useProjects } from "../../state/entities";
+import { isArchivedMember } from "../../studio/projectListVisibility";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { getRelativeTimeState } from "../../timestampFormat";
 import {
@@ -184,7 +185,7 @@ function ProviderLastChecked({ lastCheckedAt }: { lastCheckedAt: string | null }
 
 function providerEnvironmentDetail(environment: EnvironmentPresentation): string {
   if (environment.entry.target._tag === "PrimaryConnectionTarget") return "Primary device";
-  if (environment.relayManaged) return "Studio Connect";
+  if (environment.relayManaged) return "SpecWithCode Connect";
   if (environment.entry.target._tag === "SshConnectionTarget") return "SSH";
   if (isDesktopLocalConnectionTarget(environment.entry.target)) return "Local device";
   return environment.displayUrl ?? "Remote device";
@@ -629,7 +630,10 @@ export function EnvironmentProviderSettings({
   const updateClientSettings = useUpdateClientSettings();
   const serverProviders =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
-  const projects = useProjects().filter((project) => project.environmentId === environmentId);
+  // An archived project takes no new work, so its sessions are not offered to resume.
+  const projects = useProjects().filter(
+    (project) => project.environmentId === environmentId && !isArchivedMember(project),
+  );
   const refreshServerProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });

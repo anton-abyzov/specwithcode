@@ -5,6 +5,7 @@ import { it } from "@effect/vitest";
 import {
   EnvironmentId,
   PreviewTabId,
+  ProjectId,
   ProviderInstanceId,
   ThreadId,
   type PreviewAutomationSnapshot,
@@ -25,6 +26,7 @@ import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Broker from "../mcp/PreviewAutomationBroker.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as DesktopChannel from "./DesktopBrowserChannel.ts";
 import * as Manager from "./Manager.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
@@ -1147,6 +1149,66 @@ it.live("an Incognito agent profile keeps agent tabs isolated", () =>
           Layer.mergeAll(
             dependencies,
             ServerSettings.layerTest({ agentBrowserProfileId: "incognito" }),
+          ),
+        ),
+      ),
+    ),
+  ),
+);
+
+/** Thread shells name only the project; the rest of the engine is unused here. */
+const engineWithProject = (projectId: string) =>
+  Layer.succeed(Orchestrator.OrchestratorV2, {
+    getThreadShell: () => Effect.succeed({ projectId: ProjectId.make(projectId) }),
+  } as unknown as Orchestrator.OrchestratorV2["Service"]);
+
+it.live("a project's agent profile overrides the environment's", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      yield* ready;
+      expect(contextRequests).toEqual([{ profileId: "profile-work", isolationKey: undefined }]);
+    }),
+  ).pipe(
+    Effect.provide(
+      ServerBrowser.layer.pipe(
+        Layer.provideMerge(
+          Layer.mergeAll(
+            dependencies,
+            engineWithProject("project-work"),
+            ServerSettings.layerTest({
+              agentBrowserProfileId: "profile-agents",
+              projectSettingsOverrides: {
+                [ProjectId.make("project-work")]: { agentBrowserProfileId: "profile-work" },
+                [ProjectId.make("project-other")]: { agentBrowserProfileId: "incognito" },
+              },
+            }),
+          ),
+        ),
+      ),
+    ),
+  ),
+);
+
+it.live("a project can keep its agents isolated while the environment shares logins", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      yield* ready;
+      expect(contextRequests).toHaveLength(1);
+      expect(contextRequests[0]!.isolationKey).toBeDefined();
+    }),
+  ).pipe(
+    Effect.provide(
+      ServerBrowser.layer.pipe(
+        Layer.provideMerge(
+          Layer.mergeAll(
+            dependencies,
+            engineWithProject("project-other"),
+            ServerSettings.layerTest({
+              agentBrowserProfileId: "profile-agents",
+              projectSettingsOverrides: {
+                [ProjectId.make("project-other")]: { agentBrowserProfileId: "incognito" },
+              },
+            }),
           ),
         ),
       ),

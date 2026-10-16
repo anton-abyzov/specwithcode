@@ -97,6 +97,33 @@ describe("studioServiceUpdates", () => {
     ]);
   });
 
+  it("finds branded services first and unmigrated legacy services beside them", () => {
+    const BRANDED = Path.join(HOME, ".specwithcode");
+    const receiptAt = (root: string, identity: string) =>
+      installationJson(identity, {
+        studioHome: Path.join(root, identity),
+        stateDir: Path.join(root, identity, "userdata"),
+      });
+    const files: Record<string, string> = {
+      [Path.join(BRANDED, "m4", "installation.json")]: receiptAt(BRANDED, "m4"),
+      [Path.join(ROOT, "m4", "installation.json")]: receiptAt(ROOT, "m4"),
+      [Path.join(ROOT, "m1", "installation.json")]: receiptAt(ROOT, "m1"),
+    };
+    const found = findManagedServiceInstallations(
+      HOME,
+      (path) => (path === BRANDED ? ["m4", "userdata"] : ["m1", "m4"]),
+      (path) => {
+        const text = files[path];
+        if (text === undefined) throw new Error("missing");
+        return text;
+      },
+    );
+    expect(found).toEqual([
+      { identity: "m1", studioHome: Path.join(ROOT, "m1"), version: "0.1.4" },
+      { identity: "m4", studioHome: Path.join(BRANDED, "m4"), version: "0.1.4" },
+    ]);
+  });
+
   it("finds nothing when Studio was never installed", () => {
     expect(
       findManagedServiceInstallations(HOME, () => {

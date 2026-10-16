@@ -819,7 +819,30 @@ describe("DesktopRemoteUpdates", () => {
     );
   });
 
-  it.effect("fails fast with the disabled reason when updates are off", () => {
+  it.effect(
+    "fails fast with the disabled reason when SPECWITHCODE_DISABLE_AUTO_UPDATE is set",
+    () => {
+      const harness = makeHarness({ env: { SPECWITHCODE_DISABLE_AUTO_UPDATE: "true" } });
+
+      return runRemoteUpdatesTest(harness, ({ reports, requests }) =>
+        Effect.gen(function* () {
+          yield* Queue.offer(requests, request("req-3"));
+          yield* settle;
+
+          const terminals = terminalReports(reports);
+          assert.equal(terminals.length, 1);
+          assert.equal(terminals[0]?.outcome, "failed");
+          assert.equal(
+            terminals[0]?.reason,
+            "Automatic updates are disabled by the SPECWITHCODE_DISABLE_AUTO_UPDATE setting.",
+          );
+          assert.equal(harness.quitAndInstalls(), 0);
+        }),
+      );
+    },
+  );
+
+  it.effect("still honours the legacy STUDIO_DISABLE_AUTO_UPDATE name", () => {
     const harness = makeHarness({ env: { STUDIO_DISABLE_AUTO_UPDATE: "true" } });
 
     return runRemoteUpdatesTest(harness, ({ reports, requests }) =>
@@ -832,7 +855,7 @@ describe("DesktopRemoteUpdates", () => {
         assert.equal(terminals[0]?.outcome, "failed");
         assert.equal(
           terminals[0]?.reason,
-          "Automatic updates are disabled by the STUDIO_DISABLE_AUTO_UPDATE setting.",
+          "Automatic updates are disabled by the SPECWITHCODE_DISABLE_AUTO_UPDATE setting.",
         );
         assert.equal(harness.quitAndInstalls(), 0);
       }),

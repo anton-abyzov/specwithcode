@@ -10,6 +10,7 @@ import {
 import * as Effect from "effect/Effect";
 import { modelSelectionCommandType } from "@specweave-studio/shared/model";
 
+import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import {
   dispatchFailure,
@@ -21,6 +22,7 @@ import {
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
+import { isProjectActionRequestId } from "../../../project/projectActionRequestId.ts";
 import { ThreadToolkit } from "./tools.ts";
 
 function queueEntry(
@@ -36,6 +38,7 @@ function queueEntry(
     queuedRunId: run.id,
     text: characters.slice(0, limit).join(""),
     truncated: characters.length > limit,
+    ...(run.queueHeld === true ? { held: true } : {}),
   };
 }
 const dispatch = Effect.fn("mcp.dispatchThreadCommand")(function* (
@@ -218,7 +221,14 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   ),
   studio_pending_request_respond: writesThread((input) =>
     Effect.gen(function* () {
+      // Approval cards for project changes are the user's alone to answer.
+      if (isProjectActionRequestId(input.requestId))
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "Only the user can answer an approval card. Wait for their answer.",
+        });
       const { threads, projection } = yield* readQuestion(input);
+      const caller = (yield* McpInvocationContext.McpInvocationContext).thread;
       const result = yield* threads
         .dispatch({
           type: "runtime-request.respond",
@@ -226,6 +236,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           commandId: yield* newCommandId(),
           requestId: input.requestId,
           answers: input.answers,
+          ...(caller?.threadId === undefined ? {} : { answeredByThreadId: caller.threadId }),
         })
         .pipe(Effect.mapError(dispatchFailure));
       return { sequence: result.sequence };
@@ -282,6 +293,9 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       beforeRunId: input.beforeRunId,
     })),
   ),
+  studio_queue_resume: writesThread((input) =>
+    dispatch(input.threadId, (common) => ({ ...common, type: "queue.resume" })),
+  ),
   studio_queue_promote_to_steer: writesThread((input) =>
     dispatch(input.threadId, (common) => ({
       ...common,
@@ -311,6 +325,13 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           break;
         case "mark_unread":
           command = { ...common, type: "thread.mark-unread" };
+          break;
+        case "settle":
+          command = {
+            ...common,
+            type: "thread.settle",
+            ...(input.note === undefined ? {} : { note: input.note }),
+          };
           break;
         default:
           command = { ...common, type: `thread.${input.action}` };

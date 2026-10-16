@@ -1,3 +1,4 @@
+import { blockingWindow } from "@specweave-studio/shared/usageWindows";
 import {
   CHATGPT_USAGE_URL,
   collectLimitAccounts,
@@ -34,6 +35,7 @@ import {
   resetCreditsSummary,
   useResetCredit,
 } from "./UsageLimits";
+import { blockedLabel, usageToneTextClass } from "../../studio/usageIndicatorModel";
 import { instanceLabel, limitAccountLabel } from "./usageAccountLabel";
 
 /** `someone@example.com` → `SE`: enough to tell accounts apart, too little to identify one. */
@@ -487,21 +489,38 @@ function PoolWindowCard({
   now,
   label,
   description,
+  blockedBy,
 }: {
   readonly pool: LimitPoolWindow;
   readonly color: string;
   readonly now: number;
   readonly label?: string | undefined;
   readonly description?: string | undefined;
+  readonly blockedBy?: { readonly label: string; readonly resetsAt: number | null } | undefined;
 }) {
   // The soonest reset that hands anything back; an untouched account resets to no effect.
   const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
+  if (blockedBy) {
+    return (
+      <div className="grid items-center gap-x-6 gap-y-3 rounded-lg border border-border/60 p-4 md:grid-cols-[11rem_minmax(0,1fr)]">
+        <div className="flex flex-col gap-1">
+          <span className="text-sm font-medium text-muted-foreground">{label ?? pool.label}</span>
+          <span className="text-sm text-muted-foreground">{blockedLabel(blockedBy, now)}</span>
+        </div>
+        <div className="opacity-40">
+          <PoolBar pool={pool} color={color} now={now} />
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="grid items-center gap-x-6 gap-y-3 rounded-lg border border-border/60 p-4 md:grid-cols-[11rem_minmax(0,1fr)]">
       <div className="flex flex-col gap-1">
         <span className="text-sm font-medium text-foreground">{label ?? pool.label}</span>
         <span className="flex items-baseline gap-2">
-          <span className="text-3xl font-semibold text-foreground tabular-nums">
+          <span
+            className={`text-3xl font-semibold tabular-nums ${usageToneTextClass(pool.remainingPercent)}`}
+          >
             {pool.remainingPercent}%
           </span>
           <span className="text-sm text-muted-foreground">left</span>
@@ -525,6 +544,27 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
   const color = barColor(pool.driver);
   const label = getDriverOption(pool.driver)?.label ?? String(pool.driver);
   const windows = displayLimitWindows(pool);
+  // A pooled window is spent once every account in it is; it then caps the rest.
+  const gauges = windows.map((window) => {
+    const at = window.resets[window.resets.length - 1]?.at;
+    const scope = window.columns.find((column) => column.window?.modelScope)?.window?.modelScope;
+    return {
+      source: window,
+      id: window.id,
+      label: window.label,
+      usedPercent: 100 - window.remainingPercent,
+      ...(at === undefined || at <= now ? {} : { resetsAt: new Date(at).toISOString() }),
+      ...(scope ? { modelScope: scope } : {}),
+    };
+  });
+  const blockerOf = (window: LimitPoolWindow) => {
+    const gauge = gauges.find((entry) => entry.source === window);
+    const blocker = gauge ? blockingWindow(gauge, gauges, now) : null;
+    if (!blocker) return undefined;
+    // The pool opens again as soon as its first account resets.
+    const reopens = blocker.source.resets.find((reset) => reset.at > now)?.at ?? null;
+    return { label: blocker.label, resetsAt: reopens };
+  };
   return (
     <section className="flex flex-col gap-3">
       <h2 className="flex items-center gap-2 text-sm font-medium text-foreground">
@@ -547,6 +587,7 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
             now={now}
             label={details?.label}
             description={details?.description}
+            blockedBy={blockerOf(window)}
           />
         );
       })}

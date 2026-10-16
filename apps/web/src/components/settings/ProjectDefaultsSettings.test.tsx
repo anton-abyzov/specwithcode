@@ -20,7 +20,7 @@ vi.mock("../../state/environments", () => ({
 vi.mock("../../state/server", () => ({ EMPTY_SERVER_PROVIDERS: [] }));
 vi.mock("./SettingsScopeContext", () => ({
   useSettingsScope: () => ({
-    scope: { kind: "project" },
+    scope: { kind: "project", group: { displayName: "specweave" } },
     target: { environmentId: "worker", ...state.target },
     targets: [],
     connectedEnvironments: [{}],
@@ -83,7 +83,7 @@ function render() {
   act(() => {
     renderer = create(<ProjectDefaultsSettings category="project" />);
   });
-  return renderer!.root.findByType("select");
+  return renderer!.root.findByProps({ "aria-label": "Workspace" }).findByType("select");
 }
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -128,5 +128,36 @@ describe("web workspace default presentation", () => {
     expect(picker.props.value).toBe("mixed");
     act(() => picker.props.onChange({ target: { value: "automatic" } }));
     expect(state.update).toHaveBeenCalledExactlyOnceWith({ defaultThreadEnvMode: null });
+  });
+  it("puts every new-thread override on the Project page", () => {
+    render();
+    const titles = renderer!.root
+      .findAllByType("section")
+      .map((section) => section.props["aria-label"]);
+    expect(titles).toEqual(
+      expect.arrayContaining([
+        "Model",
+        "Permissions",
+        "Workspace",
+        "Submodules",
+        "Start from origin",
+      ]),
+    );
+  });
+  it("points a category page to the Project page while a project is picked", () => {
+    act(() => {
+      renderer = create(<ProjectDefaultsSettings category="source-control" />);
+    });
+    const titles = renderer!.root
+      .findAllByType("section")
+      .map((section) => section.props["aria-label"]);
+    expect(titles).toEqual(["Set on the Project page"]);
+    act(() => renderer!.unmount());
+    act(() => {
+      renderer = create(<ProjectDefaultsSettings category="source-control" onProjectPage />);
+    });
+    expect(
+      renderer!.root.findAllByType("section").map((section) => section.props["aria-label"]),
+    ).toContain("Refresh upstreams at startup");
   });
 });

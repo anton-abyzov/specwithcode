@@ -129,11 +129,25 @@ describe("DesktopSettings", () => {
       checkAutomatically: true,
       downloadAutomatically: true,
       installAutomatically: false,
+      forceInstallAfterMinutes: 2,
     });
     assert.strictEqual(
       DesktopAppSettings.setUpdatePreferences(off, { installAutomatically: false }),
       off,
     );
+  });
+
+  it("keeps the force-install wait within range and stores a changed one", () => {
+    const base = DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
+    const five = DesktopAppSettings.setUpdatePreferences(base, { forceInstallAfterMinutes: 5 });
+    assert.strictEqual(five.updatePreferences.forceInstallAfterMinutes, 5);
+    assert.strictEqual(
+      DesktopAppSettings.setUpdatePreferences(five, { forceInstallAfterMinutes: 5 }),
+      five,
+    );
+    assert.strictEqual(DesktopAppSettings.normalizeForceInstallAfterMinutes(-3), 2);
+    assert.strictEqual(DesktopAppSettings.normalizeForceInstallAfterMinutes("x"), 2);
+    assert.strictEqual(DesktopAppSettings.normalizeForceInstallAfterMinutes(99_999), 1440);
   });
 
   it("defaults packaged nightly builds to the nightly update channel", () => {

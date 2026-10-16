@@ -13,6 +13,7 @@ import { MessageCircleIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { useProjects, useServerConfigs } from "../../state/entities";
+import { projectPickerMembers } from "../../studio/projectListVisibility";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
@@ -138,6 +139,12 @@ export function MessagingSettingsPanel() {
       : null;
   const badge = status ? pollingBadge(status) : null;
   const selectedProject = projects.find((project) => project.id === projectId);
+  // The channel's own project stays a choice even once archived.
+  const projectChoices = projectPickerMembers(
+    projects,
+    (id) => configs.get(id)?.scratchWorkspaceRoot ?? null,
+    selectedProject ?? null,
+  );
 
   return (
     <SettingsPageContainer>
@@ -221,7 +228,7 @@ export function MessagingSettingsPanel() {
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup alignItemWithTrigger={false}>
-                  {projects.map((project) => (
+                  {projectChoices.map((project) => (
                     <SelectItem key={project.id} value={project.id}>
                       {project.title}
                       {project.workspaceSettings?.kind === "personal" ? " (personal)" : ""}

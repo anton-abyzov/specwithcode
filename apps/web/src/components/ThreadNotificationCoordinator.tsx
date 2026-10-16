@@ -1,4 +1,4 @@
-import { presentThreadShell } from "@specweave-studio/client-runtime/state/models";
+import { presentThreadShell, threadRunHealth } from "@specweave-studio/client-runtime/state/models";
 import { useAtomValue } from "@effect/atom-react";
 import { useParams } from "@tanstack/react-router";
 import {
@@ -14,7 +14,7 @@ import {
   MessageCircleQuestionIcon,
   ShieldQuestionIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useOpenChat } from "../hooks/useOpenChat";
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
@@ -138,6 +138,8 @@ interface NotificationState {
   readonly raw: OrchestrationV2ThreadShell;
   readonly attention: string | null;
   readonly completion: number | null;
+  /** The run that went quiet for longer than its work explains, once per run. */
+  readonly stalled: string | null;
 }
 
 function EnvironmentNotifications({
@@ -166,8 +168,18 @@ function EnvironmentNotifications({
   // A project page shows the thread named in `?thread=` in its right panel.
   const paneThreadId = useProjectPaneThreadParam();
   const previous = useRef(new Map<ThreadId, NotificationState>());
+  // Stalls come from time passing, not from a thread changing.
+  const [nowMinute, setNowMinute] = useState(() => Math.floor(Date.now() / 60_000));
+  useEffect(() => {
+    const timer = globalThis.setInterval(
+      () => setNowMinute(Math.floor(Date.now() / 60_000)),
+      60_000,
+    );
+    return () => globalThis.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
+    const nowMs = nowMinute * 60_000;
     if (threads === null) {
       previous.current.clear();
       return;
@@ -179,8 +191,13 @@ function EnvironmentNotifications({
       // tell the user it finished, not the coordinator.
       if (isProviderNativeSubagentThread(rawThread)) continue;
       const prior = previous.current.get(rawThread.id);
-      // The same object cannot produce a new notification.
-      if (prior?.raw === rawThread) {
+      // The same object cannot produce a new notification, unless it is
+      // running and may have stalled since.
+      if (
+        prior?.raw === rawThread &&
+        rawThread.status !== "running" &&
+        rawThread.status !== "waiting"
+      ) {
         next.set(rawThread.id, prior);
         continue;
       }
@@ -199,35 +216,46 @@ function EnvironmentNotifications({
         Number.isFinite(completedAt)
           ? completedAt
           : (prior?.completion ?? null);
-      next.set(thread.id, { raw: rawThread, attention, completion });
+      const health = threadRunHealth(thread, nowMs);
+      const stalled =
+        health?.state === "stalled"
+          ? (thread.latestRun?.runId ?? thread.id)
+          : prior?.stalled === (thread.latestRun?.runId ?? thread.id)
+            ? prior.stalled
+            : null;
+      next.set(thread.id, { raw: rawThread, attention, completion, stalled });
       if (!prior || thread.archivedAt !== null) continue;
       const kind =
         attention && attention !== prior.attention
           ? "input"
           : completion !== null && (prior.completion === null || completion > prior.completion)
             ? "completion"
-            : null;
+            : stalled !== null && stalled !== prior.stalled && health?.state === "stalled"
+              ? "stalled"
+              : null;
       if (!kind) continue;
       // Another window announces this event. The state above is still
       // recorded, so taking over later does not replay it.
       if (!isNotificationOwner()) continue;
       const title =
-        kind === "completion"
-          ? "Thread completed"
-          : status === "approval"
-            ? "Approval needed"
-            : status === "limited"
-              ? "Usage limit reached"
-              : status === "failed"
-                ? "Thread failed"
-                : "Input needed";
+        kind === "stalled"
+          ? "No activity in thread"
+          : kind === "completion"
+            ? "Thread completed"
+            : status === "approval"
+              ? "Approval needed"
+              : status === "limited"
+                ? "Usage limit reached"
+                : status === "failed"
+                  ? "Thread failed"
+                  : "Input needed";
       // A thread stopped until the user answers or approves.
       const needsUser =
         kind === "input" &&
         inputNeededAlertsEnabled &&
         (status === "input" || status === "approval");
       if (hasNotificationSound(mode)) {
-        void playNotificationSound(kind, () =>
+        void playNotificationSound(kind === "stalled" ? "input" : kind, () =>
           hasNotificationSound(getClientSettings().notificationMode),
         );
       }
@@ -239,13 +267,20 @@ function EnvironmentNotifications({
         paneThreadId !== thread.id
       ) {
         const toastId = toastManager.add({
-          type: kind === "completion" ? "success" : status === "failed" ? "error" : "warning",
+          type:
+            kind === "completion"
+              ? "success"
+              : status === "failed" && kind !== "stalled"
+                ? "error"
+                : "warning",
           title,
           description: thread.title,
           data: {
             hideCopyButton: true,
             leadingIcon:
-              kind === "completion" ? (
+              kind === "stalled" ? (
+                <CircleAlertIcon aria-hidden className="size-4 text-warning-foreground" />
+              ) : kind === "completion" ? (
                 <CircleCheckIcon aria-hidden className="size-4 text-success-foreground" />
               ) : status === "approval" ? (
                 <ShieldQuestionIcon aria-hidden className="size-4 text-warning-foreground" />
@@ -276,15 +311,17 @@ function EnvironmentNotifications({
             ? `${threadName.slice(0, SYSTEM_TITLE_MAX_LENGTH - 1).replace(/[\uD800-\uDBFF]$/, "")}…`
             : threadName;
       const systemBody =
-        kind === "completion"
-          ? "Finished"
-          : status === "approval"
-            ? "Waiting for your approval"
-            : status === "limited"
-              ? "Usage limit reached"
-              : status === "failed"
-                ? "Stopped with an error"
-                : "Waiting for your answer";
+        kind === "stalled" && health !== null
+          ? `No activity for ${Math.floor(health.idleMs / 60_000)} min. Stop or continue it.`
+          : kind === "completion"
+            ? "Finished"
+            : status === "approval"
+              ? "Waiting for your approval"
+              : status === "limited"
+                ? "Usage limit reached"
+                : status === "failed"
+                  ? "Stopped with an error"
+                  : "Waiting for your answer";
       const bridge = window.desktopBridge;
       if (bridge?.showThreadNotification) {
         // The desktop shell posts a native notification and, on click, brings
@@ -337,6 +374,7 @@ function EnvironmentNotifications({
     inAppNotificationsEnabled,
     inputNeededAlertsEnabled,
     mode,
+    nowMinute,
     onNotification,
     openChat,
     paneThreadId,

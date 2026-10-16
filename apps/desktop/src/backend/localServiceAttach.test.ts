@@ -1,4 +1,9 @@
-import { describe, expect, it } from "vite-plus/test";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native disk fixtures prove the legacy-root link rule.
+import * as FS from "node:fs";
+import * as OS from "node:os";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native disk fixtures prove the legacy-root link rule.
+import * as Path from "node:path";
+import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import {
   buildPairArgs,
@@ -66,13 +71,69 @@ describe("parseStudioInstallation", () => {
       JSON.stringify({ schemaVersion: 1, studioHome, stateDir, service: { installed: true } });
     expect(parseStudioInstallation(receipt("/etc", "/etc/userdata"), expected)).toBeNull();
     expect(
-      parseStudioInstallation(
-        receipt("/Users/a/.specweave-studio/m4", "/Users/a/.ssh"),
-        expected,
-      ),
+      parseStudioInstallation(receipt("/Users/a/.specweave-studio/m4", "/Users/a/.ssh"), expected),
     ).toBeNull();
     expect(parseStudioInstallation("{}", expected)).toBeNull();
     expect(parseStudioInstallation("not json", expected)).toBeNull();
+  });
+});
+
+describe("parseStudioInstallation across the home move", () => {
+  const roots: string[] = [];
+  afterEach(() =>
+    roots.splice(0).forEach((root) => FS.rmSync(root, { recursive: true, force: true })),
+  );
+  const receipt = (studioHome: string) =>
+    JSON.stringify({
+      schemaVersion: 1,
+      identity: "m4",
+      studioHome,
+      stateDir: Path.join(studioHome, "userdata"),
+      service: { installed: true },
+    });
+
+  it("reads receipts in the branded root and in a real legacy root", () => {
+    const home = FS.realpathSync(FS.mkdtempSync(Path.join(OS.tmpdir(), "attach-roots-")));
+    roots.push(home);
+    for (const root of [".specwithcode", ".specweave-studio"]) {
+      FS.mkdirSync(Path.join(home, root, "m4"), { recursive: true });
+      const studioRoot = Path.join(home, root);
+      expect(
+        parseStudioInstallation(receipt(Path.join(studioRoot, "m4")), {
+          studioRoot,
+          directoryName: "m4",
+          join: Path.join,
+        })?.studioHome,
+      ).toBe(Path.join(studioRoot, "m4"));
+    }
+    // A real legacy root is its own place: its receipt never describes the branded folder.
+    expect(
+      parseStudioInstallation(receipt(Path.join(home, ".specweave-studio", "m4")), {
+        studioRoot: Path.join(home, ".specwithcode"),
+        directoryName: "m4",
+        join: Path.join,
+      }),
+    ).toBeNull();
+  });
+
+  it("accepts a pre-move receipt in the branded root once the legacy root is a link", () => {
+    const home = FS.realpathSync(FS.mkdtempSync(Path.join(OS.tmpdir(), "attach-linked-")));
+    roots.push(home);
+    const studioRoot = Path.join(home, ".specwithcode");
+    FS.mkdirSync(Path.join(studioRoot, "m4"), { recursive: true });
+    FS.symlinkSync(studioRoot, Path.join(home, ".specweave-studio"));
+    expect(
+      parseStudioInstallation(receipt(Path.join(home, ".specweave-studio", "m4")), {
+        studioRoot,
+        directoryName: "m4",
+        join: Path.join,
+      }),
+    ).toEqual({
+      identity: "m4",
+      studioHome: Path.join(studioRoot, "m4"),
+      stateDir: Path.join(studioRoot, "m4", "userdata"),
+      serviceInstalled: true,
+    });
   });
 });
 
@@ -164,7 +225,9 @@ describe("resolveServiceCliCommand", () => {
 
   it("gives up rather than guess", () => {
     expect(resolveServiceCliCommand({ argv: ["node", "bin.mjs"], exists })).toBeNull();
-    expect(resolveServiceCliCommand({ argv: ["/opt/node22/bin/node", "-e", "1"], exists })).toBeNull();
+    expect(
+      resolveServiceCliCommand({ argv: ["/opt/node22/bin/node", "-e", "1"], exists }),
+    ).toBeNull();
     expect(resolveServiceCliCommand({ exists })).toBeNull();
   });
 });

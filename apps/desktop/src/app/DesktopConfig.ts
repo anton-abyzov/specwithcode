@@ -58,8 +58,12 @@ export const DesktopConfig = Config.all({
   appImagePath: trimmedString("APPIMAGE"),
   // On by default (owner decision 2026-10-10): a build only has a feed when it
   // names a Studio release repository, and DesktopUpdates refuses the upstream
-  // feed. Settings > About turns checks off; this variable forces them off.
-  disableAutoUpdate: Config.Boolean("STUDIO_DISABLE_AUTO_UPDATE").pipe(Config.withDefault(false)),
+  // feed. Settings > About turns checks off; either variable forces them off
+  // (STUDIO_DISABLE_AUTO_UPDATE is the pre-rename name, still accepted).
+  disableAutoUpdate: Config.all([
+    optionalBoolean("SPECWITHCODE_DISABLE_AUTO_UPDATE"),
+    optionalBoolean("STUDIO_DISABLE_AUTO_UPDATE"),
+  ]).pipe(Config.map(([current, legacy]) => current || legacy)),
   mockUpdates: optionalBoolean("STUDIO_DESKTOP_MOCK_UPDATES"),
   mockUpdateServerPort: Config.Port("STUDIO_DESKTOP_MOCK_UPDATE_SERVER_PORT").pipe(
     Config.withDefault(3000),

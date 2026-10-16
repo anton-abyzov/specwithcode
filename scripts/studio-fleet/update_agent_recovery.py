@@ -15,6 +15,8 @@ FEED_LIMIT = 30
 MAX_ATTEMPTS = 3  # Initial apply and at most two later automatic retries.
 BACKOFF_SECONDS = 600
 RETRY_WINDOW_SECONDS = 86400
+# update.py rollback outcomes that leave the previous release on its own pointers and state.
+CLEAN_ROLLBACKS = ('restored-runtime-pointers-and-state', 'restored-exact-owned-runtime-pointers')
 
 
 def _ua(agent):
@@ -49,7 +51,7 @@ def _metadata(agent, release):
             'checkedAt': agent.state['checkedAt']}
     directory = ua.ensure_dir(agent.release_dir(version), agent.home)
     if ua.PLAN_ASSET not in assets:
-        meta['manual'] = 'Studio %s needs a manual upgrade: the release has no update plan.' % version
+        meta['manual'] = 'SpecWithCode %s needs a manual upgrade: the release has no update plan.' % version
     else:
         data = agent.fetch_bytes(agent.asset_url(assets[ua.PLAN_ASSET]), 'application/octet-stream',
                                  ua.LIMITS[ua.PLAN_ASSET])
@@ -307,10 +309,41 @@ def current_installation_matches(agent, verified):
         return False
 
 
+def newer_release_after_rollback(agent, verified):
+    """A failed install holds automatic installs of its version until Install now. A newer
+    release ships its own helpers, which may fix what failed (1.0.30-1.0.32 stopped at a
+    byte-exact settings.json check after a one-time settings migration), so it gets one
+    automatic attempt; if that fails too, the hold moves to it. Only after a complete
+    rollback: the helper receipt shows the previous release's pointers (and state) restored
+    and no rollback error, and the installation is the one that attempt started from."""
+    ua = _ua(agent)
+    last = agent.state.get('lastInstall') or {}
+    try:
+        failed, offered = ua.version_tuple(last.get('version')), ua.version_tuple(verified['version'])
+        if (last.get('result') != 'failed' or failed is None or offered is None or offered <= failed
+                or last.get('previousSourceCommit') != agent.inst['sourceCommit']
+                or verified['binding']['installedSourceCommit'] != agent.inst['sourceCommit']):
+            return False
+        path = ua.owned(pathlib.Path(last['receipt']), agent.home)
+        if path.parent != agent.updates / 'receipts':
+            return False
+        value = ua.read_json(path, agent.home)
+        if not isinstance(value, dict):
+            return False
+        # Preflight refusals (a busy service) keep their own bounded budget; see record_refusal.
+        return (value.get('identity') == agent.identity and value.get('result') == 'update-failed'
+                and value.get('pointers') == 'previous-release' and value.get('rollback') in CLEAN_ROLLBACKS
+                and 'rollbackError' not in value and installation_fingerprint(agent) is not None)
+    except (ua.AgentError, OSError, ValueError, KeyError, TypeError, AttributeError):
+        return False
+
+
 def automatic_retry(agent, verified):
     """None allows one fresh quiet/snapshot attempt; a message keeps the target held."""
     ua, record = _ua(agent), agent.state.get('automaticRetry')
-    held = 'Studio %s did not install automatically; choose Install now to retry.' % verified['version']
+    held = 'SpecWithCode %s did not install automatically; choose Install now to retry.' % verified['version']
+    if newer_release_after_rollback(agent, verified):
+        return None
     if not isinstance(record, dict):
         return held
     last = agent.state.get('lastInstall') or {}

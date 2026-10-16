@@ -1,7 +1,6 @@
 import type {
   EnvironmentId,
   ServerConfig,
-  ServerInstallation,
   ServerSelfUpdateCapability,
 } from "@specweave-studio/contracts";
 import type { ServerUpdateState } from "@specweave-studio/client-runtime/state/server";
@@ -137,35 +136,6 @@ export function supportsServerUpdateThreadContinuation(
   serverConfig: Pick<ServerConfig, "environment"> | null | undefined,
 ): boolean {
   return serverConfig?.environment.capabilities.serverUpdateThreadContinuation === true;
-}
-
-/**
- * The update steps to hand users whose server cannot update itself. No package
- * registry carries specweave-studio, so nothing here installs or relaunches a
- * version by name. The supported paths are the Studio service updater behind
- * Settings > About, the guarded fleet updater, and a rebuild from source.
- */
-export function manualServerUpdateSteps(
-  targetVersion: string,
-  installation?: ServerInstallation,
-): string {
-  const steps = [
-    `Update SpecWithCode to ${targetVersion} on the machine that runs this server:`,
-    "- With the desktop app on that machine: Settings > About > SpecWithCode service, then Check now or Install now.",
-    "- A service installed without the desktop app: its update agent or the guarded updater, described in docs/studio/updates.md.",
-    "- A server built from source: git pull, rebuild, then restart it with your usual options.",
-  ];
-  if (installation?.kind === "npm-global") {
-    steps.push(
-      `This server runs from a global npm install under ${installation.prefix}. The npm registry has no specweave-studio package, so npm cannot update it.`,
-    );
-  } else if (installation !== undefined) {
-    const runner = installation.kind === "pnpm-dlx" ? "pnpm dlx" : installation.kind;
-    steps.push(
-      `This server was started with ${runner}. The npm registry has no specweave-studio package, so ${runner} cannot fetch a newer one.`,
-    );
-  }
-  return steps.join("\n");
 }
 
 export function serverUpdateGuidance(capability: ServerSelfUpdateCapability): string {

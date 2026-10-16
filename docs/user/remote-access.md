@@ -3,29 +3,29 @@
 Connect a phone, browser, or another desktop app to SpecWithCode running on a different
 machine. That machine must stay running and reachable while you work.
 
-## Studio Connect
+## SpecWithCode Connect
 
-Studio Connect makes an environment available to your other devices without setting
+SpecWithCode Connect makes an environment available to your other devices without setting
 up router forwarding. In the desktop app on the host, open **Settings →
-Connections**, sign in, and enable **Studio Connect** for that environment.
+Connections**, sign in, and enable **SpecWithCode Connect** for that environment.
 
 For a command-line host, run:
 
 ```bash
-specweave-studio connect
+specwithcode connect
 ```
 
 Follow the sign-in instructions. Setup offers a
 [background service](./background-service.md); if you decline it, start the
-server with `specweave-studio serve`. Saving your sign-in alone does not make the machine
+server with `specwithcode serve`. Saving your sign-in alone does not make the machine
 reachable.
 
-On your other device, sign in to the same Studio Connect account and choose the
+On your other device, sign in to the same SpecWithCode Connect account and choose the
 environment. Over SSH, the CLI prints a browser link and a short code. Open the
 link on any device, confirm the code matches, and approve. The CLI continues on
 its own, so you do not need to forward an OAuth callback port.
 
-Studio Connect renews access credentials when needed without disconnecting a healthy
+SpecWithCode Connect renews access credentials when needed without disconnecting a healthy
 connection. Pull request diffs and provider settings keep working after the
 previous credential expires. A failed renewal affects that request; it does not
 disconnect an otherwise healthy conversation.
@@ -42,13 +42,13 @@ For a command-line host, replace `<private-ip>` with the host's LAN or tailnet
 address:
 
 ```bash
-specweave-studio serve --host <private-ip>
+specwithcode serve --host <private-ip>
 ```
 
 If a server is already running, generate a fresh link without restarting it:
 
 ```bash
-specweave-studio pair
+specwithcode pair
 ```
 
 Scan the QR code on your phone or paste the pairing URL into **Add environment**
@@ -88,14 +88,14 @@ configured as trusted. Revoke a device later under **Settings → Connections**.
 ### Reach one machine several ways
 
 A machine can have more than one route: LAN, Tailscale, a public URL, SSH, or
-Studio Connect. To add one, choose **Add route** in the machine's route list, or
-next to it in the Studio Connect list. Pairing the same machine again over another
+SpecWithCode Connect. To add one, choose **Add route** in the machine's route list, or
+next to it in the SpecWithCode Connect list. Pairing the same machine again over another
 address also adds a route instead of a second machine. A new route is placed by
 speed, in that order, and you can reorder routes at any time.
 
-While connected through Studio Connect or a paired address, SpecWithCode also learns the
+While connected through SpecWithCode Connect or a paired address, SpecWithCode also learns the
 machine's current LAN and Tailscale addresses and adds them as routes, so
-pairing once through Studio Connect is enough to use the LAN at home. When the
+pairing once through SpecWithCode Connect is enough to use the LAN at home. When the
 machine's LAN address changes, for example after it joins another Wi-Fi network,
 the learned route follows it. The machine must allow network access for its LAN
 address to be learned. You can reorder a learned route, but not remove it; it
@@ -111,7 +111,7 @@ return to the app, and every minute, and moves back as soon as one works.
 On web and desktop, select the route count under the machine's name in
 **Settings → Connections** to see its routes. Drag a route to change the order,
 or remove it. On mobile, open the machine under **Settings → Environments** and
-choose **Edit**. Signing out of Studio Connect removes only that route; a machine
+choose **Edit**. Signing out of SpecWithCode Connect removes only that route; a machine
 you can still reach another way stays saved.
 
 ### Balance new threads across machines
@@ -140,13 +140,13 @@ HTTPS** in **Settings → Connections**. Turn it off there to remove that route.
 To start a command-line server with Tailscale HTTPS:
 
 ```bash
-specweave-studio serve --tailscale-serve
+specwithcode serve --tailscale-serve
 ```
 
 For an already-running server:
 
 ```bash
-specweave-studio pair --tailscale
+specwithcode pair --tailscale
 ```
 
 The pairing link uses an address such as `https://machine.tailnet.ts.net/`.
@@ -158,7 +158,7 @@ tailscale serve --https=443 off
 ```
 
 If that port is already in use, choose another with
-`--tailscale-serve-port`. See `specweave-studio pair --help` for other pairing options.
+`--tailscale-serve-port`. See `specwithcode pair --help` for other pairing options.
 
 ### Hosted web app
 
@@ -204,7 +204,7 @@ directly. Every other device, and the desktop app for other environments,
 streams them from the host. Agents keep using them while no device is
 connected, and `localhost` addresses reach servers on the host.
 
-The first tab downloads a headless Chrome, about 120 MB, into the Studio home. It
+The first tab downloads a headless Chrome, about 120 MB, into the SpecWithCode home. It
 is the same browser [HTML renders](html-renders.md) use, so a host downloads it
 only once. Some Linux hosts need [setup](#browser-host-setup) before it can
 start.
@@ -232,7 +232,7 @@ the server says so at startup, and browser tabs and HTML previews show the
 command to run on the host:
 
 ```sh
-sudo specweave-studio browser setup
+sudo specwithcode browser setup
 ```
 
 The server shows the exact line for how you started it and keeps your `PATH` when
@@ -256,7 +256,7 @@ claude mcp add --transport http specweave-studio https://<environment-address>/m
 
 The first time the agent connects, it opens a sign-in page on the environment.
 Enter a pairing code from **Settings → Connections** on a device that can manage
-access, or from `specweave-studio auth pairing create` on the host, and choose what the agent
+access, or from `specwithcode auth pairing create` on the host, and choose what the agent
 may do. A browser already signed in to that environment as an administrator can
 approve without a code.
 
@@ -266,7 +266,7 @@ approve without a code.
   threads in every project, but it cannot start or steer a thread with more
   permissions than the mode you chose.
 
-Use an HTTPS address: Studio Connect, Tailscale Serve, or `localhost` on the host
+Use an HTTPS address: SpecWithCode Connect, Tailscale Serve, or `localhost` on the host
 itself. Agents refuse to sign in through a plain `http://` LAN or tailnet
 address. The agent appears under **Settings → Connections** like any other
 client; revoke it there. Sign-ins last 30 days.
@@ -276,7 +276,7 @@ client; revoke it there. Sign-ins last 30 days.
 On the host, **Settings → Connections** lets authorized administrators create
 pairing links and revoke client sessions. Revoking an unused link prevents new
 pairings; revoke a device's session to remove its existing access. Command-line
-management is available through `specweave-studio auth --help`.
+management is available through `specwithcode auth --help`.
 
 A session with an open connection stays listed after its access credential
 expires.
@@ -284,11 +284,11 @@ expires.
 To choose a token's permissions, pass `--scope` once for each scope you want:
 
 ```sh
-specweave-studio pair --scope orchestration:read --scope relay:read
+specwithcode pair --scope orchestration:read --scope relay:read
 ```
 
 The selected scopes replace the default permissions. The same option works with
-`specweave-studio auth pairing create` and `specweave-studio auth session issue`; each command's
+`specwithcode auth pairing create` and `specwithcode auth session issue`; each command's
 `--help` lists the available scopes. Without `--scope`, pairing tokens retain
 standard client permissions and issued bearer sessions retain administrative
 permissions.
@@ -321,48 +321,48 @@ a client's permissions.
 local changes. Add `filesystem:write` to allow editing files or saving plans to
 the workspace. These scopes control direct file access from the client.
 
-To remove an environment from Studio Connect, open your account menu's **Studio Connect**
-page, or **Settings → Studio Connect** on mobile, and choose **Deregister**. This
+To remove an environment from SpecWithCode Connect, open your account menu's **SpecWithCode Connect**
+page, or **Settings → SpecWithCode Connect** on mobile, and choose **Deregister**. This
 revokes its cloud access and frees its host space even when the environment is
 offline or has been wiped. Removing an environment from a device's connection
 settings only forgets it on that device; it stays registered to your account.
 
-When idle tunnel cleanup is enabled, Studio Connect removes a linked environment's
+When idle tunnel cleanup is enabled, SpecWithCode Connect removes a linked environment's
 tunnel after it stays offline for several minutes. The environment stays linked
-and keeps the same address. When the host starts again or wakes, Studio Connect
+and keeps the same address. When the host starts again or wakes, SpecWithCode Connect
 creates a replacement tunnel on its own. You do not need to pair again. Cleanup
 usually runs five to ten minutes after the tunnel goes down.
 
-Studio Connect also removes the tunnel of an environment running an older version of
+SpecWithCode Connect also removes the tunnel of an environment running an older version of
 SpecWithCode once it has been offline for seven days. That environment shows a message
 asking you to update. Start SpecWithCode on that computer and update it to the latest
 version; it reconnects at the same address without pairing again.
 
-On a command-line host, `specweave-studio connect unlink` disables exposure while retaining
-your login; `specweave-studio connect logout` also clears that login. Background-service
+On a command-line host, `specwithcode connect unlink` disables exposure while retaining
+your login; `specwithcode connect logout` also clears that login. Background-service
 [removal](./background-service.md#manage-the-service) is separate.
 
 Treat pairing URLs and authorization codes as passwords. Do not include them in
 screenshots, logs, or bug reports.
 
-## Studio Connect troubleshooting
+## SpecWithCode Connect troubleshooting
 
-Run `specweave-studio connect status` on the host to inspect saved authorization and link
+Run `specwithcode connect status` on the host to inspect saved authorization and link
 configuration. It is not a live reachability check. If the environment appears
-offline, run `specweave-studio service status` and read the displayed log. If it disappears
+offline, run `specwithcode service status` and read the displayed log. If it disappears
 when SSH closes, see [background-service troubleshooting](./background-service.md#troubleshooting).
 
-| Error                                                     | Recovery                                                                                                                                                                              |
-| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `environment_link_limit_exceeded` or managed tunnel limit | Deregister an unused environment, then restart SpecWithCode on the host.                                                                                                              |
-| `auth_invalid` or `invalid_bearer`                        | Run `specweave-studio connect login`. If credentials were revoked, run `specweave-studio connect logout`, then `specweave-studio connect` again. Restart the server after signing in. |
-| Expired or invalid link proof                             | Check the host's date and time, update SpecWithCode, then restart it.                                                                                                                 |
-| HTTP 403 without a recognized error                       | Check relay access, proxies, and firewall rules. Keep any Cloudflare Ray ID for a bug report.                                                                                         |
-| HTTP 408, 429, or 5xx                                     | Check network and relay availability. Startup retries temporary failures for up to ten minutes.                                                                                       |
+| Error                                                     | Recovery                                                                                                                                                                  |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `environment_link_limit_exceeded` or managed tunnel limit | Deregister an unused environment, then restart SpecWithCode on the host.                                                                                                  |
+| `auth_invalid` or `invalid_bearer`                        | Run `specwithcode connect login`. If credentials were revoked, run `specwithcode connect logout`, then `specwithcode connect` again. Restart the server after signing in. |
+| Expired or invalid link proof                             | Check the host's date and time, update SpecWithCode, then restart it.                                                                                                     |
+| HTTP 403 without a recognized error                       | Check relay access, proxies, and firewall rules. Keep any Cloudflare Ray ID for a bug report.                                                                             |
+| HTTP 408, 429, or 5xx                                     | Check network and relay availability. Startup retries temporary failures for up to ten minutes.                                                                           |
 
 After fixing a permanent rejection, restart the host's server. On Linux, use
 `systemctl --user restart studio.service` for the background service. For a
-foreground server, stop it and run `specweave-studio serve` again with your usual options.
+foreground server, stop it and run `specwithcode serve` again with your usual options.
 Include the diagnostic message and trace ID when reporting a persistent failure.
 
 For a connection that still fails after linking, check the date and time on both
@@ -374,7 +374,7 @@ If a computer should only drive work running elsewhere, turn off its local envir
 desktop app, open **Settings → Connections** and switch off **Local
 environment**. SpecWithCode restarts without a local server: no local agents or terminals run, WSL
 backends stay off, and other devices can no longer connect to this computer. Your projects,
-history, and saved connections are kept, and you keep working through pairing, Studio Connect, or SSH.
+history, and saved connections are kept, and you keep working through pairing, SpecWithCode Connect, or SSH.
 
 Switch **Local environment** back on in the same place to restart with your previous local
 settings.

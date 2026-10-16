@@ -22,6 +22,7 @@ import {
   usePrimarySettingsAvailable,
 } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
+import { isArchivedMember } from "../../studio/projectListVisibility";
 import { WorkspacePageContainer, type WorkspacePageWidth } from "../WorkspacePageContainer";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -285,6 +286,7 @@ export function SettingsRow({
   children?: ReactNode;
 }) {
   const targetRef = useSettingsSearchTarget<HTMLDivElement>(rowProps.id);
+  const navigate = useNavigate();
   const primarySettingsAvailable = usePrimarySettingsAvailable();
   const context = useOptionalSettingsScope();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -341,19 +343,26 @@ export function SettingsRow({
         ),
       );
       if (!group) return [];
+      const member = group.memberProjects.find(
+        (candidate) =>
+          candidate.environmentId === entry.environmentId && candidate.id === entry.projectId,
+      );
       return [
         {
           ...entry,
           label: group.displayName,
+          archived: member !== undefined && isArchivedMember(member),
+          // Project overrides are edited on the project's own page.
           open: () =>
-            context.selectScope({
-              project: group.projectKey,
-              ...(context.search.machine ? { machine: context.search.machine } : {}),
+            void navigate({
+              to: "/settings/projects",
+              search: { project: group.projectKey, machine: undefined, checkout: undefined },
+              hash: "",
             }),
         },
       ];
     });
-  }, [context, isProjectScope, scopedKeys]);
+  }, [context, isProjectScope, navigate, scopedKeys]);
   const renderedReset = unavailable ? null : isProjectScope && scopedKeys.length > 0 ? (
     source === "project" || source === "mixed" ? (
       <SettingResetButton

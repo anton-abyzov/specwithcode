@@ -2024,7 +2024,7 @@ describe("pull request watch fingerprints", () => {
       { repository: "acme/docs", number: 8 },
     ]);
     expect(query).toContain(
-      'w0: repository(owner: "anton-abyzov", name: "specweave-studio") { pullRequest(number: 7)',
+      'w0: repository(owner: "anton-abyzov", name: "specwithcode-dev") { pullRequest(number: 7)',
     );
     expect(query).toContain('w1: repository(owner: "acme", name: "docs") { pullRequest(number: 8)');
     expect(

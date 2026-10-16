@@ -187,7 +187,8 @@ describe("WSL runtime cache", () => {
       "b".repeat(64),
     );
 
-    expect(script).toContain('runtime_parent="$HOME/.specweave-studio/wsl-runtime"');
+    expect(script).toContain('studio_root="$HOME/.specwithcode"');
+    expect(script).toContain('runtime_parent="$studio_root/wsl-runtime"');
     expect(script).toContain('  [ -f "$ready_marker" ] &&');
     expect(script).toContain('    runtime_entry_runs "$runtime_root" &&');
     expect(script).toContain("if runtime_is_ready; then");
@@ -284,7 +285,9 @@ describe("WSL runtime cache", () => {
     // The same proof the SSH runner and CLI installers use: executable, and
     // `--version` exits 0. That is what decides arch and loadability, so no
     // separate native probe is needed.
-    expect(script).toContain('  [ -x "$1/specweave-studio" ] && "$1/specweave-studio" --version >/dev/null 2>&1');
+    expect(script).toContain(
+      '  [ -x "$1/specweave-studio" ] && "$1/specweave-studio" --version >/dev/null 2>&1',
+    );
 
     // Readiness gates the short-circuit, so a cache whose executable broke
     // reinstalls from the archive instead of being reused forever.
@@ -349,9 +352,9 @@ describe("WSL runtime cache", () => {
   });
 
   it("parses only absolute Linux runtime paths", () => {
-    expect(parseWslRuntimeRoot("runtimeRoot:/home/josh/.specweave-studio/wsl-runtime/1.2.3-x64\n")).toBe(
-      "/home/josh/.specweave-studio/wsl-runtime/1.2.3-x64",
-    );
+    expect(
+      parseWslRuntimeRoot("runtimeRoot:/home/josh/.specweave-studio/wsl-runtime/1.2.3-x64\n"),
+    ).toBe("/home/josh/.specweave-studio/wsl-runtime/1.2.3-x64");
     expect(parseWslRuntimeRoot("runtimeRoot:relative/path\n")).toBeNull();
     expect(parseWslRuntimeRoot("noise\n")).toBeNull();
   });
@@ -405,7 +408,9 @@ describe("WSL runtime cache", () => {
 
     // Readiness is a presence check, so a tree whose pty.node is present but
     // unloadable stays ready forever unless the probe can revoke the marker.
-    expect(script).toContain('rm -f "$HOME/.specweave-studio/wsl-runtime/1.2.3_x64/.studio-wsl-runtime-ready"');
+    expect(script).toContain(
+      'rm -f "$studio_root/wsl-runtime/1.2.3_x64/.studio-wsl-runtime-ready"',
+    );
     // Deleting the tree here would pull it out from under any backend still
     // running from it; the next install moves an unready root aside instead.
     expect(script).not.toContain("rm -rf");
@@ -461,9 +466,9 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
       archivePath,
       archiveSha,
       runtimeId,
-      runtimeParent: `${work}/home/.specweave-studio/wsl-runtime`,
-      runtimeRoot: `${work}/home/.specweave-studio/wsl-runtime/${runtimeId}`,
-      serverEntry: `${work}/home/.specweave-studio/wsl-runtime/${runtimeId}/specweave-studio`,
+      runtimeParent: `${work}/home/.specwithcode/wsl-runtime`,
+      runtimeRoot: `${work}/home/.specwithcode/wsl-runtime/${runtimeId}`,
+      serverEntry: `${work}/home/.specwithcode/wsl-runtime/${runtimeId}/specweave-studio`,
       installScript,
       install: (archive?: string, sha?: string) => runShell(installScript(archive, sha)),
     };

@@ -77,7 +77,8 @@ export async function stdioFixture() {
   const waitUntil = async (predicate: () => Promise<boolean>) => {
     const deadline = DateTime.toEpochMillis(DateTime.nowUnsafe()) + 6_000;
     while (!(await predicate())) {
-      if (DateTime.toEpochMillis(DateTime.nowUnsafe()) >= deadline) throw new Error("Owned fixture did not reach expected state");
+      if (DateTime.toEpochMillis(DateTime.nowUnsafe()) >= deadline)
+        throw new Error("Owned fixture did not reach expected state");
       await delay(20);
     }
   };

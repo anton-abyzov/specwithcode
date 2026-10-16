@@ -8,6 +8,7 @@ import {
   EMPTY_THREAD_HISTORY_META,
   type EnvironmentThreadStatus,
   type ThreadHistoryMeta,
+  type ThreadLinkTarget,
 } from "@specweave-studio/client-runtime/state/threads";
 import type { ScopedProjectRef, ScopedThreadRef, ServerConfig } from "@specweave-studio/contracts";
 import type { EnvironmentId, OrchestrationV2ProjectedTurnItem } from "@specweave-studio/contracts";
@@ -36,6 +37,9 @@ const EMPTY_THREAD_REFS_ATOM = Atom.make(EMPTY_THREAD_REFS).pipe(
 const EMPTY_THREAD_SHELLS_ATOM = Atom.make<ReadonlyArray<EnvironmentThreadShell>>(
   Object.freeze([]),
 ).pipe(Atom.withLabel("web-thread-shells:empty"));
+const EMPTY_THREAD_LINK_TARGETS_ATOM = Atom.make<ReadonlyArray<ThreadLinkTarget>>(
+  Object.freeze([]),
+).pipe(Atom.withLabel("web-thread-link-targets:empty"));
 const EMPTY_THREAD_SHELL_ATOM = Atom.make<EnvironmentThreadShell | null>(null).pipe(
   Atom.withLabel("web-thread-shell:empty"),
 );
@@ -107,6 +111,17 @@ export function useThreadShellsForProjectRefs(
   refs: ReadonlyArray<ScopedProjectRef>,
 ): ReadonlyArray<EnvironmentThreadShell> {
   return useAtomValue(environmentThreadShells.threadShellsForProjectRefsAtom(refs));
+}
+
+/** A host's threads as links resolve them: a status change or a resend leaves the list as it was. */
+export function useThreadLinkTargets(
+  environmentId: EnvironmentId | null,
+): ReadonlyArray<ThreadLinkTarget> {
+  return useAtomValue(
+    environmentId === null
+      ? EMPTY_THREAD_LINK_TARGETS_ATOM
+      : environmentThreadShells.environmentThreadLinkTargetsAtom(environmentId),
+  );
 }
 
 export function useProject(ref: ScopedProjectRef | null): EnvironmentProject | null {

@@ -11,13 +11,17 @@ import pwd
 import re
 import stat
 
+import studio_paths
+
 LEGACY_POLICIES = {'m4': 'browser-cookie', 'm1': 'worker-relay', 'm3': 'worker-relay'}
 WEB_SESSION_POLICIES = ('browser-cookie', 'worker-relay')
+# Entries of the shared root that are not service identities.
+RESERVED_IDENTITIES = {'backups', studio_paths.INSTALL_DIRECTORY, 'userdata', 'dev', 'caches', 'runtime', 'worktrees'}
 
 
 def validate_identity(identity, *, staging=False):
     assert isinstance(identity, str) and re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?', identity), 'Unsafe Studio identity'
-    assert identity != 'backups' and (identity != 'stage' or staging), 'Reserved Studio identity'
+    assert identity not in RESERVED_IDENTITIES and (identity != 'stage' or staging), 'Reserved Studio identity'
     return identity
 
 
@@ -56,7 +60,7 @@ def owned_path(path, home, uid=None):
 @contextlib.contextmanager
 def installation_lock(home, *, create=False):
     """Serialize each home's installs, full apply/rollback and release pruning; never wait."""
-    root = owned_path(pathlib.Path(home) / '.local/share/specweave-studio', home)
+    root = owned_path(studio_paths.install_root(home), home)
     if create:
         root.mkdir(parents=True, mode=0o700, exist_ok=True)
     assert root.is_dir(), 'Owned release store is missing'
@@ -89,8 +93,8 @@ def updater_removal(home, identity):
     plist = owned_path(owner['home'] / 'Library/LaunchAgents' / (label + '.plist'), owner['home'], owner['uid'])
     if plist.exists():
         content = plistlib.loads(plist.read_bytes())
-        script = owned_path(owner['home'] / '.local/share/specweave-studio/updater/update_agent.py', owner['home'], owner['uid'])
-        updates = owned_path(owner['home'] / '.specweave-studio' / identity / 'updates', owner['home'], owner['uid'])
+        script = owned_path(studio_paths.updater_root(owner['home']) / 'update_agent.py', owner['home'], owner['uid'])
+        updates = owned_path(studio_paths.identity_home(owner['home'], identity) / 'updates', owner['home'], owner['uid'])
         assert content.get('Label') == label and content.get('ProgramArguments') == ['/usr/bin/python3', str(script), '--identity', identity], 'Updater LaunchAgent differs from installation identity'
         assert content.get('WorkingDirectory') == str(updates) and content.get('StandardOutPath') == content.get('StandardErrorPath') == str(updates / 'agent.log'), 'Updater LaunchAgent names another owned path'
     return 'gui/' + str(owner['uid']), label, plist
@@ -119,7 +123,7 @@ class InstallationDescriptor:
         self.uid, self.user, self.home = owner['uid'], owner['user'], owner['home']
         self.label = 'com.specweave.studio.' + identity
         self.domain = 'gui/' + str(self.uid)
-        self.own = self.path(self.home / '.specweave-studio' / identity)
+        self.own = self.path(studio_paths.identity_home(self.home, identity))
         self.state = self.path(self.own / 'userdata')
         self.launcher = self.path(self.own / 'launch.sh')
         self.installation = self.path(self.own / 'installation.json')
@@ -149,7 +153,7 @@ class InstallationDescriptor:
         value.port = port
         archive = receipt.get('archiveSha256')
         assert isinstance(archive, str) and re.fullmatch('[a-f0-9]{64}', archive), 'Invalid installed archive digest'
-        release = value.path(value.home / '.local/share/specweave-studio/releases' / archive[:20])
+        release = value.path(studio_paths.releases_root(value.home) / archive[:20])
         assert receipt.get('release') == str(release), 'Receipt names another release'
         for name in ('stdout.log', 'stderr.log'):
             value.path(value.own / name)

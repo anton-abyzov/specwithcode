@@ -23,7 +23,7 @@ export function renderLoopbackAuthorizationCompleteHtml(
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
-    <title>Studio Connect authorization complete</title>
+    <title>SpecWithCode Connect authorization complete</title>
     <style>
       :root {
         color-scheme: light dark;
@@ -147,7 +147,7 @@ export function renderLoopbackAuthorizationCompleteHtml(
       <section class="content">
         <p class="eyebrow">Browser authorization complete</p>
         <h1>You're connected</h1>
-        <p class="description">Return to your terminal to finish setting up Studio Connect. You can close this window.</p>
+        <p class="description">Return to your terminal to finish setting up SpecWithCode Connect. You can close this window.</p>
       </section>
     </main>
   </body>

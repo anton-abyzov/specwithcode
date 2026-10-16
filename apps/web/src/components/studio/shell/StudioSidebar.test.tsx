@@ -9,6 +9,7 @@ import type {
 import { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
 import { useComposerDraftStore } from "../../../composerDraftStore";
 import { buildSidebarProjectSnapshots } from "../../../sidebarProjectGrouping";
+import { takeProjectSettingsRequest } from "../../../studio/projectSettingsRequests";
 
 const state = vi.hoisted(() => ({
   navigate: vi.fn(),
@@ -73,8 +74,14 @@ vi.mock("@tanstack/react-router", () => ({
   useRouter: () => ({ navigate: state.navigate }),
   useNavigate: () => state.navigate,
 }));
+vi.mock("../../sidebar/SidebarPlanProgress", () => ({
+  useSidebarThreadPlans: () => ({ plans: new Map(), loaders: null }),
+}));
 vi.mock("../../../env", () => ({ isElectron: false }));
-vi.mock("../../../state/server", () => ({ primaryServerKeybindingsAtom: {} }));
+vi.mock("../../../state/server", () => ({
+  primaryServerKeybindingsAtom: {},
+  primaryServerConfigAtom: {},
+}));
 vi.mock("../../../state/entities", () => ({
   useThreadShells: () => state.shells,
   readThreadShell: (ref: { environmentId: string; threadId: string }) =>
@@ -94,6 +101,9 @@ vi.mock("../../../hooks/useSettings", () => ({
   useClientSettings: <T,>(
     select: (settings: { projectCoordinatorMachines: Record<string, string> }) => T,
   ) => select({ projectCoordinatorMachines: state.savedMachines }),
+  // No host in these tests: the project order lives in this browser.
+  usePrimarySettingsAvailable: () => false,
+  useUpdatePrimarySettings: () => vi.fn(),
 }));
 vi.mock("../../../hooks/useScratchProject", () => ({
   useScratchProject: () => ({
@@ -826,17 +836,93 @@ describe("cleaning up the projects list", () => {
     expect(toggle.textContent).toBe("Hide archived");
     const archivedList = container.querySelector('[aria-label="Archived projects"]')!;
     expect(archivedList.textContent).toContain("Routing samples");
-    expect(archivedList.querySelector(".sws-side-row-hint")?.textContent).toBe("Archived");
+    // The section says Archived; its rows carry no tag of their own.
+    expect(archivedList.querySelector(".sws-side-row-hint")).toBeNull();
+    expect(archivedList.querySelector(".sws-project-row")?.hasAttribute("data-archived")).toBe(
+      true,
+    );
   });
 
-  it("keeps an archived project's row while its page is open", async () => {
+  it("lists an open archived project only under Archived, opened and marked current", async () => {
     state.groups.push(archivedSample);
     state.params = { projectKey: "remote:/srv/samples" };
     await render();
-    expect(projectNames()).toEqual(["Atlas", "Borealis", "Routing samples"]);
-    expect(
-      [...container.querySelectorAll("button")].some((b) => b.textContent?.startsWith("Archived")),
-    ).toBe(false);
+    const main = [...container.querySelectorAll('[aria-label="Projects"] .sws-side-row-label')];
+    expect(main.map((label) => label.textContent)).toEqual(["Atlas", "Borealis"]);
+    const archivedList = container.querySelector('[aria-label="Archived projects"]')!;
+    const row = archivedList.querySelector("a")!;
+    expect(row.textContent).toContain("Routing samples");
+    expect(row.getAttribute("aria-current")).toBe("page");
+  });
+
+  it("keeps an archived project with waiting threads under Archived, with no count", async () => {
+    // Regression: an archived project with threads waiting on the person was
+    // listed among the active projects, tagged Archived; then its rows and the
+    // Archived toggle showed waiting counts for work the person had put away.
+    state.groups.push(archivedSample);
+    state.shells = [
+      shell("archived-ask", {
+        environmentId: "remote" as EnvironmentThreadShell["environmentId"],
+        projectId: "samples" as EnvironmentThreadShell["projectId"],
+        hasPendingUserInput: true,
+        createdBy: "agent",
+      } as Partial<EnvironmentThreadShell>),
+    ];
+    await render();
+    const main = [...container.querySelectorAll('[aria-label="Projects"] .sws-side-row-label')];
+    expect(main.map((label) => label.textContent)).toEqual(["Atlas", "Borealis"]);
+    const toggle = [...container.querySelectorAll("button")].find(
+      (b) => b.textContent === "Archived (1)",
+    )!;
+    expect(toggle.querySelector(".sws-count")).toBeNull();
+    await act(async () => toggle.click());
+    const archivedList = container.querySelector('[aria-label="Archived projects"]')!;
+    expect(archivedList.textContent).toContain("Routing samples");
+    expect(archivedList.querySelector(".sws-count")).toBeNull();
+  });
+
+  it("gives every project row the same fixed end slot, with or without a count", async () => {
+    state.groups.push(archivedSample);
+    state.shells = [
+      shell("atlas-ask", {
+        projectId: "p1" as EnvironmentThreadShell["projectId"],
+        hasPendingUserInput: true,
+        createdBy: "agent",
+      } as Partial<EnvironmentThreadShell>),
+    ];
+    await render();
+    const toggle = [...container.querySelectorAll("button")].find(
+      (b) => b.textContent === "Archived (1)",
+    )!;
+    await act(async () => toggle.click());
+    const rows = [...container.querySelectorAll(".sws-project-row")];
+    expect(rows.length).toBe(3);
+    for (const row of rows) {
+      const link = row.querySelector(".sws-side-row")!;
+      // The slot is the row's last part, so a count never moves the name or hint.
+      expect(link.lastElementChild?.classList.contains("sws-side-row-end")).toBe(true);
+    }
+    const counts = rows.map((row) => row.querySelector(".sws-side-row-end")?.textContent ?? "");
+    expect(counts).toEqual(["1 waiting on you", "", ""]);
+  });
+
+  it("tells apart two projects listed under the same name", async () => {
+    state.groups.push({
+      projectKey: "m1:/Users/me/specweave-umb",
+      displayName: "Atlas",
+      workspaceRoot: "/Users/me/specweave-umb",
+      environmentPresence: "remote-only",
+      remoteEnvironmentLabels: ["M1"],
+      memberProjects: [{ environmentId: "m1", id: "atlas-m1" }],
+    } as (typeof state.groups)[number]);
+    state.groups[0] = { ...state.groups[0]!, workspaceRoot: "/srv/atlas-main" };
+    await render();
+    const hints = [...container.querySelectorAll(".sws-project-row")]
+      .filter((row) => row.querySelector(".sws-side-row-label")?.textContent === "Atlas")
+      .map((row) => row.querySelector(".sws-side-row-hint")?.textContent ?? null);
+    expect(hints.sort()).toEqual(["M1", "atlas-main"]);
+    // Borealis has no namesake and no hint.
+    expect(container.querySelectorAll(".sws-project-row .sws-side-row-hint").length).toBe(2);
   });
 
   it("archives and restores a project through its row menu", async () => {
@@ -878,6 +964,22 @@ describe("cleaning up the projects list", () => {
     });
   });
 
+  it("asks a double-clicked project to open its settings, keeping the single click", async () => {
+    await render();
+    const row = [...container.querySelectorAll<HTMLAnchorElement>('a[href^="/projects/"]')].find(
+      (link) => link.textContent?.includes("Borealis"),
+    )!;
+    expect(row.getAttribute("href")).toBe("/projects/host:/b");
+    await act(async () => row.click());
+    expect(takeProjectSettingsRequest("host:/b")).toBe(false);
+    await act(async () => {
+      row.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
+    });
+    expect(takeProjectSettingsRequest("host:/a")).toBe(false);
+    expect(takeProjectSettingsRequest("host:/b")).toBe(true);
+    expect(projectNames()).toEqual(["Atlas", "Borealis"]);
+  });
+
   it("pins a project to the top, keeps it after a restart and unpins it", async () => {
     await render();
     const openMenu = async (name: string) => {
@@ -905,9 +1007,69 @@ describe("cleaning up the projects list", () => {
     await render();
     expect(projectNames()).toEqual(["Borealis", "Atlas"]);
 
+    // Unpinned, it leads the rest.
     await openMenu("Borealis");
     await clickItem("Unpin project");
-    expect(projectNames()).toEqual(["Atlas", "Borealis"]);
+    expect(projectNames()).toEqual(["Borealis", "Atlas"]);
+    expect(container.querySelector("[data-pinned]")).toBeNull();
+  });
+
+  it("moves a project from its row menu and with the keyboard, pinning past the top", async () => {
+    state.groups.push({
+      projectKey: "host:/c",
+      displayName: "Cygnus",
+      memberProjects: [{ environmentId: "host", id: "p3" }],
+    });
+    await render();
+    const openMenu = async (name: string) => {
+      const trigger = container.querySelector<HTMLButtonElement>(
+        `[aria-label="Actions for ${name}"]`,
+      )!;
+      await act(async () => {
+        trigger.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0 }));
+        trigger.click();
+      });
+    };
+    const menuItem = (label: string) =>
+      [...document.querySelectorAll('[role="menuitem"]')].find((entry) =>
+        entry.textContent?.startsWith(label),
+      ) as HTMLElement;
+    await openMenu("Cygnus");
+    expect(menuItem("Move down").getAttribute("aria-disabled")).toBe("true");
+    await act(async () => menuItem("Move up").click());
+    expect(projectNames()).toEqual(["Atlas", "Cygnus", "Borealis"]);
+
+    const mac = /mac/i.test(navigator.platform);
+    const press = async (name: string, key: "ArrowUp" | "ArrowDown") => {
+      const link = [
+        ...container.querySelectorAll<HTMLElement>(".sws-project-row .sws-side-row"),
+      ].find((row) => row.textContent?.includes(name))!;
+      await act(async () =>
+        link.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key,
+            bubbles: true,
+            altKey: true,
+            metaKey: mac,
+            ctrlKey: !mac,
+          }),
+        ),
+      );
+    };
+    await press("Cygnus", "ArrowUp");
+    expect(projectNames()).toEqual(["Cygnus", "Atlas", "Borealis"]);
+    // Past the top of the unpinned projects it is pinned.
+    await press("Cygnus", "ArrowUp");
+    expect(projectNames()).toEqual(["Cygnus", "Atlas", "Borealis"]);
+    expect(container.querySelector("[data-pinned] .sws-side-row-label")?.textContent).toBe(
+      "Cygnus",
+    );
+    expect(JSON.parse(localStorage.getItem("studio:sidebar-project-order:v1")!)).toEqual({
+      pinned: ["host:/c"],
+      unpinned: ["host:/a", "host:/b"],
+      pinnedMembers: { "host:/c": ["host:p3"] },
+    });
+    await press("Cygnus", "ArrowDown");
     expect(container.querySelector("[data-pinned]")).toBeNull();
   });
 

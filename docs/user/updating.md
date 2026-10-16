@@ -47,11 +47,11 @@ The offered action depends on how the server runs:
 | **Copy update steps**      | The server cannot update itself. Follow the copied steps on the named host, then start the server again with your usual options.                                                                |
 
 No package registry carries `specweave-studio`, so there is no versioned `npm` or
-`npx` command to run, and the CLI's own `specweave-studio update` is switched off in
+`npx` command to run, and the CLI's own `specwithcode update` is switched off in
 current builds. On the named host, use the path that matches how the server was
 installed:
 
-- **Desktop app on that machine:** open **Settings → About**. The **Studio service**
+- **Desktop app on that machine:** open **Settings → About**. The **SpecWithCode service**
   row offers **Check now** or **Install now**.
 - **Service installed without the desktop app:** its update agent, when installed, applies
   reviewed releases on its own. [Updates](../studio/updates.md) covers the agent and

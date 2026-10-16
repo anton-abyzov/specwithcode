@@ -24,6 +24,11 @@ export const ServerProviderUsageWindow = Schema.Struct({
   usedPercent: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
   resetsAt: Schema.optional(IsoDateTime),
   windowDurationMins: Schema.optional(NonNegativeInt),
+  /**
+   * The model family this window limits (Claude's "Fable" weekly), on top of
+   * the account-wide windows. Absent for windows that cap every model.
+   */
+  modelScope: Schema.optional(TrimmedNonEmptyString),
 });
 export type ServerProviderUsageWindow = typeof ServerProviderUsageWindow.Type;
 

@@ -72,6 +72,27 @@ describe("buildCommitMessagePrompt", () => {
   });
 });
 
+describe("plain text rule", () => {
+  it("asks commit messages and change requests for plain text without agent credits", () => {
+    const commit = buildCommitMessagePrompt({
+      branch: "main",
+      stagedSummary: "M README.md",
+      stagedPatch: "diff",
+    }).prompt;
+    const changeRequest = buildPrContentPrompt({
+      baseBranch: "main",
+      headBranch: "feature/foo",
+      commitSummary: "Add foo",
+      diffSummary: "1 file changed",
+      diffPatch: "diff",
+    }).prompt;
+    for (const prompt of [commit, changeRequest]) {
+      expect(prompt).toContain("no em dashes, curly quotes, emoji, sign-offs, or agent credits");
+      expect(prompt).toContain("Co-authored-by trailers, 'Generated with' footers, session links");
+    }
+  });
+});
+
 describe("buildPrContentPrompt", () => {
   it("includes branch names, commits, and diff in the prompt", () => {
     const result = buildPrContentPrompt({

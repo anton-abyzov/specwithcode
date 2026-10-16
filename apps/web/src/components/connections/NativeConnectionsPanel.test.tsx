@@ -21,8 +21,9 @@ const state = vi.hoisted(() => ({
   useQuery: vi.fn(),
 }));
 vi.mock("../../studio/projectWorkspace", () => ({
-  projectWorkspace: { nativeConnections: state.request },
+  projectWorkspace: { nativeConnections: state.request, nativeConnectionApply: {} },
 }));
+vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("../../state/session", () => ({ useEnvironmentScope: () => state.permitted }));
 vi.mock("../../state/environments", () => ({
   useEnvironment: () => ({ connection: { phase: state.connected ? "connected" : "disconnected" } }),

@@ -220,9 +220,9 @@ function ConfiguredConnectOnboardingDialog() {
     if (!ok) return;
     toastManager.add({
       type: "success",
-      title: "Studio Connect enabled",
+      title: "SpecWithCode Connect enabled",
       description: exposeEnvironment
-        ? "This environment is available to your other devices through Studio Connect."
+        ? "This environment is available to your other devices through SpecWithCode Connect."
         : "This environment publishes agent activity to your mobile clients.",
     });
     setStep("devices");
@@ -239,7 +239,7 @@ function ConfiguredConnectOnboardingDialog() {
     >
       <WizardPopup>
         <WizardHeader
-          title="Set up Studio Connect"
+          title="Set up SpecWithCode Connect"
           description={
             <>
               Mesh your devices together — publish this environment and connect the rest, all in one
@@ -353,7 +353,7 @@ function PublishStep({
       <div className="rounded-lg border">
         <OnboardingToggleRow
           title="Publish this environment"
-          description="Make this environment available to your other devices through Studio Connect."
+          description="Make this environment available to your other devices through SpecWithCode Connect."
           checked={exposeEnvironment}
           disabled={disabled}
           onCheckedChange={onExposeEnvironmentChange}

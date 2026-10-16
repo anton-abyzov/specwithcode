@@ -9,7 +9,7 @@ import { scoreProviderSkill } from "../../providerSkillSearch";
 
 type SlashSearchItem = Extract<
   ComposerCommandItem,
-  { type: "slash-command" | "provider-slash-command" | "skill" }
+  { type: "slash-command" | "app-command" | "provider-slash-command" | "skill" }
 >;
 
 /**
@@ -25,7 +25,10 @@ export function slashCommandItemsForPromptPosition(
   if (isAtPromptStart) {
     return [...items];
   }
-  return items.filter((item) => item.type !== "provider-slash-command");
+  // An app command is a whole message, so it too is offered only at the start.
+  return items.filter(
+    (item) => item.type !== "provider-slash-command" && item.type !== "app-command",
+  );
 }
 
 function scoreSlashCommandItem(item: SlashSearchItem, query: string): number | null {
@@ -42,7 +45,9 @@ function scoreSlashCommandItem(item: SlashSearchItem, query: string): number | n
   }
 
   const primaryValue =
-    item.type === "slash-command" ? item.command.toLowerCase() : item.command.name.toLowerCase();
+    item.type === "slash-command" || item.type === "app-command"
+      ? item.command.toLowerCase()
+      : item.command.name.toLowerCase();
   const description = item.description.toLowerCase();
 
   const scores = [
@@ -100,7 +105,7 @@ export function searchSlashCommandItems(
         item,
         score,
         tieBreaker:
-          item.type === "slash-command"
+          item.type === "slash-command" || item.type === "app-command"
             ? `0\u0000${item.command}`
             : item.type === "provider-slash-command"
               ? `1\u0000${item.command.name}\u0000${item.provider}`

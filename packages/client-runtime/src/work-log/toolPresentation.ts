@@ -104,7 +104,9 @@ function activitySource(value: unknown): ToolActivitySource | undefined {
     return undefined;
   }
   const icon = activityIcon(source?.icon);
-  return { key, name, kind, ...(icon ? { icon } : {}) };
+  // The app's own MCP server keeps its protocol name; history recorded it as the source name.
+  const shown = /^specweave[\s_-]*studio$/i.test(name) ? "SpecWithCode" : name;
+  return { key, name: shown, kind, ...(icon ? { icon } : {}) };
 }
 
 export function extractToolActivityPresentation(

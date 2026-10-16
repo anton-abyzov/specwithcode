@@ -34,7 +34,9 @@ describe("project creation choices", () => {
     for (const kind of ["code", "personal"] as const) {
       const groups = projectCreationGroups({ ...input(), kind });
       expect(groups.some((group) => group.label === "Project type")).toBe(false);
-      expect(groups.flatMap((group) => group.items).some((item) => item.value.includes(":kind:"))).toBe(false);
+      expect(
+        groups.flatMap((group) => group.items).some((item) => item.value.includes(":kind:")),
+      ).toBe(false);
     }
   });
 });

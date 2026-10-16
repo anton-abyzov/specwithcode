@@ -1,25 +1,47 @@
-import { RotateCwIcon } from "lucide-react";
+import { useNavigate } from "@tanstack/react-router";
+import type { ServiceUpdateBlocker } from "@specweave-studio/contracts";
+import { RotateCwIcon, SparklesIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { respondToConfirmDialog } from "../../confirmDialog";
+import { usePrimaryEnvironmentId } from "../../state/environments";
 import { isElectron } from "../../env";
 import { cn } from "../../lib/utils";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import { useStudioServiceUpdateState } from "../../state/serviceUpdate";
-import { showDesktopUpdateDownloadedToast } from "../desktopUpdate.toast";
 import {
   confirmAppRestartForUpdate,
+  drainWorkForAppRestart,
   isServiceWorkRunning,
+  releaseAppRestartDrain,
   retryServiceUpdate,
   startServiceUpdateNow,
   useServiceUpdateFlow,
 } from "../serviceUpdateFlow";
+import { getDesktopUpdateReleaseUrl } from "../desktopUpdate.logic";
+import { openDesktopUpdateReleaseNotes } from "../desktopUpdate.toast";
 import { Spinner } from "../ui/spinner";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
+  ensureLatestAppUpdate,
+  installWhenUpdaterFree,
+  type LatestUpdateProgress,
+} from "./latestAppUpdate";
+import {
+  DEFAULT_FORCE_INSTALL_AFTER_MINUTES,
+  describeHoldCountdown,
+  forceInstallAfterLabel,
+  forceInstallAfterMinutes,
+  holdWindowElapsed,
+  servesLocally,
+} from "./restartHoldWindow";
+import { RestartRunningWorkList } from "./RestartRunningWorkList";
+import {
   canRetryServiceUpdate,
   describeInstallOutcome,
   getRestartToUpdateView,
+  RESTART_WHEN_IDLE_NOTE,
   SERVICE_UPDATE_NOW_DESCRIPTION,
   serviceUpdateButtonLabel,
 } from "./SidebarRestartToUpdate.logic";
@@ -50,12 +72,18 @@ function SidebarRestartToUpdateButton() {
   const [pending, setPending] = useState(false);
   const [installOnQuit, setInstallOnQuit] = useState(false);
   const [downloadsInBackground, setDownloadsInBackground] = useState(false);
-  // The user chose to let running work finish: restart once nothing runs.
-  const [waitingForIdle, setWaitingForIdle] = useState(false);
+  // The user chose to let running work finish: restart once nothing runs, or
+  // once the hold window from Settings has passed, whichever comes first.
+  const [idleSince, setIdleSince] = useState<number | null>(null);
+  const [holdMinutes, setHoldMinutes] = useState(DEFAULT_FORCE_INSTALL_AFTER_MINUTES);
+  const [now, setNow] = useState(() => Date.now());
   const [checkingWork, setCheckingWork] = useState(false);
+  // Fetching the newest release before the restart, so no version is installed twice.
+  const [fetching, setFetching] = useState<LatestUpdateProgress | null>(null);
+  const navigate = useNavigate();
+  const environmentId = usePrimaryEnvironmentId();
   const watchdog = useRef<number | null>(null);
   const view = getRestartToUpdateView(appState, serviceState, { installOnQuit });
-  const readyVersion = view?.app && appState?.status === "downloaded" ? view.appVersion : null;
 
   useEffect(() => {
     let active = true;
@@ -66,6 +94,7 @@ function SidebarRestartToUpdateButton() {
           const allowed = preferences.automaticUpdatesAllowed !== false;
           setInstallOnQuit(preferences.installAutomatically && allowed);
           setDownloadsInBackground(preferences.downloadAutomatically && allowed);
+          setHoldMinutes(forceInstallAfterMinutes(preferences));
         }
       })
       .catch(() => undefined);
@@ -74,25 +103,35 @@ function SidebarRestartToUpdateButton() {
     };
   }, []);
 
-  // Point at the button once per downloaded version (the toast dedupes across
-  // windows), shown in the window the user is in rather than a background one.
-  useEffect(() => {
-    const bridge = window.desktopBridge;
-    if (!bridge || !readyVersion || !appState) return;
-    const show = () => showDesktopUpdateDownloadedToast(bridge, appState);
-    if (document.hasFocus()) {
-      show();
-      return;
-    }
-    window.addEventListener("focus", show, { once: true });
-    return () => window.removeEventListener("focus", show);
-  }, [appState, readyVersion]);
-
   useEffect(
     () => () => {
       if (watchdog.current !== null) window.clearTimeout(watchdog.current);
     },
     [],
+  );
+
+  // The dialog's list: a thread row opens that thread and closes the dialog.
+  const renderRunningWork = useCallback(
+    (blockers: ReadonlyArray<ServiceUpdateBlocker>) => (
+      <div className="space-y-3">
+        <RestartRunningWorkList
+          blockers={blockers}
+          onOpenThread={
+            environmentId === null
+              ? undefined
+              : (threadId) => {
+                  respondToConfirmDialog("cancel");
+                  void navigate({
+                    to: "/$environmentId/$threadId",
+                    params: { environmentId, threadId },
+                  });
+                }
+          }
+        />
+        <p className="text-xs text-muted-foreground">{RESTART_WHEN_IDLE_NOTE}</p>
+      </div>
+    ),
+    [environmentId, navigate],
   );
 
   const restart = useCallback(
@@ -102,21 +141,51 @@ function SidebarRestartToUpdateButton() {
         void retryServiceUpdate();
         return;
       }
-      if (!bridge || !view || pending || checkingWork || service.progress || service.starting)
+      if (
+        !bridge ||
+        !view ||
+        pending ||
+        checkingWork ||
+        fetching ||
+        service.progress ||
+        service.starting
+      )
         return;
+      // Install the newest release, never one a newer release has replaced:
+      // ask the feed again and fetch what it offers before anything restarts.
+      let appVersion = view.appVersion;
+      if (view.app) {
+        const latest = await ensureLatestAppUpdate(bridge, setFetching).finally(() =>
+          setFetching(null),
+        );
+        if (latest.kind === "failed") {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not get the newest update",
+              description: latest.message,
+            }),
+          );
+          return;
+        }
+        appVersion = latest.version;
+      }
       // A service update asks for itself before it stops work; an app restart
       // alone asks here, so running jobs are never cut off without a warning.
       if (view.app && !view.service && !options.confirmed) {
         setCheckingWork(true);
-        const proceed = await confirmAppRestartForUpdate({ version: view.appVersion })
-          .catch(() => false)
+        const choice = await confirmAppRestartForUpdate({
+          version: appVersion,
+          renderDetails: renderRunningWork,
+        })
+          .catch(() => "cancel" as const)
           .finally(() => setCheckingWork(false));
-        if (!proceed) {
-          setWaitingForIdle(true);
+        if (choice !== "now") {
+          setIdleSince(choice === "idle" ? Date.now() : null);
           return;
         }
       }
-      setWaitingForIdle(false);
+      setIdleSince(null);
       setPending(true);
       let restarting = false;
       try {
@@ -128,10 +197,18 @@ function SidebarRestartToUpdateButton() {
           if (!started) return;
         }
         if (view.app) {
-          const result = await bridge.installUpdate(
-            view.appVersion ? { expectedVersion: view.appVersion } : undefined,
+          // The bundled service quits with the app. Stopped here for the
+          // update, its running work continues after the restart; killed by
+          // the quit, it would end as cancelled.
+          const drained =
+            !view.service && servesLocally(serviceState) && (await drainWorkForAppRestart());
+          // A background check or download can hold the updater for a moment:
+          // wait for it, showing what runs, instead of failing with "busy".
+          const result = await installWhenUpdaterFree(bridge, appVersion, setFetching).finally(() =>
+            setFetching(null),
           );
           restarting = result.accepted && !result.failed;
+          if (drained && !restarting) void releaseAppRestartDrain();
           const message = describeInstallOutcome(result, { downloadsInBackground });
           if (message) {
             toastManager.add(
@@ -160,7 +237,7 @@ function SidebarRestartToUpdateButton() {
             toastManager.add(
               stackedThreadToast({
                 type: "error",
-                title: "Studio did not restart",
+                title: "SpecWithCode did not restart",
                 description: "Quit and reopen SpecWithCode to finish the update.",
               }),
             );
@@ -170,31 +247,56 @@ function SidebarRestartToUpdateButton() {
         }
       }
     },
-    [checkingWork, downloadsInBackground, pending, service, serviceState, view],
+    [
+      checkingWork,
+      downloadsInBackground,
+      fetching,
+      pending,
+      renderRunningWork,
+      service,
+      serviceState,
+      view,
+    ],
   );
 
-  // Restart on its own once the work the user let finish is done.
+  // Restart on its own once the work the user let finish is done, or once the
+  // hold window has passed: then the work is stopped for the update and
+  // continues after the restart, so an install never waits forever.
   useEffect(() => {
-    if (!waitingForIdle || !view?.app) return;
+    if (idleSince === null || !view?.app) return;
     let active = true;
-    const timer = window.setInterval(() => {
+    const check = () => {
+      if (holdWindowElapsed(idleSince, Date.now(), holdMinutes)) {
+        void restart({ confirmed: true });
+        return;
+      }
       void isServiceWorkRunning().then((running) => {
         if (active && running === false) void restart({ confirmed: true });
       });
-    }, IDLE_CHECK_MS);
+    };
+    const timer = window.setInterval(check, IDLE_CHECK_MS);
+    const deadline = window.setTimeout(
+      check,
+      Math.max(0, idleSince + holdMinutes * 60_000 - Date.now()),
+    );
+    const tick = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => {
       active = false;
       window.clearInterval(timer);
+      window.clearInterval(tick);
+      window.clearTimeout(deadline);
     };
-  }, [restart, view?.app, waitingForIdle]);
+  }, [holdMinutes, idleSince, restart, view?.app]);
 
   const progress = service.progress;
   // The button stays while a service update is under way, even once the agent no
   // longer lists it as waiting, so the click is never answered by nothing.
-  if (!view && !progress) return null;
+  // While the newest release downloads the old one is gone, but the click is still being answered.
+  if (!view && !progress && !fetching) return null;
   const busy =
     pending ||
     checkingWork ||
+    fetching !== null ||
     service.starting ||
     (progress !== null && !canRetryServiceUpdate(progress));
   const text =
@@ -202,19 +304,31 @@ function SidebarRestartToUpdateButton() {
       ? serviceUpdateButtonLabel(progress)
       : service.starting || (pending && view?.service && !view.app)
         ? (view?.label ?? "Update now")
-        : checkingWork
-          ? "Checking running work…"
-          : pending
-            ? "Restarting…"
-            : waitingForIdle && view?.app
-              ? "Restarts when idle"
-              : (view?.label ?? "Restart to update");
+        : fetching?.phase === "checking"
+          ? "Checking for a newer version…"
+          : fetching?.phase === "downloading"
+            ? `Downloading ${fetching.version}${fetching.percent === null ? "…" : ` ${Math.round(fetching.percent)}%`}`
+            : fetching?.phase === "waiting"
+              ? `Finishing update step${fetching.percent === null ? "…" : ` ${Math.round(fetching.percent)}%`}`
+              : checkingWork
+                ? "Checking running work…"
+                : pending
+                  ? "Restarting…"
+                  : idleSince !== null && view?.app
+                    ? describeHoldCountdown(idleSince, now, holdMinutes)
+                    : (view?.label ?? "Restart to update");
   const description =
-    waitingForIdle && view?.app
-      ? `SpecWithCode restarts to install ${view.appVersion ?? "the update"} once running work finishes. Click to restart now.`
+    idleSince !== null && view?.app
+      ? `SpecWithCode restarts to install ${view.appVersion ?? "the update"} once running work finishes, or after ${forceInstallAfterLabel(holdMinutes)}: then the work is stopped for the update and continues after the restart. Click to restart now.`
       : (view?.description ?? SERVICE_UPDATE_NOW_DESCRIPTION);
 
-  return (
+  const releaseUrl = view?.app ? getDesktopUpdateReleaseUrl(view.appVersion) : null;
+  const notes = view?.app
+    ? (appState?.releaseNotes.find((note) => note.version === view.appVersion) ??
+      appState?.releaseNotes[0])
+    : undefined;
+
+  const button = (
     <Tooltip>
       <TooltipTrigger
         render={
@@ -239,9 +353,38 @@ function SidebarRestartToUpdateButton() {
           </button>
         }
       />
-      <TooltipPopup side="top" align="start">
-        {description}
+      <TooltipPopup side="top" align="start" className="max-w-72">
+        <p>{description}</p>
+        {notes && notes.items.length > 0 ? (
+          <ul className="mt-1.5 list-disc space-y-0.5 pl-4 text-muted-foreground">
+            {notes.items.slice(0, 4).map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+            {notes.totalItems > 4 ? <li>and {notes.totalItems - 4} more</li> : null}
+          </ul>
+        ) : null}
       </TooltipPopup>
     </Tooltip>
+  );
+  if (!releaseUrl) return button;
+  return (
+    <div className="flex items-center gap-1 self-start">
+      {button}
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              aria-label={`What's new in ${view?.appVersion ?? "this update"}`}
+              className="inline-flex size-7 cursor-pointer items-center justify-center rounded-lg text-muted-foreground outline-hidden ring-ring hover:bg-sidebar-row-hover hover:text-foreground focus-visible:ring-2"
+              onClick={() => void openDesktopUpdateReleaseNotes(window.desktopBridge, releaseUrl)}
+            >
+              <SparklesIcon aria-hidden className="size-3.5" />
+            </button>
+          }
+        />
+        <TooltipPopup side="top">What&apos;s new</TooltipPopup>
+      </Tooltip>
+    </div>
   );
 }

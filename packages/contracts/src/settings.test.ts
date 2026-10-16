@@ -395,6 +395,12 @@ describe("ClientSettings timeline detail", () => {
 
   it("rejects unsupported levels", () => {
     expect(() => decodeClientSettings({ timelineDetail: "huge" })).toThrow();
+    expect(decodeClientSettings({}).threadTimelineDetail).toEqual({});
+    expect(
+      decodeClientSettingsPatch({ threadTimelineDetail: { "env:t": "verbose" } })
+        .threadTimelineDetail,
+    ).toEqual({ "env:t": "verbose" });
+    expect(() => decodeClientSettings({ threadTimelineDetail: { "env:t": "huge" } })).toThrow();
     expect(() => decodeClientSettingsPatch({ timelineDetail: "huge" })).toThrow();
   });
 });

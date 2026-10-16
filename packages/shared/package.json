@@ -163,6 +163,10 @@
       "types": "./src/projectStarterSuggestions.ts",
       "import": "./src/projectStarterSuggestions.ts"
     },
+    "./usageWindows": {
+      "types": "./src/usageWindows.ts",
+      "import": "./src/usageWindows.ts"
+    },
     "./providerFallback": {
       "types": "./src/providerFallback.ts",
       "import": "./src/providerFallback.ts"
@@ -438,6 +442,10 @@
     "./specweaveIncrement": {
       "types": "./src/specweaveIncrement.ts",
       "import": "./src/specweaveIncrement.ts"
+    },
+    "./planProgress": {
+      "types": "./src/planProgress.ts",
+      "import": "./src/planProgress.ts"
     },
     "./providerPermissions": {
       "types": "./src/providerPermissions.ts",

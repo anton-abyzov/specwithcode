@@ -4,6 +4,7 @@ import type { ProjectId, ThreadId } from "@specweave-studio/contracts";
 import { resolveSidebarThreadStatus } from "../components/Sidebar.logic";
 import { isAgentOwnedProjectThread } from "./projectPaneThreads";
 import { isProjectCoordinatorThread } from "./projectCoordinatorThreads";
+import { isNestedSubagentThread } from "./threadSubagents";
 import {
   formatStudioThreadHref,
   formatStudioThreadLink,
@@ -26,12 +27,33 @@ export function threadBlocker(thread: EnvironmentThreadShell): string | null {
   return thread.reportedBlocker;
 }
 
+/**
+ * "3 queued messages held" while a quiet thread's queue is held (after Stop, a
+ * restart or a provider failure): those messages start only when someone
+ * resumes the queue, so the thread waits on the user. Null otherwise.
+ */
+export function threadHeldQueue(thread: EnvironmentThreadShell): string | null {
+  const count = thread.heldQueuedCount ?? 0;
+  if (count <= 0 || thread.archivedAt !== null || threadRuntimeIsActive(thread.runtime))
+    return null;
+  return `${count} queued message${count === 1 ? "" : "s"} held`;
+}
+
+/** What a row or card says the thread needs from the reader: a held queue first, then a blocker. */
+export function threadAttentionNote(thread: EnvironmentThreadShell): string | null {
+  const held = threadHeldQueue(thread);
+  if (held !== null) return `${held}. Open the thread to resume or discard them.`;
+  return threadBlocker(thread);
+}
+
 export function projectThreadGroup(thread: EnvironmentThreadShell): ProjectThreadGroup {
   if (thread.archivedAt !== null) return "Resolved";
   const status = resolveSidebarThreadStatus(thread);
   if (thread.hasPendingApprovals || thread.hasPendingUserInput || thread.hasActionableProposedPlan)
     return "Waiting on you";
   if (threadRuntimeIsActive(thread.runtime)) return "Working";
+  // Undelivered messages outrank a resolved mark: nothing else will start them.
+  if (threadHeldQueue(thread) !== null) return "Waiting on you";
   if (thread.settledOverride === "settled") return "Resolved";
   if (threadBlocker(thread) !== null) return "Waiting on you";
   if (status === "limited" || status === "failed") return "Waiting on you";
@@ -61,6 +83,7 @@ export function projectThreads(
   const byId = new Map(
     threads.filter((t) => t.environmentId === environmentId).map((t) => [t.id as string, t]),
   );
+  const coordinators = new Set<string>(coordinatorId === null ? [] : [coordinatorId]);
   return threads
     .filter(
       (t) =>
@@ -68,6 +91,8 @@ export function projectThreads(
         t.projectId === projectId &&
         t.deletedAt === null &&
         isAgentOwnedProjectThread(t, coordinatorId, (id) => byId.get(id)) &&
+        // A worker's subagents show inside the worker, not as threads of their own.
+        !isNestedSubagentThread(t, coordinators) &&
         // The coordinator is the main conversation, and a previous one is history:
         // neither is one of the project's threads.
         !isProjectCoordinatorThread(t.id, { projectId, coordinatorThreadId: coordinatorId }),

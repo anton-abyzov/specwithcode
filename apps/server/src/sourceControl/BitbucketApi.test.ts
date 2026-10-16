@@ -396,7 +396,10 @@ it.effect("prefers an explicit repository and uses context when the repository i
       remoteName: "origin",
       remoteUrl: "git@bitbucket.org:another/context.git",
     };
-    for (const repository of ["anton-abyzov/specwithcode", "https://bitbucket.org/anton-abyzov/specwithcode.git"]) {
+    for (const repository of [
+      "anton-abyzov/specwithcode",
+      "https://bitbucket.org/anton-abyzov/specwithcode.git",
+    ]) {
       yield* bitbucket.getRepositoryCloneUrls({ cwd: "/repo", context, repository });
     }
     yield* bitbucket.getDefaultBranch({ cwd: "/repo", context });
@@ -430,7 +433,9 @@ it.effect("discovers the repository from cwd remotes when the repository is omit
     assert.deepStrictEqual(listRemotes.mock.calls, [["/repo"]]);
     assert.isTrue(
       execute.mock.calls.every(([request]) =>
-        request.url.startsWith("https://api.test.local/2.0/repositories/anton-abyzov/specwithcode"),
+        request.url.startsWith(
+          "https://api.test.local/2.0/repositories/anton-abyzov/specwithcode",
+        ),
       ),
     );
   }).pipe(Effect.provide(layer));
@@ -536,7 +541,10 @@ it.effect("creates repositories through the Bitbucket REST API", () => {
     });
 
     const request = execute.mock.calls[0]?.[0];
-    assert.strictEqual(request?.url, "https://api.test.local/2.0/repositories/anton-abyzov/specwithcode");
+    assert.strictEqual(
+      request?.url,
+      "https://api.test.local/2.0/repositories/anton-abyzov/specwithcode",
+    );
     assert.strictEqual(request?.method, "POST");
     assert.ok(request);
     const rawBody = (request.body as { readonly body?: Uint8Array }).body;
@@ -581,7 +589,7 @@ it.effect("creates pull requests using the official REST payload shape", () => {
       description: "PR body",
       source: {
         branch: { name: "feature/provider" },
-        repository: { full_name: "owner/specweave-studio" },
+        repository: { full_name: "owner/specwithcode-dev" },
       },
       destination: {
         branch: { name: "main" },

@@ -108,7 +108,7 @@ const authorizeCli = Effect.fn("cloud.cli.authorize")(function* (options: {
     Effect.catchTags({
       CloudCliCredentialRefreshError: () =>
         Console.log(
-          "The stored Studio Connect credential could not be refreshed; signing in again.",
+          "The stored SpecWithCode Connect credential could not be refreshed; signing in again.",
         ).pipe(Effect.as(Option.none())),
     }),
   );
@@ -182,15 +182,15 @@ function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: b
       ? "pending server startup"
       : "not provisioned";
   const nextStep = !status.authenticated
-    ? "Run `specweave-studio connect link` to authorize and enable Studio Connect."
+    ? "Run `specweave-studio connect link` to authorize and enable SpecWithCode Connect."
     : !status.desired
-      ? "Run `specweave-studio connect link` to enable Studio Connect."
+      ? "Run `specweave-studio connect link` to enable SpecWithCode Connect."
       : !status.linked
         ? "Start SpecWithCode to provision the environment link and launch its managed tunnel."
         : undefined;
 
   return [
-    "Studio Connect",
+    "SpecWithCode Connect",
     `  Exposure: ${status.desired ? "enabled" : "disabled"}`,
     `  Authorization: ${status.authenticated ? "stored credential" : "missing"}`,
     `  Environment link: ${provisioned}`,
@@ -208,7 +208,7 @@ const CLOUD_CLI_LIVE_SERVER_TIMEOUT = Duration.seconds(5);
 const confirmRelayClientInstall = (version: string) =>
   Prompt.run(
     Prompt.Confirm({
-      message: `The Studio relay client is required for Studio Connect. Download and install version ${version}?`,
+      message: `The SpecWithCode relay client is required for SpecWithCode Connect. Download and install version ${version}?`,
       initial: false,
     }),
   );
@@ -359,10 +359,10 @@ export const reportCloudDisconnectResults = Effect.fn("cloud.cli.report_disconne
         input.liveResult.cause,
       );
       yield* Console.warn(
-        "Studio Connect is disabled, but the running server could not stop its tunnel.\nRestart that server to stop the connector.",
+        "SpecWithCode Connect is disabled, but the running server could not stop its tunnel.\nRestart that server to stop the connector.",
       );
     } else {
-      yield* Console.log("Studio Connect is disabled locally.");
+      yield* Console.log("SpecWithCode Connect is disabled locally.");
     }
 
     if (Exit.isFailure(input.relayResult)) {
@@ -403,7 +403,7 @@ const disconnectCloud = Effect.fn("cloud.cli.disconnect")(function* (options: {
 
   if (options.clearAuthorization) {
     yield* Console.log(
-      "Signed out of Studio Connect locally.\nThe background service is managed separately with `specweave-studio service`.",
+      "Signed out of SpecWithCode Connect locally.\nThe background service is managed separately with `specweave-studio service`.",
     );
   }
 });
@@ -469,7 +469,9 @@ const linkEnvironmentForConnect = Effect.fn("cloud.cli.link_environment")(functi
       reportRelayClientInstallProgress,
     );
     if (Option.isNone(installed)) {
-      yield* Console.log("Studio Connect setup cancelled. The relay client was not installed.");
+      yield* Console.log(
+        "SpecWithCode Connect setup cancelled. The relay client was not installed.",
+      );
       return null;
     }
     yield* Console.log(formatRelayClientReady(installed.value.version));
@@ -488,12 +490,12 @@ const connectLoginCommand = Command.make("login", {
   ...projectLocationFlags,
   headless: headlessFlag,
 }).pipe(
-  Command.withDescription("Authorize the Studio Connect CLI without enabling remote access."),
+  Command.withDescription("Authorize the SpecWithCode Connect CLI without enabling remote access."),
   Command.withHandler((flags) =>
     runCloudCommand(
       flags,
       Effect.gen(function* () {
-        yield* Console.log("Studio Connect\n");
+        yield* Console.log("SpecWithCode Connect\n");
         const identity = yield* authorizeCli(flags);
         yield* Console.log(`✓ Signed in${connectedAs(identity)}`);
       }),
@@ -511,12 +513,12 @@ const connectLinkCommand = Command.make("link", {
     Flag.withDefault(false),
   ),
 }).pipe(
-  Command.withDescription("Authorize this environment for Studio Connect on next start."),
+  Command.withDescription("Authorize this environment for SpecWithCode Connect on next start."),
   Command.withHandler((flags) =>
     runCloudCommand(
       flags,
       Effect.gen(function* () {
-        yield* Console.log("Studio Connect\n");
+        yield* Console.log("SpecWithCode Connect\n");
         const linked = yield* linkEnvironmentForConnect(flags);
         if (linked) {
           const serveCommand = yield* resolveCliCommand("serve");
@@ -535,7 +537,7 @@ const connectStatusCommand = Command.make("status", {
   ...projectLocationFlags,
   json: jsonFlag,
 }).pipe(
-  Command.withDescription("Show persisted Studio Connect and relay client state."),
+  Command.withDescription("Show persisted SpecWithCode Connect and relay client state."),
   Command.withHandler((flags) =>
     runCloudCommand(
       flags,
@@ -604,7 +606,7 @@ const connectPublishCommand = Command.make("publish", {
           const linkedNow = Option.isSome(yield* secrets.get(CLOUD_LINKED_USER_ID));
           if (!linkedNow && (yield* CliState.readCliDesiredLinkMode) === "publish_only") {
             yield* CliState.setCliDesiredCloudLink(false);
-            yield* Console.log("Cancelled the pending publish-only Studio Connect link.");
+            yield* Console.log("Cancelled the pending publish-only SpecWithCode Connect link.");
           }
           yield* Console.log("Publishing agent activity disabled.");
           return;
@@ -632,7 +634,7 @@ const connectPublishCommand = Command.make("publish", {
         // link is pending at all.
         if (yield* CliState.readCliDesiredCloudLink) {
           yield* Console.log(
-            "A Studio Connect link is already pending. Start SpecWithCode to finish provisioning it; publishing starts once it links.",
+            "A SpecWithCode Connect link is already pending. Start SpecWithCode to finish provisioning it; publishing starts once it links.",
           );
           return;
         }
@@ -648,7 +650,7 @@ const connectPublishCommand = Command.make("publish", {
 const connectUnlinkCommand = Command.make("unlink", {
   ...projectLocationFlags,
 }).pipe(
-  Command.withDescription("Disable Studio Connect while retaining the stored authorization."),
+  Command.withDescription("Disable SpecWithCode Connect while retaining the stored authorization."),
   Command.withHandler((flags) =>
     runCloudCommand(flags, disconnectCloud({ clearAuthorization: false })),
   ),
@@ -657,7 +659,7 @@ const connectUnlinkCommand = Command.make("unlink", {
 const connectLogoutCommand = Command.make("logout", {
   ...projectLocationFlags,
 }).pipe(
-  Command.withDescription("Disable Studio Connect and clear the stored CLI authorization."),
+  Command.withDescription("Disable SpecWithCode Connect and clear the stored CLI authorization."),
   Command.withHandler((flags) =>
     runCloudCommand(flags, disconnectCloud({ clearAuthorization: true })),
   ),
@@ -667,12 +669,12 @@ export const connectCommand = Command.make("connect", {
   ...projectLocationFlags,
   headless: headlessFlag,
 }).pipe(
-  Command.withDescription("Set up Studio Connect for this machine."),
+  Command.withDescription("Set up SpecWithCode Connect for this machine."),
   Command.withHandler((flags) =>
     runCloudCommand(
       flags,
       Effect.gen(function* () {
-        yield* Console.log("Studio Connect\n");
+        yield* Console.log("SpecWithCode Connect\n");
         const linked = yield* linkEnvironmentForConnect(flags);
         if (!linked) {
           return;
@@ -689,8 +691,8 @@ export const connectCommand = Command.make("connect", {
           const platform = yield* HostProcessPlatform;
           yield* Console.log(
             platform === "darwin"
-              ? "\n✓ Background service ready\n\nSpecWithCode is set to run while you are logged in to this Mac. The server establishes the Studio Connect link on startup."
-              : "\n✓ Background service ready\n\nSpecWithCode is set to keep running after you log out. The server establishes the Studio Connect link on startup.",
+              ? "\n✓ Background service ready\n\nSpecWithCode is set to run while you are logged in to this Mac. The server establishes the SpecWithCode Connect link on startup."
+              : "\n✓ Background service ready\n\nSpecWithCode is set to keep running after you log out. The server establishes the SpecWithCode Connect link on startup.",
           );
           return;
         }

@@ -10,6 +10,31 @@ export const AgentInstructions = Schema.String.check(
   Schema.isMaxLength(AGENT_INSTRUCTIONS_MAX_LENGTH),
 );
 
+/**
+ * What every coordinator and worker is told unless the user rewrites it in
+ * Settings > Agents: how work is organized, and the habits that keep it legible.
+ */
+export const DEFAULT_AGENT_INSTRUCTIONS = `How SpecWithCode work is organized:
+- A project has one coordinator. It starts or reuses threads, called workers, for the work. Workers are listed in Threads and the user can message them.
+- A thread's subagents and workflows are internal to that thread. Never start a separate thread for them; summarize what they found in the thread's own reply.
+- Never block-wait on another thread or task (a long studio_thread_wait or task_status loop). Send your message or hand the work off, then end your turn: the other thread's reply wakes you.
+- Reply concisely. Lead with the result, and put long logs, tables and inventories in a file referenced by path.
+- When workflows are available and allowed, use one for work that fans out into many similar, independent steps, such as reviewing many files or verifying many findings. Do small or sequential work directly.
+- Call the app SpecWithCode, never "Studio". A coordinator's thread is a worker; a thread's internal helpers are subagents.`;
+
+/**
+ * Added to every agent's instructions, after whatever the user wrote: the
+ * service's database is live, and a direct open, even read-only, can crash
+ * the service or lose its newest writes (M4, October 15 and 16 2026).
+ */
+export const LIVE_DATABASE_INSTRUCTIONS = `## SpecWithCode database
+SpecWithCode keeps its state in a live SQLite database, \`userdata/statev2.sqlite\` with its \`-wal\` and \`-shm\` files, in its home folder (for example \`~/.specwithcode/<machine>/\`, or \`~/.specweave-studio/<machine>/\` before the move). Never open, copy, move or delete those files with sqlite3, Python, Node or any other tool, not even read-only: that can crash the running service or lose its newest writes. To read it, run \`specweave-studio db query "SELECT ..."\`. For a copy, run \`specweave-studio db snapshot <new file>\` and open the copy. Both use STUDIO_HOME, or take \`--base-dir <home>\`.`;
+
+/** The user's instructions followed by the rules SpecWithCode always adds. */
+export function withServiceInstructions(instructions: string): string {
+  return [instructions.trim(), LIVE_DATABASE_INSTRUCTIONS].filter(Boolean).join("\n\n");
+}
+
 /** Project instructions supplement environment instructions; an empty project cannot erase them. */
 export function resolveAgentInstructions(input: {
   readonly globalInstructions?: string | undefined;

@@ -95,7 +95,7 @@ const modsValidateCommand = Command.make("validate", {
           `${mod.manifest?.name} ${mod.manifest?.version} is a loadable mod.`,
           `Permissions: ${permissions.length === 0 ? "none" : [...new Set(permissions)].join(", ")}`,
           `Content hash: ${mod.sha256}`,
-          "Copy the folder into the mods folder of a Studio home, then approve it in Settings > Mods.",
+          "Copy the folder into the mods folder of a SpecWithCode home, then approve it in Settings > Mods.",
           "",
         ].join("\n"),
       );
@@ -104,6 +104,6 @@ const modsValidateCommand = Command.make("validate", {
 );
 
 export const modsCommand = Command.make("mods").pipe(
-  Command.withDescription("Inspect Studio Mods and validate a mod folder."),
+  Command.withDescription("Inspect SpecWithCode Mods and validate a mod folder."),
   Command.withSubcommands([modsListCommand, modsValidateCommand]),
 );

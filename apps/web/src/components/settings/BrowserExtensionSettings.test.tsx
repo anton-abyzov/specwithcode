@@ -1,0 +1,256 @@
+import { act } from "react";
+import { create, type ReactTestRenderer } from "react-test-renderer";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import {
+  type BrowserExtensionCheck,
+  type BrowserExtensionStatus,
+  EnvironmentId,
+} from "@specweave-studio/contracts";
+import { BROWSER_EXTENSION_POLL_MS, BrowserExtensionCard } from "./BrowserExtensionSettings";
+
+const state = vi.hoisted(() => ({
+  permitted: true,
+  operate: true,
+  connected: true,
+  query: {
+    data: null as unknown,
+    error: null as string | null,
+    isPending: false,
+    refresh: vi.fn(),
+  },
+  request: vi.fn((input: unknown) => input),
+  useQuery: vi.fn(),
+  command: vi.fn(),
+  confirm: vi.fn(async () => true),
+}));
+vi.mock("../../studio/projectWorkspace", () => ({
+  projectWorkspace: {
+    browserExtensionStatus: state.request,
+    browserExtensionPairing: "pairing",
+    browserExtensionTest: "test",
+    browserExtensionReconnect: "reconnect",
+    browserExtensionStop: "stop",
+    browserExtensionInstallFolder: "folder",
+  },
+}));
+vi.mock("../../state/use-atom-command", () => ({
+  useAtomCommand: (command: string) => (input: unknown) => state.command(command, input),
+}));
+vi.mock("../../state/session", () => ({
+  useEnvironmentScope: (_id: unknown, scope: { _tag?: string } | string) =>
+    String(scope).includes("terminal") ? state.operate : state.permitted,
+}));
+vi.mock("../../state/environments", () => ({
+  useEnvironment: () => ({ connection: { phase: state.connected ? "connected" : "disconnected" } }),
+}));
+vi.mock("../../state/query", () => ({
+  useEnvironmentQuery: (atom: unknown) => {
+    state.useQuery(atom);
+    return state.query;
+  },
+}));
+vi.mock("../../localApi", () => ({
+  ensureLocalApi: () => ({ dialogs: { confirm: state.confirm } }),
+}));
+vi.mock("./settingsLayout", () => ({
+  SettingsSection: ({ children, title }: { children: React.ReactNode; title: string }) => (
+    <section aria-label={title}>{children}</section>
+  ),
+  useRelativeTimeTick: () => 0,
+}));
+
+const m4 = EnvironmentId.make("m4");
+const status: BrowserExtensionStatus = {
+  relayUrl: "ws://127.0.0.1:4777",
+  bundledVersion: "0.1.0",
+  storeUrl: null,
+  profiles: [
+    {
+      id: "p1",
+      label: "Marketing",
+      extensionVersion: "0.1.0",
+      browser: "Chrome 141",
+      connectedAt: "2026-10-16T09:00:00Z",
+      attachedTabs: 2,
+      lease: {
+        threadId: "thread-7",
+        since: "2026-10-16T09:01:00Z",
+        lastActionAt: "2026-10-16T09:02:00Z",
+      },
+    },
+    {
+      id: "p2",
+      label: "Personal",
+      extensionVersion: "0.1.0",
+      browser: "Chrome 141",
+      connectedAt: "2026-10-16T08:00:00Z",
+      attachedTabs: 0,
+      lease: null,
+    },
+  ],
+  recentActions: [
+    {
+      at: "2026-10-16T09:02:00Z",
+      profile: "Marketing",
+      threadId: "thread-7",
+      tool: "chrome_open",
+      url: "https://example.com/",
+    },
+  ],
+};
+
+let renderer: ReactTestRenderer;
+beforeEach(() => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.clearAllMocks();
+  state.permitted = true;
+  state.operate = true;
+  state.connected = true;
+  state.query = { data: status, error: null, isPending: false, refresh: vi.fn() };
+  state.confirm.mockResolvedValue(true);
+});
+afterEach(async () => {
+  await act(() => renderer?.unmount());
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
+const text = () => JSON.stringify(renderer.toJSON());
+const button = (label: string) =>
+  renderer.root.findAll(
+    (node) =>
+      typeof node.type !== "string" &&
+      node.props.onClick &&
+      [node.props.children].flat(2).includes(label),
+  )[0]!;
+const render = () =>
+  act(() => {
+    renderer = create(<BrowserExtensionCard environmentId={m4} machine="M4 Max" />);
+  });
+
+describe("BrowserExtensionCard", () => {
+  it("does not query an offline machine", async () => {
+    state.connected = false;
+    await render();
+    expect(state.useQuery).toHaveBeenLastCalledWith(null);
+    expect(text()).toContain("offline");
+  });
+
+  it("explains store review and lists profiles, Stop only where an agent holds one", async () => {
+    await render();
+    expect(state.request).toHaveBeenCalledWith({ environmentId: m4, input: {} });
+    expect(text()).toContain("Chrome Web Store review");
+    expect(text()).toContain("Recommended");
+    expect(text()).toContain("Marketing");
+    expect(text()).toContain("thread-7");
+    expect(text()).toContain("chrome_open");
+    expect(
+      renderer.root.findAll(
+        (node) =>
+          typeof node.type === "string" &&
+          node.props["data-testid"] === "browser-extension-profile",
+      ),
+    ).toHaveLength(2);
+    expect(
+      renderer.root.findAll(
+        (node) =>
+          node.props.onClick &&
+          [node.props.children].flat(2).includes("Stop") &&
+          typeof node.type !== "string",
+      ),
+    ).toHaveLength(1);
+    state.command.mockResolvedValue({ _tag: "Success", value: status });
+    await act(() => button("Stop").props.onClick());
+    expect(state.command).toHaveBeenCalledWith("stop", {
+      environmentId: m4,
+      input: { profileId: "p1" },
+    });
+  });
+
+  it("links the store listing when it is public", async () => {
+    state.query.data = { ...status, storeUrl: "https://chromewebstore.google.com/detail/x" };
+    await render();
+    expect(text()).toContain("Add to Chrome");
+    expect(text()).not.toContain("Chrome Web Store review");
+  });
+
+  it("shows an empty state with no profiles", async () => {
+    state.query.data = { ...status, profiles: [], recentActions: [] };
+    await render();
+    expect(text()).toContain("No Chrome profile is paired yet");
+  });
+
+  it("hides the pairing code until revealed, and resets only after confirm", async () => {
+    await render();
+    expect(text()).not.toContain("SECRET-1");
+    state.command.mockResolvedValue({
+      _tag: "Success",
+      value: { pairingCode: "SECRET-1", relayUrl: "ws://x" },
+    });
+    await act(() => button("Show pairing code").props.onClick());
+    expect(state.command).toHaveBeenCalledWith("pairing", { environmentId: m4, input: {} });
+    expect(text()).toContain("SECRET-1");
+
+    state.confirm.mockResolvedValueOnce(false);
+    await act(() => button("Reset code").props.onClick());
+    expect(state.command).toHaveBeenCalledTimes(1);
+
+    state.command.mockResolvedValue({
+      _tag: "Success",
+      value: { pairingCode: "SECRET-2", relayUrl: "ws://x" },
+    });
+    await act(() => button("Reset code").props.onClick());
+    expect(state.command).toHaveBeenLastCalledWith("pairing", {
+      environmentId: m4,
+      input: { reset: true },
+    });
+    expect(text()).toContain("SECRET-2");
+
+    await act(() => button("Hide").props.onClick());
+    expect(text()).not.toContain("SECRET-2");
+  });
+
+  it("prepares the Load unpacked folder with steps", async () => {
+    state.command.mockResolvedValue({
+      _tag: "Success",
+      value: { path: "/tmp/swc-extension", version: "0.1.0" },
+    });
+    await render();
+    await act(() => button("Load unpacked").props.onClick());
+    expect(state.command).toHaveBeenCalledWith("folder", { environmentId: m4, input: {} });
+    expect(text()).toContain("/tmp/swc-extension");
+    expect(text()).toContain("Developer mode");
+  });
+
+  it("tests the connection and shows per-profile results", async () => {
+    const check: BrowserExtensionCheck = {
+      state: "connected",
+      checkedAt: "2026-10-16T09:05:00Z",
+      profiles: [
+        { id: "p1", label: "Marketing", ok: true, tabCount: 3, roundTripMs: 42 },
+        { id: "p2", label: "Personal", ok: false, message: "Chrome is closed" },
+      ],
+    };
+    state.command.mockResolvedValue({ _tag: "Success", value: check });
+    await render();
+    await act(() => button("Reconnect").props.onClick());
+    expect(state.command).toHaveBeenCalledWith("reconnect", { environmentId: m4, input: {} });
+    expect(text()).toContain("42 ms");
+    expect(text()).toContain("Chrome is closed");
+    expect(state.query.refresh).toHaveBeenCalled();
+  });
+
+  it("polls status while open", async () => {
+    vi.useFakeTimers();
+    await render();
+    expect(state.query.refresh).not.toHaveBeenCalled();
+    await act(() => vi.advanceTimersByTime(BROWSER_EXTENSION_POLL_MS * 2));
+    expect(state.query.refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it("disables pairing and checks without terminal access", async () => {
+    state.operate = false;
+    await render();
+    expect(button("Test connection").props.disabled).toBe(true);
+    expect(button("Show pairing code").props.disabled).toBe(true);
+  });
+});

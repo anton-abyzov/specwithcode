@@ -80,5 +80,7 @@ export const UserInputAttachmentAnswerPayload = Schema.Struct({
   questionTextById: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   answers: ProviderUserInputAnswers,
   attachmentsByQuestionId: UserInputAttachments,
+  /** The thread of an agent that answered for the user; absent when the user chose. */
+  answeredByThreadId: Schema.optional(Schema.String),
 });
 export type UserInputAttachmentAnswerPayload = typeof UserInputAttachmentAnswerPayload.Type;

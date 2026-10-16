@@ -1,0 +1,286 @@
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+}
+body {
+  width: 1280px;
+  height: 800px;
+  overflow: hidden;
+  font:
+    16px/1.45 -apple-system,
+    "SF Pro Text",
+    "Segoe UI",
+    system-ui,
+    sans-serif;
+  color: #1b1f3b;
+  background: radial-gradient(1200px 700px at 85% 10%, #e7eaff 0%, #f6f7ff 45%, #ffffff 100%);
+}
+.scene {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  padding: 64px 72px;
+  display: flex;
+  gap: 56px;
+  align-items: center;
+}
+.copy {
+  flex: 0 0 440px;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-weight: 600;
+  color: #5b6cff;
+  font-size: 17px;
+  margin-bottom: 26px;
+}
+.brand img {
+  width: 40px;
+  height: 40px;
+}
+h1 {
+  font-size: 44px;
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+  margin: 0 0 20px;
+  color: #141834;
+}
+h1 em {
+  font-style: normal;
+  color: #5b6cff;
+}
+.lede {
+  font-size: 19px;
+  color: #4a5072;
+  margin: 0 0 24px;
+}
+ul.points {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 12px;
+}
+ul.points li {
+  position: relative;
+  padding-left: 30px;
+  font-size: 17px;
+  color: #2b3052;
+}
+ul.points li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 5px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #5b6cff;
+  box-shadow: inset 0 0 0 5px #dfe3ff;
+}
+ol.steps {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 16px;
+  counter-reset: s;
+}
+ol.steps li {
+  counter-increment: s;
+  position: relative;
+  padding-left: 46px;
+  font-size: 17px;
+  color: #2b3052;
+}
+ol.steps li::before {
+  content: counter(s);
+  position: absolute;
+  left: 0;
+  top: -2px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #5b6cff;
+  color: #fff;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+  font-size: 15px;
+}
+ol.steps b,
+ul.points b {
+  color: #141834;
+}
+
+/* The real popup, rendered in an iframe and framed like Chrome's action popup. */
+.popup-card {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow:
+    0 30px 60px -20px rgba(30, 40, 120, 0.35),
+    0 0 0 1px rgba(20, 30, 80, 0.08);
+  overflow: hidden;
+  width: calc(372px * var(--zoom, 1.3));
+  height: calc(var(--h, 470px) * var(--zoom, 1.3));
+}
+.popup-card iframe {
+  border: 0;
+  width: 372px;
+  height: var(--h, 470px);
+  transform: scale(var(--zoom, 1.3));
+  transform-origin: 0 0;
+  display: block;
+}
+
+/* Chrome-like window. */
+.chrome {
+  background: #fff;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow:
+    0 30px 70px -25px rgba(30, 40, 120, 0.4),
+    0 0 0 1px rgba(20, 30, 80, 0.1);
+}
+.tabstrip {
+  background: #dee1e6;
+  height: 44px;
+  display: flex;
+  align-items: flex-end;
+  padding: 0 10px;
+  gap: 2px;
+}
+.dots {
+  display: flex;
+  gap: 8px;
+  align-self: center;
+  margin-right: 14px;
+}
+.dots i {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #ff5f57;
+  display: block;
+}
+.dots i:nth-child(2) {
+  background: #febc2e;
+}
+.dots i:nth-child(3) {
+  background: #28c840;
+}
+.tab {
+  height: 36px;
+  min-width: 150px;
+  max-width: 200px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #3c4043;
+  border-radius: 9px 9px 0 0;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.tab .fav {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  flex: none;
+}
+.tab.active {
+  background: #fff;
+}
+.group-chip {
+  align-self: center;
+  margin: 0 4px 6px 8px;
+  padding: 3px 10px;
+  border-radius: 7px;
+  background: #1a73e8;
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.group {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  position: relative;
+}
+.group .tab {
+  box-shadow: inset 0 -3px 0 #1a73e8;
+}
+.toolbar {
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 14px;
+  border-bottom: 1px solid #e3e5e8;
+}
+.omnibox {
+  flex: 1;
+  height: 30px;
+  border-radius: 15px;
+  background: #f1f3f4;
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  font-size: 13.5px;
+  color: #3c4043;
+}
+.ext-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  position: relative;
+}
+.ext-btn img {
+  width: 18px;
+  height: 18px;
+}
+.ext-btn .badge {
+  position: absolute;
+  right: -4px;
+  bottom: -2px;
+  background: #2f9e44;
+  color: #fff;
+  font-size: 8.5px;
+  font-weight: 700;
+  padding: 0 3px;
+  border-radius: 3px;
+}
+.nav {
+  display: flex;
+  gap: 14px;
+  color: #5f6368;
+  font-size: 16px;
+}
+.pagearea {
+  position: relative;
+  background: #fafbfc;
+}
+
+.caption-pill {
+  display: inline-block;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow:
+    0 6px 18px -8px rgba(30, 40, 120, 0.35),
+    0 0 0 1px rgba(20, 30, 80, 0.08);
+  font-size: 14px;
+  color: #2b3052;
+}
+.caption-pill b {
+  color: #1a73e8;
+}

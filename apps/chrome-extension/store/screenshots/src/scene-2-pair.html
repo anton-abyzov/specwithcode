@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="scene.css" />
+    <style>
+      .stage {
+        flex: 1;
+        display: grid;
+        place-items: center;
+      }
+      .popup-card {
+        --zoom: 1.4;
+        --h: 380px;
+      }
+      .note {
+        margin-top: 28px;
+        font-size: 15px;
+        color: #5a607f;
+      }
+      code {
+        font:
+          14px ui-monospace,
+          Menlo,
+          monospace;
+        background: #eef0ff;
+        color: #3b47c8;
+        padding: 2px 6px;
+        border-radius: 5px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="scene">
+      <div class="copy">
+        <div class="brand"><img src="/icons/icon-128.png" alt="" />SpecWithCode Browser</div>
+        <h1>Pair in <em>three steps</em></h1>
+        <ol class="steps">
+          <li>In the SpecWithCode app, open <b>Settings › Chrome</b> and copy the pairing code.</li>
+          <li>Click the extension icon and paste the code.</li>
+          <li>
+            Name this Chrome profile, for example <b>Personal</b> or <b>Work</b>, and click
+            <b>Pair this profile</b>.
+          </li>
+        </ol>
+        <p class="note">
+          The code only works for SpecWithCode on this computer: the extension refuses any address
+          that is not a loopback address such as <code>127.0.0.1</code>.
+        </p>
+      </div>
+      <div class="stage">
+        <div class="popup-card"><iframe src="/popup?state=not_paired"></iframe></div>
+      </div>
+    </div>
+  </body>
+</html>

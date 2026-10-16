@@ -141,6 +141,8 @@ export interface XAiAcpSubagentEndNotice {
 }
 
 const XAI_UUID_RE = "[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}";
+/** Background shell tasks are keyed by their tool call id (`call-<uuid>-<n>`). */
+const XAI_TASK_ID_RE = `(?:${XAI_UUID_RE}|call-${XAI_UUID_RE}-\\d+)`;
 
 function unknownRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -367,7 +369,7 @@ export function extractXAiBackgroundTaskCompletion(toolCall: AcpToolCallState): 
   const requestIds: string[] = [];
   const push = (value: unknown) => {
     const id = nonEmptyString(value);
-    if (id !== undefined && new RegExp(`^${XAI_UUID_RE}$`, "i").test(id)) {
+    if (id !== undefined && new RegExp(`^${XAI_TASK_ID_RE}$`, "i").test(id)) {
       requestIds.push(id);
     }
   };
@@ -394,7 +396,14 @@ export function extractXAiKilledBackgroundTasks(toolCall: AcpToolCallState): Rea
   const title = titleKey(toolCall);
   const rawInput = unknownRecord(toolCall.data.rawInput);
   const variant = nonEmptyString(rawInput?.variant)?.toLowerCase();
-  if (!title.includes("kill_command_or_subagent") && variant !== "kill") return [];
+  const outputType = nonEmptyString(unknownRecord(toolCall.data.rawOutput)?.type)?.toLowerCase();
+  // Grok 1.0.x titles the call "kill <id> (killed)" with variant KillTask.
+  const isKill =
+    title.includes("kill_command_or_subagent") ||
+    variant === "kill" ||
+    variant === "killtask" ||
+    outputType === "killtask";
+  if (!isKill) return [];
   if (toolCall.status !== "completed") return [];
   const taskIds: string[] = [];
   const push = (value: unknown) => {
@@ -422,6 +431,7 @@ const XAiTaskLifecycleNotification = Schema.Struct({
     command: Schema.optional(Schema.String),
     description: Schema.optional(Schema.NullOr(Schema.String)),
     monitor_description: Schema.optional(Schema.NullOr(Schema.String)),
+    will_wake: Schema.optional(Schema.Boolean),
     task_snapshot: Schema.optional(
       Schema.Struct({
         task_id: Schema.optional(Schema.String),
@@ -446,6 +456,11 @@ export interface XAiBackgroundTaskLifecycleMutation {
   readonly status: "running" | "completed" | "failed";
   /** Final output from `task_completed.task_snapshot`, when Grok sent one. */
   readonly output?: string;
+  /**
+   * `task_completed.will_wake`: false when Grok will not start a wake turn for
+   * this end because the agent already consumed it (polled or killed it).
+   */
+  readonly willWake?: boolean;
   /** What the task is and how to name it, when Grok said. */
   readonly report?:
     | { readonly kind: "command"; readonly label?: string; readonly exitCode?: number }
@@ -499,6 +514,9 @@ export function xAiBackgroundTaskLifecycleMutation(
       status === "completed" && typeof exitCode === "number" && exitCode !== 0 ? "failed" : status,
     ...(output === undefined ? {} : { output }),
     ...(report === undefined ? {} : { report }),
+    ...(status === "completed" && typeof update.will_wake === "boolean"
+      ? { willWake: update.will_wake }
+      : {}),
   };
 }
 
@@ -566,25 +584,88 @@ export function xAiSubagentFinishedNotice(
   };
 }
 
+const XAiBackgroundTasksSnapshot = Schema.Struct({
+  sessionId: Schema.String,
+  update: Schema.Struct({
+    sessionUpdate: Schema.Literal("background_tasks"),
+    tasks: Schema.Array(
+      Schema.Struct({
+        task_id: Schema.String,
+        status: Schema.optional(Schema.String),
+        exit_code: Schema.optional(Schema.NullOr(Schema.Number)),
+      }),
+    ),
+  }),
+});
+
+const decodeXAiBackgroundTasksSnapshot = Schema.decodeUnknownEffect(XAiBackgroundTasksSnapshot);
+
 /**
- * Finishes background subagents from Grok's `subagent_finished`. These arrive
- * on the session notification methods that also carry turn completion; a
+ * Grok's `background_tasks` session update snapshots every task of the session
+ * with its status. Terminal entries end a task whose own `x.ai/task_completed`
+ * was missed. Running entries are ignored: snapshots also replay on session
+ * load, and a replayed "running" must not resurrect a task that already ended.
+ */
+function xAiEndedTasksFromSnapshot(
+  params: unknown,
+): Effect.Effect<ReadonlyArray<XAiBackgroundTaskLifecycleMutation>> {
+  return decodeXAiBackgroundTasksSnapshot(params).pipe(
+    Effect.map((notification) =>
+      notification.update.tasks.flatMap(
+        (task): ReadonlyArray<XAiBackgroundTaskLifecycleMutation> => {
+          const status = task.status?.toLowerCase();
+          if (status !== "completed" && status !== "failed") return [];
+          return [{ sessionId: notification.sessionId, taskId: task.task_id, status }];
+        },
+      ),
+    ),
+    Effect.orElseSucceed(() => []),
+  );
+}
+
+/**
+ * Handles Grok session updates other than turn completion: finished background
+ * subagents (`subagent_finished`) and `background_tasks` snapshots. These arrive
+ * on the session notification methods that also carry turn completion, and the
+ * client keeps one handler per method, so both share this registration. A
  * runtime from {@link makeXAiPromptCompletionRuntime} settles its prompt from
  * each notification before passing it to this handler.
  */
-export const registerXAiSubagentFinished = (
+export const registerXAiSessionUpdates = (
   runtime: Pick<AcpSessionRuntime.AcpSessionRuntime["Service"], "handleExtNotification">,
-  finish: (notice: XAiSubagentFinishedNotice) => Effect.Effect<void>,
-): Effect.Effect<void> =>
-  Effect.forEach(
+  handlers: {
+    readonly finishSubagent: (notice: XAiSubagentFinishedNotice) => Effect.Effect<void>;
+    readonly applyBackgroundTaskMutation: (
+      mutation: XAiBackgroundTaskLifecycleMutation,
+    ) => Effect.Effect<void>;
+  },
+): Effect.Effect<void> => {
+  // Snapshots repeat every ended task; forward each terminal state once.
+  const endedTaskIds = new Set<string>();
+  return Effect.forEach(
     xAiSessionNotificationMethods,
     (method) =>
-      runtime.handleExtNotification(method, XAiSessionUpdateNotification, (notification) => {
-        const notice = xAiSubagentFinishedNotice(notification);
-        return notice === null ? Effect.void : finish(notice);
-      }),
+      runtime.handleExtNotification(method, Schema.Unknown, (params) =>
+        Effect.gen(function* () {
+          const notification = yield* decodeXAiSessionUpdateNotification(params).pipe(
+            Effect.orElseSucceed(() => null),
+          );
+          const notice = notification === null ? null : xAiSubagentFinishedNotice(notification);
+          if (notice !== null) {
+            yield* handlers.finishSubagent(notice);
+            return;
+          }
+          for (const mutation of yield* xAiEndedTasksFromSnapshot(params)) {
+            const key = `${mutation.sessionId}\u0000${mutation.taskId}`;
+            if (endedTaskIds.has(key)) continue;
+            endedTaskIds.add(key);
+            yield* handlers.applyBackgroundTaskMutation(mutation);
+          }
+        }),
+      ),
     { discard: true },
   );
+};
 
 /**
  * Grok ACP often sends `title: "Tool"` even when rawInput has a useful
@@ -795,7 +876,7 @@ function taskIdsFromGetOutputTool(
   const ids: string[] = [];
   const push = (value: unknown) => {
     const text = nonEmptyString(value);
-    if (text !== undefined && new RegExp(`^${XAI_UUID_RE}$`, "i").test(text)) {
+    if (text !== undefined && new RegExp(`^${XAI_TASK_ID_RE}$`, "i").test(text)) {
       ids.push(text);
     }
   };
@@ -821,13 +902,13 @@ function resultTaskIdFromGetOutputTool(
     nonEmptyString(result?.taskId) ??
     nonEmptyString(rawOutput?.task_id) ??
     nonEmptyString(rawOutput?.taskId);
-  if (structured !== undefined && new RegExp(`^${XAI_UUID_RE}$`, "i").test(structured)) {
+  if (structured !== undefined && new RegExp(`^${XAI_TASK_ID_RE}$`, "i").test(structured)) {
     return structured;
   }
   if (output === undefined) return undefined;
   const taskHeader = firstUuidMatch(
     output,
-    new RegExp(`===\\s*Task\\s+(${XAI_UUID_RE})\\s*===`, "i"),
+    new RegExp(`===\\s*Task\\s+(${XAI_TASK_ID_RE})\\s*===`, "i"),
   );
   return taskHeader;
 }

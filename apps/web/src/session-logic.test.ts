@@ -1035,9 +1035,10 @@ describe("native provider presentation in the v2 timeline", () => {
         .entries,
     ).toEqual(deriveTimelineEntriesFromVisibleTurnItems(questionAfterReply));
 
+    // An answered question stands alone as a decision card.
     expect(next.entries[0]).toMatchObject({
-      kind: "work",
-      entry: { questionAnswer: question.questionAnswer },
+      kind: "event",
+      projectedItem: { item: { questionAnswer: question.questionAnswer } },
     });
     // A separately paged reply stays visible until its question history is available.
     expect(

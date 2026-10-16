@@ -248,6 +248,7 @@ const makeHarness = (
     } as unknown as ProjectionStore.ProjectionStoreV2["Service"]),
     Layer.succeed(ProjectCoordinatorService.ProjectCoordinatorService, {
       start: () => Effect.die("must use send"),
+      nextTurnModel: () => Effect.succeed(undefined),
       send: (input) =>
         Effect.gen(function* () {
           if (state.launchFailure) return yield* Effect.fail({} as never);

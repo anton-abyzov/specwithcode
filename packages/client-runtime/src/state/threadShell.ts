@@ -22,6 +22,22 @@ import {
 } from "./entities.ts";
 
 const EMPTY_THREADS: ReadonlyArray<OrchestrationV2ThreadShell> = Object.freeze([]);
+const EMPTY_LINK_TARGETS: ReadonlyArray<ThreadLinkTarget> = Object.freeze([]);
+
+/** What a thread link resolves against: which thread it is and its title, never its live state. */
+export type ThreadLinkTarget = Pick<
+  EnvironmentThreadShell,
+  "environmentId" | "id" | "projectId" | "title" | "deletedAt"
+>;
+
+function sameLinkTarget(left: ThreadLinkTarget, right: ThreadLinkTarget): boolean {
+  return (
+    left.id === right.id &&
+    left.projectId === right.projectId &&
+    left.title === right.title &&
+    left.deletedAt === right.deletedAt
+  );
+}
 const EMPTY_SCOPED_THREAD_REFS: ReadonlyArray<ScopedThreadRef> = Object.freeze([]);
 const EMPTY_THREAD_INDEX: ReadonlyMap<ThreadId, OrchestrationV2ThreadShell> = new Map();
 const EMPTY_THREAD_REFS_BY_PROJECT: ReadonlyMap<
@@ -130,6 +146,34 @@ export function createEnvironmentThreadShellAtoms(input: {
     }).pipe(Atom.withLabel(`environment-thread-refs-by-project:${environmentId}`));
   });
 
+  // A message's links are resolved against every thread of its host. Status
+  // changes and the server's periodic resends leave this list as it was, so
+  // conversations that resolve links do not render again for them.
+  const environmentThreadLinkTargetsAtom = Atom.family((environmentId: EnvironmentId) => {
+    let previous: ReadonlyArray<ThreadLinkTarget> = EMPTY_LINK_TARGETS;
+    return Atom.make((get): ReadonlyArray<ThreadLinkTarget> => {
+      const threads = get(environmentThreadsAtom(environmentId));
+      const next = threads.map((thread) => scopedThread(environmentId, thread));
+      if (
+        next.length === previous.length &&
+        next.every((thread, index) => sameLinkTarget(previous[index]!, thread))
+      ) {
+        return previous;
+      }
+      previous =
+        next.length === 0
+          ? EMPTY_LINK_TARGETS
+          : next.map((thread) => ({
+              environmentId,
+              id: thread.id,
+              projectId: thread.projectId,
+              title: thread.title,
+              deletedAt: thread.deletedAt,
+            }));
+      return previous;
+    }).pipe(Atom.withLabel(`environment-thread-link-targets:${environmentId}`));
+  });
+
   const threadShellAtomFamily = Atom.family((key: string) => {
     const ref = parseThreadKey(key);
     return Atom.make((get) => {
@@ -219,6 +263,7 @@ export function createEnvironmentThreadShellAtoms(input: {
     environmentThreadIndexAtom,
     environmentThreadRefsAtom,
     environmentThreadRefsByProjectAtom,
+    environmentThreadLinkTargetsAtom,
     threadRefsAtom,
     threadShellsAtom,
     navigationThreadShellsAtom,

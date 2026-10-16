@@ -15,6 +15,12 @@ import * as FS from "node:fs";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Native launchd updater bootstrap owns subprocess and filesystem lifecycle outside the service runtime.
 import * as Path from "node:path";
 
+import {
+  canonicalStudioPath,
+  LEGACY_STUDIO_HOME_DIRECTORY,
+  STUDIO_HOME_DIRECTORY,
+} from "@specweave-studio/shared/studioIdentity";
+
 import { parseStudioInstallation } from "../backend/localServiceAttach.ts";
 
 /**
@@ -45,39 +51,47 @@ export function findManagedServiceInstallations(
   readDir: (path: string) => ReadonlyArray<string> = (path) => FS.readdirSync(path),
   readFile: (path: string) => string = (path) => FS.readFileSync(path, "utf8"),
 ): ReadonlyArray<ManagedServiceInstallation> {
-  const studioRoot = Path.join(homeDirectory, ".specweave-studio");
-  let names: ReadonlyArray<string>;
-  try {
-    names = readDir(studioRoot);
-  } catch {
-    return [];
-  }
+  // Same order as the desktop's attach scan: the branded root first, then an
+  // unmigrated legacy root. A migrated legacy root links to the branded one, so its
+  // entries are the ones already found.
   const found: ManagedServiceInstallation[] = [];
-  for (const name of [...names].sort()) {
-    if (!SERVICE_AGENT_IDENTITIES.has(name)) continue;
-    let text: string;
+  const seen = new Set<string>();
+  for (const directory of [STUDIO_HOME_DIRECTORY, LEGACY_STUDIO_HOME_DIRECTORY]) {
+    const studioRoot = Path.join(homeDirectory, directory);
+    let names: ReadonlyArray<string>;
     try {
-      text = readFile(Path.join(studioRoot, name, "installation.json"));
+      names = readDir(studioRoot);
     } catch {
       continue;
     }
-    const installation = parseStudioInstallation(text, {
-      studioRoot,
-      directoryName: name,
-      join: Path.join,
-    });
-    if (installation === null || !installation.serviceInstalled) continue;
-    if (installation.identity !== name) continue;
-    let version: string | null = null;
-    try {
-      const record = JSON.parse(text) as { version?: unknown };
-      version = typeof record.version === "string" ? record.version : null;
-    } catch {
-      version = null;
+    for (const name of [...names].sort()) {
+      if (!SERVICE_AGENT_IDENTITIES.has(name) || seen.has(name)) continue;
+      let text: string;
+      try {
+        text = readFile(Path.join(studioRoot, name, "installation.json"));
+      } catch {
+        continue;
+      }
+      const installation = parseStudioInstallation(text, {
+        studioRoot,
+        directoryName: name,
+        join: Path.join,
+        canonical: (path) => canonicalStudioPath(path, homeDirectory),
+      });
+      if (installation === null || !installation.serviceInstalled) continue;
+      if (installation.identity !== name) continue;
+      let version: string | null = null;
+      try {
+        const record = JSON.parse(text) as { version?: unknown };
+        version = typeof record.version === "string" ? record.version : null;
+      } catch {
+        version = null;
+      }
+      seen.add(name);
+      found.push({ identity: name, studioHome: installation.studioHome, version });
     }
-    found.push({ identity: name, studioHome: installation.studioHome, version });
   }
-  return found;
+  return found.sort((a, b) => a.identity.localeCompare(b.identity));
 }
 
 /**
@@ -221,8 +235,16 @@ export function effectiveUpdatePreferences(
         downloadAutomatically: saved.downloadAutomatically,
         installAutomatically: saved.installAutomatically,
         automaticUpdatesAllowed: true,
+        ...withForceInstallAfter(saved),
       }
-    : { ...NO_AUTOMATIC_UPDATES, automaticUpdatesAllowed: false };
+    : { ...NO_AUTOMATIC_UPDATES, automaticUpdatesAllowed: false, ...withForceInstallAfter(saved) };
+}
+
+// How long a forced install waits applies whether or not self-update runs.
+function withForceInstallAfter(saved: DesktopUpdatePreferences) {
+  return saved.forceInstallAfterMinutes === undefined
+    ? {}
+    : { forceInstallAfterMinutes: saved.forceInstallAfterMinutes };
 }
 
 export function agentChannel(channel: DesktopUpdateChannel): "stable" | "preview" {

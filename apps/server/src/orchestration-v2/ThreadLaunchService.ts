@@ -34,6 +34,12 @@ import {
   isTemporaryWorktreeBranch,
 } from "@specweave-studio/shared/git";
 
+import {
+  isWindowsAbsolutePath,
+  normalizeProjectPathForComparison,
+  normalizeProjectPathForDispatch,
+} from "@specweave-studio/shared/path";
+
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
@@ -54,17 +60,93 @@ export type ThreadLaunchWorkspaceStrategy =
       readonly type: "existing_worktree";
       readonly worktreePath: string;
       readonly branch?: string | undefined;
+      readonly repository?: string | undefined;
     }
   | {
       readonly type: "worktree";
       readonly baseRef: string;
       readonly branch?: string | undefined;
       readonly startFromOrigin?: boolean | undefined;
+      readonly repository?: string | undefined;
     };
+
+/** A nested repository checkout a launch runs git in instead of the project root. */
+export interface LaunchRepositoryCheckout {
+  readonly id: string;
+  readonly path: string;
+}
+
+interface LaunchRepositoryProject {
+  readonly title: string;
+  readonly workspaceRoot: string;
+  readonly workspaceSettings?:
+    | {
+        readonly environment?:
+          | {
+              readonly repositories: ReadonlyArray<{
+                readonly id: string;
+                readonly localPath: string | null;
+              }>;
+            }
+          | undefined;
+      }
+    | undefined;
+}
+
+/** Each environment repository's checkout, where the environment settings place it. */
+export function projectRepositoryCheckouts(
+  project: LaunchRepositoryProject,
+): ReadonlyArray<LaunchRepositoryCheckout> {
+  const root = normalizeProjectPathForDispatch(project.workspaceRoot);
+  const separator = isWindowsAbsolutePath(root) ? "\\" : "/";
+  return (project.workspaceSettings?.environment?.repositories ?? []).map((repo) => ({
+    id: repo.id,
+    path: normalizeProjectPathForDispatch(
+      repo.localPath ??
+        `${root.endsWith(separator) ? root : root + separator}.studio-repositories${separator}${repo.id}`,
+    ),
+  }));
+}
+
+/**
+ * Match a launch's `repository` against the project's environment repositories,
+ * by id or by the absolute path of the checkout. Anything else is rejected with
+ * the valid choices, so a launch never silently runs in the project root.
+ */
+export function resolveLaunchRepository(
+  project: LaunchRepositoryProject,
+  requested: string,
+):
+  | { readonly ok: true; readonly checkout: LaunchRepositoryCheckout }
+  | { readonly ok: false; readonly message: string } {
+  const checkouts = projectRepositoryCheckouts(project);
+  const byId = checkouts.find((checkout) => checkout.id === requested);
+  if (byId !== undefined) return { ok: true, checkout: byId };
+  if (requested.startsWith("/") || isWindowsAbsolutePath(requested)) {
+    const path = normalizeProjectPathForComparison(requested);
+    const byPath = checkouts.find(
+      (checkout) => normalizeProjectPathForComparison(checkout.path) === path,
+    );
+    if (byPath !== undefined) return { ok: true, checkout: byPath };
+  }
+  const subject = `Repository "${requested}" is not one of project "${project.title}"'s environment repositories.`;
+  if (checkouts.length === 0)
+    return {
+      ok: false,
+      message: `${subject} The project has none; omit repository to use the project root (${project.workspaceRoot}).`,
+    };
+  return {
+    ok: false,
+    message: `${subject} Use one of these ids or checkout paths: ${checkouts
+      .map((checkout) => `${checkout.id} (${checkout.path})`)
+      .join(", ")}.`,
+  };
+}
 
 export interface ThreadLaunchInitialMessage {
   readonly manualCodexCreditIntent?:
-    | import("@specweave-studio/contracts").ManualCodexCreditIntent | undefined;
+    | import("@specweave-studio/contracts").ManualCodexCreditIntent
+    | undefined;
   readonly messageId?: MessageId;
   readonly scheduledTaskId?: ScheduledTaskId;
   readonly senderThreadId?: ThreadId;
@@ -127,6 +209,7 @@ export class ThreadLaunchError extends Schema.TaggedError<ThreadLaunchError>()(
   {
     operation: Schema.Literals([
       "resolve-project",
+      "resolve-repository",
       "read-receipt",
       "generate-metadata",
       "provision-worktree",
@@ -201,6 +284,36 @@ const make = Effect.gen(function* () {
         cause,
       });
 
+  /**
+   * The checkout this launch runs git in: the requested environment repository,
+   * or the project root when the strategy names none.
+   */
+  const resolveGitRoot = Effect.fn("ThreadLaunchService.resolveGitRoot")(function* (
+    input: PreparationInput,
+    project: LaunchRepositoryProject,
+    threadId?: ThreadId,
+  ) {
+    const strategy = input.workspaceStrategy;
+    const requested = strategy.type === "root" ? undefined : strategy.repository;
+    if (requested === undefined) return { cwd: project.workspaceRoot, repository: null };
+    const resolved = resolveLaunchRepository(project, requested);
+    if (!resolved.ok)
+      return yield* mapError(input, "resolve-repository", threadId)(resolved.message);
+    const { checkout } = resolved;
+    const isRepository = yield* git
+      .isRepository(checkout.path)
+      .pipe(Effect.orElseSucceed(() => false));
+    if (!isRepository)
+      return yield* mapError(
+        input,
+        "resolve-repository",
+        threadId,
+      )(
+        `Repository "${checkout.id}" has no git checkout at ${checkout.path}. Prepare it in the project's environment settings, then launch again.`,
+      );
+    return { cwd: checkout.path, repository: checkout };
+  });
+
   const readReceipt = (input: ThreadLaunchInput, commandId: CommandId) =>
     receipts
       .getByCommandId(commandId)
@@ -245,6 +358,7 @@ const make = Effect.gen(function* () {
         }),
       ),
     );
+    const gitRoot = yield* resolveGitRoot(input, project, threadId);
 
     const reused = input.reusedWorktree;
     const tracked = input.workspaceStrategy.type === "worktree" || reused !== undefined;
@@ -337,20 +451,20 @@ const make = Effect.gen(function* () {
         const startFromOrigin =
           input.workspaceStrategy.startFromOrigin === true &&
           (yield* git
-            .remoteExists({ cwd: project.workspaceRoot, remoteName: "origin" })
+            .remoteExists({ cwd: gitRoot.cwd, remoteName: "origin" })
             .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId))));
         yield* setupTracker.stageStatus(threadId, "fetch", startFromOrigin ? "running" : "skipped");
         if (startFromOrigin) {
           yield* git
             .fetchRemote({
-              cwd: project.workspaceRoot,
+              cwd: gitRoot.cwd,
               remoteName: "origin",
               refName: input.workspaceStrategy.baseRef,
             })
             .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
           const remoteBaseExists = yield* git
             .remoteBranchExists({
-              cwd: project.workspaceRoot,
+              cwd: gitRoot.cwd,
               refName: input.workspaceStrategy.baseRef,
               remoteName: "origin",
             })
@@ -358,7 +472,7 @@ const make = Effect.gen(function* () {
           if (remoteBaseExists) {
             startRef = yield* git
               .resolveRemoteTrackingCommit({
-                cwd: project.workspaceRoot,
+                cwd: gitRoot.cwd,
                 refName: input.workspaceStrategy.baseRef,
                 fallbackRemoteName: "origin",
               })
@@ -373,22 +487,30 @@ const make = Effect.gen(function* () {
         // a parent repository or a sibling clone. A new project starts with
         // only its first branch, so `git worktree add` would fail with
         // "invalid reference". Start from the project's checked-out branch
-        // instead of dead-ending the launch.
+        // instead of dead-ending the launch. A launch that names its repository
+        // asked for that repository's ref, so it fails instead.
         let baseRefName = input.workspaceStrategy.baseRef;
         const startRefExists = yield* git
-          .hasCommit({ cwd: project.workspaceRoot, refName: startRef })
+          .hasCommit({ cwd: gitRoot.cwd, refName: startRef })
           .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
+        if (!startRefExists && gitRoot.repository !== null) {
+          return yield* mapError(
+            input,
+            "provision-worktree",
+            threadId,
+          )(
+            `Base ref "${input.workspaceStrategy.baseRef}" was not found in repository "${gitRoot.repository.id}" (${gitRoot.repository.path}).`,
+          );
+        }
         if (!startRefExists) {
-          const currentRef = yield* git
-            .localStatus({ cwd: project.workspaceRoot })
-            .pipe(
-              Effect.map((status) => status.refName),
-              Effect.orElseSucceed(() => null),
-            );
+          const currentRef = yield* git.localStatus({ cwd: gitRoot.cwd }).pipe(
+            Effect.map((status) => status.refName),
+            Effect.orElseSucceed(() => null),
+          );
           const currentRefExists =
             currentRef !== null &&
             (yield* git
-              .hasCommit({ cwd: project.workspaceRoot, refName: `refs/heads/${currentRef}` })
+              .hasCommit({ cwd: gitRoot.cwd, refName: `refs/heads/${currentRef}` })
               .pipe(Effect.orElseSucceed(() => false)));
           if (currentRef !== null && currentRefExists) {
             yield* Effect.logWarning(
@@ -405,7 +527,7 @@ const make = Effect.gen(function* () {
           branch.includes("/") &&
           (yield* git
             .hasCommit({
-              cwd: project.workspaceRoot,
+              cwd: gitRoot.cwd,
               refName: `refs/heads/${branch.slice(0, branch.indexOf("/"))}`,
             })
             .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId))))
@@ -416,7 +538,7 @@ const make = Effect.gen(function* () {
         const worktree = yield* git
           .createWorktree(
             {
-              cwd: project.workspaceRoot,
+              cwd: gitRoot.cwd,
               refName: startRef,
               newRefName: branch!,
               baseRefName,
@@ -616,7 +738,7 @@ const make = Effect.gen(function* () {
             // reusing a checkout that may be half written.
             yield* git
               .removeWorktree(
-                { cwd: project.workspaceRoot, path: removedPath, force: false },
+                { cwd: gitRoot.cwd, path: removedPath, force: false },
                 cancelled && settledSetup
                   ? {
                       cancelledSetup: {
@@ -755,6 +877,9 @@ const make = Effect.gen(function* () {
           "resolve-project",
         )("Resume or restore the project before starting new threads.");
       }
+      // Reject an unknown repository before the thread exists, so the caller
+      // sees why instead of a thread that fails during preparation.
+      yield* resolveGitRoot(input, project);
       if (input.reuseExistingThread === true && input.threadId === undefined) {
         return yield* mapError(
           input,
@@ -1014,6 +1139,9 @@ const make = Effect.gen(function* () {
               type: "existing_worktree" as const,
               worktreePath: projection.thread.worktreePath,
               branch: projection.thread.branch,
+              ...(workspacePreparation.repository === undefined
+                ? {}
+                : { repository: workspacePreparation.repository }),
             },
             reusedWorktree: { baseRef: workspacePreparation.baseRef },
           }

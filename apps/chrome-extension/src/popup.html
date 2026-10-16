@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>SpecWithCode Browser</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <img src="../icons/icon-32.png" alt="" width="24" height="24" />
+      <h1>SpecWithCode Browser</h1>
+    </header>
+
+    <p id="status" class="status" role="status" data-phase="not_paired">Not paired</p>
+    <p id="detail" class="detail"></p>
+
+    <section id="paired" hidden>
+      <dl>
+        <dt>Profile name</dt>
+        <dd id="label-value"></dd>
+        <dt>SpecWithCode on</dt>
+        <dd id="machine-value"></dd>
+        <dt>Agent tabs</dt>
+        <dd id="tabs-value">0</dd>
+      </dl>
+      <div class="row">
+        <button id="reconnect" type="button">Reconnect</button>
+        <button id="pause" type="button">Pause</button>
+        <button id="unpair" type="button" class="quiet">Unpair</button>
+      </div>
+    </section>
+
+    <form id="pair-form">
+      <label for="code">Pairing code</label>
+      <textarea
+        id="code"
+        rows="3"
+        spellcheck="false"
+        placeholder="Paste the code from SpecWithCode › Settings › Chrome"
+        required
+      ></textarea>
+      <label for="label">Name this Chrome profile</label>
+      <input id="label" maxlength="60" placeholder="For example: Personal, EasyChamp admin" />
+      <button type="submit">Pair this profile</button>
+      <p id="error" class="error" role="alert"></p>
+    </form>
+
+    <footer>
+      Agents see only this Chrome profile, and only while it is paired. Tabs they use sit in the
+      blue SpecWithCode tab group; drag a tab out of it to take it back.
+    </footer>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

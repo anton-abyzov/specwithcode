@@ -57,7 +57,9 @@ describe("mcpToolPresentation", () => {
       toolSource: { key: "mcp:my_server", name: "my server", kind: "integration" },
     });
     expect(mcpToolPresentation({ toolName: "Read" })).toEqual({});
-    expect(mcpToolPresentation({ serverName: "studio-code", toolName: "delegate_task" })).toEqual({});
+    expect(mcpToolPresentation({ serverName: "studio-code", toolName: "delegate_task" })).toEqual(
+      {},
+    );
   });
 
   it.each([
@@ -99,5 +101,16 @@ describe("mcpToolPresentation", () => {
         toolSource: { key: "mcp:weather", name: "weather", kind: "integration" },
       },
     );
+  });
+});
+
+describe("mcpToolPresentation product name", () => {
+  it("shows this app's own server as SpecWithCode, not its protocol name", () => {
+    expect(
+      mcpToolPresentation({
+        toolName: "mcp__specweave_studio__unknown_tool",
+        serverDisplayName: "SpecWeave Studio",
+      }).toolSource?.name,
+    ).toBe("SpecWithCode");
   });
 });

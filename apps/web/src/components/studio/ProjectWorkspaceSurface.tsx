@@ -1,3 +1,4 @@
+import { ThreadArtifactsMenu } from "../chat/ThreadArtifacts";
 import { CoordinatorComposerControls } from "./CoordinatorAccessPicker";
 import { useProjectThreadInventory } from "../../studio/useProjectThreadInventory";
 import { ProjectExecutionHistory, ProjectThreadAvailability } from "./ProjectExecutionHistory";
@@ -7,22 +8,24 @@ import { ProjectWorkspaceColumns } from "./ProjectWorkspaceColumns";
 import { createCoordinatorSelectionTracker } from "../../studio/coordinatorContinuation";
 import { useCoordinatorModelSave } from "../../studio/coordinatorModelSave";
 import { useProjectCoordinatorDraft } from "../../studio/projectCoordinatorDraft";
-import { useProjectCoordinatorComposer } from "../../studio/projectCoordinatorComposer";
+import { getProjectCoordinatorComposer } from "../../studio/projectCoordinatorComposer";
+import { settleAfter, settleCaught } from "../../lib/settle";
+import { CoordinatorComposer } from "./CoordinatorComposer";
+import { useDurableCoordinatorDraft } from "../../lib/durableComposerDraftBindings";
 import { ProjectCoordinatorDetails } from "./ProjectCoordinatorDetails";
 import { ProjectMachineHandoff } from "./ProjectMachineHandoff";
 import { ProjectPlan } from "./ProjectPlan";
 import { TimelineDetailMenu } from "../chat/TimelineDetailMenu";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
 import {
   AppWindowIcon,
-  ArrowUpIcon,
   EllipsisVerticalIcon,
   GaugeIcon,
+  LaptopIcon,
   ListChecksIcon,
   PanelRightIcon,
-  PlusIcon,
   RepeatIcon,
   SettingsIcon,
 } from "lucide-react";
@@ -42,20 +45,22 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@specweave-studio/client-runtime/state/shell";
-import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import { resolveCoordinatorModelSelection } from "@specweave-studio/shared/coordinatorDefault";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
+import { coordinatorOnLimitFallback } from "@specweave-studio/shared/providerFallback";
 import { useAllEnvironmentShellsBootstrapped, useThreadProjection } from "../../state/entities";
 import { useEnvironment, usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentScope } from "../../state/session";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useOrchestrationCommand } from "../../state/use-orchestration-command";
+import { threadEnvironment } from "../../state/threads";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../../keybindings";
-import { composerSendButtonLabel, composerSubmissionIntentForKey } from "../../composer-logic";
 import { isContextMenuOpen } from "../../contextMenuFallback";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { usePhoneKeyboard } from "../../hooks/usePhoneKeyboard";
@@ -73,7 +78,13 @@ import {
   createScopedProjectSendReceipt,
   projectAdmissionReason,
 } from "../../studio/projectWorkspaceModel";
-import { modelLabel, THREAD_TONE_LABELS, threadTone, waitingCount } from "../../studio/shellModel";
+import {
+  modelLabel,
+  shortMachineName,
+  THREAD_TONE_LABELS,
+  threadTone,
+  waitingCount,
+} from "../../studio/shellModel";
 import {
   PULL_REQUEST_REQUEST_EXPIRED_REASON,
   PULL_REQUEST_REQUEST_TTL_MS,
@@ -93,14 +104,8 @@ import { Button } from "../ui/button";
 import { isElectron } from "../../env";
 import { canOpenProjectWindowFor, openProjectWindow } from "../../lib/projectWindow";
 import { ProjectWorkspaceSettings, type ProjectSettingsTab } from "./ProjectWorkspaceSettings";
-import {
-  coordinatorAttachAccept,
-  CoordinatorAttachmentNotice,
-  CoordinatorAttachmentStrip,
-  filesFrom,
-  pastedFilesFrom,
-  useCoordinatorAttachments,
-} from "./shell/CoordinatorAttachments";
+import { isProjectSettingsTab } from "./projectSettingsSearch.logic";
+import { useProjectSettingsRequest } from "../../studio/projectSettingsRequests";
 import { fileAttachmentStagingLimit } from "../chat/composerAttachmentFiles";
 import { coordinatorRetryMessage, coordinatorRetryFingerprint } from "./coordinatorRecovery";
 import {
@@ -121,6 +126,9 @@ import {
   quickStartDraft,
 } from "./shell/CoordinatorQuickStarts";
 import { ThreadsPane } from "./shell/ThreadsPane";
+import { bulkThreadTargets } from "../../studio/bulkThreadControl";
+import { useBulkThreadControl } from "../../studio/useBulkThreadControl";
+import { useComposerAppCommands } from "../../studio/useComposerAppCommands";
 import { LibraryPane } from "./shell/LibraryPane";
 import { PullRequestsPane } from "./shell/PullRequestsPane";
 import { ScheduledPane } from "./shell/ScheduledPane";
@@ -131,7 +139,8 @@ import {
   PROJECT_PANE_TABS,
   type ProjectPaneTab,
 } from "../../studio/projectPaneModel";
-import { isSidebarSubagentThread } from "../Sidebar.logic";
+import { runningSubagentCount } from "../../studio/threadSubagents";
+import { useThreadSubagents } from "./shell/SubagentsChip";
 import { useOpenLink } from "../../browser/useOpenLink";
 import { ProjectWorkerPane } from "./ProjectWorkerPane";
 import { coordinatorProgress } from "../../studio/coordinatorProgress";
@@ -212,22 +221,26 @@ export function ProjectWorkspaceSurface({
     }),
   );
   const snapshot = query.data;
+  const refreshWorkspace = query.refresh;
   const coordinatorId = snapshot?.settings.coordinatorThreadId ?? null;
   // The project shell names the coordinator before the workspace read answers; the
   // panel needs it at once, so a link to the coordinator never lands there.
   const mainCoordinatorId = coordinatorId ?? project.workspaceSettings?.coordinatorThreadId ?? null;
-  const { executionScopes, archived, shells, workers } = useProjectThreadInventory(
+  // Until the read answers, the conversation opens from the project shell's
+  // coordinator, so switching to a project paints its history without a wait.
+  const conversationCoordinatorId = snapshot ? coordinatorId : mainCoordinatorId;
+  // Every host's threads are read only while one is open in the panel, which may
+  // be a subagent or fork of another project's thread; otherwise an update to
+  // another project's thread renders nothing here.
+  const { executionScopes, archived, shells, workers, linkTargets } = useProjectThreadInventory(
     project,
     iconCheckouts,
     mainCoordinatorId,
+    selected !== null,
   );
   const remoteWorkerCount = visibleRemoteWorkers(
     useProjectRemoteWorkers(project.environmentId, project.id).workers,
   ).length;
-  const environmentThreads = useMemo(
-    () => shells.filter((thread) => thread.environmentId === project.environmentId),
-    [shells, project.environmentId],
-  );
   const paneScope = useMemo(
     () => ({
       environmentId: project.environmentId,
@@ -244,6 +257,22 @@ export function ProjectWorkspaceSurface({
     ],
   );
   const [tab, setTab] = useState<ProjectSettingsTab | null>(null);
+  const [focusName, setFocusName] = useState(false);
+  const [settingsRow, setSettingsRow] = useState<string | null>(null);
+  useProjectSettingsRequest(
+    projectKey,
+    useCallback((target) => {
+      // A search result opens its tab and row; a bare request (double-click) renames.
+      if (target && isProjectSettingsTab(target.tab)) {
+        setFocusName(false);
+        setSettingsRow(target.row ?? null);
+        setTab(target.tab);
+        return;
+      }
+      setFocusName(true);
+      setTab("general");
+    }, []),
+  );
   const [planOpen, setPlanOpen] = useState(false);
   const [coordinatorDetailsOpen, setCoordinatorDetailsOpen] = useState(false);
   const [machineHandoffOpen, setMachineHandoffOpen] = useState(false);
@@ -257,11 +286,12 @@ export function ProjectWorkspaceSurface({
   const [coordinatorReviewView, setCoordinatorReviewView] = useState<"requests" | "activity">(
     "requests",
   );
-  const {
-    prompt,
-    setPrompt,
-    store: composer,
-  } = useProjectCoordinatorComposer(project.environmentId, project.id);
+  // The draft lives in a store the composer subscribes to. This page reads it only
+  // when it acts on it, so typing renders the composer and nothing else.
+  const composer = getProjectCoordinatorComposer(project.environmentId, project.id);
+  const setPrompt = composer.setPrompt;
+  // Unsent text and attachments survive a crash and follow the user between windows.
+  useDurableCoordinatorDraft(project.environmentId, project.id, composer);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -314,6 +344,7 @@ export function ProjectWorkspaceSurface({
       (text: string) => {
         setPrompt((current) => (current.trim() ? `${current}\n\n${text}` : text));
         setTab(null);
+        setFocusName(false);
         setPlanOpen(false);
         setCoordinatorDetailsOpen(false);
         setPaneExpanded(false);
@@ -321,6 +352,15 @@ export function ProjectWorkspaceSurface({
       },
       [showCoordinator, setPrompt],
     ),
+  );
+  // The subagent whose transcript peeks over the open thread; it is not a thread itself.
+  const [subagentPeek, setSubagentPeek] = useState<{
+    readonly hostId: ThreadId;
+    readonly subagentId: ThreadId;
+  } | null>(null);
+  const peekSubagent = useCallback(
+    (hostId: ThreadId, subagentId: ThreadId) => setSubagentPeek({ hostId, subagentId }),
+    [],
   );
   const { selectedThread, openThreadInPane, openThread } = useProjectPaneSelection({
     shells,
@@ -332,6 +372,7 @@ export function ProjectWorkspaceSurface({
     lastOpened,
     threadsLoaded,
     onShowCoordinator: showCoordinator,
+    onPeekSubagent: peekSubagent,
   });
   const openCoordinator = useCallback(() => {
     setCoordinatorDetailsOpen(false);
@@ -367,11 +408,14 @@ export function ProjectWorkspaceSurface({
   const connected = environment?.connection.phase === "connected";
   const blocked =
     ownershipProblem ?? projectAdmissionReason(snapshot?.settings ?? null, connected, canOperate);
-  const coordinator = shells.find(
-    (t) => t.id === coordinatorId && t.environmentId === project.environmentId,
+  // Memoized, not just computed: these feed memoized callbacks below, and the
+  // React Compiler keeps those only for values it knows are not changed later.
+  const coordinator = useMemo(
+    () => shells.find((t) => t.id === coordinatorId && t.environmentId === project.environmentId),
+    [shells, coordinatorId, project.environmentId],
   );
   // An accepted message is not an answer: its run can still fail on the host.
-  const coordinatorFailure = coordinatorTurnFailure(coordinator);
+  const coordinatorFailure = useMemo(() => coordinatorTurnFailure(coordinator), [coordinator]);
   const coordinatorRef = useMemo(
     () => (coordinatorId ? scopeThreadRef(project.environmentId, coordinatorId) : null),
     [project.environmentId, coordinatorId],
@@ -397,22 +441,42 @@ export function ProjectWorkspaceSurface({
   // is missing yet.
   const modelsLoading = useCoordinatorModelsLoading(environment?.serverConfig);
   // What the coordinator runs on, in the order the host starts one: shown so the picker is never empty.
-  const model = resolveCoordinatorModelSelection({
-    saved: liveSettings?.coordinatorModelSelection ?? snapshot?.settings.coordinatorModelSelection,
-    coordinatorThreadModel: coordinator?.modelSelection,
-    projectDefault: project.defaultModelSelection,
-    scopedDefault: hostSettings
-      ? resolveProjectSettings(hostSettings, project.id, project).settings.defaultModelSelection
-      : null,
-    providers: hostProviders,
-  });
+  const savedModel =
+    liveSettings?.coordinatorModelSelection ?? snapshot?.settings.coordinatorModelSelection;
+  const coordinatorThreadModel = coordinator?.modelSelection;
+  const model = useMemo(
+    () =>
+      resolveCoordinatorModelSelection({
+        saved: savedModel,
+        coordinatorThreadModel,
+        projectDefault: project.defaultModelSelection,
+        scopedDefault: hostSettings
+          ? resolveProjectSettings(hostSettings, project.id, project).settings.defaultModelSelection
+          : null,
+        providers: hostProviders,
+      }),
+    [savedModel, coordinatorThreadModel, project, hostSettings, hostProviders],
+  );
   const actions = useThreadActions();
   const providerEntries = useProviderEntries(project.environmentId);
   // The limit rule moved the coordinator off its saved model; it returns once that has room.
   const savedCoordinatorModel = liveSettings?.coordinatorModelSelection ?? null;
+  // Only a saved provider that really has no room is a limit: a coordinator a
+  // scheduled run moved, or one whose limit has reset, goes back to the saved
+  // model with the next message, so the line must not claim a limit then.
   const coordinatorFallback =
-    coordinator && savedCoordinatorModel
-      ? coordinator.modelSelection.instanceId !== savedCoordinatorModel.instanceId
+    coordinator && savedCoordinatorModel && hostProviders && hostSettings
+      ? coordinatorOnLimitFallback({
+          saved: savedCoordinatorModel,
+          thread: coordinator.modelSelection,
+          providers: hostProviders,
+          rule: resolveProjectSettings(hostSettings, project.id, project).settings,
+          nowMs: Date.now(),
+          // Only a run that stopped on a real usage limit marks its provider limited.
+          limitedInstanceIds: new Set(
+            coordinator.limitRecovery ? [coordinator.providerInstanceId] : [],
+          ),
+        })
         ? {
             now: modelLabel(
               providerEntries.get(coordinator.modelSelection.instanceId) ?? null,
@@ -427,6 +491,30 @@ export function ProjectWorkspaceSurface({
           }
         : null
       : null;
+  // "Switch back" puts the coordinator on its saved model; the host still moves it
+  // again on the next turn if that model's limit has not reset.
+  const setCoordinatorModel = useOrchestrationCommand(threadEnvironment.updateMetadata, {
+    reportFailure: false,
+  });
+  const [switchingBack, setSwitchingBack] = useState(false);
+  const switchCoordinatorBack = async () => {
+    if (!coordinator || !savedCoordinatorModel || switchingBack) return;
+    setSwitchingBack(true);
+    setError(null);
+    await settleAfter(
+      async () => {
+        const result = await setCoordinatorModel({
+          environmentId: project.environmentId,
+          input: { threadId: coordinator.id, modelSelection: savedCoordinatorModel },
+        });
+        if (result._tag === "Failure")
+          setError(
+            `Could not switch back to ${coordinatorFallback?.saved.full ?? "the saved model"}.`,
+          );
+      },
+      () => setSwitchingBack(false),
+    );
+  };
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
   const revision = liveSettings?.revision ?? snapshot?.settings.revision ?? null;
@@ -658,38 +746,41 @@ export function ProjectWorkspaceSurface({
       setError(null);
       setNotice(null);
       const keyParts = [project.id, text, sourceThreadId ?? null, attachments ?? []];
-      try {
-        const commandId = receipt.forPrompt(
-          coordinatorRetryFingerprint(JSON.stringify(keyParts), retryIdentity),
-          () => randomUUID(),
-          ownsRetryFlight,
-        );
-        const result = await runAfterSave(() =>
-          sendCommand({
-            environmentId: project.environmentId,
-            input: {
-              projectId: project.id,
-              commandId: CommandId.make(commandId),
-              prompt: text,
-              ...(attachments?.length ? { attachments } : {}),
-              ...(sourceThreadId ? { sourceThreadId } : {}),
-            },
-          }),
-        );
-        if (result._tag === "Failure") {
-          const e = squashAtomCommandFailure(result);
-          throw e instanceof Error
-            ? e
-            : new Error("Delivery was not confirmed. Retry preserves the same request identity.");
-        }
-        onConfirmed?.();
-        receipt.acknowledge(commandId);
-        query.refresh();
-        setNotice(sourceThreadId ? SENT_WITH_CONTEXT_NOTICE : QUEUED_NOTICE);
-      } finally {
-        if (!ownsRetryFlight) inFlight.current = false;
-        setSending(false);
-      }
+      await settleAfter(
+        async () => {
+          const commandId = receipt.forPrompt(
+            coordinatorRetryFingerprint(JSON.stringify(keyParts), retryIdentity),
+            () => randomUUID(),
+            ownsRetryFlight,
+          );
+          const result = await runAfterSave(() =>
+            sendCommand({
+              environmentId: project.environmentId,
+              input: {
+                projectId: project.id,
+                commandId: CommandId.make(commandId),
+                prompt: text,
+                ...(attachments?.length ? { attachments } : {}),
+                ...(sourceThreadId ? { sourceThreadId } : {}),
+              },
+            }),
+          );
+          if (result._tag === "Failure") {
+            const e = squashAtomCommandFailure(result);
+            throw e instanceof Error
+              ? e
+              : new Error("Delivery was not confirmed. Retry preserves the same request identity.");
+          }
+          onConfirmed?.();
+          receipt.acknowledge(commandId);
+          refreshWorkspace();
+          setNotice(sourceThreadId ? SENT_WITH_CONTEXT_NOTICE : QUEUED_NOTICE);
+        },
+        () => {
+          if (!ownsRetryFlight) inFlight.current = false;
+          setSending(false);
+        },
+      );
     },
     [
       blocked,
@@ -702,7 +793,7 @@ export function ProjectWorkspaceSurface({
       project.id,
       sendCommand,
       runAfterSave,
-      query.refresh,
+      refreshWorkspace,
     ],
   );
   const coordinatorMessages = coordinatorThread?.projection.messages;
@@ -729,52 +820,17 @@ export function ProjectWorkspaceSurface({
     supportsAttachmentUploads: uploadsSupported,
     maxFileAttachmentBytes: hostCapabilities?.fileAttachments?.maxUploadBytes ?? null,
   });
-  const attached = useCoordinatorAttachments({
-    environmentId: project.environmentId,
-    draft: composer,
-    uploadsSupported,
-    canUpload: canOperate && connected,
-    maxFileBytes,
-  });
-  const filePicker = useRef<HTMLInputElement>(null);
   // Uploads can take a while; one send owns the composer from the first keypress to the answer.
-  const preparing = composer.getSnapshot().submitting;
-  // One rule for the Send button and the Enter key.
-  const sendDisabled =
-    Boolean(blocked) ||
-    Boolean(modelCompatibility) ||
-    (!model && !coordinatorId) ||
-    savingModel ||
-    sending ||
-    preparing ||
-    attached.preparing.length > 0 ||
-    (!prompt.trim() && attached.attachments.length === 0);
-  async function submit() {
-    const {
-      prompt: text,
-      promptRevision,
-      attachments: images,
-      submitting,
-    } = composer.getSnapshot();
-    if (submitting || (!text.trim() && images.length === 0)) return;
-    composer.setSubmitting(true);
-    setError(null);
-    attached.dismissProblem();
-    let release = () => {};
-    try {
-      const attachments = await attached.prepare(images);
-      release = attached.hold(images);
-      await routingSend(text, undefined, attachments.length ? attachments : undefined);
-      release();
-      composer.clearSentPrompt(promptRevision);
-      attached.clearSent(images);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Message not sent.");
-    } finally {
-      release();
-      composer.setSubmitting(false);
-    }
-  }
+  const preparing = useSyncExternalStore(
+    composer.subscribe,
+    () => composer.getSnapshot().submitting,
+    () => composer.getSnapshot().submitting,
+  );
+  const sendFromComposer = useCallback(
+    (text: string, attachments: ReadonlyArray<ChatAttachment> | undefined) =>
+      routingSend(text, undefined, attachments),
+    [routingSend],
+  );
   const retryMessage = coordinatorRetryMessage(coordinatorThread?.projection.messages ?? []);
   const retryCoordinator = useProjectCoordinatorRecovery({
     message: retryMessage,
@@ -820,6 +876,19 @@ export function ProjectWorkspaceSurface({
     hasMemory: (snapshot?.memory.files.length ?? 0) > 0,
   });
   const promptPlaceholder = useCoordinatorPlaceholder(workers.length > 0, starters.suggestions);
+  // Stop and continue every worker at once, from the Threads pane or the composer's `/` commands.
+  const bulk = useBulkThreadControl();
+  const bulkTargets = useMemo(() => bulkThreadTargets(workers), [workers]);
+  const projectThreads = useMemo(
+    () => (coordinator ? [...workers, coordinator] : workers),
+    [workers, coordinator],
+  );
+  const readProjectThreads = useCallback(() => projectThreads, [projectThreads]);
+  const runAppCommand = useComposerAppCommands({
+    thread: coordinator ?? null,
+    projectThreads: readProjectThreads,
+  });
+  const appCommandsOffered = canOperate && connected;
   const [startingSuggestion, setStartingSuggestion] = useState<string | null>(null);
   // Sent cards come from the coordinator thread, so they survive a reload. Until
   // the host echoes the message, a local mark holds the card, keyed by the
@@ -836,18 +905,17 @@ export function ProjectWorkspaceSurface({
     if (startingSuggestion !== null || composer.getSnapshot().submitting) return;
     setStartingSuggestion(suggestion.id);
     setError(null);
-    try {
-      await routingSend(suggestion.prompt);
-      setStartedSuggestions((current) =>
-        new Map(current).set(suggestion.id, coordinatorFailure?.runId ?? null),
-      );
-      // A phone shows one pane at a time; the coordinator's answer is in the other one.
-      if (phone) setOverviewOpen(false);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "The suggestion was not sent.");
-    } finally {
-      setStartingSuggestion(null);
-    }
+    const failureAtSend = coordinatorFailure?.runId ?? null;
+    await settleCaught(
+      async () => {
+        await routingSend(suggestion.prompt);
+        setStartedSuggestions((current) => new Map(current).set(suggestion.id, failureAtSend));
+        // A phone shows one pane at a time; the coordinator's answer is in the other one.
+        if (phone) setOverviewOpen(false);
+      },
+      (e) => setError(e instanceof Error ? e.message : "The suggestion was not sent."),
+      () => setStartingSuggestion(null),
+    );
   }
   const startersBlocked =
     blocked ??
@@ -893,15 +961,32 @@ export function ProjectWorkspaceSurface({
     coordinator ? [coordinator, ...workers] : workers,
   );
   const openPullRequests = openPullRequestCount(pullRequests);
-  const subagentCount = selectedThread
-    ? shells.filter(
-        (t) =>
-          t.deletedAt === null &&
-          t.environmentId === selectedThread.environmentId &&
-          isSidebarSubagentThread(t) &&
-          t.lineage.parentThreadId === selectedThread.id,
-      ).length
-    : 0;
+  const coordinatorIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (paneScope.coordinatorThreadId) ids.add(paneScope.coordinatorThreadId);
+    for (const member of paneScope.members ?? [])
+      if (member.coordinatorThreadId) ids.add(member.coordinatorThreadId);
+    return ids;
+  }, [paneScope]);
+  const subagents = useThreadSubagents({ thread: selectedThread, shells, coordinatorIds });
+  const peekedSubagent =
+    selectedThread !== null && subagentPeek?.hostId === selectedThread.id
+      ? (shells.find(
+          (shell) =>
+            shell.environmentId === selectedThread.environmentId &&
+            shell.id === subagentPeek.subagentId,
+        ) ?? null)
+      : null;
+  const closeSubagentPeek = useCallback(() => setSubagentPeek(null), []);
+  // Working subagents keep their thread's row busy: "Working · 2 subagents".
+  const runningSubagents = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const worker of workers) {
+      const running = runningSubagentCount(shells, worker, coordinatorIds);
+      if (running > 0) counts.set(`${worker.environmentId}:${worker.id}`, running);
+    }
+    return counts;
+  }, [coordinatorIds, shells, workers]);
   const paneBar: ProjectPaneBarProps = {
     tab: paneTab,
     onTabChange: setPaneTab,
@@ -1002,6 +1087,18 @@ export function ProjectWorkspaceSurface({
                 >
                   <h1>{projectTitle}</h1>
                 </Tip>
+                {primaryEnvironmentId !== null && project.environmentId !== primaryEnvironmentId ? (
+                  // Another machine runs this project: its coordinator, workers and sign-ins.
+                  <Tip
+                    label={`Runs on ${environment?.label ?? "another machine"}, not this computer`}
+                  >
+                    <span className="sws-tag sws-project-machine" data-project-machine>
+                      <LaptopIcon aria-hidden />
+                      <span className="sr-only">Runs on </span>
+                      {shortMachineName(environment?.label ?? project.environmentId)}
+                    </span>
+                  </Tip>
+                ) : null}
                 {snapshot?.settings.kind === "personal" ? (
                   <Tip label={PERSONAL_ASSISTANT_DESCRIPTION}>
                     <span className="sws-tag">
@@ -1032,7 +1129,11 @@ export function ProjectWorkspaceSurface({
                     ) : null}
                   </button>
                 </Tip>
-                <TimelineDetailMenu appearance="project" />
+                <ThreadArtifactsMenu threadRef={coordinatorRef} cwd={project.workspaceRoot} />
+                <TimelineDetailMenu
+                  appearance="project"
+                  threadKey={coordinatorRef ? scopedThreadKey(coordinatorRef) : null}
+                />
                 <Tip label="Project settings">
                   <button
                     type="button"
@@ -1123,14 +1224,14 @@ export function ProjectWorkspaceSurface({
                 members={iconCheckouts}
                 scopes={executionScopes}
               />
-              {coordinatorId ? (
+              {conversationCoordinatorId ? (
                 <CoordinatorConversation
                   project={project}
-                  coordinatorId={coordinatorId}
+                  coordinatorId={conversationCoordinatorId}
                   workers={workers.filter(
                     (thread) => thread.environmentId === project.environmentId,
                   )}
-                  environmentThreads={environmentThreads}
+                  environmentThreads={linkTargets}
                   onOpenThread={openThread}
                   canChange={canWriteSourceControl && connected}
                   onCreatePullRequest={createPullRequest}
@@ -1150,144 +1251,65 @@ export function ProjectWorkspaceSurface({
                     retryMessage === null
                   }
                   progress={coordinatorWork}
-                  empty={welcome}
+                  // The greeting waits for the read: it may yet name another coordinator.
+                  empty={snapshot ? welcome : null}
                 />
               ) : snapshot != null && !mainCoordinatorId ? (
                 // Only a project known to have no coordinator yet is greeted: while the
                 // workspace read is pending, a coordinator with history may be behind it.
                 welcome
               ) : null}
-              <form
-                className="project-composer sws-composer"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void submit();
-                }}
-              >
-                {blocked && (
-                  <p className="project-muted" role="status">
-                    {blocked}
-                  </p>
-                )}
-                {error && <p role="alert">{error}</p>}
-                <CoordinatorAttachmentNotice
-                  problem={attached.problem}
-                  onDismiss={attached.dismissProblem}
-                />
-                {/* A "Queued" notice must not stand beside a turn that failed. */}
-                {notice &&
-                  !coordinatorFailure &&
-                  !(coordinatorWorking && SEND_NOTICES.has(notice)) && (
-                    <p className="project-muted" role="status">
-                      {notice}
-                    </p>
-                  )}
-                <VoiceCallBar call={voiceCall} />
-                <div
-                  className="sws-composer-card"
-                  onDragOver={(e) => {
-                    if (e.dataTransfer.types.includes("Files")) e.preventDefault();
-                  }}
-                  onDrop={(e) => {
-                    if (!e.dataTransfer.types.includes("Files")) return;
-                    // Every dropped file is answered: attached, or told why not.
-                    e.preventDefault();
-                    attached.add(filesFrom(e.dataTransfer));
-                  }}
-                >
-                  <CoordinatorAttachmentStrip
-                    attachments={attached.attachments}
-                    preparing={attached.preparing}
-                    locked={preparing || sending}
-                    onRemove={(id) => {
-                      attached.remove(id);
-                      // The button that had focus is gone; typing continues in the message.
-                      document.getElementById("project-prompt")?.focus();
-                    }}
-                  />
-                  <label className="sr-only" htmlFor="project-prompt">
-                    Message the project coordinator
-                  </label>
-                  <textarea
-                    id="project-prompt"
-                    rows={1}
-                    value={prompt}
-                    onChange={(e) => setPrompt(e.target.value)}
-                    placeholder={promptPlaceholder}
-                    onPaste={(e) => {
-                      const files = pastedFilesFrom(e.clipboardData);
-                      if (files.length === 0) return;
-                      // A file on the clipboard is the message's attachment, not text to insert.
-                      e.preventDefault();
-                      attached.add(files);
-                    }}
-                    onKeyDown={(e) => {
-                      // The chat composer's own rule: the person's send shortcut, never on a
-                      // phone keyboard, never mid-composition or on a held key.
-                      const intent = composerSubmissionIntentForKey({
-                        event: e.nativeEvent,
-                        keybindings,
-                        isPhoneKeyboard,
-                        isDraftThread: false,
-                        sendShortcut,
-                        prompt,
-                      });
-                      if (intent !== "foreground") return;
-                      // The send key never types a new line, but it sends only when the Send
-                      // button could: images still preparing, a blocked host or a send in
-                      // flight are all visible beside it.
-                      e.preventDefault();
-                      if (sendDisabled) {
-                        // The only reason not shown beside the composer: say it, as a send would.
-                        if (
-                          !blocked &&
-                          !model &&
-                          !coordinatorId &&
-                          (prompt.trim() || attached.attachments.length > 0)
-                        )
-                          setError(missingModelMessage(modelsLoading));
-                        return;
-                      }
-                      void submit();
-                    }}
-                  />
-                  <Tip label={composerSendButtonLabel({ isPhoneKeyboard, sendShortcut, prompt })}>
-                    <button
-                      className="sws-send"
-                      aria-label="Send to coordinator"
-                      disabled={sendDisabled}
-                    >
-                      <ArrowUpIcon aria-hidden />
-                      <span className="sr-only">{sending || preparing ? "Sending…" : "Send"}</span>
-                    </button>
-                  </Tip>
-                </div>
-                <div className="sws-composer-foot">
-                  <span className="sws-composer-meta">
-                    <input
-                      ref={filePicker}
-                      type="file"
-                      accept={coordinatorAttachAccept(maxFileBytes !== null)}
-                      multiple
-                      hidden
-                      tabIndex={-1}
-                      aria-hidden
-                      onChange={(e) => {
-                        attached.add([...(e.target.files ?? [])]);
-                        e.target.value = "";
-                      }}
-                    />
-                    <Tip label="Attach images or files (or paste, or drop them on the message)">
-                      <button
-                        type="button"
-                        className="sws-icon-button sws-attach"
-                        aria-label="Attach files"
-                        disabled={!canOperate || !connected}
-                        onClick={() => filePicker.current?.click()}
-                      >
-                        <PlusIcon aria-hidden />
-                      </button>
-                    </Tip>
+              <CoordinatorComposer
+                composer={composer}
+                environmentId={project.environmentId}
+                cwd={project.workspaceRoot}
+                sendBlocked={
+                  Boolean(blocked) ||
+                  Boolean(modelCompatibility) ||
+                  (!model && !coordinatorId) ||
+                  savingModel ||
+                  sending
+                }
+                missingModel={
+                  !blocked && !model && !coordinatorId ? missingModelMessage(modelsLoading) : null
+                }
+                canAttach={canOperate && connected}
+                uploadsSupported={uploadsSupported}
+                maxFileBytes={maxFileBytes}
+                sending={sending}
+                placeholder={promptPlaceholder}
+                keybindings={keybindings}
+                isPhoneKeyboard={isPhoneKeyboard}
+                sendShortcut={sendShortcut}
+                onAppCommand={appCommandsOffered ? runAppCommand : null}
+                provider={model ? (providerEntries.get(model.instanceId) ?? null) : null}
+                onSend={sendFromComposer}
+                onError={setError}
+                status={
+                  <>
+                    {blocked && (
+                      <p className="project-muted" role="status">
+                        {blocked}
+                      </p>
+                    )}
+                    {error && <p role="alert">{error}</p>}
+                  </>
+                }
+                notices={
+                  <>
+                    {/* A "Queued" notice must not stand beside a turn that failed. */}
+                    {notice &&
+                      !coordinatorFailure &&
+                      !(coordinatorWorking && SEND_NOTICES.has(notice)) && (
+                        <p className="project-muted" role="status">
+                          {notice}
+                        </p>
+                      )}
+                    <VoiceCallBar call={voiceCall} />
+                  </>
+                }
+                meta={
+                  <>
                     <VoiceCallButton
                       call={voiceCall}
                       disabled={Boolean(blocked) || (!model && !coordinatorId)}
@@ -1351,14 +1373,39 @@ export function ProjectWorkspaceSurface({
                     <ProjectUsageIndicator
                       onOpenProjectUsage={() => setTab("usage")}
                       projectEnvironmentId={project.environmentId}
-                      providerInstanceId={model?.instanceId ?? null}
+                      // The provider that runs the next turn, not the saved one it moved off.
+                      providerInstanceId={
+                        coordinatorFallback && coordinator
+                          ? coordinator.modelSelection.instanceId
+                          : (model?.instanceId ?? null)
+                      }
+                      model={
+                        coordinatorFallback && coordinator
+                          ? coordinator.modelSelection.model
+                          : (model?.model ?? null)
+                      }
                     />
-                  </span>
-                  <CoordinatorComposerControls project={project} fallback={coordinatorFallback}>
+                  </>
+                }
+                controls={
+                  <CoordinatorComposerControls
+                    project={project}
+                    fallback={
+                      coordinatorFallback
+                        ? {
+                            ...coordinatorFallback,
+                            switching: switchingBack,
+                            onSwitchBack:
+                              canOperate && connected ? () => void switchCoordinatorBack() : null,
+                          }
+                        : null
+                    }
+                  >
                     {coordinatorModelControls}
                   </CoordinatorComposerControls>
-                </div>
-              </form>
+                }
+                modelFallback={coordinatorFallback !== null}
+              />
             </div>
           </section>
           {paneOpen ? (
@@ -1378,9 +1425,21 @@ export function ProjectWorkspaceSurface({
                   send={routingSend}
                   suspendShortcuts={coordinatorDetailsOpen || machineHandoffOpen}
                   toolsSlot={threadToolsSlot}
+                  peek={
+                    peekedSubagent
+                      ? {
+                          thread: peekedSubagent,
+                          entry:
+                            subagents.find((entry) => entry.childThreadId === peekedSubagent.id) ??
+                            null,
+                          onClose: closeSubagentPeek,
+                        }
+                      : null
+                  }
                   header={{
                     thread: selectedThread,
-                    subagentCount,
+                    subagents,
+                    onPeekSubagent: (subagentId) => peekSubagent(selectedThread.id, subagentId),
                     providerEntry:
                       selectedThread.environmentId === project.environmentId
                         ? (providerEntries.get(selectedThread.modelSelection.instanceId) ?? null)
@@ -1428,6 +1487,7 @@ export function ProjectWorkspaceSurface({
                 <ThreadsPane
                   environmentId={project.environmentId}
                   threads={workers}
+                  runningSubagents={runningSubagents}
                   canChange={canOperate && connected}
                   findRef={findRef}
                   findOpen={findOpen}
@@ -1450,6 +1510,17 @@ export function ProjectWorkspaceSurface({
                     )
                   }
                   starters={workers.length === 0 ? starterList : null}
+                  bulk={
+                    canOperate && connected
+                      ? {
+                          running: bulkTargets.running.length,
+                          interrupted: bulkTargets.interrupted.length,
+                          busy: bulk.busy,
+                          onStopAll: () => void bulk.stopAll(bulkTargets.running),
+                          onContinueAll: () => void bulk.continueAll(bulkTargets.interrupted),
+                        }
+                      : undefined
+                  }
                   remoteWorkerCount={remoteWorkerCount}
                   notice={
                     <>
@@ -1488,12 +1559,20 @@ export function ProjectWorkspaceSurface({
             projectKey={projectKey}
             snapshot={snapshot}
             initialTab={tab}
-            onClose={() => setTab(null)}
+            initialRow={settingsRow}
+            focusName={focusName}
+            onClose={() => {
+              setTab(null);
+              setFocusName(false);
+              setSettingsRow(null);
+            }}
             onSaved={query.refresh}
             onOpenThread={openThread}
             canOperate={canOperate && connected}
             onDeleted={() => {
               setTab(null);
+              setFocusName(false);
+              setSettingsRow(null);
               void navigate({ to: "/" });
             }}
           />

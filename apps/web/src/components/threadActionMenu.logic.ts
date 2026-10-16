@@ -102,6 +102,11 @@ export interface ThreadActionMenuState {
   readonly isSnoozed: boolean;
   readonly canSnoozeNow: boolean;
   readonly isRegeneratingTitle: boolean;
+  /**
+   * True for a thread its coordinator names (a delegated task, worker or
+   * subagent): rename and regenerate stay out of the menu.
+   */
+  readonly titleLocked?: boolean;
   /** Archive rejects a thread with an attached provider, so disable it here rather than let the action fail. */
   readonly isRunning: boolean;
   /**
@@ -196,8 +201,10 @@ export function buildThreadActionMenuItems(
               },
         ]
       : []),
-    { id: "rename", label: "Rename thread", icon: "pencil", separatorBefore: true },
-    ...(state.supports.titleRegeneration
+    ...(state.titleLocked
+      ? []
+      : [{ id: "rename" as const, label: "Rename thread", icon: "pencil", separatorBefore: true }]),
+    ...(state.supports.titleRegeneration && !state.titleLocked
       ? [
           {
             id: "regenerate-title" as const,
@@ -207,7 +214,12 @@ export function buildThreadActionMenuItems(
           },
         ]
       : []),
-    { id: "mark-unread", label: "Mark unread", icon: "mail-open" },
+    {
+      id: "mark-unread",
+      label: "Mark unread",
+      icon: "mail-open",
+      ...(state.titleLocked ? { separatorBefore: true } : {}),
+    },
     ...(state.projectFilter
       ? [
           {

@@ -26,6 +26,11 @@ export interface QueuedThreadRun {
   /** Editing replaces this message's content, so its id and context travel with the row. */
   readonly messageId: Message["id"];
   readonly context?: Message["context"];
+  /** Another agent's thread that sent this message; absent when the user typed it here. */
+  readonly senderThreadId?: Message["senderThreadId"];
+  readonly createdBy?: Message["createdBy"];
+  /** A notification's own one-line summary (a worker report, a scheduled run). */
+  readonly summary?: string;
 }
 
 export interface ThreadQueueWorkflowState {
@@ -156,6 +161,9 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
       attachments: message?.attachments ?? [],
       messageId: run.userMessageId,
       ...(message?.context ? { context: message.context } : {}),
+      ...(message?.senderThreadId ? { senderThreadId: message.senderThreadId } : {}),
+      ...(message ? { createdBy: message.createdBy } : {}),
+      ...(message?.notification ? { summary: message.notification.summary } : {}),
     };
   });
 

@@ -102,7 +102,7 @@ def download(agent, name, asset, destination, limit):
 def install_beside(ua, home):
     """Copy this module next to the installed agent. install_launch_agent runs this before
     it replaces the agent, so a new agent never starts without the module it imports."""
-    target = ua.ensure_dir(home / '.local' / 'share' / 'specweave-studio' / 'updater', home)
+    target = ua.ensure_dir(ua.studio_paths.updater_root(home), home)
     os.chmod(str(target), 0o700)
     path = ua.owned(target / pathlib.Path(__file__).name, home)
     data = pathlib.Path(os.path.abspath(__file__)).read_bytes()

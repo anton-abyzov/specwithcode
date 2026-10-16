@@ -702,6 +702,376 @@ code {
   --report-serif: "New York", ui-serif, "Iowan Old Style", Charter, Georgia, serif;
 }
 
+/* The viewer overlay: one card over nearly the whole window, below the title
+   bar, over a backdrop that dims everything behind it. The viewer is on the
+   left; the thread it came from is on the right and folds to a rail. */
+.viewer-overlay-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: color-mix(in oklab, black 40%, transparent);
+  transition: opacity 150ms ease;
+}
+
+.viewer-overlay-backdrop[data-starting-style],
+.viewer-overlay-backdrop[data-ending-style] {
+  opacity: 0;
+}
+
+.viewer-overlay {
+  inset: 2.75rem 1rem 1rem;
+  display: flex;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 0.875rem;
+  background: var(--background);
+  box-shadow: 0 32px 80px -24px rgb(0 0 0 / 55%);
+  transition:
+    opacity 150ms ease,
+    transform 150ms ease;
+}
+
+.viewer-overlay[data-starting-style],
+.viewer-overlay[data-ending-style] {
+  opacity: 0;
+  transform: scale(0.985);
+}
+
+.viewer-overlay-content {
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.viewer-overlay-frame {
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.viewer-overlay-content:empty {
+  display: none;
+}
+
+.viewer-overlay-thread {
+  display: flex;
+  width: clamp(22rem, 34%, 34rem);
+  flex-shrink: 0;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.viewer-overlay-thread-head {
+  display: flex;
+  height: 2.75rem;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.5rem;
+  border-bottom: 1px solid var(--border);
+  padding-inline: 0.75rem 0.5rem;
+}
+
+.viewer-overlay-thread-rail {
+  display: flex;
+  width: 2.75rem;
+  flex-shrink: 0;
+  flex-direction: column;
+  align-items: center;
+  border-left: 1px solid var(--border);
+  padding-top: 0.375rem;
+}
+
+.viewer-overlay-thread-chat {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+@media (max-width: 52rem) {
+  .viewer-overlay {
+    inset: 0;
+    border-radius: 0;
+  }
+
+  .viewer-overlay-thread,
+  .viewer-overlay-thread-rail {
+    display: none;
+  }
+}
+
+.report-reader-toolbar {
+  display: flex;
+  height: 2.75rem;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.5rem;
+  border-bottom: 1px solid var(--border);
+  padding-inline: 0.75rem 0.5rem;
+}
+
+.report-reader-title {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.report-reader-subtitle {
+  min-width: 0;
+  max-width: 28rem;
+  overflow: hidden;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.6875rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted-foreground);
+}
+
+.report-reader-badge {
+  flex-shrink: 0;
+  border-radius: 0.25rem;
+  background: color-mix(in srgb, var(--foreground) 8%, transparent);
+  padding: 0.0625rem 0.3125rem;
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--muted-foreground);
+}
+
+.report-reader-body[hidden] {
+  display: none;
+}
+
+.report-reader-body {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  flex: 1;
+  overflow-y: auto;
+  scroll-padding-top: 1.5rem;
+}
+
+/* The artifact viewer's stage: media centred on a quiet ground, documents and
+   frames filling it. */
+.artifact-viewer-stage {
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  background: color-mix(in oklab, var(--muted) 45%, var(--background));
+}
+
+.artifact-viewer-media {
+  margin: auto;
+  max-height: 100%;
+  max-width: 100%;
+  min-height: 0;
+  object-fit: contain;
+  padding: 1rem;
+}
+
+video.artifact-viewer-media {
+  padding: 0;
+  max-height: calc(100% - 2rem);
+  border-radius: 0.5rem;
+  background: black;
+}
+
+.artifact-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr));
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.artifact-card {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 0.625rem;
+  background: var(--card);
+  text-align: left;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.artifact-card:hover {
+  border-color: color-mix(in oklab, var(--foreground) 25%, var(--border));
+  box-shadow: 0 1px 6px color-mix(in oklab, var(--foreground) 8%, transparent);
+}
+
+.artifact-card:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.artifact-card-thumb {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  background: color-mix(in oklab, var(--muted) 60%, var(--background));
+}
+
+.artifact-card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted-foreground);
+}
+
+.artifact-card-icon svg {
+  width: 1.75rem;
+  height: 1.75rem;
+}
+
+.artifact-card-label {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.625rem;
+  font-size: 0.8125rem;
+}
+
+.report-document-page {
+  width: 100%;
+  max-width: 44rem;
+  margin-inline: auto;
+  padding: 2.25rem 2rem 5rem;
+}
+
+/* Outline: a dash per heading at the left edge, sticky while reading;
+   hovering it lists the headings by name. */
+.report-outline {
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  width: 3rem;
+  flex-shrink: 0;
+  padding: 2.5rem 0 0 1.25rem;
+}
+
+.report-outline-dashes {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.report-outline-dash {
+  display: block;
+  height: 0.25rem;
+  width: 1rem;
+  padding-block: 0.125rem;
+  background-clip: content-box;
+  background-color: color-mix(in srgb, var(--foreground) 22%, transparent);
+  border-radius: 1px;
+  cursor: pointer;
+  box-sizing: content-box;
+}
+
+.report-outline-dash[data-level="3"],
+.report-outline-dash[data-level="4"] {
+  width: 0.625rem;
+}
+
+.report-outline-dash[data-active="true"] {
+  width: 1.25rem;
+  background-color: var(--primary);
+}
+
+.report-outline-list {
+  position: absolute;
+  top: 1.75rem;
+  left: 0.75rem;
+  z-index: 1;
+  display: none;
+  max-height: 70vh;
+  width: 16rem;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 0.625rem;
+  background: var(--popover);
+  padding: 0.375rem;
+  box-shadow: 0 12px 32px -12px rgb(0 0 0 / 0.35);
+}
+
+.report-outline:hover .report-outline-list,
+.report-outline:focus-within .report-outline-list {
+  display: block;
+}
+
+.report-outline-item {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 0.375rem;
+  padding: 0.3125rem 0.5rem;
+  text-align: left;
+  font-size: 0.8125rem;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted-foreground);
+}
+
+.report-outline-item[data-level="3"],
+.report-outline-item[data-level="4"] {
+  padding-left: 1.25rem;
+}
+
+.report-outline-item:hover {
+  background: var(--accent);
+  color: var(--foreground);
+}
+
+.report-outline-item[data-active="true"] {
+  color: var(--foreground);
+  font-weight: 500;
+}
+
+.report-find {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding-inline: 0.5rem 0.125rem;
+  margin-right: 0.25rem;
+}
+
+.report-find-input {
+  width: 11rem;
+  background: transparent;
+  padding-block: 0.25rem;
+  font-size: 0.8125rem;
+  outline: none;
+}
+
+::highlight(report-find) {
+  background-color: color-mix(in srgb, #facc15 40%, transparent);
+}
+
+::highlight(report-find-current) {
+  background-color: #f59e0b;
+  color: #111;
+}
+
 .report-document-prose .chat-markdown > * + * {
   margin-top: 1em;
 }
@@ -715,7 +1085,7 @@ code {
 .report-document-title {
   margin: 0;
   font-family: var(--report-serif);
-  font-size: 1.75rem;
+  font-size: 1.875rem;
   font-weight: 500;
   line-height: 1.15;
   letter-spacing: -0.012em;
@@ -723,24 +1093,146 @@ code {
   color: var(--foreground);
 }
 
-.report-document-heading {
-  margin: 0 0 0.625rem;
+.report-document-lead {
+  margin-top: 0.75rem;
+  color: color-mix(in srgb, var(--foreground) 82%, transparent);
+}
+
+.report-document-properties {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) 1fr;
+  align-items: baseline;
+  column-gap: 2rem;
+  row-gap: 0.375rem;
+  margin: 1.5rem 0 0;
+  border-block: 1px solid var(--border);
+  padding-block: 0.875rem;
+}
+
+.report-document-property-value {
+  min-width: 0;
+}
+
+.report-document-property-value .chat-markdown p {
+  margin: 0;
+}
+
+.report-document-section {
+  margin-top: 2.25rem;
+}
+
+.report-document-heading,
+.report-document .chat-markdown h1,
+.report-document .chat-markdown h2,
+.report-document .chat-markdown h3,
+.report-document .chat-markdown h4 {
+  margin: 1.75rem 0 0.625rem;
   font-family: var(--report-serif);
-  font-size: 1.35rem;
   font-weight: 500;
   line-height: 1.25;
+  letter-spacing: -0.006em;
   color: var(--foreground);
+}
+
+.report-document-heading,
+.report-document .chat-markdown h1,
+.report-document .chat-markdown h2 {
+  font-size: 1.375rem;
+}
+
+.report-document .chat-markdown h3,
+.report-document .chat-markdown h4 {
+  font-size: 1.125rem;
+}
+
+.report-document-section > .report-document-heading {
+  margin-top: 0;
 }
 
 .report-document-prose {
   font-family: var(--report-serif);
-  font-size: 1rem;
-  line-height: 1.6;
+  font-size: 1.0625rem;
+  line-height: 1.65;
   color: var(--foreground);
+}
+
+.report-document-prose .chat-markdown {
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
 }
 
 .report-document-prose .chat-markdown li + li {
   margin-top: 0.35rem;
+}
+
+/* Tables read like a document's: full width, a tinted header, row rules,
+   cells that wrap, inside one rounded frame. */
+.report-document .chat-markdown .chat-markdown-table-container {
+  margin-block: 1.25rem;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 0.625rem;
+}
+
+.report-document .chat-markdown table {
+  min-width: 100%;
+  font-size: 0.9375rem;
+  line-height: 1.45;
+}
+
+.report-document .chat-markdown thead th {
+  background: color-mix(in srgb, var(--foreground) 4%, transparent);
+  font-weight: 600;
+  white-space: normal;
+}
+
+.report-document .chat-markdown th,
+.report-document .chat-markdown td {
+  padding: 0.625rem 0.875rem;
+  vertical-align: top;
+}
+
+.report-document .chat-markdown tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.report-document .chat-markdown .chat-markdown-table-container[data-expanded="false"] th,
+.report-document .chat-markdown .chat-markdown-table-container[data-expanded="false"] td {
+  max-width: 22rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* In a document, a file it names reads as a link, not a boxed chip: the
+   file's icon, then its name in the link color. */
+.report-document .chat-markdown-file-link {
+  border-color: transparent;
+  background: transparent;
+  padding-inline: 0.0625rem;
+  font-family: inherit;
+  color: var(--primary);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--primary) 35%, transparent);
+  text-underline-offset: 0.2em;
+}
+
+.report-document .chat-markdown-file-link:hover {
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+  text-decoration-color: currentColor;
+}
+
+.report-document .chat-markdown a:not(.chat-markdown-file-link) {
+  color: var(--primary);
+  text-underline-offset: 0.2em;
+}
+
+.report-document .chat-markdown :not(pre) > code {
+  font-size: 0.85em;
+}
+
+.report-document-attachments {
+  margin-top: 2.5rem;
 }
 
 /* Chat markdown rendering */

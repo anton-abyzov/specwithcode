@@ -46,13 +46,93 @@ Before `ProviderSessionManager` opens a new V2 provider session, it asks
 - the provider session.
 
 The credential grants `preview` and `orchestration` capabilities. Credentials
-expire after a maximum lifetime, expire when idle, and are revoked when the
-provider session is released. The raw token is not persisted in orchestration
-state.
+expire when idle (no MCP call or provider turn for the liveness window) and
+are revoked when the provider session is released. The registry persists
+only token hashes; the raw token reaches disk only in the thread's owner-only
+credential file described below.
+
+Credentials survive server restarts and in-place updates, so an agent process
+or MCP bridge spawned before a restart keeps its tools after it:
+
+- The token is an HMAC of the environment, the thread, the provider instance
+  and the thread's generation under a per-install key (`mcp-credential-key` in the owner-only
+  secrets directory). Issuing again (after a restart, a revoked session or a
+  browser/device access change) yields the same token; the record's
+  capabilities are updated in place for every holder.
+- The registry persists token hashes, scopes, liveness and generations in the
+  `mcp-credentials` secret (0600) and restores records still inside the
+  liveness window. Neither server shutdown nor the agent releases before a
+  service update (including hung turns it force-ends) revoke credentials. The state
+  names its environment and a fingerprint of its key and is only trusted with
+  both: a missing, truncated, mismatched or unreadable key or state rotates
+  the key, retiring every token, rather than resetting generations.
+- Revocations, invalidations and capability reductions must be stored
+  durably. When the state cannot be written, the key is removed so the next
+  start rotates it; if that fails too, every later write retries the state.
+  While writes keep failing, a credential lapses one liveness window after
+  its last stored sign of life, however often it is used.
+- Each issue writes the thread's current `{ endpoint, authorization }` to an
+  owner-only `mcp-session-*` secret. ACP agents receive its path as
+  `STUDIO_ACP_MCP_CREDENTIAL_FILE`. The stdio bridge and `acp-mcp-call` read it
+  first, and after a 401 or a refused connection they re-read it and retry
+  once if it changed. Other transport failures are never replayed, because
+  the call may already have run. The bridge also re-runs the agent's own initialize once
+  when the server no longer knows its MCP session (404). Each request gets at
+  most one of each recovery, so a dead credential fails fast. The in-process
+  MCP-over-ACP bridge retries a 401 once with its own provider instance's
+  current credential for the thread, never another instance's.
+- Archiving or deleting a thread invalidates it: its generation advances, its
+  records and credential file are removed, and the old token can never be
+  honored again. Archive and delete always queue a durable, replay-safe
+  `mcp-credential.invalidate` effect, independent of session status, so a
+  credential restored after a restart (whose sessions are already `stopped`)
+  is retired too. The effect fails, and is retried, until the retirement is
+  stored, and a service update never cancels it. On startup the registry also
+  retires the persisted credentials (expired ones included) of threads that
+  are archived, deleted or unknown; if that check fails, it retires every
+  restored credential (a still-active thread's next session gets a new token,
+  which its bridge reads from the credential file). A revocation that could
+  not be stored at all is retried in the background until a write lands. Deleting `mcp-credential-key` and `mcp-credentials` while the
+  server is stopped revokes every agent credential on the install.
+
+A thread can hold several provider sessions at once: a limit switch, a
+context handoff, or a run on another provider leaves the first provider's
+session attached, and its background agents keep working. Each provider
+instance keeps its own credential and its own slot in `McpProviderSession`:
+preparing one instance revokes only that instance's earlier records. Claude
+reads only its own instance's credential; the other adapters still read the
+instance prepared last, which is their own because every turn prepares its
+instance again before the adapter reads. A credential is never
+revoked to stop another instance from acting, because a 401 makes Claude
+Code's MCP client give up on the server for the rest of the process; who may
+change things is decided per call instead (below). When a reused Claude
+process reports SpecWithCode's server as `failed` or `needs-auth`, the next
+turn reconnects it before prompting.
 
 The MCP HTTP server resolves the bearer token and supplies the resulting
 `McpInvocationScope` to tool handlers. Orchestration handlers additionally
 check the `orchestration` capability before reading or mutating state.
+
+Reads are open to every honored credential. A thread caller changes things
+(`McpCallerLiveness`) only while it is the provider that runs its thread,
+which is not archived:
+
+- during a turn, the provider instance running that turn;
+- between turns, the thread's own provider instance, through the provider
+  session attached for it in this server. A provider's own background agents
+  and workflows (Claude Code's background Agent and Workflow tools, Codex
+  subagents) outlive the turn that started them, and their calls are the
+  thread's work.
+
+Anything else is refused with `parent_not_active` and a message that says
+who runs the thread now or that the session is no longer attached, and that
+the thread's next message reattaches it. After a restart no session is
+attached until that message, so a restored credential reads but does not act.
+
+Stop ends the between-turns case too: once Stop reaches the thread's last
+turn (the turn ended interrupted, or Stop came after it ended), nothing that
+turn left running changes anything until the thread's next message, and its
+calls are refused the same way.
 
 ## Provider Injection
 
@@ -236,8 +316,12 @@ a distinct `clientRequestId` per round, stable across retries of that round.
 conversations; it does not reopen a completed task. There is no task-level follow-up
 API for preserving the same reviewer session.
 
-Delegation requires an active parent run owned by the MCP credential's
-provider session. The request becomes the V2 command
+Delegation attaches the task to the caller's live turn. Between turns (a
+background agent or workflow calling after its turn ended) it attaches to the
+thread's last turn when that turn completed and nothing ran, failed or was
+stopped after it; the task's result then wakes the thread like any task that
+outlives its turn. A stopped or failed last turn takes no new delegated task
+until the thread's next message. The request becomes the V2 command
 `delegated_task.request`.
 
 `mode: "async"` returns the current durable state immediately.
@@ -437,9 +521,10 @@ results use the latest assistant content from the final work turn.
   `plan`. It may not escalate from `plan` to `default`.
 - Thread tools take any thread in the environment as a target. For a thread
   caller, list and search cover one project: its own unless `projectId` is given.
-- A tool that changes another thread needs the calling thread's live run, and
-  the target's runtime and interaction modes may not be broader than the
-  caller's. This is the same privilege ceiling as child creation.
+- A tool that changes another thread needs the calling provider to run its
+  own thread (its live turn, or between turns its attached session), and the
+  target's runtime and interaction modes may not be broader than the caller's.
+  This is the same privilege ceiling as child creation.
 - Provider instances must be enabled, installed, available, authenticated, and
   backed by a V2 adapter.
 - A requested model must be advertised by the selected provider when the
@@ -507,4 +592,7 @@ Coverage includes:
 
 Provider adapter tests separately verify Codex, Claude, Cursor, Grok, and ACP
 Registry behavior and MCP injection. The provider-session manager test verifies
-that credentials exist before an adapter opens and are revoked when it closes.
+that credentials exist before an adapter opens, are revoked when it closes and
+survive a server shutdown. `McpCredentialRestart.test.ts` runs a stdio bridge
+against a real MCP endpoint across a server restart, a port move and a thread
+invalidation.

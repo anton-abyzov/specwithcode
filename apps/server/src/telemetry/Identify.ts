@@ -259,7 +259,7 @@ const upsertAnonymousId = Effect.gen(function* () {
  * getTelemetryIdentifier - Users are "identified" by finding the first match of the following, then hashing the value.
  * 1. ~/.codex/auth.json tokens.account_id
  * 2. ~/.claude.json userID
- * 3. ~/.specweave-studio/telemetry/anonymous-id
+ * 3. <SpecWithCode root>/telemetry/anonymous-id (~/.specwithcode; legacy ~/.specweave-studio)
  *
  * A missing file or an API-key-only Codex auth.json falls through quietly. Only
  * unreadable or malformed files warn.

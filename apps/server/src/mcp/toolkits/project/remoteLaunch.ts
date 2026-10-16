@@ -84,7 +84,7 @@ export const launchRemote = Effect.fn("mcp.launchRemote")(function* (input: {
     return yield* new OrchestratorMcpFailure({
       code: "capability_denied",
       message:
-        "Starting work on another machine needs an agent running inside a Studio thread on this one.",
+        "Starting work on another machine needs an agent running inside a SpecWithCode thread on this one.",
     });
   if (params.scratch === true)
     return yield* invalid("Scratch threads run on this machine; omit machine or scratch.");

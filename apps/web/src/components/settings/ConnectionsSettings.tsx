@@ -1862,7 +1862,7 @@ function CloudLinkSwitch({
   disabled,
   disabledReason,
   onCheckedChange,
-  ariaLabel = "Enable Studio Connect",
+  ariaLabel = "Enable SpecWithCode Connect",
 }: {
   readonly checked: boolean;
   readonly disabled: boolean;
@@ -1903,9 +1903,9 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
   const [isUpdatingPreference, setIsUpdatingPreference] = useState(false);
 
   const disabledReason = !isSignedIn
-    ? "Sign in to Studio Connect to manage this environment."
+    ? "Sign in to SpecWithCode Connect to manage this environment."
     : !canManageRelay
-      ? "Your session does not have permission to manage Studio Connect access."
+      ? "Your session does not have permission to manage SpecWithCode Connect access."
       : null;
   const isBusy = isUpdating || isUpdatingPreference;
 
@@ -1923,15 +1923,15 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
       toastManager.add({
         type: "success",
         title: enabled
-          ? "Studio Connect linked"
+          ? "SpecWithCode Connect linked"
           : publishAgentActivity
-            ? "Studio Connect tunnel disabled"
-            : "Studio Connect unlinked",
+            ? "SpecWithCode Connect tunnel disabled"
+            : "SpecWithCode Connect unlinked",
         description: enabled
-          ? "This environment is available through Studio Connect."
+          ? "This environment is available through SpecWithCode Connect."
           : publishAgentActivity
             ? "The managed tunnel was removed. Agent activity publishing stays on."
-            : "This environment is no longer available through Studio Connect.",
+            : "This environment is no longer available through SpecWithCode Connect.",
       });
     }
     setIsUpdating(false);
@@ -1969,7 +1969,7 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
         type: "success",
         title: enabled ? "Webhooks held while offline" : "Webhooks no longer held",
         description: enabled
-          ? "Studio Connect keeps webhook requests for up to 24 hours while this environment is offline."
+          ? "SpecWithCode Connect keeps webhook requests for up to 24 hours while this environment is offline."
           : "Requests to an offline environment now fail. Anything already held is still delivered.",
       });
     }
@@ -1983,8 +1983,8 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
           title={searchableSetting("studio-connect").title}
           description={
             managedTunnelActive
-              ? "This environment is available to your other devices through Studio Connect."
-              : "Make this environment available to your other devices through Studio Connect."
+              ? "This environment is available to your other devices through SpecWithCode Connect."
+              : "Make this environment available to your other devices through SpecWithCode Connect."
           }
           status={operationError ?? primaryCloudLinkState.error}
           control={
@@ -2005,7 +2005,7 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
       ) : null}
       <SettingsRow
         title={searchableSetting("publish-agent-activity").title}
-        description="Send activity to mobile notifications and Live Activities without Studio Connect."
+        description="Send activity to mobile notifications and Live Activities without SpecWithCode Connect."
         control={
           <CloudLinkSwitch
             ariaLabel="Publish agent activity to mobile clients"
@@ -2025,7 +2025,7 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
       {managedTunnelActive ? (
         <SettingsRow
           title={searchableSetting("hold-webhooks-while-offline").title}
-          description="Keep webhook requests for up to 24 hours while this environment is offline, then deliver them. Off: Studio Connect only forwards requests and stores nothing."
+          description="Keep webhook requests for up to 24 hours while this environment is offline, then deliver them. Off: SpecWithCode Connect only forwards requests and stores nothing."
           control={
             <CloudLinkSwitch
               ariaLabel="Hold webhook requests while this environment is offline"
@@ -2052,7 +2052,7 @@ function CloudLinkRow({
   if (!canReadRelay) {
     return (
       <SettingsRow
-        title="Studio Connect"
+        title="SpecWithCode Connect"
         description="To edit these settings, pair this connection with both View relay and Manage relay permissions."
       />
     );
@@ -2070,7 +2070,7 @@ function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnable
         <EmptyTitle>No saved remote environments</EmptyTitle>
         <EmptyDescription>
           {cloudEnabled
-            ? "Click “Add environment” to pair another environment, or connect one from Studio Connect."
+            ? "Click “Add environment” to pair another environment, or connect one from SpecWithCode Connect."
             : "Click “Add environment” to pair another environment."}
         </EmptyDescription>
       </EmptyHeader>
@@ -3089,7 +3089,7 @@ export function ConnectionsSettings() {
     toastManager.add({
       type: "success",
       title: "Route added",
-      description: `${routeTarget.label} falls back to Studio Connect when its other routes are unreachable.`,
+      description: `${routeTarget.label} falls back to SpecWithCode Connect when its other routes are unreachable.`,
     });
   };
   const renderRemoteModeBody = () => (
@@ -3097,7 +3097,7 @@ export function ConnectionsSettings() {
       {relayRouteOffer !== null ? (
         <div className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2">
           <p className="text-xs text-muted-foreground">
-            This machine is on your Studio Connect account. Use it as a fallback route.
+            This machine is on your SpecWithCode Connect account. Use it as a fallback route.
           </p>
           <Button
             size="xs"
@@ -3105,7 +3105,7 @@ export function ConnectionsSettings() {
             disabled={isAddingSavedBackend}
             onClick={() => void addRelayRoute()}
           >
-            Add Studio Connect
+            Add SpecWithCode Connect
           </Button>
         </div>
       ) : null}
@@ -3910,7 +3910,7 @@ export function ConnectionsSettings() {
                 <AlertDialogDescription>
                   {pendingDesktopServerExposureMode === "network-accessible"
                     ? "Let your other devices connect to SpecWithCode over the network. Pair devices to give them access. SpecWithCode will restart."
-                    : "Devices connected over your local network will disconnect. Existing tunnels, such as Studio Connect or Tailscale HTTPS, keep working. SpecWithCode will restart."}
+                    : "Devices connected over your local network will disconnect. Existing tunnels, such as SpecWithCode Connect or Tailscale HTTPS, keep working. SpecWithCode will restart."}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>

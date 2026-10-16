@@ -175,7 +175,9 @@ it.layer(NodeServices.layer)("PreviewBrowser", (it) => {
       const error = yield* browser.executable.pipe(Effect.flip);
 
       expect(error._tag).toBe("PreviewBrowserInstallError");
-      expect(error.message).toMatch(/^Studio could not install its headless browser: .+ Try again\.$/);
+      expect(error.message).toMatch(
+        /^SpecWithCode could not install its headless browser: .+ Try again\.$/,
+      );
       expect(yield* fs.readDirectory(installRoot)).toEqual([]);
       yield* browser.executable.pipe(Effect.flip);
       expect(requests).toHaveLength(2);
@@ -292,5 +294,7 @@ it("tells the agent how far the install has come", () => {
       totalBytes: 120_477_194,
       unpacking: false,
     }).message,
-  ).toBe("Studio is installing its headless browser (37 of 120 MB downloaded). Try again in a minute.");
+  ).toBe(
+    "SpecWithCode is installing its headless browser (37 of 120 MB downloaded). Try again in a minute.",
+  );
 });

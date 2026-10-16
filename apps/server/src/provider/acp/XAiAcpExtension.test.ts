@@ -27,7 +27,7 @@ import {
   makeXAiPromptCompletionRuntime,
   normalizeXAiAcpToolCallState,
   registerXAiBackgroundTaskTracking,
-  registerXAiSubagentFinished,
+  registerXAiSessionUpdates,
   resolveXAiAcpToolTitle,
   xAiBackgroundTaskLifecycleMutation,
   xAiPromptCompleteFromSessionUpdate,
@@ -848,6 +848,118 @@ describe("XAiAcpExtension", () => {
     ).toEqual([]);
   });
 
+  it("tombstones Grok 1.0.x KillTask calls", () => {
+    // Live grok 1.0.52 shape: title "kill <short id> (killed)", variant KillTask.
+    expect(
+      extractXAiKilledBackgroundTasks({
+        toolCallId: "call-kill-live",
+        title: "kill call-8b4 (killed)",
+        status: "completed",
+        data: {
+          rawInput: {
+            task_id: "call-8b4ac787-686b-4aa8-bba5-fa96d39d3cfe-39",
+            variant: "KillTask",
+          },
+          rawOutput: {
+            type: "KillTask",
+            Result: {
+              task_id: "call-8b4ac787-686b-4aa8-bba5-fa96d39d3cfe-39",
+              outcome: "killed",
+            },
+          },
+        },
+      }),
+    ).toEqual([
+      {
+        taskId: "call-8b4ac787-686b-4aa8-bba5-fa96d39d3cfe-39",
+        status: "completed",
+        appendOutput: "",
+      },
+    ]);
+  });
+
+  it("completes background shell tasks keyed by tool call id from TaskOutput", () => {
+    const taskId = "call-fca056d2-24d8-4bcb-889a-b65fcba1953a-70";
+    expect(
+      extractXAiBackgroundTaskCompletion({
+        toolCallId: "call-19694cef-7f6c-4c42-94c3-3b2a932b72d6-71",
+        title: "python3 build_logo.py (call-fca)",
+        status: "completed",
+        data: {
+          rawInput: { task_ids: [taskId], timeout_ms: 90000, variant: "TaskOutput" },
+          rawOutput: {
+            type: "TaskOutput",
+            Result: { task_id: taskId, status: "completed", exit_code: 0, output: "ok\n" },
+          },
+        },
+      }),
+    ).toEqual([{ taskId, status: "completed", appendOutput: "ok" }]);
+  });
+
+  it.effect("ends background tasks from terminal Grok background_tasks snapshots", () =>
+    Effect.gen(function* () {
+      const handlers = new Map<string, (notification: unknown) => Effect.Effect<void>>();
+      const runtime = {
+        handleExtNotification: (
+          method: string,
+          _schema: unknown,
+          handler: (notification: unknown) => Effect.Effect<void>,
+        ) => {
+          handlers.set(method, handler);
+          return Effect.void;
+        },
+      } as unknown as Pick<AcpSessionRuntime.AcpSessionRuntime["Service"], "handleExtNotification">;
+      const mutations: Array<unknown> = [];
+      const notices: Array<unknown> = [];
+      yield* registerXAiSessionUpdates(runtime, {
+        finishSubagent: (notice) => Effect.sync(() => notices.push(notice)),
+        applyBackgroundTaskMutation: (mutation) => Effect.sync(() => mutations.push(mutation)),
+      });
+      const update = handlers.get("_x.ai/session/update")!;
+      const taskId = "call-762f6a72-478f-4eaf-a5ee-2856b7e2ee9e-51";
+      yield* update({
+        sessionId: "root-session",
+        update: { sessionUpdate: "task_backgrounded", tool_call_id: taskId, task_id: taskId },
+      });
+      yield* update({
+        sessionId: "root-session",
+        update: { sessionUpdate: "background_tasks", tasks: [] },
+      });
+      yield* update({
+        sessionId: "root-session",
+        update: {
+          sessionUpdate: "task_completed",
+          task_snapshot: { task_id: taskId, command: "python3 build_logo.py", exit_code: 0 },
+        },
+      });
+      // The snapshot repeats ended tasks; each terminal entry is forwarded once.
+      const killedId = "call-8b4ac787-686b-4aa8-bba5-fa96d39d3cfe-39";
+      const snapshot = {
+        sessionId: "root-session",
+        update: {
+          sessionUpdate: "background_tasks",
+          tasks: [
+            { task_id: taskId, kind: "bash", status: "completed", exit_code: 0 },
+            { task_id: killedId, kind: "bash", status: "failed", signal: "killed" },
+            { task_id: "call-still-running", kind: "bash", status: "running" },
+          ],
+        },
+      };
+      yield* update(snapshot);
+      yield* update(snapshot);
+      // task_backgrounded / task_completed as session updates are Grok's
+      // persisted replay form (live ones use x.ai/task_*), so only terminal
+      // snapshot entries count, each once.
+      expect(mutations).toEqual([
+        { sessionId: "root-session", taskId, status: "completed" },
+        { sessionId: "root-session", taskId: killedId, status: "failed" },
+      ]);
+      expect(notices).toEqual([]);
+      expect(handlers.has("x.ai/session_notification")).toBe(true);
+      expect(handlers.has("_x.ai/session_notification")).toBe(true);
+    }),
+  );
+
   it("maps task lifecycle notifications to background mutations", () => {
     // task_backgrounded carries the cancelled call's tool_call_id as task_id.
     expect(
@@ -1531,9 +1643,11 @@ describe("XAiAcpExtension", () => {
       const notices: Array<unknown> = [];
       // Registered after the wrapper, as the adapter does: it must not replace
       // the wrapper's prompt completion on the shared method.
-      yield* registerXAiSubagentFinished(runtime, (notice) =>
-        Effect.sync(() => notices.push(notice)),
-      );
+      const mutations: Array<unknown> = [];
+      yield* registerXAiSessionUpdates(runtime, {
+        finishSubagent: (notice) => Effect.sync(() => notices.push(notice)),
+        applyBackgroundTaskMutation: (mutation) => Effect.sync(() => mutations.push(mutation)),
+      });
       const sessionNotification = handlers.get("_x.ai/session_notification")!;
       yield* sessionNotification({
         sessionId: "root-session",

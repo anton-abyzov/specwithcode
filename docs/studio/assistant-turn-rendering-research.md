@@ -160,9 +160,9 @@ Paths below are under `webview/assets/`.
 
 ---
 
-## Recommended for Studio
+## Recommended for SpecWithCode
 
-Both apps agree on the shape: the person's message is a tinted bubble on the right (5% of the text color), the answer is unboxed prose in a ~768px column, work is folded into one muted line above the answer, and the action row under the answer stays visible on the latest turn and appears on hover elsewhere. Studio's thread view (`MessagesTimeline`) already follows this. The coordinator conversation (`apps/web/src/components/studio/CoordinatorConversation.tsx`) did not: it labelled every answer "Coordinator" and had no work line, separators or actions. It now takes:
+Both apps agree on the shape: the person's message is a tinted bubble on the right (5% of the text color), the answer is unboxed prose in a ~768px column, work is folded into one muted line above the answer, and the action row under the answer stays visible on the latest turn and appears on hover elsewhere. SpecWithCode's thread view (`MessagesTimeline`) already follows this. The coordinator conversation (`apps/web/src/components/studio/CoordinatorConversation.tsx`) did not: it labelled every answer "Coordinator" and had no work line, separators or actions. It now takes:
 
 | Element         | Choice                                                                                                                                                              | From                                                                         |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |

@@ -60,9 +60,9 @@ describe("request execution provenance", () => {
   it("keeps each request's recorded model after later runs switch providers", () => {
     const original = markup(message());
     const latest = markup(message({ runId: RunId.make("new-run") }));
-    expect(original).toContain("M1 · claude · opus-original");
+    expect(original).toContain("M1 · Claude Code · Opus Original");
     expect(original).not.toContain("gpt-new");
-    expect(latest).toContain("M1 · codex · gpt-new");
+    expect(latest).toContain("M1 · Codex · GPT New");
     expect(original).toContain('data-environment-id="env-m1"');
     expect(original).toContain('data-run-id="original-run"');
   });
@@ -85,7 +85,7 @@ describe("request execution provenance", () => {
     );
     expect(output).toContain("Sent by automation");
     expect(output).toContain('data-task-id="scheduled-1"');
-    expect(output).toContain("M1 · claude · opus-original");
+    expect(output).toContain("M1 · Claude Code · Opus Original");
   });
 
   it("preserves navigation to the sending coordinator after attribution extraction", async () => {

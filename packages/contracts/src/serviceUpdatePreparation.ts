@@ -29,6 +29,11 @@ export const ServiceUpdateBlocker = Schema.Struct({
   threadTitle: Schema.NullOr(Schema.String),
   projectId: Schema.NullOr(ProjectId),
   projectTitle: Schema.NullOr(Schema.String),
+  /**
+   * The project continues threads after restarts: an interrupted turn
+   * continues and a cancelled queued message is queued again. Older services omit it.
+   */
+  continuesAfterRestart: Schema.optional(Schema.Boolean),
 });
 export type ServiceUpdateBlocker = typeof ServiceUpdateBlocker.Type;
 

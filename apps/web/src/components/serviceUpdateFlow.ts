@@ -1,13 +1,14 @@
 import type {
+  ServiceUpdateBlocker,
   ServerPrepareServiceUpdateInput,
   ServerPrepareServiceUpdateResult,
   StudioServiceInstallOptions,
   StudioServiceUpdateState,
   StudioServiceUpdateStatus,
 } from "@specweave-studio/contracts";
-import { useCallback, useEffect, useSyncExternalStore } from "react";
+import { type ReactNode, useCallback, useEffect, useSyncExternalStore } from "react";
 
-import { requestConfirmDialog } from "../confirmDialog";
+import { requestChoiceDialog, requestConfirmDialog } from "../confirmDialog";
 import { ensureLocalApi } from "../localApi";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { serverEnvironment } from "../state/server";
@@ -59,6 +60,11 @@ export const STOP_WORK_TIMEOUT_MS = 90_000;
 const INSTALL_REQUEST_TIMEOUT_MS = 90_000;
 /** How long the service holds new work back for the update. */
 export const SERVICE_UPDATE_HOLD_MS = 15 * 60_000;
+/** What the update agent says when an install request lapsed before it could start. */
+export const SERVICE_REQUEST_EXPIRED =
+  "The update request expired before it could start; choose Update now again.";
+// A lapsed request is renewed this many times (about 40 minutes in all) before it fails.
+const MAX_REQUEST_RENEWALS = 3;
 
 export interface ServiceUpdateFlowState {
   readonly progress: ServiceUpdateProgress | null;
@@ -123,6 +129,8 @@ let reloadTimer: number | null = null;
 let toastId: string | null = null;
 // The phase whose toast the user closed; it shows again once the phase moves on.
 let dismissedPhase: ServiceUpdateProgress["phase"] | null = null;
+// Times this window renewed its install request after the agent let it lapse.
+let renewals = 0;
 
 function readState(): ServiceUpdateFlowState {
   return state;
@@ -149,6 +157,21 @@ function updateProgress(
   const previous = state.progress;
   const next = change(previous);
   if (next === previous) return;
+  // The agent let this window's request lapse while it still waited for work
+  // to wind down (a service too old to hold itself only quiets slowly): ask
+  // again instead of failing, while the person is still following it.
+  if (
+    next?.phase === "failed" &&
+    next.message === SERVICE_REQUEST_EXPIRED &&
+    (previous.phase === "waiting" || previous.phase === "requesting") &&
+    installOptions !== undefined &&
+    !cancelling &&
+    renewals < MAX_REQUEST_RENEWALS
+  ) {
+    renewals += 1;
+    void run({ ...previous, phase: "requesting", message: null });
+    return;
+  }
   setState({ progress: next });
   // The agent gave up on this install: let work start again now instead of
   // keeping the service held until someone closes the notice. Update now
@@ -489,6 +512,8 @@ export async function startServiceUpdateNow(
   // Something else may have started or finished the update while the user decided.
   const latest = state.progress;
   if (latest !== null && !canRetryServiceUpdate(latest)) return false;
+  // A click starts afresh: the renewals of an earlier request do not count.
+  renewals = 0;
   await run(
     latest !== null
       ? retryServiceUpdateProgress(latest, lastAgentState)
@@ -503,18 +528,39 @@ export async function startServiceUpdateNow(
  * anyway. Nothing runs and no question is asked when the service says so.
  */
 export async function confirmAppRestartForUpdate(
-  options: { readonly version?: string | null } = {},
-): Promise<boolean> {
+  options: {
+    readonly version?: string | null;
+    /** The running work as the dialog shows it, under the summary. */
+    readonly renderDetails?: (blockers: ReadonlyArray<ServiceUpdateBlocker>) => ReactNode;
+  } = {},
+): Promise<AppRestartChoice> {
   const checked = await callPrepare({ stopWork: false }, QUICK_CALL_MS);
+  const listed = checked !== null && options.renderDetails !== undefined;
   const question =
-    checked === null ? APP_RESTART_UNKNOWN : describeAppRestartWarning(checked, options);
-  if (question === null) return true;
-  return ensureLocalApi().dialogs.confirm(question, {
-    variant: "destructive",
-    confirmLabel: "Restart anyway",
-    cancelLabel: "Install when idle",
+    checked === null
+      ? APP_RESTART_UNKNOWN
+      : describeAppRestartWarning(checked, { version: options.version ?? null, listed });
+  if (question === null) return "now";
+  // Waiting is the default: the safe choice is the one Enter picks.
+  const choice = requestChoiceDialog(question, {
+    confirmLabel: "Restart when idle",
+    alternateLabel: "Restart now",
+    cancelLabel: "Cancel",
+    ...(listed && checked !== null ? { details: options.renderDetails!(checked.blockers) } : {}),
   });
+  if (choice === undefined) {
+    const text =
+      checked === null ? question : (describeAppRestartWarning(checked, options) ?? question);
+    return (await ensureLocalApi().dialogs.confirm(text, { variant: "destructive" }))
+      ? "now"
+      : "cancel";
+  }
+  const picked = await choice;
+  return picked === "confirm" ? "idle" : picked === "alternate" ? "now" : "cancel";
 }
+
+/** What the user chose before an update restart: now, once idle, or not at all. */
+export type AppRestartChoice = "now" | "idle" | "cancel";
 
 /**
  * Whether work still runs on the service: false when idle, null when the
@@ -524,6 +570,23 @@ export async function isServiceWorkRunning(): Promise<boolean | null> {
   const checked = await callPrepare({ stopWork: false }, QUICK_CALL_MS);
   if (checked === null) return null;
   return describeAppRestartWarning(checked) !== null;
+}
+
+/**
+ * Before an app restart that takes the bundled service down with it: stops
+ * running work for the update, as "Update now" does, and holds the service so
+ * nothing new starts. Runs stopped this way carry the update as their cause,
+ * so they continue after the restart instead of ending as cancelled. Resolves
+ * true when the service answered.
+ */
+export async function drainWorkForAppRestart(): Promise<boolean> {
+  const prepared = await callPrepare({ stopWork: true, hold: true }, STOP_WORK_TIMEOUT_MS);
+  return prepared !== null;
+}
+
+/** Lets work start again after a drained app restart did not happen. */
+export async function releaseAppRestartDrain(): Promise<void> {
+  await callPrepare({ stopWork: false, releaseHold: true }, QUICK_CALL_MS);
 }
 
 /** "Update now" again (or "Try again") for the update already under way. */
@@ -671,6 +734,7 @@ export function resetServiceUpdateFlowForTests(): void {
   lastBlockerCheck = 0;
   waitingSince = null;
   lastAgentState = null;
+  renewals = 0;
   readBusy = false;
   checkBusy = false;
   requestBusy = false;

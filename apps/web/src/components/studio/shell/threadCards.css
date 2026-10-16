@@ -101,3 +101,20 @@
   line-height: 1.45;
   color: var(--shell-waiting);
 }
+
+/* Where the thread's plan stands, under its title: the step it runs now and
+   the one after, from its SpecWeave increment or its own todo list. */
+.sws-thread-card-plan {
+  flex: 1 0 100%;
+  overflow: hidden;
+  padding-left: 18px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--muted-foreground);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sws-thread-card-plan-label {
+  color: var(--foreground);
+  opacity: 0.7;
+}

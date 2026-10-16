@@ -5,7 +5,10 @@ import {
   scopeThreadRef,
   scopedThreadKey,
 } from "@specweave-studio/client-runtime/environment";
-import { settlePromise, squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
+import {
+  settlePromise,
+  squashAtomCommandFailure,
+} from "@specweave-studio/client-runtime/state/runtime";
 import { canSnooze, threadWokeAt } from "@specweave-studio/client-runtime/state/thread-settled";
 import { threadRuntimeCanArchive } from "@specweave-studio/client-runtime/state/models";
 import {
@@ -36,6 +39,10 @@ import { vcsEnvironment } from "../state/vcs";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { refreshArchivedThreadsForEnvironment } from "../lib/archivedThreadsState";
 import { releaseComposerDraftUploads } from "../lib/composerDraftUploads";
+import {
+  describeThreadResolveBlocker,
+  threadStopAndResolveMessage,
+} from "../lib/threadResolveBlocker";
 import { readLocalApi } from "../localApi";
 import {
   readEnvironmentSupportsAutoSettleOptOut,
@@ -85,6 +92,21 @@ export class ThreadSettlementUnsupportedError extends Schema.TaggedError<ThreadS
     return "This environment's server does not support resolving threads yet. Update the server to use Resolve.";
   }
 }
+
+export class ThreadStopBeforeResolveTimeoutError extends Schema.TaggedError<ThreadStopBeforeResolveTimeoutError>()(
+  "ThreadStopBeforeResolveTimeoutError",
+  {
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+  },
+) {
+  override get message(): string {
+    return "Stop was sent, but the thread is still finishing. Try Resolve again in a moment.";
+  }
+}
+
+/** How long Stop and resolve waits for the stopped work to end before giving up. */
+const STOP_BEFORE_RESOLVE_TIMEOUT_MS = 30_000;
 
 export class ThreadSnoozeUnsupportedError extends Schema.TaggedError<ThreadSnoozeUnsupportedError>()(
   "ThreadSnoozeUnsupportedError",
@@ -279,6 +301,9 @@ export function useThreadActions() {
     reportFailure: false,
   });
   const settleThreadMutation = useOrchestrationCommand(threadEnvironment.settle, {
+    reportFailure: false,
+  });
+  const interruptThreadTurnMutation = useOrchestrationCommand(threadEnvironment.interruptTurn, {
     reportFailure: false,
   });
   const unsettleThreadMutation = useOrchestrationCommand(threadEnvironment.unsettle, {
@@ -779,7 +804,47 @@ export function useThreadActions() {
           ),
         );
       }
-      const resolved = resolveThreadTarget(target);
+      let resolved = resolveThreadTarget(target);
+      // Resolve never dead-ends on work that still runs: offer to stop it
+      // first, naming what runs, then settle once it has ended.
+      const blocker = resolved ? describeThreadResolveBlocker(resolved.thread, Date.now()) : null;
+      if (resolved && blocker !== null) {
+        const localApi = readLocalApi();
+        if (localApi) {
+          const confirmation = await settlePromise(() =>
+            localApi.dialogs.confirm(threadStopAndResolveMessage(resolved!.thread, blocker), {
+              variant: "destructive",
+              confirmLabel: "Stop and resolve",
+            }),
+          );
+          if (confirmation._tag === "Failure") return confirmation;
+          // Declining is a cancel, not a resolve: callers skip both the error
+          // toast and the navigation they do after a settled thread.
+          if (!confirmation.value) return AsyncResult.failure(Cause.interrupt());
+        }
+        const stopped = await interruptThreadTurnMutation({
+          environmentId: target.environmentId,
+          input: { threadId: target.threadId },
+        });
+        if (stopped._tag !== "Success") return stopped;
+        const deadline = Date.now() + STOP_BEFORE_RESOLVE_TIMEOUT_MS;
+        for (;;) {
+          const current = readThreadShell(target);
+          if (!current || describeThreadResolveBlocker(current, Date.now()) === null) break;
+          if (Date.now() >= deadline) {
+            return AsyncResult.failure(
+              Cause.fail(
+                new ThreadStopBeforeResolveTimeoutError({
+                  environmentId: target.environmentId,
+                  threadId: target.threadId,
+                }),
+              ),
+            );
+          }
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+        resolved = resolveThreadTarget(target);
+      }
       const wokeAt = resolved
         ? threadWokeAt(resolved.thread, { now: new Date().toISOString() })
         : null;
@@ -830,6 +895,7 @@ export function useThreadActions() {
       return result;
     },
     [
+      interruptThreadTurnMutation,
       markThreadVisited,
       pinThread,
       resolveThreadTarget,

@@ -73,12 +73,22 @@ export interface DesktopSettingsChange {
 }
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
+/** "Restart when idle" stops running work for the update after this long. */
+export const DEFAULT_FORCE_INSTALL_AFTER_MINUTES = 2;
+const MAX_FORCE_INSTALL_AFTER_MINUTES = 24 * 60;
+
+export function normalizeForceInstallAfterMinutes(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.min(Math.round(value), MAX_FORCE_INSTALL_AFTER_MINUTES)
+    : DEFAULT_FORCE_INSTALL_AFTER_MINUTES;
+}
 // Background updates are on by default: check, download, and install at the
 // next quit (app) or quiet moment (service). Each step has its own switch.
 export const DEFAULT_UPDATE_PREFERENCES: DesktopUpdatePreferences = {
   checkAutomatically: true,
   downloadAutomatically: true,
   installAutomatically: true,
+  forceInstallAfterMinutes: DEFAULT_FORCE_INSTALL_AFTER_MINUTES,
 };
 const MIN_MAIN_WINDOW_SIZE = {
   width: 840,
@@ -144,6 +154,7 @@ const DesktopSettingsDocument = Schema.Struct({
       checkAutomatically: Schema.optionalKey(Schema.Boolean),
       downloadAutomatically: Schema.optionalKey(Schema.Boolean),
       installAutomatically: Schema.optionalKey(Schema.Boolean),
+      forceInstallAfterMinutes: Schema.optionalKey(Schema.Number),
     }),
   ),
   // Newer form of the WSL toggle. `wslMode` is still accepted on load so
@@ -349,6 +360,9 @@ function normalizeDesktopSettingsDocument(
       checkAutomatically: parsed.updatePreferences?.checkAutomatically !== false,
       downloadAutomatically: parsed.updatePreferences?.downloadAutomatically !== false,
       installAutomatically: parsed.updatePreferences?.installAutomatically !== false,
+      forceInstallAfterMinutes: normalizeForceInstallAfterMinutes(
+        parsed.updatePreferences?.forceInstallAfterMinutes,
+      ),
     },
     wslBackendEnabled,
     wslDistro: normalizeWslDistro(parsed.wslDistro),
@@ -399,7 +413,9 @@ function toDesktopSettingsDocument(
     settings.updatePreferences.downloadAutomatically !==
       defaults.updatePreferences.downloadAutomatically ||
     settings.updatePreferences.installAutomatically !==
-      defaults.updatePreferences.installAutomatically
+      defaults.updatePreferences.installAutomatically ||
+    (settings.updatePreferences.forceInstallAfterMinutes ?? DEFAULT_FORCE_INSTALL_AFTER_MINUTES) !==
+      (defaults.updatePreferences.forceInstallAfterMinutes ?? DEFAULT_FORCE_INSTALL_AFTER_MINUTES)
   ) {
     document.updatePreferences = { ...settings.updatePreferences };
   }
@@ -511,11 +527,18 @@ export function setUpdatePreferences(
   settings: DesktopSettings,
   patch: DesktopUpdatePreferencesPatch,
 ): DesktopSettings {
-  const next: DesktopUpdatePreferences = { ...settings.updatePreferences, ...patch };
+  const next: DesktopUpdatePreferences = {
+    ...settings.updatePreferences,
+    ...patch,
+    forceInstallAfterMinutes: normalizeForceInstallAfterMinutes(
+      patch.forceInstallAfterMinutes ?? settings.updatePreferences.forceInstallAfterMinutes,
+    ),
+  };
   const current = settings.updatePreferences;
   return next.checkAutomatically === current.checkAutomatically &&
     next.downloadAutomatically === current.downloadAutomatically &&
-    next.installAutomatically === current.installAutomatically
+    next.installAutomatically === current.installAutomatically &&
+    next.forceInstallAfterMinutes === current.forceInstallAfterMinutes
     ? settings
     : { ...settings, updatePreferences: next };
 }

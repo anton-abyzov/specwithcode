@@ -1,7 +1,7 @@
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { logicalCoordinator, projectExecutionScopes } from "../../studio/projectDomain";
 import { ProjectHandoffRecovery } from "./ProjectHandoffRecovery";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { type ThreadId } from "@specweave-studio/contracts";
 import { useSettingsProjectGroups } from "../settings/useSettingsProjectGroups";
@@ -80,12 +80,14 @@ export function ProjectWorkspace({
     });
   const groups = useSettingsProjectGroups();
   const projects = useProjects();
-  const routeAnchor = useRef<{
+  // State, not a ref read while rendering: the React Compiler then optimizes this
+  // page, and the workspace below it keeps its props between renders.
+  const [routeAnchor, setRouteAnchor] = useState<{
     requestedKey: string;
     environmentId: string;
     projectId: string;
   } | null>(null);
-  const anchor = routeAnchor.current?.requestedKey === requestedKey ? routeAnchor.current : null;
+  const anchor = routeAnchor?.requestedKey === requestedKey ? routeAnchor : null;
   // Promotion from repository grouping to a domain ID must follow this checkout,
   // even if another unrelated registration still owns the old repository key.
   const group = anchor
@@ -142,12 +144,13 @@ export function ProjectWorkspace({
       projectCoordinatorMachines: { ...savedMachines, [projectKey]: key },
     });
   };
-  if (member)
-    routeAnchor.current = {
-      requestedKey,
-      environmentId: member.environmentId,
-      projectId: member.id,
-    };
+  if (
+    member &&
+    (anchor === null ||
+      anchor.environmentId !== member.environmentId ||
+      anchor.projectId !== member.id)
+  )
+    setRouteAnchor({ requestedKey, environmentId: member.environmentId, projectId: member.id });
   const project = member
     ? projects.find((p) => p.environmentId === member.environmentId && p.id === member.id)
     : null;

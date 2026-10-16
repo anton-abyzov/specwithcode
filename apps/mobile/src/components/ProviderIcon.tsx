@@ -5,6 +5,7 @@ import { providerInstanceInitials } from "@specweave-studio/client-runtime/state
 import { useState } from "react";
 import {
   GITHUB_COPILOT_ICON_PATHS,
+  GITHUB_COPILOT_ICON_VIEW_BOX,
   isGitHubCopilotIcon,
   resolveOfficialAcpRegistryIconUrl,
 } from "@specweave-studio/contracts";
@@ -43,9 +44,14 @@ function AcpRegistryProviderIcon(props: {
 
   if (isGitHubCopilotIcon(null, props.iconUrl)) {
     return (
-      <Svg width={props.size} height={props.size} viewBox="0 0 24 24" fill={props.color}>
-        {GITHUB_COPILOT_ICON_PATHS.map((d, index) => (
-          <Path key={index} d={d} />
+      <Svg
+        width={props.size}
+        height={props.size}
+        viewBox={GITHUB_COPILOT_ICON_VIEW_BOX}
+        fill={props.color}
+      >
+        {GITHUB_COPILOT_ICON_PATHS.map((d) => (
+          <Path key={d} d={d} fillRule="evenodd" clipRule="evenodd" />
         ))}
       </Svg>
     );

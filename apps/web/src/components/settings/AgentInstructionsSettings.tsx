@@ -162,6 +162,8 @@ function InstructionEditor({
   const canWrite = useScopedSettingsWriteAllowed();
   const update = useUpdateScopedSettings();
   const label = project ? "Project instructions" : "Global instructions";
+  // A project adds to the global rules, so its reset clears; the global reset restores the defaults.
+  const resetValue = project ? "" : DEFAULT_SERVER_SETTINGS.agentInstructions;
   return (
     <SettingsSection title="Agent instructions">
       <SettingsRow
@@ -172,14 +174,19 @@ function InstructionEditor({
         description={
           project
             ? "Additional rules for this project. Global instructions are always included before these additions."
-            : "Shared rules for Claude Code sessions in every project on each selected environment."
+            : "Sent with every coordinator and worker request, on every provider, in every project on each selected environment. They start with how SpecWithCode organizes work; edit them freely."
         }
         mixed={mixed}
         resetAction={
-          mixed || initial !== "" ? (
+          mixed || initial !== resetValue ? (
             <SettingResetButton
               label="agent instructions"
-              onClick={() => update({ agentInstructions: "" })}
+              onClick={() => {
+                update({ agentInstructions: resetValue });
+                setDraft(resetValue);
+                setHasDraft(false);
+                edited.current = false;
+              }}
             />
           ) : null
         }
@@ -187,7 +194,7 @@ function InstructionEditor({
         <div className="mt-3 space-y-3 pb-3.5">
           <Textarea
             aria-label={label}
-            rows={6}
+            rows={project ? 6 : 10}
             maxLength={AGENT_INSTRUCTIONS_MAX_LENGTH}
             aria-describedby={countId}
             value={draft}
@@ -217,9 +224,10 @@ function InstructionEditor({
             max={AGENT_INSTRUCTIONS_MAX_LENGTH}
           />
           <p className="text-sm text-muted-foreground">
-            Studio rules and native project instructions remain included. These additions reach
-            Claude Code leads and workflow workers. New sessions and resumed turns use the saved
-            rules; running workers keep their launch context.
+            SpecWithCode rules and native project instructions remain included. These reach every
+            coordinator and worker on Claude Code, Codex, Cursor, OpenCode and ACP agents, and
+            Claude workflow workers. New sessions and resumed turns use the saved rules; running
+            workers keep their launch context.
           </p>
           <details className="rounded-md border border-border px-3 py-2">
             <summary className="cursor-pointer text-sm font-medium">

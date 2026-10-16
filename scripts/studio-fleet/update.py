@@ -36,7 +36,10 @@ from quiescence import (VANISHED_READS, capture_quiescence, assert_quiescence, q
                         reap_descendants)
 from release_retention import prune_releases
 import database_continuity as continuity
+import live_database
+import settings_continuity
 import managed_updates
+import studio_paths
 
 from installation_descriptor import InstallationDescriptor, cli_paths, current_owner, installation_lock, owned_path, validate_identity, web_session_policy
 ENV_KEYS = {'HOME', 'USER', 'LOGNAME', 'PATH', 'LANG', 'TMPDIR', 'STUDIO_HOME',
@@ -44,6 +47,33 @@ ENV_KEYS = {'HOME', 'USER', 'LOGNAME', 'PATH', 'LANG', 'TMPDIR', 'STUDIO_HOME',
             'STUDIO_LOG_LEVEL', 'STUDIO_ENABLE_HOSTED_SERVICES', 'STUDIO_DEV_ALLOWED_ORIGINS',
             'STUDIO_AUTO_BOOTSTRAP_PROJECT_FROM_CWD', 'PWDEBUG', 'PLAYWRIGHT_HTML_OPEN'}
 TERMINAL_RUNS = {'completed', 'interrupted', 'failed', 'cancelled', 'rolled_back'}
+
+def _queue_held(payload):
+    """A queued run's payload says it waits in a held queue (`"queueHeld": true`)."""
+    try:
+        return json.loads(payload).get('queueHeld') is True
+    except (TypeError, ValueError, AttributeError):
+        return False
+
+def run_work(db):
+    """(statuses of the runs that are work, held queued runs). A queued run in a held queue
+    (after Stop, a restart or a provider failure) starts only when someone resumes the queue,
+    so it never quiets on its own: it is not work, and it stays held across the update.
+    ServiceUpdatePreparation.readBlockerRows applies the same rule. A database without run
+    payloads (older fixtures) counts every run."""
+    columns = {row[1] for row in db.execute('PRAGMA table_info(orchestration_v2_projection_runs)')}
+    if 'payload_json' not in columns:
+        return [row[0] for row in db.execute('SELECT status FROM orchestration_v2_projection_runs')], 0
+    statuses = [row[0] for row in db.execute(
+        "SELECT status FROM orchestration_v2_projection_runs WHERE status IS NOT 'queued'")]
+    held = 0
+    for (payload,) in db.execute(
+            "SELECT payload_json FROM orchestration_v2_projection_runs WHERE status = 'queued'"):
+        if _queue_held(payload):
+            held += 1
+        else:
+            statuses.append('queued')
+    return statuses, held
 
 def digest(value):
     return hashlib.sha256(value).hexdigest()
@@ -83,7 +113,7 @@ AUTHORITY_TABLES = ('auth_pairing_links', 'auth_sessions', 'provider_session_run
 def _read_state(state, include_auth, since=None, include_database=False):
     """Protected rows, private auth, rows appended after `since` and the complete database
     capture, all measured in one read-only transaction."""
-    db = sqlite3.connect('file:' + str(state / 'statev2.sqlite') + '?mode=ro', uri=True)
+    db = live_database.connect(state / 'statev2.sqlite')
     try:
         db.execute('BEGIN')
         tables = [row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")]
@@ -96,7 +126,7 @@ def _read_state(state, include_auth, since=None, include_database=False):
                 rows = sorted(json.dumps(list(row), default=lambda value: value.hex(), separators=(',', ':')) for row in db.execute('SELECT * FROM ' + table))
                 counts[table] = len(rows)
                 hashes[table] = digest(('\n'.join(rows)).encode())
-        runs = [row[0] for row in db.execute('SELECT status FROM orchestration_v2_projection_runs')]
+        runs = run_work(db)[0]
         requests = db.execute("SELECT count(*) FROM orchestration_v2_projection_runtime_requests WHERE status='pending'").fetchone()[0]
         # EffectOutbox.ts uses succeeded (not run-status completed). Unknown/NULL
         # values remain nonidle; retain every terminal row in the preservation hash.
@@ -388,6 +418,59 @@ def listeners(port):
         assert result.returncode in {0, 1}, 'Listening ports could not be read'
         return sorted(set(int(value) for value in result.stdout.split()))
 
+DATABASE_FILES = ('statev2.sqlite', 'statev2.sqlite-wal', 'statev2.sqlite-shm')
+DETACHED_DATABASE = ('The SpecWithCode service is using a database log that was deleted from disk. '
+                     'Restart SpecWithCode, then update')
+LOCKS_LOST = ('The SpecWithCode service lost its SQLite locks on its database. '
+              'Restart SpecWithCode, then update')
+
+def open_inodes(pid):
+    """{path: inode} of the regular files `pid` holds open, from lsof's field output."""
+    for attempt in range(1, LSOF_ATTEMPTS + 1):
+        try:
+            result = subprocess.run(['/usr/sbin/lsof', '-nP', '-a', '-p', str(pid), '-Fin'],
+                                    capture_output=True, text=True, timeout=LSOF_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            if attempt == LSOF_ATTEMPTS:
+                raise
+            continue
+        assert result.returncode in {0, 1}, 'Open service files could not be read'
+        files, inode = {}, None
+        for line in result.stdout.splitlines():
+            if line[:1] in {'p', 'f'}:
+                inode = None
+            elif line[:1] == 'i' and line[1:].isdigit():
+                inode = int(line[1:])
+            elif line[:1] == 'n' and inode is not None:
+                files.setdefault(line[1:], set()).add(inode)
+        return files
+
+def assert_database_attached(pid, state):
+    """The service's open statev2 database, -wal and -shm are the files on disk. When another
+    connection deletes the -wal and -shm while the service has them open (it can, once the
+    service's lock on the database file is lost), the service keeps writing a log no other
+    process can see. A read then misses its newest commits and races its checkpoints into
+    SQLITE_CORRUPT ("database disk image is malformed"), so no snapshot can be trusted until
+    the service reopens the database."""
+    held = open_inodes(pid)
+    for name in DATABASE_FILES:
+        path = str(state / name)
+        for inode in held.get(path, ()):
+            try:
+                current = os.stat(path).st_ino
+            except FileNotFoundError:
+                current = None
+            assert current == inode, DETACHED_DATABASE
+
+def assert_database_locked(state):
+    """Some process holds SQLite's locks on the database and on -shm. The running service holds
+    both for as long as its connection is open, so neither means it lost them: a process that
+    closes another descriptor for one of those files drops its own POSIX locks on it. Until it
+    reopens the database, any other open can rebuild -shm under it (SIGBUS) or delete -wal as
+    the "last" user, and no snapshot is safe to take."""
+    locks = live_database.service_locks(state / 'statev2.sqlite')
+    assert locks['database'] is not None and locks['index'] is not None, LOCKS_LOST
+
 # Ports of other local services: the model proxy (8317), Switch (8318) and the worker tunnels
 # (18319, 28319). Their own launchd jobs restart them, and a tunnel reconnects after any
 # network blip, so a listener there changing is not this update's doing and never refuses it.
@@ -418,7 +501,7 @@ def _service(identity):
     assert node.is_absolute() and node.is_file() and run([str(node), '--version']).strip() == b'v22.20.0', \
         'The Node.js runtime is missing or is not v22.20.0'
     release = safe_path(pathlib.Path(receipt['release']), home)
-    assert release == home / '.local/share/specweave-studio/releases' / receipt['archiveSha256'][:20], \
+    assert release == studio_paths.releases_root(home) / receipt['archiveSha256'][:20], \
         'The installed release is outside the owned releases folder'
     manifest = release_verified(release)
     assert manifest['sourceCommit'] == receipt['sourceCommit'] and manifest['product'] == 'SpecWeave Studio', \
@@ -451,7 +534,7 @@ def _service(identity):
     live = run(['/bin/launchctl', 'print', owner.domain + '/' + label], text=True)
     pid = re.search(r'^\s*pid = (\d+)\s*$', live, re.M)
     assert pid and re.search(r'^\s*state = running\s*$', live, re.M) and 'path = ' + str(plist) in live, \
-        'The Studio service is not running'
+        'The SpecWithCode service is not running'
     runtime = json.loads((own / 'userdata/server-runtime.json').read_text())
     assert runtime['pid'] == int(pid.group(1)) and runtime['host'] == '127.0.0.1' and runtime['port'] == port, \
         'The running service does not match its runtime record'
@@ -471,12 +554,18 @@ def _snapshot(identity, include_auth, since=None):
     for path in protected.values():
         safe_path(path, home)
         assert path.is_file() and not path.is_symlink(), 'A protected Studio file is missing or is a link'
-    file_hashes = {name: digest(path.read_bytes()) for name, path in protected.items()}
+    contents = {name: path.read_bytes() for name, path in protected.items()}
+    file_hashes = {name: digest(data) for name, data in contents.items()}
+    assert_database_attached(runtime['pid'], own / 'userdata')
+    assert_database_locked(own / 'userdata')
     rows, auth, carried, database = _read_state(own / 'userdata', include_auth, since, True)
     other = {str(port): listeners(port) for port in OTHER_SERVICE_PORTS if port != receipt['port']}
     proof = {'schemaVersion': 1, 'identity': identity, 'uid': service['owner'].uid, 'port': receipt['port'], 'webSessionPolicy': service['owner'].policy, 'serviceLabel': label, 'servicePid': runtime['pid'],
             'archiveSha256': receipt['archiveSha256'], 'artifactSourceCommit': receipt['sourceCommit'],
             'fileHashes': file_hashes,
+            # Key paths and value hashes only, so a restart that rewrites settings.json can be
+            # proven to keep every user value (see settings_continuity) without storing any.
+            'settingsProof': settings_continuity.settings_proof(contents['settings']),
             'rows': rows, 'databaseCapture': database, 'otherListeners': other, 'otherListenersOwned': service_owns_listener(other, runtime['pid'], read_processes()),
             'cookieName': receipt['cookieName'],
             'processQuiescence': capture_quiescence(runtime['pid'], service['owner'].uid, str(node), content['ProgramArguments']),
@@ -704,16 +793,28 @@ def assert_migration_protected_schema(before_capture, after_capture, before):
             assert not touches.search(str(item[2]) + ' ' + str(item[3] or '')), \
                 'A migration added a trigger touching sessions, pairing, provider or schedule rows'
 
+def _write_private(path, data):
+    """A new 0600 file, never through a link; replaces `path` atomically."""
+    temporary = path.with_name(path.name + '.owned-update-' + uuid.uuid4().hex)
+    fd = os.open(str(temporary), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        with os.fdopen(fd, 'wb') as handle:
+            handle.write(data)
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists(): temporary.unlink()
+
 def backup_state(own, commit):
-    """Consistent copy of the state database before the new release can migrate it."""
+    """Consistent copy of the state database, and the exact settings.json beside it, before
+    the new release can migrate them."""
     home = pathlib.Path.home().resolve()
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
-    root = safe_path(home / '.specweave-studio' / 'backups', home)
+    root = safe_path(studio_paths.backups_root(home), home)
     root.mkdir(mode=0o700, exist_ok=True)
     target_dir = root / ('pre-%s-%s-%s' % (re.sub('[^a-f0-9]', '', str(commit))[:12] or 'unknown', stamp, uuid.uuid4().hex))
     target_dir.mkdir(mode=0o700)
     target = target_dir / 'statev2.sqlite'
-    source = sqlite3.connect('file:' + str(own / 'userdata' / 'statev2.sqlite') + '?mode=ro', uri=True)
+    source = live_database.connect(own / 'userdata' / 'statev2.sqlite')
     try:
         copy = sqlite3.connect(str(target))
         try:
@@ -723,10 +824,14 @@ def backup_state(own, commit):
     finally:
         source.close()
     target.chmod(0o600)
+    settings = own / 'userdata' / 'settings.json'
+    if settings.is_file() and not settings.is_symlink():
+        _write_private(target_dir / 'settings.json', settings.read_bytes())
     return target
 
 def restore_state(backup, own):
-    """Puts the pre-update database back while the service is stopped."""
+    """Puts the pre-update database, and the settings.json saved with it, back while the
+    service is stopped: a new release may rewrite settings.json once when it starts."""
     state = own / 'userdata'
     staged = state / ('statev2.sqlite.owned-restore-' + str(uuid.uuid4()))
     try:
@@ -738,6 +843,21 @@ def restore_state(backup, own):
         os.replace(staged, state / 'statev2.sqlite')
     finally:
         if staged.exists(): staged.unlink()
+    saved = pathlib.Path(backup).parent / 'settings.json'
+    if saved.is_file() and not saved.is_symlink():
+        data = saved.read_bytes()
+        current = state / 'settings.json'
+        if current.is_symlink() or not current.is_file() or current.read_bytes() != data:
+            _write_private(current, data)
+
+def settings_preserved(before, after):
+    """Settings across the restart: byte-identical, or every user value kept with only the
+    documented migrations (settings_continuity). Without both proofs the bytes must match."""
+    if after['fileHashes']['settings'] == before['fileHashes']['settings']:
+        return {'result': 'byte-identical'}
+    proofs = before.get('settingsProof'), after.get('settingsProof')
+    assert all(isinstance(proof, dict) for proof in proofs), 'User settings changed after restart'
+    return settings_continuity.assert_settings_preserved(*proofs)
 
 def wait_for_stopped(pid, timeout=30, *, port=8319):
     for attempt in range(int(timeout / 0.5)):
@@ -909,7 +1029,7 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
     assert allow_project_migrations or not allow_existing_browser_heartbeat or original_auth is not None, \
         'Restart heartbeat proof requires the auth sessions table'
     home = pathlib.Path.home().resolve()
-    own = home / '.specweave-studio' / identity
+    own = studio_paths.identity_home(home, identity)
     old_bytes = {name: (own / name).read_bytes() for name in ['installation.json', 'launch.sh']}
     receipt = json.loads(old_bytes['installation.json'])
     port = before.get('port', receipt.get('port', 8319))
@@ -922,9 +1042,9 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
     old_tokens = shlex.split(old_bytes['launch.sh'].decode().splitlines()[4])[1:]
     node_index = old_tokens.index(receipt['node'])
     cli_prefix = migrate_runtime_path(old_tokens[:node_index + 2], home, pathlib.Path(receipt['node']))
-    new_release = safe_path(home / '.local/share/specweave-studio/releases' / archive_sha[:20], home)
+    new_release = safe_path(studio_paths.releases_root(home) / archive_sha[:20], home)
     assert digest(archive.read_bytes()) == archive_sha
-    incoming = safe_path(home / '.local/share/specweave-studio/incoming', home)
+    incoming = safe_path(studio_paths.incoming_root(home), home)
     incoming.mkdir(parents=True, exist_ok=True)
     # Reuse the integrity installer only in a new private staging home, never a live home.
     with tempfile.TemporaryDirectory(prefix='owned-update-stage-', dir=str(incoming)) as temporary:
@@ -1138,7 +1258,11 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         else:
             assert after['otherListeners'] == before['otherListeners']
         assert after['cookieName'] == before['cookieName']
-        assert after['fileHashes']['settings'] == before['fileHashes']['settings'] and after['fileHashes']['environment'] == before['fileHashes']['environment'] and after['fileHashes']['plist'] == before['fileHashes']['plist']
+        assert after['fileHashes']['environment'] == before['fileHashes']['environment'], 'Environment identity changed after restart'
+        assert after['fileHashes']['plist'] == before['fileHashes']['plist'], 'Service LaunchAgent changed after restart'
+        # A release may rewrite settings.json once on start (a one-time migration); the values
+        # the user set must survive it. Environment identity and the LaunchAgent stay exact.
+        settings_continuity_report = settings_preserved(before, after)
         result = {'phase': 'verified', 'before': before, 'after': after, 'backup': str(backup), 'cliAlias': progress['cliAlias'], 'preservedRowsAuthAndIdentity': True, 'originalServicesPreserved': True,
                   'onlyKnownOwnedServiceRestarted': True, 'startupBootstrap': False, 'inferenceExecuted': False,
                   'restartStartedAt': restart_started_at, 'rowsByteIdentical': before['rows'] == after['rows'],
@@ -1146,7 +1270,8 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
                                      else 'verified-appended-activity-and-heartbeat' if heartbeat and appended
                                      else 'verified-existing-browser-heartbeat' if heartbeat
                                      else 'verified-appended-activity' if before['rows'] != after['rows'] else 'byte-identical',
-                  'completeDatabaseContinuity': database_continuity}
+                  'completeDatabaseContinuity': database_continuity,
+                  'settingsContinuity': settings_continuity_report}
         if migration_cells is not None:
             result['migrationProtectedCells'] = migration_cells
         if 'serverBrowserStop' in progress:
@@ -1324,15 +1449,19 @@ BUSY_REFUSALS = {'Owned process identities changed during inventory', 'Owned ser
 def native_work_counts(state):
     """The per-check counts behind 'Native work is not idle', read again (read-only) for the
     refusal line. The same predicates as _read_state, which alone decides."""
-    db = sqlite3.connect('file:' + str(state / 'statev2.sqlite') + '?mode=ro', uri=True)
+    db = live_database.connect(state / 'statev2.sqlite')
     try:
         def count(query):
             return db.execute(query).fetchone()[0]
-        runs = sum(1 for row in db.execute('SELECT status FROM orchestration_v2_projection_runs') if row[0] not in TERMINAL_RUNS)
+        statuses, held = run_work(db)
+        runs = sum(1 for status in statuses if status not in TERMINAL_RUNS and status != 'queued')
         return {'runs': runs,
+                'queued': statuses.count('queued'),
                 'requests': count("SELECT count(*) FROM orchestration_v2_projection_runtime_requests WHERE status='pending'"),
                 'effects': count("SELECT count(*) FROM orchestration_v2_effect_outbox WHERE status IS NULL OR status NOT IN ('succeeded','failed','cancelled')"),
-                'sessions': count("SELECT count(*) FROM orchestration_v2_projection_provider_sessions WHERE status IN ('running','working','connecting','starting')")}
+                'sessions': count("SELECT count(*) FROM orchestration_v2_projection_provider_sessions WHERE status IN ('running','working','connecting','starting')"),
+                # Held queued runs never block; the count says why a queue still shows.
+                'held': held}
     finally:
         db.close()
 
@@ -1362,7 +1491,7 @@ def _refusal_detail(code, own):
     try:
         if code == 'native-work':
             counts = native_work_counts(own / 'userdata')
-            return ' '.join('%s=%d' % (key, counts[key]) for key in ('runs', 'requests', 'effects', 'sessions'))
+            return ' '.join('%s=%d' % (key, counts[key]) for key in ('runs', 'queued', 'requests', 'effects', 'sessions', 'held'))
         pid = json.loads((own / 'userdata/server-runtime.json').read_text())['pid']
         return descendant_names(int(pid), read_processes())
     except Exception:
@@ -1378,12 +1507,16 @@ def refusal_line(identity, error):
         return 'REFUSAL timeout ' + _name(command[0] if command else 'check')
     if message == 'Native work is not idle' or 'descendants' in message:
         code = 'native-work' if message == 'Native work is not idle' else 'descendants'
-        own = pathlib.Path.home().resolve() / '.specweave-studio' / identity
+        own = studio_paths.identity_home(pathlib.Path.home().resolve(), identity)
         return ('REFUSAL %s %s' % (code, _refusal_detail(code, own))).rstrip()
     if isinstance(error, sqlite3.OperationalError) or message in BUSY_REFUSALS:
         return 'REFUSAL busy ' + type(error).__name__
     if isinstance(error, AssertionError):
         detail = message if re.fullmatch(r"[A-Za-z0-9 .,;:'()_-]{1,200}", message) else 'A Studio installation check failed'
+    elif isinstance(error, sqlite3.DatabaseError):
+        # SQLite's own fixed text ("database disk image is malformed", "file is not a database").
+        reason = str(error) if re.fullmatch(r'[a-z ]{1,80}', str(error)) else type(error).__name__
+        detail = 'The SpecWithCode database could not be read (%s)' % reason
     elif isinstance(error, (OSError, ValueError, KeyError, TypeError)):
         detail = 'A Studio installation file is missing or malformed (%s)' % type(error).__name__
     else:

@@ -226,8 +226,8 @@ export function WelcomeWizard({
         <WizardHeader
           title="Set up SpecWithCode"
           identity={
-            <div className="flex items-baseline gap-1.5" role="img" aria-label="SpecWithCode">
-              <StudioWordmark className="h-4 w-auto shrink-0" aria-hidden />
+            <div className="flex items-center gap-2" role="img" aria-label="SpecWithCode">
+              <StudioWordmark className="size-6 shrink-0" aria-hidden />
               <span className="text-2xl font-medium tracking-tight text-muted-foreground">
                 SpecWithCode
               </span>
@@ -475,7 +475,7 @@ function ConnectAccountOption({
           }
         >
           <CloudIcon className="size-4 text-muted-foreground" />
-          <span className="flex-1 text-left">Studio Connect</span>
+          <span className="flex-1 text-left">SpecWithCode Connect</span>
           <span className="text-xs text-muted-foreground">
             {!isLoaded
               ? "Loading sign-in…"

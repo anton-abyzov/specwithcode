@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  LIVE_DATABASE_INSTRUCTIONS,
   type ModelSelection,
   type OrchestrationV2AppThread,
   ProjectId,
@@ -160,7 +161,7 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
       assert.equal(resolved.cwd, "/project-root");
       assert.equal(
         resolved.agentInstructions,
-        "## Environment instructions\nEnvironment rule\n\n## Project instructions\nProject rule",
+        `## Environment instructions\nEnvironment rule\n\n## Project instructions\nProject rule\n\n${LIVE_DATABASE_INSTRUCTIONS}`,
       );
       assert.equal(resolved.claudeWorkflowMode, "disabled");
       assert.equal(resolved.responseStyle, "concise");

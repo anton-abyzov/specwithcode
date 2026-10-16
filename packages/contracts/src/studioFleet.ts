@@ -59,6 +59,8 @@ export const StudioFleetMachine = Schema.Struct({
   url: Schema.String,
   status: Schema.Literals(["reachable", "unreachable", "identity-mismatch"]),
   pairingConfigured: Schema.Boolean,
+  /** The machine's own name from its environment descriptor; absent when unreachable or on older servers. */
+  machineName: Schema.optionalKey(Schema.String),
   /** Absent from servers older than coordinator workers. */
   workers: Schema.optionalKey(StudioFleetWorkers),
 });

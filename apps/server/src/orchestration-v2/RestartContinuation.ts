@@ -7,6 +7,7 @@ import {
   type RunId,
   type ThreadId,
 } from "@specweave-studio/contracts";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import type { ProjectionRuntimeRecoveryState } from "./ProjectionStore.ts";
 
@@ -93,11 +94,13 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
     if (!enabled) return;
     const threads = yield* ThreadManagementService.ThreadManagementService;
-    const messageId = MessageId.make(`message:restart-continuation:${input.sourceRunId}`);
+    // The id names why the run stopped, so the timeline can say "Resumed after update".
+    const restartMessageId = MessageId.make(`message:restart-continuation:${input.sourceRunId}`);
+    const updateMessageId = MessageId.make(`message:update-continuation:${input.sourceRunId}`);
     const projection = yield* threads.getThreadRecords(
       input.threadId,
       ["messages", "runs", "providerTurns", "attempts"],
-      { messageIds: [messageId] },
+      { messageIds: [restartMessageId, updateMessageId] },
     );
     if (
       !resolveProjectSettings(enabled, projection.thread.projectId).settings
@@ -106,13 +109,19 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       return;
     if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) return;
 
-    if (projection.messages.some((message) => message.id === messageId)) return;
+    if (
+      projection.messages.some(
+        (message) => message.id === restartMessageId || message.id === updateMessageId,
+      )
+    )
+      return;
     const source = projection.runs.find((run) => run.id === input.sourceRunId);
     // Pending effects from older versions may target settled background work,
     // including waiting runs that reconciliation subsequently cancelled.
+    // A restart cancels a running turn; a service update interrupts it first.
     if (
       !source ||
-      source.status !== "cancelled" ||
+      (source.status !== "cancelled" && source.status !== "interrupted") ||
       isRestartNoteSource(source, projection.providerTurns)
     )
       return;
@@ -134,11 +143,14 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
         turnItemTypes: ["run_interrupt_request"],
       },
     );
-    // The user asked this run to stop before the restart cut it.
+    const interrupts = sourceRecords.turnItems.flatMap((item) =>
+      item.runId === source.id && item.type === "run_interrupt_request" ? [item] : [],
+    );
+    // Someone (the user, an agent, a coordinator) asked this run to stop. Only a
+    // stop for a service update continues; it is the only one an interrupted run may have.
     if (
-      sourceRecords.turnItems.some(
-        (item) => item.runId === source.id && item.type === "run_interrupt_request",
-      )
+      interrupts.some((item) => item.cause !== "service_update") ||
+      (source.status === "interrupted" && interrupts.length === 0)
     )
       return;
     const sourceMessage = sourceRecords.messages.find(
@@ -153,6 +165,8 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     );
     const noteText =
       note.work.length === 0 ? undefined : restartCancelledBackgroundWorkNote(note.work);
+    // Only a stop for a service update leaves a continued run interrupted.
+    const messageId = source.status === "interrupted" ? updateMessageId : restartMessageId;
     yield* threads.dispatch({
       type: "message.dispatch",
       commandId: CommandId.make(`command:restart-continuation:${input.sourceRunId}`),
@@ -171,6 +185,26 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       creationSource: "server",
       restartContinuationOfRunId: input.sourceRunId,
     });
+    // Restart recovery and the update stop hold the queue; a continued thread
+    // keeps its queue in order and drains it after the continuation.
+    if (projection.runs.some((run) => run.status === "queued" && run.queueHeld === true)) {
+      yield* threads
+        .dispatch({
+          type: "queue.resume",
+          commandId: CommandId.make(`command:restart-queue-resume:${input.sourceRunId}`),
+          threadId: input.threadId,
+        })
+        .pipe(
+          Effect.catchCauseIf(
+            (cause) => !Cause.hasInterruptsOnly(cause),
+            (cause) =>
+              Effect.logWarning("Failed to resume a queue after a restart continuation", {
+                threadId: input.threadId,
+                cause,
+              }),
+          ),
+        );
+    }
   },
   // A delegated child this declined to continue still owes its parent a
   // result. Once a continuation run exists this is a no-op; that run settles it.
@@ -183,4 +217,73 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
         }),
       ),
     ),
+);
+
+/**
+ * After a restart, a thread keeps its queue. Messages a service update had to
+ * cancel (its helper installs only when no run is queued) are queued again in
+ * their order, and with `releaseHeld` a queue recovery held while it was only
+ * waiting (its last run had finished) starts again.
+ */
+export const resumeQueueAfterRestart = Effect.fn("RestartContinuation.resumeQueueAfterRestart")(
+  function* (input: {
+    readonly threadId: ThreadId;
+    readonly effectId: string;
+    readonly releaseHeld: boolean;
+  }) {
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
+    if (!enabled) return;
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    const { thread, runs } = yield* threads.getThreadRecords(input.threadId, ["runs"]);
+    if (
+      !resolveProjectSettings(enabled, thread.projectId).settings.continueThreadsAfterServerUpdate
+    )
+      return;
+    if (thread.archivedAt !== null || thread.deletedAt !== null) return;
+    const cancelled = runs
+      .filter((run) => run.status === "cancelled" && run.cancelledForUpdate === true)
+      .toSorted((left, right) => left.ordinal - right.ordinal);
+    if (cancelled.length > 0) {
+      const requeueId = (runId: RunId) => MessageId.make(`message:update-requeue:${runId}`);
+      const { messages } = yield* threads.getThreadRecords(input.threadId, ["messages"], {
+        messageIds: cancelled.flatMap((run) => [run.userMessageId, requeueId(run.id)]),
+      });
+      for (const run of cancelled) {
+        if (messages.some((message) => message.id === requeueId(run.id))) continue;
+        const original = messages.find((message) => message.id === run.userMessageId);
+        // Wakes and delegated results have their own delivery; resending would repeat them.
+        if (
+          original === undefined ||
+          original.notification !== undefined ||
+          original.delegatedCompletion !== undefined
+        )
+          continue;
+        yield* threads.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`command:update-requeue:${run.id}`),
+          threadId: input.threadId,
+          messageId: requeueId(run.id),
+          text: original.text,
+          ...(original.context === undefined ? {} : { context: original.context }),
+          attachments: original.attachments,
+          modelSelection: run.modelSelection,
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: original.createdBy,
+          creationSource: original.creationSource,
+          ...(original.senderThreadId === undefined
+            ? {}
+            : { senderThreadId: original.senderThreadId }),
+        });
+      }
+    }
+    if (!input.releaseHeld) return;
+    const { runs: current } = yield* threads.getThreadRecords(input.threadId, ["runs"]);
+    if (!current.some((run) => run.status === "queued" && run.queueHeld === true)) return;
+    yield* threads.dispatch({
+      type: "queue.resume",
+      commandId: CommandId.make(`command:restart-queue-resume:${input.effectId}`),
+      threadId: input.threadId,
+    });
+  },
 );

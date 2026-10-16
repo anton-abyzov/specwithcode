@@ -2,21 +2,21 @@ import { describe, expect, it } from "vite-plus/test";
 import { resolveTimelineToolPresentation } from "./MessagesTimeline.logic";
 
 describe("resolveTimelineToolPresentation", () => {
-  it("pretty prints Claude and Cursor Studio MCP tool names", () => {
+  it("pretty prints Claude and Cursor SpecWithCode MCP tool names", () => {
     expect(resolveTimelineToolPresentation("mcp__studio-code__studio_thread_read")).toEqual({
-      displayName: "Read a Studio thread",
+      displayName: "Read a SpecWithCode thread",
       logo: "studio-code",
     });
   });
 
-  it("pretty prints Codex Studio MCP tool names", () => {
+  it("pretty prints Codex SpecWithCode MCP tool names", () => {
     expect(resolveTimelineToolPresentation("studio-code.create_threads")).toEqual({
-      displayName: "Create Studio threads",
+      displayName: "Create SpecWithCode threads",
       logo: "studio-code",
     });
   });
 
-  it("pretty prints bare Studio MCP toolkit names", () => {
+  it("pretty prints bare SpecWithCode MCP toolkit names", () => {
     expect(resolveTimelineToolPresentation("list_scheduled_tasks")).toEqual({
       displayName: "List scheduled tasks",
       logo: "studio-code",

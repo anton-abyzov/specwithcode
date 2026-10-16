@@ -328,10 +328,10 @@ function HostCard({
               </summary>
               <p>
                 {snapshot.policy.mode === "reset-first"
-                  ? "Use eligible quota that resets soonest; equal resets prefer more used quota."
+                  ? "Use eligible quota that resets soonest; equal resets prefer the one with less left."
                   : snapshot.policy.mode === "spend-first"
-                    ? "Use the most used eligible quota first."
-                    : "Use the least used eligible quota first."}{" "}
+                    ? "Use the eligible quota with the least left first."
+                    : "Use the eligible quota with the most left first."}{" "}
                 {snapshot.policy.selectedAccount
                   ? "A pinned account waits if it is unavailable."
                   : "Selection is automatic."}{" "}
@@ -593,7 +593,7 @@ function QuotaWindow({
 }) {
   const percent = value === null ? null : Math.round(value.usedPercent);
   const left = percent === null ? null : 100 - Math.min(100, Math.max(0, percent));
-  const detail = `${title}${percent === null ? "" : ` · ${percent}% used`}${fresh ? "" : " · last observed"}`;
+  const detail = `${title}${left === null ? "" : ` · ${left === 0 ? "limit reached" : `${left}% left`}`}${fresh ? "" : " · last observed"}`;
   return (
     <div
       className={`studio-quota${fresh ? "" : " stale"}${left !== null && left <= 10 ? " low" : ""}`}

@@ -184,11 +184,11 @@ const BRIDGE = String.raw`(() => {
     worker = new Worker(url, { name: "studio-mod" });
     setTimeout(() => URL.revokeObjectURL(url), 10000);
   } catch (error) {
-    fail("Studio could not start the mod: " + ((error && error.message) || error));
+    fail("SpecWithCode could not start the mod: " + ((error && error.message) || error));
     return;
   }
   worker.addEventListener("message", (event) => host.postMessage(event.data, "*"));
-  worker.addEventListener("messageerror", () => fail("The mod sent a message Studio cannot read."));
+  worker.addEventListener("messageerror", () => fail("The mod sent a message SpecWithCode cannot read."));
   worker.addEventListener("error", (event) => { event.preventDefault(); fail(event.message || "The mod failed to load."); });
   window.addEventListener("message", (event) => {
     if (event.source !== host) return;

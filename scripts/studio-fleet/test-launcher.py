@@ -88,7 +88,7 @@ class LauncherNames(unittest.TestCase):
             home = pathlib.Path(temporary).resolve()
             node = home / 'node22/bin/node'; node.parent.mkdir(parents=True)
             node.write_text('#!/bin/sh\nexec /bin/sh "$@"\n'); node.chmod(0o700)
-            entry = home / '.local/share/specweave-studio/releases/abc/bin.mjs'; entry.parent.mkdir(parents=True)
+            entry = home / '.specwithcode/install/releases/abc/bin.mjs'; entry.parent.mkdir(parents=True)
             entry.write_text('#!/bin/sh\nprintf "%s|%s\\n" "${STUDIO_CLI_NAME-unset}" "$*"\n')
             prefix = ['/usr/bin/env', '-i', 'HOME=' + str(home), 'PATH=' + runtime_path(home, node), str(node), str(entry)]
             text = render_cli(prefix)
@@ -107,7 +107,7 @@ class LauncherNames(unittest.TestCase):
     def test_every_wrapper_format_a_release_wrote_is_recognised_for_this_home_only(self):
         home = pathlib.Path('/Users/owned fixture'); node = home / 'node22/bin/node'
         prefix = ['/usr/bin/env', '-i', 'HOME=' + str(home), 'PATH=' + runtime_path(home, node), 'STUDIO_AUTO_BOOTSTRAP_PROJECT_FROM_CWD=false',
-                  str(node), str(home / '.local/share/specweave-studio/releases/0123456789abcdef0123/bin.mjs')]
+                  str(node), str(home / '.specwithcode/install/releases/0123456789abcdef0123/bin.mjs')]
         for render in [launcher.render_cli, launcher.render_unnamed_cli, launcher.render_legacy_cli]:
             with self.subTest(render=render.__name__):
                 self.assertTrue(launcher.is_studio_wrapper(render(prefix).encode(), home))

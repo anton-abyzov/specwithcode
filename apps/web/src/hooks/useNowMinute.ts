@@ -64,3 +64,9 @@ function getSnapshot(): string {
 export function useNowMinute(): string {
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
+
+/** Epoch ms of a `useNowMinute()` value. The value is UTC without a zone, so a
+    bare `Date.parse` would read it as local time and skew by the UTC offset. */
+export function nowMinuteMs(minute: string): number {
+  return Date.parse(`${minute}:00Z`);
+}

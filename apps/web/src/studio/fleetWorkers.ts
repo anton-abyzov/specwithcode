@@ -21,13 +21,13 @@ const accessLabel = (access: StudioFleetWorkerAccess | null) =>
   access === null ? "Auto" : runtimeModeConfig[access].label;
 
 const PROBLEMS: Record<NonNullable<StudioFleetWorkers["problem"]>, string> = {
-  unsupported: "That machine's Studio is too old to run workers for another machine.",
+  unsupported: "That machine's SpecWithCode is too old to run workers for another machine.",
   route_mismatch: "That machine answers on a different address than configured here.",
   pairing_unavailable:
     "This server cannot create a pairing code there. Paste a code made on that machine.",
   pairing_code_rejected: "That machine did not accept the pairing code. Make a new one.",
   unreachable: "That machine could not be reached.",
-  identity_mismatch: "A different Studio answers at that machine's address.",
+  identity_mismatch: "A different SpecWithCode answers at that machine's address.",
 };
 
 export interface FleetWorkersView {

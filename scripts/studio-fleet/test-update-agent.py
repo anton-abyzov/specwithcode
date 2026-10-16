@@ -64,7 +64,7 @@ if args.snapshot:
     value = {'schemaVersion': 1, 'servicePid': control.get('pid', 4242),
              'rows': {'counts': control.get('counts', {'projection_threads': 3}), 'hashes': {}, 'nativeWorkIdle': True},
              'observedAt': datetime.datetime.now(datetime.timezone.utc).isoformat()}
-    installed = json.loads((home / '.specweave-studio' / args.identity / 'installation.json').read_text())
+    installed = json.loads((home / '.specwithcode' / args.identity / 'installation.json').read_text())
     value.update(identity=args.identity, serviceLabel=installed['service']['label'],
                  artifactSourceCommit=installed['sourceCommit'], archiveSha256=installed['archiveSha256'])
     pathlib.Path(args.snapshot).write_text(json.dumps(value))
@@ -86,16 +86,25 @@ if applies <= control.get('applyRefusals', 0) or control.get('applyFailAfterRest
 if control.get('applyCrash'):
     sys.stderr.write('Traceback (most recent call last):\nAssertionError: Protected rows or counts changed\n')
     sys.exit(1)
+if applies <= control.get('applyRolledBack', 0):
+    # What update.py writes after the restarted release failed a check and was fully rolled back.
+    receipt = {'identity': args.identity, 'phase': 'restart-requested', 'result': 'update-failed',
+               'pointers': 'previous-release', 'rollback': 'restored-runtime-pointers-and-state',
+               'restartStartedAt': '2026-10-15T21:32:20+00:00', 'stateDeltaRetained': False,
+               'error': 'AssertionError: User settings changed or disappeared after restart: /x'}
+    receipt.update(control.get('rolledBackReceipt', {}))
+    pathlib.Path(args.output).write_text(json.dumps(receipt))
+    sys.exit(1)
 if control.get('applyFail'):
     pathlib.Path(args.output).write_text(json.dumps({'result': 'update-failed'}))
     print('helper-private-output-should-not-be-logged')
     sys.exit(1)
-path = home / '.specweave-studio' / args.identity / 'installation.json'
+path = home / '.specwithcode' / args.identity / 'installation.json'
 receipt = json.loads(path.read_text())
 receipt['version'] = control.get('newVersion', '0.2.0')
 receipt['sourceCommit'] = control.get('newCommit', 'b' * 40)
 receipt['archiveSha256'] = args.sha256
-receipt['release'] = str(home / '.local/share/specweave-studio/releases' / args.sha256[:20])
+receipt['release'] = str(home / '.specwithcode/install/releases' / args.sha256[:20])
 path.write_text(json.dumps(receipt))
 if control.get('applyFailAfterSwitch'):
     pathlib.Path(args.output).write_text(json.dumps({'result': 'update-failed', 'rollback': 'held-for-safe-review'}))
@@ -248,7 +257,7 @@ class AgentCase(unittest.TestCase):
                                     return_value=type('Account', (), {'pw_dir': str(self.home), 'pw_name': owner.pw_name})())
         patcher.start()
         self.addCleanup(patcher.stop)
-        self.own = self.home / '.specweave-studio' / 'm4'
+        self.own = self.home / '.specwithcode' / 'm4'
         self.own.mkdir(parents=True)
         self.updates = self.own / 'updates'
         self.write_installation('0.1.4', OLD_COMMIT)
@@ -284,7 +293,7 @@ class AgentCase(unittest.TestCase):
     def write_installation(self, version, commit):
         receipt = {'schemaVersion': 1, 'identity': 'm4', 'studioHome': str(self.own),
                    'stateDir': str(self.own / 'userdata'), 'version': version, 'sourceCommit': commit,
-                   'archiveSha256': 'd' * 64, 'release': str(self.home / '.local/share/specweave-studio/releases' / ('d' * 20)), 'node': '/usr/bin/node',
+                   'archiveSha256': 'd' * 64, 'release': str(self.home / '.specwithcode/install/releases' / ('d' * 20)), 'node': '/usr/bin/node',
                    'uid': os.getuid(), 'user': update_agent.installation_descriptor.pwd.getpwuid(os.getuid()).pw_name,
                    'cliWrapper': str(self.home / '.local/bin/specweave-studio'), 'host': '127.0.0.1',
                    'port': 8319, 'service': {'installed': True, 'label': 'com.specweave.studio.m4', 'domain': 'gui/' + str(os.getuid())}}
@@ -853,9 +862,9 @@ class PassBehaviour(AgentCase):
     def test_snapshot_refusal_names_what_is_still_running(self):
         self.fake.add_release()
         cases = (('AssertionError: Owned service has unexpected descendants',
-                  'Waiting for open Studio terminals and agent processes to close'),
+                  'Waiting for open SpecWithCode terminals and agent processes to close'),
                  ('AssertionError: Owned service has unexpected or missing descendants',
-                  'Waiting for open Studio terminals and agent processes to close'),
+                  'Waiting for open SpecWithCode terminals and agent processes to close'),
                  ('Traceback (most recent call last):\nOSError: database is locked', update_agent.WAITING))
         for error, message in cases:
             self.control(snapshotFail=True, snapshotError=error)
@@ -1290,7 +1299,7 @@ class LaunchAgent(AgentCase):
             self.assertIn('"result": "installed"', self.log)
             plist_path = self.home / 'Library' / 'LaunchAgents' / (label + '.plist')
             content = plistlib.loads(plist_path.read_bytes())
-            script = self.home / '.local/share/specweave-studio/updater/update_agent.py'
+            script = self.home / '.specwithcode/install/updater/update_agent.py'
             self.assertEqual(content['ProgramArguments'], ['/usr/bin/python3', str(script), '--identity', 'm4'])
             self.assertEqual(content['StartInterval'], 600)
             self.assertTrue(content['RunAtLoad'] and content['LowPriorityIO'])
@@ -1317,7 +1326,7 @@ class LaunchAgent(AgentCase):
 
     def test_a_new_script_alone_is_written_without_reloading_the_agent(self):
         calls = []
-        script = self.home / '.local/share/specweave-studio/updater/update_agent.py'
+        script = self.home / '.specwithcode/install/updater/update_agent.py'
         with self.fake_launchctl(calls), mock.patch.object(update_agent, 'current_uid', return_value=501):
             self.run_agent('--install-launch-agent')
             script.write_bytes(b'# an older agent\n')
@@ -1341,7 +1350,7 @@ runpy.run_path(script, run_name='__main__')
                                '--status'], cwd=str(self.home), capture_output=True, text=True, timeout=60)
 
     def test_the_installed_agent_imports_its_modules_from_where_it_was_installed(self):
-        script = self.home / '.local/share/specweave-studio/updater/update_agent.py'
+        script = self.home / '.specwithcode/install/updater/update_agent.py'
         with self.fake_launchctl([]), mock.patch.object(update_agent, 'current_uid', return_value=501):
             self.assertEqual(self.run_agent('--install-launch-agent'), 0)
         result = self.run_installed(script)
@@ -1356,7 +1365,7 @@ runpy.run_path(script, run_name='__main__')
         self.assertIn("No module named 'update_", result.stderr)
 
     def test_a_changed_module_alone_is_written(self):
-        module = self.home / '.local/share/specweave-studio/updater/update_request.py'
+        module = self.home / '.specwithcode/install/updater/update_request.py'
         with self.fake_launchctl([]), mock.patch.object(update_agent, 'current_uid', return_value=501):
             self.run_agent('--install-launch-agent')
             module.write_bytes(b'# an older module\n')
@@ -1371,8 +1380,9 @@ runpy.run_path(script, run_name='__main__')
         imported = sorted(set(re.findall(r'^import ([a-z_]+)', source, re.M)) & set(local))
         build = (HERE.parent / 'lib/studio-service-updater.ts').read_text()
         shipped = re.search(r'MAC_SERVICE_UPDATER_FILES = \[([^\]]*)\]', build).group(1)
-        self.assertEqual(sorted(re.findall(r'"([a-z_]+)\.py"', shipped)), sorted(['update_agent', 'managed_updates'] + imported))
-        self.assertEqual(imported, ['installation_descriptor', 'update_agent_cache', 'update_agent_reap', 'update_agent_recovery', 'update_request'])
+        # migrate_home is its own entry point, shipped and installed beside the agent.
+        self.assertEqual(sorted(re.findall(r'"([a-z_]+)\.py"', shipped)), sorted(['update_agent', 'managed_updates', 'migrate_home'] + imported))
+        self.assertEqual(imported, ['installation_descriptor', 'studio_paths', 'update_agent_cache', 'update_agent_reap', 'update_agent_recovery', 'update_request'])
 
     def hold_lock_and_install(self):
         holder = os.open(str(self.updates / 'agent.lock'), os.O_RDWR | os.O_CREAT, 0o600)
@@ -1386,7 +1396,7 @@ runpy.run_path(script, run_name='__main__')
         # "Update now" kicks the agent, which takes the lock: the new agent and its modules must
         # still land, or the old agent handles the request and every later one.
         calls = []
-        script = self.home / '.local/share/specweave-studio/updater/update_agent.py'
+        script = self.home / '.specwithcode/install/updater/update_agent.py'
         plist = self.home / 'Library/LaunchAgents/com.specweave.studio.m4.updater.plist'
         with self.fake_launchctl(calls), mock.patch.object(update_agent, 'current_uid', return_value=501):
             self.run_agent('--install-launch-agent')

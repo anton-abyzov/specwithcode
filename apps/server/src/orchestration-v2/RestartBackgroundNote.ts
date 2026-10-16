@@ -91,7 +91,7 @@ const MAX_NOTE_ENTRIES = 10;
 export function restartCancelledBackgroundWorkNote(work: ReadonlyArray<Work>): string {
   const omitted = work.length - MAX_NOTE_ENTRIES;
   return [
-    "Note: the Studio server restarted, and this background work was cancelled before it finished. It will not report back:",
+    "Note: the SpecWithCode server restarted, and this background work was cancelled before it finished. It will not report back:",
     ...work.slice(0, MAX_NOTE_ENTRIES).map((entry) => `- ${entry.kind}: ${entry.label}`),
     ...(omitted > 0 ? [`- and ${omitted} more`] : []),
   ].join("\n");

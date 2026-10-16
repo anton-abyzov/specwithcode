@@ -14,6 +14,7 @@ const state = vi.hoisted(() => ({
   validateDraft: vi.fn(() => true),
   /** The worker project's coordinator, which routes its other threads to its page. */
   workerCoordinator: null as string | null,
+  workerArchived: false,
   shells: [] as EnvironmentThreadShell[],
   projects: [
     { id: "project-local", environmentId: "host-local", title: "Local project" },
@@ -51,7 +52,10 @@ vi.mock("../settings/useSettingsProjectGroups", () => ({
         {
           environmentId: "host-worker",
           id: "project-worker",
-          workspaceSettings: { coordinatorThreadId: state.workerCoordinator },
+          workspaceSettings: {
+            coordinatorThreadId: state.workerCoordinator,
+            archived: state.workerArchived,
+          },
         },
       ],
     },
@@ -126,6 +130,8 @@ vi.mock("../../state/environments", () => ({
 }));
 vi.mock("../../state/session", () => ({
   useEnvironmentsWithScope: () => new Set(["host-local", "host-worker"]),
+  // Increment progress needs file access; these sessions show their todo lists only.
+  useEnvironmentScope: () => false,
 }));
 vi.mock("../../hooks/useNewChatDestination", () => ({
   useNewChatDestination: () => state.createDraft,
@@ -211,6 +217,7 @@ beforeEach(() => {
   state.validateDraft.mockReturnValue(true);
   state.shells = [];
   state.workerCoordinator = null;
+  state.workerArchived = false;
   state.createDraft.mockResolvedValue({
     kind: "draft",
     draftId: "owned-new-draft",
@@ -434,7 +441,11 @@ describe("deliberate native session entry", () => {
   });
   it("retains disconnected cached sessions without reporting current work or attention", async () => {
     state.shells = [
-      shell("working", { runtime: { status: "running" } as EnvironmentThreadShell["runtime"] }),
+      // Active just now, so the run reads as working rather than stalled.
+      shell("working", {
+        runtime: { status: "running" } as EnvironmentThreadShell["runtime"],
+        updatedAt: new Date().toISOString(),
+      }),
       shell("approval", { hasPendingApprovals: true }),
     ];
     const setWorkerConnection = (phase: string) => {
@@ -469,6 +480,27 @@ describe("deliberate native session entry", () => {
     expect(container.querySelectorAll(".studio-attention-item")).toHaveLength(1);
     expect(container.textContent).not.toContain("Disconnected · Last observed:");
     expect(state.createDraft).not.toHaveBeenCalled();
+  });
+  it("leaves out the threads and sessions of archived projects, as the sidebar does", async () => {
+    state.shells = [
+      shell("archived-ask", { hasPendingApprovals: true }),
+      shell("local-ask", {
+        environmentId: "host-local" as EnvironmentThreadShell["environmentId"],
+        projectId: "project-local" as EnvironmentThreadShell["projectId"],
+        hasPendingApprovals: true,
+      }),
+    ];
+    state.workerArchived = true;
+    await render();
+    expect(container.querySelectorAll(".studio-session-item")).toHaveLength(1);
+    expect(container.querySelectorAll(".studio-attention-item")).toHaveLength(1);
+    expect(container.textContent).toContain("Cached local-ask");
+    expect(container.textContent).not.toContain("Cached archived-ask");
+    expect(container.textContent).not.toContain("Worker project");
+
+    state.workerArchived = false;
+    await render();
+    expect(container.querySelectorAll(".studio-session-item")).toHaveLength(2);
   });
   it("advances the displayed session age without new session observations or work", async () => {
     vi.useFakeTimers();

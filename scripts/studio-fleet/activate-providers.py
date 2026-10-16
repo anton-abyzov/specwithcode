@@ -18,6 +18,7 @@ import shlex
 import subprocess
 import uuid
 from update import atomic, rows_snapshot
+import studio_paths
 
 def sha(raw):
     return hashlib.sha256(raw).hexdigest()
@@ -25,7 +26,7 @@ def sha(raw):
 
 def protected(home, identity):
     paths = [home/'.codex/auth.json', home/'.codex/config.toml', home/'.claude.json',
-             home/'.claude/.credentials.json', home/'.specweave-studio'/identity/'userdata/settings.json']
+             home/'.claude/.credentials.json', studio_paths.identity_home(home, identity)/'userdata/settings.json']
     profiles = home/'.local/share/specweave/account-profiles'
     if profiles.is_dir():
         for folder in profiles.iterdir():
@@ -107,7 +108,7 @@ def activate(identity, manifest_raw, expected, expected_manifest_sha256, *, prev
     home = pathlib.Path.home().resolve()
     assert identity in ('m4','m1','m3') and os.getuid() == 501 and home == pathlib.Path(pwd.getpwuid(os.getuid()).pw_dir).resolve()
     release = verify_provider_release(manifest, home)
-    own = home/'.specweave-studio'/identity
+    own = studio_paths.identity_home(home, identity)
     installation = json.loads((own/'installation.json').read_text())
     node = installation['node']
     assert subprocess.check_output([node,'--version'],text=True).strip() == 'v22.20.0'

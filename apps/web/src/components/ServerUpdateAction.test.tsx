@@ -1,11 +1,7 @@
 import { act, type ReactElement } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { renderToStaticMarkup } from "react-dom/server";
-import {
-  AuthSessionState,
-  type EnvironmentId,
-  type ServerInstallation,
-} from "@specweave-studio/contracts";
+import { AuthSessionState, type EnvironmentId } from "@specweave-studio/contracts";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
@@ -65,13 +61,6 @@ import {
 } from "./ServerUpdateAction";
 
 const decodeSessionState = Schema.decodeUnknownSync(AuthSessionState);
-
-const MANUAL_UPDATE_STEPS = [
-  "Update SpecWithCode to 0.0.45 on the machine that runs this server:",
-  "- With the desktop app on that machine: Settings > About > SpecWithCode service, then Check now or Install now.",
-  "- A service installed without the desktop app: its update agent or the guarded updater, described in docs/studio/updates.md.",
-  "- A server built from source: git pull, rebuild, then restart it with your usual options.",
-].join("\n");
 
 type ActionElement = ReactElement<{
   readonly onClick?: () => void;
@@ -173,46 +162,17 @@ describe("ServerUpdateAction", () => {
     expect(testState.updateServer).not.toHaveBeenCalled();
   });
 
-  it.each([
-    [
-      { kind: "npm-global", prefix: "/opt/node" },
-      `${MANUAL_UPDATE_STEPS}\nThis server runs from a global npm install under /opt/node. The npm registry has no specweave-studio package, so npm cannot update it.`,
-      "Update steps copied",
-      "no package registry carries specweave-studio",
-    ],
-    [
-      { kind: "npx" },
-      `${MANUAL_UPDATE_STEPS}\nThis server was started with npx. The npm registry has no specweave-studio package, so npx cannot fetch a newer one.`,
-      "Update steps copied",
-      "Follow the copied steps on that machine.",
-    ],
-    [
-      undefined,
-      MANUAL_UPDATE_STEPS,
-      "Update steps copied",
-      "Follow the copied steps on that machine.",
-    ],
-  ] satisfies ReadonlyArray<readonly [ServerInstallation | undefined, string, string, string]>)(
-    "copies honest manual steps for %j without invoking remote update",
-    (installation, steps, title, guidance) => {
-      const action = ServerUpdateAction({
+  it("offers no action for a server that cannot update itself", () => {
+    expect(
+      ServerUpdateAction({
         environmentId: "env-test" as EnvironmentId,
         serverLabel: "Test server",
         selfUpdate: null,
-        installation,
         targetVersion: "0.0.45",
-      }) as ActionElement;
-      action.props.onClick?.();
-      expect(testState.clipboard).toHaveBeenCalledWith(steps);
-      expect(testState.toast).toHaveBeenCalledWith(
-        expect.objectContaining({
-          title,
-          description: expect.stringContaining(guidance),
-        }),
-      );
-      expect(testState.updateServer).not.toHaveBeenCalled();
-    },
-  );
+      }),
+    ).toBeNull();
+    expect(testState.updateServer).not.toHaveBeenCalled();
+  });
 
   it("reports success only after the shared update flow reconnects", async () => {
     testState.updateServer.mockResolvedValue(

@@ -8,7 +8,7 @@ export const isCopilotDeviceLogin = (settings: AcpRegistrySettings, methodId: st
   methodId === "copilot-login";
 
 export const COPILOT_DEVICE_LOGIN_UPDATE_MESSAGE =
-  "Device sign-in requires a compatible Copilot CLI 1.x (1.0.95 or newer), device-code support and a working local Node.js runtime. Update Copilot or Studio on this environment, then retry device sign-in.";
+  "Device sign-in requires a compatible Copilot CLI 1.x (1.0.95 or newer), device-code support and a working local Node.js runtime. Update Copilot or SpecWithCode on this environment, then retry device sign-in.";
 
 /** 1.0.95 is the first locally verified device-flow/browser-override contract. */
 export function supportsCopilotDeviceLogin(version: string, help: string): boolean {

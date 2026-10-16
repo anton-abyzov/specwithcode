@@ -3,43 +3,91 @@
  * a "Threads ›" breadcrumb back, the title with model, pull request and
  * subagent chips, then a Resolve button, the thread's action menu, expand and
  * close. It takes the place of the panel's tab bar, in the same title row.
+ *
+ * The title outranks the controls: as the panel narrows, the chips give way
+ * first, then the chat's panel toggles fold into the action menu and Resolve
+ * drops its label, so the title stays readable; hovering it shows it whole.
+ * A coordinator names its workers, so their titles are read-only here.
  */
-import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
+import { ThreadArtifactsMenu } from "../../chat/ThreadArtifacts";
+import { TimelineDetailMenu } from "../../chat/TimelineDetailMenu";
+import { scopedThreadKey, scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@specweave-studio/client-runtime/state/runtime";
-import { modelSelectionEffortLabel } from "@specweave-studio/shared/effortLevel";
 import { resolveThreadCurrentPullRequestLink } from "@specweave-studio/shared/threadPullRequests";
+import type { ThreadId } from "@specweave-studio/contracts";
 import {
-  BotIcon,
+  ArrowLeftIcon,
   CheckCircle2Icon,
   ChevronRightIcon,
   EllipsisIcon,
-  GaugeIcon,
   Maximize2Icon,
   Minimize2Icon,
   RotateCcwIcon,
   XIcon,
 } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 import { isElectron } from "../../../env";
 
-import { useThreadActionMenu } from "../../../hooks/useThreadActionMenu";
+import {
+  useThreadActionMenu,
+  type ThreadMenuOverflowItem,
+} from "../../../hooks/useThreadActionMenu";
 import { cn } from "../../../lib/utils";
 import { threadEnvironment } from "../../../state/threads";
 import { useOrchestrationCommand } from "../../../state/use-orchestration-command";
 import { PULL_REQUEST_STATE_PRESENTATION } from "../../pullRequest/pullRequestIcons";
 import { toastManager } from "../../ui/toast";
+import type { SubagentEntry } from "../../../studio/threadSubagents";
+import { isCoordinatorNamedThread, threadTitleTip } from "../../../studio/threadTitles";
 import { ModelBadge } from "./ModelBadge";
+import { SubagentsChip } from "./SubagentsChip";
 import { Tip } from "./Tip";
+
+const FOLDED_CONTROL_ICONS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/thread details/i, "square-menu"],
+  [/terminal/i, "panel-bottom"],
+  [/right panel/i, "panel-right"],
+  [/maximize|restore/i, "maximize"],
+];
+
+/**
+ * The chat's panel toggles, as action-menu items, while the narrow header
+ * hides their slot. Each item clicks the hidden toggle, so its state and
+ * shortcut handling stay in the chat that owns it.
+ */
+export function foldedHeaderControls(slot: HTMLElement | null): ThreadMenuOverflowItem[] {
+  if (!slot || slot.childElementCount === 0 || getComputedStyle(slot).display !== "none") {
+    return [];
+  }
+  return [...slot.querySelectorAll<HTMLButtonElement>("button[aria-label]")].map((button) => {
+    const ariaLabel = button.getAttribute("aria-label") ?? "";
+    const pressed = button.getAttribute("aria-pressed");
+    // "Toggle terminal drawer" reads as "Show terminal drawer" or "Hide …" in a menu.
+    const label =
+      ariaLabel.startsWith("Toggle ") && pressed !== null
+        ? `${pressed === "true" ? "Hide" : "Show"} ${ariaLabel.slice("Toggle ".length)}`
+        : ariaLabel.charAt(0).toUpperCase() + ariaLabel.slice(1);
+    const icon = FOLDED_CONTROL_ICONS.find(([pattern]) => pattern.test(ariaLabel))?.[1];
+    return {
+      label,
+      ...(icon ? { icon } : {}),
+      disabled: button.disabled || button.getAttribute("aria-disabled") === "true",
+      onSelect: () => button.click(),
+    };
+  });
+}
 
 export function ProjectThreadHeader(props: {
   thread: EnvironmentThreadShell;
-  /** Subagents this thread started, for the chip beside the title. */
-  subagentCount: number;
+  /** Subagents this thread started, for the chip and popover beside the title. */
+  subagents: readonly SubagentEntry[];
+  /** Opens a subagent's read-only transcript over this thread. */
+  onPeekSubagent: (threadId: ThreadId) => void;
   providerEntry: Parameters<typeof ModelBadge>[0]["entry"];
   projectCwd: string;
   canChange: boolean;
@@ -57,16 +105,18 @@ export function ProjectThreadHeader(props: {
     () => scopeThreadRef(thread.environmentId, thread.id),
     [thread.environmentId, thread.id],
   );
-  const effort = useMemo(
-    () =>
-      modelSelectionEffortLabel(
-        thread.modelSelection,
-        props.providerEntry?.models.find((model) => model.slug === thread.modelSelection.model)
-          ?.capabilities?.optionDescriptors,
-      ),
-    [thread.modelSelection, props.providerEntry],
-  );
   const [renaming, setRenaming] = useState<string | null>(null);
+  const titleLocked = isCoordinatorNamedThread(thread);
+  const canRename = props.canChange && !titleLocked;
+  const toolsSlot = useRef<HTMLSpanElement | null>(null);
+  const { toolsSlotRef } = props;
+  const setToolsSlot = useCallback(
+    (node: HTMLSpanElement | null) => {
+      toolsSlot.current = node;
+      toolsSlotRef?.(node);
+    },
+    [toolsSlotRef],
+  );
   const updateMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -74,7 +124,7 @@ export function ProjectThreadHeader(props: {
     threadRef,
     projectCwd: props.projectCwd,
     onStartRename: () => {
-      if (props.canChange) setRenaming(thread.title);
+      if (canRename) setRenaming(thread.title);
     },
   });
   const menuButton = useRef<HTMLButtonElement>(null);
@@ -120,7 +170,10 @@ export function ProjectThreadHeader(props: {
           aria-label="Back to project threads"
           onClick={props.onBack}
         >
-          <span aria-hidden>Threads</span>
+          <ArrowLeftIcon aria-hidden className="sws-thread-crumb-back" />
+          <span aria-hidden className="sws-thread-crumb-label">
+            Threads
+          </span>
         </button>
       </Tip>
       <ChevronRightIcon aria-hidden className="sws-thread-crumb-sep" />
@@ -142,9 +195,14 @@ export function ProjectThreadHeader(props: {
             }}
           />
         ) : (
-          <h2 onDoubleClick={() => props.canChange && setRenaming(thread.title)}>
-            {thread.title || "Untitled thread"}
-          </h2>
+          <Tip label={threadTitleTip(thread)}>
+            <h2
+              data-title-locked={titleLocked ? "true" : undefined}
+              onDoubleClick={canRename ? () => setRenaming(thread.title) : undefined}
+            >
+              {thread.title || "Untitled thread"}
+            </h2>
+          </Tip>
         )}
         <span className="sws-thread-head-chips">
           <ModelBadge
@@ -152,13 +210,6 @@ export function ProjectThreadHeader(props: {
             instanceId={thread.modelSelection.instanceId}
             model={thread.modelSelection.model}
           />
-          {effort ? (
-            <span className="sws-chip">
-              <GaugeIcon aria-hidden />
-              <span className="sr-only">Effort </span>
-              {effort}
-            </span>
-          ) : null}
           {pr && link ? (
             <button
               type="button"
@@ -171,24 +222,22 @@ export function ProjectThreadHeader(props: {
               <span className="sr-only">, {pr.label}</span>
             </button>
           ) : null}
-          {props.subagentCount > 0 ? (
-            <span className="sws-chip">
-              <BotIcon aria-hidden />
-              {props.subagentCount}
-              <span className="sr-only">
-                {" "}
-                {props.subagentCount === 1 ? "subagent" : "subagents"}
-              </span>
-            </span>
-          ) : null}
         </span>
+        {/* Outside the chip row, which clips as the panel narrows: subagents stay reachable. */}
+        <SubagentsChip
+          environmentId={thread.environmentId}
+          entries={props.subagents}
+          onPeek={props.onPeekSubagent}
+        />
       </div>
       {settled || archived ? (
         <span className="sws-chip" role="status">
           Resolved
         </span>
       ) : null}
-      <span ref={props.toolsSlotRef} className="sws-thread-head-tools" />
+      <ThreadArtifactsMenu threadRef={threadRef} cwd={thread.worktreePath ?? props.projectCwd} />
+      <TimelineDetailMenu appearance="project" threadKey={scopedThreadKey(threadRef)} />
+      <span ref={setToolsSlot} className="sws-thread-head-tools" />
       <Tip label={`${resolveLabel} thread`}>
         <button
           type="button"
@@ -200,7 +249,7 @@ export function ProjectThreadHeader(props: {
           onClick={props.onToggleResolved}
         >
           {settled || archived ? <RotateCcwIcon aria-hidden /> : <CheckCircle2Icon aria-hidden />}
-          <span>{resolveLabel}</span>
+          <span className="sws-thread-resolve-label">{resolveLabel}</span>
         </button>
       </Tip>
       <Tip label="Thread actions">
@@ -212,7 +261,12 @@ export function ProjectThreadHeader(props: {
           aria-haspopup="menu"
           onClick={() => {
             const rect = menuButton.current?.getBoundingClientRect();
-            if (rect) openMenu({ x: rect.left, y: rect.bottom + 4 });
+            if (rect) {
+              openMenu(
+                { x: rect.left, y: rect.bottom + 4 },
+                foldedHeaderControls(toolsSlot.current),
+              );
+            }
           }}
         >
           <EllipsisIcon aria-hidden />

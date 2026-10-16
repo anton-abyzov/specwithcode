@@ -14,6 +14,7 @@ import * as ProjectWorkspaceService from "../project/ProjectWorkspaceService.ts"
 import * as ProjectStarterSuggestions from "../project/ProjectStarterSuggestions.ts";
 import * as ProjectCoordinatorService from "../project/ProjectCoordinatorService.ts";
 import * as ThreadReportService from "../project/ThreadReportService.ts";
+import * as ThreadIncrementProgressService from "../project/ThreadIncrementProgressService.ts";
 import * as UsageLimitAvailability from "./UsageLimitAvailability.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as ProviderFallbackWorker from "./ProviderFallbackWorker.ts";
@@ -27,6 +28,8 @@ import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as AgentSessionImporter from "../project/AgentSessionImporter.ts";
 import * as AgentSessionScanner from "../project/AgentSessionScanner.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ProjectActionRequests from "../project/ProjectActionRequests.ts";
+import * as ProjectFolderChange from "../project/ProjectFolderChange.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as CheckpointCaptureService from "./CheckpointCaptureService.ts";
@@ -186,6 +189,9 @@ const layerProjectWorkspaceProvided = ProjectWorkspaceService.layer.pipe(
 const layerThreadReportsProvided = ThreadReportService.layer.pipe(
   Layer.provide(Layer.merge(ProjectStore.layer, ProjectionStore.layer)),
 );
+const layerThreadIncrementProgressProvided = ThreadIncrementProgressService.layer.pipe(
+  Layer.provide(Layer.merge(ProjectStore.layer, ProjectionStore.layer)),
+);
 const layerProjectStarterSuggestionsProvided = ProjectStarterSuggestions.layer.pipe(
   Layer.provide(Layer.mergeAll(ProjectStore.layer, ProcessRunner.layer)),
 );
@@ -316,6 +322,22 @@ const layerProjectCoordinatorProvided = ProjectCoordinatorService.layer.pipe(
 const layerThreadLifecycleProvided = ThreadLifecycleService.layer.pipe(
   Layer.provide(layerThreadManagementProvided),
 );
+const layerProjectFolderProvided = ProjectFolderChange.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      layerProjectService,
+      ProjectionStore.layer,
+      layerThreadManagementProvided,
+      layerProviderSessionManagerProvided,
+      layerProviderAdapterRegistryProvided,
+    ),
+  ),
+);
+const layerProjectActionRequestsProvided = ProjectActionRequests.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(layerProjectFolderProvided, layerProjectService, layerThreadManagementProvided),
+  ),
+);
 const layerSecretRequestsProvided = SecretRequests.layer.pipe(
   Layer.provide(layerThreadManagementProvided),
 );
@@ -325,6 +347,7 @@ const layerScheduledTaskProvided = ScheduledTaskService.layer.pipe(
       layerThreadLaunchProvided,
       layerThreadManagementProvided,
       layerSecretRequestsProvided,
+      layerProjectCoordinatorProvided,
     ),
   ),
 );
@@ -407,6 +430,7 @@ export const layerProduction = Layer.mergeAll(
   layerProjectWorkspaceProvided,
   layerProjectStarterSuggestionsProvided,
   layerThreadReportsProvided,
+  layerThreadIncrementProgressProvided,
   layerProjectCoordinatorProvided,
   layer.pipe(Layer.provide(layerProjectService)),
   layerProjectService,
@@ -415,6 +439,8 @@ export const layerProduction = Layer.mergeAll(
   layerThreadLifecycleProvided,
   layerScheduledTaskProvided,
   layerSecretRequestsProvided,
+  layerProjectFolderProvided,
+  layerProjectActionRequestsProvided,
   UsageLimitRecoveryWorker.layer.pipe(
     Layer.provide(
       Layer.mergeAll(ProjectStore.layer, ProjectionStore.layer, layerThreadManagementProvided),

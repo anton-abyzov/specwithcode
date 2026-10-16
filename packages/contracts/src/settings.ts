@@ -44,7 +44,12 @@ import {
   type ProviderDriverKind,
 } from "./providerInstance.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
-import { AgentInstructions, ClaudeWorkflowMode, ResponseStyle } from "./agentInstructions.ts";
+import {
+  AgentInstructions,
+  ClaudeWorkflowMode,
+  DEFAULT_AGENT_INSTRUCTIONS,
+  ResponseStyle,
+} from "./agentInstructions.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -299,6 +304,25 @@ export const ProjectCoordinatorMachines = Schema.Record(
   TrimmedNonEmptyString,
 );
 
+/**
+ * The person's order of the sidebar's Projects list on this host: pinned
+ * projects first, then the rest. Entries are logical project keys; a project
+ * in neither list is new and leads the unpinned group.
+ */
+export const SidebarProjectOrder = Schema.Struct({
+  pinned: Schema.Array(TrimmedNonEmptyString),
+  unpinned: Schema.Array(TrimmedNonEmptyString),
+  /**
+   * The `environmentId:projectId` members of each pinned project. A folder
+   * moved or re-pointed gets a new key; its members find the pin again.
+   */
+  pinnedMembers: Schema.optionalKey(
+    Schema.Record(TrimmedNonEmptyString, Schema.Array(TrimmedNonEmptyString)),
+  ),
+});
+export type SidebarProjectOrder = typeof SidebarProjectOrder.Type;
+export const EMPTY_SIDEBAR_PROJECT_ORDER: SidebarProjectOrder = { pinned: [], unpinned: [] };
+
 export const DiffColorScheme = Schema.Literals(["red-green", "blue-orange"]);
 
 /** Maximum width of the chat timeline and composer on wide screens. */
@@ -311,6 +335,8 @@ export type ChatWidth = typeof ChatWidth.Type;
  */
 export const TimelineDetail = Schema.Literals(["concise", "normal", "verbose"]);
 export type TimelineDetail = typeof TimelineDetail.Type;
+export const ThreadTimelineDetail = Schema.Record(TrimmedNonEmptyString, TimelineDetail);
+export type ThreadTimelineDetail = typeof ThreadTimelineDetail.Type;
 
 export const ClientSettingsSchema = Schema.Struct({
   notificationMode: NotificationMode.pipe(
@@ -339,6 +365,8 @@ export const ClientSettingsSchema = Schema.Struct({
   timelineDetail: TimelineDetail.pipe(
     Schema.withDecodingDefault(Effect.succeed("normal" as const)),
   ),
+  /** A thread's own level, keyed by `environmentId:threadId`; others use `timelineDetail`. */
+  threadTimelineDetail: ThreadTimelineDetail.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   loadBalancingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   loadBalancingWeights: LoadBalancingWeights.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   /** Which machine's copy of a project runs its coordinator, keyed by logical project. */
@@ -762,9 +790,18 @@ export const ClaudeSettings = makeProviderSettingsSchema(
         },
       }),
     ),
+    idleCompaction: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({
+        title: "Compact idle threads",
+        description:
+          "Compact a Claude thread holding 100,000 tokens or more after about 55 minutes idle, while its prompt cache is still warm, so the next message continues from a summary. Set CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS in the environment to change the minimum.",
+        providerSettingsForm: { control: "switch" },
+      }),
+    ),
   },
   {
-    order: ["binaryPath", "homePath", "autoCompactWindow", "launchArgs"],
+    order: ["binaryPath", "homePath", "autoCompactWindow", "idleCompaction", "launchArgs"],
   },
 );
 export type ClaudeSettings = typeof ClaudeSettings.Type;
@@ -1247,6 +1284,14 @@ export const WorktreeCleanup = Schema.NullOr(
 );
 export type WorktreeCleanup = typeof WorktreeCleanup.Type;
 
+/**
+ * What happens to a thread's worktree branch when its work finishes: nothing,
+ * a pull request into the repository's default branch, or that pull request
+ * merged once the host's checks and branch protection allow it.
+ */
+export const ThreadFinishAction = Schema.Literals(["leave", "pull_request", "auto_merge"]);
+export type ThreadFinishAction = typeof ThreadFinishAction.Type;
+
 export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "agentInstructions",
   "claudeWorkflowMode",
@@ -1260,6 +1305,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "defaultAutoPull",
   "defaultProjectScripts",
   "enableAgentBrowserAccess",
+  "agentBrowserProfileId",
   "enableAgentDeviceAccess",
   "textGenerationModelSelection",
   "sourceControlWriterModelSelection",
@@ -1269,6 +1315,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "branchNamePrefix",
   "branchNameInstructions",
   "pullRequestMergeMethod",
+  "threadFinishAction",
   "sidebarAutoSettleOnMerge",
   "sidebarAutoSettleAfterDays",
   "continueThreadsAfterServerUpdate",
@@ -1301,6 +1348,8 @@ export const ProjectSettingsOverrides = Schema.Struct({
   defaultAutoPull: Schema.optionalKey(Schema.Boolean),
   defaultProjectScripts: Schema.optionalKey(Schema.Array(ProjectScript)),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
+  /** The incognito profile ID keeps a project's agents isolated when the environment shares logins. */
+  agentBrowserProfileId: Schema.optionalKey(BrowserProfileId),
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
   textGenerationModelSelection: Schema.optionalKey(ModelSelection),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
@@ -1310,6 +1359,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   branchNamePrefix: Schema.optionalKey(TrimmedString),
   branchNameInstructions: Schema.optionalKey(TrimmedString),
   pullRequestMergeMethod: Schema.optionalKey(Schema.NullOr(PullRequestMergeMethod)),
+  threadFinishAction: Schema.optionalKey(ThreadFinishAction),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
@@ -1359,7 +1409,9 @@ export const StorageCleanupSettings = Schema.Struct({
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
 export const ServerSettings = Schema.Struct({
-  agentInstructions: AgentInstructions.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  agentInstructions: AgentInstructions.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_AGENT_INSTRUCTIONS)),
+  ),
   claudeWorkflowMode: ClaudeWorkflowMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("on-request" as const)),
   ),
@@ -1448,6 +1500,12 @@ export const ServerSettings = Schema.Struct({
    * settings UI is not undone by the next server start.
    */
   projectSettingsFolded: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
+   * Whether per-project overrides were simplified once settings became global:
+   * overrides equal to the app value were dropped, and a value every project
+   * shared became the app value. Disagreeing overrides stay as overrides.
+   */
+  projectSettingsSimplified: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /**
    * Whether agents may drive simulators and emulators. Gates the `device_*`
    * MCP tools and the preconfigured `agent-device` CLI the same way
@@ -1561,6 +1619,13 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   addProjectBaseDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  /**
+   * Server-side so the desktop app and every browser on this host list
+   * projects in the same order.
+   */
+  sidebarProjectOrder: SidebarProjectOrder.pipe(
+    Schema.withDecodingDefault(Effect.succeed(EMPTY_SIDEBAR_PROJECT_ORDER)),
+  ),
   textGenerationModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(
       Effect.succeed({
@@ -1596,6 +1661,14 @@ export const ServerSettings = Schema.Struct({
    */
   pullRequestMergeMethod: Schema.NullOr(PullRequestMergeMethod).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  /**
+   * Applied when a thread with its own worktree finishes a turn and nothing is
+   * queued. New projects start on `auto_merge`; the environment value covers
+   * projects created before the setting existed.
+   */
+  threadFinishAction: ThreadFinishAction.pipe(
+    Schema.withDecodingDefault(Effect.succeed("pull_request" as const)),
   ),
 
   // Legacy single-instance-per-driver settings. Continues to be the source
@@ -1768,6 +1841,7 @@ const ClaudeSettingsPatch = Schema.Struct({
   autoCompactWindow: Schema.optionalKey(
     TrimmedString.check(Schema.isPattern(CLAUDE_AUTO_COMPACT_WINDOW_PATTERN)),
   ),
+  idleCompaction: Schema.optionalKey(Schema.Boolean),
 });
 
 const CursorSettingsPatch = Schema.Struct({
@@ -1897,6 +1971,8 @@ export const ServerSettingsPatch = Schema.Struct({
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   worktreeSubmodules: Schema.optionalKey(Schema.NullOr(WorktreeSubmodules)),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
+  /** Replaces the whole order; both lists are always sent together. */
+  sidebarProjectOrder: Schema.optionalKey(SidebarProjectOrder),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   branchNamingMode: Schema.optionalKey(BranchNamingMode),
   branchNamePrefix: Schema.optionalKey(TrimmedString),
@@ -1911,6 +1987,7 @@ export const ServerSettingsPatch = Schema.Struct({
   ),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   pullRequestMergeMethod: Schema.optionalKey(Schema.NullOr(PullRequestMergeMethod)),
+  threadFinishAction: Schema.optionalKey(ThreadFinishAction),
   observability: Schema.optionalKey(
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),
@@ -2000,6 +2077,7 @@ export const ClientSettingsPatch = Schema.Struct({
   diffColorScheme: Schema.optionalKey(DiffColorScheme),
   chatWidth: Schema.optionalKey(ChatWidth),
   timelineDetail: Schema.optionalKey(TimelineDetail),
+  threadTimelineDetail: Schema.optionalKey(ThreadTimelineDetail),
   loadBalancingEnabled: Schema.optionalKey(Schema.Boolean),
   loadBalancingWeights: Schema.optionalKey(LoadBalancingWeights),
   projectCoordinatorMachines: Schema.optionalKey(ProjectCoordinatorMachines),

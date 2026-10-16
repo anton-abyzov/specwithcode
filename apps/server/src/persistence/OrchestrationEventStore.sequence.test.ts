@@ -272,3 +272,63 @@ it.effect("uses indexed high-water lookups for populated history without OR scan
     ),
   ),
 );
+
+it.effect("reads a command's events through the command index instead of the V2 range", () =>
+  Effect.gen(function* () {
+    const store = yield* OrchestrationEventStore.OrchestrationEventStore;
+    const sql = yield* SqlClient.SqlClient;
+    yield* runMigrations();
+    yield* sql`
+      WITH RECURSIVE history(n) AS (
+        SELECT 1 UNION ALL SELECT n + 1 FROM history WHERE n < 25000
+      )
+      INSERT INTO orchestration_events (
+        event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at,
+        command_id, actor_kind, payload_json, metadata_json, application_event_version
+      )
+      SELECT 'history:' || n, 'thread', 'thread:' || (n % 40), n,
+        'provider-session.detached', ${occurredAt},
+        CASE WHEN n IN (7, 12000, 24999) THEN 'command:target' ELSE 'command:' || n END,
+        'server',
+        json_object('providerSessionId', 'session:' || n, 'detachedAt', ${occurredAt}),
+        '{}', 2
+      FROM history
+    `;
+    const statements: Array<string> = [];
+    const tracer = Tracer.make({
+      span(options) {
+        const span = new Tracer.NativeSpan(options);
+        const end = span.end.bind(span);
+        span.end = (endTime, exit) => {
+          end(endTime, exit);
+          const query = span.attributes.get("db.query.text");
+          if (typeof query === "string") statements.push(query);
+        };
+        return span;
+      },
+    });
+    const events = yield* store
+      .readAgentEvents({ commandId: CommandId.make("command:target") })
+      .pipe(Stream.runCollect, Effect.withTracer(tracer));
+    const expected = yield* sql<{ readonly sequence: number }>`
+      SELECT sequence FROM orchestration_events
+      WHERE command_id = 'command:target' ORDER BY sequence
+    `;
+    assert.deepEqual(
+      events.map((event) => event.sequence),
+      expected.map((row) => row.sequence),
+    );
+    const readQuery = statements.find((statement) => statement.includes("command_id ="));
+    assert.ok(readQuery);
+    const plan = yield* sql.unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${readQuery}`);
+    const detail = plan.map((row) => row.detail).join("\n");
+    assert.match(detail, /SEARCH orchestration_events USING INDEX idx_orch_events_command_id/);
+    assert.notMatch(detail, /idx_orchestration_events_application_sequence|TEMP B-TREE/);
+  }).pipe(
+    Effect.provide(
+      OrchestrationEventStore.layer.pipe(
+        Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
+      ),
+    ),
+  ),
+);

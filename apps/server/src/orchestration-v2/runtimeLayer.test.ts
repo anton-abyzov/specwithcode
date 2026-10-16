@@ -1934,6 +1934,18 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const settledProjection = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(settledProjection.thread.settledOverride, "settled");
       assert.isNotNull(settledProjection.thread.settledAt);
+      assert.isNull(settledProjection.thread.settledNote ?? null);
+
+      // Resolving again with a closing note records it and keeps the resolve time.
+      yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("runtime-layer-lifecycle-settle-note"),
+        threadId,
+        note: "Superseded — work landed in ad08cd5be.",
+      });
+      const notedProjection = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(notedProjection.thread.settledNote, "Superseded — work landed in ad08cd5be.");
+      assert.deepEqual(notedProjection.thread.settledAt, settledProjection.thread.settledAt);
 
       yield* orchestrator.dispatch({
         type: "thread.unsettle",
@@ -1944,6 +1956,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const activeProjection = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(activeProjection.thread.settledOverride, "active");
       assert.isNull(activeProjection.thread.settledAt);
+      assert.isNull(activeProjection.thread.settledNote ?? null);
       assert.isNotNull(activeProjection.thread.unsettledAt);
       const activeShell = (yield* orchestrator.getShellSnapshot()).threads.find(
         (thread) => thread.id === threadId,
@@ -3391,7 +3404,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           commandId: CommandId.make(`restart-${status}-continuation`),
           threadId,
           messageId: MessageId.make(`restart-${status}-continuation`),
-          text: "Note: the Studio server restarted.",
+          text: "Note: the SpecWithCode server restarted.",
           attachments: [],
           modelSelection,
           dispatchMode: { type: "start_immediately" },

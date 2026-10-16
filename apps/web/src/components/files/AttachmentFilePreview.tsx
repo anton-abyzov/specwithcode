@@ -33,7 +33,11 @@ const SourcePreview = lazy(() => import("./ReadOnlySourcePreview"));
 const STALE_URL_MS = 5 * 60_000;
 
 /** Highlighted read-only source, loaded on demand so message rendering never waits on the highlighter. */
-export function ReadOnlySourcePreview(props: { name: string; text: string }) {
+export function ReadOnlySourcePreview(props: {
+  name: string;
+  text: string;
+  revealLine?: number | undefined;
+}) {
   return (
     <Suspense fallback={<FileSurfaceLoading className="p-4" />}>
       <SourcePreview {...props} />

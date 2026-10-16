@@ -43,11 +43,14 @@ export function mcpToolPresentation(input: {
     normalizeMcpText(input.title) ??
     (server && tool ? normalizeMcpText(tool.replace(/[_-]+/gu, " ")) : undefined);
   if (!server) return title ? { title } : {};
-  const name =
+  const reported =
     normalizeMcpText(input.serverDisplayName) ??
     normalizeMcpText(source && Reflect.get(source, "name")) ??
     normalizeMcpText(server.replace(/[_-]+/gu, " ")) ??
     server;
+  // This app's own MCP server registers as "SpecWeave Studio" (docs/studio/naming.md);
+  // the activity it appears in names the product.
+  const name = /^specweave[\s_-]*studio$/i.test(reported) ? "SpecWithCode" : reported;
   const logoUrl =
     normalizeMcpHttpUrl(input.iconUrl) ??
     normalizeMcpHttpUrl(source && Reflect.get(source, "logoUrl"));

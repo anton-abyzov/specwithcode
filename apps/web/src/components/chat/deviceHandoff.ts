@@ -46,7 +46,7 @@ export function pickDeviceModel(input: {
   const limit = input.belowPercent ?? 100;
   const ready = input.providers.filter((provider) => {
     if (!canTakeTurn(provider) || isClaudeApiKeyProvider(provider)) return false;
-    const used = providerUsedPercent(provider, input.nowMs);
+    const used = providerUsedPercent(provider, input.nowMs, input.current.model);
     return used === null || used < limit;
   });
   const same = ready.find(

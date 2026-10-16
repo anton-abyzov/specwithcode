@@ -96,7 +96,7 @@ const requireThreadCaller = Effect.gen(function* () {
     return yield* new OrchestratorMcpFailure({
       code: "capability_denied",
       message:
-        "Work on another machine is only for an agent running inside a Studio thread on this one.",
+        "Work on another machine is only for an agent running inside a SpecWithCode thread on this one.",
     });
   return context.caller;
 });

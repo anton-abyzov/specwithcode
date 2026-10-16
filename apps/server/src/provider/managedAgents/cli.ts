@@ -16,7 +16,7 @@ import {
 class ManagedAgentsCliArgumentError extends Error {}
 const isConfigurationError = Schema.is(ManagedAgentsConfigurationError);
 
-const help = `SpecWeave Studio Managed Agents beta (Anthropic API, text workflows)
+const help = `SpecWithCode Managed Agents beta (Anthropic API, text workflows)
   specweave-studio managed-agents status [--config <file>]
   specweave-studio managed-agents run --beta --config <file> --prompt-file <file> [--receipt <file>]
 
@@ -24,7 +24,7 @@ Requires ANTHROPIC_API_KEY separately from Claude Code subscription login.
 Config requires enabled, environmentId, model, maxCostCents, timeoutSeconds.
 Optional globalInstructions and projectInstructions are added to both lead and worker systems.
 Optional responseStyle is "concise" (default) or "detailed".
-Only supplied text is sent; no repository, local credential folder or Studio store is uploaded.
+Only supplied text is sent; no repository, local credential folder or SpecWithCode store is uploaded.
 Runs archive their exact newly-created session and agents. Existing environments are reused.
 `;
 

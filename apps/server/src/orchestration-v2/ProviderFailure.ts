@@ -11,6 +11,7 @@ import type {
   ThreadId,
 } from "@specweave-studio/contracts";
 import { ProjectEnvironmentError } from "@specweave-studio/contracts";
+import { providerFailureFallbackMessage } from "@specweave-studio/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
@@ -21,8 +22,6 @@ import { providerSetupFailure } from "./ProviderAdapter.ts";
 
 export const MAX_PROVIDER_FAILURE_MESSAGE_LENGTH = 4_096;
 export const MAX_PROVIDER_FAILURE_CODE_LENGTH = 128;
-
-const DEFAULT_PROVIDER_FAILURE_MESSAGE = "Provider turn failed.";
 
 const isProjectEnvironmentCode = Schema.is(ProjectEnvironmentError.fields.code);
 
@@ -120,7 +119,7 @@ function causeMessage(cause: unknown): string | undefined {
         case "ProviderSetupError":
           return stringField(cause, "detail") ?? message;
         case "ContextHandoffDeliveryUncertainError":
-          return "Studio could not confirm whether conversation history reached the provider. Retry the turn to recover the session.";
+          return "SpecWithCode could not confirm whether conversation history reached the provider. Retry the turn to recover the session.";
         case "ProviderAdapterTurnStartError":
           message =
             "The provider could not start this turn. Retry the turn; if it keeps failing, check the provider setup and server logs.";
@@ -226,7 +225,10 @@ export function makeProviderFailure(input: {
   const setup = providerSetupFailure(input.cause);
   const failureClass = setup?.usageLimit ? "usage_limit" : (input.class ?? "unknown");
   const resetAt = setup?.usageLimit?.resetAt ?? input.resetAt;
-  const rawMessage = input.message ?? causeMessage(input.cause) ?? DEFAULT_PROVIDER_FAILURE_MESSAGE;
+  // Without a message the class still says what kind of failure it was;
+  // untranslated cause text stays in the server log.
+  const fallbackMessage = providerFailureFallbackMessage(failureClass);
+  const rawMessage = input.message ?? causeMessage(input.cause) ?? fallbackMessage;
   const message = boundedText(rawMessage, MAX_PROVIDER_FAILURE_MESSAGE_LENGTH);
   const rawCode = input.code ?? stringField(input.cause, "code") ?? null;
   const code =
@@ -234,7 +236,7 @@ export function makeProviderFailure(input: {
 
   return {
     class: failureClass,
-    message: message || DEFAULT_PROVIDER_FAILURE_MESSAGE,
+    message: message || fallbackMessage,
     code,
     retryable: input.retryable ?? null,
     ...(failureClass === "usage_limit" && resetAt != null && Number.isFinite(Date.parse(resetAt))

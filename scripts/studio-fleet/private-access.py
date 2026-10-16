@@ -14,6 +14,7 @@ import subprocess
 import time
 import urllib.request
 from fleet_hosts import worker_plans
+import studio_paths
 
 parser = argparse.ArgumentParser()
 operation = parser.add_mutually_exclusive_group()
@@ -23,7 +24,7 @@ args = parser.parse_args()
 os.umask(0o077)
 home = pathlib.Path.home().resolve()
 tailscale = '/Applications/Tailscale.app/Contents/MacOS/Tailscale'
-owner = home / '.specweave-studio/m4'
+owner = studio_paths.identity_home(home, 'm4')
 key = home / '.local/share/specweave/fleet/id_ed25519'
 known = home / '.local/share/specweave/fleet/known_hosts'
 def command_json(arguments):

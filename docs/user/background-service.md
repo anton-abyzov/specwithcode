@@ -8,13 +8,13 @@ to keep a terminal open.
 Install the `specweave-studio` CLI first ([Install SpecWithCode](./install.md#command-line)), then
 run these commands on the machine that will host SpecWithCode:
 
-| Task                            | Command                                        |
-| ------------------------------- | ---------------------------------------------- |
-| Install and start               | `specweave-studio service install`             |
-| Inspect status and log location | `specweave-studio service status`              |
+| Task                            | Command                                    |
+| ------------------------------- | ------------------------------------------ |
+| Install and start               | `specweave-studio service install`         |
+| Inspect status and log location | `specweave-studio service status`          |
 | Move to a newer release         | See [Updating SpecWithCode](./updating.md) |
-| Restart                         | `specweave-studio service restart`             |
-| Stop and remove from startup    | `specweave-studio service uninstall`           |
+| Restart                         | `specweave-studio service restart`         |
+| Stop and remove from startup    | `specweave-studio service uninstall`       |
 
 Uninstalling the service leaves your projects, threads, and settings intact.
 Running `specweave-studio service install` again repairs a service that `specweave-studio service status`
@@ -25,7 +25,7 @@ No package registry carries `specweave-studio`, so there is no versioned `npm` o
 current builds. To move the service to a newer release, use the path that matches
 how the server was installed:
 
-- **Desktop app on that machine:** open **Settings → About**. The **Studio service**
+- **Desktop app on that machine:** open **Settings → About**. The **SpecWithCode service**
   row offers **Check now** or **Install now**.
 - **Service installed without the desktop app:** its update agent, when installed, applies
   reviewed releases on its own. [Updates](../studio/updates.md) covers the agent and
@@ -56,8 +56,8 @@ service is still installed and will start at the next login.
 
 Windows background services are not supported.
 
-Studio Connect can offer service installation during setup, but the two are managed
-separately. Signing out of Studio Connect does not stop or uninstall the service.
+SpecWithCode Connect can offer service installation during setup, but the two are managed
+separately. Signing out of SpecWithCode Connect does not stop or uninstall the service.
 
 ## Troubleshooting
 
@@ -87,8 +87,8 @@ that session open.
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | `linger-unavailable`                    | Run `loginctl show-user "$(id -un)" --property=Linger` and check that systemd-logind is available.                             |
 | `user-manager-unavailable`              | Run `systemctl --user status` in a login session for the service user; check your distribution's systemd user-session support. |
-| `service-disabled` or `service-stopped` | Read the log and `systemctl --user status studio.service`, then use the repair command printed by SpecWithCode.                     |
-| `restart-pending`                       | A newer version is installed but the service still runs the previous one. Run `specweave-studio service restart`.                            |
+| `service-disabled` or `service-stopped` | Read the log and `systemctl --user status studio.service`, then use the repair command printed by SpecWithCode.                |
+| `restart-pending`                       | A newer version is installed but the service still runs the previous one. Run `specweave-studio service restart`.              |
 
 On macOS, check **System Settings → General → Login Items** if the service no
 longer starts at login. If agent work cannot access Desktop, Documents, or
@@ -96,5 +96,5 @@ Downloads, it may need Full Disk Access for the `specweave-studio` executable li
 `ProgramArguments` in
 `~/Library/LaunchAgents/com.specweave.studio.service.plist`.
 
-For failures after signing in to Studio Connect, see
+For failures after signing in to SpecWithCode Connect, see
 [connection troubleshooting](./remote-access.md#studio-connect-troubleshooting).

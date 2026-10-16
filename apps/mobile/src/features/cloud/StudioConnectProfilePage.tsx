@@ -44,7 +44,7 @@ function endpointLabel(environment: RelayClientEnvironmentRecord): string {
 
 function confirmDeregister(environment: RelayClientEnvironmentRecord, onConfirm: () => void) {
   const title = "Deregister server?";
-  const message = `“${environment.label}” will be removed from this account. Studio Connect access will be revoked, any managed tunnel will be removed, and a host space will become available. Local connections on your devices are not changed.`;
+  const message = `“${environment.label}” will be removed from this account. SpecWithCode Connect access will be revoked, any managed tunnel will be removed, and a host space will become available. Local connections on your devices are not changed.`;
   if (process.env.EXPO_OS === "ios") {
     Alert.alert(title, message, [
       { text: "Cancel", style: "cancel" },
@@ -153,7 +153,7 @@ export function StudioConnectProfilePage() {
       {environmentsState.error ? (
         <>
           <ClerkRow
-            title="Could not load Studio Connect environments"
+            title="Could not load SpecWithCode Connect environments"
             subtitle={environmentsState.error}
           />
           {errorTraceId ? (
@@ -210,7 +210,7 @@ export function StudioConnectProfilePage() {
       ) : (
         <ClerkRow
           title="No servers registered"
-          subtitle="Link a server from its local Settings to reach it through Studio Connect."
+          subtitle="Link a server from its local Settings to reach it through SpecWithCode Connect."
         />
       )}
 

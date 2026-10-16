@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="scene.css" />
+    <style>
+      .copy {
+        flex-basis: 420px;
+      }
+      .scene {
+        gap: 40px;
+      }
+      .stage {
+        position: relative;
+        flex: 1;
+        height: 640px;
+      }
+      .stage .chrome {
+        position: absolute;
+        left: -10px;
+        top: 20px;
+        width: 700px;
+        height: 520px;
+      }
+      .stage .popup-card {
+        position: absolute;
+        right: -40px;
+        top: 150px;
+        --zoom: 1;
+        --h: 505px;
+      }
+      .app {
+        padding: 26px 30px;
+      }
+      .app h3 {
+        margin: 0 0 4px;
+        font-size: 20px;
+        color: #202124;
+      }
+      .app p {
+        margin: 0 0 18px;
+        color: #5f6368;
+        font-size: 13.5px;
+      }
+      .rows {
+        display: grid;
+        gap: 10px;
+        width: 330px;
+      }
+      .row {
+        height: 42px;
+        border-radius: 8px;
+        background: #fff;
+        box-shadow: 0 0 0 1px #e3e5e8;
+        display: flex;
+        align-items: center;
+        padding: 0 14px;
+        gap: 10px;
+        font-size: 13px;
+        color: #3c4043;
+      }
+      .row span {
+        flex: 1;
+        height: 8px;
+        border-radius: 4px;
+        background: #e8eaed;
+      }
+      .btn {
+        display: inline-block;
+        margin-top: 18px;
+        padding: 9px 16px;
+        border-radius: 8px;
+        background: #188038;
+        color: #fff;
+        font-size: 13.5px;
+        font-weight: 600;
+        outline: 3px solid #1a73e8;
+        outline-offset: 3px;
+      }
+      .agent-tag {
+        position: absolute;
+        left: 160px;
+        top: 318px;
+        background: #1a73e8;
+        color: #fff;
+        font-size: 12.5px;
+        font-weight: 600;
+        padding: 5px 10px;
+        border-radius: 6px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="scene">
+      <div class="copy">
+        <div class="brand"><img src="/icons/icon-128.png" alt="" />SpecWithCode Browser</div>
+        <h1>Let your agents use <em>your</em> Chrome</h1>
+        <p class="lede">
+          Pair this Chrome profile with the SpecWithCode app on your computer. Your agents can then
+          open tabs, read pages, click, type and take screenshots, signed in as you.
+        </p>
+        <ul class="points">
+          <li>Works with Claude, Codex, Grok, Gemini, GitHub Copilot and Muse</li>
+          <li>Agent tabs sit in a blue <b>SpecWithCode</b> tab group</li>
+          <li>Stays on this computer: no servers, no analytics</li>
+        </ul>
+      </div>
+      <div class="stage">
+        <div class="chrome">
+          <div class="tabstrip">
+            <div class="dots"><i></i><i></i><i></i></div>
+            <div class="tab"><span class="fav" style="background: #ea4335"></span>Inbox</div>
+            <div class="group-chip">SpecWithCode · Personal</div>
+            <div class="group">
+              <div class="tab active">
+                <span class="fav" style="background: #34a853"></span>Billing · Reports
+              </div>
+              <div class="tab">
+                <span class="fav" style="background: #fbbc04"></span>Docs: API keys
+              </div>
+            </div>
+          </div>
+          <div class="toolbar">
+            <div class="nav">&#8592; &#8594; &#8635;</div>
+            <div class="omnibox">dashboard.example.com/billing/reports</div>
+            <div class="ext-btn">
+              <img src="/icons/icon-32.png" alt="" /><span class="badge">ON</span>
+            </div>
+          </div>
+          <div class="pagearea app" style="height: 432px">
+            <h3>Billing reports</h3>
+            <p>Signed in as you. The agent works here with your session.</p>
+            <div class="rows">
+              <div class="row">September<span></span></div>
+              <div class="row">August<span></span></div>
+              <div class="row">July<span></span></div>
+            </div>
+            <div class="btn">Export CSV</div>
+            <div class="agent-tag">Agent: clicking Export CSV</div>
+          </div>
+        </div>
+        <div class="popup-card"><iframe src="/popup?state=connected"></iframe></div>
+      </div>
+    </div>
+  </body>
+</html>

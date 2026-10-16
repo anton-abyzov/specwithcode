@@ -37,7 +37,13 @@ export class ProjectStarterSuggestionsService extends Context.Service<
 >()("specweave-studio/project/ProjectStarterSuggestions/ProjectStarterSuggestionsService") {}
 
 /** Entries that do not make a folder a workspace on their own. */
-const METADATA_ENTRIES = new Set([".git", ".DS_Store", "Thumbs.db", ".specweave-studio"]);
+const METADATA_ENTRIES = new Set([
+  ".git",
+  ".DS_Store",
+  "Thumbs.db",
+  ".specwithcode",
+  ".specweave-studio",
+]);
 const README = /^readme(?:\.[a-z0-9]+)?$/i;
 const INCREMENT_DIRECTORY = /^\d{3,5}[A-Z]?-[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const OPEN_INCREMENT_STATUSES = new Set(["active", "in-progress"]);

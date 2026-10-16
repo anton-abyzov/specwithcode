@@ -1,5 +1,6 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  INCOGNITO_BROWSER_PROFILE_ID,
   type ModelSelection,
   type ProviderInstanceId,
   type WorktreeSubmodules,
@@ -22,8 +23,11 @@ import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { ProviderLimitSettings } from "./ProviderLimitSettings";
 import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig";
 import { PULL_REQUEST_MERGE_METHOD_LABELS } from "../pullRequest/pullRequestDetail.logic";
+import { THREAD_FINISH_ACTION_LABELS } from "./threadFinishAction";
 import { TraitsPicker } from "../chat/TraitsPicker";
+import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { useBrowserDefaults } from "../../browser/browserDefaults";
 import { toastManager } from "../ui/toast";
 import { Switch } from "../ui/switch";
 import type { ProjectSettingsCategory } from "./ProjectSettingsPanel";
@@ -52,7 +56,14 @@ function isWorktreeSubmodules(value: string | null): value is WorktreeSubmodules
   return value !== null && (WORKTREE_SUBMODULES_OPTIONS as readonly string[]).includes(value);
 }
 
-export function ProjectDefaultsSettings({ category }: { category: ProjectSettingsCategory }) {
+export function ProjectDefaultsSettings({
+  category,
+  onProjectPage = false,
+}: {
+  category: ProjectSettingsCategory;
+  /** Rendered on the Project page, where a picked project edits every category. */
+  onProjectPage?: boolean;
+}) {
   const { scope, target, targets, connectedEnvironments } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -79,9 +90,24 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const mixedWorkspace = useScopedSettingsMixed(["defaultThreadEnvMode"]);
   const mixedSubmodules = useScopedSettingsMixed(["worktreeSubmodules"]);
   const mixedBrowser = useScopedSettingsMixed(["enableAgentBrowserAccess"]);
+  const mixedBrowserProfile = useScopedSettingsMixed(["agentBrowserProfileId"]);
+  const browserProfileSource = useScopedSettingSource(["agentBrowserProfileId"]);
+  const browserProfiles = useBrowserDefaults().profiles.filter(
+    (profile) => profile.id !== INCOGNITO_BROWSER_PROFILE_ID,
+  );
+  const browserProfileSupported = targets.some((member) => {
+    const capabilities = environments.find(
+      (environment) => environment.environmentId === member.environmentId,
+    )?.serverConfig?.environment?.capabilities;
+    return scope.kind === "project" || scope.kind === "checkout"
+      ? capabilities?.projectAgentBrowserProfile === true
+      : capabilities?.agentBrowserProfile === true;
+  });
   const mixedAutoPull = useScopedSettingsMixed(["defaultAutoPull"]);
   const mixedAgentCredits = useScopedSettingsMixed(["removeAgentCreditsOnMerge"]);
   const mixedMergeMethod = useScopedSettingsMixed(["pullRequestMergeMethod"]);
+  const mixedFinishAction = useScopedSettingsMixed(["threadFinishAction"]);
+  const mixedStartFromOrigin = useScopedSettingsMixed(["newWorktreesStartFromOrigin"]);
   const modelSource = useScopedSettingSource(["defaultModelSelection"]);
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
   const unavailable = connectedEnvironments.length === 0;
@@ -254,30 +280,87 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     />
   );
 
+  const sectionTitle =
+    category === "general" || category === "project"
+      ? "New threads"
+      : category === "integrations"
+        ? "Browser"
+        : "Repositories";
+  const sectionId =
+    category === "general" || category === "project"
+      ? "project-defaults"
+      : category === "integrations"
+        ? "browser-access"
+        : "source-control-defaults";
+
+  // A picked project edits these on its Project page; the category pages keep
+  // the defaults every project inherits.
+  if (isProjectScope && category !== "project" && !onProjectPage) {
+    return (
+      <SettingsSection id={sectionId} title={sectionTitle}>
+        <SettingsRow
+          title="Set on the Project page"
+          description={`${sectionTitle} settings for ${
+            scope.kind === "project" || scope.kind === "checkout"
+              ? scope.group.displayName
+              : "this project"
+          } are on its Project page, with the rest of its settings.`}
+          control={
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() =>
+                void navigate({
+                  to: "/settings/projects",
+                  hash: sectionId,
+                  hashScrollIntoView: false,
+                  state: { settingsTargetHighlight: true },
+                })
+              }
+            >
+              Open project settings
+            </Button>
+          }
+        />
+      </SettingsSection>
+    );
+  }
+
+  const startFromOriginRow = (
+    <SettingsRow
+      serverScoped
+      settingKeys={["newWorktreesStartFromOrigin"]}
+      {...searchableSetting("start-from-origin")}
+      description="Creates this project's worktrees from the latest matching branch on origin instead of the local branch."
+      resetAction={
+        settings.newWorktreesStartFromOrigin !==
+        DEFAULT_SERVER_SETTINGS.newWorktreesStartFromOrigin ? (
+          <SettingResetButton
+            label="new worktrees start from origin"
+            onClick={() =>
+              updateSettings({
+                newWorktreesStartFromOrigin: DEFAULT_SERVER_SETTINGS.newWorktreesStartFromOrigin,
+              })
+            }
+          />
+        ) : null
+      }
+      control={
+        <Switch
+          aria-label="Start new worktrees from origin by default"
+          mixed={mixedStartFromOrigin}
+          checked={mixedStartFromOrigin ? false : settings.newWorktreesStartFromOrigin}
+          onCheckedChange={(checked) =>
+            updateSettings({ newWorktreesStartFromOrigin: Boolean(checked) })
+          }
+        />
+      }
+    />
+  );
+
   return (
-    <SettingsSection
-      id={
-        category === "general" || category === "project"
-          ? "project-defaults"
-          : category === "integrations"
-            ? "browser-access"
-            : "source-control-defaults"
-      }
-      title={
-        category === "general" || category === "project"
-          ? "New threads"
-          : category === "integrations"
-            ? "Browser"
-            : "Repositories"
-      }
-    >
-      {category === "project" ? (
-        <>
-          {modelRow}
-          {workspaceRow}
-          <ProviderLimitSettings />
-        </>
-      ) : category === "general" ? (
+    <SettingsSection id={sectionId} title={sectionTitle}>
+      {category === "general" || category === "project" ? (
         <>
           {modelRow}
           <SettingsRow
@@ -388,6 +471,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
               </Select>
             }
           />
+          {category === "project" ? startFromOriginRow : null}
           <ProviderLimitSettings />
         </>
       ) : category === "source-control" ? (
@@ -445,6 +529,45 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                   updateSettings({ removeAgentCreditsOnMerge: enabled })
                 }
               />
+            }
+          />
+          <SettingsRow
+            serverScoped
+            settingKeys={["threadFinishAction"]}
+            mixed={mixedFinishAction}
+            {...searchableSetting("thread-finish-action")}
+            description={
+              isProjectScope
+                ? "When a thread in its own worktree finishes, with nothing queued, its branch targets this repository's default branch. Merging waits for required checks and branch protection; nothing is force-pushed."
+                : "When a thread in its own worktree finishes, with nothing queued, its branch targets the repository's default branch. Merging waits for required checks and branch protection; nothing is force-pushed. New projects start on Open PR and auto-merge."
+            }
+            control={
+              <Select
+                value={mixedFinishAction ? null : settings.threadFinishAction}
+                onValueChange={(value) => {
+                  if (value === "leave" || value === "pull_request" || value === "auto_merge")
+                    updateSettings({ threadFinishAction: value });
+                }}
+              >
+                <SelectTrigger size="sm" aria-label="When a thread finishes">
+                  <SelectValue>
+                    {(value: string | null) =>
+                      value === "leave" || value === "pull_request" || value === "auto_merge"
+                        ? THREAD_FINISH_ACTION_LABELS[value]
+                        : "Mixed"
+                    }
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="leave">{THREAD_FINISH_ACTION_LABELS.leave}</SelectItem>
+                  <SelectItem value="pull_request">
+                    {THREAD_FINISH_ACTION_LABELS.pull_request}
+                  </SelectItem>
+                  <SelectItem value="auto_merge">
+                    {THREAD_FINISH_ACTION_LABELS.auto_merge}
+                  </SelectItem>
+                </SelectPopup>
+              </Select>
             }
           />
           <SettingsRow
@@ -531,6 +654,68 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
               />
             }
           />
+          {browserProfileSupported ? (
+            <SettingsRow
+              serverScoped
+              settingKeys={["agentBrowserProfileId"]}
+              mixed={mixedBrowserProfile}
+              id={searchableSetting("agent-browser-profile").id}
+              title="Browser profile for agents"
+              description={
+                isProjectScope
+                  ? "The SpecWithCode browser profile this project's agents open pages in, with its saved logins. Isolated tabs keep no logins."
+                  : "The SpecWithCode browser profile agents open pages in, with its saved logins. Projects can choose their own."
+              }
+              resetAction={
+                isProjectScope && browserProfileSource === "project" ? (
+                  <SettingResetButton
+                    label="browser profile"
+                    onClick={() => updateSettings({ agentBrowserProfileId: null })}
+                  />
+                ) : null
+              }
+              control={
+                <Select
+                  value={
+                    mixedBrowserProfile
+                      ? ""
+                      : (settings.agentBrowserProfileId ?? INCOGNITO_BROWSER_PROFILE_ID)
+                  }
+                  onValueChange={(value) => {
+                    if (typeof value !== "string" || value === "") return;
+                    // The environment stores isolation as no profile; a project stores it explicitly.
+                    updateSettings({
+                      agentBrowserProfileId:
+                        value === INCOGNITO_BROWSER_PROFILE_ID && !isProjectScope ? null : value,
+                    });
+                  }}
+                >
+                  <SelectTrigger size="sm" aria-label="Browser profile for agents">
+                    <SelectValue>
+                      {(value: string | null) =>
+                        mixedBrowserProfile
+                          ? "Mixed"
+                          : value === INCOGNITO_BROWSER_PROFILE_ID
+                            ? "Isolated, no logins"
+                            : (browserProfiles.find((profile) => profile.id === value)?.name ??
+                              "Removed profile")
+                      }
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup align="end" alignItemWithTrigger={false}>
+                    <SelectItem value={INCOGNITO_BROWSER_PROFILE_ID}>
+                      Isolated, no logins
+                    </SelectItem>
+                    {browserProfiles.map((profile) => (
+                      <SelectItem key={profile.id} value={profile.id}>
+                        {profile.name}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              }
+            />
+          ) : null}
         </>
       )}
     </SettingsSection>

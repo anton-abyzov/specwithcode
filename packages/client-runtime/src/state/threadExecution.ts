@@ -262,6 +262,11 @@ export function deriveThreadRuntime(
   }
   const activeRunId =
     latestMatchingRun(projection, (run) => INTERRUPTIBLE_RUN_STATUSES.has(run.status))?.id ?? null;
+  const errorSummary = threadErrorSummary(
+    latestRootProviderFailure(latestRunProjection, projection.turnItems),
+    providerSession?.lastError ?? null,
+    latestRunProjection?.status ?? null,
+  );
   return {
     status: usageLimitedRun
       ? "failed"
@@ -275,10 +280,11 @@ export function deriveThreadRuntime(
         : DateTime.formatIso(orchestrationV2RunWorkStartedAt(liveActivityRun)),
     providerInstanceId: projection.thread.providerInstanceId,
     providerName: providerSession?.driver ?? null,
-    ...threadErrorSummary(
-      latestRootProviderFailure(latestRunProjection, projection.turnItems),
-      providerSession?.lastError ?? null,
-    ),
+    ...errorSummary,
+    lastErrorAt:
+      errorSummary.lastError === null || !latestRunProjection?.completedAt
+        ? null
+        : DateTime.formatIso(latestRunProjection.completedAt),
     updatedAt: DateTime.formatIso(projection.updatedAt),
   };
 }

@@ -1,5 +1,11 @@
 import { useSettingsProjectGroups } from "../settings/useSettingsProjectGroups";
-import { isArchivedMember, partitionProjectGroups } from "../../studio/projectListVisibility";
+import { useNowMinute } from "../../hooks/useNowMinute";
+import {
+  archivedMemberKeys,
+  partitionProjectGroups,
+  projectPickerMembers,
+  type ScratchRootLookup,
+} from "../../studio/projectListVisibility";
 import { scopeProjectRef } from "@specweave-studio/client-runtime/environment";
 import type { ModelSelection, ServerProvider } from "@specweave-studio/contracts";
 import { AuthOrchestrationOperateScope, PROVIDER_DISPLAY_NAMES } from "@specweave-studio/contracts";
@@ -15,7 +21,7 @@ import {
   PlusIcon,
   SearchIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { APP_DISPLAY_NAME } from "../../branding";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { isElectron } from "../../env";
@@ -45,6 +51,9 @@ import { SidebarInset } from "../ui/sidebar";
 import { CapacityFleet } from "./CapacityFleet";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import { ModelBadge, useProviderEntriesByEnvironment } from "./shell/ModelBadge";
+import { PlanProgressChip } from "./PlanProgressChip";
+import { compactThreadPlan } from "../../studio/threadPlanProgress";
+import { useThreadIncrementProgress } from "../../studio/useThreadIncrementProgress";
 import "./overview.css";
 
 type DraftRequest = {
@@ -112,17 +121,24 @@ export function StudioOverview() {
       );
   }, [projectGroups]);
   const projects = useProjects();
-  const shells = useThreadShells();
+  const allShells = useThreadShells();
   const configs = useServerConfigs();
+  const scratchRootFor = useCallback<ScratchRootLookup>(
+    (environmentId) => configs.get(environmentId)?.scratchWorkspaceRoot ?? null,
+    [configs],
+  );
   // Projects in use: no machine's "No project" folder and nothing archived.
   const listedGroups = useMemo(
-    () =>
-      partitionProjectGroups(
-        projectGroups,
-        (environmentId) => configs.get(environmentId)?.scratchWorkspaceRoot ?? null,
-      ).listed,
-    [configs, projectGroups],
+    () => partitionProjectGroups(projectGroups, scratchRootFor).listed,
+    [projectGroups, scratchRootFor],
   );
+  // Threads of archived projects stay out of Overview, as the projects stay out of the sidebar.
+  const shells = useMemo(() => {
+    const archived = archivedMemberKeys(projectGroups, scratchRootFor);
+    return archived.size === 0
+      ? allShells
+      : allShells.filter((thread) => !archived.has(`${thread.environmentId}:${thread.projectId}`));
+  }, [allShells, projectGroups, scratchRootFor]);
   const bootstrapped = useAllEnvironmentShellsBootstrapped();
   const { environments, isReady, networkStatus } = useEnvironments();
   const canOperate = useEnvironmentsWithScope(environments, AuthOrchestrationOperateScope);
@@ -151,17 +167,21 @@ export function StudioOverview() {
       ),
     [environments],
   );
+  // Stalls come from time passing, so the list refreshes each minute.
+  const nowMinute = useNowMinute();
   const sessions = useMemo(
-    () => deriveSessions(shells, projects, connectedIds),
-    [shells, projects, connectedIds],
+    () => deriveSessions(shells, projects, connectedIds, Date.parse(`${nowMinute}:00Z`)),
+    [shells, projects, connectedIds, nowMinute],
   );
   const attention = sessions.filter((s) => s.attention !== null);
   const working = sessions.filter((s) => s.working).length;
   const connected = connectedIds.size;
   const hostNames = new Map(environments.map((e) => [e.environmentId, e.label]));
-  const draftProjects = projects.filter(
+  const draftProjects = projectPickerMembers(
+    projects,
+    (environmentId) => configs.get(environmentId)?.scratchWorkspaceRoot ?? null,
+  ).filter(
     (p) =>
-      !isArchivedMember(p) &&
       canOperate.has(p.environmentId) &&
       connectedIds.has(p.environmentId) &&
       (!request?.environmentId || request.environmentId === p.environmentId),
@@ -926,6 +946,13 @@ function SessionItem({
   // A cached row from an older host can arrive without its model.
   const selection = s.thread.modelSelection as typeof s.thread.modelSelection | undefined;
   const tone = s.attention ? attentionTone(s) : s.working ? "moss" : s.settled ? "muted" : "plain";
+  const incrementProgress = useThreadIncrementProgress({
+    environmentId: s.thread.environmentId,
+    projectId: s.project === null ? null : s.thread.projectId,
+    threadIds: [s.thread.id],
+    activityKey: s.thread.updatedAt,
+  });
+  const plan = compactThreadPlan(incrementProgress.get(s.thread.id) ?? null, s.thread.planProgress);
   return (
     <ChatLink target={target} className="studio-session-item">
       <span
@@ -944,6 +971,12 @@ function SessionItem({
           ) : (
             provider
           )}
+          {plan ? (
+            <>
+              {" "}
+              <span aria-hidden="true">·</span> <PlanProgressChip plan={plan} />
+            </>
+          ) : null}
         </p>
       </div>
       <div className="studio-session-state">

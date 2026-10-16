@@ -43,7 +43,7 @@ vi.mock("../state/session", async (importOriginal) => ({
 }));
 vi.mock("../state/projects", () => ({
   projectEnvironment: {
-    searchEntries: {},
+    searchEntries: () => ({ input: { cwd: "" } }),
     listEntries: (request: { input: { cwd: string } }) => request,
   },
 }));

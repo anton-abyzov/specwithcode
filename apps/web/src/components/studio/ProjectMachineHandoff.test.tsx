@@ -7,9 +7,16 @@ import type { MachineHandoffDialog } from "./MachineHandoffDialog";
 import { machineHandoffStorageKey } from "../../studio/machineHandoffPending";
 import { buildProjectGroups } from "../../logicalProject";
 import { ProjectMachineHandoff } from "./ProjectMachineHandoff";
+import { handoffMachinePreferenceKey } from "../../studio/handoffMachinePreference";
 
 vi.mock("./HandoffFolderPicker", () => ({ HandoffFolderPicker: () => null }));
+vi.mock("./useHandoffSourceChanges", () => ({ useHandoffSourceChanges: () => null }));
+vi.mock("../../studio/fleet", () => ({
+  useStudioFleet: () => ({ snapshot: state.fleet }),
+}));
 const state = vi.hoisted(() => ({
+  fleet: null as { machines: Array<Record<string, unknown>> } | null,
+  environments: [] as Array<Record<string, unknown>>,
   prepare: vi.fn(),
   receive: vi.fn(),
   navigate: vi.fn(),
@@ -29,19 +36,14 @@ vi.mock("@specweave-studio/client-runtime/state/runtime", () => ({
   squashAtomCommandFailure: (failure: { error: Error }) => failure.error,
 }));
 vi.mock("../../state/environments", () => ({
-  useEnvironments: () => ({
-    environments: [
-      { environmentId: "m4", label: "M4", connection: { phase: "connected" } },
-      { environmentId: "m1", label: "M1", connection: { phase: "connected" } },
-    ],
-  }),
+  useEnvironments: () => ({ environments: state.environments }),
 }));
 vi.mock("../../state/entities", () => ({
   useProjects: () => state.projects,
 }));
 vi.mock("../../state/session", () => ({
   useEnvironmentsWithScope: (_environments: unknown, scope: string) =>
-    new Set(state.denied.has(scope) ? ["m4"] : ["m4", "m1"]),
+    new Set(state.denied.has(scope) ? ["m4"] : ["m4", "m1", "m3", "m2"]),
 }));
 vi.mock("../../lib/utils", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../lib/utils")>()),
@@ -173,6 +175,11 @@ beforeEach(() => {
   state.order = [];
   state.denied.clear();
   state.projects = [source, target];
+  state.fleet = null;
+  state.environments = [
+    { environmentId: "m4", label: "M4", connection: { phase: "connected" } },
+    { environmentId: "m1", label: "M1", connection: { phase: "connected" } },
+  ];
   localStorage.clear();
   state.navigate.mockResolvedValue(undefined);
   state.prepare.mockImplementation(async ({ input }) => {
@@ -566,4 +573,73 @@ it("recovers a pointer persisted before an interrupted first source request", as
     destination: { projectId: "target", executionMode: "project-folder" },
   });
   expect(props().phase).toBe("review");
+});
+
+const machineEnvironments = [
+  { environmentId: "m4", label: "M4", connection: { phase: "connected" } },
+  { environmentId: "m1", label: "M1", connection: { phase: "connected" } },
+  { environmentId: "m3", label: "M3", connection: { phase: "connected" } },
+  { environmentId: "m2", label: "M2", connection: { phase: "offline" } },
+];
+const allowWorkers = (...ids: string[]) => ({
+  machines: ids.map((id) => ({ environmentId: id, workers: { status: "allowed" } })),
+});
+const preferenceKey = handoffMachinePreferenceKey("m4", "source");
+const picker = () =>
+  (props().folderPicker as { props: Record<string, unknown> } | undefined)?.props;
+
+it("opens the folder picker on the only online machine allowed for workers when no folder is saved", async () => {
+  state.projects = [source];
+  state.environments = machineEnvironments;
+  state.fleet = allowWorkers("m3");
+  await mount();
+  expect(props().selected).toBe("");
+  expect(picker()).toMatchObject({ machine: "m3", defaultOpen: true, sourceFolder: "/source" });
+  const machines = picker()!.machines as Array<Record<string, unknown>>;
+  expect(machines.map((machine) => [machine.id, machine.online, machine.hasProjectFolder])).toEqual(
+    [
+      ["m1", true, false],
+      ["m3", true, false],
+      ["m2", false, false],
+    ],
+  );
+  expect(props().rememberMachine).toMatchObject({ label: "M3", checked: false });
+});
+
+it("prefers the remembered machine, then the last handoff target, over worker heuristics", async () => {
+  state.environments = machineEnvironments;
+  state.fleet = allowWorkers("m3");
+  localStorage.setItem(preferenceKey, JSON.stringify({ remembered: "m1", lastUsed: "m3" }));
+  await mount();
+  // M1 has the saved project folder, so its destination is selected and the picker stays closed.
+  expect(props().selected).toBe("m1:target");
+  expect(picker()).toMatchObject({ machine: null, defaultOpen: false });
+  expect(props().rememberMachine).toMatchObject({ label: "M1", checked: true });
+
+  await act(async () => props().onOpenChange(false));
+  localStorage.setItem(preferenceKey, JSON.stringify({ lastUsed: "m3" }));
+  await act(async () => container.querySelector("button")!.click());
+  expect(props().selected).toBe("");
+  expect(picker()).toMatchObject({ machine: "m3", defaultOpen: true });
+});
+
+it("remembers the chosen machine and records the last handoff target", async () => {
+  await mount();
+  expect(props().selected).toBe("m1:target");
+  await act(async () => props().rememberMachine!.onChange(true));
+  expect(JSON.parse(localStorage.getItem(preferenceKey)!)).toEqual({
+    remembered: "m1",
+    lastUsed: null,
+  });
+  expect(props().rememberMachine!.checked).toBe(true);
+  await act(async () => props().rememberMachine!.onChange(false));
+  expect(localStorage.getItem(preferenceKey)).toBeNull();
+  await review();
+  await consent();
+  await transfer();
+  expect(props().phase).toBe("complete");
+  expect(JSON.parse(localStorage.getItem(preferenceKey)!)).toEqual({
+    remembered: null,
+    lastUsed: "m1",
+  });
 });

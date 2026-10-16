@@ -59,15 +59,31 @@ try {
     await page.goto(`http://127.0.0.1:${server.address().port}/?theme=${theme}`);
     await page.getByRole("dialog").waitFor();
     assert.equal(await page.locator('[data-slot="handoff-machine"]').count(), 2);
-    await page.screenshot({ path: join(output, `${width}-${theme}-choose.png`), fullPage: true });
-    await page.getByText("Choose another folder on a machine", { exact: true }).click();
-    await page.getByLabel("Folder machine").selectOption("m3");
+    // Expanded by default, preselected, with the matching folder found and prefilled.
+    assert.equal(await page.getByLabel("Folder machine").inputValue(), "m3");
     assert.equal(await page.evaluate(() => window.browsedMachine), "m3");
-    await page.getByRole("button", { name: "sw-easychamp", exact: true }).click();
     assert.equal(
       await page.getByLabel("Remote project folder").inputValue(),
       "/Users/you/Projects/sw-easychamp",
     );
+    await page
+      .getByText("Found this project's folder on MacBook Pro M3.", { exact: false })
+      .waitFor();
+    const options = await page.getByLabel("Folder machine").locator("option").allTextContents();
+    assert.deepEqual(options, [
+      "Choose a machine",
+      "MacBook Pro M1 — Online · Project folder saved",
+      "MacBook Pro M3 — Online · No project folder yet",
+      "Mac mini — Offline · No project folder yet",
+    ]);
+    await page.getByText("2 uncommitted files on MacBook Pro M4.", { exact: false }).waitFor();
+    await page.screenshot({ path: join(output, `${width}-${theme}-choose.png`), fullPage: true });
+    await page.getByRole("button", { name: "Commit for me", exact: true }).click();
+    await page.getByText("No uncommitted changes on MacBook Pro M4.", { exact: false }).waitFor();
+    await page.getByRole("checkbox").first().click();
+    assert.equal(await page.getByRole("checkbox").first().getAttribute("aria-checked"), "true");
+    assert.equal(await page.getByRole("button", { name: "Up one folder" }).count(), 0);
+    await page.getByRole("button", { name: "Browse folder", exact: true }).click();
     await page.getByRole("button", { name: "Up one folder" }).click();
     assert.equal(
       await page.getByLabel("Remote project folder").inputValue(),

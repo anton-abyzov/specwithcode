@@ -1,6 +1,10 @@
 import { useAuth } from "@clerk/react";
 import { findErrorTraceId } from "@specweave-studio/client-runtime/errors";
-import { EnvironmentId, AuthRelayReadScope, AuthRelayWriteScope } from "@specweave-studio/contracts";
+import {
+  EnvironmentId,
+  AuthRelayReadScope,
+  AuthRelayWriteScope,
+} from "@specweave-studio/contracts";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -55,13 +59,14 @@ export function useCloudLinkController() {
   const [operationError, setOperationError] = useState<string | null>(null);
 
   const reportUpdateFailure = (cause: unknown) => {
-    const message = cause instanceof Error ? cause.message : "Could not update Studio Connect access.";
+    const message =
+      cause instanceof Error ? cause.message : "Could not update SpecWithCode Connect access.";
     const traceId = findErrorTraceId(cause);
     console.error("[studio-connect] Could not update Studio Connect", { message, traceId, cause });
     setOperationError(traceId ? `${message} Trace ID: ${traceId}` : message);
     toastManager.add({
       type: "error",
-      title: "Could not update Studio Connect",
+      title: "Could not update SpecWithCode Connect",
       description: message,
       data: traceId
         ? {
@@ -96,7 +101,9 @@ export function useCloudLinkController() {
         !readEnvironmentScope(environmentId, AuthRelayWriteScope)
       ) {
         reportUpdateFailure(
-          new Error("This connection needs permission to view and manage Studio Connect settings."),
+          new Error(
+            "This connection needs permission to view and manage SpecWithCode Connect settings.",
+          ),
         );
         return false;
       }
@@ -105,7 +112,9 @@ export function useCloudLinkController() {
     const readLinkState = () => {
       const state = readCachedPrimaryCloudLinkState(target);
       if (state === null) {
-        reportUpdateFailure(new Error("Wait until the current Studio Connect settings can be read."));
+        reportUpdateFailure(
+          new Error("Wait until the current SpecWithCode Connect settings can be read."),
+        );
       }
       return state;
     };
@@ -142,7 +151,7 @@ export function useCloudLinkController() {
       }
       const clerkToken = tokenResult.value;
       if (!clerkToken) {
-        reportUpdateFailure(new Error("Sign in to Studio Connect before enabling this."));
+        reportUpdateFailure(new Error("Sign in to SpecWithCode Connect before enabling this."));
         return false;
       }
       const currentManagedTunnel = currentLinkState.managedTunnelActive ?? currentLinkState.linked;

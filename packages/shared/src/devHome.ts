@@ -1,8 +1,9 @@
 /**
  * Where development state lives, and how to keep it away from the shared
- * `~/.specweave-studio` that a user's installed SpecWithCode runs against.
+ * `~/.specwithcode` (legacy `~/.specweave-studio`) that a user's installed SpecWithCode
+ * runs against.
  *
- * A linked git worktree gets its own (gitignored) `.specweave-studio`: feature work in a
+ * A linked git worktree gets its own (gitignored) `.specwithcode`: feature work in a
  * throwaway branch must not share a database with the real app, and an ambient
  * `STUDIO_HOME` counts as an explicit base dir — flipping the state directory
  * from `<base>/dev` to `<base>/userdata`, the live production database.
@@ -12,6 +13,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+
+import { LEGACY_STUDIO_HOME_DIRECTORY, STUDIO_HOME_DIRECTORY } from "./studioIdentity.ts";
 
 /**
  * A `.git` file points at the real git directory. A linked worktree's lives at
@@ -88,7 +91,8 @@ export const resolveGitWorktreePath = (
 /**
  * The worktree-local data directory for `cwd`, or undefined outside a linked
  * worktree. Deliberately does not require the directory to exist yet: falling
- * back because it is missing would send callers at the shared home.
+ * back because it is missing would send callers at the shared home. An existing
+ * legacy `<worktree>/.specweave-studio` keeps serving until a `.specwithcode` exists.
  */
 export const resolveWorktreeStudioHome = (
   cwd: string,
@@ -99,5 +103,10 @@ export const resolveWorktreeStudioHome = (
       return undefined;
     }
     const path = yield* Path.Path;
-    return path.join(worktreePath, ".specweave-studio");
+    const fileSystem = yield* FileSystem.FileSystem;
+    const branded = path.join(worktreePath, STUDIO_HOME_DIRECTORY);
+    const legacy = path.join(worktreePath, LEGACY_STUDIO_HOME_DIRECTORY);
+    const exists = (candidate: string) =>
+      fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false));
+    return !(yield* exists(branded)) && (yield* exists(legacy)) ? legacy : branded;
   });

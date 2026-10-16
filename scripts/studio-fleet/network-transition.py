@@ -16,9 +16,12 @@ import re
 import subprocess
 import sqlite3
 import uuid
+
+import studio_paths
 from update import assert_prestate, atomic, digest, listeners, safe_path, snapshot
 from auth_heartbeat import read_auth_sessions, restore_timestamp, verify_restart_witness
 import database_continuity as continuity
+import live_database
 from fleet_hosts import worker_plans
 
 TAILSCALE = '/Applications/Tailscale.app/Contents/MacOS/Tailscale'
@@ -50,7 +53,7 @@ def read_command(command):
     return result.stdout
 
 def tunnel_bytes(home, identity, remote_user, ip, port, user):
-    network = home / '.specweave-studio/m4/network'
+    network = studio_paths.identity_home(home, 'm4') / 'network'
     fleet = home / '.local/share/specweave/fleet'
     label = 'com.specweave.studio.tunnel-' + identity
     command = ['/usr/bin/env', '-i', 'HOME=' + str(home), 'USER=' + user, 'PATH=/usr/bin:/bin',
@@ -80,8 +83,8 @@ def assert_update_continuity(expected, actual, home, witness=None):
     for value in [before, after]:
         assert re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z', value)
     assert before < after
-    db_path = safe_path(home / '.specweave-studio/m4/userdata/statev2.sqlite', home)
-    db = sqlite3.connect('file:' + str(db_path) + '?mode=ro', uri=True)
+    db_path = safe_path(studio_paths.identity_home(home, 'm4') / 'userdata/statev2.sqlite', home)
+    db = live_database.connect(db_path)
     try:
         db.execute('BEGIN')
         columns = [row[1] for row in db.execute('PRAGMA table_info(auth_sessions)')]
@@ -138,7 +141,10 @@ for name, source in sources.items():
 identity = request['identity']
 assert identity in {'m1', 'm3'} and request['final']['identity'] == identity
 home = pathlib.Path.home().resolve()
-state = home / '.specweave-studio' / identity / 'userdata'
+# studio_paths.identity_home, inlined: this program runs on the worker without the module.
+legacy, branded = home / '.specweave-studio', home / '.specwithcode' / identity
+own = branded if legacy.is_symlink() or branded.exists() or not (legacy / identity).exists() else legacy / identity
+state = own / 'userdata'
 ancestor = home
 for part in state.relative_to(home).parts:
     ancestor = ancestor / part
@@ -181,7 +187,7 @@ def assert_update_rows(update, final, home, later_witness=None, *, allow_existin
         assert all(captured), 'Complete database capture missing'
         identity = final['identity']
         if identity == 'm4':
-            state = safe_path(home / '.specweave-studio/m4/userdata', home)
+            state = safe_path(studio_paths.identity_home(home, 'm4') / 'userdata', home)
             return continuity.verify_update_database(update, final, state, later_witness=later_witness,
                                                      allow_existing_browser_heartbeat=allow_existing_browser_heartbeat)
         assert identity in {'m1', 'm3'} and later_witness is None
@@ -198,7 +204,7 @@ def assert_update_rows(update, final, home, later_witness=None, *, allow_existin
     assert update['rowsByteIdentical'] is False and update['rowPreservation'] == 'verified-existing-browser-heartbeat'
     assert update['restartStartedAt'] == witness['restartStartedAt']
     assert update['after']['observedAt'] == witness['observedAfterAt']
-    state = safe_path(home / '.specweave-studio/m4/userdata', home)
+    state = safe_path(studio_paths.identity_home(home, 'm4') / 'userdata', home)
     current = read_auth_sessions(state, final['rows'])
     if later_witness is not None:
         # The separate later heartbeat was also checked by assert_update_continuity.
@@ -211,7 +217,7 @@ def assert_update_rows(update, final, home, later_witness=None, *, allow_existin
 def transition(home, proof_path, expected_progress_sha, old_sha, new_sha, output, *, allow_existing_browser_heartbeat=False):
     assert os.getuid() == 501 and home == pathlib.Path.home().resolve()
     assert re.fullmatch('[a-f0-9]{64}', old_sha) and re.fullmatch('[a-f0-9]{64}', new_sha) and old_sha != new_sha
-    network = safe_path(home / '.specweave-studio/m4/network', home)
+    network = safe_path(studio_paths.identity_home(home, 'm4') / 'network', home)
     path = safe_path(network / 'progress.json', home)
     original = path.read_bytes()
     assert digest(original) == expected_progress_sha, 'Network progress changed before transition'

@@ -113,9 +113,27 @@ function isWindowsPathStyle(value: string): boolean {
 function joinPath(base: string, next: string, separator: "/" | "\\"): string {
   const cleanBase = base.replace(/[\\/]+$/, "");
   if (separator === "\\") {
-    return `${cleanBase}\\${next.replaceAll("/", "\\")}`;
+    return collapseDotSegments(`${cleanBase}\\${next.replaceAll("/", "\\")}`, "\\");
   }
-  return `${cleanBase}/${next.replace(/^\/+/, "")}`;
+  return collapseDotSegments(`${cleanBase}/${next.replace(/^\/+/, "")}`, "/");
+}
+
+/**
+ * `/repo/specweave/../wt` is `/repo/wt`: a joined `..` must leave the base, or
+ * a sibling folder reads as one inside it. Never climbs above the root.
+ */
+function collapseDotSegments(path: string, separator: "/" | "\\"): string {
+  const parts = path.split(separator);
+  const out: string[] = [];
+  for (const [index, part] of parts.entries()) {
+    if (part === "." && index > 0) continue;
+    if (part === ".." && out.length > 1) {
+      out.pop();
+      continue;
+    }
+    out.push(part);
+  }
+  return out.join(separator);
 }
 
 function inferHomeFromCwd(cwd: string): string | undefined {

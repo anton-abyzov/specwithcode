@@ -17,8 +17,11 @@ import { ArrowRightIcon, TicketIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { environmentPresentations } from "../../../state/presentation";
 import {
+  blockedLabel,
+  leftPercent,
   usageIndicatorProviders,
   usageIndicatorSummary,
+  usageLeftLabel,
   usageTone,
   type UsageIndicatorProvider,
   type UsageIndicatorWindow,
@@ -34,10 +37,10 @@ import { HostLimitsCompact } from "./HostLimits";
 const driverLabel = (driver: LimitPool["driver"]) =>
   getDriverOption(driver)?.label ?? String(driver);
 
-/** A 14px ring filled clockwise from the top by the used share. */
+/** A 14px ring filled clockwise from the top by the share left. */
 function UsageRing({ percent, tone }: { percent: number | null; tone: string }) {
   const circumference = 2 * Math.PI * 5.5;
-  const used = Math.min(100, Math.max(0, percent ?? 0));
+  const left = Math.min(100, Math.max(0, percent ?? 0));
   return (
     <svg className="sws-usage-ring" viewBox="0 0 14 14" data-tone={tone} aria-hidden>
       <circle cx="7" cy="7" r="5.5" className="sws-usage-ring-track" />
@@ -47,7 +50,7 @@ function UsageRing({ percent, tone }: { percent: number | null; tone: string }) 
           cy="7"
           r="5.5"
           className="sws-usage-ring-value"
-          strokeDasharray={`${(used / 100) * circumference} ${circumference}`}
+          strokeDasharray={`${(left / 100) * circumference} ${circumference}`}
           transform="rotate(-90 7 7)"
         />
       )}
@@ -56,13 +59,27 @@ function UsageRing({ percent, tone }: { percent: number | null; tone: string }) 
 }
 
 function WindowRow({ window, now }: { window: UsageIndicatorWindow; now: number }) {
+  const left = leftPercent(window.usedPercent);
+  if (window.blockedBy) {
+    return (
+      <div className="sws-usage-window" data-blocked="">
+        <span className="sws-usage-window-label">{window.label}</span>
+        <span className="sws-usage-bar" data-tone="blocked" aria-hidden>
+          <span style={{ width: `${left}%` }} />
+        </span>
+        <span className="sws-usage-window-blocked">{blockedLabel(window.blockedBy, now)}</span>
+      </div>
+    );
+  }
   return (
     <div className="sws-usage-window">
       <span className="sws-usage-window-label">{window.label}</span>
-      <span className="sws-usage-bar" data-tone={usageTone(window.usedPercent)} aria-hidden>
-        <span style={{ width: `${Math.min(100, window.usedPercent)}%` }} />
+      <span className="sws-usage-bar" data-tone={usageTone(left)} aria-hidden>
+        <span style={{ width: `${left}%` }} />
       </span>
-      <span className="sws-usage-window-value">{window.usedPercent}% used</span>
+      <span className="sws-usage-window-value" data-tone={usageTone(left)}>
+        {usageLeftLabel(window.usedPercent)}
+      </span>
       <span className="sws-usage-window-reset">
         {window.nextResetAt === null ? "" : `resets in ${formatDuration(window.nextResetAt - now)}`}
       </span>
@@ -123,7 +140,7 @@ function ProviderSection({
               <span>{accountName(account)}</span>
               {account.limits.windows.map((window) => (
                 <span key={window.id}>
-                  {window.label} {Math.round(window.usedPercent)}%
+                  {window.label} {leftPercent(window.usedPercent)}% left
                 </span>
               ))}
             </p>
@@ -147,34 +164,39 @@ function ProviderSection({
 /** Every provider's pooled windows across the connected hosts and hubs, as of `now`. */
 function useSubscriptionUsage(
   now: number,
-  destination?: { environmentId: EnvironmentId | null; instanceId: ProviderInstanceId | null },
+  destination?: {
+    environmentId: EnvironmentId | null;
+    instanceId: ProviderInstanceId | null;
+    model?: string | null;
+  },
 ) {
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const environmentId = destination?.environmentId;
   const instanceId = destination?.instanceId;
+  const model = destination?.model ?? null;
   const scoped = destination !== undefined;
   const presentation = environmentId ? presentations.get(environmentId) : undefined;
-  const pools = useMemo(
-    () => {
-      if (!scoped) return collectLimitPools(collectLimitAccounts(presentations), now);
-      // Admission runs against this host and native instance. Other accounts,
-      // even a fresher hub snapshot, cannot lend it their remaining capacity.
-      if (!environmentId || !instanceId || !presentation?.serverConfig) return [];
-      const selected = new Map([
-        [environmentId, {
+  const pools = useMemo(() => {
+    if (!scoped) return collectLimitPools(collectLimitAccounts(presentations), now);
+    // Admission runs against this host and native instance. Other accounts,
+    // even a fresher hub snapshot, cannot lend it their remaining capacity.
+    if (!environmentId || !instanceId || !presentation?.serverConfig) return [];
+    const selected = new Map([
+      [
+        environmentId,
+        {
           ...presentation,
           serverConfig: {
             providers: presentation.serverConfig.providers?.filter(
               (provider) => provider.instanceId === instanceId,
             ),
           },
-        }],
-      ]);
-      return collectLimitPools(collectLimitAccounts(selected), now);
-    },
-    [presentations, now, scoped, environmentId, instanceId, presentation],
-  );
-  const providers = useMemo(() => usageIndicatorProviders(pools, now), [pools, now]);
+        },
+      ],
+    ]);
+    return collectLimitPools(collectLimitAccounts(selected), now);
+  }, [presentations, now, scoped, environmentId, instanceId, presentation]);
+  const providers = useMemo(() => usageIndicatorProviders(pools, now, model), [pools, now, model]);
   return { pools, providers, environmentLabel: presentation?.entry.target.label };
 }
 
@@ -220,11 +242,14 @@ export function ProjectUsageIndicator({
   onOpenProjectUsage,
   projectEnvironmentId = null,
   providerInstanceId = null,
+  model = null,
 }: {
   onOpenProjectUsage: () => void;
   /** The actual host and native instance used by this project's coordinator. */
   projectEnvironmentId?: EnvironmentId | null;
   providerInstanceId?: ProviderInstanceId | null;
+  /** The model of the coordinator's next turn: model windows (Weekly · Fable) count only for it. */
+  model?: string | null;
 }) {
   // The clock moves when the popover opens; a ticking one would repaint the composer for nothing.
   const [now, setNow] = useState(Date.now);
@@ -232,6 +257,7 @@ export function ProjectUsageIndicator({
   const usage = useSubscriptionUsage(now, {
     environmentId: projectEnvironmentId,
     instanceId: providerInstanceId,
+    model,
   });
   const { providers } = usage;
   if (providers.length === 0) return null;
@@ -257,9 +283,12 @@ export function ProjectUsageIndicator({
               className="size-3.5"
               iconClassName="size-3.5"
             />
-            <UsageRing percent={provider.peak?.usedPercent ?? null} tone={provider.tone} />
+            <UsageRing
+              percent={provider.peak ? leftPercent(provider.peak.usedPercent) : null}
+              tone={provider.tone}
+            />
             <span className="sws-usage-chip-value">
-              {provider.peak ? `${provider.peak.usedPercent}%` : "?"}
+              {provider.peak ? `${leftPercent(provider.peak.usedPercent)}% left` : "?"}
             </span>
           </span>
         ))}

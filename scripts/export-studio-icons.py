@@ -7,6 +7,7 @@ Every icon is the mark on a rounded indigo tile. Writes the tracked PNG, ICO and
 logo.svg and its copies, and the text.svg layer of the three Icon Composer projects.
 See assets/README.md. Needs Pillow and rsvg-convert (brew install librsvg).
 """
+import hashlib
 import math
 import re
 import subprocess
@@ -138,7 +139,28 @@ def main():
             (ROOT / public / target).write_bytes((ROOT / f"{prefix}-{source}").read_bytes())
     for name in ("icon.webp", "icon-nightly.webp"):
         mac.save(ROOT / "apps/marketing/src/assets" / name, format="WEBP", quality=92, method=6)
+    stamp_icon_links()
     print("SpecWithCode icons generated from assets/brand")
+
+
+# Pages that link the generated icons. Each link carries ?v=<mark hash>, so a new mark gets new
+# URLs and browsers stop showing a favicon or touch icon cached from the old one.
+ICON_LINKERS = (
+    "apps/web/index.html",
+    "apps/web/public/manifest.webmanifest",
+    "apps/marketing/src/layouts/Layout.astro",
+    "apps/marketing/src/pages/95.astro",
+)
+ICON_LINK = re.compile(
+    r"/(favicon\.ico|favicon-\d+x\d+\.png|apple-touch-icon\.png|manifest\.webmanifest|studio-mark\.svg)(\?v=[0-9a-f]+)?"
+)
+
+
+def stamp_icon_links():
+    version = hashlib.sha256((BRAND / "specwithcode-mark.svg").read_bytes()).hexdigest()[:8]
+    for relative in ICON_LINKERS:
+        path = ROOT / relative
+        path.write_text(ICON_LINK.sub(lambda match: f"/{match.group(1)}?v={version}", path.read_text()))
 
 
 if __name__ == "__main__":

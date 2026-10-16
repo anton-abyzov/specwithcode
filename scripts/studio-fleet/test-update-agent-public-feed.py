@@ -72,7 +72,7 @@ class PublicFeed(fixture.AgentCase):
         self.write_installation('1.0.16', '157ea42fe61de34998e8fa737a8dc45b49fac482')
         installation = self.own / 'installation.json'
         before = installation.read_bytes()
-        target = self.home / '.local/share/specweave-studio/updater'
+        target = self.home / '.specwithcode/install/updater'
         target.mkdir(parents=True)
         (target / 'update_agent.py').write_text('# previous 1.0.16 helper\n')
         self.bootstrap()

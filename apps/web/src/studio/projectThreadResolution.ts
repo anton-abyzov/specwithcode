@@ -5,7 +5,10 @@ import type { useThreadActions } from "../hooks/useThreadActions";
 /** Legacy archived history and explicit settlement have the same project-level reopen action. */
 export async function toggleProjectThreadResolution(
   thread: EnvironmentThreadShell,
-  actions: Pick<ReturnType<typeof useThreadActions>, "unarchiveThread" | "unsettleThread" | "settleThread">,
+  actions: Pick<
+    ReturnType<typeof useThreadActions>,
+    "unarchiveThread" | "unsettleThread" | "settleThread"
+  >,
   refresh: () => void,
 ) {
   const ref = scopeThreadRef(thread.environmentId, thread.id);

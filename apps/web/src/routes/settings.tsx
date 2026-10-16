@@ -1,15 +1,16 @@
 import { Outlet, createFileRoute, redirect, useLocation } from "@tanstack/react-router";
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { RotateCcwIcon } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { useSettingsRestore } from "../components/settings/SettingsPanels";
 
 import { SettingsBreadcrumb } from "../components/settings/SettingsBreadcrumb";
+import { SettingsDialog } from "../components/settings/SettingsDialog";
+import { SettingsSidebarNav } from "../components/settings/SettingsSidebarNav";
 import { SidebarInset } from "../components/ui/sidebar";
 import { useNavigateToMainApp } from "../components/sidebar/mainAppLocation";
 import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
 import { isElectron } from "../env";
-import { useEscapeToGoBack } from "../hooks/useNavigateBack";
 import {
   SettingsScopeProvider,
   useSettingsScope,
@@ -18,6 +19,11 @@ import { useEnvironments } from "../state/environments";
 import { SettingsScopeNotice } from "../components/settings/SettingsScopeNotice";
 import { SETTINGS_DEVICE_ONLY_PATHS } from "../components/settings/SettingsScopeSentence";
 import { SettingsPageContainer } from "../components/settings/settingsLayout";
+import {
+  effectiveSettingsSearch,
+  SETTINGS_SINGLE_MACHINE_PATHS,
+  settingsSearchAfterScopeChange,
+} from "../components/settings/settingsPageScope";
 import { redirectSettingsEntry } from "../components/settings/settingsEntryScope";
 import {
   retainSettingsScope,
@@ -114,15 +120,20 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
 function SettingsContentLayout() {
   const location = useLocation();
   const navigateToMainApp = useNavigateToMainApp();
-  useEscapeToGoBack(navigateToMainApp);
   const { search } = useSettingsScope();
   const [restoreSignal, setRestoreSignal] = useState(0);
 
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none isolate">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
-        <WorkspacePageHeader electron={isElectron}>
-          <div className="flex w-full items-center gap-3">
+    <>
+      {/* The app stays in place, dimmed, under the settings sheet. */}
+      <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none isolate">
+        <WorkspacePageHeader electron={isElectron}>{null}</WorkspacePageHeader>
+      </SidebarInset>
+      <SettingsDialog
+        onClose={() => void navigateToMainApp()}
+        nav={<SettingsSidebarNav pathname={location.pathname} />}
+        header={
+          <>
             <SettingsBreadcrumb pathname={location.pathname} />
             {location.pathname === "/settings/general" ? (
               <div className="ms-auto flex shrink-0 items-center">
@@ -131,9 +142,9 @@ function SettingsContentLayout() {
                 />
               </div>
             ) : null}
-          </div>
-        </WorkspacePageHeader>
-
+          </>
+        }
+      >
         <div
           key={`${JSON.stringify(search)}:${restoreSignal}`}
           className="min-h-0 flex flex-1 flex-col"
@@ -142,8 +153,8 @@ function SettingsContentLayout() {
             <Outlet />
           </SettingsScopeBoundary>
         </div>
-      </div>
-    </SidebarInset>
+      </SettingsDialog>
+    </>
   );
 }
 
@@ -151,11 +162,19 @@ function SettingsRouteLayout() {
   const rawSearch = Route.useSearch();
   const navigate = Route.useNavigate();
   const pathname = useLocation({ select: (location) => location.pathname });
+  const project = rawSearch.project;
+  const machine = rawSearch.machine;
+  const checkout = rawSearch.checkout;
+  const search = useMemo(
+    () => effectiveSettingsSearch(pathname, { project, machine, checkout }),
+    [checkout, machine, pathname, project],
+  );
   return (
     <SettingsScopeProvider
-      search={rawSearch}
-      singleEnvironment={pathname === "/settings/providers" || pathname === "/settings/privacy"}
-      onChange={(next) => {
+      search={search}
+      singleEnvironment={SETTINGS_SINGLE_MACHINE_PATHS.has(pathname)}
+      onChange={(selected) => {
+        const next = settingsSearchAfterScopeChange(pathname, rawSearch, selected);
         // Send every axis so the retain middleware sees an explicit target
         // even when the choice is "all", which is the absence of a key.
         void navigate({

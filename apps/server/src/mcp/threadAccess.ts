@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import type { OrchestratorV2Error } from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as OrchestrationMcp from "./OrchestratorMcpService.ts";
+import { afterStop, callerLiveness, lastTurnWasStopped } from "./McpCallerLiveness.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 
 export const unavailable = () =>
@@ -114,23 +115,44 @@ export const assertTargetWithinLimits = (
   );
 
 /**
- * A thread caller acts only while it owns a live run of a thread that is not
- * archived, so a provider token that outlived its session cannot act. An
- * OAuth client has no run; its session and ceiling are its authority.
+ * A thread caller acts only while it is the provider that runs its thread,
+ * which is not archived: the instance of its live turn, or between turns the
+ * thread's own instance through a session still attached here (a provider's
+ * background agents keep working after their turn). A provider token that
+ * outlived its session, or belongs to a provider the thread left, cannot act.
+ * An OAuth client has no run; its session and ceiling are its authority.
  */
-export function assertLiveCaller({ caller, scope }: Caller) {
-  if (caller === undefined) return Effect.void;
-  return caller.archivedAt !== null ||
-    caller.activeRunId === null ||
-    caller.providerInstanceId !== scope.thread?.providerInstanceId
-    ? Effect.fail(
-        new OrchestratorMcpFailure({
-          code: "parent_not_active",
-          message: "The calling provider no longer owns an active thread run.",
-        }),
-      )
-    : Effect.void;
-}
+export const assertLiveCaller = Effect.fn("mcp.assertLiveCaller")(function* ({
+  caller,
+  scope,
+  threads,
+}: Caller) {
+  if (caller === undefined) return;
+  let verdict =
+    scope.thread === undefined
+      ? ({ live: false, message: "The calling provider has no thread." } as const)
+      : callerLiveness({
+          thread: caller,
+          activeTurnProviderInstanceId:
+            caller.activeRunId === null ? undefined : caller.providerInstanceId,
+          caller: scope.thread,
+        });
+  if (verdict.live && verdict.turn === "between_turns") {
+    // Stop also stops what the stopped turn left running.
+    const records = yield* threads
+      .getThreadRecords(caller.id, ["runs", "turnItems"], {
+        turnItemTypes: ["run_interrupt_request"],
+      })
+      .pipe(Effect.mapError(unavailable));
+    verdict = afterStop(verdict, caller.id, lastTurnWasStopped(records));
+  }
+  if (!verdict.live) {
+    return yield* new OrchestratorMcpFailure({
+      code: "parent_not_active",
+      message: verdict.message,
+    });
+  }
+});
 
 /**
  * Actions that change the environment itself (projects, preferences) need full
@@ -151,7 +173,7 @@ export const resolveProjectId = (context: Caller, projectId: ProjectId | undefin
       : Effect.fail(
           new OrchestratorMcpFailure({
             code: "target_required",
-            message: "Pass projectId: this MCP client is not running inside a Studio thread.",
+            message: "Pass projectId: this MCP client is not running inside a SpecWithCode thread.",
           }),
         );
 
@@ -164,7 +186,7 @@ const resolveThreadId = (context: Caller, threadId: ThreadId | undefined) =>
       : Effect.fail(
           new OrchestratorMcpFailure({
             code: "target_required",
-            message: "Pass threadId: this MCP client is not running inside a Studio thread.",
+            message: "Pass threadId: this MCP client is not running inside a SpecWithCode thread.",
           }),
         );
 

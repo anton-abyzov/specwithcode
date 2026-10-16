@@ -41,6 +41,12 @@ vi.mock("./ui/tooltip", () => ({
   TooltipPopup: () => null,
 }));
 vi.mock("./chat/PierreEntryIcon", () => ({ PierreEntryIcon: () => null }));
+vi.mock("./chat/MarkdownDocumentReader", () => ({
+  MARKDOWN_DOCUMENT_PATTERN: /\.(?:md|mdx|markdown)$/i,
+  MarkdownDocumentReader: (props: { target: { path: string } }) => (
+    <div data-document-reader={props.target.path} />
+  ),
+}));
 vi.mock("./ui/toast", () => ({
   toastManager: { add: state.toast },
   stackedThreadToast: (value: unknown) => value,
@@ -201,7 +207,13 @@ it("removes host actions after revocation while keeping file preview and copying
   expect(offeredActions()).toEqual(["copy-relative", "copy-full"]);
   expect(state.copy).toHaveBeenCalledWith("/work/docs/readme.md");
   await act(async () => anchor().props.onClick(menuEvent()));
-  expect(state.openFile).toHaveBeenCalledWith(threadRef, "docs/readme.md", undefined);
+  // Previewing stays allowed: the file opens in the viewer overlay.
+  expect(
+    renderer!.root.findAll(
+      (node) =>
+        node.type === "div" && node.props["data-document-reader"] === "/work/docs/readme.md",
+    ),
+  ).toHaveLength(1);
   expect(state.openEditor).not.toHaveBeenCalled();
 });
 

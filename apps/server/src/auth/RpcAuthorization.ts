@@ -63,6 +63,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.projectsSkillsRead]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsEnvironmentRead]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsEnvironmentImportPreview]: AuthOrchestrationReadScope,
+  [WS_METHODS.projectsFolderCheck]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsWorkspaceRead]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsStarterSuggestions]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsConnectionsRead]: AuthOrchestrationReadScope,
@@ -70,6 +71,9 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.projectsLibraryRead]: AuthFilesystemReadScope,
   [WS_METHODS.projectsLibraryAddArtifact]: AuthFilesystemWriteScope,
   [WS_METHODS.projectsThreadReportsRead]: AuthFilesystemReadScope,
+  [WS_METHODS.projectsThreadIncrementProgressRead]: AuthFilesystemReadScope,
+  [WS_METHODS.projectsIncrementsList]: AuthFilesystemReadScope,
+  [WS_METHODS.projectsThreadIncrementLink]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsThreadReportSave]: AuthFilesystemWriteScope,
   [WS_METHODS.projectsMemoryWrite]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsMemoryDelete]: AuthOrchestrationOperateScope,
@@ -121,6 +125,10 @@ export const RPC_REQUIRED_SCOPES = {
   // Approved mods run in every client, so every reader of this host loads them.
   [WS_METHODS.modsList]: AuthOrchestrationReadScope,
   [WS_METHODS.modsSpecweave]: AuthOrchestrationReadScope,
+  [WS_METHODS.composerDraftsGet]: AuthOrchestrationReadScope,
+  // Refresh reads public status feeds and this host's checks; it changes nothing.
+  [WS_METHODS.statusPageSnapshot]: AuthOrchestrationReadScope,
+  [WS_METHODS.statusPageRefresh]: AuthOrchestrationReadScope,
   // Status carries no token, only the paired person's display name.
   [WS_METHODS.telegramChannelStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.googleAccountStatus]: AuthOrchestrationReadScope,
@@ -155,6 +163,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.pullRequestsDetail]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsPreview]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsChecks]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsCheckFailureLog]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsActivity]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsThreadComments]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsDiffFileContents]: AuthOrchestrationReadScope,

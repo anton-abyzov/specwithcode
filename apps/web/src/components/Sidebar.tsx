@@ -127,6 +127,8 @@ import { canOpenProjectWindowFor, openProjectWindow } from "../lib/projectWindow
 import { readLocalApi } from "../localApi";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalProject";
+import { projectPickerGroups } from "../studio/projectListVisibility";
+import { isCoordinatorNamedThread } from "../studio/threadTitles";
 import {
   buildSidebarProjectSnapshots,
   projectGroupsSpanEnvironments,
@@ -146,6 +148,7 @@ import { useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
+import { threadRunHealth } from "@specweave-studio/client-runtime/state/models";
 import {
   useEnvironmentIdentities,
   useConnectedEnvironmentIds,
@@ -281,6 +284,9 @@ import {
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
+import { useSidebarThreadPlans } from "./sidebar/SidebarPlanProgress";
+import { PlanProgressChip } from "./studio/PlanProgressChip";
+import type { ThreadPlanCompact } from "../studio/threadPlanProgress";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { MiddleTruncate } from "./ui/middle-truncate";
@@ -1181,6 +1187,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     threadKey: string,
     snapshot: ThreadChangeRequestSnapshot | null,
   ) => void;
+  /** "3/5" from the thread's increment or todo list; null hides it. */
+  plan: ThreadPlanCompact | null;
 }) {
   const {
     isRenaming,
@@ -1270,6 +1278,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // switching sidebars must not light up every historical thread as unread.
   const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
   const status = resolveSidebarThreadStatus(thread);
+  const nowMinute = useNowMinute();
+  // A turn that has gone quiet for longer than its work explains: shown so a
+  // stuck thread does not read "Working" for hours.
+  const runStalled =
+    status === "working" &&
+    threadRunHealth(thread, Date.parse(`${nowMinute}:00Z`))?.state === "stalled";
   const isInFlight =
     status === "working" || status === "waiting" || status === "approval" || status === "input";
   // A woken thread reappears at its original position (the sort is
@@ -1298,8 +1312,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // Status hues follow the system-wide convention set by sidebar v1 and the
   // mobile Live Activity/widgets (amber approval, indigo input, sky working)
   // so a thread reads the same color everywhere it surfaces.
-  const topStatus =
-    status === "working"
+  const topStatus = runStalled
+    ? {
+        label: "No activity",
+        icon: "failed" as const,
+        className: "text-muted-foreground",
+      }
+    : status === "working"
       ? {
           // A native /goal keeps the agent going across turns until it is met.
           label: thread.goal?.status === "active" ? "Goal" : "Working",
@@ -1434,6 +1453,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     (event: ReactMouseEvent) => {
       if (
         !readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope) ||
+        isCoordinatorNamedThread(thread) ||
         isRenaming ||
         event.metaKey ||
         event.ctrlKey ||
@@ -1446,7 +1466,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       event.preventDefault();
       onStartRename(threadRef, thread.title);
     },
-    [isRenaming, onStartRename, thread.title, threadRef],
+    [isRenaming, onStartRename, thread, threadRef],
   );
   const [isFileDragOver, setIsFileDragOver] = useState(false);
   const fileDropHandlers = useMemo(
@@ -1837,6 +1857,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             {draftIndicator}
             {title}
             {pinIndicator}
+            {props.plan ? <PlanProgressChip plan={props.plan} /> : null}
             {terminalStatusIcon}
             {isRegeneratingTitle ? (
               <span role="status" className="sr-only">
@@ -2173,6 +2194,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               ) : (
                 <span className="flex-1" />
               )}
+              {props.plan ? <PlanProgressChip plan={props.plan} /> : null}
               {terminalStatusIcon}
               {prBadge}
               {diff ? (
@@ -2585,15 +2607,21 @@ export default function Sidebar() {
   const setProjectScopeKey = useUiStateStore((store) => store.setSidebarProjectScopeKey);
   // {value, label} items let Base UI drive the combobox selection contract
   // while the popup search filters the same collection.
+  // Neither a machine's "No project" folder nor an archived project is a scope
+  // choice; the current scope stays listed so the menu still shows it.
   const projectScopeItems = useMemo(
     () => [
       { value: "all", label: "All projects" },
-      ...projectGroups.map((project) => ({
+      ...projectPickerGroups(
+        projectGroups,
+        (environmentId) => serverConfigs.get(environmentId)?.scratchWorkspaceRoot ?? null,
+        projectScopeKey,
+      ).map((project) => ({
         value: project.projectKey,
         label: project.displayName,
       })),
     ],
-    [projectGroups],
+    [projectGroups, projectScopeKey, serverConfigs],
   );
   // Same-named projects on two machines are only told apart by where they
   // live, so rows on another machine carry its icon once the catalog spans
@@ -3771,6 +3799,18 @@ export default function Sidebar() {
   );
   // Include every visible row in the measured order. Older servers disable
   // pickup on their rows without changing where those rows render.
+  const sidebarAllThreads = useMemo(
+    () => [
+      ...pinnedThreads,
+      ...activeThreads,
+      ...workingThreads,
+      ...snoozedThreads,
+      ...settledThreads,
+    ],
+    [activeThreads, pinnedThreads, settledThreads, snoozedThreads, workingThreads],
+  );
+  const { plans: sidebarPlans, loaders: sidebarPlanLoaders } =
+    useSidebarThreadPlans(sidebarAllThreads);
   const sidebarListItems = useMemo((): readonly SidebarListItem[] => {
     const rowsOf = (
       list: readonly EnvironmentThreadShell[],
@@ -4633,6 +4673,7 @@ export default function Sidebar() {
               isSnoozed,
               canSnoozeNow: canSnooze(thread, { now: new Date().toISOString() }),
               isRegeneratingTitle,
+              titleLocked: isCoordinatorNamedThread(thread),
               isRunning: !threadRuntimeCanArchive(thread.runtime),
               canOpenProjectWindow:
                 threadProjectGroup !== null &&
@@ -5296,6 +5337,7 @@ export default function Sidebar() {
                 onDragEnd={handleThreadDragEnd}
               >
                 <SidebarDragLifecycle onUnmount={cancelThreadDrag} />
+                {sidebarPlanLoaders}
                 <SortableContext items={sortableIds} strategy={sidebarSortingStrategy}>
                   <ul
                     ref={attachListMotionRef}
@@ -5336,6 +5378,7 @@ export default function Sidebar() {
                             // sortable wrapper keeps its identity during a drag.
                             key={`${threadKey}:${rowVariant}`}
                             thread={thread}
+                            plan={sidebarPlans.get(threadKey) ?? null}
                             variant={rowVariant}
                             // Snoozed rows wake, settled rows un-settle, and cards settle.
                             variantAction={

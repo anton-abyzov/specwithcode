@@ -119,6 +119,8 @@ const layerMcpRegistry = Layer.succeed(
     touch: () => Effect.void,
     revokeProviderSession: () => Effect.void,
     revokeThread: () => Effect.void,
+    revokeThreadInstance: () => Effect.void,
+    invalidateThread: () => Effect.void,
     revokeAll: Effect.void,
   }),
 );
@@ -129,7 +131,9 @@ const layerPlatformTest = Layer.merge(
     resolveLink: () => Effect.die("unused title link"),
   }),
 );
-const layerServerConfig = ServerConfig.layerTest(`${ROOT}/work`, { prefix: "studio-opencode2-live-" });
+const layerServerConfig = ServerConfig.layerTest(`${ROOT}/work`, {
+  prefix: "studio-opencode2-live-",
+});
 const layerVcsDriverRegistry = VcsDriverRegistry.layer.pipe(
   Layer.provide(VcsProcess.layer),
   Layer.provide(layerServerConfig),
@@ -339,7 +343,10 @@ describe.runIf(binaryPath !== undefined && ROOT !== "")("OpenCode 2 live orchest
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        yield* fs.writeFileString(path.join(ROOT, "work", "hello.txt"), "hello from specweave-studio live\n");
+        yield* fs.writeFileString(
+          path.join(ROOT, "work", "hello.txt"),
+          "hello from specweave-studio live\n",
+        );
         yield* EffectWorker.runDaemonWithOptions({ concurrency: 2 }).pipe(Effect.forkScoped);
 
         // A status check starts a fresh server, which lists no models for its

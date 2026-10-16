@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
 import {
+  gitHubCopilotIconUrlForInstanceConfig,
   isGitHubCopilotIcon,
   AcpRegistryImportSessionInput,
   AcpRegistryManagedBinaryUninstallInput,
@@ -196,5 +197,28 @@ describe("bundled Copilot identity", () => {
     expect(
       isGitHubCopilotIcon(null, "https://invalid.test/registry/v1/latest/github-copilot-cli.svg"),
     ).toBe(false);
+  });
+});
+
+describe("Copilot identity from instance config", () => {
+  const url = "https://cdn.agentclientprotocol.com/registry/v1/latest/github-copilot-cli.svg";
+  it("names Studio-managed and local Copilot installs, nothing else", () => {
+    expect(gitHubCopilotIconUrlForInstanceConfig({ agentId: "github-copilot-cli" })).toBe(url);
+    expect(
+      gitHubCopilotIconUrlForInstanceConfig({
+        source: "local",
+        agentId: "github-copilot-cli",
+        commandPath: "/usr/local/lib/node_modules/@github/copilot-darwin-arm64/copilot",
+      }),
+    ).toBe(url);
+    expect(
+      gitHubCopilotIconUrlForInstanceConfig({
+        source: "local",
+        agentId: "github-copilot-cli",
+        commandPath: "/usr/local/bin/dsh",
+      }),
+    ).toBeNull();
+    expect(gitHubCopilotIconUrlForInstanceConfig({ agentId: "gemini" })).toBeNull();
+    expect(gitHubCopilotIconUrlForInstanceConfig(undefined)).toBeNull();
   });
 });

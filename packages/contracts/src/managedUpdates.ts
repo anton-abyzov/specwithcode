@@ -90,11 +90,17 @@ export interface DesktopUpdatePreferences {
    */
   installAutomatically: boolean;
   /**
-   * False when this build keeps self-update off (STUDIO_DISABLE_AUTO_UPDATE),
+   * False when this build keeps self-update off (SPECWITHCODE_DISABLE_AUTO_UPDATE or STUDIO_DISABLE_AUTO_UPDATE),
    * so nothing runs on its own and the switches above report off. Absent on
    * desktop apps from before it was reported.
    */
   automaticUpdatesAllowed?: boolean;
+  /**
+   * How long "Restart when idle" waits for running work, in minutes. After
+   * it, the work is stopped for the update and resumes after the restart.
+   * Absent on desktop apps from before it was added (2 minutes).
+   */
+  forceInstallAfterMinutes?: number;
 }
 
 export const DesktopUpdatePreferencesSchema = Schema.Struct({
@@ -102,12 +108,14 @@ export const DesktopUpdatePreferencesSchema = Schema.Struct({
   downloadAutomatically: Schema.Boolean,
   installAutomatically: Schema.Boolean,
   automaticUpdatesAllowed: Schema.optionalKey(Schema.Boolean),
+  forceInstallAfterMinutes: Schema.optionalKey(Schema.Number),
 });
 
 export const DesktopUpdatePreferencesPatchSchema = Schema.Struct({
   checkAutomatically: Schema.optionalKey(Schema.Boolean),
   downloadAutomatically: Schema.optionalKey(Schema.Boolean),
   installAutomatically: Schema.optionalKey(Schema.Boolean),
+  forceInstallAfterMinutes: Schema.optionalKey(Schema.Number),
 });
 export type DesktopUpdatePreferencesPatch = typeof DesktopUpdatePreferencesPatchSchema.Type;
 

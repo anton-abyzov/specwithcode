@@ -8,10 +8,17 @@ import {
   rememberSettingsOriginProject,
   resolveSettingsOriginProjectKey,
 } from "./settingsEntryScope";
+import { rememberSettingsOpener } from "./settingsReturnFocus";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
 
-/** Records the current page's project so Settings opens scoped to it. */
+/** Records the current page's project and focus so Settings opens scoped to it and closes back to it. */
 export function useSettingsOriginTracker(): void {
+  useEffect(() => {
+    const onFocusIn = (event: FocusEvent) => rememberSettingsOpener(event.target as Element | null);
+    rememberSettingsOpener(document.activeElement);
+    document.addEventListener("focusin", onFocusIn);
+    return () => document.removeEventListener("focusin", onFocusIn);
+  }, []);
   const pathname = useLocation({ select: (location) => location.pathname });
   const routeProjectKey = useParams({
     strict: false,

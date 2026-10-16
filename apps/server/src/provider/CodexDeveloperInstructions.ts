@@ -186,6 +186,7 @@ export interface CodexRuntimeInfo {
   readonly modelName?: string | undefined;
   readonly reasoningEffort: string;
   readonly responseStyle?: ResponseStyle | undefined;
+  readonly agentInstructions?: string | undefined;
 }
 
 /** Mode prompt for `turn/start.collaborationMode.settings.developer_instructions`. */
@@ -214,12 +215,15 @@ export function buildCodexAdditionalContext(
   toolsAvailable: boolean | SpecWeaveStudioToolAvailability = true,
 ): Record<string, V2TurnStartParams__AdditionalContextEntry> {
   const tools = toolInstructions(toolsAvailable);
+  const { agentInstructions, ...runtimeInfo } = runtime;
+  const agent = agentInstructions?.trim() ?? "";
   // Separate keys keep each value under Codex's per-entry token cap.
   return {
+    ...(agent ? { studio_code_agent_instructions: { kind: "application", value: agent } } : {}),
     studio_code_orchestration: { kind: "application", value: STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS },
     studio_code_runtime: {
       kind: "application",
-      value: buildRuntimeInstructions({ harness: "Codex", ...runtime }),
+      value: buildRuntimeInstructions({ harness: "Codex", ...runtimeInfo }),
     },
     ...(tools ? { studio_code_tools: { kind: "application", value: tools } } : {}),
   };

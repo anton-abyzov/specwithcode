@@ -13,6 +13,8 @@ import type {
 } from "@specweave-studio/contracts";
 import { isProviderAvailable } from "@specweave-studio/contracts";
 import { limitAccountKey, limitsNotice } from "@specweave-studio/shared/usageLimits";
+import { blockingWindow, windowModelScope } from "@specweave-studio/shared/usageWindows";
+import { leftPercent, usageTone } from "./usageIndicatorModel";
 
 export type HostStatus = "online" | "connecting" | "offline";
 
@@ -25,6 +27,13 @@ export interface HostLimitWindow {
   readonly resetsAt: number | null;
   /** Its reset has passed since the reading: the bar no longer describes the window. */
   readonly stale: boolean;
+  /** The model family the window limits, when it is not account-wide. */
+  readonly modelScope?: string;
+  /**
+   * A spent window that caps this one (the weekly over the session): what is
+   * left here cannot be used until that one resets.
+   */
+  readonly blockedBy?: { readonly label: string; readonly resetsAt: number | null };
 }
 
 export interface HostProviderRow {
@@ -91,22 +100,58 @@ export function hostStatus(phase: string): HostStatus {
 }
 
 function windowsOf(limits: ServerProviderUsageLimits, now: number): HostLimitWindow[] {
-  return limits.windows.map((window) => {
-    const at = window.resetsAt === undefined ? NaN : Date.parse(window.resetsAt);
-    return {
+  return withBlockers(
+    limits.windows.map((window) => {
+      const at = window.resetsAt === undefined ? NaN : Date.parse(window.resetsAt);
+      const scope = windowModelScope(window);
+      return {
+        id: window.id,
+        label: window.label,
+        kind: window.kind,
+        usedPercent: Math.round(Math.max(0, Math.min(100, window.usedPercent))),
+        resetsAt: Number.isFinite(at) && at > now ? at : null,
+        stale: Number.isFinite(at) && at <= now,
+        ...(scope === null ? {} : { modelScope: scope }),
+      };
+    }),
+    now,
+  );
+}
+
+/** Marks each window a spent one caps; stale readings neither block nor are blocked. */
+export function withBlockers(windows: readonly HostLimitWindow[], now: number): HostLimitWindow[] {
+  const live = windows
+    .filter((window) => !window.stale)
+    .map((window) => ({
+      source: window,
       id: window.id,
       label: window.label,
-      kind: window.kind,
-      usedPercent: Math.round(Math.max(0, Math.min(100, window.usedPercent))),
-      resetsAt: Number.isFinite(at) && at > now ? at : null,
-      stale: Number.isFinite(at) && at <= now,
-    };
+      usedPercent: window.usedPercent,
+      ...(window.resetsAt === null ? {} : { resetsAt: new Date(window.resetsAt).toISOString() }),
+      ...(window.modelScope === undefined ? {} : { modelScope: window.modelScope }),
+    }));
+  return windows.map((window) => {
+    const { blockedBy: _previous, ...rest } = window;
+    const self = live.find((entry) => entry.source === window);
+    const blocker = self ? blockingWindow(self, live, now) : null;
+    return blocker === null
+      ? rest
+      : {
+          ...rest,
+          blockedBy: { label: blocker.label, resetsAt: blocker.source.resetsAt },
+        };
   });
 }
 
+/**
+ * The fullest current account-wide window: a spent model window (Fable) stops
+ * only that model, so it decides the peak only when nothing else reports.
+ */
 function peakOf(windows: readonly HostLimitWindow[]): number | null {
   const current = windows.filter((window) => !window.stale);
-  return current.length === 0 ? null : Math.max(...current.map((window) => window.usedPercent));
+  const wide = current.filter((window) => window.modelScope === undefined);
+  const counted = wide.length > 0 ? wide : current;
+  return counted.length === 0 ? null : Math.max(...counted.map((window) => window.usedPercent));
 }
 
 /**
@@ -184,10 +229,13 @@ export function collectHostLimitBlocks(
     const providers = useSaved
       ? saved.providers.map((row) => {
           // A saved reset that has passed no longer says anything about the window.
-          const windows = row.windows.map((window) =>
-            window.resetsAt !== null && window.resetsAt <= options.now
-              ? { ...window, resetsAt: null, stale: true }
-              : window,
+          const windows = withBlockers(
+            row.windows.map((window) =>
+              window.resetsAt !== null && window.resetsAt <= options.now
+                ? { ...window, resetsAt: null, stale: true }
+                : window,
+            ),
+            options.now,
           );
           return { ...row, windows, peak: peakOf(windows), sharedWith: [] };
         })
@@ -249,9 +297,9 @@ export function savableReadings(
   return saved;
 }
 
-export function usageToneOf(percent: number | null): "ok" | "warn" | "full" {
-  if (percent === null) return "ok";
-  return percent >= 95 ? "full" : percent >= 80 ? "warn" : "ok";
+/** Tone of a used share, judged by what is left: amber at 20% left, red at 5% left. */
+export function usageToneOf(usedPercent: number | null): "ok" | "warn" | "full" {
+  return usedPercent === null ? "ok" : usageTone(leftPercent(usedPercent));
 }
 
 /** `just now`, `5m ago`, `3h ago`, `2d ago`. */

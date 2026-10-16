@@ -27,7 +27,7 @@ vi.mock("./hooks/useLocalStorage", () => ({
   useLocalStorage: vi.fn(),
 }));
 
-import { useOpenInPreferredEditor } from "./editorPreferences";
+import { resolvePreferredEditor, useOpenInPreferredEditor } from "./editorPreferences";
 
 const primary = EnvironmentId.make("primary");
 const secondary = EnvironmentId.make("secondary");
@@ -65,7 +65,8 @@ it("checks revocation and regrant when a retained editor callback is invoked", a
     environmentId: secondary,
     input: { cwd: "/work/readme.md:5", editor: "vscode" },
   });
-  expect(state.setPreference).toHaveBeenCalledTimes(1);
+  // The fallback is not stored: only an editor the user picks is remembered.
+  expect(state.setPreference).not.toHaveBeenCalled();
 });
 
 it("keeps the stored available editor for an authorized launch", async () => {
@@ -85,4 +86,22 @@ it("returns the existing failures for a missing environment or editor", async ()
   expect((await useOpenInPreferredEditor(null, ["vscode"])("/work"))._tag).toBe("Failure");
   expect((await useOpenInPreferredEditor(secondary, [])("/work"))._tag).toBe("Failure");
   expect(state.run).not.toHaveBeenCalled();
+});
+
+it("defaults to VS Code over Cursor, then the first installed editor", () => {
+  expect(resolvePreferredEditor(null, ["cursor", "zed", "vscode"])).toBe("vscode");
+  expect(resolvePreferredEditor(null, ["zed", "cursor"])).toBe("cursor");
+  expect(resolvePreferredEditor(null, ["file-manager"])).toBe("file-manager");
+  expect(resolvePreferredEditor(null, [])).toBeNull();
+});
+
+it("keeps the user's installed choice and ignores one that is not installed", () => {
+  expect(resolvePreferredEditor("zed", ["cursor", "vscode", "zed"])).toBe("zed");
+  expect(resolvePreferredEditor("zed", ["cursor", "vscode"])).toBe("vscode");
+});
+
+it("opens VS Code by default when Cursor is also installed", async () => {
+  state.allowed.add(secondary);
+  const open = useOpenInPreferredEditor(secondary, ["cursor", "vscode"]);
+  expect(await open("/work")).toMatchObject({ _tag: "Success", value: "vscode" });
 });

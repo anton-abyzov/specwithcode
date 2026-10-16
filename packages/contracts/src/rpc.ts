@@ -4,7 +4,13 @@ import {
   legacyServerUpdateRpcs,
 } from "./managedUpdatesRpc.ts";
 import { MACHINE_HANDOFF_RPC_METHODS, machineHandoffRpcs } from "./machineHandoffRpc.ts";
-import { PROJECT_CONNECTION_RPC_METHODS, projectConnectionRpcs } from "./projectConnectionRpc.ts";
+import { BROWSER_BRIDGE_RPC_METHODS, browserBridgeRpcs } from "./browserBridge.ts";
+import { BROWSER_EXTENSION_RPC_METHODS, browserExtensionRpcs } from "./browserExtension.ts";
+import {
+  nativeConnectionApplyRpc,
+  PROJECT_CONNECTION_RPC_METHODS,
+  projectConnectionRpcs,
+} from "./projectConnectionRpc.ts";
 import { PROJECT_WORKSPACE_RPC_METHODS, projectWorkspaceRpcs } from "./projectWorkspaceRpc.ts";
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 import {
@@ -150,6 +156,13 @@ import {
   ModSpecweaveResult,
 } from "./mods.ts";
 import {
+  ComposerDraftError,
+  ComposerDraftGetResult,
+  ComposerDraftKeyInput,
+  ComposerDraftPutInput,
+  ComposerDraftPutResult,
+} from "./composerDraft.ts";
+import {
   GoogleAccountCompleteSignInInput,
   GoogleAccountConfigureClientInput,
   GoogleAccountError,
@@ -162,6 +175,7 @@ import {
   TelegramChannelError,
   TelegramChannelStatus,
 } from "./telegramChannel.ts";
+import { StatusPageError, StatusSnapshot } from "./statusPage.ts";
 import {
   OrchestrationSearchThreadsError,
   OrchestrationSearchThreadsInput,
@@ -181,6 +195,8 @@ import {
   PullRequestDetail,
   PullRequestPreview,
   PullRequestChecks,
+  PullRequestCheckFailureLogInput,
+  PullRequestCheckFailureLogResult,
   PullRequestDiffFileContentsInput,
   PullRequestDiffFileContentsResult,
   PullRequestFilesViewedResult,
@@ -374,6 +390,8 @@ export const WS_METHODS = {
   ...MACHINE_HANDOFF_RPC_METHODS,
   ...MANAGED_UPDATES_RPC_METHODS,
   ...PROJECT_CONNECTION_RPC_METHODS,
+  ...BROWSER_BRIDGE_RPC_METHODS,
+  ...BROWSER_EXTENSION_RPC_METHODS,
   // Project registry methods
   projectsList: "projects.list",
   projectsAdd: "projects.add",
@@ -514,6 +532,15 @@ export const WS_METHODS = {
   modsApprove: "mods.approve",
   modsDisable: "mods.disable",
 
+  // Unsent composer drafts
+  composerDraftsGet: "composerDrafts.get",
+  composerDraftsPut: "composerDrafts.put",
+  composerDraftsDelete: "composerDrafts.delete",
+
+  // Status page
+  statusPageSnapshot: "statusPage.snapshot",
+  statusPageRefresh: "statusPage.refresh",
+
   // Telegram channel
   telegramChannelStatus: "telegramChannel.status",
   telegramChannelConfigure: "telegramChannel.configure",
@@ -554,6 +581,7 @@ export const WS_METHODS = {
   pullRequestsDetail: "pullRequests.detail",
   pullRequestsPreview: "pullRequests.preview",
   pullRequestsChecks: "pullRequests.checks",
+  pullRequestsCheckFailureLog: "pullRequests.checkFailureLog",
   pullRequestsActivity: "pullRequests.activity",
   pullRequestsThreadComments: "pullRequests.threadComments",
   pullRequestsDiffFileContents: "pullRequests.diffFileContents",
@@ -872,6 +900,36 @@ const WsModsDisableRpc = Rpc.make(WS_METHODS.modsDisable, {
   error: Schema.Union([ModsError, EnvironmentAuthorizationError]),
 });
 
+const WsComposerDraftsGetRpc = Rpc.make(WS_METHODS.composerDraftsGet, {
+  payload: ComposerDraftKeyInput,
+  success: ComposerDraftGetResult,
+  error: Schema.Union([ComposerDraftError, EnvironmentAuthorizationError]),
+});
+
+const WsComposerDraftsPutRpc = Rpc.make(WS_METHODS.composerDraftsPut, {
+  payload: ComposerDraftPutInput,
+  success: ComposerDraftPutResult,
+  error: Schema.Union([ComposerDraftError, EnvironmentAuthorizationError]),
+});
+
+const WsComposerDraftsDeleteRpc = Rpc.make(WS_METHODS.composerDraftsDelete, {
+  payload: ComposerDraftKeyInput,
+  success: Schema.Struct({}),
+  error: Schema.Union([ComposerDraftError, EnvironmentAuthorizationError]),
+});
+
+const WsStatusPageSnapshotRpc = Rpc.make(WS_METHODS.statusPageSnapshot, {
+  payload: Schema.Struct({}),
+  success: StatusSnapshot,
+  error: Schema.Union([StatusPageError, EnvironmentAuthorizationError]),
+});
+
+const WsStatusPageRefreshRpc = Rpc.make(WS_METHODS.statusPageRefresh, {
+  payload: Schema.Struct({}),
+  success: StatusSnapshot,
+  error: Schema.Union([StatusPageError, EnvironmentAuthorizationError]),
+});
+
 const WsTelegramChannelStatusRpc = Rpc.make(WS_METHODS.telegramChannelStatus, {
   payload: Schema.Struct({}),
   success: TelegramChannelStatus,
@@ -1096,6 +1154,12 @@ const WsPullRequestsPreviewRpc = Rpc.make(WS_METHODS.pullRequestsPreview, {
 const WsPullRequestsChecksRpc = Rpc.make(WS_METHODS.pullRequestsChecks, {
   payload: PullRequestRef,
   success: Schema.NullOr(PullRequestChecks),
+  error: PullRequestRpcError,
+});
+
+const WsPullRequestsCheckFailureLogRpc = Rpc.make(WS_METHODS.pullRequestsCheckFailureLog, {
+  payload: PullRequestCheckFailureLogInput,
+  success: PullRequestCheckFailureLogResult,
   error: PullRequestRpcError,
 });
 
@@ -1885,7 +1949,7 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
   { error: EnvironmentAuthorizationError },
 ) {}
 
-export const WsRpcGroup = RpcGroup.make(
+export const WsCoreRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
@@ -1972,6 +2036,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPullRequestsDetailRpc,
   WsPullRequestsPreviewRpc,
   WsPullRequestsChecksRpc,
+  WsPullRequestsCheckFailureLogRpc,
   WsPullRequestsActivityRpc,
   WsPullRequestsThreadCommentsRpc,
   WsPullRequestsDiffFileContentsRpc,
@@ -2085,3 +2150,38 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,
 ).middleware(RpcScopeAuthorization);
+
+/**
+ * Composer drafts and native connection edits live in groups of their own: the
+ * server registers each group's handlers in its own layer, because one layer
+ * for every method is at TypeScript's instantiation-depth limit.
+ */
+export const WsComposerDraftsRpcGroup = RpcGroup.make(
+  WsComposerDraftsGetRpc,
+  WsComposerDraftsPutRpc,
+  WsComposerDraftsDeleteRpc,
+).middleware(RpcScopeAuthorization);
+
+export const WsNativeConnectionsRpcGroup =
+  RpcGroup.make(nativeConnectionApplyRpc).middleware(RpcScopeAuthorization);
+
+export const WsStatusPageRpcGroup = RpcGroup.make(
+  WsStatusPageSnapshotRpc,
+  WsStatusPageRefreshRpc,
+).middleware(RpcScopeAuthorization);
+
+/** Chrome checks for agents; their own group for the same depth reason. */
+export const WsBrowserBridgeRpcGroup = RpcGroup.make(...browserBridgeRpcs).middleware(
+  RpcScopeAuthorization,
+);
+
+/** The SpecWithCode Browser extension; its own group for the same depth reason. */
+export const WsBrowserExtensionRpcGroup = RpcGroup.make(...browserExtensionRpcs).middleware(
+  RpcScopeAuthorization,
+);
+
+export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
+  .merge(WsNativeConnectionsRpcGroup)
+  .merge(WsStatusPageRpcGroup)
+  .merge(WsBrowserBridgeRpcGroup)
+  .merge(WsBrowserExtensionRpcGroup);

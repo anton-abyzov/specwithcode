@@ -60,10 +60,10 @@ describe("connection routes", () => {
     expect(connectionRouteKind(direct("lo", "http://127.0.0.1:8319/"))).toBe("loopback");
     expect(connectionRouteKind(direct("ts6", "http://[fd7a:115c:a1e0::1]:8319/"))).toBe("tailnet");
     expect(connectionRouteLabel(TAILNET)).toBe("Tailscale");
-    expect(connectionRouteLabel(RELAY)).toBe("Studio Connect");
+    expect(connectionRouteLabel(RELAY)).toBe("SpecWithCode Connect");
   });
 
-  it("places a new route after faster kinds and ahead of Studio Connect", () => {
+  it("places a new route after faster kinds and ahead of SpecWithCode Connect", () => {
     expect(insertRoute([RELAY], LAN)).toEqual([LAN, RELAY]);
     expect(insertRoute([LAN, RELAY], TAILNET)).toEqual([LAN, TAILNET, RELAY]);
     expect(insertRoute([TAILNET], LAN)).toEqual([LAN, TAILNET]);
@@ -87,7 +87,7 @@ describe("learned routes", () => {
     routes?.map((route) => connectionRouteId(route.target)) ?? null;
   const profileOf = (route: ConnectionRoute) => Option.getOrThrow(route.profile);
 
-  it("learns a LAN address over Studio Connect, ahead of it, using the Studio Connect credential", () => {
+  it("learns a LAN address over SpecWithCode Connect, ahead of it, using the SpecWithCode Connect credential", () => {
     const routes = mergeLearnedRoutes({
       entry: relayOnly,
       activeRoute: RELAY,
@@ -234,7 +234,7 @@ describe("learned routes", () => {
     expect(ids(routesAfterRemoving(overLan, "relay"))).toHaveLength(2);
   });
 
-  it("counts an environment reached only through Studio Connect as removed with it", () => {
+  it("counts an environment reached only through SpecWithCode Connect as removed with it", () => {
     const learned = mergeLearnedRoutes({
       entry: relayOnly,
       activeRoute: RELAY,
@@ -262,7 +262,7 @@ describe("learned routes", () => {
     expect(gitHubRoutingConnectionKey(withLearned)).toBe(gitHubRoutingConnectionKey(relayOnly));
   });
 
-  it("keeps the Studio Connect credential when learning over a learned Studio Connect route", () => {
+  it("keeps the SpecWithCode Connect credential when learning over a learned SpecWithCode Connect route", () => {
     const first = mergeLearnedRoutes({
       entry: relayOnly,
       activeRoute: RELAY,

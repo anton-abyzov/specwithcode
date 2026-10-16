@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="scene.css" />
+    <style>
+      .stage {
+        flex: 1;
+        display: grid;
+        place-items: center;
+      }
+      .popup-card {
+        --zoom: 1.25;
+        --h: 505px;
+      }
+      .copy {
+        flex-basis: 470px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="scene">
+      <div class="copy">
+        <div class="brand"><img src="/icons/icon-128.png" alt="" />SpecWithCode Browser</div>
+        <h1>You stay <em>in control</em></h1>
+        <ul class="points">
+          <li><b>Pause</b> stops all agent access at once; <b>Unpair</b> forgets the pairing.</li>
+          <li>The toolbar badge shows <b>ON</b> whenever agents can use this profile.</li>
+          <li>
+            Talks only to SpecWithCode on this computer. No servers, no analytics, no remote code.
+          </li>
+          <li>Open source under Apache-2.0, built on Microsoft's Playwright extension.</li>
+        </ul>
+      </div>
+      <div class="stage">
+        <div class="popup-card"><iframe src="/popup?state=connected"></iframe></div>
+      </div>
+    </div>
+  </body>
+</html>

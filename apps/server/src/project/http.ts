@@ -2,6 +2,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
+  type ProjectFolderCheckError,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
@@ -14,11 +15,15 @@ import {
 } from "../auth/http.ts";
 import { traceLocalHandlerWork } from "../cloud/traceRelayRequest.ts";
 import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
+import { ProjectFolderService } from "./ProjectFolderChange.ts";
 import * as ProjectService from "./ProjectService.ts";
 import { projectMutationOperation } from "./ProjectMutation.ts";
 
 export const failProjectMutation = Effect.fn("environment.projects.failMutation")(function* (
-  cause: ProjectService.ProjectServiceError | ServerRuntimeStartup.ServerRuntimeStartupError,
+  cause:
+    | ProjectService.ProjectServiceError
+    | ProjectFolderCheckError
+    | ServerRuntimeStartup.ServerRuntimeStartupError,
 ) {
   if (cause._tag === "ProjectRequestDeniedError") {
     const reason = {
@@ -31,6 +36,8 @@ export const failProjectMutation = Effect.fn("environment.projects.failMutation"
   }
   if (cause._tag === "ProjectEnvironmentError")
     return yield* failEnvironmentInvalidRequest("project_environment_invalid");
+  if (cause._tag === "ProjectFolderChangeError" || cause._tag === "ProjectFolderCheckError")
+    return yield* failEnvironmentInvalidRequest("project_folder_change_refused");
   if (
     cause._tag === "ProjectNotFoundError" ||
     cause._tag === "ProjectConflictError" ||
@@ -46,6 +53,7 @@ export const layer = HttpApiBuilder.group(
   "projects",
   Effect.fnUntraced(function* (handlers) {
     const projects = yield* ProjectService.ProjectService;
+    const folders = yield* ProjectFolderService;
     const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
 
     return handlers
@@ -65,7 +73,10 @@ export const layer = HttpApiBuilder.group(
         Effect.fn("environment.projects.mutate")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
-          const operation = projectMutationOperation(projects, args.payload);
+          const operation = projectMutationOperation(
+            { ...projects, changeFolder: folders.change },
+            args.payload,
+          );
           return yield* startup
             .enqueueCommand(operation)
             .pipe(traceLocalHandlerWork, Effect.catch(failProjectMutation));

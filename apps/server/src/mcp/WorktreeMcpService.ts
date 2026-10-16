@@ -76,7 +76,7 @@ const make = Effect.gen(function* () {
       ? Effect.fail(
           failure(
             "thread_credential_required",
-            "Worktree handoff and status act as the calling Studio thread, so they need an agent running inside SpecWithCode.",
+            "Worktree handoff and status act as the calling SpecWithCode thread, so they need an agent running inside SpecWithCode.",
           ),
         )
       : Effect.succeed(scope as McpThreadInvocationScope);

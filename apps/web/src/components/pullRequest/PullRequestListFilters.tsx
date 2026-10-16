@@ -1,3 +1,4 @@
+import { parsePullRequestReference } from "~/pullRequestReference";
 import { Spinner } from "~/components/ui/spinner";
 import type {
   EnvironmentId,
@@ -94,15 +95,29 @@ export function pullRequestHostLabel(
     : getSourceControlPresentationForKind(entry.kind).providerName;
 }
 
+/** A whole pull request address and nothing else: what a paste or Enter opens instead of searching. */
+function pullRequestLinkIn(text: string): string | null {
+  const trimmed = text.trim();
+  return /^https?:\/\/\S+$/i.test(trimmed) && parsePullRequestReference(trimmed) !== null
+    ? trimmed
+    : null;
+}
+
 export function PullRequestSearchInput({
   value,
   busy,
   onChange,
+  onOpenLink,
 }: {
   value: string;
   /** A search is on its way to the hosts, said where the typing is rather than over the list. */
   busy?: boolean;
   onChange: (value: string) => void;
+  /**
+   * Opens a pasted pull request link instead of searching for it. True when it opened; false
+   * leaves the link in the field as an ordinary search.
+   */
+  onOpenLink?: (url: string) => boolean;
 }) {
   return (
     <InputGroup className="min-w-0 flex-1 **:[input]:h-9 sm:**:[input]:h-8">
@@ -113,7 +128,21 @@ export function PullRequestSearchInput({
         type="search"
         value={value}
         onChange={(event) => onChange(event.currentTarget.value)}
-        placeholder="Search pull requests, or label:bug"
+        onPaste={(event) => {
+          const link = onOpenLink ? pullRequestLinkIn(event.clipboardData.getData("text")) : null;
+          if (link !== null && onOpenLink?.(link)) event.preventDefault();
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" || !onOpenLink) return;
+          const link = pullRequestLinkIn(event.currentTarget.value);
+          if (link !== null && onOpenLink(link)) {
+            event.preventDefault();
+            onChange("");
+          }
+        }}
+        placeholder={
+          onOpenLink ? "Search or paste a PR link" : "Search pull requests, or label:bug"
+        }
         aria-label="Search pull requests"
       />
     </InputGroup>

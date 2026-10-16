@@ -4,6 +4,10 @@ import {
   makeLegacyServerUpdateRpc,
 } from "./managedUpdates/ManagedUpdatesRpc.ts";
 import * as ProjectWorkspaceRpc from "./project/ProjectWorkspaceRpc.ts";
+import * as ProjectConnectionRpc from "./project/ProjectConnectionRpc.ts";
+import * as ChromeBridge from "./browserBridge/ChromeBridge.ts";
+import * as BrowserExtension from "./browserExtension/BrowserExtension.ts";
+import * as PullRequestCheckFailureLogRpc from "./pullRequest/PullRequestCheckFailureLogRpc.ts";
 import { OrchestrationDispatchCommandError } from "@specweave-studio/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
@@ -104,6 +108,7 @@ import {
   type PullRequestRef,
   WS_METHODS,
   WsRpcGroup,
+  WsCoreRpcGroup,
   ModsError,
 } from "@specweave-studio/contracts";
 import { resolveServerBackgroundActivitySettings } from "@specweave-studio/shared/backgroundActivitySettings";
@@ -119,6 +124,8 @@ import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as ServerConfig from "./config.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as StudioMods from "./mods/StudioMods.ts";
+import * as ComposerDrafts from "./composerDrafts/ComposerDrafts.ts";
+import * as StatusMonitor from "./statusPage/StatusMonitor.ts";
 import { readSpecweaveProgress } from "./mods/SpecweaveProgress.ts";
 import * as TelegramChannel from "./channels/TelegramChannel.ts";
 import * as GoogleAccountService from "./integrations/google/GoogleAccountService.ts";
@@ -209,6 +216,8 @@ import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts
 import * as ProjectService from "./project/ProjectService.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
 import { projectMutationOperation } from "./project/ProjectMutation.ts";
+import * as ProjectActionRequests from "./project/ProjectActionRequests.ts";
+import { ProjectFolderService } from "./project/ProjectFolderChange.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
@@ -550,6 +559,13 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
 // Middleware added later wraps middleware added earlier, so instrumentation wraps authorization.
 const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
+// Handlers register per group; composer drafts, native connection edits and the PR
+// check-failure log have their own layers. The group-wide `toLayer` typing grows with the
+// square of the group, so new methods past this size join as single handlers instead of
+// tripping TypeScript's instantiation limit.
+const ServerWsCoreRpcGroup = WsCoreRpcGroup.middleware(RpcInstrumentation).omit(
+  WS_METHODS.pullRequestsCheckFailureLog,
+);
 // When a resuming client's cursor is more than this many events behind the
 // current head, skip the per-event catch-up replay and send a fresh shell
 // snapshot instead. Replaying each intervening event costs a shell refetch;
@@ -1195,7 +1211,7 @@ const layerWsRpc = (
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
   serverBrowser: ServerBrowser.ServerBrowser["Service"],
 ) =>
-  ServerWsRpcGroup.toLayer(
+  ServerWsCoreRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
       const sql = yield* SqlClient.SqlClient;
@@ -1256,6 +1272,8 @@ const layerWsRpc = (
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
       const worktreeSetupTracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
       const projectCloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+      const projectFolders = yield* ProjectFolderService;
+      const projectActions = yield* ProjectActionRequests.ProjectActionRequests;
       const repositoryIdentityResolver =
         yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
       const agentSessionScanner = yield* AgentSessionScanner.AgentSessionScanner;
@@ -1528,7 +1546,7 @@ const layerWsRpc = (
               if (racedImport !== null) return { threadId, imported: false } as const;
               return yield* new AcpRegistryOperationError({
                 reason: "session_import_failed",
-                message: "Could not create a Studio thread for the ACP session.",
+                message: "Could not create a SpecWithCode thread for the ACP session.",
                 cause: launched.failure,
               });
             }
@@ -1570,7 +1588,7 @@ const layerWsRpc = (
               return yield* new AcpRegistryOperationError({
                 reason: "session_delete_failed",
                 message:
-                  "Delete the imported Studio thread before deleting its native ACP session.",
+                  "Delete the imported SpecWithCode thread before deleting its native ACP session.",
               });
             }
             yield* manager.deleteSession({
@@ -1816,14 +1834,17 @@ const layerWsRpc = (
       });
 
       const mutateProject = Effect.fn("ws.projects.mutate")(function* (mutation: ProjectMutation) {
-        const result = yield* projectMutationOperation(projectService, mutation);
+        const result = yield* projectMutationOperation(
+          { ...projectService, changeFolder: projectFolders.change },
+          mutation,
+        );
         if (mutation.type === "project.delete")
           yield* projectCloneTracker.discard(mutation.projectId);
         return result;
       });
 
       const projectWorkspaceHandlers = yield* ProjectWorkspaceRpc.handlers;
-      const handlers = ServerWsRpcGroup.of({
+      const handlers = ServerWsCoreRpcGroup.of({
         ...projectWorkspaceHandlers,
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
@@ -1849,17 +1870,28 @@ const layerWsRpc = (
                   // A retry also restarts the preparation work the launch owns.
                   (command.type === "prepared-run.retry"
                     ? threadLaunch.retryPreparation(command)
-                    : ThreadMessageIntake.dispatchCommand(
-                        ThreadManagementService.withCreationProvenance(command, {
-                          createdBy: "user",
-                          creationSource:
-                            "creationSource" in command ? command.creationSource : "web",
-                        }),
-                      )
+                    : // The user's answer to a project approval card: the server applies
+                      // the change outside the project's admission lock, then resolves it.
+                      command.type === "runtime-request.respond" &&
+                        ProjectActionRequests.isProjectActionRequestId(command.requestId)
+                      ? projectActions.answer(command)
+                      : ThreadMessageIntake.dispatchCommand(
+                          ThreadManagementService.withCreationProvenance(command, {
+                            createdBy: "user",
+                            creationSource:
+                              "creationSource" in command ? command.creationSource : "web",
+                          }),
+                        )
                   ).pipe(Effect.provide(intakeContext)),
                 )
                 .pipe(
                   Effect.tap(() => recordClientCommandAnalytics(command)),
+                  Effect.tap(() =>
+                    command.type === "thread.user-input.dismiss" &&
+                    ProjectActionRequests.isProjectActionRequestId(command.requestId)
+                      ? projectActions.dismissed(command.requestId)
+                      : Effect.void,
+                  ),
                   Effect.map((result) => ({ sequence: result.sequence })),
                   Effect.mapError((cause) => {
                     const detail = userFacingDispatchErrorMessage(cause);
@@ -3123,6 +3155,13 @@ const layerWsRpc = (
       });
       return handlers;
     }),
+  ).pipe(
+    Layer.merge(
+      ServerWsRpcGroup.toLayerHandler(
+        WS_METHODS.pullRequestsCheckFailureLog,
+        PullRequestCheckFailureLogRpc.handler,
+      ),
+    ),
   );
 
 // A defect in a handler's effect fails only its own request. RpcServer's default
@@ -3140,6 +3179,7 @@ const inferredWebSocketLayer = Layer.unwrap(
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const pullRequests = yield* PullRequestService.PullRequestService;
     const sql = yield* SqlClient.SqlClient;
+    const browserExtension = yield* BrowserExtension.BrowserExtension;
     return HttpRouter.add(
       "GET",
       "/ws",
@@ -3194,6 +3234,15 @@ const inferredWebSocketLayer = Layer.unwrap(
               previewAutomationBroker,
               serverBrowser,
             ).pipe(
+              Layer.merge(ComposerDrafts.layerRpcHandlers),
+              Layer.merge(StatusMonitor.layerRpcHandlers),
+              Layer.merge(ProjectConnectionRpc.layerNativeApplyHandlers),
+              Layer.merge(ChromeBridge.layerRpcHandlers),
+              Layer.merge(
+                BrowserExtension.layerRpcHandlers.pipe(
+                  Layer.provide(Layer.succeed(BrowserExtension.BrowserExtension, browserExtension)),
+                ),
+              ),
               Layer.provideMerge(RpcSerialization.layerJson),
               // Request fibers run in the handlers' context, so this reporter sees
               // their defects, not the rest of the server's.

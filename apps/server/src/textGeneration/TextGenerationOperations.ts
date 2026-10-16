@@ -9,10 +9,15 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { type ChatAttachment, type ModelSelection, TextGenerationError } from "@specweave-studio/contracts";
+import {
+  type ChatAttachment,
+  type ModelSelection,
+  TextGenerationError,
+} from "@specweave-studio/contracts";
 import { formatGeneratedBranchName, sanitizeFeatureBranchName } from "@specweave-studio/shared/git";
 import { extractJsonObject } from "@specweave-studio/shared/schemaJson";
 
+import { cleanGeneratedText, lintGeneratedText } from "./GeneratedTextLint.ts";
 import type * as TextGeneration from "./TextGeneration.ts";
 import {
   buildBranchNamePrompt,
@@ -64,6 +69,22 @@ export const decodeJsonReply = <S extends Schema.Top>(
   );
 };
 
+/**
+ * Logs the style issues `cleanGeneratedText` cannot fix, such as chatbot
+ * phrasing inside a sentence. Only the issue kinds are logged, not the text.
+ */
+const logStyleIssues = (operation: Operation, texts: ReadonlyArray<string>) => {
+  const kinds = [
+    ...new Set(texts.flatMap((text) => lintGeneratedText(text).map((issue) => issue.kind))),
+  ];
+  return kinds.length === 0
+    ? Effect.void
+    : Effect.logInfo("generated text still has style issues", {
+        operation,
+        issues: kinds.join(", "),
+      });
+};
+
 /** The text generation service over `run`. `name` prefixes each operation's span. */
 export function fromRunner(name: string, run: Runner): TextGeneration.TextGeneration["Service"] {
   const generateCommitMessage: TextGeneration.TextGeneration["Service"]["generateCommitMessage"] =
@@ -80,9 +101,13 @@ export function fromRunner(name: string, run: Runner): TextGeneration.TextGenera
           policy: input.policy,
         }),
       });
+      // Credits, dashes and curly quotes are fixed here so no provider can skip it.
+      const subject = sanitizeCommitSubject(cleanGeneratedText(generated.subject));
+      const body = cleanGeneratedText(generated.body).trim();
+      yield* logStyleIssues("generateCommitMessage", [subject, body]);
       return {
-        subject: sanitizeCommitSubject(generated.subject),
-        body: generated.body.trim(),
+        subject,
+        body,
         ...("branch" in generated && typeof generated.branch === "string"
           ? { branch: sanitizeFeatureBranchName(generated.branch) }
           : {}),
@@ -105,7 +130,10 @@ export function fromRunner(name: string, run: Runner): TextGeneration.TextGenera
           changeRequestTemplate: input.changeRequestTemplate,
         }),
       });
-      return { title: sanitizePrTitle(generated.title), body: generated.body.trim() };
+      const title = sanitizePrTitle(cleanGeneratedText(generated.title));
+      const body = cleanGeneratedText(generated.body).trim();
+      yield* logStyleIssues("generatePrContent", [title, body]);
+      return { title, body };
     });
 
   const generateBranchName: TextGeneration.TextGeneration["Service"]["generateBranchName"] =
@@ -138,8 +166,10 @@ export function fromRunner(name: string, run: Runner): TextGeneration.TextGenera
           attachments: input.attachments,
         }),
       });
+      // Unwrap a JSON or quoted title first, then clean it, then normalise it again.
+      const title = sanitizeThreadTitle(cleanGeneratedText(sanitizeThreadTitle(generated.title)));
       return {
-        title: sanitizeThreadTitle(generated.title),
+        title,
         ...(generated.needsRefinement ? { needsRefinement: true } : {}),
       };
     });

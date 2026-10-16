@@ -138,8 +138,8 @@ export const describeFinishedRun = (
   if (status === "completed") return text === "" ? null : text;
   if (status === "failed") {
     return text === ""
-      ? "The coordinator's turn failed. Open Studio for details."
-      : `${text}\n\n(The turn ended with an error. Open Studio for details.)`;
+      ? "The coordinator's turn failed. Open SpecWithCode for details."
+      : `${text}\n\n(The turn ended with an error. Open SpecWithCode for details.)`;
   }
   return null;
 };
@@ -169,7 +169,7 @@ export const HELP_TEXT = [
   "Send any message and the coordinator works on it on your machine. Its answer comes back here, and so do your routines' results.",
   "",
   "/status shows the project and whether the coordinator is busy.",
-  "Approvals and questions from agents still need Studio; this chat tells you when one is waiting.",
+  "Approvals and questions from agents still need SpecWithCode; this chat tells you when one is waiting.",
 ].join("\n");
 
 export const PAIRING_HINT_TEXT =

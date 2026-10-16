@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="scene.css" />
+    <style>
+      .scene {
+        flex-direction: column;
+        align-items: stretch;
+        justify-content: center;
+        gap: 40px;
+        padding: 60px 72px;
+      }
+      h1 {
+        font-size: 42px;
+        margin: 0;
+      }
+      .sub {
+        margin: 10px 0 0;
+        font-size: 19px;
+        color: #4a5072;
+      }
+      .flow {
+        display: grid;
+        grid-template-columns: 1fr 70px 1fr 70px 1fr;
+        align-items: center;
+      }
+      .box {
+        background: #fff;
+        border-radius: 16px;
+        padding: 26px 26px;
+        box-shadow:
+          0 20px 40px -22px rgba(30, 40, 120, 0.35),
+          0 0 0 1px rgba(20, 30, 80, 0.08);
+        height: 330px;
+      }
+      .box h2 {
+        margin: 0 0 6px;
+        font-size: 21px;
+        color: #141834;
+      }
+      .box p {
+        margin: 0 0 16px;
+        color: #5a607f;
+        font-size: 14.5px;
+      }
+      .chips {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 9px;
+      }
+      .chip {
+        border-radius: 10px;
+        padding: 10px 12px;
+        background: #f3f4ff;
+        font-weight: 600;
+        font-size: 14.5px;
+        color: #26306e;
+      }
+      .chip small {
+        display: block;
+        font-weight: 400;
+        color: #6a7092;
+        font-size: 12px;
+      }
+      .arrow {
+        text-align: center;
+        color: #5b6cff;
+        font-size: 34px;
+        font-weight: 700;
+      }
+      .arrow small {
+        display: block;
+        font-size: 11.5px;
+        color: #6a7092;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+      }
+      .ext {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+      }
+      .ext img {
+        width: 96px;
+        height: 96px;
+        margin: 8px 0 14px;
+      }
+      .acts {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+        justify-content: center;
+      }
+      .acts span {
+        font-size: 13px;
+        padding: 5px 10px;
+        border-radius: 999px;
+        background: #eef0ff;
+        color: #3b47c8;
+        font-weight: 600;
+      }
+      .profile .group-chip {
+        display: inline-block;
+        margin: 6px 0 14px;
+        font-size: 14px;
+        padding: 5px 12px;
+      }
+      .profile .ptab {
+        height: 34px;
+        border-radius: 8px;
+        margin-bottom: 8px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 12px;
+        font-size: 13.5px;
+        color: #3c4043;
+        background: #f1f3f4;
+        box-shadow: inset 3px 0 0 #1a73e8;
+      }
+      .profile .ptab i {
+        width: 14px;
+        height: 14px;
+        border-radius: 4px;
+        display: block;
+      }
+      .foot {
+        text-align: center;
+        color: #5a607f;
+        font-size: 15px;
+        margin-top: -10px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="scene">
+      <div>
+        <div class="brand" style="margin-bottom: 14px">
+          <img src="/icons/icon-128.png" alt="" />SpecWithCode Browser
+        </div>
+        <h1>One browser for every agent you run</h1>
+        <p class="sub">
+          Whichever agent you pick in SpecWithCode, it reaches the web through the Chrome profile
+          you paired.
+        </p>
+      </div>
+      <div class="flow">
+        <div class="box">
+          <h2>SpecWithCode app</h2>
+          <p>Your agents, on your computer</p>
+          <div class="chips">
+            <div class="chip">Claude<small>Anthropic</small></div>
+            <div class="chip">Codex<small>OpenAI</small></div>
+            <div class="chip">Grok<small>xAI</small></div>
+            <div class="chip">Gemini<small>Google</small></div>
+            <div class="chip">Copilot<small>GitHub</small></div>
+            <div class="chip">Muse<small>Meta</small></div>
+          </div>
+        </div>
+        <div class="arrow">&#8594;<small>127.0.0.1</small></div>
+        <div class="box ext">
+          <h2>SpecWithCode Browser</h2>
+          <img src="/icons/icon-128.png" alt="" />
+          <div class="acts">
+            <span>Open tabs</span><span>Read pages</span><span>Click</span><span>Type</span
+            ><span>Screenshots</span>
+          </div>
+        </div>
+        <div class="arrow">&#8594;<small>this profile</small></div>
+        <div class="box profile">
+          <h2>Your Chrome profile</h2>
+          <p>Your logins and cookies, no new browser</p>
+          <span class="group-chip">SpecWithCode · Personal</span>
+          <div class="ptab"><i style="background: #34a853"></i>Pull request #214</div>
+          <div class="ptab"><i style="background: #fbbc04"></i>Staging · Checkout</div>
+        </div>
+      </div>
+      <div class="foot">
+        Pair each Chrome profile you want agents to use, such as Personal and Work; each gets its
+        own name.
+      </div>
+    </div>
+  </body>
+</html>

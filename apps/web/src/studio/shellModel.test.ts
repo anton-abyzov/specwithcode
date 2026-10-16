@@ -14,6 +14,7 @@ import {
   parseChatListOptions,
   parseThreadSort,
   providerShortLabel,
+  shortMachineName,
   shortModelName,
   threadsSummary,
   threadStatusWord,
@@ -51,6 +52,15 @@ const failed = { status: "failed", lastErrorClass: null } as EnvironmentThreadSh
 const now = new Date(2026, 9, 10, 12, 0, 0).getTime();
 const at = (daysAgo: number, hour = 9) => new Date(2026, 9, 10 - daysAgo, hour, 0, 0).toISOString();
 const projectLabel = (t: EnvironmentThreadShell) => String(t.projectId);
+
+describe("machine names", () => {
+  it("drops the owner so a row keeps room for the model", () => {
+    expect(shortMachineName("Anton's MacBook M4MAX (149)")).toBe("MacBook M4MAX (149)");
+    expect(shortMachineName("Anton’s Mac mini")).toBe("Mac mini");
+    expect(shortMachineName("build-box")).toBe("build-box");
+    expect(shortMachineName("Anton's ")).toBe("Anton's");
+  });
+});
 
 describe("model and provider names", () => {
   it("says a model the way people do", () => {
@@ -414,6 +424,9 @@ describe("a project's Threads pane", () => {
     expect(threadStatusWord(thread({ hasPendingUserInput: true }))).toBe("Answer needed");
     expect(threadStatusWord(thread())).toBeNull();
     expect(threadStatusWord(thread({ settledOverride: "settled" }))).toBeNull();
+    // Held messages never start on their own, so the row says so and the dot asks.
+    expect(threadStatusWord(thread({ heldQueuedCount: 3 }))).toBe("Queue held");
+    expect(threadTone(thread({ heldQueuedCount: 3 }))).toBe("waiting");
   });
   it("gives each row one status tone", () => {
     expect(threadTone(thread({ hasPendingUserInput: true }))).toBe("waiting");

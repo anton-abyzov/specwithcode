@@ -1,4 +1,5 @@
 import { resolveThreadWorkingStartedAt } from "@specweave-studio/client-runtime/state/models";
+import { providerFailureDisplayMessage } from "@specweave-studio/shared/orchestrationV2ThreadError";
 import {
   type AssetResource,
   type OrchestrationV2ExecutionNode,
@@ -14,6 +15,7 @@ import {
   type ToolActivitySource,
 } from "@specweave-studio/contracts";
 import { extractToolActivityPresentation } from "@specweave-studio/client-runtime/work-log/tool-presentation";
+import { hasQuestionAnswer } from "@specweave-studio/client-runtime/work-log/user-input";
 import {
   classifyToolActivity,
   collectToolFilePaths,
@@ -31,7 +33,10 @@ import type {
   ThreadPendingApproval,
   ThreadPendingUserInput,
 } from "@specweave-studio/client-runtime/state/thread-requests";
-import type { ThreadRunSummary, ThreadRuntimeSummary } from "@specweave-studio/client-runtime/state/shell";
+import type {
+  ThreadRunSummary,
+  ThreadRuntimeSummary,
+} from "@specweave-studio/client-runtime/state/shell";
 import { threadRuntimeHasInterruptibleRun } from "@specweave-studio/client-runtime/state/thread-execution";
 import { turnItemIsWorkspacePreparation } from "@specweave-studio/client-runtime/state/turn-item-presentation";
 
@@ -319,6 +324,22 @@ const STANDALONE_V2_ITEM_TYPES = new Set<OrchestrationV2ProjectedTurnItem["item"
   "subagent",
 ]);
 
+/** An answered question leaves the work log and stands alone as a decision card. */
+export function isAnsweredQuestionItem(item: OrchestrationV2TurnItem): item is Extract<
+  OrchestrationV2TurnItem,
+  { type: "user_input_request" }
+> & {
+  readonly questionAnswer: NonNullable<
+    Extract<OrchestrationV2TurnItem, { type: "user_input_request" }>["questionAnswer"]
+  >;
+} {
+  return (
+    item.type === "user_input_request" &&
+    item.questionAnswer !== undefined &&
+    hasQuestionAnswer(item.questionAnswer)
+  );
+}
+
 const PERSISTENT_RESOURCE_V2_ITEM_TYPES = new Set<OrchestrationV2TurnItem["type"]>([
   "fork",
   "thread_created",
@@ -384,7 +405,7 @@ export function providerErrorPresentation(
         item.failure.class === "usage_limit"
           ? "Usage limit reached"
           : item.title?.trim() || "Provider error",
-      detail: item.failure.message,
+      detail: providerFailureDisplayMessage(item.failure),
     };
   }
   const progress =
@@ -407,7 +428,7 @@ export function providerErrorPresentation(
       : "";
   return {
     label,
-    detail: `${item.failure.message}${retryDelay}`,
+    detail: `${providerFailureDisplayMessage(item.failure)}${retryDelay}`,
   };
 }
 
@@ -714,7 +735,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
       continue;
     }
 
-    if (STANDALONE_V2_ITEM_TYPES.has(item.type)) {
+    if (STANDALONE_V2_ITEM_TYPES.has(item.type) || isAnsweredQuestionItem(item)) {
       entries.push({
         id: item.id,
         kind: "event",

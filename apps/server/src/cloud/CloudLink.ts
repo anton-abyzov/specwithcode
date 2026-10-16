@@ -179,7 +179,7 @@ export class CloudLinkNotLinkedError extends Schema.TaggedError<CloudLinkNotLink
   {},
 ) {
   override get message(): string {
-    return "Link this environment to Studio Connect first.";
+    return "Link this environment to SpecWithCode Connect first.";
   }
 }
 
@@ -260,14 +260,14 @@ const INTERNAL_OPERATION_MESSAGES = {
   "persist-relay-config": "Could not persist environment relay configuration.",
   "register-endpoint-origin": "Could not register the managed endpoint origin.",
   "resolve-server-origin": "Could not resolve the local server origin.",
-  "persist-desired-link": "Could not persist desired Studio Connect link state.",
+  "persist-desired-link": "Could not persist desired SpecWithCode Connect link state.",
   "sign-recovery-proof": "Could not sign the managed tunnel recovery request.",
   "unsupported-recovered-tunnel":
-    "Studio Connect returned an unsupported managed tunnel configuration.",
+    "SpecWithCode Connect returned an unsupported managed tunnel configuration.",
   "persist-recovered-tunnel": "Could not persist the recovered managed tunnel configuration.",
   "read-relay-config": "Could not read environment relay configuration.",
   "remove-relay-config": "Could not remove environment relay configuration.",
-  "update-webhook-settings": "Could not update Studio Connect webhook settings.",
+  "update-webhook-settings": "Could not update SpecWithCode Connect webhook settings.",
   "read-preferences": "Could not read environment cloud preferences.",
   "persist-preferences": "Could not persist environment cloud preferences.",
   "answer-health": "Could not answer cloud health request.",
@@ -1620,7 +1620,7 @@ const make = Effect.gen(function* () {
         scopes: AuthStandardClientScopes,
         subject: "cloud-connect",
         ttl: Duration.minutes(2),
-        label: "Studio Connect connect",
+        label: "SpecWithCode Connect connect",
         proofKeyThumbprint: proof.clientProofKeyThumbprint,
       });
       const responsePayload = {

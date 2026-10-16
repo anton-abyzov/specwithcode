@@ -16,11 +16,14 @@ import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   type OrchestrationProjectShell,
   type ModelSelection,
+  ProjectFolderCheckError,
   ProjectId,
   type Project,
   type ProjectCreatePayload,
   type ProjectUpdatePayload,
   type ProjectSnapshot,
+  type OrchestrationV2ThreadShell,
+  type RuntimeRequestId,
   type ThreadId,
 } from "@specweave-studio/contracts";
 import { defaultProjectModelSelection } from "@specweave-studio/shared/coordinatorDefault";
@@ -70,6 +73,11 @@ export interface ProjectUpdateInput extends ProjectUpdatePayload {
   readonly onlyIfDefaultModelUnset?: boolean;
   /** Internal coordinator binding, never accepted from a client settings patch. */
   readonly coordinatorThreadId?: ThreadId;
+  /**
+   * Internal: the approval card that asked for this change. Its own pending
+   * request does not count as active work in the thread that asked.
+   */
+  readonly approvalRequestId?: RuntimeRequestId;
   readonly commandId: CommandId;
   readonly projectId: ProjectId;
 }
@@ -81,6 +89,20 @@ export interface ProjectDeleteInput {
   readonly projectId: ProjectId;
   readonly force?: boolean;
   readonly confirmationTitle?: string;
+  /** Internal: the approval card that asked for this deletion; see ProjectUpdateInput. */
+  readonly approvalRequestId?: RuntimeRequestId;
+}
+
+/** True while a thread holds work a project change must not pull the folder from under. */
+export function threadHasActiveWork(
+  thread: Pick<OrchestrationV2ThreadShell, "activeRunId" | "pendingRuntimeRequest">,
+  approvalRequestId?: RuntimeRequestId,
+): boolean {
+  return (
+    thread.activeRunId !== null ||
+    (thread.pendingRuntimeRequest !== null &&
+      (approvalRequestId === undefined || thread.pendingRuntimeRequest.id !== approvalRequestId))
+  );
 }
 
 export class ProjectNotFoundError extends Schema.TaggedError<ProjectNotFoundError>()(
@@ -110,7 +132,26 @@ export class ProjectNotEmptyError extends Schema.TaggedError<ProjectNotEmptyErro
   { projectId: ProjectId },
 ) {
   override get message(): string {
-    return `Project ${this.projectId} is not empty.`;
+    return "This project still has threads, and deleting it deletes them too. Confirm the deletion to go ahead.";
+  }
+}
+
+/** Why a project's main folder could not change, in words the user can act on. */
+export class ProjectFolderChangeError extends Schema.TaggedError<ProjectFolderChangeError>()(
+  "ProjectFolderChangeError",
+  {
+    projectId: ProjectId,
+    reason: Schema.Literals([
+      "folder_missing",
+      "folder_conflict",
+      "repository_mismatch",
+      "active_work",
+    ]),
+    detail: Schema.String,
+  },
+) {
+  override get message(): string {
+    return this.detail;
   }
 }
 
@@ -145,6 +186,9 @@ export class ProjectRequestDeniedError extends Schema.TaggedError<ProjectRequest
 export function projectMutationErrorMessage(cause: unknown): string {
   return Schema.is(ProjectRequestDeniedError)(cause) ||
     Schema.is(ProjectNotEmptyError)(cause) ||
+    Schema.is(ProjectFolderChangeError)(cause) ||
+    Schema.is(ProjectFolderCheckError)(cause) ||
+    Schema.is(ProjectConflictError)(cause) ||
     Schema.is(ProjectEnvironmentError)(cause)
     ? cause.message
     : "Failed to mutate project.";
@@ -177,6 +221,7 @@ export type ProjectServiceError =
   | ProjectConflictError
   | ProjectNotEmptyError
   | ProjectRequestDeniedError
+  | ProjectFolderChangeError
   | ProjectOperationError;
 
 export class ProjectService extends Context.Service<
@@ -409,6 +454,27 @@ export const make = Effect.gen(function* () {
     return Option.isNone(row) ? Option.none() : Option.some(yield* hydrate(row.value));
   });
 
+  // A new project merges a finished thread's branch once its checks pass, unless
+  // Settings changed the environment value; older projects keep that value.
+  const seedNewProjectFinishAction = (projectId: ProjectId) =>
+    Effect.gen(function* () {
+      const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+      if (Option.isNone(serverSettings)) return;
+      const settings = yield* serverSettings.value.getSettings;
+      const entry = settings.projectSettingsOverrides[projectId] ?? {};
+      if (settings.threadFinishAction !== "pull_request" || entry.threadFinishAction !== undefined)
+        return;
+      yield* serverSettings.value.updateSettings({
+        projectSettingsOverrides: { [projectId]: { ...entry, threadFinishAction: "auto_merge" } },
+      });
+    }).pipe(
+      // Best effort: a settings store that cannot write (or a test double without
+      // updateSettings) must never fail project creation.
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Could not set a new project's finish action", { projectId, cause }),
+      ),
+    );
+
   const create: ProjectService["Service"]["create"] = Effect.fn("ProjectService.create")(
     function* (input) {
       const workspaceRoot = yield* normalizeWorkspaceRoot({
@@ -449,6 +515,7 @@ export const make = Effect.gen(function* () {
           : { initialWorkerModelSelection: input.initialWorkerModelSelection }),
       });
       yield* projectEnrichment.invalidate([workspaceRoot]);
+      yield* seedNewProjectFinishAction(input.projectId);
       const created = yield* readCommitted(input.projectId);
       if (input.initialWorkerModelSelection !== undefined || created.defaultModelSelection !== null)
         return created;
@@ -582,7 +649,7 @@ export const make = Effect.gen(function* () {
           [...snapshot.threads, ...snapshot.archivedThreads].some(
             (thread) =>
               thread.projectId === input.projectId &&
-              (thread.activeRunId !== null || thread.pendingRuntimeRequest !== null),
+              threadHasActiveWork(thread, input.approvalRequestId),
           )
         )
           return yield* new ProjectRequestDeniedError({
@@ -661,7 +728,11 @@ export const make = Effect.gen(function* () {
       projection.runs.some((run) =>
         ["preparing", "queued", "starting", "running", "waiting"].includes(run.status),
       ) ||
-      projection.runtimeRequests.some((request) => request.status === "pending")
+      projection.runtimeRequests.some(
+        (request) =>
+          request.status === "pending" &&
+          (input.approvalRequestId === undefined || request.id !== input.approvalRequestId),
+      )
     ) {
       return yield* new ProjectRequestDeniedError({
         projectId: input.projectId,
@@ -766,7 +837,7 @@ export const make = Effect.gen(function* () {
           [...active.threads, ...active.archivedThreads].some(
             (thread) =>
               thread.projectId === projectId &&
-              (thread.activeRunId !== null || thread.pendingRuntimeRequest !== null),
+              threadHasActiveWork(thread, input.approvalRequestId),
           )
         ) {
           return yield* new ProjectRequestDeniedError({ projectId, reason: "active_work" });

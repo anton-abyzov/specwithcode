@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as WelcomeRouteImport } from './routes/welcome'
 import { Route as UsageRouteImport } from './routes/usage'
+import { Route as StatusRouteImport } from './routes/status'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as PairRouteImport } from './routes/pair'
 import { Route as ConnectAgentRouteImport } from './routes/connect-agent'
@@ -34,6 +35,7 @@ import { Route as SettingsGoogleRouteImport } from './routes/settings.google'
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsDiagnosticsRouteImport } from './routes/settings.diagnostics'
 import { Route as SettingsConnectionsRouteImport } from './routes/settings.connections'
+import { Route as SettingsChromeRouteImport } from './routes/settings.chrome'
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
 import { Route as SettingsAgentsRouteImport } from './routes/settings.agents'
@@ -50,6 +52,11 @@ const WelcomeRoute = WelcomeRouteImport.update({
 const UsageRoute = UsageRouteImport.update({
   id: '/usage',
   path: '/usage',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StatusRoute = StatusRouteImport.update({
+  id: '/status',
+  path: '/status',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsRoute = SettingsRouteImport.update({
@@ -167,6 +174,11 @@ const SettingsConnectionsRoute = SettingsConnectionsRouteImport.update({
   path: '/connections',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsChromeRoute = SettingsChromeRouteImport.update({
+  id: '/chrome',
+  path: '/chrome',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsArchivedRoute = SettingsArchivedRouteImport.update({
   id: '/archived',
   path: '/archived',
@@ -210,6 +222,7 @@ export interface FileRoutesByFullPath {
   '/connect-agent': typeof ConnectAgentRoute
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/status': typeof StatusRoute
   '/usage': typeof UsageRoute
   '/welcome': typeof WelcomeRoute
   '/pull-requests': typeof ChatPullRequestsRoute
@@ -217,6 +230,7 @@ export interface FileRoutesByFullPath {
   '/settings/agents': typeof SettingsAgentsRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
+  '/settings/chrome': typeof SettingsChromeRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
@@ -242,6 +256,7 @@ export interface FileRoutesByTo {
   '/connect-agent': typeof ConnectAgentRoute
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/status': typeof StatusRoute
   '/usage': typeof UsageRoute
   '/welcome': typeof WelcomeRoute
   '/pull-requests': typeof ChatPullRequestsRoute
@@ -249,6 +264,7 @@ export interface FileRoutesByTo {
   '/settings/agents': typeof SettingsAgentsRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
+  '/settings/chrome': typeof SettingsChromeRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
@@ -277,6 +293,7 @@ export interface FileRoutesById {
   '/connect-agent': typeof ConnectAgentRoute
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/status': typeof StatusRoute
   '/usage': typeof UsageRoute
   '/welcome': typeof WelcomeRoute
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
@@ -284,6 +301,7 @@ export interface FileRoutesById {
   '/settings/agents': typeof SettingsAgentsRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
+  '/settings/chrome': typeof SettingsChromeRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
@@ -313,6 +331,7 @@ export interface FileRouteTypes {
     | '/connect-agent'
     | '/pair'
     | '/settings'
+    | '/status'
     | '/usage'
     | '/welcome'
     | '/pull-requests'
@@ -320,6 +339,7 @@ export interface FileRouteTypes {
     | '/settings/agents'
     | '/settings/appearance'
     | '/settings/archived'
+    | '/settings/chrome'
     | '/settings/connections'
     | '/settings/diagnostics'
     | '/settings/general'
@@ -345,6 +365,7 @@ export interface FileRouteTypes {
     | '/connect-agent'
     | '/pair'
     | '/settings'
+    | '/status'
     | '/usage'
     | '/welcome'
     | '/pull-requests'
@@ -352,6 +373,7 @@ export interface FileRouteTypes {
     | '/settings/agents'
     | '/settings/appearance'
     | '/settings/archived'
+    | '/settings/chrome'
     | '/settings/connections'
     | '/settings/diagnostics'
     | '/settings/general'
@@ -379,6 +401,7 @@ export interface FileRouteTypes {
     | '/connect-agent'
     | '/pair'
     | '/settings'
+    | '/status'
     | '/usage'
     | '/welcome'
     | '/_chat/pull-requests'
@@ -386,6 +409,7 @@ export interface FileRouteTypes {
     | '/settings/agents'
     | '/settings/appearance'
     | '/settings/archived'
+    | '/settings/chrome'
     | '/settings/connections'
     | '/settings/diagnostics'
     | '/settings/general'
@@ -414,6 +438,7 @@ export interface RootRouteChildren {
   ConnectAgentRoute: typeof ConnectAgentRoute
   PairRoute: typeof PairRoute
   SettingsRoute: typeof SettingsRouteWithChildren
+  StatusRoute: typeof StatusRoute
   UsageRoute: typeof UsageRoute
   WelcomeRoute: typeof WelcomeRoute
   ProjectsProjectKeyRoute: typeof ProjectsProjectKeyRoute
@@ -433,6 +458,13 @@ declare module '@tanstack/react-router' {
       path: '/usage'
       fullPath: '/usage'
       preLoaderRoute: typeof UsageRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/status': {
+      id: '/status'
+      path: '/status'
+      fullPath: '/status'
+      preLoaderRoute: typeof StatusRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings': {
@@ -596,6 +628,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsConnectionsRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/settings/chrome': {
+      id: '/settings/chrome'
+      path: '/chrome'
+      fullPath: '/settings/chrome'
+      preLoaderRoute: typeof SettingsChromeRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/archived': {
       id: '/settings/archived'
       path: '/archived'
@@ -668,6 +707,7 @@ interface SettingsRouteChildren {
   SettingsAgentsRoute: typeof SettingsAgentsRoute
   SettingsAppearanceRoute: typeof SettingsAppearanceRoute
   SettingsArchivedRoute: typeof SettingsArchivedRoute
+  SettingsChromeRoute: typeof SettingsChromeRoute
   SettingsConnectionsRoute: typeof SettingsConnectionsRoute
   SettingsDiagnosticsRoute: typeof SettingsDiagnosticsRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
@@ -691,6 +731,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsAgentsRoute: SettingsAgentsRoute,
   SettingsAppearanceRoute: SettingsAppearanceRoute,
   SettingsArchivedRoute: SettingsArchivedRoute,
+  SettingsChromeRoute: SettingsChromeRoute,
   SettingsConnectionsRoute: SettingsConnectionsRoute,
   SettingsDiagnosticsRoute: SettingsDiagnosticsRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
@@ -720,6 +761,7 @@ const rootRouteChildren: RootRouteChildren = {
   ConnectAgentRoute: ConnectAgentRoute,
   PairRoute: PairRoute,
   SettingsRoute: SettingsRouteWithChildren,
+  StatusRoute: StatusRoute,
   UsageRoute: UsageRoute,
   WelcomeRoute: WelcomeRoute,
   ProjectsProjectKeyRoute: ProjectsProjectKeyRoute,

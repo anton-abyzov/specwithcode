@@ -1,4 +1,5 @@
 import type { ConfirmDialogOptions, ConfirmDialogVariant } from "@specweave-studio/contracts";
+import type { ReactNode } from "react";
 
 type ConfirmDialogRequest = {
   readonly message: string;
@@ -6,7 +7,14 @@ type ConfirmDialogRequest = {
   /** Button labels; absent means "Confirm" and "Cancel". */
   readonly confirmLabel?: string;
   readonly cancelLabel?: string;
+  /** A third button between the two; absent means none. */
+  readonly alternateLabel?: string;
+  /** Rich content under the description, such as a list of what is affected. */
+  readonly details?: ReactNode;
 };
+
+/** Which button closed the dialog; dismissing it counts as cancel. */
+export type ConfirmDialogChoice = "confirm" | "alternate" | "cancel";
 
 export type ConfirmDialogState =
   | { readonly status: "idle" }
@@ -14,7 +22,7 @@ export type ConfirmDialogState =
   | ({ readonly status: "closing" } & ConfirmDialogRequest);
 
 type PendingConfirmation = ConfirmDialogRequest & {
-  readonly resolve: (confirmed: boolean) => void;
+  readonly resolve: (choice: ConfirmDialogChoice) => void;
 };
 
 function requestOf(pending: PendingConfirmation): ConfirmDialogRequest {
@@ -36,10 +44,10 @@ function publish(next: ConfirmDialogState): void {
   }
 }
 
-function resolvePendingConfirmations(confirmed: boolean): void {
-  activeConfirmation?.resolve(confirmed);
+function resolvePendingConfirmations(choice: ConfirmDialogChoice): void {
+  activeConfirmation?.resolve(choice);
   for (const confirmation of queuedConfirmations) {
-    confirmation.resolve(confirmed);
+    confirmation.resolve(choice);
   }
   activeConfirmation = null;
   queuedConfirmations = [];
@@ -70,7 +78,7 @@ export function registerConfirmDialogHost(): () => void {
     registeredHostCount = Math.max(0, registeredHostCount - 1);
 
     if (registeredHostCount === 0) {
-      resolvePendingConfirmations(false);
+      resolvePendingConfirmations("cancel");
       publish(idleState);
     }
   };
@@ -84,14 +92,30 @@ export function requestConfirmDialog(
   message: string,
   options?: ConfirmDialogOptions,
 ): Promise<boolean> | undefined {
+  return requestChoiceDialog(message, options)?.then((choice) => choice === "confirm");
+}
+
+/**
+ * Like `requestConfirmDialog`, with an optional third button
+ * (`alternateLabel`). Undefined when no themed host is available.
+ */
+export function requestChoiceDialog(
+  message: string,
+  options?: ConfirmDialogOptions & {
+    readonly alternateLabel?: string;
+    readonly details?: ReactNode;
+  },
+): Promise<ConfirmDialogChoice> | undefined {
   if (registeredHostCount === 0) return undefined;
 
-  const confirmation = new Promise<boolean>((resolve) => {
+  return new Promise<ConfirmDialogChoice>((resolve) => {
     const pending: PendingConfirmation = {
       message,
       variant: options?.variant ?? "default",
       ...(options?.confirmLabel ? { confirmLabel: options.confirmLabel } : {}),
       ...(options?.cancelLabel ? { cancelLabel: options.cancelLabel } : {}),
+      ...(options?.alternateLabel ? { alternateLabel: options.alternateLabel } : {}),
+      ...(options?.details ? { details: options.details } : {}),
       resolve,
     };
     if (activeConfirmation || state.status === "closing") {
@@ -102,16 +126,14 @@ export function requestConfirmDialog(
     activeConfirmation = pending;
     publish({ status: "confirming", ...requestOf(pending) });
   });
-
-  return confirmation;
 }
 
-export function respondToConfirmDialog(confirmed: boolean): void {
+export function respondToConfirmDialog(response: boolean | ConfirmDialogChoice): void {
   if (state.status !== "confirming" || !activeConfirmation) return;
 
   const confirmation = activeConfirmation;
   activeConfirmation = null;
-  confirmation.resolve(confirmed);
+  confirmation.resolve(response === true ? "confirm" : response === false ? "cancel" : response);
   const { status: _status, ...request } = state;
   publish({ status: "closing", ...request });
 }
@@ -130,7 +152,7 @@ export function completeConfirmDialogClose(): void {
 }
 
 export function resetConfirmDialogForTests(): void {
-  resolvePendingConfirmations(false);
+  resolvePendingConfirmations("cancel");
   registeredHostCount = 0;
   publish(idleState);
   listeners.clear();

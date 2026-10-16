@@ -107,12 +107,10 @@ export function threadHasUnshippedWork(
   );
 }
 
+/** The card itself opens the thread; these are the secondary actions beside it. */
 export type ThreadCardAction =
-  /** Opens the thread in the project's right panel. Always offered. */
-  | { readonly kind: "view_thread" }
   /** Runs the thread's own source control action that opens a pull request. */
-  | { readonly kind: "create_pr" }
-  | ({ readonly kind: "view_pr" } & ThreadCardPullRequest);
+  { readonly kind: "create_pr" } | ({ readonly kind: "view_pr" } & ThreadCardPullRequest);
 
 /**
  * The quick actions a thread card offers, in order. An action whose data has not
@@ -125,7 +123,7 @@ export function threadCardActions(input: {
   /** The person may change source control on the thread's host, which is connected. */
   readonly canChange: boolean;
 }): ThreadCardAction[] {
-  const actions: ThreadCardAction[] = [{ kind: "view_thread" }];
+  const actions: ThreadCardAction[] = [];
   const { pullRequest } = input;
   const pullRequestOpen =
     pullRequest?.state === "open" ||

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
+  requestChoiceDialog,
   completeConfirmDialogClose,
   readConfirmDialogState,
   registerConfirmDialogHost,
@@ -100,5 +101,20 @@ describe("confirm dialog coordinator", () => {
     expect(readConfirmDialogState()).toEqual({ status: "idle" });
     unregister();
     return expect(confirmation).resolves.toBe(true);
+  });
+
+  it("reports the third button of a choice dialog", async () => {
+    const unregister = registerConfirmDialogHost();
+    const choice = requestChoiceDialog("Restart now?", {
+      confirmLabel: "Restart when idle",
+      alternateLabel: "Restart now",
+    });
+    expect(readConfirmDialogState()).toMatchObject({
+      status: "confirming",
+      alternateLabel: "Restart now",
+    });
+    respondToConfirmDialog("alternate");
+    await expect(choice).resolves.toBe("alternate");
+    unregister();
   });
 });

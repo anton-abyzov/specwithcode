@@ -7,7 +7,10 @@ import type {
   ThreadId,
 } from "@specweave-studio/contracts";
 import { CheckIcon, MessageSquareIcon } from "lucide-react";
+import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
+
+import { buildThreadRouteParams } from "~/threadRoutes";
 import { threadPullRequestLinkMode } from "@specweave-studio/client-runtime/thread-pull-request-compatibility";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 
@@ -30,7 +33,7 @@ interface PullRequestThreadLinksProps {
   reference: PullRequestRef;
   url: string;
   threadRef: ScopedThreadRef | null;
-  display: "count" | "menu-item" | "picker";
+  display: "count" | "menu-item" | "picker" | "list";
   onPickerOpenChange?: (open: boolean) => void;
 }
 
@@ -77,6 +80,7 @@ function EnabledPullRequestThreadLinks({
     setLastRelations(relations.data);
   }
   const [pending, setPending] = useState(false);
+  const navigate = useNavigate();
 
   const changeLink = async (threadId: ThreadId, remove: boolean) => {
     if (parsed === null || pending) return;
@@ -137,6 +141,43 @@ function EnabledPullRequestThreadLinks({
           />
           <TooltipPopup>{linkedThreadsLabel}. Search in the command palette.</TooltipPopup>
         </Tooltip>
+      ) : null}
+      {display === "list" ? (
+        <div className="-mx-1.5 flex flex-col" data-pull-request-thread-list>
+          {linkedThreads.map((thread) => (
+            <button
+              key={thread.id}
+              type="button"
+              onClick={() =>
+                void navigate({
+                  to: "/$environmentId/$threadId",
+                  params: buildThreadRouteParams(scopeThreadRef(environmentId, thread.id)),
+                })
+              }
+              className="flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-left text-xs outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <MessageSquareIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1 truncate">{thread.title || "Untitled thread"}</span>
+              {thread.archivedAt ? (
+                <span className="shrink-0 text-2xs text-muted-foreground">Archived</span>
+              ) : null}
+            </button>
+          ))}
+          {linkedThreads.length === 0 ? (
+            <p className="px-1.5 py-1 text-xs text-muted-foreground">
+              {relations.error !== null ? "Linked threads could not be read." : "No thread yet."}
+            </p>
+          ) : null}
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => onPickerOpenChange?.(true)}
+            className="flex items-center gap-2 rounded-md px-1.5 py-1 text-left text-xs text-muted-foreground outline-none hover:bg-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <PullRequestGlyph.link aria-hidden className="size-3.5" />
+            Link a thread
+          </button>
+        </div>
       ) : null}
       {display === "menu-item" ? (
         <MenuItem

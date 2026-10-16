@@ -220,6 +220,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server honours `agentBrowserProfileId`, letting agent tabs share a
       persistent browser profile instead of throwaway storage. */
   agentBrowserProfile: Schema.optionalKey(Schema.Boolean),
+  /** Server resolves `agentBrowserProfileId` per project, from the thread's
+      project overrides. Absent on servers that apply only the environment value. */
+  projectAgentBrowserProfile: Schema.optionalKey(Schema.Boolean),
   /** Server lists, approves and serves Studio Mods (`mods.list` and friends).
       Absent on servers from before Mods shipped, which reject those calls, so
       clients say the service predates Mods instead of probing it. */

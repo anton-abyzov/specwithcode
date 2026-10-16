@@ -28,6 +28,10 @@ export interface MarkdownFileLinkMeta {
   basename: string;
   line?: number;
   column?: number;
+  /** Last line of a `file.ts:12-20` range; the link opens at `line`. */
+  endLine?: number;
+  /** Shown instead of the file name: a bare `:12-20` keeps reading as written. */
+  label?: string;
   /** Written as a folder (`png/app/`): opens in the file manager, not a viewer. */
   directory?: true;
   /**
@@ -36,6 +40,13 @@ export interface MarkdownFileLinkMeta {
    * one that exists on the host wins.
    */
   candidates?: ReadonlyArray<string>;
+  /**
+   * Where to search by file name when no candidate exists, with the path as
+   * the message wrote it (`CoordinatorConversation.tsx`, `apps/web/x.ts`).
+   */
+  search?: { readonly roots: ReadonlyArray<string>; readonly path: string };
+  /** Every path the host was asked about when none of them exists. */
+  unresolved?: ReadonlyArray<string>;
 }
 
 export function extractMarkdownLinkHrefs(markdown: string): string[] {
@@ -110,11 +121,22 @@ export function resolveInlineCodeFileLinkMeta(
       cwd,
     );
   }
+  // `serverRuntimeStartup.ts:353-357`: a line range opens at its first line.
+  const range = LINE_RANGE_PATTERN.exec(trimmed);
+  if (range && !trimmed.startsWith(":")) {
+    const meta = resolveInlineCodeFileLinkMeta(range[1]!, cwd, baseDir);
+    const endLine = Number(range[2]);
+    return meta && meta.line !== undefined && endLine > meta.line ? { ...meta, endLine } : meta;
+  }
   const candidate = inlineCodeFilePathCandidate(codeText) ?? bareDocumentFileName(trimmed);
   if (candidate === null) return null;
 
   return resolveMarkdownFileLinkMeta(candidate, cwd, baseDir);
 }
+
+const LINE_RANGE_PATTERN = /^(.+:\d+)\s*[-–]\s*(\d+)$/;
+// `:396-399` or `:238` after a file reference: lines in that same file.
+const BARE_LINE_REFERENCE_PATTERN = /^:(\d+)(?:\s*[-–]\s*(\d+))?$/;
 
 // `png/app/`, `explorations/`, `~/Projects/app/`: a trailing slash is how a
 // report names a folder.
@@ -168,19 +190,35 @@ function isPlainRelativePath(text: string): boolean {
   return !EXPLICIT_PATH_PREFIX_PATTERN.test(text) && isRelativeFilePath(text);
 }
 
+/** A path whose last segment has no extension: a folder, unless the host says otherwise. */
+export function mayBeDirectory(meta: MarkdownFileLinkMeta): boolean {
+  if (meta.directory) return true;
+  if (meta.line !== undefined) return false;
+  return (
+    !/\.[A-Za-z0-9_-]+$/.test(meta.basename) &&
+    !/^[A-Z][A-Za-z]*file$|^(?:LICENSE|README|CHANGELOG|NOTICE|AUTHORS|CODEOWNERS)$/.test(
+      meta.basename,
+    )
+  );
+}
+
 /**
- * The folder a message's plain relative paths are written against, when it is
- * not the workspace. A worker that built files in `~/Projects/logo` writes
- * `~/Projects/logo/png/sheet.png` once and then `svg/icon.svg`; the first
- * segment of a relative path (`png`) found in an absolute one marks the folder
- * above it (`~/Projects/logo`) as the base for the whole message.
+ * The folders a message's plain relative paths may be written against, when
+ * they are not the workspace, most likely first. A worker that built files in
+ * `~/Projects/logo` writes `~/Projects/logo/png/sheet.png` once and then
+ * `svg/icon.svg`: the first segment of a relative path (`png`) found in an
+ * absolute one marks the folder above it. A folder the message names outside
+ * the workspace (`../specweave-wt-code-captures`, a sibling worktree) is one
+ * too. Which one holds a file is settled on the host.
  */
-export function inferInlineCodeBaseDir(
+export function inferInlineCodeBaseDirs(
   spans: ReadonlyArray<string>,
   cwd?: string,
   baseDir: string | undefined = cwd,
-): string | null {
+): { readonly forPaths: string[]; readonly forNames: string[] } {
   const externalDirectories: string[][] = [];
+  const namedFolders: string[] = [];
+  const fileFolders: string[] = [];
   const firstSegments: string[] = [];
   for (const span of spans) {
     const text = span.trim();
@@ -190,52 +228,99 @@ export function inferInlineCodeBaseDir(
       const segments = text.split("/");
       if (segments.length > 1) firstSegments.push(segments[0]!);
     } else if (meta.workspaceRelativePath === null && meta.filePath.startsWith("/")) {
+      const folder = mayBeDirectory(meta);
       const segments = meta.filePath.split("/");
-      externalDirectories.push(meta.directory ? segments : segments.slice(0, -1));
+      externalDirectories.push(folder ? segments : segments.slice(0, -1));
+      if (folder) namedFolders.push(meta.filePath);
+      else fileFolders.push(segments.slice(0, -1).join("/"));
     }
   }
+  const bases: string[] = [];
   for (const segment of firstSegments) {
     for (const directories of externalDirectories) {
       const index = directories.lastIndexOf(segment);
-      if (index > 1) return directories.slice(0, index).join("/");
+      if (index > 1) bases.push(directories.slice(0, index).join("/"));
     }
   }
-  return null;
+  const matched = [...bases];
+  bases.push(...namedFolders);
+  const keep = (list: string[]) =>
+    [...new Set(list)].filter((base) => base.length > 0 && base !== cwd);
+  // A bare file name sits beside the files the message named ("the same
+  // folder") before anywhere else; a path with folders does not.
+  return { forPaths: keep(bases), forNames: keep([...matched, ...fileFolders, ...namedFolders]) };
 }
 
 /**
  * File links for a message's inline code spans. Plain relative paths resolve
- * against the folder the message names (see `inferInlineCodeBaseDir`) first
- * and the workspace second.
+ * against the folders the message names (see `inferInlineCodeBaseDirs`) first
+ * and the workspace last.
  */
 export function resolveInlineCodeFileLinks(
   spans: ReadonlyArray<string>,
   cwd?: string,
   baseDir: string | undefined = cwd,
 ): Map<string, MarkdownFileLinkMeta> {
-  const inferredBaseDir = inferInlineCodeBaseDir(spans, cwd, baseDir);
+  const inferredBaseDirs = inferInlineCodeBaseDirs(spans, cwd, baseDir);
   const metaByText = new Map<string, MarkdownFileLinkMeta>();
+  let lastFile: MarkdownFileLinkMeta | null = null;
   for (const span of spans) {
-    if (metaByText.has(span)) continue;
+    const bareLines = BARE_LINE_REFERENCE_PATTERN.exec(span.trim());
+    if (bareLines) {
+      if (lastFile !== null && !metaByText.has(span)) {
+        const line = Number(bareLines[1]);
+        const endLine = bareLines[2] === undefined ? undefined : Number(bareLines[2]);
+        metaByText.set(span, {
+          ...fileLinkMetaAtPath({ line }, lastFile.filePath, cwd),
+          ...(endLine !== undefined && endLine > line ? { endLine } : {}),
+          ...(lastFile.candidates ? { candidates: lastFile.candidates } : {}),
+          label: span.trim().replace("-", "–"),
+        });
+      }
+      continue;
+    }
+    if (metaByText.has(span)) {
+      const known = metaByText.get(span)!;
+      if (!known.directory) lastFile = known;
+      continue;
+    }
     const meta = resolveInlineCodeFileLinkMeta(span, cwd, baseDir);
     if (!meta) continue;
-    const inferred =
-      inferredBaseDir !== null && isPlainRelativePath(span.trim())
-        ? resolveInlineCodeFileLinkMeta(span, cwd, inferredBaseDir)
-        : null;
-    metaByText.set(
-      span,
-      inferred && inferred.filePath !== meta.filePath
-        ? { ...inferred, candidates: [inferred.filePath, meta.filePath] }
-        : meta,
-    );
+    const bases = span.trim().includes("/") ? inferredBaseDirs.forPaths : inferredBaseDirs.forNames;
+    const inferred = isPlainRelativePath(span.trim())
+      ? bases.flatMap((base) => {
+          const resolved = resolveInlineCodeFileLinkMeta(span, cwd, base);
+          return resolved && resolved.filePath !== meta.filePath ? [resolved] : [];
+        })
+      : [];
+    const plain = isPlainRelativePath(span.trim());
+    const search = plain
+      ? {
+          roots: [...bases, ...(cwd ? [cwd] : [])],
+          path: span
+            .trim()
+            .replace(/(?::\d+){1,2}(?:\s*[-–]\s*\d+)?$/, "")
+            .replace(/\/+$/, ""),
+        }
+      : null;
+    const settled: MarkdownFileLinkMeta = {
+      ...(inferred.length > 0
+        ? {
+            ...inferred[0]!,
+            candidates: [...inferred.map((candidate) => candidate.filePath), meta.filePath],
+          }
+        : meta),
+      ...(search ? { search } : {}),
+    };
+    metaByText.set(span, settled);
+    if (!settled.directory) lastFile = settled;
   }
   return metaByText;
 }
 
 /** The link for one of a link's candidate paths, keeping its folder flag. */
 export function fileLinkMetaAtPath(
-  meta: MarkdownFileLinkMeta,
+  meta: Pick<MarkdownFileLinkMeta, "line" | "column" | "endLine" | "label" | "directory">,
   filePath: string,
   cwd?: string,
 ): MarkdownFileLinkMeta {
@@ -245,6 +330,8 @@ export function fileLinkMetaAtPath(
       : `:${meta.line}${meta.column === undefined ? "" : `:${meta.column}`}`;
   return {
     ...buildFileLinkMetaFromTarget(`${filePath}${position}`, cwd),
+    ...(meta.endLine !== undefined ? { endLine: meta.endLine } : {}),
+    ...(meta.label !== undefined ? { label: meta.label } : {}),
     ...(meta.directory ? { directory: true as const } : {}),
   };
 }

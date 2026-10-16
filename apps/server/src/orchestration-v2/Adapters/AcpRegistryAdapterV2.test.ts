@@ -1,3 +1,4 @@
+import { providerFailureFallbackMessage } from "@specweave-studio/shared/orchestrationV2ThreadError";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderInstanceId, ProviderSessionId, ThreadId } from "@specweave-studio/contracts";
@@ -106,7 +107,7 @@ describe("AcpRegistryAdapterV2", () => {
     assert.equal(acpRegistryPromptFailure("other-agent", limit).class, "provider_error");
     assert.equal(
       acpRegistryPromptFailure("mistral-vibe", new Error("private defect")).message,
-      "Provider turn failed.",
+      providerFailureFallbackMessage("provider_error"),
     );
     const rejected = acpRegistryPromptFailure(
       "any-agent",

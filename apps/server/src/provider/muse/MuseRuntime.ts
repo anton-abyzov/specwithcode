@@ -208,7 +208,7 @@ export const makeMuseRuntime = (input: {
             return yield* Effect.fail(
               failure(
                 new Error(
-                  "Muse Code currently accepts text and referenced workspace files in Studio.",
+                  "Muse Code currently accepts text and referenced workspace files in SpecWithCode.",
                 ),
               ),
             );

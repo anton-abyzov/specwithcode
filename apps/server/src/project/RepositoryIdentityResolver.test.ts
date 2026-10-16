@@ -174,6 +174,59 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     }).pipe(Effect.provide(Layer.merge(TestClock.layer(), layerResolver)));
   });
 
+  it.effect("does not spawn git for a folder that is not there", () => {
+    const calls: Array<ReadonlyArray<string>> = [];
+    const existing = new Set(["/repo/packages/web"]);
+    const layerProcessRunner = Layer.succeed(ProcessRunner.ProcessRunner, {
+      run: (input) =>
+        Effect.sync(() => {
+          calls.push(input.args);
+          return {
+            stdout: input.args.includes("rev-parse")
+              ? "/repo\n"
+              : "origin\tgit@github.com:StudioTools/studio.git (fetch)\n",
+            stderr: "",
+            code: ChildProcessSpawner.ExitCode(0),
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          };
+        }),
+    });
+    const layerResolver = Layer.effect(
+      RepositoryIdentityResolver.RepositoryIdentityResolver,
+      RepositoryIdentityResolver.make({
+        negativeCacheTtl: Duration.minutes(5),
+        cwdExists: (cwd) => Effect.sync(() => existing.has(cwd)),
+      }),
+    ).pipe(Layer.provide(layerProcessRunner));
+
+    return Effect.gen(function* () {
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      expect(yield* resolver.resolve("/gone/checkout")).toBeNull();
+      expect(calls).toEqual([]);
+
+      // Still null inside the negative TTL, even once the folder appears...
+      existing.add("/gone/checkout");
+      yield* TestClock.adjust(Duration.minutes(1));
+      expect(yield* resolver.resolve("/gone/checkout")).toBeNull();
+      expect(calls).toEqual([]);
+      // ...and found after it, or at once when a caller asks for a refresh.
+      expect((yield* resolver.resolve("/repo/packages/web", { refresh: true }))?.rootPath).toBe(
+        "/repo",
+      );
+      yield* TestClock.adjust(Duration.minutes(5));
+      expect((yield* resolver.resolve("/gone/checkout"))?.rootPath).toBe("/repo");
+      expect(calls).toEqual([
+        ["-C", "/repo/packages/web", "rev-parse", "--show-toplevel"],
+        ["-C", "/repo", "remote", "-v"],
+        ["-C", "/gone/checkout", "rev-parse", "--show-toplevel"],
+      ]);
+    }).pipe(Effect.provide(Layer.merge(TestClock.layer(), layerResolver)));
+  });
+
   it.effect("normalizes equivalent GitHub remotes into a stable repository identity", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

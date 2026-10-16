@@ -27,6 +27,7 @@ const checks = [];
 try {
   for (const [width, height] of [
     [1440, 1000],
+    [1920, 1080],
     [390, 844],
   ]) {
     for (const theme of ["light", "dark"]) {
@@ -90,26 +91,69 @@ try {
         await reader.getByText(/Check 12: budget-vs-actuals scenario 12 passes/).isVisible(),
         `${label}: reader shows the end of the report`,
       );
-      NodeAssert.ok(
-        await reader
-          .getByText(
-            "Not saved yet. Saving puts it in .specweave/increments/0973-budget-vs-actuals/reports/",
-          )
-          .isVisible(),
-        `${label}: reader names the folder`,
-      );
       const readerBox = await reader.boundingBox();
       NodeAssert.ok(
         readerBox && readerBox.y >= 0 && readerBox.y + readerBox.height <= height + 1,
         `${label}: reader fits the viewport`,
       );
+      // The reader opens in the app's one overlay: a card over nearly the
+      // whole window, the report on the left and the worker's thread on the right.
+      const overlay = page.locator('[data-viewer-overlay="true"]');
+      NodeAssert.equal(await overlay.count(), 1, `${label}: one overlay`);
+      if (width >= 832) {
+        await page.waitForFunction(
+          () =>
+            document.querySelector('[data-viewer-overlay="true"]')?.getAnimations().length === 0,
+        );
+        const overlayBox = await overlay.boundingBox();
+        NodeAssert.ok(
+          overlayBox &&
+            overlayBox.x <= 24 &&
+            overlayBox.x + overlayBox.width >= width - 24 &&
+            overlayBox.y <= 48 &&
+            overlayBox.y + overlayBox.height >= height - 24,
+          `${label}: the overlay covers nearly the whole window (${JSON.stringify(overlayBox)})`,
+        );
+        const thread = overlay.locator("[data-overlay-thread]");
+        NodeAssert.equal(
+          await thread.getAttribute("data-overlay-thread"),
+          "skills",
+          `${label}: the worker's thread beside the report`,
+        );
+        const pane = await overlay.getByRole("complementary", { name: "Thread" }).boundingBox();
+        const readerWide = await reader.boundingBox();
+        NodeAssert.ok(
+          pane && readerWide && readerWide.x + readerWide.width <= pane.x + 1,
+          `${label}: the report is on the left, the thread on the right`,
+        );
+        NodeAssert.ok(
+          readerWide.width >= overlayBox.width * 0.55,
+          `${label}: the report gets most of the card (${readerWide.width})`,
+        );
+        // The thread folds to a rail and back; the report takes the room.
+        await overlay.getByRole("button", { name: "Hide thread" }).click();
+        await overlay.locator('[data-thread-collapsed="true"]').waitFor();
+        NodeAssert.equal(await thread.count(), 0, `${label}: thread folded`);
+        const readerFolded = await reader.boundingBox();
+        NodeAssert.ok(
+          readerFolded.width > readerWide.width + 200,
+          `${label}: the report widens when the thread folds`,
+        );
+        await page.screenshot({ path: shot("report-reader-thread-folded") });
+        await overlay.getByRole("button", { name: /^Show thread/ }).click();
+        await thread.waitFor();
+      }
       await page.screenshot({ path: shot("report-reader") });
 
       // Saving from the reader writes it once and flips both surfaces to Saved.
-      await reader.getByRole("button", { name: "Save to increment" }).click();
-      await reader
-        .getByText(/^Saved as \.specweave\/increments\/0973-budget-vs-actuals\/reports\//)
-        .waitFor();
+      await reader.getByRole("button", { name: "More actions" }).click();
+      // The menu names the folder saving puts it in.
+      await page
+        .getByRole("menuitem", {
+          name: "Save to increment (.specweave/increments/0973-budget-vs-actuals/reports/)",
+        })
+        .click();
+      await reader.getByText(/ · Saved$/).waitFor();
       const saves = await page.evaluate(() =>
         window.__projectCalls.filter((call) => call.command === "threadReportSave"),
       );
@@ -123,6 +167,19 @@ try {
         0,
         `${label}: no second save`,
       );
+      // The close button closes it too.
+      await card.getByRole("button", { name: "Open report", exact: true }).click();
+      await reader.waitFor();
+      await reader.getByRole("button", { name: "Close report" }).click();
+      await reader.waitFor({ state: "detached" });
+      await overlay.waitFor({ state: "detached" });
+      if (width >= 832) {
+        // And so does a press on the backdrop, outside the card.
+        await card.getByRole("button", { name: "Open report", exact: true }).click();
+        await reader.waitFor();
+        await page.mouse.click(width - 6, Math.round(height / 2));
+        await overlay.waitFor({ state: "detached" });
+      }
 
       // The coordinator's long relay folds inline; open, it is bounded and folds from the end.
       const relay = conversation.locator("article").filter({

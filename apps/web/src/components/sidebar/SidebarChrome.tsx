@@ -25,8 +25,12 @@ import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
 import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarRestartToUpdate } from "./SidebarRestartToUpdate";
+import { SidebarServerUpdate } from "./SidebarServerUpdate";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
 import { ModStatusItems } from "../../mods/ModPanes";
+
+const isSettingsPath = (pathname: string) =>
+  pathname === "/settings" || pathname.startsWith("/settings/");
 
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron,
@@ -122,14 +126,12 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
 
 function SidebarBrandMark({ onBackdrop }: { onBackdrop: boolean }) {
   return (
-    // Center the visible capitals, without the font's ascender/descender space.
-    <span className="inline-flex min-w-0 items-baseline gap-1 text-sm font-medium tracking-tight">
-      <StudioWordmark aria-label="SpecWithCode" className="h-[1cap] w-auto shrink-0" />
+    // An 18 px tile centred on the name. The name keeps its full 20 px line box, so
+    // `truncate`'s overflow clip leaves descenders such as the "p" whole.
+    <span className="inline-flex min-w-0 items-center gap-1.5 text-sm font-medium tracking-tight">
+      <StudioWordmark aria-label="SpecWithCode" className="size-[18px] shrink-0" />
       <span
-        className={cn(
-          "truncate [text-box:trim-both_cap_alphabetic]",
-          onBackdrop ? "text-white/70" : "text-muted-foreground",
-        )}
+        className={cn("truncate leading-5", onBackdrop ? "text-white/70" : "text-muted-foreground")}
       >
         SpecWithCode
       </span>
@@ -141,7 +143,9 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const navigateToMainApp = useNavigateToMainApp();
   const { isMobile, setOpenMobile } = useSidebar();
   const isOnUtilityPage = useLocation({
-    select: (location) => isSidebarUtilityPage(location.pathname),
+    // Settings is a modal with its own close button over this sidebar.
+    select: (location) =>
+      isSidebarUtilityPage(location.pathname) && !isSettingsPath(location.pathname),
   });
   const handleBackClick = useCallback(() => {
     if (isMobile) setOpenMobile(false);
@@ -169,6 +173,7 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
     <SidebarFooter>
       <SidebarThreadUndoNotice />
       <SidebarProviderUpdatePill />
+      <SidebarServerUpdate />
       <SidebarUpdateArchitectureWarning />
       <ModStatusItems />
       <SidebarRestartToUpdate />

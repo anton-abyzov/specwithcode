@@ -29,4 +29,15 @@ describe("theme contrast classes", () => {
     });
     expect(offenders).toEqual([]);
   });
+
+  it("scans the files that once waited on other branches", () => {
+    for (const file of [
+      "./components/CommandPalette.tsx",
+      "./components/studio/ProjectCreation.tsx",
+      "./components/studio/NewProjectFolderPicker.tsx",
+      "./components/studio/CoordinatorConversation.tsx",
+    ]) {
+      expect(sources[file], file).toBeTypeOf("string");
+    }
+  });
 });

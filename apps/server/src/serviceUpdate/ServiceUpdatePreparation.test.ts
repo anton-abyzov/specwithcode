@@ -21,7 +21,7 @@ import * as Preparation from "./ServiceUpdatePreparation.ts";
 
 /** The columns update.py and this service read, nothing else. */
 const schema = [
-  `CREATE TABLE orchestration_v2_projection_runs (run_id TEXT, thread_id TEXT, status TEXT, provider_thread_id TEXT)`,
+  `CREATE TABLE orchestration_v2_projection_runs (run_id TEXT, thread_id TEXT, status TEXT, provider_thread_id TEXT, payload_json TEXT)`,
   `CREATE TABLE orchestration_v2_projection_runtime_requests (thread_id TEXT, status TEXT)`,
   `CREATE TABLE orchestration_v2_effect_outbox (thread_id TEXT, status TEXT, command_id TEXT, effect_type TEXT)`,
   `CREATE TABLE orchestration_v2_projection_provider_sessions (thread_id TEXT, status TEXT)`,
@@ -48,6 +48,9 @@ interface Fixture {
   }>;
   readonly released: Array<string>;
   releasedIdle: number;
+  /** Whether each forced release kept MCP credentials for the restarted server. */
+  readonly releasedIdleKeptMcp: Array<boolean>;
+  readonly releasedKeptMcp: Array<boolean>;
   /** What an interrupt does in the fixture: end the run (a provider that answers), or nothing (hung). */
   stopEndsRun: boolean;
   /** Runs the orchestrator refuses to interrupt (no provider thread yet). */
@@ -100,7 +103,7 @@ const run = <E>(
                 yield* sql`UPDATE orchestration_v2_projection_runs SET status = 'interrupted'
                   WHERE run_id = ${command.runId}`;
               if (command.runId === fixture.wakesCoordinator)
-                yield* sql`INSERT INTO orchestration_v2_projection_runs VALUES ('wake', 't2', 'queued', NULL)`;
+                yield* sql`INSERT INTO orchestration_v2_projection_runs (run_id, thread_id, status, provider_thread_id) VALUES ('wake', 't2', 'queued', NULL)`;
             }
             if (command.type === "thread.stop" && fixture.stopEndsRun) {
               yield* sql`UPDATE orchestration_v2_projection_runs SET status = 'interrupted'
@@ -123,16 +126,18 @@ const run = <E>(
             Effect.andThen(
               Effect.sync(() => {
                 fixture.released.push(input.providerSessionId);
+                fixture.releasedKeptMcp.push(input.keepMcpCredentials === true);
               }),
             ),
           ) as never,
-        releaseIdle: () =>
+        releaseIdle: (input) =>
           sql`UPDATE orchestration_v2_projection_provider_sessions SET status = 'stopped'`.pipe(
             Effect.orDie,
             Effect.as(1),
             Effect.tap(() =>
               Effect.sync(() => {
                 fixture.releasedIdle += 1;
+                fixture.releasedIdleKeptMcp.push(input.keepMcpCredentials === true);
               }),
             ),
           ),
@@ -222,6 +227,8 @@ const newFixture = (stopEndsRun: boolean, extra: Partial<Fixture> = {}): Fixture
   dispatched: [],
   released: [],
   releasedIdle: 0,
+  releasedIdleKeptMcp: [],
+  releasedKeptMcp: [],
   cleanupCalls: [],
   stopEndsRun,
   ...extra,
@@ -271,7 +278,7 @@ it.live(
       fixture,
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
-        yield* sql`INSERT INTO orchestration_v2_projection_runs VALUES
+        yield* sql`INSERT INTO orchestration_v2_projection_runs (run_id, thread_id, status, provider_thread_id) VALUES
         ('r1', 't1', 'running', 'pt1'), ('r2', 't1', 'queued', NULL), ('r3', 't2', 'completed', NULL)`;
         yield* sql`INSERT INTO orchestration_v2_projection_provider_sessions VALUES ('t2', 'running')`;
         const preparation = yield* Preparation.ServiceUpdatePreparation;
@@ -312,10 +319,50 @@ it.live(
         // Stop was answered, so nothing was forced.
         assert.deepEqual(fixture.released, []);
         assert.equal(fixture.releasedIdle, 1);
+        // Agents' MCP credentials outlive the update restart.
+        assert.deepEqual(fixture.releasedIdleKeptMcp, [true]);
       }),
     );
   },
 );
+
+it.live("leaves a held queue in place: it is not work the update waits for", () => {
+  const fixture = newFixture(true);
+  return run(
+    fixture,
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      // A restart held this worker's handoffs; only someone's Resume starts them.
+      yield* sql`INSERT INTO orchestration_v2_projection_runs VALUES
+        ('h1', 't1', 'queued', NULL, '{"status":"queued","queueHeld":true}'),
+        ('h2', 't1', 'queued', NULL, '{"status":"queued","queueHeld":true}'),
+        ('q1', 't2', 'queued', NULL, '{"status":"queued","queueHeld":false}')`;
+      const preparation = yield* Preparation.ServiceUpdatePreparation;
+      const before = yield* preparation.prepare({ stopWork: false });
+      assert.deepEqual(
+        before.blockers.map((blocker) => [blocker.kind, blocker.count, blocker.threadTitle]),
+        [["queued", 1, "Docs"]],
+      );
+      const result = yield* preparation.prepare({ stopWork: true });
+      assert.isTrue(result.idle);
+      // Only the waiting message is cancelled (and queued again after the restart);
+      // the held ones stay held, in order, for the person to resume or discard.
+      assert.deepEqual(fixture.dispatched, [
+        { type: "queued-run.cancel", threadId: "t2", runId: "q1" },
+      ]);
+      const left = yield* sql<{ run_id: string; status: string }>`
+        SELECT run_id, status FROM orchestration_v2_projection_runs ORDER BY run_id`;
+      assert.deepEqual(
+        left.map((row) => [row.run_id, row.status]),
+        [
+          ["h1", "queued"],
+          ["h2", "queued"],
+          ["q1", "cancelled"],
+        ],
+      );
+    }),
+  );
+});
 
 it.live("ends a turn whose provider never answers the interrupt", () => {
   const fixture = newFixture(false);
@@ -323,13 +370,14 @@ it.live("ends a turn whose provider never answers the interrupt", () => {
     fixture,
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* sql`INSERT INTO orchestration_v2_projection_runs VALUES ('r1', 't1', 'running', 'pt1')`;
+      yield* sql`INSERT INTO orchestration_v2_projection_runs (run_id, thread_id, status, provider_thread_id) VALUES ('r1', 't1', 'running', 'pt1')`;
       yield* sql`INSERT INTO orchestration_v2_projection_provider_threads VALUES ('pt1', 'session-1')`;
       yield* sql`INSERT INTO orchestration_v2_projection_provider_turns VALUES ('pt1', 'turn-1', 1), ('pt1', 'turn-2', 2)`;
       const preparation = yield* Preparation.ServiceUpdatePreparation;
       const result = yield* preparation.prepare({ stopWork: true });
       assert.isTrue(result.idle);
       assert.deepEqual(fixture.released, ["session-1"]);
+      assert.deepEqual(fixture.releasedKeptMcp, [true]);
       assert.deepEqual(
         fixture.dispatched.map((command) => command.type),
         ["run.interrupt", "thread.background-work.settle"],
@@ -347,7 +395,7 @@ it.live("names what is left when work will not stop", () => {
       // An effect the outbox has not finished, and a run with no provider turn to settle.
       yield* sql`INSERT INTO orchestration_v2_effect_outbox (thread_id, status)
         VALUES ('t2', 'pending'), (NULL, NULL), ('t2', 'succeeded')`;
-      yield* sql`INSERT INTO orchestration_v2_projection_runs VALUES ('r1', 't1', 'starting', NULL)`;
+      yield* sql`INSERT INTO orchestration_v2_projection_runs (run_id, thread_id, status, provider_thread_id) VALUES ('r1', 't1', 'starting', NULL)`;
       const preparation = yield* Preparation.ServiceUpdatePreparation;
       const result = yield* preparation.prepare({ stopWork: true });
       assert.isFalse(result.idle);
@@ -369,7 +417,7 @@ it.live("stops the coordinator turn an interrupted worker wakes", () => {
     fixture,
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* sql`INSERT INTO orchestration_v2_projection_runs VALUES ('r1', 't1', 'running', 'pt1')`;
+      yield* sql`INSERT INTO orchestration_v2_projection_runs (run_id, thread_id, status, provider_thread_id) VALUES ('r1', 't1', 'running', 'pt1')`;
       const preparation = yield* Preparation.ServiceUpdatePreparation;
       const result = yield* preparation.prepare({ stopWork: true });
       assert.deepEqual(result, {
@@ -396,7 +444,7 @@ it.live(
       fixture,
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
-        yield* sql`INSERT INTO orchestration_v2_projection_runs VALUES ('r1', 't1', 'preparing', NULL)`;
+        yield* sql`INSERT INTO orchestration_v2_projection_runs (run_id, thread_id, status, provider_thread_id) VALUES ('r1', 't1', 'preparing', NULL)`;
         yield* sql`INSERT INTO orchestration_v2_projection_runtime_requests VALUES ('t2', 'pending')`;
         const preparation = yield* Preparation.ServiceUpdatePreparation;
         const result = yield* preparation.prepare({ stopWork: true });
@@ -427,7 +475,7 @@ it.live("clears what Stop leaves behind even without a hold", () => {
       const sql = yield* SqlClient.SqlClient;
       // A turn that never reached its provider, a request on an ended run, an
       // effect nobody will finish and a session row whose process is gone.
-      yield* sql`INSERT INTO orchestration_v2_projection_runs VALUES ('r1', 't1', 'starting', NULL)`;
+      yield* sql`INSERT INTO orchestration_v2_projection_runs (run_id, thread_id, status, provider_thread_id) VALUES ('r1', 't1', 'starting', NULL)`;
       yield* sql`INSERT INTO orchestration_v2_projection_runtime_requests VALUES ('t2', 'pending')`;
       yield* sql`INSERT INTO orchestration_v2_effect_outbox (thread_id, status) VALUES ('t2', 'pending')`;
       yield* sql`INSERT INTO orchestration_v2_projection_provider_sessions VALUES ('t1', 'working')`;
@@ -482,7 +530,7 @@ it.live("Update now holds the service before draining, then closes terminals", (
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
         // r1 waits on its checkpoint; r2 never reached its provider.
-        yield* sql`INSERT INTO orchestration_v2_projection_runs VALUES
+        yield* sql`INSERT INTO orchestration_v2_projection_runs (run_id, thread_id, status, provider_thread_id) VALUES
           ('r1', 't1', 'waiting', NULL), ('r2', 't2', 'starting', NULL)`;
         yield* sql`INSERT INTO orchestration_v2_projection_runtime_requests VALUES ('t2', 'pending')`;
         const preparation = yield* Preparation.ServiceUpdatePreparation;
@@ -589,7 +637,7 @@ it.live("lets a finished turn's checkpoint finish before closing the turn", () =
     fixture,
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* sql`INSERT INTO orchestration_v2_projection_runs VALUES ('r1', 't1', 'waiting', NULL)`;
+      yield* sql`INSERT INTO orchestration_v2_projection_runs (run_id, thread_id, status, provider_thread_id) VALUES ('r1', 't1', 'waiting', NULL)`;
       yield* sql`INSERT INTO orchestration_v2_effect_outbox VALUES
         ('t1', 'running', 'command:effect:checkpoint.capture:r1', 'checkpoint.capture')`;
       // The capture takes longer than every other wait in the drain.
@@ -619,7 +667,7 @@ it.live("closes a finished turn without its checkpoint once the wait runs out", 
     fixture,
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* sql`INSERT INTO orchestration_v2_projection_runs VALUES ('r1', 't1', 'waiting', NULL)`;
+      yield* sql`INSERT INTO orchestration_v2_projection_runs (run_id, thread_id, status, provider_thread_id) VALUES ('r1', 't1', 'waiting', NULL)`;
       yield* sql`INSERT INTO orchestration_v2_effect_outbox VALUES
         ('t1', 'pending', 'command:effect:checkpoint.capture:r1', 'checkpoint.capture')`;
       const preparation = yield* Preparation.ServiceUpdatePreparation;
@@ -639,7 +687,7 @@ it.live("keeps to its budget when agent processes take long to close", () => {
     fixture,
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* sql`INSERT INTO orchestration_v2_projection_runs VALUES
+      yield* sql`INSERT INTO orchestration_v2_projection_runs (run_id, thread_id, status, provider_thread_id) VALUES
         ('r1', 't1', 'running', 'pt1'), ('r2', 't2', 'running', 'pt2')`;
       yield* sql`INSERT INTO orchestration_v2_projection_provider_threads VALUES
         ('pt1', 'session-1'), ('pt2', 'session-2')`;
@@ -663,7 +711,7 @@ it.live("an interrupted drain releases the hold", () =>
       fixture,
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
-        yield* sql`INSERT INTO orchestration_v2_projection_runs VALUES ('r1', 't1', 'running', 'pt1')`;
+        yield* sql`INSERT INTO orchestration_v2_projection_runs (run_id, thread_id, status, provider_thread_id) VALUES ('r1', 't1', 'running', 'pt1')`;
         const preparation = yield* Preparation.ServiceUpdatePreparation;
         // The window that asked closes while Stop is still waiting on the turn.
         const fiber = yield* preparation
@@ -686,7 +734,7 @@ it.live("a held drain cancels a message queued after its single round", () =>
       fixture,
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
-        yield* sql`INSERT INTO orchestration_v2_projection_runs VALUES ('r1', 't1', 'running', 'pt1')`;
+        yield* sql`INSERT INTO orchestration_v2_projection_runs (run_id, thread_id, status, provider_thread_id) VALUES ('r1', 't1', 'running', 'pt1')`;
         const preparation = yield* Preparation.ServiceUpdatePreparation;
         const result = yield* preparation.prepare({ stopWork: true, hold: true });
         assert.isTrue(result.idle);
@@ -699,7 +747,7 @@ it.live("a held drain cancels a message queued after its single round", () =>
         );
 
         // One that lands later is cleared by the next look while held.
-        yield* sql`INSERT INTO orchestration_v2_projection_runs VALUES ('late', 't2', 'queued', NULL)`;
+        yield* sql`INSERT INTO orchestration_v2_projection_runs (run_id, thread_id, status, provider_thread_id) VALUES ('late', 't2', 'queued', NULL)`;
         const looked = yield* preparation.prepare({ stopWork: false });
         assert.isTrue(looked.idle);
         assert.isString(looked.holdUntil);

@@ -19,6 +19,50 @@ export function createProjectWorkspaceAtoms<R, E>(
       staleTimeMs: 0,
       idleTtlMs: 30_000,
     }),
+    browserBridgeStatus: createEnvironmentGuardedRpcQueryAtomFamily(runtime, {
+      label: "browser-bridge:status",
+      tag: WS_METHODS.browserBridgeStatus,
+      staleTimeMs: 0,
+      idleTtlMs: 30_000,
+    }),
+    browserBridgeTest: createEnvironmentRpcCommand(runtime, {
+      label: "browser-bridge:test",
+      tag: WS_METHODS.browserBridgeTest,
+    }),
+    browserBridgeReconnect: createEnvironmentRpcCommand(runtime, {
+      label: "browser-bridge:reconnect",
+      tag: WS_METHODS.browserBridgeReconnect,
+    }),
+    browserExtensionStatus: createEnvironmentGuardedRpcQueryAtomFamily(runtime, {
+      label: "browser-extension:status",
+      tag: WS_METHODS.browserExtensionStatus,
+      staleTimeMs: 0,
+      idleTtlMs: 30_000,
+    }),
+    browserExtensionPairing: createEnvironmentRpcCommand(runtime, {
+      label: "browser-extension:pairing",
+      tag: WS_METHODS.browserExtensionPairing,
+    }),
+    browserExtensionTest: createEnvironmentRpcCommand(runtime, {
+      label: "browser-extension:test",
+      tag: WS_METHODS.browserExtensionTest,
+    }),
+    browserExtensionReconnect: createEnvironmentRpcCommand(runtime, {
+      label: "browser-extension:reconnect",
+      tag: WS_METHODS.browserExtensionReconnect,
+    }),
+    browserExtensionStop: createEnvironmentRpcCommand(runtime, {
+      label: "browser-extension:stop",
+      tag: WS_METHODS.browserExtensionStop,
+    }),
+    browserExtensionInstallFolder: createEnvironmentRpcCommand(runtime, {
+      label: "browser-extension:install-folder",
+      tag: WS_METHODS.browserExtensionInstallFolder,
+    }),
+    nativeConnectionApply: createEnvironmentRpcCommand(runtime, {
+      label: "native-connections:apply",
+      tag: WS_METHODS.nativeConnectionApply,
+    }),
     connections: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "project-connections:read",
       tag: WS_METHODS.projectsConnectionsRead,
@@ -99,7 +143,9 @@ export function createProjectWorkspaceAtoms<R, E>(
       label: "project-workspace:read",
       tag: WS_METHODS.projectsWorkspaceRead,
       staleTimeMs: 10_000,
-      idleTtlMs: 30_000,
+      // Kept for a while after the project is left: switching back paints from the
+      // last answer at once and revalidates, instead of waiting on the host.
+      idleTtlMs: 5 * 60_000,
     }),
     starterSuggestions: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "project-workspace:starter-suggestions",
@@ -140,6 +186,22 @@ export function createProjectWorkspaceAtoms<R, E>(
       tag: WS_METHODS.projectsThreadReportsRead,
       staleTimeMs: 5_000,
       idleTtlMs: 60_000,
+    }),
+    threadIncrementProgress: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "project-workspace:thread-increment-progress",
+      tag: WS_METHODS.projectsThreadIncrementProgressRead,
+      staleTimeMs: 5_000,
+      idleTtlMs: 60_000,
+    }),
+    incrementsList: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "project-workspace:increments-list",
+      tag: WS_METHODS.projectsIncrementsList,
+      staleTimeMs: 5_000,
+      idleTtlMs: 30_000,
+    }),
+    threadIncrementLink: createEnvironmentRpcCommand(runtime, {
+      label: "project-workspace:thread-increment-link",
+      tag: WS_METHODS.projectsThreadIncrementLink,
     }),
     threadReportSave: createEnvironmentRpcCommand(runtime, {
       label: "project-workspace:thread-report-save",

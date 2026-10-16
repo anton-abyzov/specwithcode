@@ -1,12 +1,14 @@
-import type { EnvironmentId, ThreadId } from "@specweave-studio/contracts";
+import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@specweave-studio/contracts";
 import type { HandoffTimelineRun } from "@specweave-studio/client-runtime/handoff";
 import { resolveUserMessagePresentation } from "@specweave-studio/client-runtime/user-message";
 import { useEnvironment } from "../../state/environments";
+import { useThreadShell } from "../../state/entities";
 import { requestExecutionLabel } from "../../studio/projectDomain";
 import { useProjectMessageRouting } from "../../studio/projectMessageRouting";
 import type { ChatMessage } from "../../types";
 import { ScheduledTaskLink } from "../settings/ScheduledTaskLink";
 import { InlineButton } from "../ui/button";
+import { useProviderEntries } from "../studio/shell/ModelBadge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 /** Sender and execution origin are distinct: an agent may ask a different host/model to run. */
@@ -14,20 +16,67 @@ export function UserMessageProvenance({
   message,
   runs,
   environmentId,
+  threadRef,
   onOpenThread,
 }: {
   readonly message: ChatMessage;
   readonly runs: ReadonlyArray<HandoffTimelineRun>;
   readonly environmentId: EnvironmentId;
+  readonly threadRef?: ScopedThreadRef | null;
   readonly onOpenThread: (threadId: ThreadId) => void;
 }) {
   const routing = useProjectMessageRouting();
   const environment = useEnvironment(environmentId);
+  const providers = useProviderEntries(environmentId);
   const presentation = resolveUserMessagePresentation(message);
   const senderThreadId = message.senderThreadId;
   // The transcript is bound to its execution environment. Its run, not today's
   // composer selection, owns the historical provider/model attribution.
-  const execution = requestExecutionLabel(message, runs, environment?.label ?? environmentId);
+  // A subagent's task arrives outside any run; it ran on the subagent thread's own model.
+  const thread = useThreadShell(threadRef ?? null);
+  const execution = requestExecutionLabel(
+    message,
+    runs,
+    environment?.label ?? environmentId,
+    providers,
+    thread?.modelSelection ?? null,
+  );
+  // Typed here and routed elsewhere: the line under the bubble says where.
+  if (message.routedNote) return null;
+  const fromCoordinator =
+    senderThreadId !== undefined && senderThreadId === routing?.coordinatorThreadId;
+  if (
+    !presentation.isAutomation &&
+    senderThreadId &&
+    (fromCoordinator || message.createdBy === "user")
+  )
+    // Routed through another thread: one quiet marker; who routed it and where it ran on hover.
+    return (
+      <p
+        className="me-1 text-2xs text-muted-foreground"
+        data-user-message-attribution={message.createdBy === "user" ? "routed" : "agent"}
+        data-environment-id={environmentId}
+      >
+        <InlineButton
+          onClick={() =>
+            fromCoordinator ? routing!.openCoordinator() : onOpenThread(senderThreadId)
+          }
+          tone="muted"
+          aria-label={message.createdBy === "user" ? "Open routing thread" : "Open sending thread"}
+          title={`${message.createdBy === "user" ? "Your message, routed by" : "Sent by"} ${
+            fromCoordinator ? "the coordinator" : "another thread"
+          } · ${execution}`}
+        >
+          {message.createdBy === "user"
+            ? fromCoordinator
+              ? "via coordinator"
+              : "via another thread"
+            : fromCoordinator
+              ? "from coordinator"
+              : "from another agent"}
+        </InlineButton>
+      </p>
+    );
   return (
     <>
       {presentation.isAutomation ? (
@@ -46,23 +95,6 @@ export function UserMessageProvenance({
           ) : (
             "Sent by automation"
           )}
-        </p>
-      ) : message.createdBy === "user" && senderThreadId ? (
-        // The user's own words, delivered here by the thread that routed them.
-        <p className="me-1 text-2xs text-muted-foreground" data-user-message-attribution="routed">
-          <InlineButton
-            onClick={() =>
-              senderThreadId === routing?.coordinatorThreadId
-                ? routing.openCoordinator()
-                : onOpenThread(senderThreadId)
-            }
-            tone="muted"
-            aria-label="Open routing thread"
-          >
-            {senderThreadId === routing?.coordinatorThreadId
-              ? "Your message · Routed by coordinator · View coordinator"
-              : "Your message · Routed by another thread"}
-          </InlineButton>
         </p>
       ) : message.createdBy === "agent" ? (
         <p className="me-1 text-2xs text-muted-foreground" data-user-message-attribution="agent">

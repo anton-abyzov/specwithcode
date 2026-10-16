@@ -29,17 +29,15 @@ export const synchronizeAcpPermissions = Effect.fn("synchronizeAcpPermissions")(
       new AcpRequestError({
         method: "session/set_config_option",
         code: -32602,
-        errorMessage: `Cannot synchronize provider Allow All with Studio access mode (${runtimeMode}): ${detail}. Retry after checking the provider permission settings.`,
+        errorMessage: `Cannot synchronize provider Allow All with SpecWithCode access mode (${runtimeMode}): ${detail}. Retry after checking the provider permission settings.`,
       });
     if (value === undefined) return yield* failure("unsupported permission values");
     if (option.currentValue === value) continue;
-    yield* runtime
-      .setConfigOption(option.id, value)
-      .pipe(
-        Effect.catchTags({
-          AcpRequestError: () => Effect.fail(failure("provider rejected the change")),
-        }),
-      );
+    yield* runtime.setConfigOption(option.id, value).pipe(
+      Effect.catchTags({
+        AcpRequestError: () => Effect.fail(failure("provider rejected the change")),
+      }),
+    );
     const effective = (yield* runtime.getConfigOptions).find((entry) => entry.id === option.id);
     if (effective?.currentValue !== value) {
       return yield* failure("provider did not confirm the requested value");
