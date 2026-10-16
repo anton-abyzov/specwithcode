@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Renders the Chrome Web Store screenshots (1280x800) and the small promo tile
- * (440x280) from the HTML scenes next to this file. The scenes embed the real
+ * Renders the Chrome Web Store screenshots (1280x800) and the promo tiles
+ * (440x280, 1400x560) from the HTML scenes next to this file. The scenes embed the real
  * popup (src/popup.html, popup.css, popup.js) with a stubbed `chrome` object.
  *
  * Headless only:
@@ -86,6 +86,7 @@ const SHOTS = [
   { scene: "scene-4-agents.html", out: "screenshot-4-agents.png", width: 1280, height: 800 },
   { scene: "scene-5-control.html", out: "screenshot-5-control.png", width: 1280, height: 800 },
   { scene: "promo-small.html", out: "promo-small-440x280.png", width: 440, height: 280 },
+  { scene: "promo-marquee.html", out: "promo-marquee-1400x560.png", width: 1400, height: 560 },
 ];
 
 const browser = await chromium.launch({ headless: true });

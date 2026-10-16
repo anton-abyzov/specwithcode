@@ -183,9 +183,15 @@ export function reportDocument(text: string): ReportDocument | null {
 /** Parts that say what stops the work, whatever a model calls them. */
 const BLOCKER_LABELS =
   /^(blockers?|blocked(?: on| by)?|decision needed|needs? from you|question for you)$/i;
-/** A blocker part that says there is none. */
+/**
+ * An opening clause that says nothing blocks the work. The verdict comes from
+ * the opening clause alone: `none. I also fixed X` is a report with notes, not
+ * a blocker, however long the notes run, and `No access to staging` is one.
+ */
 const NO_BLOCKER =
-  /^(?:none|no(?:ne)?(?: blockers?)?|n\/?a|nothing|-|—|not blocked|no blockers? remain(?:ing)?)\b[\s\S]{0,80}$/i;
+  /^(?:none|no|nothing|n\/?a|-+|—|not blocked|unblocked|no(?: (?:open|outstanding|known|remaining|current|new))? blockers?(?: (?:remain(?:ing)?|left|here|now|found))?|none (?:remain(?:ing)?|left|so far|now|here)|nothing (?:blocking|blocks)(?: (?:it|this|the work))?)$/i;
+/** Where a blocker part's opening clause ends. */
+const CLAUSE_END = /[.;:,!?()\u2014\u2013]|\s-\s/;
 /** Long enough to read in a tooltip and a row, short enough to never be a wall. */
 export const MAX_REPORT_BLOCKER_LENGTH = 400;
 
@@ -222,8 +228,15 @@ export function reportBlocker(text: string): string | null {
     .replace(/^\s*(?:[-*+]|\d+[.)])\s+/gm, "")
     .replace(/\s+/g, " ")
     .trim();
-  if (plain.length === 0 || NO_BLOCKER.test(plain.replace(/[.;,]$/, ""))) return null;
+  if (plain.length === 0 || NO_BLOCKER.test(openingClause(plain))) return null;
   return plain.length > MAX_REPORT_BLOCKER_LENGTH
     ? `${plain.slice(0, MAX_REPORT_BLOCKER_LENGTH - 1).trimEnd()}…`
     : plain;
+}
+
+/** The words before a blocker part's first clause break; a lone dash stays itself. */
+function openingClause(plain: string): string {
+  if (/^[-—]+$/.test(plain)) return plain;
+  const end = CLAUSE_END.exec(plain);
+  return (end === null ? plain : plain.slice(0, end.index)).trim();
 }

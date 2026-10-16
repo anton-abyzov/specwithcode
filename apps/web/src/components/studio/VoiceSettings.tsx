@@ -1,49 +1,103 @@
 import { useEffect, useRef, useState } from "react";
 import { AudioLinesIcon, PlayIcon } from "lucide-react";
-import type { DesktopLocalVoice, DesktopVoicePreferences } from "@specweave-studio/contracts";
+import type {
+  DesktopLocalVoice,
+  VoiceSettings as VoiceSettingsValue,
+} from "@specweave-studio/contracts";
+import { usePrimarySettings } from "../../hooks/useSettings";
+import { useAtomValue } from "@effect/atom-react";
+import { primaryServerConfigAtom, serverEnvironment } from "../../state/server";
+import { usePrimaryEnvironmentId } from "../../state/environments";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { Dialog, DialogPopup, DialogTitle, DialogDescription } from "../ui/dialog";
 import { Button } from "../ui/button";
 import { Tip } from "./shell/Tip";
 import { playCallAudio } from "../../studio/voiceCallAudio";
 
-const DEFAULT: DesktopVoicePreferences = {
-  provider: "local",
-  localVoiceId: "",
-  rate: 0.47,
-  elevenLabsVoiceId: "",
-  hasApiKey: false,
-};
+let legacyImport: Promise<void> | null = null;
+
+/**
+ * Moves voice settings an earlier build kept on this Mac into the server once.
+ * Server settings that were already changed win; the local file is deleted
+ * only after the server has accepted the move.
+ */
+function importLegacyVoiceSettings(
+  bridge: NonNullable<Window["desktopBridge"]>,
+  saved: VoiceSettingsValue,
+  save: (voice: Partial<VoiceSettingsValue>) => Promise<VoiceSettingsValue | null>,
+): Promise<void> {
+  legacyImport ??= (async () => {
+    const legacy = await bridge.readLegacyVoicePreferences?.().catch(() => null);
+    if (!legacy) return;
+    const untouched =
+      saved.provider === "local" &&
+      saved.elevenLabsApiKey.length === 0 &&
+      saved.elevenLabsVoiceId.length === 0 &&
+      saved.localVoiceId.length === 0;
+    if (untouched) {
+      const { apiKey, ...rest } = legacy;
+      const stored = await save({ ...rest, ...(apiKey ? { elevenLabsApiKey: apiKey } : {}) });
+      // A server without voice settings accepts the patch but drops it; keep the file then.
+      if (
+        stored === null ||
+        stored.provider !== legacy.provider ||
+        stored.elevenLabsVoiceId !== legacy.elevenLabsVoiceId ||
+        (apiKey.length > 0 && stored.elevenLabsApiKey.length === 0)
+      ) {
+        legacyImport = null;
+        return;
+      }
+    }
+    await bridge.forgetLegacyVoicePreferences?.().catch(() => undefined);
+  })();
+  return legacyImport;
+}
+
 const fieldClass = "w-full rounded-md border border-border bg-background px-3 py-2 text-sm";
+/**
+ * One voice for every project on this Mac: saved in the primary server's
+ * settings, with the ElevenLabs key in that server's secret store. The key is
+ * write-only here; the server only reports whether one is saved.
+ */
 export function VoiceSettings({ disabled = false }: { disabled?: boolean }) {
   const bridge = typeof window === "undefined" ? undefined : window.desktopBridge;
+  const environmentId = usePrimaryEnvironmentId();
+  const saved = usePrimarySettings((settings) => settings.voice);
+  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
+    label: "save voice settings",
+    reportFailure: false,
+  });
   const [open, setOpen] = useState(false);
-  const [value, setValue] = useState(DEFAULT);
+  const [value, setValue] = useState<VoiceSettingsValue>(saved);
   const [voices, setVoices] = useState<readonly DesktopLocalVoice[]>([]);
   const [apiKey, setApiKey] = useState("");
   const [clearKey, setClearKey] = useState(false);
-  const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const preview = useRef<AbortController | null>(null);
+  // Waits for the server's real settings, so defaults are never mistaken for "untouched".
+  const settingsLoaded = useAtomValue(primaryServerConfigAtom) !== null;
   useEffect(() => {
-    if (!open || !bridge?.getVoicePreferences) return;
-    let alive = true;
-    setLoaded(false);
+    if (!bridge || environmentId === null || !settingsLoaded) return;
+    void importLegacyVoiceSettings(bridge, saved, async (voice) => {
+      const result = await updateSettings({ environmentId, input: { patch: { voice } } });
+      return result._tag === "Success" ? result.value.voice : null;
+    });
+  }, [bridge, environmentId, settingsLoaded, saved, updateSettings]);
+  const hasApiKey = saved.elevenLabsApiKey.length > 0;
+  const loaded = environmentId !== null;
+  // Each opening starts from what the server has; edits stay local until saved.
+  const openDialog = () => {
+    setValue(saved);
     setError(null);
     setApiKey("");
     setClearKey(false);
-    void bridge
-      .getVoicePreferences()
-      .then((settings) => {
-        if (alive) {
-          setValue(settings);
-          setLoaded(true);
-        }
-      })
-      .catch(() => {
-        if (alive) setError("Could not load voice settings. Close and try again.");
-      });
+    setOpen(true);
+  };
+  useEffect(() => {
+    if (!open || !bridge) return;
+    let alive = true;
     void bridge
       .listLocalVoices?.()
       .then((list) => {
@@ -66,25 +120,49 @@ export function VoiceSettings({ disabled = false }: { disabled?: boolean }) {
       setApiKey("");
     };
   }, [open, bridge]);
-  if (!bridge?.getVoicePreferences || !bridge.setVoicePreferences) return null;
+  if (!bridge?.synthesizeVoice) return null;
   const save = async () => {
+    if (environmentId === null) return;
+    const key = apiKey.trim();
+    const voiceId = value.elevenLabsVoiceId.trim();
+    if (value.provider === "elevenlabs") {
+      if ((!key && (!hasApiKey || clearKey)) || !voiceId) {
+        setError("Add your own ElevenLabs API key and voice ID first.");
+        return;
+      }
+      if (!/^[a-zA-Z0-9_-]+$/.test(voiceId)) {
+        setError("Enter a valid ElevenLabs voice ID.");
+        return;
+      }
+    }
     setBusy(true);
     setError(null);
     try {
-      await bridge.setVoicePreferences!({
-        provider: value.provider,
-        localVoiceId: value.localVoiceId,
-        rate: value.rate,
-        elevenLabsVoiceId: value.elevenLabsVoiceId,
-        ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
-        clearApiKey: clearKey,
+      const result = await updateSettings({
+        environmentId,
+        input: {
+          patch: {
+            voice: {
+              provider: value.provider,
+              localVoiceId: value.localVoiceId,
+              rate: value.rate,
+              elevenLabsVoiceId: voiceId,
+              // An omitted key keeps the saved one; an empty one removes it.
+              ...(key ? { elevenLabsApiKey: key } : clearKey ? { elevenLabsApiKey: "" } : {}),
+            },
+          },
+        },
       });
+      if (result._tag !== "Success") {
+        setError("Could not save voice settings. Try again.");
+        return;
+      }
+      if (result.value.voice.provider !== value.provider) {
+        setError("Update the SpecWithCode service on this Mac to save voice settings.");
+        return;
+      }
       setApiKey("");
       setOpen(false);
-    } catch {
-      setError(
-        "Could not save. For ElevenLabs, add your own key and a valid voice ID. Secure storage must be available.",
-      );
     } finally {
       setBusy(false);
     }
@@ -119,7 +197,7 @@ export function VoiceSettings({ disabled = false }: { disabled?: boolean }) {
           className="sws-icon-button"
           aria-label="Voice settings"
           disabled={disabled}
-          onClick={() => setOpen(true)}
+          onClick={openDialog}
         >
           <AudioLinesIcon aria-hidden />
         </button>
@@ -212,7 +290,7 @@ export function VoiceSettings({ disabled = false }: { disabled?: boolean }) {
                   aria-label="ElevenLabs API key"
                   value={apiKey}
                   placeholder={
-                    value.hasApiKey && !clearKey
+                    hasApiKey && !clearKey
                       ? "Saved securely · leave blank to keep"
                       : "Enter your API key"
                   }
@@ -233,11 +311,12 @@ export function VoiceSettings({ disabled = false }: { disabled?: boolean }) {
                 />
               </label>
               <p className="text-xs text-muted-foreground">
-                The key is encrypted on this device and is never synced to other users.
+                One setting for every project. The key stays in the SpecWithCode service's secret
+                store on this Mac and is never shown again or synced to other machines.
               </p>
             </>
           )}
-          {value.hasApiKey && !clearKey ? (
+          {hasApiKey && !clearKey ? (
             <Button
               variant="ghost"
               onClick={() => {

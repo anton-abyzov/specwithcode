@@ -129,6 +129,8 @@ export const RPC_REQUIRED_SCOPES = {
   // Refresh reads public status feeds and this host's checks; it changes nothing.
   [WS_METHODS.statusPageSnapshot]: AuthOrchestrationReadScope,
   [WS_METHODS.statusPageRefresh]: AuthOrchestrationReadScope,
+  // Spends the user's own ElevenLabs credit, so only a caller that can operate may ask.
+  [WS_METHODS.voiceSynthesize]: AuthOrchestrationOperateScope,
   // Status carries no token, only the paired person's display name.
   [WS_METHODS.telegramChannelStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.googleAccountStatus]: AuthOrchestrationReadScope,

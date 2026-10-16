@@ -125,6 +125,7 @@ vi.mock("@legendapp/list/react", async () => {
         };
     className?: string;
     contentInsetEndAdjustment?: number;
+    maintainScrollAtEndThreshold?: number;
     ref?: Ref<LegendListRef>;
   }) => {
     if (props.anchoredEndSpace) {
@@ -140,6 +141,7 @@ vi.mock("@legendapp/list/react", async () => {
         data-anchor-offset={props.anchoredEndSpace?.anchorOffset}
         data-anchor-on-ready={Boolean(props.anchoredEndSpace?.onReady)}
         data-content-inset-end={props.contentInsetEndAdjustment}
+        data-maintain-scroll-at-end-threshold={props.maintainScrollAtEndThreshold}
         data-maintain-visible-content-position={
           typeof props.maintainVisibleContentPosition === "object"
             ? "object"
@@ -1293,6 +1295,15 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain('data-anchor-index="0"');
     expect(markup).not.toContain('data-maintain-scroll-at-end="enabled"');
+    // A taller composer must not nudge a reader who scrolled up toward the end.
+    expect(markup).toContain('data-maintain-scroll-at-end-threshold="0"');
+  });
+
+  it("keeps the end band one viewport tall while following the live edge", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[buildUserTimelineEntry("Status?")]} />,
+    );
+    expect(markup).toContain('data-maintain-scroll-at-end-threshold="1"');
   });
 
   it("hands end-following back to the list once the send anchor is released", () => {

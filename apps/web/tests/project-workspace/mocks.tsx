@@ -748,7 +748,50 @@ const baseThreadProjection = () => ({
                     ],
           },
 });
+/* `?stream`: a long coordinator conversation that the check grows while a
+   reader is scrolled up. `window.__streamPush` adds a message and
+   `window.__streamUpdate` rewrites one, the way streamed text arrives. */
+const streamFixture = new URLSearchParams(window.location.search).has("stream");
+let streamMessages = Array.from({ length: 24 }, (_, index) => ({
+  id: `s${index}`,
+  role: index % 2 === 0 ? "user" : "assistant",
+  createdBy: index % 2 === 0 ? "user" : "agent",
+  creationSource: "web",
+  text:
+    index % 2 === 0
+      ? `Question ${index / 2 + 1}: what is the state of worker ${index / 2 + 1}?`
+      : `Answer ${(index + 1) / 2}. ${"The worker finished its part, opened a pull request and is waiting on review. ".repeat(4)}`,
+  createdAt: new Date(Date.UTC(2026, 9, 16, 9, 0, index * 5)).toISOString(),
+  updatedAt: new Date(Date.UTC(2026, 9, 16, 9, 0, index * 5)).toISOString(),
+  streaming: false,
+  attachments: [],
+}));
+const streamListeners = new Set<() => void>();
+const subscribeStream = (listener: () => void) => {
+  streamListeners.add(listener);
+  return () => streamListeners.delete(listener);
+};
+let streamProjection = { projection: { messages: streamMessages, runs: [], turnItems: [] } };
+const publishStream = () => {
+  streamProjection = { projection: { messages: streamMessages, runs: [], turnItems: [] } };
+  for (const listener of streamListeners) listener();
+};
+window.__streamPush = (message) => {
+  const at = new Date().toISOString();
+  streamMessages = [
+    ...streamMessages,
+    { createdAt: at, updatedAt: at, streaming: false, attachments: [], ...message },
+  ];
+  publishStream();
+};
+window.__streamUpdate = (id, text) => {
+  const at = new Date().toISOString();
+  streamMessages = streamMessages.map((m) => (m.id === id ? { ...m, text, updatedAt: at } : m));
+  publishStream();
+};
 export const useThreadProjection = (ref) => {
+  // The fixture mode never changes on a page, so the hook order is stable.
+  if (streamFixture) return useSyncExternalStore(subscribeStream, () => streamProjection);
   if (fallbackFixture) return { projection: fallbackProjection };
   const base = baseThreadProjection();
   return subagentsFixture

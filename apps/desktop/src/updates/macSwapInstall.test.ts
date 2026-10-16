@@ -76,12 +76,23 @@ const makeAppZip = (dir: string, version: string) => {
   return zip;
 };
 
-// The Electron binary, when this checkout has downloaded it.
+// The Electron binary, when this checkout has downloaded all of it. A runtime that is
+// still extracting, or was cut off mid-download, has a binary on disk that dyld kills
+// at launch, and every such launch pops a macOS "Electron quit unexpectedly" dialog.
 const electronBinary = (() => {
   if (process.env.STUDIO_TEST_ELECTRON) return process.env.STUDIO_TEST_ELECTRON;
   try {
     const binary = createRequire(import.meta.url)("electron") as unknown;
-    return typeof binary === "string" && FS.existsSync(binary) ? binary : null;
+    if (typeof binary !== "string" || !FS.existsSync(binary)) return null;
+    const runtimeCheck = spawnSync(
+      process.execPath,
+      [
+        fileURLToPath(new URL("../../scripts/ensure-electron-runtime.mjs", import.meta.url)),
+        "--check",
+      ],
+      { encoding: "utf8" },
+    );
+    return runtimeCheck.status === 0 ? binary : null;
   } catch {
     return null;
   }

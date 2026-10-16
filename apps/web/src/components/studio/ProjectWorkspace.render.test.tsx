@@ -119,4 +119,97 @@ describe("coordinator conversation rendering", () => {
     await act(async () => setConversationFindState({ query: "", scope: null }));
     expect(shownMessages()).toBe(100);
   });
+
+  describe("scroll position while messages arrive", () => {
+    // jsdom lays nothing out: each mounted message is 100px tall in a 300px viewport.
+    async function scrolled() {
+      await render();
+      const scope = container.querySelector<HTMLElement>("[data-conversation-find-scope]")!;
+      let top = 0;
+      const height = () => container.querySelectorAll(".project-message").length * 100;
+      Object.defineProperty(scope, "clientHeight", { configurable: true, get: () => 300 });
+      Object.defineProperty(scope, "scrollHeight", { configurable: true, get: height });
+      Object.defineProperty(scope, "scrollTop", {
+        configurable: true,
+        get: () => top,
+        set: (value: number) => {
+          top = Math.max(0, Math.min(value, height() - 300));
+        },
+      });
+      const scrollTo = async (value: number) => {
+        scope.scrollTop = value;
+        await act(async () => scope.dispatchEvent(new Event("scroll")));
+      };
+      // Mounted before the geometry above existed: start at the end, as the browser would.
+      await scrollTo(height());
+      return { top: () => top, height, scrollTo };
+    }
+    const latestButton = () => container.querySelector("[data-coordinator-latest] button");
+    const reply = (index: number, extra: Record<string, unknown> = {}) => ({
+      ...conversation(index + 1)[index]!,
+      ...extra,
+    });
+
+    it("keeps a reader who scrolled up where they are when a reply arrives", async () => {
+      state.messages = conversation(10);
+      const view = await scrolled();
+      expect(view.top()).toBe(700);
+      expect(latestButton()).toBeNull();
+      await view.scrollTo(200);
+      expect(latestButton()?.textContent).toBe("Jump to latest");
+      state.messages = [...state.messages, reply(10, { role: "assistant", createdBy: "agent" })];
+      await render();
+      expect(view.top()).toBe(200);
+      // Nothing scrolls an ancestor either, as scrollIntoView would on a phone.
+      expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+      expect(latestButton()?.textContent).toBe("New messages");
+      await act(async () => (latestButton() as HTMLButtonElement).click());
+      expect(view.top()).toBe(view.height() - 300);
+      expect(latestButton()).toBeNull();
+    });
+
+    it("follows new messages while the reader is at the end", async () => {
+      state.messages = conversation(10);
+      const view = await scrolled();
+      state.messages = [...state.messages, reply(10, { role: "assistant", createdBy: "agent" })];
+      await render();
+      expect(view.top()).toBe(800);
+      expect(latestButton()).toBeNull();
+    });
+
+    it("returns to the end when the person sends a message, but not for a worker's", async () => {
+      state.messages = conversation(10);
+      const view = await scrolled();
+      await view.scrollTo(100);
+      state.messages = [
+        ...state.messages,
+        reply(10, {
+          role: "user",
+          createdBy: "user",
+          creationSource: "web",
+          senderThreadId: "worker",
+        }),
+      ];
+      await render();
+      expect(view.top()).toBe(100);
+      state.messages = [
+        ...state.messages,
+        reply(11, { role: "user", createdBy: "user", creationSource: "web" }),
+      ];
+      await render();
+      expect(view.top()).toBe(view.height() - 300);
+      // The browser reports the move to the end as a scroll.
+      await view.scrollTo(view.top());
+      expect(latestButton()).toBeNull();
+    });
+
+    it("stays put while the person types in the composer", async () => {
+      state.messages = conversation(10);
+      const view = await scrolled();
+      await view.scrollTo(300);
+      await prompt("Where did worker");
+      await prompt("Where did worker two land?");
+      expect(view.top()).toBe(300);
+    });
+  });
 });

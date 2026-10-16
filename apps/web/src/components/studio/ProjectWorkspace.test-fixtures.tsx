@@ -42,6 +42,7 @@ const state = vi.hoisted(() => ({
     text: string;
     role: string;
     createdBy: string;
+    creationSource?: string;
     senderThreadId?: string;
     delegatedCompletion?: { taskIds: string[] };
     runId?: string | null;
@@ -393,6 +394,8 @@ vi.mock("../../hooks/useSettings", async () => {
   const { DEFAULT_SERVER_SETTINGS } = await import("@specweave-studio/contracts");
   return {
     useEnvironmentSettings: () => DEFAULT_SERVER_SETTINGS,
+    usePrimarySettings: (select?: (settings: typeof DEFAULT_SERVER_SETTINGS) => unknown) =>
+      select ? select(DEFAULT_SERVER_SETTINGS) : DEFAULT_SERVER_SETTINGS,
     useClientSettings: (
       select: (settings: {
         sendShortcut: string;

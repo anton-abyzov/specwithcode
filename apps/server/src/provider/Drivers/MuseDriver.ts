@@ -24,7 +24,7 @@ import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 import { buildServerProvider } from "../providerSnapshot.ts";
 import { MuseSettings } from "@specweave-studio/contracts";
-import { connectMuse, museControl } from "../muse/MuseConnection.ts";
+import { connectMuse, museCheckFailure, museControl } from "../muse/MuseConnection.ts";
 import { museModels, museUsage, museSubscription } from "../muse/MuseDiscovery.ts";
 import { makeMuseRuntime } from "../muse/MuseRuntime.ts";
 import { fromRunner } from "../../textGeneration/TextGenerationOperations.ts";
@@ -124,11 +124,10 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
             await client.close();
           }
         },
-        catch: () => ({
+        catch: (cause) => ({
           ...initial(),
           status: "error" as const,
-          message:
-            "Muse Code could not be checked. Install the official muse CLI, sign in, then refresh Providers.",
+          message: museCheckFailure(cause),
         }),
       }).pipe(Effect.orElseSucceed((value) => value));
       const snapshot = yield* makeManagedServerProvider({

@@ -30,30 +30,47 @@ export const DesktopVoiceTranscribeInputSchema = Schema.Struct({
   locale: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(35))),
 });
 
+const SpokenText = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(DESKTOP_VOICE_MAX_SPOKEN_CHARACTERS),
+);
+
+/** Local macOS speech; the voice and pace come from the server's voice settings. */
 export const DesktopVoiceSynthesizeInputSchema = Schema.Struct({
-  text: Schema.String.check(
-    Schema.isMinLength(1),
-    Schema.isMaxLength(DESKTOP_VOICE_MAX_SPOKEN_CHARACTERS),
-  ),
+  text: SpokenText,
+  voiceId: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
+  rate: Schema.optionalKey(Schema.Number.check(Schema.isBetween({ minimum: 0.35, maximum: 0.6 }))),
 });
 
-export const DesktopVoicePreferencesSchema = Schema.Struct({
+/**
+ * Voice settings an earlier build kept on this Mac, read once so the app can
+ * move them into the server's settings. `apiKey` is empty when none was saved.
+ */
+export const DesktopLegacyVoicePreferencesSchema = Schema.Struct({
   provider: Schema.Literals(["local", "elevenlabs"]),
   localVoiceId: Schema.String,
-  rate: Schema.Number.check(Schema.isBetween({ minimum: 0.35, maximum: 0.6 })),
+  rate: Schema.Number,
   elevenLabsVoiceId: Schema.String,
-  hasApiKey: Schema.Boolean,
+  apiKey: Schema.String,
 });
-export type DesktopVoicePreferences = typeof DesktopVoicePreferencesSchema.Type;
-export const DesktopVoicePreferencesInputSchema = Schema.Struct({
-  provider: Schema.Literals(["local", "elevenlabs"]),
-  localVoiceId: Schema.String.check(Schema.isMaxLength(200)),
-  rate: Schema.Number.check(Schema.isBetween({ minimum: 0.35, maximum: 0.6 })),
-  elevenLabsVoiceId: Schema.String.check(Schema.isMaxLength(100)),
-  apiKey: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(512))),
-  clearApiKey: Schema.optionalKey(Schema.Boolean),
+export type DesktopLegacyVoicePreferences = typeof DesktopLegacyVoicePreferencesSchema.Type;
+
+/** A reply spoken by the server's cloud voice (ElevenLabs), with the key it keeps. */
+export const VoiceSpeechInput = Schema.Struct({ text: SpokenText });
+export const VoiceSpeechResult = Schema.Struct({
+  /** Base64 MP3. */
+  audio: Schema.String,
 });
-export type DesktopVoicePreferencesInput = typeof DesktopVoicePreferencesInputSchema.Type;
+export type VoiceSpeechResult = typeof VoiceSpeechResult.Type;
+
+export class VoiceSpeechError extends Schema.TaggedError<VoiceSpeechError>()("VoiceSpeechError", {
+  detail: Schema.String,
+}) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
 export const DesktopLocalVoiceSchema = Schema.Struct({
   id: Schema.String,
   name: Schema.String,

@@ -64,16 +64,73 @@ function getRequiredRuntimePaths(electronDir, platformPath) {
   return paths;
 }
 
-function isMachO(filePath) {
-  if (hostPlatform !== "darwin") {
-    return true;
+const MH_MAGIC_64 = 0xfeedfacf;
+const FAT_MAGIC = 0xcafebabe;
+const LC_SEGMENT_64 = 0x19;
+
+// dyld refuses to load a Mach-O whose segments end past the end of the file, and the
+// launch then dies with a macOS "quit unexpectedly" dialog. An interrupted download or
+// extraction leaves exactly that: a valid header over a truncated body, which `file`
+// still reports as Mach-O. Walk the segment table so a partial runtime is caught here.
+export function machOProblem(filePath) {
+  let fd;
+  try {
+    fd = NodeFS.openSync(filePath, "r");
+  } catch {
+    return "missing";
   }
 
-  const result = NodeChildProcess.spawnSync("file", ["-b", filePath], {
-    encoding: "utf8",
-  });
+  try {
+    const fileSize = NodeFS.fstatSync(fd).size;
+    const read = (position, length) => {
+      const buffer = Buffer.alloc(length);
+      return NodeFS.readSync(fd, buffer, 0, length, position) === length ? buffer : null;
+    };
 
-  return result.status === 0 && result.stdout.includes("Mach-O");
+    const checkSlice = (base, end) => {
+      const magic = read(base, 4);
+      if (!magic || magic.readUInt32LE(0) !== MH_MAGIC_64) return "not a 64-bit Mach-O";
+      const header = read(base, 32);
+      if (!header) return "header is truncated";
+
+      const commandCount = header.readUInt32LE(16);
+      let offset = base + 32;
+      for (let index = 0; index < commandCount; index += 1) {
+        const command = read(offset, 8);
+        if (!command) return "load commands are truncated";
+        const commandSize = command.readUInt32LE(4);
+        if (commandSize < 8) return "load command is malformed";
+        if (command.readUInt32LE(0) === LC_SEGMENT_64) {
+          const segment = read(offset, 72);
+          if (!segment) return "segment command is truncated";
+          const segmentEnd = Number(segment.readBigUInt64LE(40) + segment.readBigUInt64LE(48));
+          if (base + segmentEnd > end) {
+            const name = segment.toString("latin1", 8, 24).replace(/\0+$/, "");
+            return `segment ${name} ends past the end of the file`;
+          }
+        }
+        offset += commandSize;
+      }
+      return null;
+    };
+
+    const fatHeader = read(0, 8);
+    if (!fatHeader || fatHeader.readUInt32BE(0) !== FAT_MAGIC) return checkSlice(0, fileSize);
+
+    const archCount = fatHeader.readUInt32BE(4);
+    for (let index = 0; index < archCount; index += 1) {
+      const arch = read(8 + index * 20, 20);
+      if (!arch) return "fat header is truncated";
+      const sliceOffset = arch.readUInt32BE(8);
+      const sliceEnd = sliceOffset + arch.readUInt32BE(12);
+      if (sliceEnd > fileSize) return "fat slice ends past the end of the file";
+      const problem = checkSlice(sliceOffset, sliceEnd);
+      if (problem) return problem;
+    }
+    return null;
+  } finally {
+    NodeFS.closeSync(fd);
+  }
 }
 
 function missingRuntimePaths(electronDir, platformPath) {
@@ -98,7 +155,7 @@ function invalidRuntimePaths(electronDir, platformPath) {
       "Electron Framework.framework",
       "Electron Framework",
     ),
-  ].filter((runtimePath) => NodeFS.existsSync(runtimePath) && !isMachO(runtimePath));
+  ].filter((runtimePath) => NodeFS.existsSync(runtimePath) && machOProblem(runtimePath) !== null);
 }
 
 function runChecked(command, args) {
@@ -143,9 +200,10 @@ function installElectronRuntime(electronDir, version) {
 }
 
 export function ensureElectronRuntime() {
-  const electronPackageJsonPath = require.resolve("electron/package.json");
-  const electronPackageJson = JSON.parse(NodeFS.readFileSync(electronPackageJsonPath, "utf8"));
-  const electronDir = NodePath.dirname(electronPackageJsonPath);
+  const electronDir = resolveElectronDir();
+  const electronPackageJson = JSON.parse(
+    NodeFS.readFileSync(NodePath.join(electronDir, "package.json"), "utf8"),
+  );
   const platformPath = getPlatformPath();
   const electronPath = NodePath.join(electronDir, "dist", platformPath);
   const missingBeforeInstall = missingRuntimePaths(electronDir, platformPath);
@@ -177,8 +235,35 @@ export function ensureElectronRuntime() {
   return electronPath;
 }
 
+function resolveElectronDir() {
+  return NodePath.dirname(require.resolve("electron/package.json"));
+}
+
+// Reports what is wrong with the downloaded runtime without repairing it, so callers
+// such as tests can skip launching Electron instead of tripping a crash dialog.
+export function electronRuntimeProblems() {
+  const electronDir = resolveElectronDir();
+  const platformPath = getPlatformPath();
+  return [
+    ...missingRuntimePaths(electronDir, platformPath).map(
+      (runtimePath) => `missing: ${runtimePath}`,
+    ),
+    ...invalidRuntimePaths(electronDir, platformPath).map(
+      (runtimePath) => `invalid (${machOProblem(runtimePath)}): ${runtimePath}`,
+    ),
+  ];
+}
+
 // `file://${argv[1]}` never matches on Windows (drive letters need `file:///C:/`).
 if (process.argv[1] && NodeURL.pathToFileURL(process.argv[1]).href === import.meta.url) {
-  const electronPath = ensureElectronRuntime();
-  process.stdout.write(`${electronPath}\n`);
+  if (process.argv.includes("--check")) {
+    const problems = electronRuntimeProblems();
+    if (problems.length > 0) {
+      process.stderr.write(`${problems.join("\n")}\n`);
+      process.exitCode = 1;
+    }
+  } else {
+    const electronPath = ensureElectronRuntime();
+    process.stdout.write(`${electronPath}\n`);
+  }
 }

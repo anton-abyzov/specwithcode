@@ -40,6 +40,15 @@ export const CHAT_TIMELINE_ANCHOR_OFFSET = 24;
 
 export type TimelineScrollMode = "following-end" | "anchoring-new-turn" | "free-scrolling";
 
+/**
+ * Whether a ready anchor may scroll the list to the turn it frames. The list
+ * reports it ready again each time the turn below it grows, so once the reader
+ * has scrolled away that report must not pull them back.
+ */
+export function shouldPositionTimelineAnchor(mode: TimelineScrollMode): boolean {
+  return mode !== "free-scrolling";
+}
+
 export interface TimelineListMeasurementState {
   readonly data: readonly unknown[];
   readonly scroll: number;

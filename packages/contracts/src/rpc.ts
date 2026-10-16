@@ -176,6 +176,7 @@ import {
   TelegramChannelStatus,
 } from "./telegramChannel.ts";
 import { StatusPageError, StatusSnapshot } from "./statusPage.ts";
+import { VoiceSpeechError, VoiceSpeechInput, VoiceSpeechResult } from "./desktopVoice.ts";
 import {
   OrchestrationSearchThreadsError,
   OrchestrationSearchThreadsInput,
@@ -536,6 +537,9 @@ export const WS_METHODS = {
   composerDraftsGet: "composerDrafts.get",
   composerDraftsPut: "composerDrafts.put",
   composerDraftsDelete: "composerDrafts.delete",
+
+  // Voice calls
+  voiceSynthesize: "voice.synthesize",
 
   // Status page
   statusPageSnapshot: "statusPage.snapshot",
@@ -916,6 +920,12 @@ const WsComposerDraftsDeleteRpc = Rpc.make(WS_METHODS.composerDraftsDelete, {
   payload: ComposerDraftKeyInput,
   success: Schema.Struct({}),
   error: Schema.Union([ComposerDraftError, EnvironmentAuthorizationError]),
+});
+
+const WsVoiceSynthesizeRpc = Rpc.make(WS_METHODS.voiceSynthesize, {
+  payload: VoiceSpeechInput,
+  success: VoiceSpeechResult,
+  error: Schema.Union([VoiceSpeechError, EnvironmentAuthorizationError]),
 });
 
 const WsStatusPageSnapshotRpc = Rpc.make(WS_METHODS.statusPageSnapshot, {
@@ -2170,6 +2180,10 @@ export const WsStatusPageRpcGroup = RpcGroup.make(
   WsStatusPageRefreshRpc,
 ).middleware(RpcScopeAuthorization);
 
+/** Cloud voice for calls; its own group for the same depth reason. */
+export const WsVoiceRpcGroup =
+  RpcGroup.make(WsVoiceSynthesizeRpc).middleware(RpcScopeAuthorization);
+
 /** Chrome checks for agents; their own group for the same depth reason. */
 export const WsBrowserBridgeRpcGroup = RpcGroup.make(...browserBridgeRpcs).middleware(
   RpcScopeAuthorization,
@@ -2183,5 +2197,6 @@ export const WsBrowserExtensionRpcGroup = RpcGroup.make(...browserExtensionRpcs)
 export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsNativeConnectionsRpcGroup)
   .merge(WsStatusPageRpcGroup)
+  .merge(WsVoiceRpcGroup)
   .merge(WsBrowserBridgeRpcGroup)
   .merge(WsBrowserExtensionRpcGroup);

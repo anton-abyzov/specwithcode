@@ -24,7 +24,7 @@ export async function connectMuse(settings: MuseSettings, env: NodeJS.ProcessEnv
     if (host.fingerprintWarning) {
       await host.close();
       throw new Error(
-        "Muse Code protocol differs from the supported SDK. Update the integration before continuing.",
+        `Muse Code ${host.initializeResult.serverInfo.version} speaks a protocol this SpecWithCode build does not support. Update SpecWithCode, then refresh Providers.`,
       );
     }
     const client = new MuseClient(host.connection, {
@@ -51,11 +51,18 @@ export async function museControl<T>(
     return await Promise.race([
       operation,
       Effect.runPromise(Effect.sleep(timeoutMs), { signal: timeout.signal }).then(() => {
-          void close();
+        void close();
         throw new Error("Muse Code control request timed out");
       }),
     ]);
   } finally {
     timeout.abort();
   }
+}
+
+/** A missing binary keeps the install hint; a protocol or timeout failure must not read as one. */
+export function museCheckFailure(cause: unknown): string {
+  const detail = cause instanceof Error ? cause.message : "";
+  if (/does not support|timed out/i.test(detail)) return detail;
+  return "Muse Code could not be checked. Install the official muse CLI, sign in, then refresh Providers.";
 }

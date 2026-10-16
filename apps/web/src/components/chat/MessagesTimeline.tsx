@@ -1544,7 +1544,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                 ? false
                 : maintainVisibleContentPosition
             }
-            maintainScrollAtEndThreshold={1}
+            // A taller composer moves a list within this band of its end down by
+            // the growth, so a reader further up is outside it.
+            maintainScrollAtEndThreshold={liveFollowEnabled ? 1 : 0}
             onScroll={handleScroll}
             onItemSizeChanged={reportContentOverflow}
             className={cn(

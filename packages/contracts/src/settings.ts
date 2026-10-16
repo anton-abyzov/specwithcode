@@ -1107,6 +1107,33 @@ export const UsageLimitSourceConfig = Schema.Struct({
 export type UsageLimitSourceConfig = typeof UsageLimitSourceConfig.Type;
 
 /**
+ * How the coordinator's voice-call replies are spoken, for every project on
+ * this environment. The ElevenLabs key lives in the server's secret store;
+ * settings and clients only see a redaction marker when one is set, and the
+ * server makes the ElevenLabs request itself.
+ */
+const ElevenLabsVoiceId = TrimmedString.check(
+  Schema.isMaxLength(100),
+  Schema.isPattern(/^[a-zA-Z0-9_-]*$/),
+);
+export const VoiceSettings = Schema.Struct({
+  provider: Schema.Literals(["local", "elevenlabs"]).pipe(
+    Schema.withDecodingDefault(Effect.succeed("local" as const)),
+  ),
+  localVoiceId: Schema.String.check(Schema.isMaxLength(200)).pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+  ),
+  rate: Schema.Number.check(Schema.isBetween({ minimum: 0.35, maximum: 0.6 })).pipe(
+    Schema.withDecodingDefault(Effect.succeed(0.47)),
+  ),
+  elevenLabsVoiceId: ElevenLabsVoiceId.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  elevenLabsApiKey: TrimmedString.check(Schema.isMaxLength(512)).pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+  ),
+});
+export type VoiceSettings = typeof VoiceSettings.Type;
+
+/**
  * Bitbucket API credentials for this environment, used before the
  * `STUDIO_BITBUCKET_*` environment variables. The tokens live in the server's
  * secret store; settings and clients only see a redaction marker when one is
@@ -1696,6 +1723,7 @@ export const ServerSettings = Schema.Struct({
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   bitbucket: BitbucketSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  voice: VoiceSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   github: GitHubSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // Keyed by a user-chosen id so a source keeps its rows across edits. Entries
   // this build cannot decode round-trip untouched, as provider instances do.
@@ -1993,6 +2021,18 @@ export const ServerSettingsPatch = Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),
       otlpMetricsUrl: Schema.optionalKey(TrimmedString),
       otlpLogsUrl: Schema.optionalKey(TrimmedString),
+    }),
+  ),
+  /** An empty key clears it; an omitted one or the redaction marker keeps what the server has. */
+  voice: Schema.optionalKey(
+    Schema.Struct({
+      provider: Schema.optionalKey(Schema.Literals(["local", "elevenlabs"])),
+      localVoiceId: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
+      rate: Schema.optionalKey(
+        Schema.Number.check(Schema.isBetween({ minimum: 0.35, maximum: 0.6 })),
+      ),
+      elevenLabsVoiceId: Schema.optionalKey(ElevenLabsVoiceId),
+      elevenLabsApiKey: Schema.optionalKey(TrimmedString.check(Schema.isMaxLength(512))),
     }),
   ),
   /** An empty token clears it; an omitted one keeps what the server has. */

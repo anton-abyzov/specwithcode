@@ -77,6 +77,23 @@ It reads `STUDIO_TRACE_FILE` if set, else `<home>/userdata/logs/server.trace.ndj
 a copied file, set `STUDIO_TRACE_FILE`. `--since 30m` keeps spans that ended in the last 30
 minutes. The rate is per minute between the first and last span end.
 
+#### Check why sending is slow
+
+`specweave-studio doctor` reads the same trace files and the database's file sizes, never the
+database itself, so it is safe while the server runs. It reports:
+
+- the latency of a coordinator send, thread commands and agent turn starts (warn at a 1 s p90,
+  fail at 3 s);
+- every database read over 250 ms, grouped by the code that ran it (fail at 1 s);
+- the database and write-ahead log sizes (warn when the log passes 256 MiB);
+- the memory of each open window that sampled in the last 15 minutes.
+
+```bash
+specweave-studio doctor --since 2h
+```
+
+It exits with status 1 when a check fails.
+
 ### Metrics
 
 Metrics are not written to a local file.

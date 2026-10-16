@@ -170,6 +170,7 @@ const BITBUCKET_SECRET_NAMES = {
   apiToken: "bitbucket-api-token",
 } as const;
 const BITBUCKET_SECRET_FIELDS = ["accessToken", "apiToken"] as const;
+const ELEVENLABS_VOICE_SECRET_NAME = "elevenlabs-voice-api-key";
 
 /** Hosts are case-insensitive; a patch can arrive before decoding lowercased its keys. */
 function gitHubTokenSecretName(host: string): string {
@@ -225,7 +226,11 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
       Object.entries(settings.github.tokens).map(([host, token]) => [host, redactSecret(token)]),
     ),
   };
-  return { ...settings, providerInstances, usageLimitSources, bitbucket, github };
+  const voice = {
+    ...settings.voice,
+    elevenLabsApiKey: redactSecret(settings.voice.elevenLabsApiKey),
+  };
+  return { ...settings, providerInstances, usageLimitSources, bitbucket, github, voice };
 }
 
 export function applyProviderInstanceMutation(
@@ -747,7 +752,27 @@ const make = Effect.gen(function* () {
         tokens[host] = SECRET_REDACTED;
         moved = true;
       }
-      return moved ? { ...settings, bitbucket, github: { ...settings.github, tokens } } : settings;
+      const voice = { ...settings.voice };
+      const voiceKey = voice.elevenLabsApiKey;
+      if (voiceKey.length > 0 && voiceKey !== SECRET_REDACTED) {
+        const stored = yield* secretStore
+          .set(ELEVENLABS_VOICE_SECRET_NAME, textEncoder.encode(voiceKey))
+          .pipe(
+            Effect.as(true),
+            Effect.catch(() =>
+              Effect.logWarning("failed to move the ElevenLabs key into the secret store").pipe(
+                Effect.as(false),
+              ),
+            ),
+          );
+        if (stored) {
+          voice.elevenLabsApiKey = SECRET_REDACTED;
+          moved = true;
+        }
+      }
+      return moved
+        ? { ...settings, bitbucket, github: { ...settings.github, tokens }, voice }
+        : settings;
     });
 
   const loadSettingsFromDisk = Effect.gen(function* () {
@@ -963,12 +988,24 @@ const make = Effect.gen(function* () {
           );
         tokens[host] = Option.isSome(secret) ? textDecoder.decode(secret.value) : "";
       }
+      const voice = { ...settings.voice };
+      if (voice.elevenLabsApiKey === SECRET_REDACTED) {
+        const secret = yield* secretStore
+          .get(ELEVENLABS_VOICE_SECRET_NAME)
+          .pipe(
+            Effect.mapError(
+              (cause) => new ServerSettingsError({ settingsPath, operation: "read-secret", cause }),
+            ),
+          );
+        voice.elevenLabsApiKey = Option.isSome(secret) ? textDecoder.decode(secret.value) : "";
+      }
       return {
         ...settings,
         providerInstances: providerInstances as ServerSettings["providerInstances"],
         usageLimitSources: usageLimitSources as ServerSettings["usageLimitSources"],
         bitbucket,
         github: { ...settings.github, tokens },
+        voice,
       };
     });
 
@@ -1170,6 +1207,30 @@ const make = Effect.gen(function* () {
         });
       }
 
+      const voice = { ...next.voice };
+      {
+        let value = voice.elevenLabsApiKey;
+        if (value === SECRET_REDACTED) {
+          // The marker keeps what is saved; a hand-edited plaintext key moves into the store.
+          const inline = current.voice.elevenLabsApiKey;
+          value = inline === SECRET_REDACTED ? "" : inline;
+        }
+        if (value.length > 0) {
+          changes.push({
+            kind: "write",
+            secretName: ELEVENLABS_VOICE_SECRET_NAME,
+            value: textEncoder.encode(value),
+          });
+          voice.elevenLabsApiKey = SECRET_REDACTED;
+        } else if (voice.elevenLabsApiKey !== SECRET_REDACTED) {
+          changes.push({
+            kind: "remove",
+            secretName: ELEVENLABS_VOICE_SECRET_NAME,
+            operation: "remove-secret",
+          });
+        }
+      }
+
       return {
         settings: {
           ...next,
@@ -1177,6 +1238,7 @@ const make = Effect.gen(function* () {
           usageLimitSources: usageLimitSources as ServerSettings["usageLimitSources"],
           bitbucket,
           github: { ...next.github, tokens },
+          voice,
         },
         changes,
       };
