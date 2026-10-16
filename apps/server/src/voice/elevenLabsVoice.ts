@@ -1,28 +1,24 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Main-process speech adapter.
+import type { VoiceSettings } from "@specweave-studio/contracts";
+
 export interface ElevenLabsVoiceConfig {
   apiKey: string;
   voiceId: string;
   modelId: string;
 }
 
-/** Only explicit Studio configuration enables sending reply text to the cloud. */
-export function readElevenLabsVoiceConfig(
-  env: Record<string, string | undefined>,
-): ElevenLabsVoiceConfig | null {
-  const apiKey = env.STUDIO_ELEVENLABS_API_KEY?.trim();
-  const voiceId = env.STUDIO_ELEVENLABS_VOICE_ID?.trim();
-  if (!apiKey && !voiceId) return null;
+/**
+ * The cloud voice for a call, or `null` for the free on-device voice. Throws a
+ * user-facing message when ElevenLabs is chosen but not fully set up.
+ */
+export function elevenLabsConfigFromSettings(voice: VoiceSettings): ElevenLabsVoiceConfig | null {
+  if (voice.provider !== "elevenlabs") return null;
+  const apiKey = voice.elevenLabsApiKey.trim();
+  const voiceId = voice.elevenLabsVoiceId.trim();
   if (!apiKey || !voiceId) {
-    throw new Error(
-      "Set both STUDIO_ELEVENLABS_API_KEY and STUDIO_ELEVENLABS_VOICE_ID to use ElevenLabs.",
-    );
+    throw new Error("Add your ElevenLabs API key and voice ID in Voice settings.");
   }
-  if (!/^[a-zA-Z0-9_-]+$/.test(voiceId)) throw new Error("Invalid ElevenLabs voice ID.");
-  return {
-    apiKey,
-    voiceId,
-    modelId: env.STUDIO_ELEVENLABS_MODEL_ID?.trim() || "eleven_flash_v2_5",
-  };
+  if (!/^[a-zA-Z0-9_-]+$/.test(voiceId)) throw new Error("Enter a valid ElevenLabs voice ID.");
+  return { apiKey, voiceId, modelId: "eleven_flash_v2_5" };
 }
 
 /** Secrets and provider error bodies never cross IPC. No silent switch to a different voice. */

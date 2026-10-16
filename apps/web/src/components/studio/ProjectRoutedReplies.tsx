@@ -3,6 +3,7 @@ import * as DateTime from "effect/DateTime";
 import { MessageId, ThreadId } from "@specweave-studio/contracts";
 import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
+import { useStructuralValue } from "../../hooks/useStructuralValue";
 import { useThreadProjection, useThreadShell } from "../../state/entities";
 import {
   routedRepliesForThread,
@@ -10,11 +11,36 @@ import {
 } from "../../studio/projectCoordinatorMessageDisplay";
 import type { ChatMessage, RoutedMessageNote } from "../../types";
 
+const EMPTY: readonly ChatMessage[] = [];
+
+/** Same notes in the same order: what the worker's timeline shows for them. */
+export function sameRoutedMessages(
+  kept: readonly ChatMessage[],
+  next: readonly ChatMessage[],
+): boolean {
+  return (
+    kept.length === next.length &&
+    kept.every((message, index) => {
+      const other = next[index]!;
+      return (
+        message.id === other.id &&
+        message.text === other.text &&
+        message.createdAt === other.createdAt &&
+        message.routedNote?.kind === other.routedNote?.kind &&
+        message.routedNote?.targetThreadId === other.routedNote?.targetThreadId
+      );
+    })
+  );
+}
+
 /**
  * Messages the person typed in this worker that did not come back to it. Each
  * one goes to the coordinator first; one delivered back here is already in the
  * timeline as the person's own, so only the rest are returned, to sit in the
  * timeline where they were typed with a note on where they went.
+ *
+ * The coordinator's messages change on every streamed token. The list keeps its
+ * identity until a note changes, so the worker's timeline is not rebuilt for them.
  */
 export function useRoutedThreadMessages(
   project: { readonly id: string; readonly environmentId: EnvironmentThreadShell["environmentId"] },
@@ -31,8 +57,8 @@ export function useRoutedThreadMessages(
   );
   const coordinatorMessages = useThreadProjection(coordinatorRef)?.projection.messages;
   const threadMessages = useThreadProjection(threadRef)?.projection.messages;
-  return useMemo(() => {
-    if (!coordinatorId || !coordinatorMessages) return [];
+  const routed = useMemo(() => {
+    if (!coordinatorId || !coordinatorMessages) return EMPTY;
     const replies = routedRepliesForThread(coordinatorMessages, project, thread);
     const notes = routedReplyNotes(replies, threadMessages ?? [], thread.id, coordinatorId);
     return notes.flatMap((note): ChatMessage[] => {
@@ -58,6 +84,7 @@ export function useRoutedThreadMessages(
       ];
     });
   }, [coordinatorId, coordinatorMessages, threadMessages, project, thread]);
+  return useStructuralValue(routed, sameRoutedMessages);
 }
 
 /** One muted line under the person's message: where the coordinator sent it. */

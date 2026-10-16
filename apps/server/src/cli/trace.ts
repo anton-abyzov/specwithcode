@@ -2,6 +2,8 @@
  * `specweave-studio trace summary` - per-span counts, rates, and latency percentiles from
  * the local server trace file and its rotated backups. It reads the files
  * directly, so it works while the server is stalled or stopped.
+ *
+ * `specweave-studio doctor` reads the same files to explain a slow send.
  */
 import { PositiveInt } from "@specweave-studio/contracts";
 import * as Clock from "effect/Clock";
@@ -12,10 +14,17 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { Command, Flag } from "effect/cli";
 
 import * as ServerConfig from "../config.ts";
+import {
+  checkDatabaseFiles,
+  checkRendererMemory,
+  formatDoctorReport,
+  makeSessionDoctor,
+} from "../diagnostics/SessionDoctor.ts";
 import { streamTraceFileLines, toRotatedTracePaths } from "../diagnostics/TraceDiagnostics.ts";
 import { resolveBaseDir } from "../os-jank.ts";
 import { baseDirFlag, DurationFromString, traceFileConfig, traceMaxFilesConfig } from "./config.ts";
@@ -205,4 +214,57 @@ const traceSummaryCommand = Command.make("summary", {
 export const traceCommand = Command.make("trace").pipe(
   Command.withDescription("Inspect the local server trace file."),
   Command.withSubcommands([traceSummaryCommand]),
+);
+
+export const doctorCommand = Command.make("doctor", {
+  baseDir: baseDirFlag,
+  since: Flag.String("since").pipe(
+    Flag.withSchema(DurationFromString),
+    Flag.withDescription("Only look at spans that ended in this window, for example 30m or 2h."),
+    Flag.optional,
+  ),
+}).pipe(
+  Command.withDescription(
+    "Check why sending a message is slow: send latency, slow database reads, database and window memory.",
+  ),
+  Command.withHandler(
+    Effect.fn("cli.doctor")(function* (flags) {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const envHome = yield* Config.String("STUDIO_HOME").pipe(Config.option);
+      const baseDir = yield* resolveBaseDir(
+        Option.getOrUndefined(Option.orElse(flags.baseDir, () => envHome)),
+      );
+      const paths = yield* ServerConfig.deriveServerPaths(baseDir, undefined);
+      const traceFilePath = (yield* traceFileConfig) ?? paths.serverTracePath;
+      const nowMs = yield* Clock.currentTimeMillis;
+      const doctor = makeSessionDoctor(
+        Option.isSome(flags.since) ? nowMs - Duration.toMillis(flags.since.value) : undefined,
+      );
+      yield* Effect.forEach(
+        toRotatedTracePaths(traceFilePath, yield* traceMaxFilesConfig),
+        (tracePath) => streamTraceFileLines(fs, tracePath, doctor.addLine),
+        { discard: true },
+      );
+      const report = doctor.finish();
+      // Sizes only: opening the live database from a second process is not safe.
+      const sizeOf = (file: string) =>
+        fs.stat(file).pipe(
+          Effect.map((info) => Number(info.size)),
+          Effect.orElseSucceed(() => undefined),
+        );
+      report.checks.push(
+        checkDatabaseFiles({
+          databaseBytes: yield* sizeOf(paths.dbPath),
+          walBytes: yield* sizeOf(`${paths.dbPath}-wal`),
+        }),
+      );
+      const rendererLines = yield* fs
+        .readFileString(path.join(paths.logsDir, "renderer-history.ndjson"))
+        .pipe(Effect.orElseSucceed(() => ""));
+      report.checks.push(checkRendererMemory(rendererLines.split("\n"), nowMs));
+      yield* Console.log(formatDoctorReport(report));
+      if (report.checks.some((check) => check.level === "fail")) process.exitCode = 1;
+    }),
+  ),
 );

@@ -20,6 +20,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import * as Schedule from "effect/Schedule";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/http";
@@ -1187,5 +1188,11 @@ const layerMakeServer = Layer.unwrap(
   }),
 );
 
-// The CLI supplies configuration.
-export const runServer = Layer.launch(layerMakeServer);
+// The CLI supplies configuration. The services are spelled out: inferred through
+// the CLI's command tree, the whole server layer can exceed the checker's limits
+// and turn into `any` there.
+export const runServer: Effect.Effect<
+  never,
+  Layer.Error<typeof layerMakeServer>,
+  FileSystem.FileSystem | Path.Path | ServerConfig.ServerConfig
+> = Layer.launch(layerMakeServer);

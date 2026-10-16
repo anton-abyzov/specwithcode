@@ -129,8 +129,32 @@ describe("reportBlocker", () => {
       "**Blockers:** no blockers remain.",
       "**Outcome:** done.",
       "Plain answer.",
+      "**Blockers:** None — fixed in the same commit.",
+      "**Blockers:** -",
+      "Blocked: no.",
     ]) {
       expect(reportBlocker(text)).toBeNull();
     }
+  });
+
+  it("reads none followed by long notes as not blocked", () => {
+    // The Full-window viewer overlay report: notes after `none.` ran past the old 80-character cap.
+    expect(
+      reportBlocker(
+        [
+          "**Checks:** `tsc` is clean, and 1,355 unit tests pass.",
+          "**Blockers:** none. The Files/diff right panel and the subagent peek still open inside the pane; neither is a pop-up, so I left them. I also patched `useHandoffSourceChanges`, which crashed the headless test page on main.",
+        ].join("\n\n"),
+      ),
+    ).toBeNull();
+  });
+
+  it("reads a blocker that opens with no as a blocker", () => {
+    expect(reportBlocker("**Blockers:** No access to the staging token; can you grant it?")).toBe(
+      "No access to the staging token; can you grant it?",
+    );
+    expect(reportBlocker("**Blockers:** Nonexistent signing key. Upload it or skip signing?")).toBe(
+      "Nonexistent signing key. Upload it or skip signing?",
+    );
   });
 });

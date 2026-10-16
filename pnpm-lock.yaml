@@ -149,6 +149,8 @@ importers:
         specifier: 1.0.0
         version: 1.0.0(@types/node@24.12.4)(@vitest/ui@5.0.1)(bufferutil@4.1.0)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(msw@2.12.11(@types/node@24.12.4)(typescript@7.0.2))(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
 
+  apps/chrome-extension: {}
+
   apps/desktop:
     dependencies:
       '@clerk/electron':
@@ -542,8 +544,8 @@ importers:
         specifier: 1.29.0
         version: 1.29.0(zod@4.6.5)
       '@muse-code/sdk':
-        specifier: 1.4.8
-        version: 1.4.8(@types/node@24.12.4)
+        specifier: 1.4.9
+        version: 1.4.9(@types/node@24.12.4)
       '@napi-rs/keyring':
         specifier: ^1.3.0
         version: 1.3.0
@@ -3513,8 +3515,8 @@ packages:
     resolution: {integrity: sha512-VVPPgHyQ6ShqnrmDWuxjmUIsO9gWyOZFmuOfLd9LfBGQJwZfy0gvv9pbHSJuoFNIYC7ZDX9aoFwowjcdSC4E8w==}
     engines: {node: '>=18'}
 
-  '@muse-code/sdk@1.4.8':
-    resolution: {integrity: sha512-Aub03JxS9ajz9q7T5FsLr+nR+5nWQdzIS2squoxwvrmBIG1sQwqPcEaxW9Nv5RYARZKvK96g7BAD1DVPvDtwbw==}
+  '@muse-code/sdk@1.4.9':
+    resolution: {integrity: sha512-fYWvvK0Ar11e0KHbepmp1Kobp6w9UPVVq1rL6ZY7uY1t9NlK6yrF66hELky6G7NgvpH2q/RfeFYfiyuESpHo2A==}
     engines: {node: '>=20'}
     peerDependencies:
       '@types/node': 24.12.4
@@ -14336,7 +14338,7 @@ snapshots:
       strict-event-emitter: 0.5.1
     optional: true
 
-  '@muse-code/sdk@1.4.8(@types/node@24.12.4)':
+  '@muse-code/sdk@1.4.9(@types/node@24.12.4)':
     optionalDependencies:
       '@types/node': 24.12.4
 

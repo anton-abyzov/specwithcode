@@ -1690,6 +1690,73 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 
+  it.effect(
+    "keeps the ElevenLabs voice key in the secret store and tells clients only that one is set",
+    () =>
+      Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const secrets = yield* ServerSecretStore.ServerSecretStore;
+        const serverConfig = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+
+        const saved = yield* serverSettings.updateSettings({
+          voice: {
+            provider: "elevenlabs",
+            elevenLabsVoiceId: "voice-1",
+            elevenLabsApiKey: "xi-test-key",
+          },
+        });
+        assert.equal(saved.voice.provider, "elevenlabs");
+        assert.equal(saved.voice.elevenLabsApiKey, "xi-test-key");
+
+        const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+        assert.notInclude(raw, "xi-test-key");
+        assert.include(raw, "voice-1");
+        const stored = yield* secrets.get("elevenlabs-voice-api-key");
+        assert.equal(
+          Option.isSome(stored) ? new TextDecoder().decode(stored.value) : null,
+          "xi-test-key",
+        );
+
+        const forClient = ServerSettingsModule.redactServerSettingsForClient(saved).voice;
+        assert.notInclude(forClient.elevenLabsApiKey, "xi-test-key");
+        assert.isAbove(forClient.elevenLabsApiKey.length, 0);
+
+        // Echoing the marker back, or omitting the key, keeps the saved one.
+        yield* serverSettings.updateSettings({ voice: forClient });
+        yield* serverSettings.updateSettings({ voice: { rate: 0.52 } });
+        const kept = yield* serverSettings.getSettings;
+        assert.equal(kept.voice.elevenLabsApiKey, "xi-test-key");
+        assert.equal(kept.voice.rate, 0.52);
+        assert.equal(kept.voice.provider, "elevenlabs");
+
+        const cleared = yield* serverSettings.updateSettings({
+          voice: { provider: "local", elevenLabsApiKey: "" },
+        });
+        assert.equal(cleared.voice.elevenLabsApiKey, "");
+        assert.isTrue(Option.isNone(yield* secrets.get("elevenlabs-voice-api-key")));
+      }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
+  it.effect("moves a hand-edited ElevenLabs key into the secret store when settings load", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const secrets = yield* ServerSecretStore.ServerSecretStore;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        '{"voice":{"provider":"elevenlabs","elevenLabsVoiceId":"v","elevenLabsApiKey":"hand-key"}}',
+      );
+
+      const loaded = yield* serverSettings.getSettings;
+
+      assert.equal(loaded.voice.elevenLabsApiKey, "hand-key");
+      assert.notInclude(yield* fileSystem.readFileString(serverConfig.settingsPath), "hand-key");
+      assert.isTrue(Option.isSome(yield* secrets.get("elevenlabs-voice-api-key")));
+    }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
   it.effect("drops a saved hub key when the hub URL moves to another origin", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;

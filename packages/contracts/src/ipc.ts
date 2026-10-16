@@ -1161,9 +1161,8 @@ export const DesktopPreviewRecordingSaveInputSchema = Schema.Struct({
 export * from "./desktopVoice.ts";
 import type {
   DesktopVoiceStatus,
-  DesktopVoicePreferences,
-  DesktopVoicePreferencesInput,
   DesktopLocalVoice,
+  DesktopLegacyVoicePreferences,
 } from "./desktopVoice.ts";
 
 /**
@@ -1254,12 +1253,18 @@ export interface DesktopBridge {
   setVoiceCallActive?: (state: { active: boolean }) => Promise<void>;
   /** On-device speech to text for a 16 kHz mono WAV. */
   transcribeVoice?: (input: { audio: Uint8Array; locale?: string }) => Promise<string>;
-  getVoicePreferences?: () => Promise<DesktopVoicePreferences>;
-  setVoicePreferences?: (input: DesktopVoicePreferencesInput) => Promise<DesktopVoicePreferences>;
   listLocalVoices?: () => Promise<readonly DesktopLocalVoice[]>;
+  /** Voice settings an earlier build saved on this Mac, for a one-time move to the server. */
+  readLegacyVoicePreferences?: () => Promise<DesktopLegacyVoicePreferences | null>;
+  /** Deletes those files once the server has the settings. */
+  forgetLegacyVoicePreferences?: () => Promise<void>;
   previewLocalVoice?: (input: { voiceId: string; rate: number }) => Promise<Uint8Array>;
-  /** Local speech by default; optional personal ElevenLabs voice returns encoded audio. */
-  synthesizeVoice?: (input: { text: string }) => Promise<Uint8Array>;
+  /** On-device macOS speech. ElevenLabs replies come from the server (`voice.synthesize`). */
+  synthesizeVoice?: (input: {
+    text: string;
+    voiceId?: string;
+    rate?: number;
+  }) => Promise<Uint8Array>;
   openMicrophoneSettings?: () => Promise<void>;
   onTrackpadScrollEnd?: (listener: () => void) => () => void;
   /**

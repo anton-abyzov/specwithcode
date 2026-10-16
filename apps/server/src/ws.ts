@@ -126,6 +126,7 @@ import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as StudioMods from "./mods/StudioMods.ts";
 import * as ComposerDrafts from "./composerDrafts/ComposerDrafts.ts";
 import * as StatusMonitor from "./statusPage/StatusMonitor.ts";
+import * as VoiceSpeech from "./voice/VoiceSpeech.ts";
 import { readSpecweaveProgress } from "./mods/SpecweaveProgress.ts";
 import * as TelegramChannel from "./channels/TelegramChannel.ts";
 import * as GoogleAccountService from "./integrations/google/GoogleAccountService.ts";
@@ -3236,6 +3237,7 @@ const inferredWebSocketLayer = Layer.unwrap(
             ).pipe(
               Layer.merge(ComposerDrafts.layerRpcHandlers),
               Layer.merge(StatusMonitor.layerRpcHandlers),
+              Layer.merge(VoiceSpeech.layerRpcHandlers),
               Layer.merge(ProjectConnectionRpc.layerNativeApplyHandlers),
               Layer.merge(ChromeBridge.layerRpcHandlers),
               Layer.merge(

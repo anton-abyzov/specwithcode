@@ -1,6 +1,7 @@
 import { test } from "vite-plus/test";
-import assert from "node:assert/strict";
-import { readElevenLabsVoiceConfig, synthesizeElevenLabsVoice } from "./elevenLabsVoice.ts";
+import * as NodeAssert from "node:assert/strict";
+import { DEFAULT_SERVER_SETTINGS, type VoiceSettings } from "@specweave-studio/contracts";
+import { elevenLabsConfigFromSettings, synthesizeElevenLabsVoice } from "./elevenLabsVoice.ts";
 const config = {
   apiKey: "private-test-key",
   voiceId: "selected-voice",
@@ -8,25 +9,35 @@ const config = {
 };
 const signal = () => new AbortController().signal;
 const reply = (response: Response) => (async () => response) as typeof fetch;
-test("only complete explicit Studio configuration enables cloud voice", () => {
-  assert.equal(readElevenLabsVoiceConfig({ ELEVENLABS_API_KEY: "unrelated" }), null);
-  assert.throws(
-    () => readElevenLabsVoiceConfig({ STUDIO_ELEVENLABS_API_KEY: "secret" }),
-    /Set both/,
+const voice = (patch: Partial<VoiceSettings>): VoiceSettings => ({
+  ...DEFAULT_SERVER_SETTINGS.voice,
+  ...patch,
+});
+test("only a complete ElevenLabs choice enables the cloud voice", () => {
+  NodeAssert.equal(elevenLabsConfigFromSettings(DEFAULT_SERVER_SETTINGS.voice), null);
+  NodeAssert.equal(
+    elevenLabsConfigFromSettings(voice({ provider: "local", elevenLabsApiKey: "k" })),
+    null,
   );
-  assert.throws(
+  NodeAssert.throws(
+    () => elevenLabsConfigFromSettings(voice({ provider: "elevenlabs", elevenLabsApiKey: "k" })),
+    /API key and voice ID/,
+  );
+  NodeAssert.throws(
     () =>
-      readElevenLabsVoiceConfig({
-        STUDIO_ELEVENLABS_API_KEY: "secret",
-        STUDIO_ELEVENLABS_VOICE_ID: "../bad",
-      }),
-    /Invalid/,
+      elevenLabsConfigFromSettings(
+        voice({ provider: "elevenlabs", elevenLabsApiKey: "k", elevenLabsVoiceId: "../bad" }),
+      ),
+    /valid ElevenLabs voice ID/,
   );
-  assert.deepEqual(
-    readElevenLabsVoiceConfig({
-      STUDIO_ELEVENLABS_API_KEY: " private-test-key ",
-      STUDIO_ELEVENLABS_VOICE_ID: "selected-voice",
-    }),
+  NodeAssert.deepEqual(
+    elevenLabsConfigFromSettings(
+      voice({
+        provider: "elevenlabs",
+        elevenLabsApiKey: " private-test-key ",
+        elevenLabsVoiceId: "selected-voice",
+      }),
+    ),
     config,
   );
 });
@@ -35,16 +46,16 @@ test("uses selected voice, neutral pacing, and encoded audio", async () => {
     url,
     options,
   ) => {
-    assert.match(String(url), /\/selected-voice\?output_format=mp3_44100_128$/);
-    assert.equal(options?.redirect, "error");
-    assert.equal(new Headers(options?.headers).get("xi-api-key"), config.apiKey);
+    NodeAssert.match(String(url), /\/selected-voice\?output_format=mp3_44100_128$/);
+    NodeAssert.equal(options?.redirect, "error");
+    NodeAssert.equal(new Headers(options?.headers).get("xi-api-key"), config.apiKey);
     const body = JSON.parse(String(options?.body));
-    assert.equal(body.text, "Hello Anton.");
-    assert.equal(body.model_id, config.modelId);
-    assert.equal(body.voice_settings.speed, 1);
+    NodeAssert.equal(body.text, "Hello Anton.");
+    NodeAssert.equal(body.model_id, config.modelId);
+    NodeAssert.equal(body.voice_settings.speed, 1);
     return new Response(new Uint8Array([1, 2, 3]), { headers: { "content-type": "audio/mpeg" } });
   }) as typeof fetch);
-  assert.deepEqual(audio, new Uint8Array([1, 2, 3]));
+  NodeAssert.deepEqual(audio, new Uint8Array([1, 2, 3]));
 });
 test("provider failures give safe actionable messages", async () => {
   for (const [status, pattern] of [
@@ -54,7 +65,7 @@ test("provider failures give safe actionable messages", async () => {
     [429, /usage or request limit/],
     [500, /could not generate/],
   ] as const) {
-    await assert.rejects(
+    await NodeAssert.rejects(
       synthesizeElevenLabsVoice(
         "Hello",
         config,
@@ -66,7 +77,7 @@ test("provider failures give safe actionable messages", async () => {
   }
 });
 test("rejects non-audio and empty audio", async () => {
-  await assert.rejects(
+  await NodeAssert.rejects(
     synthesizeElevenLabsVoice(
       "Hello",
       config,
@@ -75,7 +86,7 @@ test("rejects non-audio and empty audio", async () => {
     ),
     /invalid audio/,
   );
-  await assert.rejects(
+  await NodeAssert.rejects(
     synthesizeElevenLabsVoice(
       "Hello",
       config,
@@ -98,7 +109,7 @@ test("hang-up cancels synthesis without leaking fetch errors", async () => {
     });
   }) as typeof fetch);
   controller.abort();
-  await assert.rejects(pending, /Voice call ended/);
+  await NodeAssert.rejects(pending, /Voice call ended/);
 });
 test("bounds streaming audio memory", async () => {
   const stream = new ReadableStream({
@@ -107,7 +118,7 @@ test("bounds streaming audio memory", async () => {
       controller.close();
     },
   });
-  await assert.rejects(
+  await NodeAssert.rejects(
     synthesizeElevenLabsVoice(
       "Hello",
       config,

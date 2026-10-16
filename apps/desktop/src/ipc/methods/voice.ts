@@ -7,8 +7,7 @@ import * as NodeCrypto from "node:crypto";
 
 import {
   DESKTOP_VOICE_MAX_AUDIO_BYTES,
-  DesktopVoicePreferencesSchema,
-  DesktopVoicePreferencesInputSchema,
+  DesktopLegacyVoicePreferencesSchema,
   DesktopLocalVoiceSchema,
   DesktopLocalVoicePreviewSchema,
   DesktopVoiceStatusSchema,
@@ -23,17 +22,18 @@ import * as Schema from "effect/Schema";
 
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import {
-  synthesizeElevenLabsVoice,
-} from "../../voice/elevenLabsVoice.ts";
-import { VoicePreferencesStore } from "../../voice/voicePreferences.ts";
+  legacyVoicePreferencePaths,
+  readLegacyVoicePreferences,
+  removeLegacyVoicePreferences,
+} from "../../voice/legacyVoicePreferences.ts";
 import { VoiceHelper, VoiceHelperError } from "../../voice/VoiceHelper.ts";
 import { allowMediaPermission, MICROPHONE_SETTINGS_URL } from "../../voice/voicePermission.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import {
   VOICE_GET_STATUS_CHANNEL,
-  VOICE_GET_PREFERENCES_CHANNEL,
-  VOICE_SET_PREFERENCES_CHANNEL,
   VOICE_LIST_LOCAL_CHANNEL,
+  VOICE_READ_LEGACY_CHANNEL,
+  VOICE_FORGET_LEGACY_CHANNEL,
   VOICE_PREVIEW_LOCAL_CHANNEL,
   VOICE_OPEN_MICROPHONE_SETTINGS_CHANNEL,
   VOICE_REQUEST_ACCESS_CHANNEL,
@@ -125,10 +125,6 @@ export const installVoice = Effect.fn("desktop.ipc.installVoice")(function* () {
   const ipc = yield* DesktopIpc.DesktopIpc;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const isMac = environment.platform === "darwin";
-  const preferences = new VoicePreferencesStore(
-    NodePath.join(environment.stateDir, "voice-preferences.json"),
-    Electron.safeStorage,
-  );
   const activeCalls = new Set<number>();
   const speechRequests = new Map<number, AbortController>();
   const watched = new Set<number>();
@@ -160,20 +156,24 @@ export const installVoice = Effect.fn("desktop.ipc.installVoice")(function* () {
     }
   };
 
+  const legacyPaths = () => legacyVoicePreferencePaths(environment.stateDir, environment.baseDir);
   yield* ipc.handle(
     DesktopIpc.makeIpcMethod({
-      channel: VOICE_GET_PREFERENCES_CHANNEL,
+      channel: VOICE_READ_LEGACY_CHANNEL,
       payload: Schema.Void,
-      result: DesktopVoicePreferencesSchema,
-      handler: () => Effect.promise(() => preferences.get()),
+      result: Schema.NullOr(DesktopLegacyVoicePreferencesSchema),
+      handler: () =>
+        Effect.promise(async () =>
+          readLegacyVoicePreferences(await legacyPaths(), Electron.safeStorage).catch(() => null),
+        ),
     }),
   );
   yield* ipc.handle(
     DesktopIpc.makeIpcMethod({
-      channel: VOICE_SET_PREFERENCES_CHANNEL,
-      payload: DesktopVoicePreferencesInputSchema,
-      result: DesktopVoicePreferencesSchema,
-      handler: (input) => Effect.promise(() => preferences.set(input)),
+      channel: VOICE_FORGET_LEGACY_CHANNEL,
+      payload: Schema.Void,
+      result: Schema.Void,
+      handler: () => Effect.promise(async () => removeLegacyVoicePreferences(await legacyPaths())),
     }),
   );
   yield* ipc.handle(
@@ -355,7 +355,7 @@ export const installVoice = Effect.fn("desktop.ipc.installVoice")(function* () {
       channel: VOICE_SYNTHESIZE_CHANNEL,
       payload: DesktopVoiceSynthesizeInputSchema,
       result: VoiceAudioResult,
-      handler: ({ text }, event) =>
+      handler: ({ text, voiceId, rate }, event) =>
         Effect.promise(async () => {
           if (!isMac) return { ok: false as const, error: status().reason ?? "Unsupported." };
           if (event === undefined || !activeCalls.has(event.sender.id)) {
@@ -366,14 +366,6 @@ export const installVoice = Effect.fn("desktop.ipc.installVoice")(function* () {
           const request = new AbortController();
           speechRequests.set(senderId, request);
           try {
-            const settings = await preferences.speechConfig();
-            if (request.signal.aborted) return { ok: false as const, error: "Voice call ended." };
-            const cloudVoice = settings.cloud;
-            if (cloudVoice) {
-              const audio = await synthesizeElevenLabsVoice(text, cloudVoice, request.signal);
-              if (request.signal.aborted) return { ok: false as const, error: "Voice call ended." };
-              return { ok: true as const, audio };
-            }
             const voice = await getHelper();
             if (request.signal.aborted) return { ok: false as const, error: "Voice call ended." };
             const audio = await withTempFile("wav", async (path) => {
@@ -382,8 +374,8 @@ export const installVoice = Effect.fn("desktop.ipc.installVoice")(function* () {
                 op: "speak",
                 text,
                 path,
-                voice: settings.localVoiceId || undefined,
-                rate: settings.rate,
+                voice: voiceId || undefined,
+                rate,
               });
               return new Uint8Array(await NodeFSP.readFile(path));
             });

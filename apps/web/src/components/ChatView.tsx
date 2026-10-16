@@ -22,6 +22,7 @@ import {
   resumeQueueWithProjectModel,
 } from "../studio/coordinatorContinuation";
 import { latestWorkStep } from "../studio/coordinatorProgress";
+import { threadBlocker } from "../studio/projectWorkspaceModel";
 import { useOpenThread } from "../hooks/useOpenThread";
 import { runThreadLifecycleShortcut } from "../lib/threadLifecycleShortcut";
 import { settleAfter, settleCaught } from "../lib/settle";
@@ -261,6 +262,7 @@ import {
   timelineContentOverflowsViewport,
   readTimelinePosition,
   observeTimelineRun,
+  shouldPositionTimelineAnchor,
   type TimelineRunObservation,
   type TimelineScrollMode,
 } from "./chat/timelineScrollAnchoring";
@@ -657,6 +659,7 @@ import { useOpenInPreferredEditor } from "../editorPreferences";
 import { deriveThreadPlanView, displayFolder } from "../studio/threadPlanProgress";
 import { useThreadIncrementProgress } from "../studio/useThreadIncrementProgress";
 import { ThreadPlanCard } from "./chat/ThreadPlanCard";
+import { ThreadBlockerNote } from "./chat/ThreadBlockerNote";
 import {
   LinkIncrementDialogHost,
   openLinkIncrementDialog,
@@ -4316,9 +4319,7 @@ function useChatViewState(props: ChatViewProps) {
   );
   const threadPlanStatus = activeThreadShell?.activeWork?.label
     ? `Now: ${activeThreadShell.activeWork.label}`
-    : activeThreadShell?.reportedBlocker
-      ? `Blocked: ${activeThreadShell.reportedBlocker}`
-      : null;
+    : null;
   const setThreadIncrementLink = useSetThreadIncrementLink();
   const threadIncrementActions = useMemo(() => {
     if (!activeThreadShell || !canOperateThread) return null;
@@ -4352,7 +4353,13 @@ function useChatViewState(props: ChatViewProps) {
             onOpen: availableEditors.length > 0 ? () => void openThreadPath(gitCwd) : undefined,
           }
         : null,
-    [activeThread?.worktreePath, activeThreadShell, availableEditors.length, gitCwd, openThreadPath],
+    [
+      activeThread?.worktreePath,
+      activeThreadShell,
+      availableEditors.length,
+      gitCwd,
+      openThreadPath,
+    ],
   );
   const threadPullRequests = activeThreadShell?.pullRequests ?? [];
   const manualCompactionProviderAvailable = useMemo(
@@ -7394,6 +7401,9 @@ function useChatViewActions(
 
   const onTimelineAnchorReady = useCallback(
     (messageId: MessageId, anchorIndex: number) => {
+      if (!shouldPositionTimelineAnchor(timelineScrollModeRef.current)) {
+        return;
+      }
       if (pendingTimelineAnchorRef.current === messageId) {
         pendingTimelineAnchorRef.current = null;
       }
@@ -7741,7 +7751,7 @@ function useChatViewActions(
         '[data-chat-composer-main-surface="true"]',
       );
       const button = composerOverlayElement?.parentElement?.querySelector<HTMLElement>(
-        'button[aria-label="Scroll to end"]',
+        'button[aria-label="Jump to latest"]',
       );
       const clearance =
         composerOverlayElement && mainSurface && button
@@ -8187,7 +8197,13 @@ function useChatViewActions(
       parentTitle: parentThreadLink.title,
       onOpen: () => onOpenRelatedThread(parentThreadLink.threadId),
     };
-  }, [activeThreadShell, coordinatorThreadId, onOpenRelatedThread, parentThreadLink, transcriptOnly]);
+  }, [
+    activeThreadShell,
+    coordinatorThreadId,
+    onOpenRelatedThread,
+    parentThreadLink,
+    transcriptOnly,
+  ]);
 
   // Commands such as /compact and /goal clear run as their own turn. The draft
   // and its attachments stay local.
@@ -9127,6 +9143,8 @@ export default function ChatView(props: ChatViewProps) {
     worktreeSetupBlocksSend,
     worktreeSetupOwnerKey,
   } = chatViewState;
+  // The same rule that files the thread under Blocked, so the two never disagree.
+  const activeThreadBlocker = activeThreadShell ? threadBlocker(activeThreadShell) : null;
   const {
     acknowledgeActiveThreadWoke,
     activatePanelTerminal,
@@ -13519,6 +13537,7 @@ export default function ChatView(props: ChatViewProps) {
                 }}
               />
               {threadPlanView !== null ||
+              activeThreadBlocker !== null ||
               threadPullRequests.length > 0 ||
               threadOrigin !== null ||
               timelineWorkingFolder !== null ? (
@@ -13545,6 +13564,9 @@ export default function ChatView(props: ChatViewProps) {
                       onUnlinkIncrement={threadIncrementActions?.unlink ?? null}
                       status={threadPlanStatus}
                     />
+                  ) : null}
+                  {activeThreadBlocker !== null ? (
+                    <ThreadBlockerNote blocker={activeThreadBlocker} />
                   ) : null}
                 </div>
               ) : null}
@@ -13672,7 +13694,7 @@ export default function ChatView(props: ChatViewProps) {
                   style={{ bottom: scrollToEndClearance + 4 }}
                 >
                   <Button
-                    aria-label="Scroll to end"
+                    aria-label="Jump to latest"
                     onPointerDown={(event) => event.preventDefault()}
                     onClick={() => {
                       composerRef.current?.restoreAfterTimelineReachedEnd();
@@ -13683,7 +13705,7 @@ export default function ChatView(props: ChatViewProps) {
                     variant="glass"
                   >
                     <ChevronDownIcon className="size-3.5" />
-                    Scroll to end
+                    Jump to latest
                   </Button>
                 </div>
               )}

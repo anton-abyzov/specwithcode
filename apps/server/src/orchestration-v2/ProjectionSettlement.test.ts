@@ -579,5 +579,13 @@ it.effect.each([
       ]);
       yield* message("answer", "user", "Ship today", DateTime.subtract(now, { hours: 1 }));
       assert.deepEqual(yield* blockerOf(), [null, null]);
+      // `none.` with notes after it is not a blocker, however long the notes run.
+      yield* message(
+        "done",
+        "assistant",
+        "**Outcome:** shipped.\n\n**Blockers:** none. The Files/diff right panel and the subagent peek still open inside the pane; neither is a pop-up, so I left them. I also patched `useHandoffSourceChanges`, which crashed the headless test page on main.",
+        DateTime.subtract(now, { minutes: 30 }),
+      );
+      assert.deepEqual(yield* blockerOf(), [null, null]);
     }).pipe(Effect.provide(testLayer)),
 );

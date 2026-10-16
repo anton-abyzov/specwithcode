@@ -61,6 +61,7 @@ import { prepareProjectMarkdown } from "../../studio/projectWorkspaceModel";
 import { type CoordinatorAttention } from "../../studio/projectCoordinatorThreads";
 import { ProjectThreadCard, ProjectThreadChip } from "./ProjectThreadCards";
 import { RemoteWorkerCards } from "./RemoteWorkerCards";
+import { useConversationFollow } from "./useConversationFollow";
 import { linkedThreadIds, newThreadsByMessage } from "../../studio/projectThreadMentions";
 import { resolveStudioThreadLink } from "../../studio/studioThreadLinks";
 import { type CoordinatorTurnFailure } from "../../studio/coordinatorTurnState";
@@ -199,7 +200,6 @@ export function CoordinatorConversation({
   const history = useThreadHistory(ref);
   const status = useThreadStatus(ref);
   const load = useAtomCommand(threadEnvironment.loadEarlierHistory);
-  const end = useRef<HTMLDivElement>(null);
   const allMessages = thread?.projection.messages ?? EMPTY_MESSAGES;
   // A worker finishing wakes the coordinator, but the person sees it on the
   // worker's status and in a notification that opens it, not as a card here.
@@ -210,10 +210,6 @@ export function CoordinatorConversation({
   const executionEnvironment = useEnvironment(project.environmentId);
   const executionProviders = useProviderEntries(project.environmentId);
   const working = progress !== null && failure === null;
-  // Before paint, so a conversation opens at its end, never first at its top.
-  useLayoutEffect(() => {
-    end.current?.scrollIntoView({ block: "nearest" });
-  }, [messages.length, failure?.runId, working]);
   // A thread the coordinator started this turn is announced by a card under its message;
   // a thread that already existed is a link. Both open the thread in the right pane.
   const reportIds = useMemo(() => projectReportMessageIds(allMessages), [allMessages]);
@@ -329,6 +325,21 @@ export function CoordinatorConversation({
   // A find in this conversation mounts them all, so every match can be found, and
   // they stay mounted once it closes: the match it went to stays where it is.
   const [scope, setScope] = useState<HTMLDivElement | null>(null);
+  // Follows the end only while the reader is there; a reader further up stays put.
+  const lastMessage = messages.at(-1);
+  const ownSend = messages.findLast(
+    (message) =>
+      message.createdBy === "user" &&
+      message.creationSource === "web" &&
+      message.role === "user" &&
+      !message.senderThreadId &&
+      !message.scheduledTaskId,
+  );
+  const latest = useConversationFollow(scope, {
+    contentKey: `${messages.length}:${lastMessage?.id}:${lastMessage?.updatedAt}:${working}:${failure?.runId}:${attention?.reason}`,
+    ownSendKey: ownSend?.id ?? null,
+    resetKey: coordinatorId,
+  });
   const findQuery = useConversationFindQuery(scope);
   const [windowSize, setWindowSize] = useState(COORDINATOR_MESSAGE_WINDOW);
   if (findQuery && windowSize < rows.length) setWindowSize(rows.length);
@@ -512,7 +523,14 @@ export function CoordinatorConversation({
             </div>
           </div>
         )}
-        <div ref={end} data-coordinator-end="" />
+        {latest.away ? (
+          <div className="project-conversation-latest" data-coordinator-latest="">
+            <Button size="xs" variant="glass" onClick={latest.jumpToLatest}>
+              <ChevronDownIcon className="size-3.5" aria-hidden />
+              {latest.unseen ? "New messages" : "Jump to latest"}
+            </Button>
+          </div>
+        ) : null}
       </div>
     </CoordinatorThreadsContext.Provider>
   );

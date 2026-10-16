@@ -135,6 +135,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.composerDraftsDelete]: "composerDrafts",
   [WS_METHODS.statusPageSnapshot]: "statusPage",
   [WS_METHODS.statusPageRefresh]: "statusPage",
+  [WS_METHODS.voiceSynthesize]: "voice",
   [WS_METHODS.telegramChannelStatus]: "telegramChannel",
   [WS_METHODS.telegramChannelConfigure]: "telegramChannel",
   [WS_METHODS.telegramChannelUnpair]: "telegramChannel",

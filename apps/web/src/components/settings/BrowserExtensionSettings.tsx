@@ -421,9 +421,9 @@ function CheckResult({ check }: { check: BrowserExtensionCheck }) {
           {check.profiles.map((profile) => (
             <li key={profile.id} className="flex flex-wrap items-center gap-2">
               {profile.ok ? (
-                <CircleCheckIcon className="size-3.5 text-success" />
+                <CircleCheckIcon className="size-3.5 text-success-foreground" />
               ) : (
-                <CircleAlertIcon className="size-3.5 text-destructive" />
+                <CircleAlertIcon className="size-3.5 text-destructive-foreground" />
               )}
               <span className="font-medium">{profile.label}</span>
               <span className="text-muted-foreground">

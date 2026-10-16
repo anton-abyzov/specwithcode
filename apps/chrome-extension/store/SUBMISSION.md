@@ -32,7 +32,7 @@ Let your SpecWithCode agents (Claude, Codex, Grok, Gemini, Copilot, Muse) use th
 | Store icon (128×128)          | `apps/chrome-extension/icons/icon-128.png`                                                                                                                                   |
 | Screenshots (1280×800)        | `screenshots/screenshot-1-overview.png`, `screenshot-2-pair.png`, `screenshot-3-tab-group.png`, `screenshot-4-agents.png`, `screenshot-5-control.png` (upload in this order) |
 | Small promo tile (440×280)    | `screenshots/promo-small-440x280.png`                                                                                                                                        |
-| Marquee promo tile (1400×560) | Not provided (optional)                                                                                                                                                      |
+| Marquee promo tile (1400×560) | `screenshots/promo-marquee-1400x560.png`                                                                                                                                     |
 | Official URL                  | Leave unset unless spec-weave.com is verified in Google Search Console for this account                                                                                      |
 | Homepage URL                  | `https://spec-weave.com`                                                                                                                                                     |
 | Support URL                   | `https://spec-weave.com`                                                                                                                                                     |
@@ -166,7 +166,7 @@ The `debugger` permission usually triggers an in-depth review, so expect more th
 3. Confirm <https://spec-weave.com/specwithcode/chrome-extension-privacy> loads with the text of `privacy-policy.md`.
 4. Items → New item → upload `apps/chrome-extension/dist/specwithcode-browser-1.0.0.zip`.
 5. Store listing: paste the detailed description; set category Developer Tools and language English.
-6. Store listing: upload the store icon, the five screenshots in order and the small promo tile.
+6. Store listing: upload the store icon, the five screenshots in order and both promo tiles.
 7. Store listing: set homepage and support URLs to `https://spec-weave.com`.
 8. Privacy practices: paste the single purpose statement.
 9. Privacy practices: paste the five permission justifications (debugger, tabs, tabGroups, storage, alarms).

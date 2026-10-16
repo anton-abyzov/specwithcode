@@ -13,10 +13,27 @@ import {
   VoiceCallController,
   type VoiceCallState,
 } from "@specweave-studio/client-runtime/voice-call";
-import type { DesktopBridge } from "@specweave-studio/contracts";
+import {
+  WS_METHODS,
+  type DesktopBridge,
+  type EnvironmentId,
+  type VoiceSettings as VoiceSettingsValue,
+} from "@specweave-studio/contracts";
+import {
+  createEnvironmentRpcCommand,
+  runAtomCommand,
+  squashAtomCommandFailure,
+} from "@specweave-studio/client-runtime/state/runtime";
 
 import { isElectron } from "../../env";
-import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import { connectionAtomRuntime } from "../../connection/runtime";
+import {
+  useClientSettings,
+  usePrimarySettings,
+  useUpdateClientSettings,
+} from "../../hooks/useSettings";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { usePrimaryEnvironmentId } from "../../state/environments";
 import { CoordinatorReplyWaiter, type CoordinatorReplySnapshot } from "../../studio/voiceCallReply";
 import { openCallMicrophone, playCallAudio } from "../../studio/voiceCallAudio";
 import {
@@ -66,6 +83,35 @@ function voiceBridge(): VoiceBridge | null {
   )
     return null;
   return bridge as VoiceBridge;
+}
+
+const synthesizeOnServer = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "voice:synthesize",
+  tag: WS_METHODS.voiceSynthesize,
+});
+
+/**
+ * Speaks a reply with the voice saved in the primary server's settings: the
+ * server calls ElevenLabs with the key it keeps, or this Mac speaks it.
+ */
+async function speakReply(
+  bridge: VoiceBridge,
+  environmentId: EnvironmentId | null,
+  voice: VoiceSettingsValue,
+  text: string,
+): Promise<Uint8Array> {
+  if (voice.provider !== "elevenlabs") {
+    return bridge.synthesizeVoice({ text, voiceId: voice.localVoiceId, rate: voice.rate });
+  }
+  if (environmentId === null) throw new Error("Voice settings are not available yet.");
+  const result = await runAtomCommand(
+    appAtomRegistry,
+    synthesizeOnServer,
+    { environmentId, input: { text } },
+    { reportFailure: false, reportDefect: false },
+  );
+  if (result._tag !== "Success") throw squashAtomCommandFailure(result);
+  return Uint8Array.from(atob(result.value.audio), (char) => char.charCodeAt(0));
 }
 
 /**
@@ -157,6 +203,10 @@ export type VoiceCall = ReturnType<typeof useVoiceCall>;
 export function useVoiceCall(ask: (text: string, signal: AbortSignal) => Promise<string | null>) {
   const bridge = voiceBridge();
   const allowed = useClientSettings((settings) => settings.voiceCallsAllowed);
+  const environmentId = usePrimaryEnvironmentId();
+  const voice = usePrimarySettings((settings) => settings.voice);
+  // Read at speaking time, so a call picks up the voice saved just before it.
+  const voiceRef = useRef({ environmentId, voice });
   const updateSettings = useUpdateClientSettings();
   const [state, setState] = useState<VoiceCallState>(IDLE);
   const [consentOpen, setConsentOpen] = useState(false);
@@ -166,6 +216,7 @@ export function useVoiceCall(ask: (text: string, signal: AbortSignal) => Promise
   const askRef = useRef(ask);
   useLayoutEffect(() => {
     askRef.current = ask;
+    voiceRef.current = { environmentId, voice };
   });
   const setLevelTarget = useCallback((element: HTMLElement | null) => {
     levelTarget.current = element;
@@ -228,7 +279,8 @@ export function useVoiceCall(ask: (text: string, signal: AbortSignal) => Promise
       openMicrophone: openCallMicrophone,
       transcribe: (audio) => bridge.transcribeVoice(locale ? { audio, locale } : { audio }),
       ask: (text, signal) => askRef.current(text, signal),
-      synthesize: (text) => bridge.synthesizeVoice({ text }),
+      synthesize: (text) =>
+        speakReply(bridge, voiceRef.current.environmentId, voiceRef.current.voice, text),
       play: playCallAudio,
       onStateChange: (next) => {
         setState(next);

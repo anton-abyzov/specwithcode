@@ -9,20 +9,27 @@ import * as Fiber from "effect/Fiber";
 import * as Deferred from "effect/Deferred";
 import { EXPECTED_SCHEMA_FINGERPRINT } from "@muse-code/sdk";
 import { makeMuseRuntime } from "./MuseRuntime.ts";
+import { connectMuse, museCheckFailure } from "./MuseConnection.ts";
 import type { AcpSessionRuntimeEvent } from "../acp/AcpSessionRuntime.ts";
 const fs = Effect.runSync(Effect.provide(FileSystem.FileSystem, NodeFileSystem.layer));
 
 const dirs: string[] = [];
 afterEach(async () => {
-  await Promise.all(dirs.splice(0).map((path) => Effect.runPromise(fs.remove(path, { recursive: true, force: true }))));
+  await Promise.all(
+    dirs
+      .splice(0)
+      .map((path) => Effect.runPromise(fs.remove(path, { recursive: true, force: true }))),
+  );
 });
 async function fixture(env: Record<string, string> = {}) {
   const cwd = await Effect.runPromise(fs.makeTempDirectory({ prefix: "studio-muse-test-" }));
   dirs.push(cwd);
   await Effect.runPromise(
     fs.copyFile(
-      fileURLToPath(new URL("./fixtures/serve.cjs", import.meta.url)), join(cwd, "serve"),
-    ));
+      fileURLToPath(new URL("./fixtures/serve.cjs", import.meta.url)),
+      join(cwd, "serve"),
+    ),
+  );
   return {
     cwd,
     settings: { enabled: true, binaryPath: process.execPath },
@@ -123,7 +130,9 @@ describe("Muse native MSP runtime", () => {
         );
       }),
     );
-    expect(await Effect.runPromise(fs.readFileString(join(input.cwd, "requests.jsonl")))).toContain("userInput/cancel");
+    expect(await Effect.runPromise(fs.readFileString(join(input.cwd, "requests.jsonl")))).toContain(
+      "userInput/cancel",
+    );
   });
   it("cancels a running native turn", async () => {
     const input = await fixture();
@@ -172,6 +181,19 @@ describe("Muse native MSP runtime", () => {
           ))._tag,
         ).toBe("Failure");
       }),
+    );
+  });
+  it("names a protocol mismatch instead of asking to install Muse", async () => {
+    const input = await fixture({ MUSE_TEST_FINGERPRINT: `sha256:${"0".repeat(64)}` });
+    const failure = await connectMuse(input.settings, input.environment, input.cwd).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(museCheckFailure(failure)).toBe(
+      "Muse Code 1.0.0 speaks a protocol this SpecWithCode build does not support. Update SpecWithCode, then refresh Providers.",
+    );
+    expect(museCheckFailure(new Error("spawn muse ENOENT"))).toMatch(
+      /Install the official muse CLI/,
     );
   });
 });

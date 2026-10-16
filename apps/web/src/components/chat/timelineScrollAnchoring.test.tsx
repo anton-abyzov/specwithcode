@@ -2,6 +2,7 @@ import { MessageId, RunId } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
   observeTimelineRun,
+  shouldPositionTimelineAnchor,
   getAnchoredTurnMetrics,
   getRowBottom,
   readTimelinePosition,
@@ -280,5 +281,14 @@ describe("remembered timeline positions", () => {
     expect(readTimelinePosition("scroll-test-a:unvisited")).toBeUndefined();
     rememberTimelinePosition("scroll-test-a:thread-1", following);
     expect(readTimelinePosition("scroll-test-a:thread-1")).toEqual(following);
+  });
+});
+
+describe("shouldPositionTimelineAnchor", () => {
+  it("frames a sent turn until the reader scrolls away from it", () => {
+    expect(shouldPositionTimelineAnchor("anchoring-new-turn")).toBe(true);
+    expect(shouldPositionTimelineAnchor("following-end")).toBe(true);
+    // A streamed reply re-reports the anchor ready; a reader further up stays put.
+    expect(shouldPositionTimelineAnchor("free-scrolling")).toBe(false);
   });
 });
