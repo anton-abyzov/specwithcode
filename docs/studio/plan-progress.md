@@ -11,10 +11,10 @@ When a thread is bound to an increment whose tasks or ledger cannot be read, the
 
 ## How a thread binds to an increment
 
-Studio derives the binding on every read, unless someone linked the thread by hand. Strongest first:
+SpecWithCode derives the binding on every read, unless someone linked the thread by hand. Strongest first:
 
-0. **Manual: linked in Studio.** **Link increment** on the plan card (or "Link SpecWeave increment to thread" in the command palette) picks an increment from the thread's checkout, **No increment**, or **Automatic**. **Unlink** on the card sets No increment. The choice lives in Studio's database (`thread_increment_links`, written by `projects.threadIncrementLink`), never in the repository. No row means automatic. A row with no increment hides the increment, and the card falls back to the todo list. The thread's own task still comes from its claim when the claim names the same increment.
-1. **Claim: the thread wrote to the increment's ledger.** Studio starts every provider turn with `SPECWEAVE_STUDIO_THREAD_ID`. Every ledger append made in that turn, by `specweave task claim|done|block|skip|release`, an auto-claim, `pickup`, `note` or a handoff, also writes `~/.specweave/studio/threads/<thread>.json` with `{incrementId, root, taskId, event, at}`. This happens in SpecWeave's `appendEvent` (`src/core/tasks/studio-thread-binding.ts`). It needs no setting, and a failed write never fails the command. Studio accepts the file only when its root lies inside the thread's worktree or the project folder and the increment folder exists. The task it names, while claimed or blocked, is the thread's own task.
+0. **Manual: linked in SpecWithCode.** **Link increment** on the plan card (or "Link SpecWeave increment to thread" in the command palette) picks an increment from the thread's checkout, **No increment**, or **Automatic**. **Unlink** on the card sets No increment. The choice lives in SpecWithCode's database (`thread_increment_links`, written by `projects.threadIncrementLink`), never in the repository. No row means automatic. A row with no increment hides the increment, and the card falls back to the todo list. The thread's own task still comes from its claim when the claim names the same increment.
+1. **Claim: the thread wrote to the increment's ledger.** SpecWithCode starts every provider turn with `SPECWEAVE_STUDIO_THREAD_ID`. Every ledger append made in that turn, by `specweave task claim|done|block|skip|release`, an auto-claim, `pickup`, `note` or a handoff, also writes `~/.specweave/studio/threads/<thread>.json` with `{incrementId, root, taskId, event, at}`. This happens in SpecWeave's `appendEvent` (`src/core/tasks/studio-thread-binding.ts`). It needs no setting, and a failed write never fails the command. SpecWithCode accepts the file only when its root lies inside the thread's worktree or the project folder and the increment folder exists. The task it names, while claimed or blocked, is the thread's own task.
 2. **Checkpoint: SpecWeave's session checkpoint names the increment.** This is `~/.specweave/checkpoints/studio/<thread>.json`, written by the auto-handoff hooks.
 3. **Name: an increment number or folder appears in the thread's title or branch**, such as `feat/0930-plan-card`.
 
@@ -22,13 +22,13 @@ Checkpoint and name binding come from the report resolver (`resolveReportIncreme
 
 ## Why the ledger, and not the agent's todo list
 
-Claude Code Desktop renders TodoWrite: one list per session, gone when the session ends, with no evidence behind a tick. Studio keeps that list but nests it under the increment task the thread holds. Without a held task, it goes under the first task in progress. No text matching is involved. The ledger stays the record:
+Claude Code Desktop renders TodoWrite: one list per session, gone when the session ends, with no evidence behind a tick. SpecWithCode keeps that list but nests it under the increment task the thread holds. Without a held task, it goes under the first task in progress. No text matching is involved. The ledger stays the record:
 
 - a task is done only when `specweave task done` gives evidence;
 - claims stop two agents from taking the same task;
 - every tool and machine sees the same state.
 
-Studio never writes the ledger from todo events. A ticked todo isn't evidence, Studio would be writing under the agent's identity, and todo items rarely match spec tasks one to one.
+SpecWithCode never writes the ledger from todo events. A ticked todo isn't evidence, SpecWithCode would be writing under the agent's identity, and todo items rarely match spec tasks one to one.
 
 ## How SpecWeave feeds the UI
 
@@ -42,9 +42,9 @@ projects.threadIncrementProgressRead { projectId, threadIds }  (server: ThreadIn
 useThreadIncrementProgress (web)  → ThreadPlanCard, PlanProgressChip
 ```
 
-- **The ledger is the only state.** The fold follows the CLI's 3.0.6 rules: claims lease for two hours, `done` needs evidence, `skip` needs a reason, and only the owner releases. Studio never writes checkboxes, board tables or any derived state back into markdown, and never appends to the ledger. Claiming and finishing stay with the agent and `specweave task`.
-- **No CLI process, no Git, no network.** The reader parses files directly, just as the `specweave:read` mod summary does. `specweave pickup` and the task board compute the same fold for terminal users. Studio does not shell out to them on a timer.
-- **Refresh.** The ledger changes outside Studio's event stream. The query refreshes whenever one of its threads moves (an agent turn is when tasks get claimed and done) and every 15 seconds while the page is visible. Each query lists at most 100 threads, the newest first.
+- **The ledger is the only state.** The fold follows the CLI's 3.0.6 rules: claims lease for two hours, `done` needs evidence, `skip` needs a reason, and only the owner releases. SpecWithCode never writes checkboxes, board tables or any derived state back into markdown, and never appends to the ledger. Claiming and finishing stay with the agent and `specweave task`.
+- **No CLI process, no Git, no network.** The reader parses files directly, just as the `specweave:read` mod summary does. `specweave pickup` and the task board compute the same fold for terminal users. SpecWithCode does not shell out to them on a timer.
+- **Refresh.** The ledger changes outside SpecWithCode's event stream. The query refreshes whenever one of its threads moves (an agent turn is when tasks get claimed and done) and every 15 seconds while the page is visible. Each query lists at most 100 threads, the newest first.
 - **Access.** Reading needs `filesystem:read`, like thread reports; `projects.incrementsList` lists the increments in the thread's checkout for the picker. Changing a link needs `orchestration:operate`. Threads from another project are ignored, so a caller cannot aim the reader at a folder the project does not own.
 
 ## The todo list on the shell

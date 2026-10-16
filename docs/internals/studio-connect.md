@@ -1,6 +1,6 @@
-# Studio Connect
+# SpecWithCode Connect
 
-Studio Connect uses Clerk for cloud identity. The relay manages environment links,
+SpecWithCode Connect uses Clerk for cloud identity. The relay manages environment links,
 credentials for reaching environments, and managed tunnel allocations. After
 bootstrap, clients send application traffic through the environment's tunnel
 hostname; the relay Worker does not proxy their HTTP or WebSocket sessions.

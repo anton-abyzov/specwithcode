@@ -64,6 +64,23 @@ export function resolveLegacySessionCookieName(input: {
     : undefined;
 }
 
+/**
+ * A loopback web server names its cookie after its state directory, so moving
+ * that directory (for example when the home folder is renamed) gives the same
+ * server a new cookie name and every open browser loses its sign-in. The prefix
+ * lets the server recognise its own cookie under an earlier name; the token
+ * signature decides whether a cookie with this prefix was issued here.
+ */
+export function resolveMovedSessionCookiePrefix(input: {
+  readonly mode: "web" | "desktop";
+  readonly port: number;
+  readonly host: string | undefined;
+}): string | undefined {
+  return input.mode === "web" && !isRemoteReachableHost(input.host)
+    ? `${SESSION_COOKIE_NAME}_${input.port}_`
+    : undefined;
+}
+
 export function isRemoteReachableHost(host: string | undefined): boolean {
   if (host === "0.0.0.0" || host === "::" || host === "[::]") {
     return true;

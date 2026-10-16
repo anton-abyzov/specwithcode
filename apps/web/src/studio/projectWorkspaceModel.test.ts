@@ -4,6 +4,7 @@ import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/st
 import {
   createProjectSendReceipt,
   prepareProjectMarkdown,
+  hostDisconnectedLabel,
   projectAdmissionReason,
   projectThreadGroup,
   projectThreadReference,
@@ -497,6 +498,28 @@ describe("Project admission and retry", () => {
     const settings = { paused: false, archived: false };
     expect(projectAdmissionReason(settings, true, true)).toBeNull();
     expect(projectAdmissionReason(settings, false, true)).toMatch(/Reconnect/);
+    expect(
+      projectAdmissionReason(settings, false, true, {
+        phase: "error",
+        blockedReason: "authentication",
+      }),
+    ).toMatch(/signed out of this host/);
+    expect(projectAdmissionReason(settings, false, true, { phase: "reconnecting" })).toMatch(
+      /Reconnecting to this host/,
+    );
+    expect(projectAdmissionReason(settings, false, true, { phase: "offline" })).toMatch(/offline/);
+    expect(hostDisconnectedLabel({ phase: "error", blockedReason: "authentication" })).toBe(
+      "Signed out",
+    );
+    expect(hostDisconnectedLabel({ phase: "reconnecting" })).toBe("Reconnecting");
+    expect(hostDisconnectedLabel({ phase: "connecting" })).toBe("Connecting");
+    expect(projectAdmissionReason(settings, false, true, { phase: "connecting" })).toMatch(
+      /Connecting to this host/,
+    );
+    expect(hostDisconnectedLabel({ phase: "error", blockedReason: "configuration" })).toBe(
+      "Disconnected",
+    );
+    expect(hostDisconnectedLabel(undefined)).toBe("Disconnected");
     expect(projectAdmissionReason(settings, true, false)).toMatch(/read-only/);
     expect(projectAdmissionReason(null, true, true)).toMatch(/loading/);
     expect(projectAdmissionReason({ ...settings, paused: true }, true, true)).toMatch(/Resume/);

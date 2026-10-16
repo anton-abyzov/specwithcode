@@ -30,6 +30,75 @@ export function useEnvironmentScope(
   return sessionHasScope(result, scope);
 }
 
+/**
+ * Whether this browser may use a scope on an environment, telling a missing
+ * grant apart from a session that is signed out or not loaded, so the UI does
+ * not report a permission problem when the real problem is the sign-in.
+ */
+export type EnvironmentScopeAccess = "granted" | "denied" | "signed-out" | "unknown";
+
+/** The parts of an environment's connection that decide whether its cached grant is current. */
+export interface ScopeAccessConnection {
+  readonly phase: string;
+  readonly blockedReason?: string;
+}
+
+/**
+ * The session is fetched only while the connection is up, so a disconnected
+ * environment keeps its last answer. Report that answer only while connected.
+ */
+export function environmentScopeAccess(
+  result: AsyncResult.AsyncResult<AuthSessionState, unknown>,
+  scope: AuthEnvironmentScope,
+  connection?: ScopeAccessConnection | null,
+): EnvironmentScopeAccess {
+  if (connection?.blockedReason === "authentication") return "signed-out";
+  if (connection && connection.phase !== "connected") return "unknown";
+  const session = Option.getOrNull(AsyncResult.value(result));
+  if (result._tag === "Failure" || session === null) return "unknown";
+  if (!session.authenticated) return "signed-out";
+  return sessionGrantsScope(session, scope) ? "granted" : "denied";
+}
+
+export function useEnvironmentScopeAccess(
+  environmentId: EnvironmentId | null,
+  scope: AuthEnvironmentScope,
+  connection?: ScopeAccessConnection | null,
+): EnvironmentScopeAccess {
+  const result = useAtomValue(
+    environmentId === null
+      ? EMPTY_SESSION_STATE_ATOM
+      : environmentSession.sessionStateAtom(environmentId),
+  );
+  return environmentScopeAccess(result, scope, connection);
+}
+
+export function readEnvironmentScopeAccess(
+  environmentId: EnvironmentId,
+  scope: AuthEnvironmentScope,
+  connection?: ScopeAccessConnection | null,
+): EnvironmentScopeAccess {
+  return environmentScopeAccess(
+    appAtomRegistry.get(environmentSession.sessionStateAtom(environmentId)),
+    scope,
+    connection,
+  );
+}
+
+/** Why a provider update cannot start from this browser, or null when it can. */
+export function providerManageBlockedText(access: EnvironmentScopeAccess): string | null {
+  switch (access) {
+    case "granted":
+      return null;
+    case "denied":
+      return "This connection cannot manage provider accounts.";
+    case "signed-out":
+      return "This browser is signed out of this host. Reload the page to sign in again.";
+    case "unknown":
+      return "Waiting to confirm this browser's access to the host.";
+  }
+}
+
 function sessionHasScope(
   result: AsyncResult.AsyncResult<AuthSessionState, unknown>,
   scope: AuthEnvironmentScope,

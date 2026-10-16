@@ -146,6 +146,7 @@ const setup = (
           },
           studio_thread_send: {
             threadId: "b-thread",
+            threadLink: "[Worker](studio://thread/b-thread)",
             messageId: "message",
             runId: "b-run-2",
             status: "queued",
@@ -265,6 +266,21 @@ it.effect("lists another machine's threads with links that name that machine", (
     expect(listed).toMatchObject({
       machine: M1,
       threads: [{ threadId: "b-thread", threadLink: "[Worker](studio://thread/env-m1/b-thread)" }],
+    });
+  });
+});
+
+it.effect("sends to another machine's thread with a link that names that machine", () => {
+  const { call } = setup();
+  return Effect.gen(function* () {
+    const sent = yield* call("studio_thread_send", {
+      machine: "m1",
+      threadId: "b-thread",
+      message: "More",
+    });
+    expect(sent).toMatchObject({
+      machine: M1,
+      threadLink: "[Worker](studio://thread/env-m1/b-thread)",
     });
   });
 });

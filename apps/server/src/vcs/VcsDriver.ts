@@ -34,6 +34,12 @@ export interface VcsDiffCheckpointsInput {
   readonly format?: "patch" | "numstat";
 }
 
+export interface VcsCheckpointHeadMoveInput {
+  readonly cwd: string;
+  readonly fromCheckpointRef: CheckpointRef;
+  readonly toCheckpointRef: CheckpointRef;
+}
+
 export interface VcsDeleteCheckpointRefsInput {
   readonly cwd: string;
   readonly checkpointRefs: ReadonlyArray<CheckpointRef>;
@@ -48,6 +54,10 @@ export interface VcsCheckpointOps {
     input: VcsRestoreCheckpointInput,
   ) => Effect.Effect<boolean, VcsError>;
   readonly diffCheckpoints: (input: VcsDiffCheckpointsInput) => Effect.Effect<string, VcsError>;
+  /** Paths the diff between two checkpoints holds only because HEAD moved; see headMoveAttribution. */
+  readonly headMovePaths?: (
+    input: VcsCheckpointHeadMoveInput,
+  ) => Effect.Effect<ReadonlySet<string>, VcsError>;
   readonly deleteCheckpointRefs: (
     input: VcsDeleteCheckpointRefsInput,
   ) => Effect.Effect<void, VcsError>;

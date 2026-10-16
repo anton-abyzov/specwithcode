@@ -11,10 +11,18 @@ export const AgentInstructions = Schema.String.check(
 );
 
 /**
- * What every coordinator and worker is told unless the user rewrites it in
- * Settings > Agents: how work is organized, and the habits that keep it legible.
+ * Settings > Agents starts empty: it holds only what the user writes. The
+ * rules SpecWithCode needs live in the server's runtime instructions and in
+ * code, so editing or clearing this text cannot remove them.
  */
-export const DEFAULT_AGENT_INSTRUCTIONS = `How SpecWithCode work is organized:
+export const DEFAULT_AGENT_INSTRUCTIONS = "";
+
+/**
+ * The default this setting shipped with before the rules moved into the app
+ * (October 2026). A saved value equal to it was never the user's own text, so
+ * it counts as empty.
+ */
+export const LEGACY_DEFAULT_AGENT_INSTRUCTIONS = `How SpecWithCode work is organized:
 - A project has one coordinator. It starts or reuses threads, called workers, for the work. Workers are listed in Threads and the user can message them.
 - A thread's subagents and workflows are internal to that thread. Never start a separate thread for them; summarize what they found in the thread's own reply.
 - Never block-wait on another thread or task (a long studio_thread_wait or task_status loop). Send your message or hand the work off, then end your turn: the other thread's reply wakes you.
@@ -22,13 +30,20 @@ export const DEFAULT_AGENT_INSTRUCTIONS = `How SpecWithCode work is organized:
 - When workflows are available and allowed, use one for work that fans out into many similar, independent steps, such as reviewing many files or verifying many findings. Do small or sequential work directly.
 - Call the app SpecWithCode, never "Studio". A coordinator's thread is a worker; a thread's internal helpers are subagents.`;
 
+/** The user's own text, with the retired shipped default treated as nothing written. */
+export function userAgentInstructions(value: string | undefined): string {
+  const trimmed = value?.trim() ?? "";
+  return trimmed === LEGACY_DEFAULT_AGENT_INSTRUCTIONS ? "" : trimmed;
+}
+
 /**
  * Added to every agent's instructions, after whatever the user wrote: the
  * service's database is live, and a direct open, even read-only, can crash
  * the service or lose its newest writes (M4, October 15 and 16 2026).
  */
-export const LIVE_DATABASE_INSTRUCTIONS = `## SpecWithCode database
-SpecWithCode keeps its state in a live SQLite database, \`userdata/statev2.sqlite\` with its \`-wal\` and \`-shm\` files, in its home folder (for example \`~/.specwithcode/<machine>/\`, or \`~/.specweave-studio/<machine>/\` before the move). Never open, copy, move or delete those files with sqlite3, Python, Node or any other tool, not even read-only: that can crash the running service or lose its newest writes. To read it, run \`specweave-studio db query "SELECT ..."\`. For a copy, run \`specweave-studio db snapshot <new file>\` and open the copy. Both use STUDIO_HOME, or take \`--base-dir <home>\`.`;
+export const LIVE_DATABASE_INSTRUCTIONS = `<live_database>
+Never open, copy, move or delete SpecWithCode's \`userdata/statev2.sqlite*\` files (under \`~/.specwithcode/\` or \`~/.specweave-studio/\`) with any tool, even read-only: it can crash the service. Read with \`specweave-studio db query "SELECT ..."\` or copy with \`specweave-studio db snapshot <file>\`.
+</live_database>`;
 
 /** The user's instructions followed by the rules SpecWithCode always adds. */
 export function withServiceInstructions(instructions: string): string {
@@ -40,13 +55,11 @@ export function resolveAgentInstructions(input: {
   readonly globalInstructions?: string | undefined;
   readonly projectInstructions?: string | undefined;
 }): string {
+  const global = userAgentInstructions(input.globalInstructions);
+  const project = userAgentInstructions(input.projectInstructions);
   return [
-    input.globalInstructions?.trim()
-      ? `## Environment instructions\n${input.globalInstructions.trim()}`
-      : "",
-    input.projectInstructions?.trim()
-      ? `## Project instructions\n${input.projectInstructions.trim()}`
-      : "",
+    global ? `## Environment instructions\n${global}` : "",
+    project ? `## Project instructions\n${project}` : "",
   ]
     .filter(Boolean)
     .join("\n\n");

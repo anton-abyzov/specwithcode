@@ -2,7 +2,7 @@
 
 > For maintainers. Using SpecWithCode? See [docs/user](../user/).
 
-The screenshot harness runs the real mobile application against three disposable local Studio
+The screenshot harness runs the real mobile application against three disposable local SpecWithCode
 environments. It creates an isolated base directory and server for each environment, real Git
 projects with deterministic content, seeded orchestration projections, and persisted terminal
 history. The app pairs with every server through its normal connection flow and React Navigation
@@ -10,7 +10,7 @@ opens the production Home, Thread, ThreadTerminal, ThreadReview, and SettingsEnv
 
 No screenshot-specific screen recreates application UI. `EXPO_PUBLIC_SHOWCASE=1` only enables the
 non-rendering pairing/readiness coordinator, disables terminal autofocus so captures do not contain
-the software keyboard, and supplies deterministic Studio Connect discovery rows to the real
+the software keyboard, and supplies deterministic SpecWithCode Connect discovery rows to the real
 Environments screen. The local environment cards always come from real paired servers.
 
 ## Capture the default matrix
@@ -21,7 +21,7 @@ From the repository root:
 
 The command:
 
-1. Creates three temporary Studio base directories and starts a local server for each on an available
+1. Creates three temporary SpecWithCode base directories and starts a local server for each on an available
    port.
 2. Creates SpecWithCode, React, and Linux Git repositories with recognizable favicons, feature branches,
    and a deterministic SpecWithCode review diff.
@@ -63,8 +63,8 @@ multiplies the run by six; only the native build is shared.
 
 The default matrix is:
 
-| Output folder                         | Capture target               | Upload dimensions | Store slot                                |
-| ------------------------------------- | ---------------------------- | ----------------- | ----------------------------------------- |
+| Output folder                             | Capture target               | Upload dimensions | Store slot                                |
+| ----------------------------------------- | ---------------------------- | ----------------- | ----------------------------------------- |
 | `apple/iphone-6.9/dark/studio-code/`      | disposable iPhone 17 Pro Max | 1320×2868         | App Store Connect iPhone 6.9-inch         |
 | `apple/iphone-6.5/dark/studio-code/`      | disposable iPhone 14 Plus    | 1284×2778         | App Store Connect iPhone 6.5-inch         |
 | `apple/ipad-13/dark/studio-code/`         | iPad Pro 13-inch (M5)        | 2752×2064         | App Store Connect iPad 13-inch, landscape |

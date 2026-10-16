@@ -63,16 +63,11 @@ it.layer(layer)("ProjectWorkspaceService", (it) => {
         yield* sql`UPDATE projection_projects SET workspace_settings_json=${JSON.stringify(settings)} WHERE project_id=${id}`;
         const service = yield* Workspace.ProjectWorkspaceService;
         const context = yield* service.context(id, coordinator);
-        assert.include(context, "studio_google_status with checkConnection: true");
-        assert.include(context, "native Google tools are separate from that list");
+        // The setup and permission details live in the studio_google_status description.
+        assert.include(context, "for Gmail, Calendar or Drive call studio_google_status first");
         assert.include(context, "web lookups and Gmail, Calendar or Drive reads");
         assert.include(context, "For requests that need a worker, route them at once");
-        assert.include(context, "the project coordinator sends such requests to a worker");
-        assert.include(
-          context,
-          "inspect the run and tool evidence before stating whether the worker started",
-        );
-        assert.include(context, "require the user's authorization");
+        assert.include(context, "check the run before saying whether Google was reached");
         assert.isAtMost(context.length, PROJECT_CONTEXT_CHARACTER_LIMIT);
       }),
   );
@@ -463,15 +458,14 @@ it("asks workers for short reports and the coordinator to relay only their outco
     files: [],
     index: "",
   });
-  assert.include(worker, "Write it in the <response_style> your runtime instructions set");
-  assert.include(worker, "(when none is set, at most 5 short lines)");
-  assert.include(worker, "decides between a plain short message and a labeled report");
-  assert.include(worker, "end with a paragraph opening **Blockers:**");
-  assert.notInclude(worker, "so SpecWithCode shows it as a document");
+  // Report length and the **Blockers:** paragraph come from the runtime response style.
+  assert.include(worker, "Your final message is your report");
+  assert.include(worker, "Write every file or folder path in full from the root");
+  assert.notInclude(worker, "<response_style>");
+  assert.notInclude(worker, "Studio");
   // Detailed may include steps, so the fixed worker text must not forbid them.
   assert.notInclude(worker, "not a replay of your steps");
   assert.notInclude(worker, "add detail only when asked");
-  assert.include(worker, "give its path instead of pasting them");
   const coordinator = Workspace.projectContextText({
     projectId: "p",
     threadId: "c",
@@ -479,8 +473,7 @@ it("asks workers for short reports and the coordinator to relay only their outco
     files: [],
     index: "",
   });
-  assert.include(coordinator, "Write every reply to the user in the <response_style>");
-  assert.include(coordinator, "lead with the answer and keep it to 1-3 sentences");
+  assert.notInclude(coordinator, 'never "Studio"');
   assert.include(coordinator, "You coordinate this project's work and do none of it yourself");
   assert.include(coordinator, "do not relay, summarize or repeat its result here");
   assert.include(coordinator, "otherwise end the turn without a reply");

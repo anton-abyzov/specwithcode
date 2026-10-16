@@ -956,6 +956,7 @@ function CoordinatorWorking({ progress }: { progress: CoordinatorProgress }) {
 export function CoordinatorMachine({
   label,
   connected,
+  disconnectedLabel = "Disconnected",
   current,
   checkouts,
   savedMachineMissing,
@@ -963,6 +964,7 @@ export function CoordinatorMachine({
 }: {
   label: string;
   connected: boolean;
+  disconnectedLabel?: string;
   current: string;
   checkouts: ReadonlyArray<{ key: string; machine: string; folder: string }>;
   savedMachineMissing: boolean;
@@ -974,8 +976,10 @@ export function CoordinatorMachine({
       <span className="sws-host-name" title={label}>
         {shortMachineName(label)}
       </span>
-      <span className="sr-only">{connected ? ", connected" : ", disconnected"}</span>
-      {connected ? null : <span aria-hidden> · Disconnected</span>}
+      <span className="sr-only">
+        {connected ? ", connected" : `, ${disconnectedLabel.toLowerCase()}`}
+      </span>
+      {connected ? null : <span aria-hidden> · {disconnectedLabel}</span>}
       {savedMachineMissing ? <span aria-hidden> · Saved machine offline</span> : null}
     </>
   );

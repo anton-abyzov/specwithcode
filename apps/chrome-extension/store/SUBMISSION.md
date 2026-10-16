@@ -1,4 +1,4 @@
-# Chrome Web Store submission: SpecWithCode Browser 1.0.0
+# Chrome Web Store submission: SpecWithCode Browser 1.0.1
 
 Every field the developer dashboard asks for, in the order it asks, with paste-ready values. Images are in `screenshots/`; the privacy policy text is in `privacy-policy.md`.
 
@@ -6,19 +6,19 @@ Every field the developer dashboard asks for, in the order it asks, with paste-r
 
 - **Publisher account:** anton.abyzov@gmail.com (registration fee of USD 5 already paid). Per the JobWeave notes of October 6, 2026, the account still has **no verified contact email**. Add one and click the verification link (Dashboard → Account → Contact email) before submitting; publishing is blocked without it.
 - **Privacy policy page:** publish `privacy-policy.md` at <https://spec-weave.com/specwithcode/chrome-extension-privacy>. The page does not exist yet and review checks that it loads.
-- **Package:** `apps/chrome-extension/dist/specwithcode-browser-1.0.0.zip`. Build it with `node apps/chrome-extension/scripts/build.mjs` (or `pnpm --filter @specweave-studio/chrome-extension build`). The build refuses a manifest with a `key`, host permissions, an unreviewed permission or a description over 132 characters.
+- **Package:** `apps/chrome-extension/dist/specwithcode-browser-1.0.1.zip`. Build it with `node apps/chrome-extension/scripts/build.mjs` (or `pnpm --filter @specweave-studio/chrome-extension build`). The build refuses a manifest with a `key`, host permissions, an unreviewed permission or a description over 132 characters.
 - **Screenshots:** regenerate with `PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never node apps/chrome-extension/store/screenshots/src/render.mjs` (headless Chromium).
 
 ## 1. Package
 
 | Field  | Value                                                       |
 | ------ | ----------------------------------------------------------- |
-| Upload | `apps/chrome-extension/dist/specwithcode-browser-1.0.0.zip` |
+| Upload | `apps/chrome-extension/dist/specwithcode-browser-1.0.1.zip` |
 
 The summary shown on the listing comes from the manifest `description` (121 of 132 characters):
 
 ```
-Let your SpecWithCode agents (Claude, Codex, Grok, Gemini, Copilot, Muse) use this Chrome profile, on this computer only.
+Let the coding agents you run in SpecWithCode use this Chrome profile, in a visible tab group, on this computer only.
 ```
 
 ## 2. Store listing tab
@@ -43,7 +43,7 @@ Let your SpecWithCode agents (Claude, Codex, Grok, Gemini, Copilot, Muse) use th
 ```
 SpecWithCode Browser lets the agents you run in the SpecWithCode desktop app use this Chrome profile: your tabs, your logins and your cookies, on this computer only.
 
-Pair once with a code from SpecWithCode (Settings › Chrome), give the profile a name such as "Personal" or "Work", and your agents can open tabs, read pages, click, type and take screenshots, signed in as you. It works with every agent SpecWithCode runs: Claude, Codex, Grok, Gemini, GitHub Copilot and Meta's Muse.
+Pair once with a code from SpecWithCode (Settings › Chrome), give the profile a name such as "Personal" or "Work", and your agents can open tabs, read pages, click, type and take screenshots, signed in as you. It works with any coding agent you run in SpecWithCode, whichever AI provider it uses.
 
 WHAT YOU SEE
 • Every tab an agent opens or works in sits in a blue "SpecWithCode · <profile name>" tab group, so you always know which tabs agents are using.
@@ -164,7 +164,7 @@ The `debugger` permission usually triggers an in-depth review, so expect more th
 1. Sign in to <https://chrome.google.com/webstore/devconsole> as anton.abyzov@gmail.com.
 2. Account: add a contact email and verify it from the link Google sends.
 3. Confirm <https://spec-weave.com/specwithcode/chrome-extension-privacy> loads with the text of `privacy-policy.md`.
-4. Items → New item → upload `apps/chrome-extension/dist/specwithcode-browser-1.0.0.zip`.
+4. Items → New item → upload `apps/chrome-extension/dist/specwithcode-browser-1.0.1.zip`.
 5. Store listing: paste the detailed description; set category Developer Tools and language English.
 6. Store listing: upload the store icon, the five screenshots in order and both promo tiles.
 7. Store listing: set homepage and support URLs to `https://spec-weave.com`.

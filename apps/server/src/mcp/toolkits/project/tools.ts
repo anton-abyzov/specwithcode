@@ -82,7 +82,7 @@ const ProjectCreateTool = Tool.make("studio_project_create", {
 const ProjectUpdateTool = Tool.make("studio_project_update", {
   ...shared,
   description:
-    "Update a registered project's settings. Omitted fields are preserved. Uses the same project service as the app. To move a project to another folder, or to archive, restore or delete it, use studio_project_request: the user approves those.",
+    "Update a registered project's settings. Omitted fields are preserved. Uses the same project service as the app. Project instructions, pause, auto-resume and the worker machine are the user's to change. To move a project to another folder, or to archive, restore or delete it, use studio_project_request: the user approves those.",
   parameters: Schema.Struct({ projectId: ProjectId, ...ProjectUpdatePayload.fields }),
 }).annotate(Tool.Destructive, true);
 const ProjectRequestResult = Schema.Struct({

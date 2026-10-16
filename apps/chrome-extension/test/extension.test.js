@@ -116,6 +116,11 @@ describe("store package", () => {
     const manifest = JSON.parse(NodeFS.readFileSync(NodePath.join(root, "manifest.json"), "utf8"));
     expect(validateManifest(manifest)).toEqual([]);
   });
+  it("refuses a description that lists AI products by name", () => {
+    const manifest = JSON.parse(NodeFS.readFileSync(NodePath.join(root, "manifest.json"), "utf8"));
+    manifest.description = "Let your agents (Claude, Codex, Grok) use this profile.";
+    expect(validateManifest(manifest)).toContain("description must not name AI products");
+  });
   it("ships the license, notice and every source file", () => {
     const files = packageFiles();
     for (const name of [

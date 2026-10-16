@@ -9,6 +9,7 @@ import { Badge } from "../ui/badge";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
+import type { ProviderQuickSetup } from "~/hooks/useProviderQuickSetup";
 import { ModelPickerContent, resolveModelPickerSelectedModel } from "./ModelPickerContent";
 import { ChatGptSharingControl } from "./ChatGptSharingControl";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
@@ -57,6 +58,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   triggerAriaLabel?: string;
   onOpenChange?: (open: boolean) => void;
   onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
+  quickSetup?: ProviderQuickSetup;
   /** Open the provider list even when every configured model is ready. */
   onManageProviders?: () => void;
   getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
@@ -333,6 +335,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           {...(props.getModelDisabledReason
             ? { getModelDisabledReason: props.getModelDisabledReason }
             : {})}
+          {...(props.quickSetup && !props.disabled ? { quickSetup: props.quickSetup } : {})}
           onInstanceModelChange={handleInstanceModelChange}
         />
         {props.selectedModels === undefined && !props.unset ? (

@@ -12,7 +12,9 @@ import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { Button } from "../ui/button";
 import { isConfiguredAcpRegistryAgent } from "./AddProviderInstanceDialog.logic";
 
-export const FEATURED_ACP_AGENT_IDS = ["github-copilot-cli", "grok-build", "gemini"] as const;
+import { FEATURED_ACP_AGENT_IDS } from "../../providerQuickSetup";
+
+export { FEATURED_ACP_AGENT_IDS };
 
 interface FeaturedAcpProvidersProps {
   readonly environmentId: EnvironmentId;

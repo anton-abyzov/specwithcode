@@ -63,7 +63,7 @@ Native subagents:
 - the app observes native child refs/events;
 - the child is modeled as a child execution node and, when useful, as a related app subthread.
 
-Cross-provider Studio subagents:
+Cross-provider SpecWithCode subagents:
 
 - the parent agent calls an app-owned tool;
 - the app creates a child app thread/run with a relationship to the parent;

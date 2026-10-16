@@ -292,7 +292,7 @@ export const layer = HttpApiBuilder.group(
             const credential = EnvironmentAuth.selectRequestCredential(
               request,
               sessions.cookieName,
-              sessions.legacyCookieName,
+              sessions.findLegacyCookie,
             );
             if (
               (credential?.source === "cookie" || credential?.source === "legacy-cookie") &&
@@ -304,7 +304,7 @@ export const layer = HttpApiBuilder.group(
                 sessions.cookieName,
                 credential.token,
                 result.expiresAt,
-                credential.source === "legacy-cookie" ? sessions.legacyCookieName : undefined,
+                credential.source === "legacy-cookie" ? credential.cookieName : undefined,
               );
               yield* appendCredentialResponseHeaders;
             }
@@ -324,7 +324,7 @@ export const layer = HttpApiBuilder.group(
             const previousCredential = EnvironmentAuth.selectRequestCredential(
               request,
               sessions.cookieName,
-              sessions.legacyCookieName,
+              sessions.findLegacyCookie,
             );
             const result = yield* serverAuth.createBrowserSession(
               args.payload.credential,

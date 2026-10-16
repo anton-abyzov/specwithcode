@@ -207,7 +207,9 @@ import { ProposedPlanCard } from "./ProposedPlanCard";
 import { HtmlRenderFrame } from "./HtmlRenderFrame";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { useFileContextMenuHandler } from "../../fileContextMenu";
-import { useProject, useThreadShell } from "../../state/entities";
+import type { ThreadLinkTarget } from "@specweave-studio/client-runtime/state/threads";
+import { useProject, useThreadLinkTargets, useThreadShell } from "../../state/entities";
+import { linkPlainThreadMentions, projectMentionThreads } from "../../studio/plainThreadMentions";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
   readTimelinePosition,
@@ -391,6 +393,8 @@ interface TimelineRowSharedState {
   reportProjectId: ProjectId | null;
   reportFallbackTitle: string;
   timelineDetail: TimelineDetail;
+  /** The other threads of this thread's project, which a plain mention of their title links to. */
+  mentionThreads: ReadonlyArray<ThreadLinkTarget>;
 }
 
 interface TimelineRowActivityState {
@@ -711,6 +715,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     setDisclosureLevel({ detail: timelineDetail, reset: true });
   }
   const citationThreadRef = useMemo(() => parseScopedThreadKey(routeThreadKey), [routeThreadKey]);
+  const timelineShell = useThreadShell(citationThreadRef);
+  const environmentLinkTargets = useThreadLinkTargets(timelineShell?.environmentId ?? null);
+  const timelineProjectId = timelineShell?.projectId ?? null;
+  const timelineThreadId = timelineShell?.id ?? null;
+  const mentionThreads = useMemo(
+    () => projectMentionThreads(environmentLinkTargets, timelineProjectId, timelineThreadId),
+    [environmentLinkTargets, timelineProjectId, timelineThreadId],
+  );
   const openPullRequest = useOpenPrLink(citationThreadRef ?? undefined);
   const expandCitedRun = useCallback(
     (runId: RunId, toolActivityGroupId: string | null) => {
@@ -1354,6 +1366,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       reportProjectId,
       reportFallbackTitle,
       timelineDetail,
+      mentionThreads,
     }),
     [
       readyCitationRequest,
@@ -1394,6 +1407,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       reportProjectId,
       reportFallbackTitle,
       timelineDetail,
+      mentionThreads,
     ],
   );
   const compactionAwaitingRow =
@@ -2760,10 +2774,15 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
         : null,
     [threadRef, reportProjectId],
   );
+  const mentionThreads = ctx.mentionThreads;
+  const linkedText = useMemo(
+    () => linkPlainThreadMentions(messageText, mentionThreads),
+    [messageText, mentionThreads],
+  );
   const markdown = (
     <ChatMarkdown
       formatDates
-      text={messageText}
+      text={linkedText}
       cwd={ctx.markdownCwd}
       threadRef={ctx.threadRef ?? undefined}
       isStreaming={Boolean(row.message.streaming)}
@@ -2800,7 +2819,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
               renderMarkdown={(part) => (
                 <ChatMarkdown
                   formatDates
-                  text={part}
+                  text={linkPlainThreadMentions(part, mentionThreads)}
                   cwd={ctx.markdownCwd}
                   threadRef={ctx.threadRef ?? undefined}
                   isStreaming={false}
@@ -4367,6 +4386,7 @@ function AssistantChangedFilesSectionInner({
     <ChangedFilesCard
       runId={turnSummary.runId}
       files={checkpointFiles}
+      summaryOnly={ctx.timelineDetail === "concise"}
       allDirectoriesExpanded={allDirectoriesExpanded}
       resolvedTheme={resolvedTheme}
       onToggleAllDirectories={() =>

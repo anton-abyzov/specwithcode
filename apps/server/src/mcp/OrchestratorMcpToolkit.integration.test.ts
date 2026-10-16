@@ -81,6 +81,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { delegatedTaskRun, hasPendingChildRuns } from "./OrchestratorMcpService.ts";
+import { formatStudioThreadLink } from "@specweave-studio/shared/studioThreadLinks";
 
 // Effect returns a declared tool failure as `isError` with its encoded payload
 // as JSON text, never as `structuredContent`.
@@ -2548,6 +2549,10 @@ describe("orchestrator MCP toolkit", () => {
               senderThreadId: parentThreadId,
             });
             expect(sent.delivery).toBe("started");
+            // The reply names the thread with this link instead of its bare title.
+            expect(sent.threadLink).toBe(
+              formatStudioThreadLink(emptyThread.threadId, sentSource.thread.title || "thread"),
+            );
             const waitCall = yield* invoke("studio_thread_wait", {
               threadId: emptyThread.threadId,
               runId: sent.runId,

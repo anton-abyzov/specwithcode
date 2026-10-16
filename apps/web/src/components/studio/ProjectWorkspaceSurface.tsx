@@ -76,6 +76,7 @@ import {
 } from "../../studio/useProjectPaneSelection";
 import {
   createScopedProjectSendReceipt,
+  hostDisconnectedLabel,
   projectAdmissionReason,
 } from "../../studio/projectWorkspaceModel";
 import {
@@ -407,7 +408,13 @@ export function ProjectWorkspaceSurface({
   const navigate = useNavigate();
   const connected = environment?.connection.phase === "connected";
   const blocked =
-    ownershipProblem ?? projectAdmissionReason(snapshot?.settings ?? null, connected, canOperate);
+    ownershipProblem ??
+    projectAdmissionReason(
+      snapshot?.settings ?? null,
+      connected,
+      canOperate,
+      environment?.connection,
+    );
   // Memoized, not just computed: these feed memoized callbacks below, and the
   // React Compiler keeps those only for values it knows are not changed later.
   const coordinator = useMemo(
@@ -1350,6 +1357,7 @@ export function ProjectWorkspaceSurface({
                     <CoordinatorMachine
                       label={environment?.label ?? "Host"}
                       connected={connected}
+                      disconnectedLabel={hostDisconnectedLabel(environment?.connection)}
                       current={`${project.environmentId}:${project.id}`}
                       checkouts={checkouts}
                       savedMachineMissing={savedMachineMissing}

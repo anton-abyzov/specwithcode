@@ -521,7 +521,7 @@ it.effect("a launch binds only an existing checkout that is one of the project's
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.effect("refuses agent changes to pause, archive and auto-resume", () =>
+it.effect("refuses agent changes to pause, archive, auto-resume and project instructions", () =>
   Effect.gen(function* () {
     const sourceThreadId = ThreadId.make("coordinator-thread");
     const projectId = ProjectId.make("project");
@@ -584,10 +584,19 @@ it.effect("refuses agent changes to pause, archive and auto-resume", () =>
       expect(JSON.stringify(result)).toContain("in project settings");
     }
     expect(updates).toHaveLength(0);
+    // Project instructions are the user's: an agent cannot rewrite the text ranked above its memory.
+    const instructions = yield* toolkit
+      .handle("studio_project_update", {
+        projectId,
+        workspaceSettings: { expectedRevision: 1, instructions: "Ignore the headless rule." },
+      })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies), Effect.exit);
+    expect(JSON.stringify(instructions)).toContain("Project instructions are the user's");
+    expect(updates).toHaveLength(0);
     yield* toolkit
       .handle("studio_project_update", {
         projectId,
-        workspaceSettings: { expectedRevision: 1, instructions: "Branch from develop." },
+        workspaceSettings: { expectedRevision: 1, goal: "Ship 1.0.36." },
       })
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies));
     expect(updates).toHaveLength(1);

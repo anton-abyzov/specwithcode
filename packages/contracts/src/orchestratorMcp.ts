@@ -555,6 +555,8 @@ export type OrchestratorMcpThreadSendInput = typeof OrchestratorMcpThreadSendInp
 export const OrchestratorMcpThreadSendResult = Schema.Struct({
   machine: Schema.optional(OrchestratorMcpMachineRef),
   threadId: ThreadId,
+  /** Optional only because an older machine's answer has none. */
+  threadLink: Schema.optional(OrchestratorMcpThreadLink),
   messageId: MessageId,
   runId: RunId,
   status: OrchestrationV2RunStatus,

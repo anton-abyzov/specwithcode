@@ -97,4 +97,4 @@ Downloads, it may need Full Disk Access for the `specweave-studio` executable li
 `~/Library/LaunchAgents/com.specweave.studio.service.plist`.
 
 For failures after signing in to SpecWithCode Connect, see
-[connection troubleshooting](./remote-access.md#studio-connect-troubleshooting).
+[connection troubleshooting](./remote-access.md#specwithcode-connect-troubleshooting).

@@ -10,7 +10,13 @@ import {
 
 import { primaryServerProvidersAtom, serverEnvironment } from "../state/server";
 import { usePrimaryEnvironment } from "../state/environments";
-import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
+import {
+  type EnvironmentScopeAccess,
+  providerManageBlockedText,
+  readEnvironmentScope,
+  readEnvironmentScopeAccess,
+  useEnvironmentScopeAccess,
+} from "../state/session";
 import { useDismissedProviderUpdateNotificationKeys } from "../providerUpdateDismissal";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import {
@@ -36,7 +42,7 @@ type ActiveProviderUpdateToast =
       readonly kind: "prompt";
       readonly key: string;
       readonly toastId: ProviderUpdateToastId;
-      readonly canManageProviders: boolean;
+      readonly manageAccess: EnvironmentScopeAccess;
     }
   | {
       readonly kind: "update";
@@ -114,10 +120,12 @@ export function ProviderUpdatePrimaryNotification() {
   const navigate = useNavigate();
   const providers = useAtomValue(primaryServerProvidersAtom);
   const primaryEnvironment = usePrimaryEnvironment();
-  const canManageProviders = useEnvironmentScope(
+  const manageAccess = useEnvironmentScopeAccess(
     primaryEnvironment?.environmentId ?? null,
     AuthProvidersManageScope,
+    primaryEnvironment?.connection,
   );
+  const canManageProviders = manageAccess === "granted";
   const updateProvider = useAtomCommand(serverEnvironment.updateProvider, {
     reportFailure: false,
   });
@@ -202,9 +210,12 @@ export function ProviderUpdatePrimaryNotification() {
     const updateExistingPrompt =
       activeToast?.kind === "prompt" &&
       activeToast.key === notificationKey &&
-      activeToast.canManageProviders !== canManageProviders;
+      activeToast.manageAccess !== manageAccess;
     if (
       !notificationKey ||
+      // Until this browser's session has loaded there is nothing true to say
+      // about who may update, so do not open a prompt yet.
+      (manageAccess === "unknown" && !updateExistingPrompt) ||
       dismissedNotificationKeys.has(notificationKey) ||
       (seenProviderUpdateNotificationKeys.has(notificationKey) && !updateExistingPrompt) ||
       (activeToastRef.current && !updateExistingPrompt)
@@ -258,7 +269,12 @@ export function ProviderUpdatePrimaryNotification() {
               addProviderUpdateToast({
                 view: getProviderUpdateRejectedToastView(
                   providerCount,
-                  "This connection cannot manage provider accounts.",
+                  providerManageBlockedText(
+                    readEnvironmentScopeAccess(
+                      primaryEnvironment.environmentId,
+                      AuthProvidersManageScope,
+                    ),
+                  ) ?? "This connection cannot manage provider accounts.",
                 ),
                 openSettings: openProviderSettings,
               });
@@ -310,9 +326,12 @@ export function ProviderUpdatePrimaryNotification() {
     const toastOptions = stackedThreadToast({
       type: initialView.type,
       title: initialView.title,
-      description: canManageProviders
-        ? initialView.description
-        : "This connection cannot manage provider accounts. View provider settings for update details.",
+      description:
+        manageAccess === "granted"
+          ? initialView.description
+          : manageAccess === "denied"
+            ? "This connection cannot manage provider accounts. View provider settings for update details."
+            : providerManageBlockedText(manageAccess),
       timeout: 0,
       actionProps:
         oneClickProviders.length > 0
@@ -350,9 +369,10 @@ export function ProviderUpdatePrimaryNotification() {
     } else {
       toastId = toastManager.add(toastOptions);
     }
-    activeToastRef.current = { kind: "prompt", key: notificationKey, toastId, canManageProviders };
+    activeToastRef.current = { kind: "prompt", key: notificationKey, toastId, manageAccess };
   }, [
     canManageProviders,
+    manageAccess,
     updateProvider,
     dismissNotificationKey,
     dismissedNotificationKeys,

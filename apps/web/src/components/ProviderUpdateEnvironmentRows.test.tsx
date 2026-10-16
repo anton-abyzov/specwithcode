@@ -96,10 +96,18 @@ vi.mock("~/state/server", () => ({
 vi.mock("~/state/session", () => ({
   readEnvironmentScope: (environmentId: EnvironmentId, scope: AuthEnvironmentScope) =>
     scope === AuthProvidersManageScope && testState.permittedEnvironmentIds.has(environmentId),
-  useEnvironmentScope: (environmentId: EnvironmentId | null, scope: AuthEnvironmentScope) =>
+  useEnvironmentScopeAccess: (environmentId: EnvironmentId | null, scope: AuthEnvironmentScope) =>
     environmentId !== null &&
     scope === AuthProvidersManageScope &&
-    testState.permittedEnvironmentIds.has(environmentId),
+    testState.permittedEnvironmentIds.has(environmentId)
+      ? "granted"
+      : "denied",
+  providerManageBlockedText: (access: string) =>
+    access === "granted" ? null : "This connection cannot manage provider accounts.",
+}));
+
+vi.mock("~/state/environments", () => ({
+  useEnvironment: () => ({ connection: { phase: "connected" } }),
 }));
 
 vi.mock("~/state/use-atom-command", () => ({

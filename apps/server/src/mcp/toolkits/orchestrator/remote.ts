@@ -209,7 +209,14 @@ export const sendRemote = (
           remoteThreadId: result.threadId,
           runId: result.runId,
         });
-        return result;
+        // The link that machine wrote names a thread there; say which machine.
+        const label = result.threadLink?.match(/^\[([^\]]*)\]/)?.[1];
+        return label === undefined
+          ? result
+          : {
+              ...result,
+              threadLink: formatStudioThreadLink(result.threadId, label, machine.environmentId),
+            };
       }),
     );
   });

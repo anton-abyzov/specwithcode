@@ -48,6 +48,10 @@ export function validateManifest(manifest) {
   for (const permission of manifest.permissions ?? [])
     if (!allowed.has(permission)) problems.push(`unreviewed permission: ${permission}`);
   if (manifest.host_permissions?.length) problems.push("host_permissions must stay empty");
+  // The store rejected 1.0.0 as keyword spam for listing AI products by name.
+  const brands = /\b(claude|anthropic|codex|openai|chatgpt|grok|xai|gemini|copilot|muse)\b/i;
+  for (const key of ["name", "short_name", "description"])
+    if (brands.test(manifest[key] ?? "")) problems.push(`${key} must not name AI products`);
   return problems;
 }
 

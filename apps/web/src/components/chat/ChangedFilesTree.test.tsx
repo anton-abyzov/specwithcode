@@ -24,6 +24,30 @@ describe("ChangedFilesCard", () => {
     expect(markup).not.toContain("1 changed files");
   });
 
+  it("shows one summary line without the tree under concise timeline detail", () => {
+    const markup = renderToStaticMarkup(
+      <ChangedFilesCard
+        runId={RunId.make("run-1")}
+        files={[
+          { path: "extension/manifest.json", kind: "modified", additions: 4, deletions: 1 },
+          { path: "docs-site/privacy.md", kind: "modified", additions: 30, deletions: 0 },
+        ]}
+        allDirectoriesExpanded
+        resolvedTheme="light"
+        onToggleAllDirectories={() => {}}
+        onOpenTurnDiff={() => {}}
+        summaryOnly
+      />,
+    );
+
+    expect(markup).toContain('data-changed-files-state="summary"');
+    expect(markup).toContain("2 changed files");
+    expect(markup).toContain('aria-label="Open diff"');
+    expect(markup).not.toContain("manifest.json");
+    expect(markup).not.toContain("docs-site");
+    expect(markup).not.toContain("Collapse all folders");
+  });
+
   it("shows collapsed folders and root files together", () => {
     const markup = renderToStaticMarkup(
       <ChangedFilesCard

@@ -1,16 +1,16 @@
-# Studio Connect setup
+# SpecWithCode Connect setup
 
-Deployment and client configuration for Studio Connect. The [architecture note](../internals/studio-connect.md)
+Deployment and client configuration for SpecWithCode Connect. The [architecture note](../internals/studio-connect.md)
 explains the trust boundaries; the [relay README](../../infra/relay/README.md#deployment) owns relay
 provisioning instructions.
 
 ## Public application configuration
 
-Studio Connect is disabled in a fresh clone, and the repository configures no hosted deployment
+SpecWithCode Connect is disabled in a fresh clone, and the repository configures no hosted deployment
 to build against. Every value in the repository-root `.env.example` is empty, so
 `cp .env.example .env` builds the same app as a checkout with no `.env`.
 
-To run Studio Connect against a Clerk instance and relay you operate, set these values in the
+To run SpecWithCode Connect against a Clerk instance and relay you operate, set these values in the
 repository-root `.env` or `.env.local`:
 
 ```dotenv
@@ -34,7 +34,7 @@ that check it:
 
 `vp run dev` loads the root `.env` and `.env.local` into the environment it starts the server and
 web client with, so both lines can go there during development. Any other value, or none, leaves
-Studio Connect off and direct private pairing working.
+SpecWithCode Connect off and direct private pairing working.
 
 Client and bundled-server builds embed the public values, so set them before building.
 EAS preview and production environments need the publishable key, JWT template name, and relay URL.
@@ -52,7 +52,7 @@ depend on. The stack's `PublishClientConfig` action writes the resulting relay U
 
 In Clerk's OAuth applications settings:
 
-1. Create a public OAuth application for the Studio CLI, using authorization-code exchange with PKCE.
+1. Create a public OAuth application for the SpecWithCode CLI, using authorization-code exchange with PKCE.
 2. Allow the redirect URI `http://127.0.0.1:34338/callback`.
 3. Enable the `openid`, `profile`, `email`, and `offline_access` scopes.
 4. Enable **Device authorization grant** on the application. Headless and SSH authorization use

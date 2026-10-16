@@ -29,8 +29,11 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
   onToggleAllDirectories: () => void;
   onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
   onFileContextMenu?: ChangedFileContextMenuHandler | undefined;
+  /** Concise timeline detail: the count, stats and Open diff on one line, without the tree. */
+  summaryOnly?: boolean;
 }) {
   const {
+    summaryOnly = false,
     runId,
     files,
     allDirectoriesExpanded,
@@ -40,16 +43,20 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
     onFileContextMenu,
   } = props;
   const summaryStat = useMemo(() => summarizeTurnDiffStats(files), [files]);
-  const hasDirectories = files.some((file) => /[/\\]/.test(file.path));
+  const hasDirectories = !summaryOnly && files.some((file) => /[/\\]/.test(file.path));
 
   return (
     <div
       className="@container/changed-files mt-4 rounded-lg bg-secondary dark:bg-input/20"
-      data-changed-files-state="tree"
+      data-changed-files-state={summaryOnly ? "summary" : "tree"}
     >
       <div
         data-changed-files-header=""
-        className="sticky top-2 z-10 flex items-center justify-between gap-2 rounded-t-lg bg-secondary px-3 py-2 dark:bg-background dark:bg-linear-to-b dark:from-input/20 dark:to-input/20"
+        className={cn(
+          "flex items-center justify-between gap-2 rounded-lg px-3 py-2",
+          !summaryOnly &&
+            "sticky top-2 z-10 rounded-b-none bg-secondary dark:bg-background dark:bg-linear-to-b dark:from-input/20 dark:to-input/20",
+        )}
       >
         <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs font-medium text-foreground">
           <span>
@@ -104,21 +111,25 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
               }
             >
               <FileDiffIcon className="size-3" />
-              <span className="hidden @[24rem]/changed-files:inline">Open diff</span>
+              <span className={summaryOnly ? undefined : "hidden @[24rem]/changed-files:inline"}>
+                Open diff
+              </span>
             </TooltipTrigger>
             <TooltipPopup side="top">Open the full diff</TooltipPopup>
           </Tooltip>
         </div>
       </div>
-      <ChangedFilesTree
-        key={`${runId}:${allDirectoriesExpanded}`}
-        runId={runId}
-        files={files}
-        allDirectoriesExpanded={allDirectoriesExpanded}
-        resolvedTheme={resolvedTheme}
-        onOpenTurnDiff={onOpenTurnDiff}
-        onFileContextMenu={onFileContextMenu}
-      />
+      {summaryOnly ? null : (
+        <ChangedFilesTree
+          key={`${runId}:${allDirectoriesExpanded}`}
+          runId={runId}
+          files={files}
+          allDirectoriesExpanded={allDirectoriesExpanded}
+          resolvedTheme={resolvedTheme}
+          onOpenTurnDiff={onOpenTurnDiff}
+          onFileContextMenu={onFileContextMenu}
+        />
+      )}
     </div>
   );
 });

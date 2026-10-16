@@ -1,20 +1,43 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   buildRuntimeInstructions,
+  HEADLESS_BROWSER_ENVIRONMENT,
   responseStyleInstructions,
   STUDIO_CONCISE_RESPONSE_STYLE_INSTRUCTIONS,
   STUDIO_DETAILED_RESPONSE_STYLE_INSTRUCTIONS,
+  STUDIO_HEADLESS_INSTRUCTIONS,
   STUDIO_OUTPUT_FORMATTING_INSTRUCTIONS,
   STUDIO_WRITING_INSTRUCTIONS,
 } from "./RuntimeInstructions.ts";
 
 describe("buildRuntimeInstructions", () => {
-  it("requires explicit registration of every PR and stack layer", () => {
+  it("asks only for the pull requests the server cannot detect", () => {
     const instructions = buildRuntimeInstructions({ harness: "Codex" });
-    expect(instructions).toContain("When the studio-code MCP server exposes link_pull_request");
-    expect(instructions).toContain("with the full PR URL immediately after creating a PR");
-    expect(instructions).toContain("For a stack, call it for every layer");
-    expect(instructions).toContain("call list_thread_pull_requests and link any PR");
+    // ThreadPullRequestService finds the thread's own branch PR without the agent.
+    expect(instructions).toContain(
+      "tracks the pull request for this thread's own branch by itself",
+    );
+    expect(instructions).toContain("each stack layer, another repository");
+    expect(instructions).toContain("link_pull_request");
+    expect(instructions).toContain("watch_pull_request and end your turn instead of polling");
+  });
+
+  it("states the headless rule once and sets what an environment variable can", () => {
+    for (const responseStyle of ["concise", "detailed"] as const) {
+      const instructions = buildRuntimeInstructions({ harness: "Claude Code", responseStyle });
+      expect(instructions.match(/<browser_automation>/g)).toHaveLength(1);
+    }
+    expect(STUDIO_HEADLESS_INSTRUCTIONS).toContain("headless: true");
+    expect(STUDIO_HEADLESS_INSTRUCTIONS).toContain("without the user's approval");
+    expect(HEADLESS_BROWSER_ENVIRONMENT).toEqual({ PWDEBUG: "0", PLAYWRIGHT_HTML_OPEN: "never" });
+  });
+
+  it("does not police the product name: the text agents read already says SpecWithCode", () => {
+    for (const responseStyle of ["concise", "detailed"] as const) {
+      const instructions = buildRuntimeInstructions({ harness: "Codex", responseStyle });
+      expect(instructions).not.toMatch(/\bStudio\b/);
+      expect(instructions).toContain("You are running in SpecWithCode");
+    }
   });
 
   it("keeps known model and effort metadata on one line", () => {
@@ -24,16 +47,16 @@ describe("buildRuntimeInstructions", () => {
         model: "  custom\nmodel  ",
         reasoningEffort: " high\n",
       }),
-    ).toContain("through the Codex harness, as custom model with high reasoning effort.");
+    ).toContain("through the Codex harness, as custom model with high reasoning effort;");
   });
 
   it("names the model by display name and slug when they differ", () => {
     expect(
       buildRuntimeInstructions({ harness: "Codex", model: "gpt-5.4", modelName: "GPT-5.4" }),
-    ).toContain("through the Codex harness, as GPT-5.4 (model slug: gpt-5.4).");
+    ).toContain("through the Codex harness, as GPT-5.4 (model slug: gpt-5.4);");
     expect(
       buildRuntimeInstructions({ harness: "Codex", model: "my-model", modelName: "my-model" }),
-    ).toContain("through the Codex harness, as my-model.");
+    ).toContain("through the Codex harness, as my-model;");
   });
 
   it("asks every harness for concise responses by default", () => {
@@ -84,21 +107,16 @@ describe("buildRuntimeInstructions", () => {
     expect(writing).toContain("Take a position and say why");
     expect(writing).toContain("hedge only real uncertainty");
     expect(writing).toContain("Be specific: a number, file or command, not an adverb.");
-    expect(writing).toContain("Say what a thing does");
-    expect(writing).toContain("not how it feels");
     expect(writing).toContain("Cut puffery, praise, closing offers, chatbot phrases");
     expect(writing).toContain("stock -ing tails");
     expect(writing).toContain("Avoid em dashes; use a period or comma.");
-    expect(writing).toContain("Vary sentence length");
-    expect(writing).toContain(
-      "Concise means fewer whole sentences, not dropped articles, verbs or arrows.",
-    );
+    expect(writing).toContain("Concise means fewer sentences, not dropped articles or verbs.");
     expect(writing).toContain("ask what makes this look machine-generated, and fix it");
   });
 
   it("keeps the writing rules within their per-turn budget", () => {
-    // About 150 tokens. Every agent turn carries this block, so growth should be a deliberate choice.
-    expect(STUDIO_WRITING_INSTRUCTIONS.length).toBeLessThanOrEqual(640);
+    // About 110 tokens. Every agent turn carries this block, so growth should be a deliberate choice.
+    expect(STUDIO_WRITING_INSTRUCTIONS.length).toBeLessThanOrEqual(480);
   });
 
   it.each(["concise", "detailed"] as const)(
@@ -112,96 +130,62 @@ describe("buildRuntimeInstructions", () => {
   it("requires readable dates without guessing or changing literal data", () => {
     const instructions = STUDIO_OUTPUT_FORMATTING_INSTRUCTIONS;
     expect(instructions).toContain("month name, day and year");
-    expect(instructions).toContain("not raw ISO timestamps");
-    expect(instructions).toContain("12/24-hour preference");
-    expect(instructions).toContain("include the timezone");
-    expect(instructions).toContain("retain the source timezone");
-    expect(instructions).toContain("never infer a timezone");
-    expect(instructions).toContain("Preserve date-only calendar dates");
-    expect(instructions).toContain("Do not guess invalid or ambiguous dates");
-    expect(instructions).toContain("explicit exact-output requests take precedence");
-    expect(instructions).toContain("raw machine exports such as JSON or CSV exactly");
-    expect(instructions).toContain("Quote errors verbatim when required");
-    expect(instructions).toContain("give a readable date separately");
-  });
-
-  it("keeps structured output readable and missing data distinct from zero", () => {
-    const instructions = STUDIO_OUTPUT_FORMATTING_INSTRUCTIONS;
-    expect(instructions).toContain("real Markdown bullets or numbered steps");
-    expect(instructions).toContain("blank line before the list");
-    expect(instructions).toContain("header row, separator row and consistent columns");
-    expect(instructions).toContain("Label units and currencies");
-    expect(instructions).toContain("right-align numeric columns");
-    expect(instructions).toContain("appropriate digit grouping and consistent precision");
-    expect(instructions).toContain("currency codes when the symbol is ambiguous");
-    expect(instructions).toContain("Do not invent units, currencies or precision");
-    expect(instructions).toContain(
-      "Distinguish unknown, unavailable and not applicable from zero or an empty value",
-    );
+    expect(instructions).toContain("not ISO timestamps");
+    expect(instructions).toContain("in the user's timezone when known, otherwise the source's");
+    expect(instructions).toContain("never guess one");
+    expect(instructions).toContain("data and quoted errors exactly as they are");
   });
 
   it("follows Claude Code's Concise rules for users, workers and coordinators", () => {
     const concise = responseStyleInstructions();
-    expect(concise).toContain(
-      "Keep your responses short and direct while doing the work just as thoroughly.",
-    );
     expect(concise).toContain("Lead with the result");
-    expect(concise).toContain("do not restate the request, your plan or the steps you took");
+    expect(concise).toContain("Skip narration, restating the request and closing recaps");
     expect(concise).toContain("1-3 sentences");
-    expect(concise).toContain("without hedging boilerplate");
-    expect(concise).toContain("Give full detail when the user asks for it");
-    expect(concise).toContain("Never trade correctness for brevity");
+    expect(concise).toContain("Give full detail when asked");
     // Worker report shape, not a replay.
-    expect(concise).toContain("Outcome");
-    expect(concise).toContain("Evidence");
-    expect(concise).toContain("Blockers");
-    expect(concise).toContain(
-      "a plain message of 1-3 lines, not a replay of your steps or a report",
-    );
+    expect(concise).toContain("a plain 1-3 line result with the path or link that proves it");
     expect(concise).toContain("only when the result needs them");
+    // reportDocument.ts reads this label to mark the thread Blocked.
     expect(concise).toContain("end with a paragraph opening **Blockers:**");
-    // Other parents relay a short outcome. A project coordinator does not.
-    expect(concise).toContain("Do not paste its report");
-    expect(concise).toContain(
-      "A project coordinator does not relay: the result stays in the worker's thread.",
+    expect(concise).toContain("Ask workers and subagents you brief to report the same way");
+  });
+
+  it("never caps errors, security warnings or confirmations", () => {
+    for (const style of ["concise", "detailed"] as const) {
+      const instructions = responseStyleInstructions(style);
+      expect(instructions).toContain(
+        "Never shorten errors, failing tests, security warnings or confirmations before destructive actions",
+      );
+      expect(instructions).toContain("quote errors exactly");
+      expect(instructions).toContain("give its full path");
+    }
+    expect(responseStyleInstructions("detailed")).toContain(
+      "paragraphs that open with bold labels",
     );
   });
 
-  it("keeps short concise results plain and reserves reports and pages for results that need them", () => {
-    const concise = responseStyleInstructions("concise");
-    expect(concise).not.toContain("so SpecWithCode shows it as a report");
-    expect(concise).toContain(
-      "Build an HTML page only for screenshots, charts, tables or comparisons that prose cannot carry, or when the user asks for one.",
-    );
-    expect(responseStyleInstructions("detailed")).toContain("so SpecWithCode shows it as a report");
-  });
-
-  it("never caps errors, security warnings or a required answer", () => {
-    const concise = responseStyleInstructions("concise");
-    expect(concise).toContain(
-      "These limits never apply to errors, failing tests or security warnings (quote them exactly)",
-    );
-    expect(concise).toContain("answer markers or output format your task explicitly requires");
-    expect(concise).toContain(
-      "quote any error, failing test or security warning it reports exactly",
-    );
-    const detailed = responseStyleInstructions("detailed");
-    expect(detailed).toContain("may go beyond 5 lines");
-    expect(detailed).toContain("each part a paragraph opening with its bold label");
-    expect(detailed).toContain("quote errors exactly");
-    expect(detailed).not.toContain("explain what you did and why");
+  it("keeps everything every turn carries within its budget", () => {
+    // About 750 tokens with both blocks; it was about 2,000 before the rules moved into code.
+    for (const responseStyle of ["concise", "detailed"] as const) {
+      const instructions = buildRuntimeInstructions({
+        harness: "Claude Code",
+        model: "claude-opus-5-5",
+        responseStyle,
+      });
+      expect(instructions.length).toBeLessThanOrEqual(3_200);
+    }
   });
 
   it("switches to detailed responses when the user chooses them", () => {
     const instructions = buildRuntimeInstructions({ harness: "Codex", responseStyle: "detailed" });
     expect(instructions).toContain(STUDIO_DETAILED_RESPONSE_STYLE_INSTRUCTIONS);
     expect(instructions).not.toContain(STUDIO_CONCISE_RESPONSE_STYLE_INSTRUCTIONS);
-    expect(responseStyleInstructions("detailed")).toContain("stay complete");
+    expect(responseStyleInstructions("detailed")).toContain("Never shorten errors");
   });
 
   it.each([undefined, "", "auto", "default"])("omits unresolved model %s", (model) => {
     const instructions = buildRuntimeInstructions({ harness: "Cursor", model });
-    expect(instructions).toContain("through the Cursor harness.");
+    expect(instructions).toContain("through the Cursor harness;");
     expect(instructions).not.toContain("reasoning effort");
   });
 });

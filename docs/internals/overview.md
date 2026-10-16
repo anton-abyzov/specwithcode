@@ -87,7 +87,7 @@ must reject that operation before changing the filesystem.
 Thread settlement is server-owned. The
 [settlement service](../../apps/server/src/orchestration-v2/ThreadSettlementService.ts) evaluates PR
 and inactivity settings without a connected client. Merge notifications invalidate cached PR state
-and trigger a check. A merge outside Studio, such as an agent running `gh pr merge`, sends no
+and trigger a check. A merge outside SpecWithCode, such as an agent running `gh pr merge`, sends no
 notification, so the [PR sync reactor](../../apps/server/src/orchestration-v2/PullRequestSyncReactor.ts)
 re-reads a thread's open links when a run that ran a merge or close command ends. The guarded
 `thread.auto-settle` command rejects newer activity, explicit settlement overrides, and live or

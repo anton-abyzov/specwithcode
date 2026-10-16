@@ -419,7 +419,7 @@ Webhooks have their own families:
 
 `ScheduledTaskService.triggerWebhook` spans carry the same outcome per request, and each run
 started from a delivery is its own `ScheduledTaskService.runWebhookDelivery` trace. For a request
-the relay forwarded, the span also goes to the Studio Connect trace export as a child of the relay's
+the relay forwarded, the span also goes to the SpecWithCode Connect trace export as a child of the relay's
 span; requests that reach the environment directly never join a sender's trace.
 
 Use metrics when the question is:
