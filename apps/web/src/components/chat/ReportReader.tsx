@@ -1,13 +1,11 @@
 import type { ReportDocument } from "@specweave-studio/shared/reportDocument";
 import {
-  ArrowLeftIcon,
   CheckIcon,
   ChevronDownIcon,
   ChevronUpIcon,
   CopyIcon,
   DownloadIcon,
   EllipsisIcon,
-  FileTextIcon,
   FolderOpenIcon,
   ListCollapseIcon,
   PanelRightOpenIcon,
@@ -122,14 +120,14 @@ const MARKDOWN_FILE = /\.(?:md|mdx|markdown)$/i;
 
 /**
  * A file the report links to, read in the report's place, so nothing opens
- * behind the reader and the page is never split in two. Back returns to the
- * report where it was left; "Open in panel" hands the file to the side panel.
+ * behind the reader and the page is never split in two. The overlay header
+ * names it and offers Back to the report, where it was left; its own actions
+ * (editor, file manager, "Open in panel") join the header's.
  */
 function ReportFilePane(props: {
   readonly target: ReportFileTarget;
-  readonly reportTitle: string;
   readonly renderMarkdown: ((markdown: string) => ReactNode) | undefined;
-  readonly onClose: () => void;
+  readonly actionsSlot: HTMLElement | null;
   readonly onOpenInPanel: () => void;
 }) {
   const { target } = props;
@@ -139,7 +137,7 @@ function ReportFilePane(props: {
     target.cwd,
     unresolved ? null : target.path,
   );
-  const name = target.path.split(/[\\/]/).filter(Boolean).at(-1) ?? target.path;
+  const name = reportFileTargetName(target);
   const contents = file.data?.contents ?? null;
   const actions = (
     <>
@@ -157,44 +155,22 @@ function ReportFilePane(props: {
       ) : null}
     </>
   );
+  const headerActions = unresolved ? null : (
+    <>
+      {actions}
+      <Button type="button" size="xs" variant="ghost" onClick={props.onOpenInPanel}>
+        <PanelRightOpenIcon aria-hidden />
+        Open in panel
+      </Button>
+    </>
+  );
   return (
     <section
       className="flex min-h-0 min-w-0 flex-1 flex-col bg-background"
       aria-label={`File ${name}`}
       data-report-file-pane="true"
     >
-      <div className="flex shrink-0 items-center gap-1 border-b py-2 pr-2 pl-2">
-        <Button
-          type="button"
-          size="xs"
-          variant="ghost"
-          onClick={props.onClose}
-          aria-label={`Back to ${props.reportTitle}`}
-          title={`Back to ${props.reportTitle}`}
-        >
-          <ArrowLeftIcon aria-hidden />
-          Back
-        </Button>
-        <FileTextIcon aria-hidden className="mr-1 ml-1 size-4 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 flex-1">
-          <span className="block truncate font-medium text-sm">
-            {name}
-            {target.line ? (
-              <span className="ml-1.5 font-normal text-muted-foreground">line {target.line}</span>
-            ) : null}
-          </span>
-          <span className="block truncate text-muted-foreground text-xs" dir="rtl">
-            <bdi>{target.path}</bdi>
-          </span>
-        </span>
-        {unresolved ? null : actions}
-        {unresolved ? null : (
-          <Button type="button" size="xs" variant="ghost" onClick={props.onOpenInPanel}>
-            <PanelRightOpenIcon aria-hidden />
-            Open in panel
-          </Button>
-        )}
-      </div>
+      {props.actionsSlot && headerActions ? createPortal(headerActions, props.actionsSlot) : null}
       <div className="flex min-h-0 flex-1 flex-col overflow-auto">
         {unresolved ? (
           <div
@@ -241,6 +217,15 @@ function ReportFilePane(props: {
       </div>
     </section>
   );
+}
+
+function reportFileTargetName(target: ReportFileTarget): string {
+  return target.path.split(/[\\/]/).filter(Boolean).at(-1) ?? target.path;
+}
+
+function extensionBadge(name: string): string {
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? name.slice(dot + 1, dot + 5).toUpperCase() : "FILE";
 }
 
 /** One dash per heading, the one being read marked; hovering lists their titles. */
@@ -295,7 +280,8 @@ function FindBar(props: {
   readonly onClose: () => void;
 }) {
   return (
-    <div className="report-find" role="search">
+    // The find field answers Escape itself (it closes find, not the report).
+    <div className="report-find" role="search" data-viewer-escape="own">
       <SearchIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
       <input
         autoFocus
@@ -400,19 +386,122 @@ export function ReportReader(props: {
       setQuery("");
     }
   };
-  const slot = useViewerOverlay({
+  const date = formatViewerDate(props.createdAt);
+  // A markdown file opened from a message is a document; a worker's reply is a report.
+  const kind = props.subtitle ? "Document" : "Report";
+  const fileName = file ? reportFileTargetName(file) : null;
+  const slots = useViewerOverlay({
     open: props.open,
-    title: props.title,
+    title: fileName ?? props.title,
+    kind: file ? "File" : kind,
+    badge: fileName ? extensionBadge(fileName) : "MD",
+    detail: file
+      ? file.line
+        ? `line ${file.line}`
+        : null
+      : [
+          date,
+          props.subtitle ? null : `${props.words.toLocaleString()} words`,
+          save?.savedPath ? "Saved" : null,
+        ]
+          .filter(Boolean)
+          .join(" · ") || null,
     threadRef: props.threadRef,
+    trail: file ? [{ kind, title: props.title }] : undefined,
+    onBack: file ? () => setFile(null) : null,
     onClose: () => setOpen(false),
   });
+  const slot = slots?.content ?? null;
   const revision = `${slot !== null}:${props.text}`;
   const outline = useDocumentOutline(scrollRef, articleRef, revision);
   const find = useFindInDocument(articleRef, finding ? query : "", revision);
   const canSave = save !== null && !save.savedPath && save.canSave && save.folder !== null;
-  const date = formatViewerDate(props.createdAt);
 
-  if (slot === null) return null;
+  if (slots === null) return null;
+  const reportActions = (
+    <>
+      {finding ? (
+        <FindBar
+          query={query}
+          onQuery={setQuery}
+          count={find.count}
+          index={find.index}
+          onStep={find.step}
+          onClose={() => {
+            setFinding(false);
+            setQuery("");
+          }}
+        />
+      ) : (
+        <Button
+          type="button"
+          size="icon-sm"
+          variant="ghost"
+          aria-label="Find in report"
+          onClick={() => setFinding(true)}
+        >
+          <SearchIcon aria-hidden />
+        </Button>
+      )}
+      <Button
+        type="button"
+        size="icon-sm"
+        variant="ghost"
+        aria-label="Download as markdown"
+        onClick={() => downloadReport(props.text, props.title)}
+      >
+        <DownloadIcon aria-hidden />
+      </Button>
+      <Button
+        type="button"
+        size="icon-sm"
+        variant="ghost"
+        aria-label={copied ? "Copied" : "Copy report"}
+        onClick={() => {
+          void navigator.clipboard?.writeText(props.text).then(() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1_500);
+          });
+        }}
+      >
+        {copied ? <CheckIcon aria-hidden /> : <CopyIcon aria-hidden />}
+      </Button>
+      {props.onShowInline || canSave || save?.savedPath ? (
+        <Menu>
+          <MenuTrigger render={<Button aria-label="More actions" size="icon-sm" variant="ghost" />}>
+            <EllipsisIcon aria-hidden />
+          </MenuTrigger>
+          <MenuPopup align="end">
+            {props.onShowInline ? (
+              <MenuItem
+                onClick={() => {
+                  setOpen(false);
+                  props.onShowInline?.();
+                }}
+              >
+                <ListCollapseIcon aria-hidden />
+                Show in chat
+              </MenuItem>
+            ) : null}
+            {canSave ? (
+              <MenuItem disabled={save.saving} onClick={save.onSave}>
+                <SaveIcon aria-hidden />
+                {save.saving
+                  ? "Saving…"
+                  : `${save.increment ? "Save to increment" : "Save to reports"} (${save.folder}/)`}
+              </MenuItem>
+            ) : null}
+            {save?.savedPath ? (
+              <MenuItem onClick={() => void navigator.clipboard?.writeText(save.savedPath ?? "")}>
+                <CopyIcon aria-hidden />
+                Copy saved path
+              </MenuItem>
+            ) : null}
+          </MenuPopup>
+        </Menu>
+      ) : null}
+    </>
+  );
   return createPortal(
     <div
       className="viewer-overlay-frame"
@@ -424,122 +513,7 @@ export function ReportReader(props: {
         }
       }}
     >
-      <header className="report-reader-toolbar">
-        <span className="report-reader-badge" aria-hidden>
-          MD
-        </span>
-        <h2 className="report-reader-title">{props.title}</h2>
-        {date ? (
-          <time className="shrink-0 text-muted-foreground text-xs" dateTime={props.createdAt}>
-            {date}
-          </time>
-        ) : null}
-        {props.subtitle ? (
-          <span className="report-reader-subtitle" dir="rtl">
-            <bdi>{props.subtitle}</bdi>
-          </span>
-        ) : (
-          <span className="shrink-0 text-muted-foreground text-xs">
-            {props.words.toLocaleString()} words
-            {save?.savedPath ? " · Saved" : ""}
-          </span>
-        )}
-        <div className="ml-auto flex shrink-0 items-center gap-0.5">
-          {finding ? (
-            <FindBar
-              query={query}
-              onQuery={setQuery}
-              count={find.count}
-              index={find.index}
-              onStep={find.step}
-              onClose={() => {
-                setFinding(false);
-                setQuery("");
-              }}
-            />
-          ) : (
-            <Button
-              type="button"
-              size="icon-sm"
-              variant="ghost"
-              aria-label="Find in report"
-              onClick={() => setFinding(true)}
-            >
-              <SearchIcon aria-hidden />
-            </Button>
-          )}
-          <Button
-            type="button"
-            size="icon-sm"
-            variant="ghost"
-            aria-label="Download as markdown"
-            onClick={() => downloadReport(props.text, props.title)}
-          >
-            <DownloadIcon aria-hidden />
-          </Button>
-          <Button
-            type="button"
-            size="icon-sm"
-            variant="ghost"
-            aria-label={copied ? "Copied" : "Copy report"}
-            onClick={() => {
-              void navigator.clipboard?.writeText(props.text).then(() => {
-                setCopied(true);
-                setTimeout(() => setCopied(false), 1_500);
-              });
-            }}
-          >
-            {copied ? <CheckIcon aria-hidden /> : <CopyIcon aria-hidden />}
-          </Button>
-          {props.onShowInline || canSave || save?.savedPath ? (
-            <Menu>
-              <MenuTrigger
-                render={<Button aria-label="More actions" size="icon-sm" variant="ghost" />}
-              >
-                <EllipsisIcon aria-hidden />
-              </MenuTrigger>
-              <MenuPopup align="end">
-                {props.onShowInline ? (
-                  <MenuItem
-                    onClick={() => {
-                      setOpen(false);
-                      props.onShowInline?.();
-                    }}
-                  >
-                    <ListCollapseIcon aria-hidden />
-                    Show in chat
-                  </MenuItem>
-                ) : null}
-                {canSave ? (
-                  <MenuItem disabled={save.saving} onClick={save.onSave}>
-                    <SaveIcon aria-hidden />
-                    {save.saving
-                      ? "Saving…"
-                      : `${save.increment ? "Save to increment" : "Save to reports"} (${save.folder}/)`}
-                  </MenuItem>
-                ) : null}
-                {save?.savedPath ? (
-                  <MenuItem
-                    onClick={() => void navigator.clipboard?.writeText(save.savedPath ?? "")}
-                  >
-                    <CopyIcon aria-hidden />
-                    Copy saved path
-                  </MenuItem>
-                ) : null}
-              </MenuPopup>
-            </Menu>
-          ) : null}
-          <Button
-            type="button"
-            size="icon-sm"
-            variant="ghost"
-            aria-label="Close report"
-            onClick={() => setOpen(false)}
-          >
-            <XIcon aria-hidden />
-          </Button>
-        </div>
-      </header>
+      {slots.actions && !file ? createPortal(reportActions, slots.actions) : null}
       {save?.error ? (
         <p className="border-b px-4 py-2 text-destructive-foreground text-xs" role="alert">
           {save.error}
@@ -579,9 +553,8 @@ export function ReportReader(props: {
             <ReportFilePane
               key={`${file.path}:${file.line ?? ""}`}
               target={file}
-              reportTitle={props.title}
               renderMarkdown={props.renderMarkdown}
-              onClose={() => setFile(null)}
+              actionsSlot={slots.actions}
               onOpenInPanel={() => {
                 setOpen(false);
                 useRightPanelStore.getState().openFile(file.threadRef, file.path, file.line);
@@ -591,6 +564,6 @@ export function ReportReader(props: {
         </div>
       </ReportFileHostContext>
     </div>,
-    slot,
+    slots.content,
   );
 }

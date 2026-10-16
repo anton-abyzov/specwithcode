@@ -20,12 +20,24 @@ const sources = import.meta.glob<string>(["./**/*.{ts,tsx}", "!./**/*.test.{ts,t
 describe("theme contrast classes", () => {
   it("keeps text classes readable in light and dark themes", () => {
     expect(Object.keys(sources).length).toBeGreaterThan(100);
+    // Every offender in one run, with its line: a first-match-only scan let a
+    // second class in the same file wait for the next run.
     const offenders = Object.entries(sources).flatMap(([path, text]) => {
       const file = path.replace(/^\.\//, "");
-      return UNREADABLE.flatMap((pattern) => {
-        const match = text.match(pattern);
-        return match ? [`${file}: ${match[0]}`] : [];
-      });
+      return UNREADABLE.flatMap((pattern) =>
+        Array.from(
+          text.matchAll(
+            new RegExp(
+              pattern.source,
+              pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`,
+            ),
+          ),
+          (match) => {
+            const line = text.slice(0, match.index).split("\n").length;
+            return `${file}:${line}: ${match[0]}`;
+          },
+        ),
+      );
     });
     expect(offenders).toEqual([]);
   });

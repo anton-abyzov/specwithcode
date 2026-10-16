@@ -1,6 +1,7 @@
 import Migration0063 from "./Migrations/063_ProjectConnections.ts";
 import Migration0064 from "./Migrations/064_ThreadIncrementLinks.ts";
 import Migration0065 from "./Migrations/065_ProjectActionRequests.ts";
+import Migration0066 from "./Migrations/066_ScheduledTaskRunPolicy.ts";
 /**
  * Migration runner with an inline loader.
  *
@@ -159,6 +160,7 @@ export const migrationEntries = [
   [63, "ProjectConnections", Migration0063],
   [64, "ThreadIncrementLinks", Migration0064],
   [65, "ProjectActionRequests", Migration0065],
+  [66, "ScheduledTaskRunPolicy", Migration0066],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

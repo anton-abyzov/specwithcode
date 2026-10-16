@@ -496,32 +496,6 @@ describe("coordinator image attachments", () => {
     expect(picker.accept).toBe("");
   });
 });
-it("binds worker attachment identity to retries and sends pending refs to the coordinator", async () => {
-  state.attachments = [
-    {
-      type: "file",
-      id: "pending-00000000-0000-4000-8000-000000000001-txt",
-      name: "notes.txt",
-      mimeType: "text/plain",
-      sizeBytes: 3,
-    },
-  ];
-  state.send.mockResolvedValue({ _tag: "Failure", error: new Error("Acknowledgement lost") });
-  await render();
-  await openFirstThread();
-  await click("Reply in selected thread");
-  await click("Reply in selected thread");
-  const first = state.send.mock.calls[0]![0].input;
-  expect(first.attachments).toEqual(state.attachments);
-  expect(first.sourceThreadId).toBe("worker");
-  expect(state.send.mock.calls[1]![0].input.commandId).toBe(first.commandId);
-  state.attachments = [
-    { ...state.attachments[0]!, id: "pending-00000000-0000-4000-8000-000000000002-txt" },
-  ];
-  await click("Reply in selected thread");
-  expect(state.send.mock.calls[2]![0].input.commandId).not.toBe(first.commandId);
-});
-
 it("shows the original worker follow-up with clickable provenance and preserved attachments", async () => {
   const workerId = "a3111111-2222-4333-8444-555555555555";
   state.shells.push(shell(workerId, { title: "Calendar improvements" }));

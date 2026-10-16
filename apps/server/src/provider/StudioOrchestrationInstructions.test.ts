@@ -41,6 +41,11 @@ describe("SpecWithCode orchestration provider instructions", () => {
     assert.isAtMost(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.length, 1_200);
   });
 
+  it("asks for absolute file paths and a one-path-per-line list for manual picks", () => {
+    assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "never a bare file name");
+    assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "one absolute path per line");
+  });
+
   it("tells only ACP agents about the terminal bridge", () => {
     assert.notInclude(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "STUDIO_ACP_MCP_NODE");
     assert.include(

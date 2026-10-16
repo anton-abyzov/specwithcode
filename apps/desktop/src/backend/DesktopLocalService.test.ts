@@ -374,8 +374,11 @@ describe("DesktopLocalService.bearerToken", () => {
             Buffer.from("encrypted:replacement-bearer").toString("base64"),
           );
       }).pipe(
-        Effect.provide(layerFor(home, {}, { httpClient, crypto: { ...crypto, encryptString } })),
-        Effect.provide(TestClock.layer()),
+        Effect.provide(
+          layerFor(home, {}, { httpClient, crypto: { ...crypto, encryptString } }).pipe(
+            Layer.provideMerge(TestClock.layer()),
+          ),
+        ),
         Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
       );
     },

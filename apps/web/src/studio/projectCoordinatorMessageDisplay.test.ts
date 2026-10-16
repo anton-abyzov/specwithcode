@@ -6,6 +6,7 @@ import {
   isWorkerCompletionWake,
   projectReportMessageIds,
   projectSystemNotice,
+  returnedFollowUpIds,
   routedRepliesForThread,
   routedReplyNotes,
 } from "./projectCoordinatorMessageDisplay";
@@ -255,5 +256,49 @@ describe("coordinator messages that carry a worker's report", () => {
         { id: "answer", role: "assistant", createdBy: "agent" },
       ]).size,
     ).toBe(0);
+  });
+});
+
+describe("follow-ups passed back to their own worker", () => {
+  const reply = (id: string, text: string) => ({
+    id,
+    role: "assistant",
+    createdBy: "agent",
+    text,
+  });
+  const followUp = (id: string) => ({
+    ...message,
+    id: `coordinator-send:project:${id}`,
+    text: `User follow-up from selected worker worker, message coordinator-send:project:${id}. Review that thread and decide whether to reuse it or route elsewhere.\n\nmarquee promo?`,
+  });
+
+  it("leaves out a follow-up the coordinator only sent back to the same worker, with its reply", () => {
+    const messages = [
+      followUp("a"),
+      reply("r1", "I passed your question to [Calendar work](studio://thread/worker)."),
+    ];
+    expect([...returnedFollowUpIds(messages, project, [worker])]).toEqual([
+      "coordinator-send:project:a",
+      "r1",
+    ]);
+  });
+
+  it("keeps a follow-up moved to another worker, answered here, or not answered yet", () => {
+    const messages = [
+      followUp("moved"),
+      reply("r1", "Moved to [Release](studio://thread/other)."),
+      followUp("answered"),
+      reply("r2", "The tile is 1400 by 560."),
+      followUp("waiting"),
+    ];
+    expect(returnedFollowUpIds(messages, project, [worker]).size).toBe(0);
+  });
+
+  it("leaves the user's own coordinator messages alone", () => {
+    const messages = [
+      { ...message, senderThreadId: undefined, text: "Start a worker" },
+      reply("r1", "Started [Calendar work](studio://thread/worker)."),
+    ];
+    expect(returnedFollowUpIds(messages, project, [worker]).size).toBe(0);
   });
 });

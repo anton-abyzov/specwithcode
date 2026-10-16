@@ -9,6 +9,8 @@ import types
 import plistlib
 import shlex
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -22,6 +24,18 @@ OLD = '2026-10-09T09:00:00.000Z'
 NEW = '2026-10-09T10:00:01.000Z'
 START = '2026-10-09T10:00:00+00:00'
 END = '2026-10-09T10:00:02+00:00'
+
+# Stands in for the running service: like the service's own connection it keeps the WAL
+# database open, which holds SQLite's locks on statev2.sqlite and -shm (#228). A connection in
+# this test process cannot: F_GETLK never reports the caller's own locks.
+SERVICE_HOLDER = '''
+import sqlite3, sys
+db = sqlite3.connect(sys.argv[1], isolation_level=None)
+db.execute('SELECT count(*) FROM auth_sessions').fetchone()
+print('ready', flush=True)
+sys.stdin.read()
+db.close()
+'''
 
 
 class CoherentAuthRead(unittest.TestCase):
@@ -120,8 +134,18 @@ class CoherentAuthRead(unittest.TestCase):
         self.assertNotIn('columns', public)
         self.assertEqual(public, update.rows_snapshot(self.state))
 
+    def hold_database_like_the_service(self):
+        holder = subprocess.Popen([sys.executable, '-B', '-c', SERVICE_HOLDER, str(self.state / 'statev2.sqlite')],
+                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+        self.addCleanup(holder.wait, 10)
+        self.addCleanup(holder.stdin.close)
+        self.addCleanup(holder.stdout.close)
+        self.assertEqual(holder.stdout.readline().strip(), 'ready')
+        return holder.pid
+
     def test_public_snapshot_api_keeps_auth_private_and_uses_the_same_wal_snapshot(self):
         own = self.state.parent
+        pid = self.hold_database_like_the_service()
         uid, user = os.getuid(), pwd.getpwuid(os.getuid()).pw_name
         node = self.home / 'tools/node22'
         node.parent.mkdir()
@@ -156,14 +180,14 @@ class CoherentAuthRead(unittest.TestCase):
             'archiveSha256': 'b' * 64, 'sourceCommit': 'a' * 40, 'cookieName': 'synthetic-cookie'}))
         (self.state / 'settings.json').write_text('{}')
         (self.state / 'environment-id').write_text('synthetic-environment')
-        (self.state / 'server-runtime.json').write_text(json.dumps({'pid': 100, 'host': '127.0.0.1', 'port': 8319}))
+        (self.state / 'server-runtime.json').write_text(json.dumps({'pid': pid, 'host': '127.0.0.1', 'port': 8319}))
 
         def transport(command, **kwargs):
             if command == [str(node), '--version']:
                 return b'v22.20.0'
             if command == ['/bin/launchctl', 'print', 'gui/' + str(uid) + '/' + label]:
-                return 'pid = 100\nstate = running\npath = ' + str(plist)
-            if command == ['/bin/ps', '-p', '100', '-o', 'command=']:
+                return 'pid = ' + str(pid) + '\nstate = running\npath = ' + str(plist)
+            if command == ['/bin/ps', '-p', str(pid), '-o', 'command=']:
                 return str(node) + ' ' + str(release / 'bin.mjs')
             self.fail('Unexpected external command')
 
@@ -175,7 +199,7 @@ class CoherentAuthRead(unittest.TestCase):
         baseline = update.rows_snapshot(self.state)
         full_baseline = continuity.read_database(self.state, baseline)
         with patch.object(pathlib.Path, 'home', return_value=self.home), patch.object(pwd, 'getpwuid', return_value=types.SimpleNamespace(pw_name=user, pw_dir=str(self.home))), \
-             patch.object(update, 'run', side_effect=transport), patch.object(update, 'listeners', side_effect=lambda p: [100] if p == 8319 else []), \
+             patch.object(update, 'run', side_effect=transport), patch.object(update, 'listeners', side_effect=lambda p: [pid] if p == 8319 else []), \
              patch.object(update, 'capture_quiescence', return_value={'synthetic': 'idle'}), \
              patch.object(update, 'read_auth_sessions_in_transaction', side_effect=concurrent_commit):
             public, private = update.snapshot_with_auth('m3')

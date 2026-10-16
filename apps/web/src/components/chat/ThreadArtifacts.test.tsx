@@ -13,8 +13,13 @@ const state = vi.hoisted(() => ({
   missing: new Set<string>(),
 }));
 
+const overlay = vi.hoisted(() => ({ last: null as Record<string, unknown> | null }));
 vi.mock("~/viewerOverlayStore", () => ({
-  useViewerOverlay: (options: { open: boolean }) => (options.open ? ({} as HTMLElement) : null),
+  // The overlay's header is the host's; the viewer's actions portal into it.
+  useViewerOverlay: (options: Record<string, unknown> & { open: boolean }) => {
+    overlay.last = options;
+    return options.open ? { content: {} as HTMLElement, actions: {} as HTMLElement } : null;
+  },
 }));
 vi.mock("react-dom", async (importOriginal) => ({
   ...(await importOriginal<typeof import("react-dom")>()),
@@ -270,7 +275,12 @@ it("plays a host video through a server URL and steps through the thread's artif
   expect(
     renderer!.root.findAll((node) => node.type === "span" && node.children.join("") === "1 of 5"),
   ).not.toHaveLength(0);
-  expect(renderer!.root.findByType("time").children).toEqual(["Oct 15"]);
+  expect(overlay.last).toMatchObject({
+    title: "snap-18s-master.mp4",
+    kind: "Video",
+    badge: "MP4",
+    detail: "Oct 15",
+  });
   expect(
     renderer!.root.findByProps({ "data-file-actions": "/tmp/promo/snap-18s-master.mp4" }),
   ).toBeDefined();

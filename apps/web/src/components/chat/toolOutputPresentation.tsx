@@ -185,7 +185,9 @@ export function ToolCodePanel({ label, text: content, language }: ToolPresentati
     if (copyState === "pending") return;
     setCopyResult({ content, status: "pending" });
     try {
-      await writeTextToClipboard(content, label.toLowerCase());
+      await writeTextToClipboard(content, label.toLowerCase(), undefined, {
+        preserveBytes: true,
+      });
       setCopyResult((previous) =>
         previous.content === content ? { content, status: "copied" } : previous,
       );

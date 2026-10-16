@@ -2312,7 +2312,30 @@ it.effect(
         });
         const config = McpProviderSession.readMcpProviderSession(threadId);
         assert.equal(config?.providerInstanceId, modelSelection.instanceId);
+        // The same token the live process already holds, so it keeps working
+        // without reopening the process (which background work would refuse).
+        assert.equal(config?.authorizationHeader, own!.authorizationHeader);
         const token = config!.authorizationHeader.replace(/^Bearer\s+/, "");
+        assert.equal((yield* registry.resolve(token))?.thread.threadId, threadId);
+
+        // The other provider's session released and cleared the slot: the
+        // thread's next turn here still gets the credential back.
+        yield* registry.revokeThread(threadId);
+        McpProviderSession.clearMcpProviderSession(threadId);
+        yield* runtime.resumeThread({
+          threadId,
+          providerThread: makeProviderThread({
+            idAllocator,
+            threadId,
+            providerSessionId,
+            now,
+            nativeThreadId: "native-slot-taken",
+          }),
+        });
+        assert.equal(
+          McpProviderSession.readMcpProviderSession(threadId)?.authorizationHeader,
+          own!.authorizationHeader,
+        );
         assert.equal((yield* registry.resolve(token))?.thread.threadId, threadId);
       }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
     }),

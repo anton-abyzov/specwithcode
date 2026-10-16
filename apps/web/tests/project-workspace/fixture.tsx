@@ -78,6 +78,17 @@ function SidebarLayout(props: { children: React.ReactNode }) {
         renderThread={(threadRef) => (
           <div className="p-4 text-sm" data-overlay-thread={threadRef.threadId}>
             Thread {threadRef.threadId}
+            {/* Like the real thread's code blocks and editors, this keeps Escape to itself. */}
+            <pre
+              tabIndex={0}
+              data-overlay-thread-code="true"
+              className="mt-3 rounded bg-muted p-2 font-mono text-xs"
+              onKeyDown={(event) => {
+                if (event.key === "Escape") event.stopPropagation();
+              }}
+            >
+              /Users/me/Downloads/specwithcode-browser-1.0.0.zip
+            </pre>
           </div>
         )}
       />

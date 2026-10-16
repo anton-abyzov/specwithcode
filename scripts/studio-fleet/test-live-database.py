@@ -95,8 +95,13 @@ class Holder:
         self.process = subprocess.Popen(command, stdout=subprocess.PIPE, text=True)
         assert self.process.stdout.readline().strip() == 'ready'
 
-    def crashed(self):
-        time.sleep(0.3)
+    def crashed(self, within=0.3):
+        """The holder's exit status, or None while it still runs `within` seconds on. A loaded host
+        can take seconds to schedule the holder's next read, so a test that expects the fault
+        waits longer than one that expects none."""
+        deadline = time.monotonic() + within
+        while self.process.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.05)
         return self.process.poll()
 
     def close(self):
@@ -145,7 +150,7 @@ class LiveDatabase(unittest.TestCase):
         reader = sqlite3.connect('file:' + str(self.database) + '?mode=ro', uri=True)
         reader.execute('SELECT count(*) FROM t').fetchone()
         reader.close()
-        self.assertEqual(holder.crashed(), -signal.SIGBUS)
+        self.assertEqual(holder.crashed(within=30), -signal.SIGBUS)
 
     def test_the_safe_reader_never_resets_the_index_of_a_holder_that_lost_its_locks(self):
         holder = self.hold('dropped')

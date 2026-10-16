@@ -111,8 +111,15 @@ class HeartbeatProofs(unittest.TestCase):
     def test_invalid_or_unbounded_restart_windows_fail(self):
         self.change()
         for start, end in [(END, START), ('2026-02-30T10:00:00Z', END),
-                           ('2026-10-08T10:00:00', END), (START, '2026-10-08T10:02:00.001Z')]:
+                           ('2026-10-08T10:00:00', END), (START, '2026-10-08T11:00:00.001Z')]:
             with self.subTest(start=start, end=end), self.assertRaises(AssertionError): self.prove(start, end)
+
+    def test_a_slow_restart_within_the_readiness_deadline_is_bounded(self):
+        import update
+        self.assertGreaterEqual(heartbeat.MAX_RESTART_WINDOW_SECONDS, 3600)  # The largest apply budget.
+        self.assertGreaterEqual(heartbeat.MAX_RESTART_WINDOW_SECONDS, update.APPLY_BUDGET_SECONDS)
+        self.change()
+        self.assertIsNotNone(self.prove(START, '2026-10-08T10:02:17Z'))  # 137 s, the M4 1.0.38 restart.
 
     def test_every_other_cell_remains_exact(self):
         for field in ['session_id', 'subject', 'scopes', 'method', 'client_label', 'client_surface',
@@ -494,7 +501,7 @@ class HeartbeatProofs(unittest.TestCase):
                 self.db.commit(); self.after = self.proof(); self.current = heartbeat.read_auth_sessions(self.state, self.after)
                 with self.assertRaises(AssertionError): self.prove()
         self.change_two()
-        with self.assertRaises(AssertionError): self.prove(end='2026-10-08T10:02:00.001Z')
+        with self.assertRaises(AssertionError): self.prove(end='2026-10-08T11:00:00.001Z')
 
     def test_m4_v2_witness_cannot_forge_host_counts_types_flags_or_schema(self):
         self.two_browser_baseline(); self.change_two(); witness = self.prove()

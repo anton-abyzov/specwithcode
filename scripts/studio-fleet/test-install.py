@@ -6,6 +6,7 @@ import json
 import os
 import pathlib
 import shlex
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -13,7 +14,8 @@ import tempfile
 import unittest
 from launcher import runtime_path
 
-NODE = pathlib.Path(os.environ['STUDIO_TEST_NODE']).resolve(strict=True)
+# The Node 22 the installer fixtures run; verify-release.mjs passes its own process.execPath.
+NODE = pathlib.Path(os.environ.get('STUDIO_TEST_NODE') or shutil.which('node') or 'node').resolve(strict=True)
 INSTALL = pathlib.Path(__file__).with_name('install.py')
 
 class InstallerIntegrityTests(unittest.TestCase):

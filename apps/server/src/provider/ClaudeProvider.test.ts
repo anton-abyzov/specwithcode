@@ -215,13 +215,15 @@ it.layer(NodeServices.layer)("native subscription status corroboration", (it) =>
     Effect.gen(function* () {
       const status = yield* checkNative({ code: 1 });
       expect(status.auth.status).toBe("unknown");
+      expect(status.auth.type).toBe("subscription-auth-unverified");
     }),
   );
 
   it.effect("keeps process failures unverified", () =>
     Effect.gen(function* () {
       const status = yield* checkNative({ failure: "spawn" });
-      expect(status.auth.status).toBe("unknown");
+      expect(status.status).toBe("warning");
+      expect(status.auth).toMatchObject({ status: "unknown", type: "status-check-failed" });
     }),
   );
 
@@ -232,7 +234,7 @@ it.layer(NodeServices.layer)("native subscription status corroboration", (it) =>
       yield* Deferred.await(started);
       yield* TestClock.adjust("11 seconds");
       const status = yield* Fiber.join(fiber);
-      expect(status.auth.status).toBe("unknown");
+      expect(status.auth).toMatchObject({ status: "unknown", type: "status-check-failed" });
     }),
   );
 

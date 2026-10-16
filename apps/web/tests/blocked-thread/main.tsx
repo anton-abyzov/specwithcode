@@ -57,6 +57,26 @@ function shell(title: string, reportedBlocker: string | null): EnvironmentThread
   } as unknown as EnvironmentThreadShell;
 }
 
+// The thread view floats the note in a banner lane over the scrolled timeline.
+const longBlocker =
+  "The specweave-studio repo has two stashes I left alone. One is on perf/session-aging-doctor (2 lines in pnpm-lock.yaml). The other, on fix/coordinator-turns-port, changes CoordinatorConversation.tsx and shell.css by 267 lines added and 135 removed. Do you want that second stash pushed to a branch for review, or dropped?";
+function OverlayLane() {
+  return (
+    <section data-case="overlay-lane" className="relative h-80 overflow-hidden rounded-lg border">
+      <div data-overlay-scroller className="h-full overflow-y-auto bg-background px-4 pt-40">
+        {Array.from({ length: 40 }, (_, index) => (
+          <p key={index} className="py-1 text-sm">
+            28m · 18 commands · Waiting on the last worktree removals ({index} of 40 done)
+          </p>
+        ))}
+      </div>
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex flex-col px-3 pt-2">
+        <ThreadBlockerNote blocker={longBlocker} />
+      </div>
+    </section>
+  );
+}
+
 function Fixture() {
   return (
     <main className="mx-auto flex max-w-3xl flex-col gap-6 p-6">
@@ -85,6 +105,7 @@ function Fixture() {
           </section>
         );
       })}
+      <OverlayLane />
     </main>
   );
 }

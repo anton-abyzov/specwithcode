@@ -838,6 +838,9 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 .sws-model-fallback-text strong {
   font-weight: 600;
 }
+.sws-model-fallback-note {
+  color: var(--muted-foreground);
+}
 .sws-model-fallback-back {
   flex: none;
   height: 24px;

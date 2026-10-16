@@ -27,11 +27,9 @@ try {
   assert(await page.getByLabel("Project coordinator", { exact: true }).isVisible());
   await page.getByLabel("Worker reply").fill("Continue the selected review");
   await page.getByRole("button", { name: "Send worker reply", exact: true }).click();
+  // A worker on this machine takes its reply itself: no coordinator turn.
   const calls = await page.evaluate(() => window.__projectCalls);
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].args.input.sourceThreadId, "review");
-  assert.equal(calls[0].args.input.prompt, "Continue the selected review");
-  assert.equal(calls[0].args.environmentId, "host");
+  assert.equal(calls.filter((call) => call.command === "send").length, 0);
   await page.getByLabel("Close thread pane").click();
   await page.getByLabel("Project settings", { exact: true }).click();
   await page.getByRole("dialog").waitFor();
@@ -152,7 +150,7 @@ try {
         checks: [
           "link opens scoped worker",
           "coordinator remains visible on desktop",
-          "worker reply exact sourceThreadId",
+          "worker reply skips the coordinator",
           "memory draft survives tabs",
           "usage incomplete categories",
           "routines project scope",

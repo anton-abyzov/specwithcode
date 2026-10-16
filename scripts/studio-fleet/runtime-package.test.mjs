@@ -20,7 +20,8 @@ test("runtime and desktop package the complete executable managed helper graph",
   const fleet = new URL("./", import.meta.url);
   const local = new Set(readdirSync(fleet).filter((name) => name.endsWith(".py")));
   const required = new Set();
-  const pending = ["update_agent.py", "managed_updates.py"];
+  // migrate_home.py is an entry point of its own: the desktop runs it beside the agent.
+  const pending = ["update_agent.py", "managed_updates.py", "migrate_home.py"];
   while (pending.length) {
     const name = pending.pop();
     if (required.has(name)) continue;
@@ -35,15 +36,28 @@ test("runtime and desktop package the complete executable managed helper graph",
   assert.match(bundle, /import \{ MAC_SERVICE_UPDATER_FILES \} from/);
   assert.match(bundle, /join\(output, 'studio-updater'\)/);
   assert.match(bundle, /for \(const file of MAC_SERVICE_UPDATER_FILES\)/);
-  assert.ok(bundle.indexOf("cpSync(source, join(updater, file))") < bundle.indexOf("indexTree(output);"),
-    "helper copies must precede the archive's hashed file inventory");
+  assert.ok(
+    bundle.indexOf("cpSync(source, join(updater, file))") < bundle.indexOf("indexTree(output);"),
+    "helper copies must precede the archive's hashed file inventory",
+  );
   const isolated = mkdtempSync(join(tmpdir(), "studio-updater-graph-"));
   try {
     for (const name of shipped) cpSync(new URL(name, fleet), join(isolated, name));
-    const help = execFileSync("/usr/bin/python3", ["-B", "-E", "-s", join(isolated, "managed_updates.py"), "--help"],
-      { cwd: isolated, encoding: "utf8", env: { PATH: "/usr/bin:/bin", PYTHONDONTWRITEBYTECODE: "1" } });
+    const help = execFileSync(
+      "/usr/bin/python3",
+      ["-B", "-E", "-s", join(isolated, "managed_updates.py"), "--help"],
+      {
+        cwd: isolated,
+        encoding: "utf8",
+        env: { PATH: "/usr/bin:/bin", PYTHONDONTWRITEBYTECODE: "1" },
+      },
+    );
     assert.match(help, /--state-dir/);
-    assert.deepEqual(readdirSync(isolated).toSorted(), shipped.toSorted(), "helper import creates no cache or state");
+    assert.deepEqual(
+      readdirSync(isolated).toSorted(),
+      shipped.toSorted(),
+      "helper import creates no cache or state",
+    );
   } finally {
     rmSync(isolated, { recursive: true, force: true });
   }

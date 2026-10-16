@@ -178,6 +178,19 @@ const BARE_DOCUMENT_EXTENSIONS = new Set([
   "mp4",
   "mov",
   "webm",
+  "mp3",
+  "wav",
+  "m4a",
+  // Packages and office files a worker hands over to upload or send.
+  "zip",
+  "tgz",
+  "gz",
+  "dmg",
+  "pkg",
+  "crx",
+  "docx",
+  "xlsx",
+  "pptx",
 ]);
 
 function bareDocumentFileName(text: string): string | null {
@@ -260,8 +273,17 @@ export function resolveInlineCodeFileLinks(
   spans: ReadonlyArray<string>,
   cwd?: string,
   baseDir: string | undefined = cwd,
+  contextFolders: ReadonlyArray<string> = [],
 ): Map<string, MarkdownFileLinkMeta> {
-  const inferredBaseDirs = inferInlineCodeBaseDirs(spans, cwd, baseDir);
+  const ownBaseDirs = inferInlineCodeBaseDirs(spans, cwd, baseDir);
+  // A bare name may sit in a folder an earlier message named; the message's
+  // own folders come first.
+  const inferredBaseDirs = {
+    forPaths: ownBaseDirs.forPaths,
+    forNames: [...new Set([...ownBaseDirs.forNames, ...contextFolders])].filter(
+      (folder) => folder !== cwd,
+    ),
+  };
   const metaByText = new Map<string, MarkdownFileLinkMeta>();
   let lastFile: MarkdownFileLinkMeta | null = null;
   for (const span of spans) {
@@ -357,4 +379,89 @@ function buildFileLinkMetaFromTarget(targetPath: string, cwd?: string): Markdown
     ...(line !== undefined ? { line } : {}),
     ...(column !== undefined ? { column } : {}),
   };
+}
+
+// Fences a worker lists files in: no language, or plain text.
+const PATH_LIST_LANGUAGES = new Set(["", "text", "txt", "plain", "plaintext"]);
+const MAX_PATH_LIST_LINES = 50;
+
+function isPathListLine(line: string): boolean {
+  if (/\s/.test(line)) return false;
+  return (
+    inlineCodeFilePathCandidate(line) !== null ||
+    bareDocumentFileName(line) !== null ||
+    inlineCodeDirectoryCandidate(line) !== null
+  );
+}
+
+/**
+ * The paths of a fenced block that lists files and nothing else, one per line
+ * (`/Users/me/cws/icon-128.png`, `screenshot-1.png`), or null. A command, a
+ * placeholder like `(leave empty)` or a language other than plain text makes
+ * it code.
+ */
+export function pathListLines(code: string, language = ""): string[] | null {
+  if (!PATH_LIST_LANGUAGES.has(language.trim().toLowerCase())) return null;
+  const lines = code
+    .split(/\r?\n/)
+    .map((line) => line.replace(/[\u200B\u2060\uFEFF\u00AD]/g, "").trim())
+    .filter((line) => line.length > 0);
+  if (lines.length === 0 || lines.length > MAX_PATH_LIST_LINES) return null;
+  return lines.every(isPathListLine) ? lines : null;
+}
+
+const FENCED_BLOCK_PATTERN =
+  /(?:^|\n) {0,3}(`{3,}|~{3,})([^\n`]*)\n([\s\S]*?)\n {0,3}\1[ \t]*(?=\n|$)/g;
+const UNFENCED_SEGMENT_PATTERN = /(```[\s\S]*?(?:```|$))/;
+const INLINE_SPAN_PATTERN = /`([^`\n]+)`/g;
+
+/** The paths of every fenced path list in a message, in order. */
+export function fencedPathListLines(text: string): string[] {
+  const lines: string[] = [];
+  for (const match of text.matchAll(FENCED_BLOCK_PATTERN)) {
+    const language = (match[2] ?? "").trim().split(/\s+/)[0] ?? "";
+    lines.push(...(pathListLines(match[3] ?? "", language) ?? []));
+  }
+  return lines;
+}
+
+/**
+ * Every span of a message that may name a file: inline code outside fences,
+ * then the lines of fenced path lists.
+ */
+export function fileReferenceSpans(text: string): string[] {
+  const spans: string[] = [];
+  const segments = text.split(UNFENCED_SEGMENT_PATTERN);
+  for (let index = 0; index < segments.length; index += 2) {
+    for (const match of (segments[index] ?? "").matchAll(INLINE_SPAN_PATTERN)) {
+      const span = match[1]?.trim();
+      if (span) spans.push(span);
+    }
+  }
+  return [...spans, ...fencedPathListLines(text)];
+}
+
+const MAX_CONTEXT_FOLDERS = 4;
+
+/**
+ * Folders outside the workspace that a thread's messages name files in or
+ * name outright, the latest first. A reply that lists `icon-128.png` after an
+ * earlier one put files in `~/Downloads/cws/` finds it there.
+ */
+export function threadFileFolders(texts: ReadonlyArray<string>, cwd?: string): string[] {
+  const folders: string[] = [];
+  for (const text of texts.toReversed()) {
+    const spans = fileReferenceSpans(text).toReversed();
+    for (const span of spans) {
+      const meta = resolveInlineCodeFileLinkMeta(span, cwd);
+      if (!meta || meta.workspaceRelativePath !== null || !meta.filePath.startsWith("/")) continue;
+      const folder = mayBeDirectory(meta)
+        ? meta.filePath
+        : meta.filePath.slice(0, meta.filePath.lastIndexOf("/"));
+      if (folder.length <= 1 || folder === cwd || folders.includes(folder)) continue;
+      folders.push(folder);
+      if (folders.length === MAX_CONTEXT_FOLDERS) return folders;
+    }
+  }
+  return folders;
 }

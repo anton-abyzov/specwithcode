@@ -1,5 +1,5 @@
 import type { EnvironmentId } from "@specweave-studio/contracts";
-import { ChevronLeftIcon, ChevronRightIcon, XIcon } from "lucide-react";
+import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 
@@ -53,8 +53,46 @@ export function LibraryFileViewer(props: {
   };
   const absolute = hostPath(props.workspaceRoot, file.path);
   const date = formatViewerDate(file.modifiedAt);
-  const slot = useViewerOverlay({ open: true, title: file.name, onClose: props.onClose });
-  if (slot === null) return null;
+  const slots = useViewerOverlay({
+    open: true,
+    title: file.name,
+    kind: "File",
+    badge: extensionBadge(file.name),
+    detail: date,
+    origin: "Library",
+    onClose: props.onClose,
+  });
+  if (slots === null) return null;
+  const actions = (
+    <>
+      {count > 1 ? (
+        <>
+          <span className="px-1 text-muted-foreground text-xs tabular-nums">
+            {index + 1} of {count}
+          </span>
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            aria-label="Previous file"
+            onClick={() => step(-1)}
+          >
+            <ChevronLeftIcon aria-hidden />
+          </Button>
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            aria-label="Next file"
+            onClick={() => step(1)}
+          >
+            <ChevronRightIcon aria-hidden />
+          </Button>
+        </>
+      ) : null}
+      <ViewerFileActions environmentId={props.environmentId} path={absolute} name={file.name} />
+    </>
+  );
   return createPortal(
     <div
       className="viewer-overlay-frame"
@@ -65,57 +103,7 @@ export function LibraryFileViewer(props: {
         if (event.key === "ArrowRight" && count > 1) step(1);
       }}
     >
-      <header className="report-reader-toolbar">
-        <span className="report-reader-badge" aria-hidden>
-          {extensionBadge(file.name)}
-        </span>
-        <h2 className="report-reader-title">{file.name}</h2>
-        {date ? (
-          <time className="shrink-0 text-muted-foreground text-xs" dateTime={file.modifiedAt}>
-            {date}
-          </time>
-        ) : null}
-        <span className="report-reader-subtitle" dir="rtl">
-          <bdi>{file.path}</bdi>
-        </span>
-        <div className="ml-auto flex shrink-0 items-center gap-0.5">
-          {count > 1 ? (
-            <>
-              <span className="px-1 text-muted-foreground text-xs tabular-nums">
-                {index + 1} of {count}
-              </span>
-              <Button
-                type="button"
-                size="icon-sm"
-                variant="ghost"
-                aria-label="Previous file"
-                onClick={() => step(-1)}
-              >
-                <ChevronLeftIcon aria-hidden />
-              </Button>
-              <Button
-                type="button"
-                size="icon-sm"
-                variant="ghost"
-                aria-label="Next file"
-                onClick={() => step(1)}
-              >
-                <ChevronRightIcon aria-hidden />
-              </Button>
-            </>
-          ) : null}
-          <ViewerFileActions environmentId={props.environmentId} path={absolute} name={file.name} />
-          <Button
-            type="button"
-            size="icon-sm"
-            variant="ghost"
-            aria-label="Close file"
-            onClick={props.onClose}
-          >
-            <XIcon aria-hidden />
-          </Button>
-        </div>
-      </header>
+      {slots.actions ? createPortal(actions, slots.actions) : null}
       <div className="artifact-viewer-stage">
         <LibraryFileBody
           key={file.path}
@@ -126,7 +114,7 @@ export function LibraryFileViewer(props: {
         />
       </div>
     </div>,
-    slot,
+    slots.content,
   );
 }
 

@@ -55,6 +55,9 @@ export function ProjectWorkerPane({
       <ProjectMessageRoutingContext
         value={{
           coordinatorThreadId: coordinatorId,
+          // A worker here takes the user's message itself; only a thread on
+          // another machine still goes through the coordinator.
+          direct: local,
           openCoordinator,
           openThread,
           routedMessages,

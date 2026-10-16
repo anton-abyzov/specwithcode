@@ -25,6 +25,8 @@ import {
   API_CREDIT_IDLE_RETURN_MS,
   apiCreditOrigin,
   apiCreditReturnCommand,
+  limitFallbackReturnCommand,
+  LIMIT_FALLBACK_MESSAGE_PREFIX,
   limitResetAt,
   limitStopIsCurrent,
   makeSweep,
@@ -1356,4 +1358,68 @@ describe("sweep API credit path", () => {
         expect(state.attempted).toEqual([]);
       }),
   );
+});
+
+describe("limitFallbackReturnCommand", () => {
+  const onCodex = {
+    ...idle,
+    providerInstanceId: codexId,
+    modelSelection: { instanceId: codexId, model: "gpt-6" },
+    latestRunId: RunId.make("r3"),
+  };
+  const run = (id: string, ordinal: number, instanceId: ProviderInstanceId, message: string) => ({
+    id: RunId.make(id),
+    ordinal,
+    providerInstanceId: instanceId,
+    modelSelection: { instanceId, model: instanceId === claudeId ? "opus" : "gpt-6" },
+    userMessageId: message as never,
+  });
+  const moved = [
+    run("r1", 1, claudeId, "m1"),
+    run("r2", 2, codexId, `${LIMIT_FALLBACK_MESSAGE_PREFIX}t1:r1`),
+    run("r3", 3, codexId, "m3"),
+  ];
+  const codex = withUsage(provider(codexId, "codex", now), 30);
+
+  it("returns a thread the switch rule moved once its provider has room", () => {
+    const origin = apiCreditOrigin(onCodex, moved, LIMIT_FALLBACK_MESSAGE_PREFIX)!;
+    expect(origin).toMatchObject({ stoppedRunId: "r1", continuedByRunId: "r2" });
+    const open = withUsage(provider(claudeId, "claudeAgent", now), 20);
+    const spent = withUsage(provider(claudeId, "claudeAgent", now), 100);
+    expect(limitFallbackReturnCommand(onCodex, origin, [open, codex], now)).toEqual({
+      type: "thread.model-selection.set",
+      commandId: "limit-return:t1:r2",
+      threadId: "t1",
+      modelSelection: { instanceId: claudeId, model: "opus" },
+    });
+    // Still spent: it stays on the fallback until the read shows room or the reset passes.
+    expect(limitFallbackReturnCommand(onCodex, origin, [spent, codex], now)).toBeNull();
+    expect(
+      limitFallbackReturnCommand(
+        onCodex,
+        { ...origin, resetAt: resetsAt },
+        [spent, codex],
+        Date.parse(resetsAt),
+      ),
+    ).not.toBeNull();
+    // Never mid-turn.
+    expect(
+      limitFallbackReturnCommand(
+        { ...onCodex, activeRunId: RunId.make("r4") },
+        origin,
+        [open, codex],
+        now,
+      ),
+    ).toBeNull();
+  });
+
+  it("leaves a thread a person moved where they put it", () => {
+    expect(
+      apiCreditOrigin(
+        onCodex,
+        [run("r1", 1, claudeId, "m1"), run("r2", 2, codexId, "m2")],
+        LIMIT_FALLBACK_MESSAGE_PREFIX,
+      ),
+    ).toBeNull();
+  });
 });

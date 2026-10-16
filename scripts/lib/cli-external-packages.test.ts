@@ -34,7 +34,12 @@ const decodeManifest = Schema.decodeUnknownSync(Schema.fromJsonString(PackageMan
 
 describe("shouldBundleCliDependency", () => {
   it("bundles ordinary runtime dependencies", () => {
-    for (const id of ["effect", "@effect/platform", "hono", "@specweave-studio/shared/hostProcess"]) {
+    for (const id of [
+      "effect",
+      "@effect/platform",
+      "hono",
+      "@specweave-studio/shared/hostProcess",
+    ]) {
       assert.strictEqual(shouldBundleCliDependency(id), true, id);
     }
   });
@@ -81,9 +86,18 @@ describe("selectCliRuntimeExternalDependencies", () => {
   });
 
   it("selects every external root declared by the server", () => {
+    // zod is in Cursor's disk-backed closure; since the server declares it directly (the
+    // 1.0.35 missing-zod bundle fix) it is a runtime root of its own.
     assert.deepStrictEqual(
       Object.keys(selectCliRuntimeExternalDependencies(serverPackageJson.dependencies)).sort(),
-      ["@cursor/sdk", "@ff-labs/fff-node", "@napi-rs/keyring", "node-pty", "playwright-core"],
+      [
+        "@cursor/sdk",
+        "@ff-labs/fff-node",
+        "@napi-rs/keyring",
+        "node-pty",
+        "playwright-core",
+        "zod",
+      ],
     );
   });
 });

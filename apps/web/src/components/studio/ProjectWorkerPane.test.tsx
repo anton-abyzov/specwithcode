@@ -119,16 +119,14 @@ it("preserves the remote draft when the coordinator rejects the routed request",
   expect(state.draft).toBe("Continue this work");
 });
 
-it("keeps same-host replies and staged files associated with their local worker", async () => {
+it("lets a worker on this machine take its reply and files itself, with no coordinator turn", async () => {
   state.attachments = [{ id: "pending-local-file" } as ChatAttachment];
   await render("m4");
   await send();
+  // Earlier messages the coordinator moved elsewhere still show where they went.
   expect(container.querySelector("[data-routed-replies]")).not.toBeNull();
-  expect(state.send).toHaveBeenCalledWith(
-    "Continue this work",
-    "shared-thread-id",
-    state.attachments,
-  );
+  expect(state.send).not.toHaveBeenCalled();
   expect(state.reportError).not.toHaveBeenCalled();
-  expect(state.clear).toHaveBeenCalledTimes(1);
+  // The composer's own send runs instead, so the draft is not cleared here.
+  expect(state.clear).not.toHaveBeenCalled();
 });

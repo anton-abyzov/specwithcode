@@ -49,7 +49,11 @@ import { scopedThreadKey, scopeThreadRef } from "@specweave-studio/client-runtim
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import { resolveCoordinatorModelSelection } from "@specweave-studio/shared/coordinatorDefault";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
-import { coordinatorOnLimitFallback } from "@specweave-studio/shared/providerFallback";
+import {
+  coordinatorFallbackReason,
+  coordinatorOnLimitFallback,
+} from "@specweave-studio/shared/providerFallback";
+import { formatDuration } from "@specweave-studio/shared/usageLimits";
 import { useAllEnvironmentShellsBootstrapped, useThreadProjection } from "../../state/entities";
 import { useEnvironment, usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentScope } from "../../state/session";
@@ -471,32 +475,42 @@ export function ProjectWorkspaceSurface({
   // Only a saved provider that really has no room is a limit: a coordinator a
   // scheduled run moved, or one whose limit has reset, goes back to the saved
   // model with the next message, so the line must not claim a limit then.
-  const coordinatorFallback =
+  const fallbackInput =
     coordinator && savedCoordinatorModel && hostProviders && hostSettings
-      ? coordinatorOnLimitFallback({
+      ? {
           saved: savedCoordinatorModel,
           thread: coordinator.modelSelection,
           providers: hostProviders,
           rule: resolveProjectSettings(hostSettings, project.id, project).settings,
           nowMs: Date.now(),
           // Only a run that stopped on a real usage limit marks its provider limited.
-          limitedInstanceIds: new Set(
+          limitedInstanceIds: new Set<string>(
             coordinator.limitRecovery ? [coordinator.providerInstanceId] : [],
           ),
-        })
-        ? {
-            now: modelLabel(
-              providerEntries.get(coordinator.modelSelection.instanceId) ?? null,
-              coordinator.modelSelection.instanceId,
-              coordinator.modelSelection.model,
-            ),
-            saved: modelLabel(
-              providerEntries.get(savedCoordinatorModel.instanceId) ?? null,
-              savedCoordinatorModel.instanceId,
-              savedCoordinatorModel.model,
-            ),
-          }
-        : null
+        }
+      : null;
+  const fallbackReason =
+    fallbackInput && coordinatorOnLimitFallback(fallbackInput)
+      ? coordinatorFallbackReason(fallbackInput)
+      : null;
+  const coordinatorFallback =
+    coordinator && savedCoordinatorModel && fallbackReason
+      ? {
+          reason:
+            fallbackReason.resetsAt === null || fallbackReason.resetsAt <= Date.now()
+              ? fallbackReason.text
+              : `${fallbackReason.text}, resets in ${formatDuration(fallbackReason.resetsAt - Date.now())}`,
+          now: modelLabel(
+            providerEntries.get(coordinator.modelSelection.instanceId) ?? null,
+            coordinator.modelSelection.instanceId,
+            coordinator.modelSelection.model,
+          ),
+          saved: modelLabel(
+            providerEntries.get(savedCoordinatorModel.instanceId) ?? null,
+            savedCoordinatorModel.instanceId,
+            savedCoordinatorModel.model,
+          ),
+        }
       : null;
   // "Switch back" puts the coordinator on its saved model; the host still moves it
   // again on the next turn if that model's limit has not reset.

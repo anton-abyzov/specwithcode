@@ -1,0 +1,46 @@
+# Known type-check diagnostics: <repo-relative file> <code> <count>.
+# scripts/studio-verify/typecheck-gate.sh fails only on diagnostics beyond these.
+# Shrink it as files are fixed: bash scripts/studio-verify/typecheck-gate.sh --write-baseline
+apps/server/src/auth/RpcAuthorization.test.ts TS377069 1
+apps/server/src/browserBridge/chromeBridgeFacts.test.ts TS377057 2
+apps/server/src/browserBridge/chromeBridgeProbe.test.ts TS377057 2
+apps/server/src/fleet/MachineHandoff.test.ts TS377033 2
+apps/server/src/managedUpdates/ManagedUpdatesRpc.test.ts TS377033 1
+apps/server/src/mcp/AcpMcpStdioBridge.test.ts TS377030 2
+apps/server/src/mcp/McpCredentialRestart.test.ts TS377061 1
+apps/server/src/mcp/McpSessionRegistry.test.ts TS377023 1
+apps/server/src/mcp/McpSessionRegistry.ts TS377030 1
+apps/server/src/mcp/McpSessionRegistry.ts TS377049 1
+apps/server/src/mcp/OrchestratorMcpBulkThreads.test.ts TS377068 1
+apps/server/src/mcp/OrchestratorMcpService.ts TS377042 1
+apps/server/src/orchestration-v2/Orchestrator.control-reads.test.ts TS377030 2
+apps/server/src/orchestration-v2/UsageLimitRecoveryWorker.test.ts TS377033 3
+apps/server/src/project/ManagedProjectFolders.ts TS377000 1
+apps/server/src/project/ProjectActionRequests.ts TS377042 2
+apps/server/src/project/ProjectCoordinatorAttachments.test.ts TS377033 3
+apps/server/src/project/ProjectCoordinatorService.test.ts TS377033 17
+apps/server/src/project/ProjectDeletionRace.test.ts TS377033 1
+apps/server/src/project/ProjectEnvironmentAdoption.ts TS377042 1
+apps/server/src/project/ProjectEnvironmentImport.ts TS377026 4
+apps/server/src/project/ProjectEnvironmentImport.ts TS377042 1
+apps/server/src/project/ProjectEnvironmentImport.ts TS377057 1
+apps/server/src/project/ProjectEnvironmentService.ts TS377042 1
+apps/server/src/project/ProjectFolderChange.ts TS377049 1
+apps/server/src/project/ProjectPlanService.ts TS377026 2
+apps/server/src/project/ProjectRuntimeAccess.test.ts TS377030 1
+apps/server/src/project/ProjectRuntimeAccess.ts TS377023 1
+apps/server/src/project/ProjectRuntimeAccess.ts TS377049 1
+apps/server/src/project/ProjectRuntimeAccess.ts TS377057 1
+apps/server/src/project/ProjectService.test.ts TS377033 3
+apps/server/src/project/ProjectService.ts TS377026 2
+apps/server/src/project/connections/NativeConnectionApply.test.ts TS377057 2
+apps/server/src/project/connections/NativeConnectionDiscovery.test.ts TS377057 2
+apps/server/src/project/connections/NativeConnectionDiscovery.ts TS377026 1
+apps/server/src/project/connections/NativeConnectionDiscovery.ts TS377049 2
+apps/server/src/project/connections/NativeConnectionDiscovery.ts TS377057 2
+apps/server/src/server.ts TS377030 8
+apps/server/src/server.ts TS377035 1
+apps/server/src/serviceUpdate/UpdateInstallGate.ts TS377000 1
+apps/server/src/studio/Capacity.integration.test.ts TS377033 1
+apps/server/src/studio/Capacity.test.ts TS377033 2
+apps/server/src/studio/ClaudeQuotaFailure.test.ts TS377033 1

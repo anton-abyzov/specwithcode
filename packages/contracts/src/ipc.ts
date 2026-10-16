@@ -1243,6 +1243,12 @@ export interface DesktopBridge {
    * forward when it is already open. Absent on desktop builds predating it.
    */
   openProjectWindow?: (input: DesktopOpenProjectWindowInput) => Promise<void>;
+  /**
+   * Drags a file on this machine out of the app as the file itself, into a
+   * browser upload field or Finder. Resolves false when the path is not a
+   * file. Absent on desktop builds predating it.
+   */
+  startFileDrag?: (path: string) => Promise<boolean>;
   /** Holds off idle system sleep while `active`; absent on desktop builds predating it. */
   setKeepAwake?: (state: { active: boolean }) => Promise<void>;
   /** Voice calls; all absent on desktop builds predating them. */

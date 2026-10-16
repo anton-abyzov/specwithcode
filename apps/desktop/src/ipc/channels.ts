@@ -147,3 +147,4 @@ export const SHOW_THREAD_NOTIFICATION_CHANNEL = "desktop:show-thread-notificatio
 export const CLOSE_THREAD_NOTIFICATION_CHANNEL = "desktop:close-thread-notification";
 export const THREAD_NOTIFICATION_OPEN_CHANNEL = "desktop:thread-notification-open";
 export const TAKE_THREAD_NOTIFICATION_OPEN_CHANNEL = "desktop:take-thread-notification-open";
+export const START_FILE_DRAG_CHANNEL = "desktop:start-file-drag";

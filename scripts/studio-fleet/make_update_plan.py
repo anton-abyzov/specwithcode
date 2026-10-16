@@ -4,6 +4,11 @@
 The plan is validated by the same policy the background update agent enforces, so a
 release can never publish a plan the agent would reject (unknown args, other
 entrypoints, hashes that are not in SHA256SUMS).
+
+The source commits that may upgrade on their own come from --from-source, from
+--previous-plan (the previous release's studio-update.json: its sourceCommit and every
+fromSourceCommits entry it accepted), or both. scripts/release/release.sh passes the
+previous plan it downloaded and checked against that release's SHA256SUMS.
 """
 import argparse
 import json
@@ -29,6 +34,27 @@ def build_plan(version, source_commit, sums, runtime, helpers, helpers_root, fro
                                       'entrypoint': agent.ENTRYPOINT, 'args': list(dict.fromkeys(args))}]}}
     agent.validate_plan(plan, version)
     return plan
+
+
+def previous_sources(path):
+    """The previous plan's sourceCommit, then every source commit it accepted, without repeats."""
+    try:
+        plan = json.loads(pathlib.Path(path).read_text())
+    except (OSError, ValueError):
+        raise agent.AgentError('The previous plan %s is not readable JSON' % path) from None
+    service = plan.get('service') if isinstance(plan, dict) else None
+    upgrades = service.get('upgrades') if isinstance(service, dict) else None
+    source = plan.get('sourceCommit') if isinstance(plan, dict) else None
+    if not (isinstance(source, str) and agent.HEX40.fullmatch(source) and isinstance(upgrades, list)):
+        raise agent.AgentError('The previous plan %s has no sourceCommit or upgrades' % path)
+    sources = [source]
+    for upgrade in upgrades:
+        listed = upgrade.get('fromSourceCommits') if isinstance(upgrade, dict) else None
+        if not (isinstance(listed, list) and all(isinstance(item, str) and agent.HEX40.fullmatch(item)
+                                                 for item in listed)):
+            raise agent.AgentError('The previous plan %s has an invalid fromSourceCommits list' % path)
+        sources.extend(listed)
+    return list(dict.fromkeys(sources))
 
 
 def default_root(helpers):
@@ -67,17 +93,22 @@ def main(argv=None):
     parser.add_argument('--runtime', required=True, help='runtime asset name')
     parser.add_argument('--helpers', required=True, help='deployment helpers asset name')
     parser.add_argument('--helpers-root', help='top-level folder in the helpers tarball (default: asset stem)')
-    parser.add_argument('--from-source', action='append', default=[], required=True,
+    parser.add_argument('--from-source', action='append', default=[],
                         help='installed sourceCommit this release may auto-upgrade from (repeatable)')
+    parser.add_argument('--previous-plan', type=pathlib.Path,
+                        help="the previous release's studio-update.json; its source commits may upgrade too")
     parser.add_argument('--arg', action='append', default=[], help='helper flag: ' + ', '.join(agent.ALLOWED_ARGS))
     parser.add_argument('--output', type=pathlib.Path, default=pathlib.Path(agent.PLAN_ASSET))
     parser.add_argument('--upload', metavar='TAG', help='also run gh release upload TAG ... --clobber')
     parser.add_argument('--repo', default=agent.DEFAULT_REPOSITORY)
     args = parser.parse_args(normalize_argv(list(sys.argv[1:] if argv is None else argv)))
     try:
+        sources = (previous_sources(args.previous_plan) if args.previous_plan else []) + args.from_source
+        if not sources:
+            raise agent.AgentError('Give --from-source or --previous-plan')
         sums = agent.parse_sums(args.sha256sums.read_bytes())
         plan = build_plan(args.version, args.source_commit, sums, args.runtime, args.helpers,
-                          args.helpers_root or default_root(args.helpers), args.from_source, args.arg)
+                          args.helpers_root or default_root(args.helpers), sources, args.arg)
         output = args.output.resolve()
         data = (json.dumps(plan, indent=2) + '\n').encode()
         temporary = output.with_name('.' + output.name + '.tmp-' + uuid.uuid4().hex)

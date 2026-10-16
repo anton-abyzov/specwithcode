@@ -13,6 +13,7 @@ import * as Schema from "effect/Schema";
 import * as Settings from "../serverSettings.ts";
 import * as Providers from "../provider/ProviderRegistry.ts";
 import { hasExplicitProviderApiEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
+import { CLAUDE_STATUS_CHECK_FAILED } from "../provider/providerSnapshot.ts";
 import * as NativeRoute from "./NativeRoute.ts";
 import * as SwitchClient from "./SwitchClient.ts";
 import { companionCreditFailureCleared, nativeCreditContinuationAllowed } from "./nativeCreditContinuation.ts";
@@ -121,6 +122,10 @@ const make = Effect.gen(function* () {
     }
     if (!nativeSnapshotAuthorized(native, now)) {
       if (native?.status === "error" && native.auth.status !== "unauthenticated") return yield* deny("The native provider status check failed. Refresh Providers on this machine and try again.");
+      // The probe never read the sign-in (timeout or spawn failure, usually a
+      // busy host). Saying "sign in" here sends a signed-in user the wrong way.
+      if (native?.auth.status === "unknown" && native.auth.type === CLAUDE_STATUS_CHECK_FAILED)
+        return yield* deny("The native sign-in status check did not finish, often because this machine is busy. You are not signed out. Refresh Providers on this machine and try again.");
       return yield* deny("Native subscription authorization is unverified. Sign in with the official native CLI on this machine and refresh provider status.");
     }
     if (entry.driver === "codex" && !(yield* nativeRoute.verify(entry, cwd, baseEnv).pipe(

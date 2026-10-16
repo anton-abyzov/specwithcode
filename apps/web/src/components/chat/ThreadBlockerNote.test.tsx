@@ -10,5 +10,20 @@ describe("ThreadBlockerNote", () => {
     expect(html).toContain("data-thread-blocker");
     expect(html).toContain("Blocked: ");
     expect(html).toContain(blocker);
+    expect(html).not.toContain("Show more");
+  });
+
+  it("paints an opaque card so timeline rows never show through", () => {
+    const html = renderToStaticMarkup(<ThreadBlockerNote blocker="Waiting on review" />);
+    expect(html).toContain("bg-card");
+    expect(html).not.toMatch(/(?:^|\s)bg-warning\/\d+/);
+  });
+
+  it("clamps a long blocker to three lines and keeps the full text", () => {
+    const blocker = "The repo has two stashes I left alone. ".repeat(10);
+    const html = renderToStaticMarkup(<ThreadBlockerNote blocker={blocker} />);
+    expect(html).toContain("line-clamp-3");
+    expect(html).toContain("Show more");
+    expect(html).toContain(blocker.trim());
   });
 });

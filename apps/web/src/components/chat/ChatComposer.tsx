@@ -3,7 +3,7 @@ import {
   deriveExplicitCreditSendOffer,
   type CreditSendContext,
 } from "./explicitCreditSend";
-import { useProjectMessageRouting } from "../../studio/projectMessageRouting";
+import { routesViaCoordinator, useProjectMessageRouting } from "../../studio/projectMessageRouting";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { runtimeModeConfig, runtimeModeOptions as runtimeModes } from "./runtimeModeConfig";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
@@ -1823,7 +1823,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onRemoveEditingQueuedAttachment,
   } = props;
   const projectRouting = useProjectMessageRouting();
-  const routesProjectMessage = projectRouting !== null && !activePendingProgress;
+  const routesProjectMessage = routesViaCoordinator(projectRouting) && !activePendingProgress;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const composerDraftTargetKey = composerTargetKey(composerDraftTarget);
   // Opening a running thread resyncs for a few frames. Show the sync row, and

@@ -1473,6 +1473,41 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("Execution environment:");
   });
 
+  it("shows the user's words the coordinator passed back here as typed here, with no marker", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const { ProjectMessageRoutingContext } = await import("../../studio/projectMessageRouting");
+    const entry = buildUserTimelineEntry("marquee promo?");
+    const markup = renderToStaticMarkup(
+      <ProjectMessageRoutingContext
+        value={{
+          coordinatorThreadId: ThreadId.make("thread-coordinator"),
+          send: async () => {},
+          openCoordinator: () => {},
+          openThread: () => false,
+        }}
+      >
+        <MessagesTimeline
+          {...buildProps()}
+          timelineEntries={[
+            {
+              ...entry,
+              message: {
+                ...entry.message,
+                createdBy: "user",
+                creationSource: "mcp",
+                senderThreadId: ThreadId.make("thread-coordinator"),
+              },
+            },
+          ]}
+        />
+      </ProjectMessageRoutingContext>,
+    );
+
+    expect(markup).toContain("marquee promo?");
+    expect(markup).not.toContain("via coordinator");
+    expect(markup).not.toContain('data-user-message-attribution="routed"');
+  });
+
   it("shows a message typed here and sent elsewhere as the user's, with where it went", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const entry = buildUserTimelineEntry("Also cover the away fixtures.");
@@ -1493,7 +1528,7 @@ describe("MessagesTimeline", () => {
       <MessagesTimeline {...buildProps()} timelineEntries={[routed("sent"), routed("pending")]} />,
     );
     expect(markup).toContain('data-routed-note="sent"');
-    expect(markup).toContain("→ Sent to another thread");
+    expect(markup).toContain("Moved to another thread");
     expect(markup).toContain("Sending via coordinator…");
     expect(markup).not.toContain("via coordinator<");
     // The note is the provenance: no execution line or marker above the bubble.

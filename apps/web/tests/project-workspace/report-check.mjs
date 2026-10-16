@@ -130,30 +130,90 @@ try {
           readerWide.width >= overlayBox.width * 0.55,
           `${label}: the report gets most of the card (${readerWide.width})`,
         );
-        // The thread folds to a rail and back; the report takes the room.
+        // One header says where you are: the worker's thread › the report, with
+        // one Close (Esc). Nothing in it looks pressed when the overlay opens.
+        const head = overlay.locator('[data-viewer-overlay-head="true"]');
+        NodeAssert.equal(await overlay.locator("header").count(), 1, `${label}: one header`);
+        const crumbs = head.getByRole("navigation", { name: "Breadcrumb" });
+        NodeAssert.equal(
+          await crumbs.locator('[data-crumb="source"]').innerText(),
+          "Consolidate the skills",
+          `${label}: the thread it came from`,
+        );
+        NodeAssert.match(
+          await crumbs.locator('[data-crumb="current"]').innerText(),
+          /Report\s*Review cycle 2 of 0973/,
+          `${label}: what is open`,
+        );
+        NodeAssert.equal(
+          await overlay.getByRole("button", { name: /^Close/ }).count(),
+          1,
+          `${label}: one close button`,
+        );
+        const headBox = await head.boundingBox();
+        NodeAssert.ok(
+          headBox && Math.abs(headBox.width - overlayBox.width) <= 2,
+          `${label}: the header spans the viewer and the thread`,
+        );
+        NodeAssert.equal(
+          await page.evaluate(
+            () => document.activeElement?.getAttribute("data-viewer-overlay-content") ?? null,
+          ),
+          "true",
+          `${label}: focus starts on the page, not a header button`,
+        );
+        await head.screenshot({ path: shot("overlay-header") });
+        // The thread folds away from the header and back; the report takes the room.
         await overlay.getByRole("button", { name: "Hide thread" }).click();
-        await overlay.locator('[data-thread-collapsed="true"]').waitFor();
-        NodeAssert.equal(await thread.count(), 0, `${label}: thread folded`);
+        await thread.waitFor({ state: "detached" });
         const readerFolded = await reader.boundingBox();
         NodeAssert.ok(
           readerFolded.width > readerWide.width + 200,
           `${label}: the report widens when the thread folds`,
         );
         await page.screenshot({ path: shot("report-reader-thread-folded") });
-        await overlay.getByRole("button", { name: /^Show thread/ }).click();
+        await overlay.getByRole("button", { name: "Show thread" }).click();
         await thread.waitFor();
+
+        // Escape closes it from inside the thread, even where a code block keeps the key.
+        await thread.locator('[data-overlay-thread-code="true"]').focus();
+        await page.keyboard.press("Escape");
+        await overlay.waitFor({ state: "detached" });
+        await card.getByRole("button", { name: "Open report", exact: true }).click();
+        await reader.waitFor();
+
+        // Find and menus answer Escape first; the next Escape closes the report.
+        await overlay.getByRole("button", { name: "Find in report" }).click();
+        await overlay.getByRole("textbox", { name: "Find in report" }).fill("Check 12");
+        await page.keyboard.press("Escape");
+        await overlay.getByRole("button", { name: "Find in report" }).waitFor();
+        NodeAssert.equal(await overlay.count(), 1, `${label}: Escape closed find, not the report`);
+        await overlay.getByRole("button", { name: "More actions" }).click();
+        await page.getByRole("menu").waitFor();
+        await page.keyboard.press("Escape");
+        await page.getByRole("menu").waitFor({ state: "detached" });
+        NodeAssert.equal(await overlay.count(), 1, `${label}: Escape closed the menu only`);
+        await page.keyboard.press("Escape");
+        await overlay.waitFor({ state: "detached" });
+        await card.getByRole("button", { name: "Open report", exact: true }).click();
+        await reader.waitFor();
       }
+      await page.waitForFunction(() => {
+        const card = document.querySelector('[data-viewer-overlay="true"]');
+        return card !== null && getComputedStyle(card).opacity === "1";
+      });
       await page.screenshot({ path: shot("report-reader") });
 
       // Saving from the reader writes it once and flips both surfaces to Saved.
-      await reader.getByRole("button", { name: "More actions" }).click();
+      await overlay.getByRole("button", { name: "More actions" }).click();
       // The menu names the folder saving puts it in.
       await page
         .getByRole("menuitem", {
           name: "Save to increment (.specweave/increments/0973-budget-vs-actuals/reports/)",
         })
         .click();
-      await reader.getByText(/ · Saved$/).waitFor();
+      // On a phone the header drops the detail line; it still says Saved.
+      await overlay.getByText(/ · Saved$/).waitFor({ state: "attached" });
       const saves = await page.evaluate(() =>
         window.__projectCalls.filter((call) => call.command === "threadReportSave"),
       );
@@ -167,10 +227,10 @@ try {
         0,
         `${label}: no second save`,
       );
-      // The close button closes it too.
+      // The one Close button closes it too.
       await card.getByRole("button", { name: "Open report", exact: true }).click();
       await reader.waitFor();
-      await reader.getByRole("button", { name: "Close report" }).click();
+      await overlay.getByRole("button", { name: "Close", exact: true }).click();
       await reader.waitFor({ state: "detached" });
       await overlay.waitFor({ state: "detached" });
       if (width >= 832) {

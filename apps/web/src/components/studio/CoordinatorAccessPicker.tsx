@@ -95,6 +95,8 @@ export function CoordinatorComposerControls({
   fallback: {
     saved: ModelLabel;
     now: ModelLabel;
+    /** Why the saved model has no room: `weekly limit reached, resets in 1d 15h`. */
+    reason: string;
     switching?: boolean;
     onSwitchBack?: (() => void) | null;
   } | null;
@@ -107,14 +109,16 @@ export function CoordinatorComposerControls({
         <p className="sws-model-fallback" role="status" data-model-fallback>
           <ZapIcon aria-hidden />
           <span className="sws-model-fallback-text">
-            <strong>{fallback.saved.provider} limit reached</strong>
-            <span aria-hidden> · </span>
-            <span className="sr-only">, </span>
-            running on {fallback.now.full}
+            <strong>Switched to {fallback.now.provider}</strong>
+            {": "}
+            {fallback.saved.provider} {fallback.reason}.{" "}
+            <span className="sws-model-fallback-note">
+              The next turn after it has room goes back to {fallback.saved.provider} on its own.
+            </span>
           </span>
           {fallback.onSwitchBack ? (
             <Tip
-              label={`Switch back to ${fallback.saved.full}, the saved model, for the next turn. If its limit has not reset, the coordinator moves again.`}
+              label={`Run the next turn on ${fallback.saved.full} now. If it still has no room, that turn moves to ${fallback.now.full} again.`}
             >
               <button
                 type="button"
@@ -123,7 +127,7 @@ export function CoordinatorComposerControls({
                 aria-busy={fallback.switching}
                 onClick={fallback.onSwitchBack}
               >
-                Switch back
+                Switch back to {fallback.saved.provider}
               </button>
             </Tip>
           ) : null}

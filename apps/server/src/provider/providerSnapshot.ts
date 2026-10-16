@@ -24,6 +24,11 @@ import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 export const DEFAULT_TIMEOUT_MS = 4_000;
 // Auth status checks involve disk/network lookups and can be slow on first run (especially Windows)
 export const AUTH_PROBE_TIMEOUT_MS = 10_000;
+/**
+ * auth.type when the status probe itself failed or timed out (usually a busy
+ * host), so the sign-in was never read. Admission reports a failed check, not a sign-out.
+ */
+export const CLAUDE_STATUS_CHECK_FAILED = "status-check-failed";
 
 export const COMPACT_SLASH_COMMAND = {
   name: "compact",

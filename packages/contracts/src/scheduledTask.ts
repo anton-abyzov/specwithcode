@@ -170,6 +170,28 @@ export const ScheduledTaskWebhookEndpoint = Schema.Struct({
 });
 export type ScheduledTaskWebhookEndpoint = typeof ScheduledTaskWebhookEndpoint.Type;
 
+/**
+ * A shell check run before any agent: the routine wakes its thread only when
+ * the command exits 0, and a quiet run uses no AI provider at all.
+ */
+export const ScheduledTaskCheck = Schema.Struct({
+  command: TrimmedNonEmptyString.annotate({
+    description:
+      "Shell command run with /bin/sh in the project folder. Exit 0 means the condition holds: the prompt is sent with the command's output. Any other exit ends the run quietly, without an agent.",
+  }),
+  timeoutMs: Schema.optional(
+    Schema.Int.check(Schema.isBetween({ minimum: 1_000, maximum: 600_000 })).annotate({
+      description: "How long the command may run, in milliseconds; defaults to 60000.",
+    }),
+  ),
+}).annotate({ description: "Run a shell check first and wake the agent only when it passes." });
+export type ScheduledTaskCheck = typeof ScheduledTaskCheck.Type;
+
+const ScheduledTaskModelPinned = Schema.Boolean.annotate({
+  description:
+    "Run every time on modelSelection. Off by default: a run in a bound thread uses the model that thread's next turn would use, and never moves it to another provider.",
+});
+
 export const ScheduledTask = Schema.Struct({
   id: ScheduledTaskId,
   title: TrimmedNonEmptyString,
@@ -192,6 +214,8 @@ export const ScheduledTask = Schema.Struct({
   lastRunError: Schema.NullOr(Schema.String),
   runCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   webhook: Schema.optional(ScheduledTaskWebhookEndpoint),
+  modelPinned: Schema.optional(ScheduledTaskModelPinned),
+  check: Schema.optional(Schema.NullOr(ScheduledTaskCheck)),
 });
 export type ScheduledTask = typeof ScheduledTask.Type;
 
@@ -223,6 +247,8 @@ export const ScheduledTaskUpsertInput = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   createdBy: Schema.optional(OrchestrationV2Actor),
   creationSource: Schema.optional(OrchestrationV2CreationSource),
+  modelPinned: Schema.optional(ScheduledTaskModelPinned),
+  check: Schema.optional(Schema.NullOr(ScheduledTaskCheck)),
 });
 export type ScheduledTaskUpsertInput = typeof ScheduledTaskUpsertInput.Type;
 

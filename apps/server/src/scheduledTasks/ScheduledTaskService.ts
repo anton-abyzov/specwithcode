@@ -26,6 +26,7 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Duration from "effect/Duration";
 import * as Metric from "effect/Metric";
 import * as Layer from "effect/Layer";
@@ -43,6 +44,8 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as Metrics from "../observability/Metrics.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { ProjectCoordinatorService } from "../project/ProjectCoordinatorService.ts";
+import * as ProcessRunner from "../processRunner.ts";
+import { checkedPrompt, isModelPinned, runScheduledTaskCheck } from "./ScheduledTaskCheck.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
@@ -55,6 +58,7 @@ import { reserveRun, completeRun } from "./ScheduledTaskRunReceipt.ts";
 
 import {
   decodeRow,
+  encodeRunPolicyJson,
   decodeTaskId,
   errorMessage,
   iso,
@@ -157,6 +161,9 @@ export const layer = Layer.effect(
     const scheduler = yield* Scheduler.Scheduler;
     const updateHold = yield* ServiceUpdateHold.optional;
     const projects = yield* ProjectStore.ProjectStoreV2;
+    const processRunner = Option.getOrUndefined(
+      yield* Effect.serviceOption(ProcessRunner.ProcessRunner),
+    );
     const admission = yield* ProjectAdmission.ProjectAdmission;
     const readWebhookOrigin = yield* ScheduledTaskWebhookOrigin;
     // Webhook deliveries for one task dispatch in arrival order rather than
@@ -198,7 +205,8 @@ export const layer = Layer.effect(
         last_run_error,
         run_count,
         webhook_token,
-        webhook_secret
+        webhook_secret,
+        run_policy_json
       FROM scheduled_tasks
       ORDER BY updated_at DESC, task_id ASC
     `;
@@ -233,7 +241,8 @@ export const layer = Layer.effect(
         last_run_error,
         run_count,
         webhook_token,
-        webhook_secret
+        webhook_secret,
+        run_policy_json
       FROM scheduled_tasks
       WHERE task_id = ${id}
     `;
@@ -313,7 +322,8 @@ export const layer = Layer.effect(
           last_run_error,
           run_count,
           webhook_token,
-          webhook_secret
+          webhook_secret,
+          run_policy_json
         )
         SELECT
           ${task.id},
@@ -337,7 +347,8 @@ export const layer = Layer.effect(
           ${task.lastRunError},
           ${task.runCount},
           ${webhook.token},
-          ${webhook.secret}
+          ${webhook.secret},
+          ${encodeRunPolicyJson(task)}
         WHERE ${requireExisting ? 0 : 1} = 1
            OR EXISTS (SELECT 1 FROM scheduled_tasks WHERE task_id = ${task.id})
         ON CONFLICT (task_id)
@@ -350,6 +361,7 @@ export const layer = Layer.effect(
           thread_id = excluded.thread_id,
           workspace_strategy_json = excluded.workspace_strategy_json,
           model_selection_json = excluded.model_selection_json,
+          run_policy_json = excluded.run_policy_json,
           runtime_mode = excluded.runtime_mode,
           interaction_mode = excluded.interaction_mode,
           creation_source = excluded.creation_source,
@@ -576,71 +588,106 @@ export const layer = Layer.effect(
         // Dispatch from the fresh row so prompt/model/binding edits made
         // after the poll read are honoured. A webhook prompt was rendered
         // from the row when the request arrived.
-        const prompt = webhook?.prompt ?? active.prompt;
+        let prompt = webhook?.prompt ?? active.prompt;
+        // A command routine wakes the thread only when its check passes; a
+        // quiet check ends the run here, without any agent or provider.
+        const check = active.check ?? null;
+        const checked =
+          check === null
+            ? null
+            : yield* Effect.exit(
+                processRunner === undefined
+                  ? Effect.fail("Command checks are not available on this host.")
+                  : projects.get(active.projectId).pipe(
+                      Effect.orElseSucceed(() => Option.none()),
+                      Effect.flatMap((project) =>
+                        runScheduledTaskCheck(
+                          processRunner,
+                          check,
+                          Option.getOrUndefined(project)?.workspaceRoot ?? undefined,
+                        ),
+                      ),
+                    ),
+              );
+        if (check !== null && checked?._tag === "Success" && checked.value.passed) {
+          prompt = checkedPrompt(prompt, check, checked.value.output);
+        }
+        // Agent routines follow their thread; a person's pinned model is used as chosen.
+        const pinned = isModelPinned(active);
 
         // Effect.exit (not Effect.result) so defects and interruptions in the
         // dispatch are also captured and recorded as a failed run instead of
         // aborting before markCompleted.
         const result =
-          active.threadId === null
-            ? yield* Effect.exit(
-                threadLaunch.launch({
-                  commandId,
-                  projectId: active.projectId,
-                  title: active.title,
-                  modelSelection: active.modelSelection,
-                  runtimeMode: active.runtimeMode,
-                  interactionMode: active.interactionMode,
-                  workspaceStrategy: active.workspaceStrategy,
-                  initialMessage: {
-                    messageId,
-                    scheduledTaskId: active.id,
-                    text: prompt,
-                    attachments: [],
-                  },
-                  createdBy: active.createdBy,
-                  creationSource: active.creationSource,
-                }),
-              )
-            : yield* Effect.exit(
-                admission.withLock(
-                  active.projectId,
-                  assertTaskAdmission(active).pipe(
-                    Effect.provideService(ProjectStore.ProjectStoreV2, projects),
-                    Effect.provideService(SqlClient.SqlClient, sql),
-                    // A run in an existing thread never moves it to another
-                    // provider: the task's model is a snapshot of whatever the
-                    // thread ran on when the task was made, and switching the
-                    // thread to it hands the conversation over mid-stream. A
-                    // coordinator takes the model a user message would get;
-                    // any other thread keeps its own.
-                    Effect.andThen(
-                      coordinators === undefined
-                        ? Effect.succeed(undefined)
-                        : coordinators.nextTurnModel(
-                            active.projectId,
-                            ThreadId.make(active.threadId),
-                          ),
-                    ),
-                    Effect.flatMap((modelSelection) =>
-                      threadManagement.sendToThread({
-                        projectId: active.projectId,
-                        commandId,
-                        threadId: ThreadId.make(active.threadId!),
+          checked !== null && checked._tag === "Failure"
+            ? checked
+            : checked !== null && !checked.value.passed
+              ? Exit.void
+              : active.threadId === null
+                ? yield* Effect.exit(
+                    threadLaunch.launch({
+                      commandId,
+                      projectId: active.projectId,
+                      title: active.title,
+                      modelSelection: pinned
+                        ? active.modelSelection
+                        : ((yield* (
+                            coordinators?.nextTurnModel(active.projectId, null) ??
+                              Effect.succeed(undefined)
+                          )) ?? active.modelSelection),
+                      runtimeMode: active.runtimeMode,
+                      interactionMode: active.interactionMode,
+                      workspaceStrategy: active.workspaceStrategy,
+                      initialMessage: {
                         messageId,
                         scheduledTaskId: active.id,
                         text: prompt,
                         attachments: [],
-                        ...(modelSelection === undefined ? {} : { modelSelection }),
-                        // Scheduled prompts must not interrupt tools in the bound thread.
-                        mode: "queue",
-                        createdBy: active.createdBy,
-                        creationSource: active.creationSource,
-                      }),
+                      },
+                      createdBy: active.createdBy,
+                      creationSource: active.creationSource,
+                    }),
+                  )
+                : yield* Effect.exit(
+                    admission.withLock(
+                      active.projectId,
+                      assertTaskAdmission(active).pipe(
+                        Effect.provideService(ProjectStore.ProjectStoreV2, projects),
+                        Effect.provideService(SqlClient.SqlClient, sql),
+                        // An unpinned run never moves its thread to another
+                        // provider: the task's model is only a snapshot of what the
+                        // thread ran on when the task was made. A coordinator takes
+                        // the model a user message would get; any other thread
+                        // keeps its own.
+                        Effect.andThen(
+                          pinned
+                            ? Effect.succeed(active.modelSelection)
+                            : coordinators === undefined
+                              ? Effect.succeed(undefined)
+                              : coordinators.nextTurnModel(
+                                  active.projectId,
+                                  ThreadId.make(active.threadId),
+                                ),
+                        ),
+                        Effect.flatMap((modelSelection) =>
+                          threadManagement.sendToThread({
+                            projectId: active.projectId,
+                            commandId,
+                            threadId: ThreadId.make(active.threadId!),
+                            messageId,
+                            scheduledTaskId: active.id,
+                            text: prompt,
+                            attachments: [],
+                            ...(modelSelection === undefined ? {} : { modelSelection }),
+                            // Scheduled prompts must not interrupt tools in the bound thread.
+                            mode: "queue",
+                            createdBy: active.createdBy,
+                            creationSource: active.creationSource,
+                          }),
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-              );
+                  );
 
         const completedAt = yield* localNow;
         const runSucceeded = result._tag === "Success";
@@ -918,6 +965,14 @@ export const layer = Layer.effect(
           lastRunStatus: existingTask?.lastRunStatus ?? "never",
           lastRunError: existingTask?.lastRunError ?? null,
           runCount: existingTask?.runCount ?? 0,
+          // A save that leaves these out (a client form that predates them)
+          // keeps what the task has; null clears a check.
+          ...((input.modelPinned ?? existingTask?.modelPinned) === undefined
+            ? {}
+            : { modelPinned: (input.modelPinned ?? existingTask?.modelPinned)! }),
+          ...((input.check === undefined ? existingTask?.check : input.check)
+            ? { check: (input.check === undefined ? existingTask?.check : input.check)! }
+            : {}),
         };
         yield* saveTask(task, input.requireExisting === true, webhook);
         yield* notifyChanged;

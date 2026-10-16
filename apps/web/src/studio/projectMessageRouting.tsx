@@ -27,6 +27,12 @@ export interface ProjectMessageRouting {
   ) => Promise<T>;
   readonly saveCoordinatorModel?: (selection: ModelSelection) => Promise<void>;
   readonly send: (prompt: string, attachments?: ReadonlyArray<ChatAttachment>) => Promise<void>;
+  /**
+   * A worker on this machine: its composer sends straight to the worker, the
+   * way a thread outside a project does, with no coordinator turn. The user
+   * chose the thread by typing in it.
+   */
+  readonly direct?: boolean;
   readonly openCoordinator: () => void;
   /** Messages typed in this worker that the coordinator kept or sent elsewhere, for its timeline. */
   readonly routedMessages?: ReadonlyArray<import("../types").ChatMessage>;
@@ -43,6 +49,13 @@ export interface ProjectMessageRouting {
 export const ProjectMessageRoutingContext = createContext<ProjectMessageRouting | null>(null);
 export const useProjectMessageRouting = () => useContext(ProjectMessageRoutingContext);
 
+/** Whether a composer message goes to the coordinator rather than to its own thread. */
+export function routesViaCoordinator(
+  routing: ProjectMessageRouting | null,
+): routing is ProjectMessageRouting {
+  return routing !== null && routing.direct !== true;
+}
+
 /** Keep native approval/question submission in its own runtime. Ordinary messages route once. */
 export async function routeProjectComposerSend(
   routing: ProjectMessageRouting | null,
@@ -55,7 +68,7 @@ export async function routeProjectComposerSend(
     reportError: (message: string) => void;
   },
 ): Promise<boolean> {
-  if (!routing || input.nativeInput) return false;
+  if (!routesViaCoordinator(routing) || input.nativeInput) return false;
   if (input.hasOtherContent) {
     input.reportError(
       "This reply has annotations or context cards. Keep this draft and send those from the full thread view.",

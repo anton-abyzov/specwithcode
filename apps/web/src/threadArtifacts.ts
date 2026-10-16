@@ -4,10 +4,12 @@ import { renderCodexFileCitationsAsMarkdown } from "@specweave-studio/client-run
 
 import {
   extractMarkdownLinkHrefs,
+  fileReferenceSpans,
   mayBeDirectory,
   type MarkdownFileLinkMeta,
   resolveInlineCodeFileLinks,
   resolveMarkdownFileLinkMeta,
+  threadFileFolders,
 } from "./markdown-links";
 
 export type ThreadArtifactKind =
@@ -50,6 +52,26 @@ export interface ThreadRenderArtifact extends ThreadArtifactBase {
 
 export type ThreadArtifact = ThreadFileArtifact | ThreadLinkArtifact | ThreadRenderArtifact;
 
+/** A file a thread's tool calls wrote, as the tool named it. */
+export interface ThreadCreatedFile {
+  readonly path: string;
+  readonly itemId: string;
+}
+
+const WORKSPACE_DELIVERABLE_KINDS = new Set<ThreadArtifactKind>([
+  "image",
+  "video",
+  "audio",
+  "pdf",
+  "html",
+]);
+
+/** A file outside the workspace, or a picture, recording, PDF or page inside it. */
+function isDeliverableFile(meta: MarkdownFileLinkMeta): boolean {
+  if (meta.workspaceRelativePath === null) return true;
+  return WORKSPACE_DELIVERABLE_KINDS.has(fileKind(meta.basename));
+}
+
 export interface ThreadArtifactMessage {
   readonly id: string;
   readonly text: string;
@@ -79,13 +101,9 @@ export function expandBraceList(span: string): string[] {
     .flatMap((part) => expandBraceList(`${head}${part}${tail}`));
 }
 
+/** Inline code outside fences, then the lines of fenced path lists. */
 function inlineCodeSpans(text: string): string[] {
-  return proseSegments(text).flatMap((segment) =>
-    [...segment.matchAll(INLINE_CODE_SPAN_PATTERN)].flatMap((match) => {
-      const span = match[1]?.trim();
-      return span ? expandBraceList(span) : [];
-    }),
-  );
+  return fileReferenceSpans(text).flatMap(expandBraceList);
 }
 
 function fileKind(name: string): ThreadFileArtifact["kind"] {
@@ -122,12 +140,26 @@ function linkArtifact(url: string, messageId: string, title?: string): ThreadLin
 export function collectThreadArtifacts(
   messages: ReadonlyArray<ThreadArtifactMessage>,
   cwd: string | undefined,
+  createdFiles: ReadonlyArray<ThreadCreatedFile> = [],
 ): ThreadArtifact[] {
   const byKey = new Map<string, ThreadArtifact>();
   const add = (artifact: ThreadArtifact) => {
     byKey.delete(artifact.key);
     byKey.set(artifact.key, artifact);
   };
+  const contextFolders = threadFileFolders(
+    messages.map((message) => message.text),
+    cwd,
+  );
+  // Files the thread wrote outside its workspace (a store listing in
+  // ~/Downloads) are deliverables even when no reply names them; edits inside
+  // the workspace are the diff's business.
+  for (const file of createdFiles) {
+    const meta = resolveMarkdownFileLinkMeta(file.path, cwd, cwd);
+    if (meta && !mayBeDirectory(meta) && isDeliverableFile(meta)) {
+      add(fileArtifact(meta, file.itemId));
+    }
+  }
   for (const message of messages) {
     // In the order the message names them, so the newest mention lists first.
     const found: Array<readonly [number, ThreadArtifact]> = [];
@@ -139,7 +171,12 @@ export function collectThreadArtifacts(
       if (meta && !mayBeDirectory(meta))
         found.push([at(`(${href}`), fileArtifact(meta, message.id)]);
     }
-    for (const [span, meta] of resolveInlineCodeFileLinks(inlineCodeSpans(message.text), cwd)) {
+    for (const [span, meta] of resolveInlineCodeFileLinks(
+      inlineCodeSpans(message.text),
+      cwd,
+      cwd,
+      contextFolders,
+    )) {
       if (!mayBeDirectory(meta)) found.push([at(`\`${span}`), fileArtifact(meta, message.id)]);
     }
     for (const match of text.matchAll(TITLED_LINK_PATTERN)) {

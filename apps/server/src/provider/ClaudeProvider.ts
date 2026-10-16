@@ -31,6 +31,7 @@ import {
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
   AUTH_PROBE_TIMEOUT_MS,
+  CLAUDE_STATUS_CHECK_FAILED,
   DEFAULT_TIMEOUT_MS,
   isCommandMissingCause,
   parseGenericCliVersion,
@@ -153,6 +154,11 @@ function formatClaudeSubscriptionAuthLabel(subscriptionType: string): string {
   }
   return `Claude ${subscriptionLabel} Subscription`;
 }
+
+const statusCheckFailedAuth = {
+  type: CLAUDE_STATUS_CHECK_FAILED,
+  label: "Status check did not finish",
+} as const;
 
 export function claudeAuthMetadata(input: {
   readonly subscriptionType: string | undefined;
@@ -622,7 +628,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         installed: true,
         version: parsedVersion,
         status: "warning",
-        auth: { status: "unknown" },
+        auth: { status: "unknown", ...statusCheckFailedAuth },
         message: "Could not verify Claude authentication status from initialization result.",
       },
     });
@@ -636,6 +642,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     capabilities.apiKeySource !== undefined &&
     capabilities.apiKeySource !== "none";
   let authMethod = billedToApiKey ? "apiKey" : capabilities.tokenSource;
+  let authStatusCheckFailed = false;
   // Native Claude subscription initialization intentionally omits tokenSource
   // when it reports a plan. Corroborate that case through the same CLI/profile;
   // a plan alone and copied bearer-token sources still cannot authorize it.
@@ -650,6 +657,9 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       resolvedEnvironment,
       cwd,
     ).pipe(Effect.timeoutOption(AUTH_PROBE_TIMEOUT_MS), Effect.result);
+    // A spawn failure or timeout never read the sign-in. A completed command,
+    // even a nonzero exit, is an answer and keeps the unverified verdict.
+    authStatusCheckFailed = Result.isFailure(nativeAuth) || Option.isNone(nativeAuth.success);
     if (Result.isSuccess(nativeAuth) && Option.isSome(nativeAuth.success)) {
       const result = nativeAuth.success.value;
       const decoded = decodeNativeSubscriptionAuthStatus(result.stdout);
@@ -664,12 +674,19 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       }
     }
   }
-  const authMetadata =
+  const resolvedAuthMetadata =
     apiProviderAuthMetadata(capabilities.apiProvider) ??
     claudeAuthMetadata({
       subscriptionType: capabilities.subscriptionType,
       authMethod,
     });
+  const authMetadata =
+    authStatusCheckFailed && resolvedAuthMetadata?.type === "subscription-auth-unverified"
+      ? statusCheckFailedAuth
+      : resolvedAuthMetadata;
+  const authUnverified =
+    authMetadata?.type === "subscription-auth-unverified" ||
+    authMetadata?.type === CLAUDE_STATUS_CHECK_FAILED;
   const usageLimits = !capabilities.usage
     ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })
     : scopedLimitNames
@@ -695,9 +712,9 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     probe: {
       installed: true,
       version: parsedVersion,
-      status: authMetadata?.type === "subscription-auth-unverified" ? "warning" : "ready",
+      status: authUnverified ? "warning" : "ready",
       auth: {
-        status: authMetadata?.type === "subscription-auth-unverified" ? "unknown" : "authenticated",
+        status: authUnverified ? "unknown" : "authenticated",
         ...(capabilities.email ? { email: capabilities.email } : {}),
         ...(authMetadata ? authMetadata : {}),
       },
