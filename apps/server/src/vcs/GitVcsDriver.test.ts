@@ -405,7 +405,9 @@ it.effect.each(["discovery", "probe", "retry"] as const)(
       const path = yield* Path.Path;
       const liveProcess = yield* VcsProcess.VcsProcess;
       const driver = yield* GitVcsDriver.makeVcsDriverShape();
-      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "studio-checkpoint-recovery-timeout-" });
+      const cwd = yield* fs.makeTempDirectoryScoped({
+        prefix: "studio-checkpoint-recovery-timeout-",
+      });
       const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
       yield* git(["init", "empty"]);
       const originalIndex = yield* fs.readFile(path.join(cwd, ".git", "index"));
@@ -491,7 +493,9 @@ it.effect("checkpoint recovery preserves interruption and removes the private in
     const fs = yield* FileSystem.FileSystem;
     const liveProcess = yield* VcsProcess.VcsProcess;
     const driver = yield* GitVcsDriver.makeVcsDriverShape();
-    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "studio-checkpoint-recovery-interrupt-" });
+    const cwd = yield* fs.makeTempDirectoryScoped({
+      prefix: "studio-checkpoint-recovery-interrupt-",
+    });
     const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
     yield* git(["init", "empty"]);
     const entered = yield* Deferred.make<void>();
@@ -878,7 +882,9 @@ it.effect("checkpoint capture preserves racy edits made after resetting the inde
     const path = yield* Path.Path;
     const liveProcess = yield* VcsProcess.VcsProcess;
     const driver = yield* GitVcsDriver.makeVcsDriverShape();
-    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-checkpoint-racy-reset-" });
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "studio-checkpoint-racy-reset-",
+    });
     const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
     const racyPath = path.join(cwd, "racy.txt");
     const indexPath = path.join(cwd, ".git", "index");
@@ -1026,7 +1032,9 @@ it.effect("restores empty checkpoints without changing paths outside the workspa
     const path = yield* Path.Path;
     const driver = yield* GitVcsDriver.makeVcsDriverShape();
     for (const nested of [false, true]) {
-      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-empty-checkpoint-" });
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "studio-empty-checkpoint-",
+      });
       yield* runGit(root, ["init"]);
       yield* runGit(root, ["config", "user.email", "test@test.com"]);
       yield* runGit(root, ["config", "user.name", "Test"]);
@@ -1195,3 +1203,63 @@ it.effect("GitVcsDriver flushes checkpoint objects and refs to disk before publi
     ),
   );
 });
+
+it.live("checkpoint diff leaves out files a merge or checkout brought in during the turn", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-checkpoint-head-" });
+    const git = (args: ReadonlyArray<string>) =>
+      driver.execute({ operation: "checkpoint-test", cwd, args });
+    const write = (name: string, contents: string) =>
+      fileSystem.writeFileString(path.join(cwd, name), contents);
+    yield* git(["init", "-b", "main"]);
+    yield* git(["config", "user.name", "Test"]);
+    yield* git(["config", "user.email", "test@test.com"]);
+    yield* write("a.txt", "a\n");
+    yield* git(["add", "."]);
+    yield* git(["commit", "-m", "initial"]);
+    // Work made elsewhere, before the turn: another branch with its own files.
+    yield* git(["checkout", "-b", "other"]);
+    for (const name of ["b1.txt", "b2.txt", "b3.txt"]) yield* write(name, `${name}\n`);
+    yield* git(["add", "."]);
+    yield* git(["commit", "-m", "other work"]);
+    yield* git(["checkout", "main"]);
+    // Reflog times have one-second resolution; keep the earlier commit out of the turn.
+    yield* Effect.sleep("1100 millis");
+    const first = CheckpointRef.make("refs/studio/checkpoints/head/1");
+    const second = CheckpointRef.make("refs/studio/checkpoints/head/2");
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef: first });
+
+    // The turn: a local commit, a merge of the other branch, and an uncommitted edit.
+    yield* write("c.txt", "c\n");
+    yield* git(["add", "c.txt"]);
+    yield* git(["commit", "-m", "turn work"]);
+    yield* git(["merge", "--no-edit", "other"]);
+    yield* write("a.txt", "edited\n");
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef: second });
+
+    assert.strictEqual(
+      (yield* git(["diff", "--name-only", first, second])).stdout,
+      "a.txt\nb1.txt\nb2.txt\nb3.txt\nc.txt\n",
+    );
+    const moved = yield* driver.checkpoints.headMovePaths!({
+      cwd,
+      fromCheckpointRef: first,
+      toCheckpointRef: second,
+    });
+    assert.deepEqual([...moved].toSorted(), ["b1.txt", "b2.txt", "b3.txt"]);
+    // Without a HEAD move nothing is left out.
+    assert.deepEqual(
+      [
+        ...(yield* driver.checkpoints.headMovePaths!({
+          cwd,
+          fromCheckpointRef: second,
+          toCheckpointRef: second,
+        })),
+      ],
+      [],
+    );
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);

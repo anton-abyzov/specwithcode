@@ -9,6 +9,8 @@ const state = vi.hoisted(() => ({
   turnItems: [] as unknown[],
   minted: [] as unknown[],
   openExternal: vi.fn(),
+  pullRequests: [] as unknown[],
+  missing: new Set<string>(),
 }));
 
 vi.mock("~/viewerOverlayStore", () => ({
@@ -45,6 +47,20 @@ vi.mock("~/state/entities", () => ({
   useThreadProjection: () => ({
     projection: { messages: state.messages, turnItems: state.turnItems },
   }),
+  useThreadShell: () => ({ pullRequests: state.pullRequests }),
+}));
+vi.mock("../ui/popover", () => ({
+  Popover: (props: { children: unknown }) => <div>{props.children as never}</div>,
+  PopoverTrigger: (props: { children: unknown }) => (
+    <span data-menu-trigger="true">{props.children as never}</span>
+  ),
+  PopoverPopup: (props: { children: unknown }) => <div>{props.children as never}</div>,
+}));
+vi.mock("../ui/input", () => ({
+  Input: (props: Record<string, unknown>) => <input {...props} />,
+}));
+vi.mock("./useMissingArtifactFiles", () => ({
+  useMissingArtifactFiles: () => state.missing,
 }));
 vi.mock("./ViewerFileActions", () => ({
   ViewerFileActions: (props: { path: string | null }) => (
@@ -100,6 +116,22 @@ const CWD = "/Users/me/Projects/easychamp";
 let renderer: ReactTestRenderer | undefined;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-10-16T12:00:00.000Z"));
+  // Pins and hides live in localStorage; a fresh store per test.
+  const stored = new Map<string, string>();
+  vi.stubGlobal(
+    "window",
+    Object.assign(new EventTarget(), {
+      localStorage: {
+        getItem: (key: string) => stored.get(key) ?? null,
+        setItem: (key: string, value: string) => stored.set(key, value),
+        removeItem: (key: string) => stored.delete(key),
+      },
+    }),
+  );
+  state.pullRequests = [];
+  state.missing = new Set();
   state.minted = [];
   state.openExternal.mockReset();
   state.messages = [
@@ -128,6 +160,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => renderer?.unmount());
   renderer = undefined;
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -155,7 +188,72 @@ it("counts and lists what the thread produced, links and published pages include
     renderer!.root
       .findAll((node) => node.type === "button" && node.props["data-thread-artifact"])
       .map((node) => node.props["data-thread-artifact"]),
-  ).toEqual(["html", "link", "markdown", "html", "image", "video"]);
+  ).toEqual(["link", "html", "html", "markdown", "image", "video"]);
+});
+
+function sections() {
+  return renderer!.root
+    .findAll((node) => node.type === "section")
+    .map((node) => [
+      node.props["data-artifact-section"],
+      node
+        .findAll((child) => child.type === "button" && child.props["data-thread-artifact"])
+        .map((child) => child.props["data-thread-artifact"]),
+    ]);
+}
+
+function action(name: string, kind: "pin" | "hide") {
+  const row = renderer!.root.findAll(
+    (node) =>
+      node.type === "li" && node.findAll((child) => child.children.includes(name)).length > 0,
+  )[0]!;
+  return row.find((node) => node.type === "button" && node.props["data-artifact-action"] === kind);
+}
+
+it("groups by type, folds a merged pull request and a missing file into Older", async () => {
+  state.pullRequests = [
+    {
+      host: "github.com",
+      repository: "acme/gitops",
+      number: 254,
+      url: "https://github.com/acme/gitops/pull/254",
+      source: "agent",
+      linkedAt: "2026-10-15T12:00:00.000Z",
+      snapshot: { state: "merged", title: "Verify Bing" },
+      stack: null,
+    },
+  ];
+  state.missing = new Set(["/tmp/promo/snap-cover.jpg"]);
+  await render();
+  expect(sections()).toEqual([
+    ["reports", ["html", "html"]],
+    ["files", ["markdown", "video"]],
+    ["older", []],
+  ]);
+  await act(async () =>
+    renderer!.root.findByProps({ "data-artifact-section-toggle": "older" }).props.onClick(),
+  );
+  expect(
+    renderer!.root
+      .findAll((node) => node.type === "button" && node.props["data-artifact-aged"])
+      .map((node) => node.props["data-artifact-aged"]),
+  ).toEqual(["merged", "missing"]);
+});
+
+it("pins to the top and hides from the list, and remembers both", async () => {
+  await render();
+  await act(async () => action("plan.md", "pin").props.onClick());
+  expect(sections()[0]).toEqual(["pinned", ["markdown"]]);
+  await act(async () => action("snap-cover.jpg", "hide").props.onClick());
+  expect(
+    renderer!.root.findByProps({ "data-menu-trigger": "true" }).findAllByType("span").at(-1)!
+      .children,
+  ).toEqual(["5"]);
+  expect(sections().at(-1)).toEqual(["hidden", []]);
+  // The choice survives a remount.
+  await act(async () => renderer!.unmount());
+  await render();
+  expect(sections()[0]).toEqual(["pinned", ["markdown"]]);
 });
 
 it("plays a host video through a server URL and steps through the thread's artifacts, oldest first", async () => {

@@ -2,20 +2,20 @@
 
 ## Purpose
 
-Studio exposes V2 orchestration through its app-owned MCP endpoint. A provider
+SpecWithCode exposes V2 orchestration through its app-owned MCP endpoint. A provider
 agent can use this endpoint to:
 
 - create an app-owned sub-agent on any supported provider instance;
 - wait for or poll the sub-agent's durable result;
 - cancel an active delegated task; and
-- create one or more ordinary top-level Studio threads;
+- create one or more ordinary top-level SpecWithCode threads;
 - list a project's threads and incrementally read any thread;
 - rename threads, regenerate titles, and link or unlink pull requests;
 - send or steer follow-up messages; and
 - wait for or interrupt ordinary thread runs.
 
-These are Studio orchestration operations, not provider-native sub-agent APIs.
-Delegated tasks always create a Studio child thread and run. The child receives
+These are SpecWithCode orchestration operations, not provider-native sub-agent APIs.
+Delegated tasks always create a SpecWithCode child thread and run. The child receives
 only the supplied task prompt, plus an optional role instruction supplied in
 the same tool call. Parent conversation history is not copied into the child.
 
@@ -40,8 +40,8 @@ preview toolkit and the orchestration toolkit.
 Before `ProviderSessionManager` opens a new V2 provider session, it asks
 `McpSessionRegistry` for a credential scoped to:
 
-- the Studio environment;
-- the parent Studio thread;
+- the SpecWithCode environment;
+- the parent SpecWithCode thread;
 - the concrete provider instance; and
 - the provider session.
 
@@ -226,7 +226,7 @@ provider-specific extensions; those remain in flavors such as Grok.
 ### Pi V2
 
 Pi core has no MCP client. When a provider session credential exists, the
-adapter writes a Studio-owned extension into the server cache and spawns
+adapter writes a SpecWithCode-owned extension into the server cache and spawns
 `pi --mode rpc --extension <cache>/pi-studio-mcp-extension.ts` with:
 
 ```text
@@ -239,12 +239,12 @@ one with `pi.registerTool` under a `mcp__studio-code__` namespace
 (`mcp__studio-code__delegate_task`, `mcp__studio-code__studio_thread_launch`, and the rest).
 The bridge calls the original MCP tool name over HTTP. Follow-up requests send
 `mcp-protocol-version: 2025-06-18`; Effect's MCP transport returns 400
-without it. The first turn of a session also receives the shared Studio
+without it. The first turn of a session also receives the shared SpecWithCode
 orchestration instructions.
 
-Pi keeps ownership of native extension discovery. Studio does not replace Pi's
+Pi keeps ownership of native extension discovery. SpecWithCode does not replace Pi's
 `subagent` tool or reproduce Pi's package and project-trust loader. Durable
-delegation goes through the namespaced Studio MCP `delegate_task` tool and the
+delegation goes through the namespaced SpecWithCode MCP `delegate_task` tool and the
 shared orchestration child-thread lifecycle. When Pi's example `subagent`
 extension is installed, the adapter observes its documented `details.results`
 shape and projects task cards with no child thread id. Unknown result shapes
@@ -280,7 +280,7 @@ adapter support, disabled state, missing executable, or missing authentication.
 
 ### `delegate_task`
 
-Creates a Studio-owned child thread and immediately dispatches the supplied task
+Creates a SpecWithCode-owned child thread and immediately dispatches the supplied task
 prompt.
 
 ```ts
@@ -373,7 +373,7 @@ optional cancellation reason.
 
 ### `create_threads`
 
-Creates between one and twenty ordinary top-level Studio threads:
+Creates between one and twenty ordinary top-level SpecWithCode threads:
 
 ```ts
 type CreateThreadsInput = {

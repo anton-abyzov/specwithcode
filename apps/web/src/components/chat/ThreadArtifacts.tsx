@@ -1,5 +1,6 @@
 import type { AssetResource, EnvironmentId, ScopedThreadRef } from "@specweave-studio/contracts";
 import { htmlRenderFileName } from "@specweave-studio/shared/htmlRender";
+import { visibleThreadPullRequests } from "@specweave-studio/shared/threadPullRequests";
 import { htmlRenderFromToolItem } from "@specweave-studio/shared/toolOutput";
 import {
   ChevronLeftIcon,
@@ -24,7 +25,13 @@ import { createPortal } from "react-dom";
 import { useAssetUrlState } from "~/assets/assetUrls";
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { readLocalApi } from "~/localApi";
-import { useThreadProjection } from "~/state/entities";
+import {
+  canonicalLinkKey,
+  shelfEntries,
+  type ShelfEntry,
+  type ShelfPullRequest,
+} from "~/artifactShelf";
+import { useThreadProjection, useThreadShell } from "~/state/entities";
 import { formatViewerDate, viewerIso } from "~/viewerDate";
 import { useViewerOverlay } from "~/viewerOverlayStore";
 import {
@@ -42,7 +49,11 @@ import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
 import { BrowserDocumentFrame } from "../files/BrowserDocumentFrame";
 import { useProjectFileQuery } from "../files/projectFilesQueryState";
 import { Button } from "../ui/button";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import { MenuItem } from "../ui/menu";
+import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { ArtifactShelfList } from "./ArtifactShelfList";
+import { useArtifactShelfState } from "./useArtifactShelfState";
+import { useMissingArtifactFiles } from "./useMissingArtifactFiles";
 import { ViewerFileActions } from "./ViewerFileActions";
 import { useExistingFileLinks } from "./useExistingFileLinks";
 
@@ -137,8 +148,8 @@ function useSettledArtifacts(
 }
 
 /**
- * The thread header's artifacts chip: a count that opens the list, and the
- * viewer that steps through them.
+ * The thread header's artifacts chip: a count that opens the organized list,
+ * and the viewer that steps through it.
  */
 export function ThreadArtifactsMenu(props: {
   readonly threadRef: ScopedThreadRef | null;
@@ -148,49 +159,50 @@ export function ThreadArtifactsMenu(props: {
   // Oldest first, so stepping forward moves forward in the thread.
   const viewable = useMemo(() => artifacts.filter(isViewableArtifact).toReversed(), [artifacts]);
   const [openKey, setOpenKey] = useState<string | null>(null);
+  const [listOpen, setListOpen] = useState(false);
+  // When the list last opened: what has gone quiet since is aged against it.
+  const [openedAt, setOpenedAt] = useState(() => Date.now());
+  const shelfState = useArtifactShelfState(props.threadRef);
+  const entries = useShelfEntries(props.threadRef, artifacts, shelfState, listOpen, openedAt);
   if (artifacts.length === 0 || props.threadRef === null) return null;
   const index = viewable.findIndex((artifact) => artifact.key === openKey);
+  const visible = entries.filter((entry) => !entry.hidden).length;
   return (
     <>
-      <Menu>
-        <MenuTrigger
+      <Popover
+        open={listOpen}
+        onOpenChange={(open) => {
+          if (open) setOpenedAt(Date.now());
+          setListOpen(open);
+        }}
+      >
+        <PopoverTrigger
           render={
             <Button
               size="xs"
               variant="ghost"
-              aria-label={`${artifacts.length} artifacts`}
-              data-thread-artifacts={artifacts.length}
+              aria-label={`${visible} artifacts`}
+              data-thread-artifacts={visible}
             />
           }
         >
           <ShapesIcon aria-hidden />
-          <span className="tabular-nums">{artifacts.length}</span>
-        </MenuTrigger>
-        <MenuPopup align="end" className="max-h-[min(28rem,70vh)] w-80 max-w-[90vw]">
-          {artifacts.map((artifact) => {
-            const Icon = KIND_ICON[artifact.kind];
-            return (
-              <MenuItem
-                key={artifact.key}
-                data-thread-artifact={artifact.kind}
-                onClick={() => {
-                  if (artifact.kind === "link") openExternally(artifact.url);
-                  else setOpenKey(artifact.key);
-                }}
-              >
-                <Icon aria-hidden />
-                <span className="min-w-0 flex-1 truncate">{artifact.name}</span>
-                {artifact.kind === "link" ? (
-                  <>
-                    <span className="shrink-0 text-muted-foreground text-xs">{artifact.host}</span>
-                    <ExternalLinkIcon aria-hidden className="text-muted-foreground" />
-                  </>
-                ) : null}
-              </MenuItem>
-            );
-          })}
-        </MenuPopup>
-      </Menu>
+          <span className="tabular-nums">{visible}</span>
+        </PopoverTrigger>
+        <PopoverPopup align="end" padding="compact" className="w-96 max-w-[90vw]">
+          <ArtifactShelfList
+            entries={entries}
+            iconFor={(entry) => KIND_ICON[entry.artifact.kind]}
+            onOpen={(entry) => {
+              setListOpen(false);
+              if (entry.artifact.kind === "link") openExternally(entry.artifact.url);
+              else setOpenKey(entry.artifact.key);
+            }}
+            onPin={(entry, pinned) => shelfState.setPinned(entry.id, pinned)}
+            onHide={(entry, hidden) => shelfState.setHidden(entry.id, hidden)}
+          />
+        </PopoverPopup>
+      </Popover>
       {index >= 0 ? (
         <ArtifactViewer
           threadRef={props.threadRef}
@@ -202,6 +214,68 @@ export function ThreadArtifactsMenu(props: {
         />
       ) : null}
     </>
+  );
+}
+
+/**
+ * The thread's artifacts as list entries: deduplicated, dated by the message
+ * that last named them, pull requests with their tracked state, and files
+ * checked against the host while the list is open.
+ */
+function useShelfEntries(
+  threadRef: ScopedThreadRef | null,
+  artifacts: ReadonlyArray<ThreadArtifact>,
+  { pinned, hidden }: Pick<ReturnType<typeof useArtifactShelfState>, "pinned" | "hidden">,
+  checkFiles: boolean,
+  now: number,
+): ReadonlyArray<ShelfEntry> {
+  const thread = useThreadProjection(threadRef);
+  const shell = useThreadShell(threadRef);
+  const messages = thread?.projection.messages;
+  const turnItems = thread?.projection.turnItems;
+  const dates = useMemo(() => {
+    const byId = new Map<string, number>();
+    for (const message of messages ?? []) {
+      const at = Date.parse(viewerIso(message.createdAt) ?? "");
+      if (!Number.isNaN(at)) byId.set(message.id, at);
+    }
+    for (const item of (turnItems ?? []) as ReadonlyArray<unknown>) {
+      if (item === null || typeof item !== "object" || !("id" in item)) continue;
+      const createdAt = "createdAt" in item ? item.createdAt : null;
+      const at = typeof createdAt === "string" ? Date.parse(createdAt) : Number.NaN;
+      if (typeof item.id === "string" && !Number.isNaN(at)) byId.set(item.id, at);
+    }
+    return byId;
+  }, [messages, turnItems]);
+  const pullRequests = useMemo(
+    () =>
+      new Map(
+        visibleThreadPullRequests(shell?.pullRequests ?? []).map(
+          (link): [string, ShelfPullRequest] => [
+            canonicalLinkKey(link.url),
+            { state: link.snapshot?.state ?? "open", title: link.snapshot?.title ?? null },
+          ],
+        ),
+      ),
+    [shell?.pullRequests],
+  );
+  const paths = useMemo(
+    () => artifacts.flatMap((artifact) => ("meta" in artifact ? [artifact.meta.filePath] : [])),
+    [artifacts],
+  );
+  const missingPaths = useMissingArtifactFiles(threadRef?.environmentId ?? null, paths, checkFiles);
+  return useMemo(
+    () =>
+      shelfEntries({
+        artifacts,
+        mentionedAt: (artifact) => dates.get(artifact.messageId) ?? null,
+        pullRequests,
+        missingPaths,
+        pinned,
+        hidden,
+        now,
+      }),
+    [artifacts, dates, hidden, missingPaths, now, pinned, pullRequests],
   );
 }
 

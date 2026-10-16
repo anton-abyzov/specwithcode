@@ -111,7 +111,7 @@ With `specweave:read` a mod sees the increments under `<project>/.specweave/incr
 ```ts
 {
   increments: Array<{
-    project: string; // the Studio project's title
+    project: string; // the SpecWithCode project's title
     id: string; // "0894-consolidate-agent-skills"
     title: string | null;
     status: string; // metadata.json status: active, planned, completed...

@@ -486,11 +486,11 @@ describe("CodexAdapterV2 runtime policy", () => {
       assert.equal(params.collaborationMode?.mode, "default");
       assert.include(
         params.additionalContext?.studio_code_orchestration?.value ?? "",
-        "Use `delegate_task`",
+        "otherwise `delegate_task`",
       );
       assert.include(
         params.additionalContext?.studio_code_orchestration?.value ?? "",
-        "structured object, never as JSON text",
+        "Never block-wait",
       );
     }),
   );

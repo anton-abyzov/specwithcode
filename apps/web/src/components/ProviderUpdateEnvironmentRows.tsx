@@ -13,7 +13,12 @@ import {
 
 import { cn } from "~/lib/utils";
 import { serverEnvironment } from "~/state/server";
-import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
+import { useEnvironment } from "~/state/environments";
+import {
+  providerManageBlockedText,
+  readEnvironmentScope,
+  useEnvironmentScopeAccess,
+} from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useLocalEnvironmentUpdateGroups } from "./ProviderUpdateLaunchNotification.environments";
 import {
@@ -120,7 +125,14 @@ function EnvironmentUpdateRow({
   readonly status: ProviderUpdateRowStatus;
   readonly onUpdate: () => void;
 }) {
-  const canManageProviders = useEnvironmentScope(group.environmentId, AuthProvidersManageScope);
+  const connection = useEnvironment(group.environmentId)?.connection;
+  const manageAccess = useEnvironmentScopeAccess(
+    group.environmentId,
+    AuthProvidersManageScope,
+    connection,
+  );
+  const canManageProviders = manageAccess === "granted";
+  const blockedText = providerManageBlockedText(manageAccess);
   let trailing: ReactNode;
   switch (status.kind) {
     case "loading":
@@ -151,11 +163,7 @@ function EnvironmentUpdateRow({
       <div className="flex min-w-0 flex-col">
         <span className="truncate font-medium text-foreground">{group.label}</span>
         <span className={cn("truncate text-xs", rowToneClass(status.kind))}>{status.text}</span>
-        {!canManageProviders ? (
-          <span className="text-xs text-muted-foreground">
-            This connection cannot manage provider accounts.
-          </span>
-        ) : null}
+        {blockedText ? <span className="text-xs text-muted-foreground">{blockedText}</span> : null}
       </div>
       <div className="shrink-0">{trailing}</div>
     </div>

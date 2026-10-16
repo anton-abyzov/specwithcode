@@ -40,10 +40,16 @@ import {
   base64UrlDecodeUtf8,
   base64UrlEncode,
   resolveLegacySessionCookieName,
+  resolveMovedSessionCookiePrefix,
   resolveSessionCookieName,
   signPayload,
   timingSafeEqualBase64Url,
 } from "./utils.ts";
+
+export interface LegacySessionCookie {
+  readonly name: string;
+  readonly token: string;
+}
 
 export interface IssuedSession {
   readonly sessionId: AuthSessionId;
@@ -384,6 +390,13 @@ export class SessionStore extends Context.Service<
   {
     readonly cookieName: string;
     readonly legacyCookieName: string | undefined;
+    /**
+     * A session cookie this server issued under an earlier name: the legacy
+     * remote name, or a loopback name from before the state directory moved.
+     */
+    readonly findLegacyCookie: (
+      cookies: Readonly<Record<string, string | undefined>>,
+    ) => LegacySessionCookie | undefined;
     readonly issue: (input?: {
       readonly ttl?: Duration.Duration;
       readonly subject?: string;
@@ -526,6 +539,25 @@ export const make = Effect.gen(function* () {
   } as const;
   const cookieName = resolveSessionCookieName(cookieInput);
   const legacyCookieName = resolveLegacySessionCookieName(cookieInput);
+  const movedCookiePrefix = resolveMovedSessionCookiePrefix(cookieInput);
+  const findLegacyCookie = (
+    cookies: Readonly<Record<string, string | undefined>>,
+  ): LegacySessionCookie | undefined => {
+    if (legacyCookieName !== undefined) {
+      const token = cookies[legacyCookieName];
+      return token === undefined ? undefined : { name: legacyCookieName, token };
+    }
+    if (movedCookiePrefix === undefined) return undefined;
+    for (const [name, token] of Object.entries(cookies)) {
+      if (name === cookieName || !name.startsWith(movedCookiePrefix) || !token) continue;
+      const [encodedPayload, signature, extra] = token.split(".");
+      if (!encodedPayload || !signature || extra !== undefined) continue;
+      if (timingSafeEqualBase64Url(signature, signPayload(encodedPayload, signingSecret))) {
+        return { name, token };
+      }
+    }
+    return undefined;
+  };
   const devAuth = resolveReusableDevAuth(serverConfig);
   if (devAuth) {
     yield* authSessions
@@ -1185,6 +1217,7 @@ export const make = Effect.gen(function* () {
   return SessionStore.of({
     cookieName,
     legacyCookieName,
+    findLegacyCookie,
     issue,
     verify,
     renewWorkerGrant,

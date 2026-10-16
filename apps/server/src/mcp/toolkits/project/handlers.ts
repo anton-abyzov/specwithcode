@@ -388,6 +388,14 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           message:
             "Pause, auto-resume and the worker machine are the user's to change in project settings. To archive or restore a project, call studio_project_request; the user approves it.",
         });
+      // The context labels these the user's own instructions, ranked above agent memory;
+      // an agent that could rewrite them could raise its own text to that rank.
+      if (lifecycle?.instructions !== undefined)
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message:
+            "Project instructions are the user's to change in project settings. Save what you learned with studio_project_memory_write instead.",
+        });
       return yield* projects
         .update({ ...input, commandId: yield* newCommandId() })
         .pipe(Effect.mapError(projectFailure));

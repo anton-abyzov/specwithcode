@@ -2725,6 +2725,7 @@ const make = Effect.gen(function* () {
           );
         return {
           threadId: input.threadId,
+          threadLink: formatStudioThreadLink(input.threadId, target.thread.title || "thread"),
           messageId,
           runId: result.run.id,
           status: result.run.status,

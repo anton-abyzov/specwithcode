@@ -27,6 +27,7 @@ vi.mock("@legendapp/list/react", () => ({
   ),
 }));
 vi.mock("./ModelPickerSidebar", () => ({ ModelPickerSidebar: () => null }));
+vi.mock("./ProviderInstanceIcon", () => ({ ProviderInstanceIcon: () => null }));
 vi.mock("../ui/combobox", () => ({
   Combobox: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   ComboboxListVirtualized: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -166,5 +167,71 @@ describe("model picker provider management", () => {
   it("does not render a management action without a destination", async () => {
     await mount({}, false);
     expect(button("Add or manage providers")).toBeUndefined();
+  });
+});
+
+describe("model picker one-click setup", () => {
+  const quickSetup = (
+    overrides: Partial<NonNullable<ComponentProps<typeof ModelPickerContent>["quickSetup"]>> = {},
+  ) => ({
+    installable: new Map(),
+    elsewhere: [],
+    canManage: true,
+    pending: new Set<string>(),
+    errors: new Map<string, string>(),
+    install: vi.fn(),
+    enableHere: vi.fn(),
+    ...overrides,
+  });
+
+  it("installs an unprepared registry agent from the picker without leaving the chat", async () => {
+    const unprepared = {
+      ...ready,
+      installed: false,
+      status: "warning" as const,
+      snapshot: { ...ready.snapshot, installed: false, status: "warning" as const },
+    };
+    const setup = quickSetup({ installable: new Map([[instanceId, "github-copilot-cli"]]) });
+    const onOpenProviderSetup = vi.fn();
+    const { calls } = await mount({
+      instanceEntries: [unprepared],
+      onOpenProviderSetup,
+      quickSetup: setup,
+    });
+    expect(container.textContent).toContain("not installed on this machine yet");
+    await act(async () => button("Install GitHub Copilot")!.click());
+    expect(setup.install).toHaveBeenCalledWith(instanceId);
+    expect(onOpenProviderSetup).not.toHaveBeenCalled();
+    expect(calls).toEqual([]);
+  });
+
+  it("offers providers from other machines and turns one on here", async () => {
+    const grok = {
+      identity: "driver:grok",
+      driverKind: ProviderDriverKind.make("grok"),
+      displayName: "Grok",
+      agentId: null,
+      entry: ready,
+      machineLabels: ["M4 Max"],
+    };
+    const setup = quickSetup({ elsewhere: [grok] });
+    await mount({ quickSetup: setup });
+    expect(container.textContent).toContain("On your other machines");
+    expect(container.textContent).toContain("Grok · ready on M4 Max");
+    await act(async () => button("Turn on here")!.click());
+    expect(setup.enableHere).toHaveBeenCalledWith(grok);
+  });
+
+  it("keeps the action disabled without permission to manage providers", async () => {
+    const grok = {
+      identity: "driver:grok",
+      driverKind: ProviderDriverKind.make("grok"),
+      displayName: "Grok",
+      agentId: null,
+      entry: ready,
+      machineLabels: ["M4 Max"],
+    };
+    await mount({ quickSetup: quickSetup({ elsewhere: [grok], canManage: false }) });
+    expect(button("Turn on here")!.disabled).toBe(true);
   });
 });

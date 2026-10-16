@@ -6,65 +6,50 @@ import {
   studioOrchestrationPromptForFirstRun,
   studioOrchestrationSystemPrompt,
 } from "./StudioOrchestrationInstructions.ts";
+import { DelegateTaskTool, ScheduleTaskTool } from "../mcp/toolkits/orchestrator/tools.ts";
 
 describe("SpecWithCode orchestration provider instructions", () => {
   it("distinguishes delegated subagents from ordinary top-level threads", () => {
-    assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "Use `delegate_task`");
+    assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "otherwise `delegate_task`");
     assert.include(
       STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
-      "ordinary top-level SpecWithCode conversations",
+      "only when the user asks for separate threads",
     );
-    assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "Never use them merely");
-    assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "cross-provider");
-    assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "call `delegate_task` again");
+    assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "Never block-wait");
     assert.include(
       STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
-      "Do not use `studio_thread_send` on `childThreadId`",
+      "Never ask for, invent or repeat a secret",
     );
   });
 
-  it("briefs and relays delegated reports in the chosen response style", () => {
-    assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "Reports from delegated work");
-    assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "Follow the `<response_style>` rules");
-    assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "Claude's Agent tool");
-    // The style decides between a plain short result and a labeled report.
+  it("leaves how to call each tool to that tool's description", () => {
+    // Moved out of the per-turn prose; the tool carries it to whoever calls it.
     assert.include(
-      STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
-      "ask for its final result in that style and pass the style on",
-    );
-    assert.notInclude(
-      STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
-      "so SpecWithCode shows it as a document",
+      DelegateTaskTool.description,
+      "call delegate_task again with the original brief",
     );
     assert.include(
-      STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
-      "A result that fits in a few lines stays a plain message.",
+      DelegateTaskTool.description,
+      "not the target for starting another delegated review round",
     );
-    assert.include(
-      STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
-      "long inventories, tables and logs in a file, referenced by path",
-    );
-    assert.include(
-      STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
-      "SpecWithCode marks that thread Blocked",
-    );
-    assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "do not paste the whole report");
-    assert.include(
-      STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
-      "quote any error, failing test or security warning in it exactly",
-    );
-    // The length rule lives in the response style so Detailed can relax it; a
-    // runtime that sends no style block still gets the old 5-line rule.
-    assert.include(
-      STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
-      "when none is given, keep a delegated report to the outcome in at most 5 short lines",
-    );
+    assert.include(ScheduleTaskTool.description, "STRUCTURED OBJECT, never JSON text");
+    assert.include(ScheduleTaskTool.description, "bindToCurrentThread=true");
+    assert.notInclude(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "everyMs");
+    assert.notInclude(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "workspaceStrategy");
+    assert.notInclude(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "<browser_automation>");
+    // About 270 tokens; it was about 1,900.
+    assert.isAtMost(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.length, 1_200);
   });
 
-  it("documents structured schedules instead of JSON strings", () => {
-    assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "structured object, never as JSON text");
-    assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, '"everyMs":3600000');
-    assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "bindToCurrentThread=false");
+  it("tells only ACP agents about the terminal bridge", () => {
+    assert.notInclude(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "STUDIO_ACP_MCP_NODE");
+    assert.include(
+      studioAcpPromptWithInstructions({
+        prompt: "Inspect the repository.",
+        state: { interactionMode: "default", hasStudioMcp: true },
+      }),
+      "STUDIO_ACP_MCP_NODE",
+    );
   });
 
   it("injects prompt fallback only for an MCP-enabled first run", () => {

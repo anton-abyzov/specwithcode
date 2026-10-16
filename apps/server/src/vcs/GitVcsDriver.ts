@@ -38,6 +38,13 @@ import {
   PATCH_RENDER_PREFIX_ARGS,
   splitNullSeparatedGitStdoutPaths,
 } from "./GitVcsDriverCore.ts";
+import {
+  checkpointHeadOid,
+  checkpointMessage,
+  headMoveOnlyPaths,
+  localCommitsSince,
+  parseCommitPaths,
+} from "../checkpointing/headMoveAttribution.ts";
 import * as VcsDriver from "./VcsDriver.ts";
 import * as VcsProcess from "./VcsProcess.ts";
 
@@ -1056,7 +1063,11 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           });
         }
 
-        const message = `specweave-studio checkpoint ref=${input.checkpointRef}`;
+        // The HEAD it was taken at lets a later diff tell edits from a checkout or pull.
+        const message = checkpointMessage(
+          input.checkpointRef,
+          headExists ? yield* resolveHeadCommit(input.cwd) : null,
+        );
         const commitTreeResult = yield* execute({
           operation,
           cwd: input.cwd,
@@ -1080,6 +1091,77 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           args: [...durableWrite, "update-ref", input.checkpointRef, commitOid],
         });
       }).pipe(Effect.ensuring(cleanupTempIndex));
+    }),
+
+    headMovePaths: Effect.fn("GitVcsDriver.checkpoints.headMovePaths")(function* (input) {
+      const operation = "GitVcsDriver.checkpoints.headMovePaths";
+      const none: ReadonlySet<string> = new Set();
+      const readCheckpoint = (checkpointRef: string) =>
+        execute({
+          operation,
+          cwd: input.cwd,
+          args: ["log", "-1", "--format=%ct%n%B", `${checkpointRef}^{commit}`],
+          allowNonZeroExit: true,
+        }).pipe(
+          Effect.map((result) => {
+            if (result.exitCode !== 0) return null;
+            const [time, ...body] = result.stdout.split("\n");
+            const head = checkpointHeadOid(body.join("\n"));
+            return head === null ? null : { time: Number(time), head };
+          }),
+        );
+      const from = yield* readCheckpoint(input.fromCheckpointRef);
+      const to = yield* readCheckpoint(input.toCheckpointRef);
+      if (from === null || to === null || from.head === to.head) return none;
+      const listing = (args: ReadonlyArray<string>) =>
+        execute({
+          operation,
+          cwd: input.cwd,
+          args: ["-c", "core.quotePath=false", ...args],
+          allowNonZeroExit: true,
+          maxOutputBytes: CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
+          outputMode: "truncate",
+        });
+      const log = yield* listing([
+        "log",
+        "--no-renames",
+        "--max-count=5000",
+        "--format=@@%H",
+        "--name-only",
+        `${from.head}...${to.head}`,
+      ]);
+      const reflog = yield* listing([
+        "reflog",
+        "show",
+        "--date=unix",
+        "--format=%H%x09%gd%x09%gs",
+        "--max-count=2000",
+        "HEAD",
+      ]);
+      const dirtyBefore = yield* listing([
+        "diff",
+        "--name-only",
+        "--no-renames",
+        `${input.fromCheckpointRef}^{commit}`,
+        from.head,
+      ]);
+      const dirtyAfter = yield* listing([
+        "diff",
+        "--name-only",
+        "--no-renames",
+        `${input.toCheckpointRef}^{commit}`,
+        to.head,
+      ]);
+      // Without the whole picture, keep every file rather than hide real edits.
+      const results = [log, reflog, dirtyBefore, dirtyAfter];
+      if (results.some((result) => result.exitCode !== 0 || result.stdoutTruncated)) return none;
+      const lines = (text: string) => text.split("\n").filter((line) => line.length > 0);
+      return headMoveOnlyPaths({
+        commits: parseCommitPaths(log.stdout),
+        localCommits: localCommitsSince(reflog.stdout, from.time),
+        dirtyBefore: lines(dirtyBefore.stdout),
+        dirtyAfter: lines(dirtyAfter.stdout),
+      });
     }),
 
     hasCheckpointRef: (input) =>

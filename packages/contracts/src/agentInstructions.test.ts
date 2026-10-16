@@ -4,6 +4,7 @@ import {
   DEFAULT_AGENT_INSTRUCTIONS,
   AgentInstructions,
   ClaudeWorkflowMode,
+  LEGACY_DEFAULT_AGENT_INSTRUCTIONS,
   LIVE_DATABASE_INSTRUCTIONS,
   resolveAgentInstructions,
   ResponseStyle,
@@ -31,12 +32,28 @@ describe("shared agent instructions", () => {
     expect(resolveAgentInstructions({})).toBe("");
   });
 
+  it("starts Settings > Agents empty and treats the retired default as nothing written", () => {
+    expect(DEFAULT_AGENT_INSTRUCTIONS).toBe("");
+    expect(
+      resolveAgentInstructions({
+        globalInstructions: `${LEGACY_DEFAULT_AGENT_INSTRUCTIONS}\n`,
+        projectInstructions: "Use Node 22",
+      }),
+    ).toBe("## Project instructions\nUse Node 22");
+    // Any edit makes the text the user's own, so it is sent as written.
+    expect(
+      resolveAgentInstructions({
+        globalInstructions: `${LEGACY_DEFAULT_AGENT_INSTRUCTIONS}\nMine.`,
+      }),
+    ).toContain("Mine.");
+  });
+
   it("always ends with the live database rule, even when the user wrote nothing", () => {
     expect(withServiceInstructions("")).toBe(LIVE_DATABASE_INSTRUCTIONS);
     expect(withServiceInstructions(" ## Environment instructions\nAlways verify ")).toBe(
       `## Environment instructions\nAlways verify\n\n${LIVE_DATABASE_INSTRUCTIONS}`,
     );
-    expect(LIVE_DATABASE_INSTRUCTIONS).toContain("not even read-only");
+    expect(LIVE_DATABASE_INSTRUCTIONS).toContain("even read-only");
     expect(LIVE_DATABASE_INSTRUCTIONS).toContain("specweave-studio db snapshot");
     expect(LIVE_DATABASE_INSTRUCTIONS).toContain("specweave-studio db query");
   });

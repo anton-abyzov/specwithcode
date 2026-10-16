@@ -1,4 +1,9 @@
-import { DEFAULT_UNIFIED_SETTINGS, EnvironmentId, ProjectId } from "@specweave-studio/contracts";
+import {
+  DEFAULT_UNIFIED_SETTINGS,
+  EnvironmentId,
+  LEGACY_DEFAULT_AGENT_INSTRUCTIONS,
+  ProjectId,
+} from "@specweave-studio/contracts";
 import { act, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -233,5 +238,16 @@ describe("agent instruction settings", () => {
     expect(instructionValuesAreMixed(rows)).toBe(false);
     expect(previewAgentInstructions(rows[0]!)).toContain("Run project tests.");
     expect(rows[0]!.editableInstructions).not.toContain("Use headless browsers.");
+  });
+
+  it("shows a saved copy of the retired default as empty global instructions", () => {
+    state.globalRules = [LEGACY_DEFAULT_AGENT_INSTRUCTIONS];
+    state.projectRules = [""];
+    const [row] = agentInstructionPreviews(
+      targets().map((target) => ({ ...target, projectId: null })),
+      environments(),
+    );
+    expect(row!.editableInstructions).toBe("");
+    expect(previewAgentInstructions(row!)).toBe("");
   });
 });

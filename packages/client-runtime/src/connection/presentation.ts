@@ -2,7 +2,7 @@ import type { ServerConfig } from "@specweave-studio/contracts";
 import * as Option from "effect/Option";
 
 import type { ConnectionCatalogEntry } from "./catalog.ts";
-import type { SupervisorConnectionState } from "./model.ts";
+import type { ConnectionBlockedReason, SupervisorConnectionState } from "./model.ts";
 
 export type EnvironmentConnectionPhase =
   | "available"
@@ -17,6 +17,8 @@ export interface EnvironmentConnectionPresentation {
   readonly phase: EnvironmentConnectionPhase;
   readonly error: string | null;
   readonly traceId: string | null;
+  /** Why a connection stopped retrying, when it did ("authentication" is a lost sign-in). */
+  readonly blockedReason?: ConnectionBlockedReason;
 }
 
 export interface EnvironmentPresentation {
@@ -52,6 +54,9 @@ export function presentConnectionState(
         phase: state.lastFailure?.reason === "unsupported" ? "unsupported" : "error",
         error: state.lastFailure?.message ?? null,
         traceId: state.lastFailure?.traceId ?? null,
+        ...(state.lastFailure?._tag === "ConnectionBlockedError"
+          ? { blockedReason: state.lastFailure.reason }
+          : {}),
       };
   }
 }

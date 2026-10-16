@@ -11,7 +11,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 interface TestToast {
   readonly id: string;
-  options: { readonly data?: { readonly onClose?: () => void } };
+  options: {
+    readonly description?: string | null;
+    readonly data?: { readonly onClose?: () => void };
+  };
   open: boolean;
 }
 
@@ -19,6 +22,7 @@ const testState = vi.hoisted(() => ({
   providers: [] as ReadonlyArray<ServerProvider>,
   toasts: [] as TestToast[],
   nextToastId: 0,
+  manageAccess: "granted" as "granted" | "denied" | "signed-out" | "unknown",
 }));
 
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => () => undefined }));
@@ -31,8 +35,11 @@ vi.mock("../state/environments", () => ({
   usePrimaryEnvironment: () => ({ environmentId: "env-primary" }),
 }));
 vi.mock("../state/session", () => ({
-  readEnvironmentScope: () => true,
-  useEnvironmentScope: () => true,
+  readEnvironmentScope: () => testState.manageAccess === "granted",
+  useEnvironmentScopeAccess: () => testState.manageAccess,
+  readEnvironmentScopeAccess: () => testState.manageAccess,
+  providerManageBlockedText: (access: string) =>
+    access === "granted" ? null : `blocked: ${access}`,
 }));
 vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("./chat/ProviderInstanceIcon", () => ({ ProviderInstanceIcon: () => null }));
@@ -103,6 +110,7 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   removeLocalStorageItem(PROVIDER_UPDATE_DISMISSALS_STORAGE_KEY);
   testState.toasts = [];
+  testState.manageAccess = "granted";
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -159,5 +167,25 @@ describe("ProviderUpdatePrimaryNotification", () => {
 
     expect(testState.toasts).toHaveLength(1);
     expect(openToasts()).toHaveLength(0);
+  });
+
+  it("waits for this browser's session instead of blaming the connection", async () => {
+    testState.providers = [codexBehind("0.162.4")];
+    testState.manageAccess = "unknown";
+    await act(async () => root.render(<Harness />));
+    expect(testState.toasts).toHaveLength(0);
+
+    testState.manageAccess = "granted";
+    await act(async () => rerender());
+    expect(openToasts()).toHaveLength(1);
+    expect(openToasts()[0]?.options.description).not.toMatch(/cannot manage/);
+  });
+
+  it("says the browser is signed out rather than lacking provider access", async () => {
+    testState.providers = [codexBehind("0.162.5")];
+    testState.manageAccess = "signed-out";
+    await act(async () => root.render(<Harness />));
+    expect(openToasts()).toHaveLength(1);
+    expect(openToasts()[0]?.options.description).toBe("blocked: signed-out");
   });
 });

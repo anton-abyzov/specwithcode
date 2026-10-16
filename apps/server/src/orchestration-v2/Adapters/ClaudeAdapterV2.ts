@@ -129,6 +129,7 @@ import {
 } from "../../provider/ClaudeWorkflowPolicy.ts";
 import { STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS } from "../../provider/StudioOrchestrationInstructions.ts";
 import { mcpToolPresentation, normalizeMcpText } from "../../provider/McpToolPresentation.ts";
+import { HEADLESS_BROWSER_ENVIRONMENT } from "../../provider/RuntimeInstructions.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import { makeProviderFailure, makeProviderRetryTurnItem } from "../ProviderFailure.ts";
@@ -7510,6 +7511,7 @@ export function makeClaudeAdapterV2(
             // instead of asking the model to hand off.
             environment: {
               ...adapterOptions.environment,
+              ...HEADLESS_BROWSER_ENVIRONMENT,
               SPECWEAVE_STUDIO_THREAD_ID: turnInput.threadId,
             },
             tools: queryPolicy.tools ?? CLAUDE_CODE_PRESET_TOOLS,

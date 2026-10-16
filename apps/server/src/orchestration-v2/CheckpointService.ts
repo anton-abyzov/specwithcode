@@ -440,7 +440,7 @@ export const layer: Layer.Layer<
                 }).pipe(Effect.as(false)),
               ),
             );
-          const files = previousExists
+          const diffFiles = previousExists
             ? yield* checkpointStore
                 .diffCheckpoints({
                   cwd: input.scope.cwd,
@@ -468,6 +468,26 @@ export const layer: Layer.Layer<
                   ),
                 )
             : [];
+          // A checkout or pull during the turn is not the turn's work; leave its files out.
+          const movedByHead =
+            diffFiles.length > 0 && checkpointStore.headMovePaths
+              ? yield* checkpointStore
+                  .headMovePaths({
+                    cwd: input.scope.cwd,
+                    fromCheckpointRef: previousCheckpointRef,
+                    toCheckpointRef: checkpointRef,
+                  })
+                  .pipe(
+                    Effect.catch((cause) =>
+                      Effect.logWarning("orchestration V2 checkpoint head move check failed", {
+                        scopeId: input.scope.id,
+                        checkpointRef,
+                        cause: String(cause),
+                      }).pipe(Effect.as(new Set<string>())),
+                    ),
+                  )
+              : new Set<string>();
+          const files = diffFiles.filter((file) => !movedByHead.has(file.path));
 
           return makeCheckpoint({
             id: checkpointId,

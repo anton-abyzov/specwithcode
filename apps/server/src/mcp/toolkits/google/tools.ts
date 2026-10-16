@@ -23,7 +23,7 @@ export const GoogleToolkit = Toolkit.make(
   Tool.make("studio_google_status", {
     ...shared,
     description:
-      "Check this project's native Google setup before Calendar, Gmail or Drive work. Distinguishes missing sign-in, project permission, consent and API failures. The default reads saved configuration only. Set checkConnection:true to verify only services this project may read using content-free API probes. Connections in other apps and studio_project_connections_list are separate. Never infer working Google access from a saved sign-in or from provider model availability.",
+      "Check this project's native Google setup before Calendar, Gmail or Drive work. Distinguishes missing sign-in, project permission, consent and API failures. The default reads saved configuration only. Set checkConnection:true to verify only services this project may read using content-free API probes. Connections in other apps and studio_project_connections_list are separate. Never infer working Google access from a saved sign-in, an empty connection list or provider model availability. When access is missing, report the returned setup or permission step: sign-in and project access are the user's to grant in Settings > Google account.",
     parameters: Schema.Struct({
       checkConnection: Schema.optional(Schema.Boolean),
     }),

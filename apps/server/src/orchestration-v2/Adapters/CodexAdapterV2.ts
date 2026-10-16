@@ -116,6 +116,7 @@ import {
 } from "../../provider/EventNdjsonLogger.ts";
 import { ProviderEventLoggers } from "../../provider/ProviderEventLoggers.ts";
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "../../provider/codexLaunchArgs.ts";
+import { HEADLESS_BROWSER_ENVIRONMENT } from "../../provider/RuntimeInstructions.ts";
 import {
   mergeNativeSubscriptionEnvironment,
   mergeProviderInstanceEnvironment,
@@ -1497,6 +1498,7 @@ export const layerAppServerClientFactory: Layer.Layer<
           const scope = yield* Scope.Scope;
           const environment = {
             ...input.environment,
+            ...HEADLESS_BROWSER_ENVIRONMENT,
             ...(input.settings.homePath ? { CODEX_HOME: input.settings.homePath } : {}),
             // SpecWeave hooks read it: inside Studio they save a checkpoint
             // instead of asking the model to hand off.

@@ -676,6 +676,47 @@ if (fallbackFixture) {
     s.id === "coord" ? { ...s, modelSelection: { instanceId: "codex", model: "gpt-6.1-sol" } } : s,
   );
 }
+// `?mention`: the coordinator named a worker by its plain title, without a link.
+const mentionFixture = new URLSearchParams(window.location.search).has("mention");
+const mentionProjection = {
+  messages: [
+    {
+      id: "m1",
+      role: "user",
+      createdBy: "user",
+      runId: "run-mention",
+      text: "Ask the extension worker to publish the store listing.",
+      createdAt: minutesAgo(3),
+      attachments: [],
+    },
+    {
+      id: "m2",
+      role: "assistant",
+      runId: "run-mention",
+      text: "Sent to the Release Chrome extension worker.",
+      createdAt: minutesAgo(2),
+      attachments: [],
+    },
+    {
+      id: "m3",
+      role: "assistant",
+      runId: "run-mention",
+      text: "The docs are fine. Run `Release Chrome extension` only from its worker.",
+      createdAt: minutesAgo(1),
+      attachments: [],
+    },
+  ],
+  runs: [{ id: "run-mention", status: "completed", ordinal: 1, requestedAt: minutesAgo(3) }],
+  turnItems: [],
+};
+if (mentionFixture)
+  shells = [
+    shell("coord", "Project coordinator"),
+    shell("thread:delegated-task:command%3Amcp%3Arelease-chrome", "Release Chrome extension", {
+      createdBy: "agent",
+    }),
+    shell("docs", "Docs", { createdBy: "agent" }),
+  ];
 const baseThreadProjection = () => ({
   projection: recovery
     ? {
@@ -793,6 +834,7 @@ export const useThreadProjection = (ref) => {
   // The fixture mode never changes on a page, so the hook order is stable.
   if (streamFixture) return useSyncExternalStore(subscribeStream, () => streamProjection);
   if (fallbackFixture) return { projection: fallbackProjection };
+  if (mentionFixture) return { projection: mentionProjection };
   const base = baseThreadProjection();
   return subagentsFixture
     ? {

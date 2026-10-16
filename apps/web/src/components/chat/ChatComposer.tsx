@@ -1151,6 +1151,7 @@ import {
 } from "@specweave-studio/client-runtime/providerSkills";
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useDelayedStatus } from "../../hooks/useDelayedStatus";
+import { useProviderQuickSetup } from "../../hooks/useProviderQuickSetup";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { usePhoneKeyboard } from "../../hooks/usePhoneKeyboard";
 import { usePanelAnimationSettings } from "../../panelAnimations";
@@ -2120,6 +2121,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ),
     [providerStatuses, settings],
   );
+  const providerQuickSetup = useProviderQuickSetup({
+    environmentId,
+    entries: providerInstanceEntries,
+    settings,
+  });
   const selectedProviderByThreadId = composerDraft.activeProvider ?? null;
   const {
     selectedProviderEntry,
@@ -5719,6 +5725,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           onProviderModelSelect(instanceId, model);
         }}
         onOpenProviderSetup={onOpenProviderSetup}
+        quickSetup={providerQuickSetup}
       />
 
       <>

@@ -1,4 +1,8 @@
-import { resolveAgentInstructions, type ServerSettings } from "@specweave-studio/contracts";
+import {
+  resolveAgentInstructions,
+  userAgentInstructions,
+  type ServerSettings,
+} from "@specweave-studio/contracts";
 
 import type { ScopedSettingsTarget } from "./scopedSettings";
 
@@ -25,11 +29,13 @@ export function agentInstructionPreviews(
     const settings = environments.find(
       (environment) => environment.environmentId === target.environmentId,
     )?.serverConfig?.settings;
-    const globalInstructions = settings?.agentInstructions ?? "";
+    const globalInstructions = userAgentInstructions(settings?.agentInstructions);
     const projectInstructions =
       target.projectId === null
         ? ""
-        : (settings?.projectSettingsOverrides[target.projectId]?.agentInstructions ?? "");
+        : userAgentInstructions(
+            settings?.projectSettingsOverrides[target.projectId]?.agentInstructions,
+          );
     return {
       key: `${target.environmentId}:${target.projectId ?? "all"}`,
       label: target.label,

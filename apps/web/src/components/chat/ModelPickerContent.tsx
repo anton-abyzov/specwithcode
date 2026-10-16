@@ -11,6 +11,8 @@ import { memo, useMemo, useState, useCallback, useEffect, useLayoutEffect, useRe
 import { ChevronRightIcon } from "lucide-react";
 import { ModelListRow } from "./ModelListRow";
 import { ModelPickerSidebar } from "./ModelPickerSidebar";
+import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
+import type { ProviderQuickSetup } from "~/hooks/useProviderQuickSetup";
 import { getProviderStatusMessage, hasProviderSetup } from "./ProviderStatusBanner";
 import {
   modelPickerLegacySectionKey,
@@ -103,11 +105,12 @@ export function shouldIncludeModelPickerOption(input: {
 export function shouldOfferModelPickerSetup(
   entry: ProviderInstanceEntry,
   options: ReadonlyArray<ModelEsque>,
+  oneClickInstall = false,
 ): boolean {
   return (
     entry.enabled &&
     entry.status !== "disabled" &&
-    hasProviderSetup(entry.snapshot) &&
+    (oneClickInstall || hasProviderSetup(entry.snapshot)) &&
     (!isProviderInstancePickerReady(entry) ||
       !entry.installed ||
       entry.snapshot.auth.status === "unauthenticated" ||
@@ -183,6 +186,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   onRequestClose?: () => void;
   onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
   onManageProviders?: () => void;
+  /** One-click install here, and providers ready on the user's other machines. */
+  quickSetup?: ProviderQuickSetup;
   getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
   onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
 }) {
@@ -249,6 +254,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     shouldOfferModelPickerSetup(
       activeEntry,
       modelOptionsByInstance.get(props.activeInstanceId) ?? [],
+      props.quickSetup?.installable.has(props.activeInstanceId),
     );
   const [selectedInstanceId, setSelectedInstanceId] = useState<ProviderInstanceId | "favorites">(
     () => {
@@ -341,7 +347,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     if (props.onOpenProviderSetup) {
       for (const entry of instanceEntries) {
         if (
-          shouldOfferModelPickerSetup(entry, modelOptionsByInstance.get(entry.instanceId) ?? [])
+          shouldOfferModelPickerSetup(
+            entry,
+            modelOptionsByInstance.get(entry.instanceId) ?? [],
+            props.quickSetup?.installable.has(entry.instanceId),
+          )
         ) {
           instanceIds.add(entry.instanceId);
         }
@@ -354,6 +364,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     modelOptionsByInstance,
     props.activeInstanceId,
     props.onOpenProviderSetup,
+    props.quickSetup,
   ]);
 
   // Flatten models into a searchable array. One pass over the
@@ -582,12 +593,17 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             shouldOfferModelPickerSetup(
               entry,
               modelOptionsByInstance.get(entry.instanceId) ?? [],
+              props.quickSetup?.installable.has(entry.instanceId),
             ) &&
             (selectedEntry
               ? entry.instanceId === selectedEntry.instanceId
               : filteredModels.length === 0),
         )
       : [];
+
+  const elsewhereSetup = props.quickSetup;
+  const otherMachineProviders =
+    elsewhereSetup && !isSearching && props.lockedProvider === null ? elsewhereSetup.elsewhere : [];
 
   const toggleLegacySection = useCallback((instanceId: ProviderInstanceId) => {
     setExpandedLegacyInstances((expanded) => {
@@ -1055,28 +1071,99 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             </div>
             {providerSetupEntries.length > 0 ? (
               <div className="max-h-44 shrink-0 overflow-y-auto border-t border-border/70 p-2">
-                {providerSetupEntries.map((entry) => (
-                  <div key={entry.instanceId} className="px-1 py-1.5 text-xs leading-snug">
-                    <p className="line-clamp-3 text-muted-foreground">
-                      {getProviderStatusMessage(entry.snapshot)}
-                    </p>
-                    <InlineButton
-                      className="mt-1"
-                      onClick={() => {
-                        props.onRequestClose?.();
-                        props.onOpenProviderSetup?.(entry.instanceId);
-                      }}
-                    >
-                      {providerSetupEntries.length > 1
-                        ? `Set up ${entry.displayName}`
-                        : "Open provider setup"}
-                    </InlineButton>
-                  </div>
-                ))}
+                {providerSetupEntries.map((entry) => {
+                  const quickSetup = props.quickSetup;
+                  const installing = quickSetup?.pending.has(entry.instanceId) === true;
+                  const installError = quickSetup?.errors.get(entry.instanceId);
+                  return (
+                    <div key={entry.instanceId} className="px-1 py-1.5 text-xs leading-snug">
+                      <p className="line-clamp-3 text-muted-foreground">
+                        {quickSetup?.installable.has(entry.instanceId)
+                          ? `${entry.displayName} is not installed on this machine yet.`
+                          : getProviderStatusMessage(entry.snapshot)}
+                      </p>
+                      {quickSetup?.installable.has(entry.instanceId) ? (
+                        <InlineButton
+                          className="mt-1"
+                          data-model-picker-install={entry.instanceId}
+                          disabled={installing || !quickSetup.canManage}
+                          onClick={() => quickSetup.install(entry.instanceId)}
+                        >
+                          {installing ? "Installing…" : `Install ${entry.displayName}`}
+                        </InlineButton>
+                      ) : (
+                        <InlineButton
+                          className="mt-1"
+                          onClick={() => {
+                            props.onRequestClose?.();
+                            props.onOpenProviderSetup?.(entry.instanceId);
+                          }}
+                        >
+                          {providerSetupEntries.length > 1
+                            ? `Set up ${entry.displayName}`
+                            : "Open provider setup"}
+                        </InlineButton>
+                      )}
+                      {installError ? (
+                        <p role="status" className="mt-1 text-destructive-foreground">
+                          {installError}
+                        </p>
+                      ) : null}
+                    </div>
+                  );
+                })}
               </div>
             ) : (
               <ComboboxEmpty className="empty:h-0">No models found</ComboboxEmpty>
             )}
+            {elsewhereSetup && otherMachineProviders.length > 0 ? (
+              <div
+                className="max-h-40 shrink-0 overflow-y-auto border-t border-border/70 p-2"
+                data-model-picker-elsewhere="true"
+              >
+                <p className="px-1 pb-1 text-2xs font-medium text-muted-foreground">
+                  On your other machines
+                </p>
+                {otherMachineProviders.map((provider) => {
+                  const quickSetup = elsewhereSetup;
+                  const enabling = quickSetup.pending.has(provider.identity);
+                  const enableError = quickSetup.errors.get(provider.identity);
+                  return (
+                    <div key={provider.identity} className="px-1 py-1 text-xs leading-snug">
+                      <div className="flex items-center gap-2">
+                        <ProviderInstanceIcon
+                          driverKind={provider.driverKind}
+                          displayName={provider.displayName}
+                          acpRegistryAgentId={provider.entry.acpRegistryAgentId}
+                          acpRegistryIconUrl={provider.entry.acpRegistryIconUrl}
+                          className="size-4 shrink-0"
+                          iconClassName="size-4"
+                        />
+                        <span className="min-w-0 flex-1 truncate">
+                          {provider.displayName}
+                          <span className="text-muted-foreground">
+                            {" "}
+                            · ready on {provider.machineLabels.join(", ")}
+                          </span>
+                        </span>
+                        <InlineButton
+                          data-model-picker-enable-here={provider.identity}
+                          disabled={enabling || !quickSetup.canManage}
+                          onClick={() => quickSetup.enableHere(provider)}
+                        >
+                          {enabling ? "Turning on…" : "Turn on here"}
+                        </InlineButton>
+                      </div>
+                      {enableError ? (
+                        <p role="status" className="mt-1 text-destructive-foreground">
+                          {enableError}
+                        </p>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
             {props.onManageProviders ? (
               <div className="shrink-0 border-t border-border/70 p-2">
                 <Button

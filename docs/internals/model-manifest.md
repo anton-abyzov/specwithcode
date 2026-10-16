@@ -16,7 +16,7 @@ capabilities from its native SDK initialization, without generating a response.
 Codex discovers models through its native account and app-server catalogs. New
 models become available through provider health refreshes (every five minutes
 with the default background settings while provider status is in use), without
-a Studio release or a manifest update. Discovery is scoped to each configured
+a SpecWithCode release or a manifest update. Discovery is scoped to each configured
 provider instance.
 
 Claude's native aliases and default resolve to the current canonical model IDs.
@@ -32,7 +32,7 @@ empty response clears it. Authentication failures and account changes invalidate
 the retained Codex list.
 
 A public model directory such as OpenRouter is not an entitlement source for a
-native Claude or Codex subscription. Native discovery controls what Studio
+native Claude or Codex subscription. Native discovery controls what SpecWithCode
 offers for those accounts; a router requires its own configured provider.
 
 `currentModels.claudeAgent` is the current-model classification overlay for

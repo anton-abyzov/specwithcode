@@ -88,6 +88,17 @@ export class CheckpointStore extends Context.Service<
     ) => Effect.Effect<string, CheckpointStoreError>;
 
     /**
+     * Paths the diff between two checkpoints holds only because HEAD moved
+     * (a checkout, pull or merge), not because the turn edited them. Empty
+     * when the driver cannot tell. Optional so test stores may omit it.
+     */
+    readonly headMovePaths?: (input: {
+      readonly cwd: string;
+      readonly fromCheckpointRef: CheckpointRef;
+      readonly toCheckpointRef: CheckpointRef;
+    }) => Effect.Effect<ReadonlySet<string>, CheckpointStoreError>;
+
+    /**
      * Delete the provided checkpoint refs.
      *
      * Best-effort delete: missing refs are tolerated.
@@ -150,6 +161,13 @@ export const make = Effect.gen(function* () {
     return yield* checkpoints.diffCheckpoints(input);
   });
 
+  const headMovePaths: NonNullable<CheckpointStore["Service"]["headMovePaths"]> = Effect.fn(
+    "headMovePaths",
+  )(function* (input) {
+    const checkpoints = yield* resolveCheckpoints("CheckpointStore.headMovePaths", input.cwd);
+    return checkpoints.headMovePaths ? yield* checkpoints.headMovePaths(input) : new Set<string>();
+  });
+
   const deleteCheckpointRefs: CheckpointStore["Service"]["deleteCheckpointRefs"] = Effect.fn(
     "deleteCheckpointRefs",
   )(function* (input) {
@@ -166,6 +184,7 @@ export const make = Effect.gen(function* () {
     hasCheckpointRef,
     restoreCheckpoint,
     diffCheckpoints,
+    headMovePaths,
     deleteCheckpointRefs,
   });
 });

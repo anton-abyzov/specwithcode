@@ -417,6 +417,118 @@ it.effect(
     }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.effect("keeps a loopback browser signed in after its state directory moves", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.nowUnsafe()));
+    const crypto = yield* Crypto.Crypto;
+    const config = Layer.effect(
+      ServerConfig.ServerConfig,
+      Effect.gen(function* () {
+        const current = yield* ServerConfig.ServerConfig;
+        return {
+          ...current,
+          mode: "web" as const,
+          host: "127.0.0.1",
+          devUrl: undefined,
+          devAuthToken: undefined,
+        };
+      }),
+    ).pipe(
+      Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "studio-auth-moved-home-" })),
+    );
+    const authContext = yield* Layer.build(
+      EnvironmentAuth.layer.pipe(
+        Layer.provide(SqlitePersistence.layerMemory),
+        Layer.provideMerge(ServerSecretStore.layer),
+        Layer.provide(ServerEnvironment.layerIdentity),
+        Layer.provide(config),
+      ),
+    );
+    const auth = Context.get(authContext, EnvironmentAuth.EnvironmentAuth);
+    const sessions = Context.get(authContext, SessionStore.SessionStore);
+    expect(sessions.legacyCookieName).toBeUndefined();
+    const port = sessions.cookieName.split("_")[2];
+    // The name this server gave its cookie before the state directory moved.
+    const movedName = `studio_session_${port}_15add52e56b4`;
+    expect(movedName).not.toBe(sessions.cookieName);
+    const pairing = yield* auth.issuePairingCredential({ scopes: ["orchestration:read"] });
+    const routes = HttpApiBuilder.layer(AuthTestApi).pipe(
+      Layer.provide(AuthHttp.layer),
+      Layer.provide(AuthHttp.layerAuthenticatedAuth),
+      Layer.provide(Layer.succeed(EnvironmentAuth.EnvironmentAuth, auth)),
+      Layer.provide(Layer.succeed(SessionStore.SessionStore, sessions)),
+      Layer.provide(
+        HttpPlatform.layer.pipe(
+          Layer.provideMerge(NodeServices.layer),
+          Layer.provideMerge(Etag.layerWeak),
+        ),
+      ),
+      Layer.provide(NodeServices.layer),
+    );
+    yield* Effect.acquireUseRelease(
+      Effect.sync(() => HttpRouter.toWebHandler(routes, { disableLogger: true })),
+      (handler) =>
+        Effect.tryPromise(async () => {
+          const requestContext = Context.make(Crypto.Crypto, crypto).pipe(
+            Context.add(
+              ServerSecretStore.ServerSecretStore,
+              Context.get(authContext, ServerSecretStore.ServerSecretStore),
+            ),
+          );
+          const issued = await handler.handler(
+            postJson("/api/auth/browser-session", { credential: pairing.credential }),
+            requestContext,
+          );
+          expect(issued.status).toBe(200);
+          const value = issued.headers
+            .getSetCookie()[0]
+            ?.split(";", 1)[0]
+            ?.split("=")
+            .slice(1)
+            .join("=");
+          expect(value).toBeTruthy();
+
+          const moved = await handler.handler(
+            new Request("http://127.0.0.1/api/auth/session", {
+              headers: { cookie: movedName + "=" + value },
+            }),
+            requestContext,
+          );
+          expect(await moved.json()).toMatchObject({ authenticated: true });
+          const movedCookies = moved.headers.getSetCookie();
+          expect(movedCookies).toHaveLength(2);
+          expect(movedCookies).toContainEqual(
+            expect.stringMatching(new RegExp("^" + movedName + "=;.*Max-Age=0")),
+          );
+          expect(movedCookies).toContainEqual(
+            expect.stringMatching(new RegExp("^" + sessions.cookieName + "=" + value + ";")),
+          );
+
+          // A cookie with the same prefix from another server is not this one's.
+          const [payload] = (value ?? "").split(".");
+          const foreign = await handler.handler(
+            new Request("http://127.0.0.1/api/auth/session", {
+              headers: { cookie: movedName + "=" + payload + ".c2lnbmVkLWVsc2V3aGVyZQ" },
+            }),
+            requestContext,
+          );
+          expect(await foreign.json()).toMatchObject({ authenticated: false });
+          expect(foreign.headers.getSetCookie()).toEqual([]);
+
+          // A cookie for another port is never read.
+          const otherPort = await handler.handler(
+            new Request("http://127.0.0.1/api/auth/session", {
+              headers: { cookie: `studio_session_${Number(port) + 1}_15add52e56b4=` + value },
+            }),
+            requestContext,
+          );
+          expect(await otherPort.json()).toMatchObject({ authenticated: false });
+        }),
+      () => Effect.void,
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.effect("exports only verified Studio Connect requests", () =>
   Effect.gen(function* () {
     const productSpans: Array<string> = [];

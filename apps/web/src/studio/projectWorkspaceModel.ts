@@ -5,6 +5,7 @@ import { resolveSidebarThreadStatus } from "../components/Sidebar.logic";
 import { isAgentOwnedProjectThread } from "./projectPaneThreads";
 import { isProjectCoordinatorThread } from "./projectCoordinatorThreads";
 import { isNestedSubagentThread } from "./threadSubagents";
+import { linkPlainThreadMentions } from "./plainThreadMentions";
 import {
   formatStudioThreadHref,
   formatStudioThreadLink,
@@ -140,7 +141,8 @@ const PROJECT_THREAD_TOKEN =
  * whichever form the agent wrote (encoded ID, raw ID, or the thread's title);
  * any other thread link is kept as written, so it still renders as a chip that
  * opens the thread elsewhere or says why it cannot. A delegated task's internal
- * node or thread ID becomes a link to the worker it names.
+ * node or thread ID becomes a link to the worker it names, and a thread named
+ * by its plain title becomes a link too (see linkPlainThreadMentions).
  */
 export function prepareProjectMarkdown(
   text: string,
@@ -148,7 +150,7 @@ export function prepareProjectMarkdown(
   /** Every thread a link could name, live or deleted (see resolveStudioThreadLink). */
   known: readonly Pick<EnvironmentThreadShell, "id" | "title" | "deletedAt">[] = [],
 ): string {
-  return text.replace(
+  const linked = text.replace(
     PROJECT_THREAD_TOKEN,
     (original, label: string | undefined, href: string | undefined, commandId?: string) => {
       if (label !== undefined && href !== undefined) {
@@ -164,14 +166,40 @@ export function prepareProjectMarkdown(
       return formatStudioThreadLink(worker.id, studioThreadLinkLabel(worker.title, "worker"));
     },
   );
+  return linkPlainThreadMentions(linked, threads);
+}
+
+type HostConnection = {
+  readonly phase: string;
+  readonly blockedReason?: string;
+};
+
+/** A short status for a host that is not connected, naming why where it is known. */
+export function hostDisconnectedLabel(connection: HostConnection | null | undefined): string {
+  if (connection?.blockedReason === "authentication") return "Signed out";
+  if (connection?.phase === "connecting") return "Connecting";
+  if (connection?.phase === "reconnecting") return "Reconnecting";
+  if (connection?.phase === "offline") return "Offline";
+  return "Disconnected";
 }
 
 export function projectAdmissionReason(
   settings: { paused: boolean; archived: boolean } | null,
   connected: boolean,
   canOperate: boolean,
+  connection?: HostConnection | null,
 ): string | null {
-  if (!connected) return "Reconnect this host to send a message.";
+  if (!connected) {
+    if (connection?.blockedReason === "authentication") {
+      return "This browser is signed out of this host. Reload the page to sign in again.";
+    }
+    if (connection?.phase === "connecting") return "Connecting to this host.";
+    if (connection?.phase === "reconnecting") {
+      return "Reconnecting to this host. If this does not clear, reload the page.";
+    }
+    if (connection?.phase === "offline") return "This device is offline.";
+    return "Reconnect this host to send a message.";
+  }
   if (!canOperate) return "This connection has read-only access.";
   if (!settings) return "Project settings are still loading.";
   if (settings.archived) return "Unarchive the project to start new work.";

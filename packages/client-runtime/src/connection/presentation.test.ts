@@ -68,6 +68,20 @@ describe("connection presentation", () => {
     expect(connectionStatusText(connection)).toBe("Client not supported");
   });
 
+  it("says when a blocked connection lost its sign-in", () => {
+    const connection = presentConnectionState(
+      supervisorState({
+        phase: "blocked",
+        lastFailure: new ConnectionBlockedError({
+          reason: "authentication",
+          detail: "The environment credential is invalid.",
+        }),
+      }),
+    );
+    expect(connection.phase).toBe("error");
+    expect(connection.blockedReason).toBe("authentication");
+  });
+
   it("preserves profile display information without exposing credentials", () => {
     expect(connectionCatalogDisplayUrl(ENTRY)).toBe("https://environment.example.test");
   });

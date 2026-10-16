@@ -650,7 +650,9 @@ function parseDpopToken(request: HttpServerRequest.HttpServerRequest): string | 
 export function selectRequestCredential(
   request: HttpServerRequest.HttpServerRequest,
   cookieName: string,
-  legacyCookieName: string | undefined,
+  findLegacyCookie: (
+    cookies: Readonly<Record<string, string | undefined>>,
+  ) => SessionStore.LegacySessionCookie | undefined,
 ) {
   const cookieToken = request.cookies[cookieName];
   if (cookieToken !== undefined) {
@@ -667,9 +669,13 @@ export function selectRequestCredential(
     return { token: dpopToken, source: "dpop" } as const;
   }
 
-  const legacyToken = legacyCookieName ? request.cookies[legacyCookieName] : undefined;
-  if (legacyToken !== undefined) {
-    return { token: legacyToken, source: "legacy-cookie" } as const;
+  const legacyCookie = findLegacyCookie(request.cookies);
+  if (legacyCookie !== undefined) {
+    return {
+      token: legacyCookie.token,
+      source: "legacy-cookie",
+      cookieName: legacyCookie.name,
+    } as const;
   }
 
   return undefined;
@@ -720,7 +726,7 @@ export const make = Effect.gen(function* () {
     const selectedCredential = selectRequestCredential(
       request,
       sessions.cookieName,
-      sessions.legacyCookieName,
+      sessions.findLegacyCookie,
     );
     const dpopToken = parseDpopToken(request);
     const hasAuthorization = request.headers.authorization !== undefined;
@@ -1238,7 +1244,7 @@ export const make = Effect.gen(function* () {
   ) => {
     const token =
       request.cookies[sessions.cookieName] ??
-      (sessions.legacyCookieName ? request.cookies[sessions.legacyCookieName] : undefined) ??
+      sessions.findLegacyCookie(request.cookies)?.token ??
       (devAuth ? request.cookies[devAuth.cookieName] : undefined);
     if (!token) return Effect.fail(new ServerAuthMissingCredentialError({}));
     return authenticateToken(token).pipe(

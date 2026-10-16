@@ -162,7 +162,7 @@ function InstructionEditor({
   const canWrite = useScopedSettingsWriteAllowed();
   const update = useUpdateScopedSettings();
   const label = project ? "Project instructions" : "Global instructions";
-  // A project adds to the global rules, so its reset clears; the global reset restores the defaults.
+  // A project adds to the global rules; both start empty, so reset clears either.
   const resetValue = project ? "" : DEFAULT_SERVER_SETTINGS.agentInstructions;
   return (
     <SettingsSection title="Agent instructions">
@@ -174,7 +174,7 @@ function InstructionEditor({
         description={
           project
             ? "Additional rules for this project. Global instructions are always included before these additions."
-            : "Sent with every coordinator and worker request, on every provider, in every project on each selected environment. They start with how SpecWithCode organizes work; edit them freely."
+            : "Your own rules, sent with every coordinator and worker request, on every provider, in every project on each selected environment. Empty by default."
         }
         mixed={mixed}
         resetAction={
@@ -224,10 +224,11 @@ function InstructionEditor({
             max={AGENT_INSTRUCTIONS_MAX_LENGTH}
           />
           <p className="text-sm text-muted-foreground">
-            SpecWithCode rules and native project instructions remain included. These reach every
-            coordinator and worker on Claude Code, Codex, Cursor, OpenCode and ACP agents, and
-            Claude workflow workers. New sessions and resumed turns use the saved rules; running
-            workers keep their launch context.
+            SpecWithCode adds its own rules (response style, safety and orchestration) after these;
+            editing or clearing this text never removes them. Native project instructions remain
+            included. These reach every coordinator and worker on Claude Code, Codex, Cursor,
+            OpenCode and ACP agents, and Claude workflow workers. New sessions and resumed turns use
+            the saved rules; running workers keep their launch context.
           </p>
           <details className="rounded-md border border-border px-3 py-2">
             <summary className="cursor-pointer text-sm font-medium">

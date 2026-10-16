@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "SpecWithCode Browser",
   "short_name": "SpecWithCode",
-  "version": "1.0.0",
-  "description": "Let your SpecWithCode agents (Claude, Codex, Grok, Gemini, Copilot, Muse) use this Chrome profile, on this computer only.",
+  "version": "1.0.1",
+  "description": "Let the coding agents you run in SpecWithCode use this Chrome profile, in a visible tab group, on this computer only.",
   "minimum_chrome_version": "120",
   "permissions": ["debugger", "tabs", "tabGroups", "storage", "alarms"],
   "background": {

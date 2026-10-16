@@ -12,10 +12,10 @@ session or catalog state.
 ## Process and account isolation
 
 The `opencode` driver probes the installed version and runs the 1.x or 2.x runtime. OpenCode's MCP
-registrations are directory-scoped, while Studio's MCP connection is thread-scoped, so threads in one
-directory must not share one Studio MCP entry.
+registrations are directory-scoped, while SpecWithCode's MCP connection is thread-scoped, so threads in one
+directory must not share one SpecWithCode MCP entry.
 
-- **1.x** uses one Studio-managed chat server per thread, so threads cannot replace each other's
+- **1.x** uses one SpecWithCode-managed chat server per thread, so threads cannot replace each other's
   connection. Catalog and text-generation work can share the
   [instance-owned helper](../../apps/server/src/provider/OpenCodeServerOwner.ts), which closes
   after an idle period. See the [1.x adapter](../../apps/server/src/orchestration-v2/Adapters/OpenCodeAdapterV2.ts).
@@ -27,10 +27,10 @@ directory must not share one Studio MCP entry.
 External OpenCode servers remain externally owned and can require an external restart to pick up
 configuration changes. OpenCode stores "always" approval grants for the whole project. Automatic
 full-access replies use `once` so they cannot widen a supervised thread's permissions on a shared
-server. On 2.x, a session-wide approval also replies `once` and becomes Studio's own rule on that session.
+server. On 2.x, a session-wide approval also replies `once` and becomes SpecWithCode's own rule on that session.
 
 Pi runs the user's own `pi` install in RPC mode and owns native extension, package, and project
-trust discovery. Studio injects only its namespaced MCP bridge, so a Pi session behaves as it does in
+trust discovery. SpecWithCode injects only its namespaced MCP bridge, so a Pi session behaves as it does in
 the Pi TUI. Pi session files back native resume, rollback, and same-instance thread forks.
 Forks use Pi's CLI in the destination directory because RPC session switching retains the source
 session's cwd. Provider switches still use portable handoff summaries.
@@ -57,7 +57,7 @@ session creation for this reason. Antigravity likewise reserves authenticated ca
 explicit setup or model refresh; background checks use initialization only.
 
 [Antigravity sign-in](../../apps/server/src/provider/AntigravityAuth.ts) belongs to the initiating
-Studio auth session. The client carries the return URL back to the environment because the provider's
+SpecWithCode auth session. The client carries the return URL back to the environment because the provider's
 loopback listener may be on another machine. Forward only the callback for the owned pending flow;
 a successful callback HTTP request is not proof that provider authentication finished. The native
 process owns token exchange and storage.
@@ -154,7 +154,7 @@ before redaction and serialization, so logging a large response does not require
 copies. These limits apply to diagnostics; provider event handling is unchanged.
 
 Codex resumes with metadata-only reads when it needs a thread's identity and update time. Its
-initialization capabilities opt out of `turn/diff/updated`: Studio derives diffs from checkpoints.
+initialization capabilities opt out of `turn/diff/updated`: SpecWithCode derives diffs from checkpoints.
 The logger filters those notifications before traversal when an older provider still sends them.
 
 Model classification has its own [manifest constraints](./model-manifest.md). Assistant-reference

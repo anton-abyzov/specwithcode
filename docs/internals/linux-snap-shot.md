@@ -100,7 +100,7 @@ variant) on the same connection. This is GNOME's trusted-session-client pattern,
 against a hostile process on the user's bus.
 
 Electron does not position overlay windows on Wayland, so the flash and flight run as Shell actors
-inside the extension with coordinates relative to Studio's content area. Electron 44's restored-session
+inside the extension with coordinates relative to SpecWithCode's content area. Electron 44's restored-session
 path can skip rebinding and leave callbacks behind on unregister, which is why
 `PortalCaptureShortcut` owns its own portal session instead of using Electron's global-shortcut API.
 

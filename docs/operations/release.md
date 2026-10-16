@@ -24,7 +24,7 @@ This document covers the unified release workflow for stable and nightly desktop
   - Pushing a `vX.Y.Z` tag by hand still works and builds exactly the tagged commit. Use it when
     the commit to ship is not the latest nightly, such as a cherry-picked fix on a release branch.
 - Runs lint, typecheck, and tests alongside artifact builds. Publishing waits for every check.
-- Reads the shared production Studio Connect relay URL and Clerk client configuration before packaging clients.
+- Reads the shared production SpecWithCode Connect relay URL and Clerk client configuration before packaging clients.
 - Builds the platform-independent JS (server bundle, web client, Electron main) once in the `build_bundle` job and hands it to every platform job as the `js-bundle` artifact; the platform jobs only package it, so no runner rebuilds it.
 - Builds six desktop artifacts in parallel for both channels, each as its own job (`desktop_<platform>_<arch>`, one call of `release-desktop.yml`) on hardware of its own architecture, gated only on the bundle. The Windows jobs embed the same-arch Linux CLI archive as the WSL runtime and wait for that artifact partway through, not for the whole Linux job:
   - macOS `arm64` DMG
@@ -72,18 +72,18 @@ split so the Developer ID certificate never shares a job with PR code:
   the PR. Only the version is read from the PR commit, as data. A PR that changes packaging must
   use the `channel=preview` release train above instead.
 
-The public Studio Connect identifiers never come from the PR. Both workflows read them from the
+The public SpecWithCode Connect identifiers never come from the PR. Both workflows read them from the
 repository variables `CLERK_PUBLISHABLE_KEY`, `CLERK_JWT_TEMPLATE`, and `CLERK_CLI_OAUTH_CLIENT_ID`,
 and build the relay URL from `RELAY_DOMAIN` or, when that is unset, as `relay.` followed by
 `RELAY_API_ZONE_NAME`. Reading the same variables in both halves keeps the signed app's passkey
 entitlement matched to the bundle. Neither job declares a GitHub Actions environment, so the
 `production` environment variables of the same names listed under
-[Studio Connect relay deployment](#studio-connect-relay-deployment) do not reach them; set
+[SpecWithCode Connect relay deployment](#specwithcode-connect-relay-deployment) do not reach them; set
 repository-level variables for previews. `.env.example` holds no identifiers. Unset variables stay
-empty: the preview is then packaged with Studio Connect unconfigured, and its PR comment says so.
+empty: the preview is then packaged with SpecWithCode Connect unconfigured, and its PR comment says so.
 Neither workflow sets `VITE_STUDIO_ENABLE_HOSTED_SERVICES`, which the web client needs at build
-time (see [Studio Connect setup](./connect-setup.md#public-application-configuration)), so setting
-the identifiers alone does not turn Studio Connect on in a preview.
+time (see [SpecWithCode Connect setup](./connect-setup.md#public-application-configuration)), so setting
+the identifiers alone does not turn SpecWithCode Connect on in a preview.
 
 Before handing the bundle to the signing runner, the trusted workflow validates its ZIP entries
 and accepts only regular files under `server/dist` and `desktop/dist-electron`, plus the directory
@@ -105,7 +105,7 @@ The finalize job uses them to commit and push aligned package versions to `main`
 GitHub Release publication uses the repository-scoped workflow token so it has a rate-limit quota
 independent from the shared Release App installation.
 
-## Studio Connect relay deployment
+## SpecWithCode Connect relay deployment
 
 The relay is a shared control plane versioned separately from client releases. Stable and nightly
 client builds must point at the same relay so users see the same linked environments when switching
@@ -243,7 +243,7 @@ chart the `attributes.custom.relay.managed_endpoint_reaper.*` fields over time.
 Set the legacy mode back to `off` and deploy if any of these happen:
 
 - `failed` stays above a few per sweep. Read the warning log for the Cloudflare error.
-- Users report an environment that is offline with the update message after they have updated Studio
+- Users report an environment that is offline with the update message after they have updated SpecWithCode
   Code on that computer and restarted it.
 - Relay request errors rise while sweeps run. Deletions share the Postgres connection pool with
   request handlers.
@@ -255,12 +255,12 @@ recover as described above.
 ### Disposable-host canary
 
 This test has not been run against a real Cloudflare account. Run it against a disposable relay
-stage, test Cloudflare account, disposable host, and disposable Studio home. Keep production cleanup at
-`off` or `dry-run` until it passes. Do not stop a daily-use Studio server.
+stage, test Cloudflare account, disposable host, and disposable SpecWithCode home. Keep production cleanup at
+`off` or `dry-run` until it passes. Do not stop a daily-use SpecWithCode server.
 
 1. Deploy the disposable stage with cleanup `dry-run`. Link a first disposable environment through
    web or mobile settings and confirm its tunnel is healthy and recovery is registered.
-2. Stop that host and restart the same Studio home on a different local port. Confirm the public
+2. Stop that host and restart the same SpecWithCode home on a different local port. Confirm the public
    hostname reaches the new port and sends nothing to the old one.
 3. Link a second disposable environment with a server build that predates recovery registration.
    Capture its managed `cloudflared` child PID, confirm it belongs to that host, and pause only that
@@ -555,7 +555,7 @@ Checklist:
    - `APPLE_API_KEY`: contents of the downloaded `.p8`
    - `APPLE_API_KEY_ID`: Key ID
    - `APPLE_API_ISSUER`: Issuer ID
-10. Complete the Clerk Native API and AASA setup in [Studio Connect setup](./connect-setup.md#desktop-passkeys).
+10. Complete the Clerk Native API and AASA setup in [SpecWithCode Connect setup](./connect-setup.md#desktop-passkeys).
 11. Re-run a tag release and confirm macOS artifacts are signed/notarized and contain the expected
     `com.apple.developer.associated-domains` entitlement.
 
