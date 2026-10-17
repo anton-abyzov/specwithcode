@@ -4,7 +4,10 @@
     packages ROOT                          workspace packages with a test script, minus the root
                                            and apps/server, as "dir<TAB>name" lines
     sums --dir D --out F NAME...           SHA256SUMS for NAME... in D (--append adds lines)
-    verify-sums --dir D NAME...            NAME... are listed in D/SHA256SUMS and match it
+    verify-sums --dir D [--digests F] NAME...
+                                           NAME... are listed in D/SHA256SUMS and match it; with
+                                           F (a release's assets as JSON, name and digest), a
+                                           NAME the sums leave out may match GitHub's sha256 for it
     google-env check FILE                  FILE holds exactly the Google OAuth pair, mode 600
     google-env copy SOURCE FILE            copy only that pair from SOURCE into a new FILE
     previous --version V                   newest published X.Y.Z below V from `gh release list
@@ -141,14 +144,55 @@ def write_sums(directory, out, names, append=False):
     write_atomic(out, ('\n'.join(lines) + '\n').encode(), 0o644)
 
 
-def verify_sums(directory, names):
+def read_digests(path):
+    """{name: sha256} from a release's assets as `gh api .../releases/tags/<tag> --jq
+    '[.assets[] | {name, digest}]'` writes them (or the whole release object). GitHub records a
+    "sha256:<hex>" digest for each asset it stores; an asset without one is left out."""
+    try:
+        data = json.loads(pathlib.Path(path).read_text() or 'null')
+    except ValueError:
+        raise ToolError('%s is not JSON' % path) from None
+    if isinstance(data, dict):
+        data = data.get('assets')
+    if not isinstance(data, list):
+        raise ToolError('%s does not list the release assets' % path)
+    digests = {}
+    for asset in data:
+        if not isinstance(asset, dict) or not isinstance(asset.get('name'), str):
+            raise ToolError('%s has a malformed asset' % path)
+        match = re.fullmatch(r'sha256:([0-9a-fA-F]{64})', asset.get('digest') or '')
+        if match:
+            digests[asset['name']] = match.group(1).lower()
+    return digests
+
+
+def verify_sums(directory, names, digests=None):
+    """Checks NAME... in `directory` against its SHA256SUMS. With `digests` (read_digests), every
+    file GitHub has a digest for must match it too, and a NAME the sums do not list is accepted
+    only on that digest. Returns a note for each file accepted that way; never accepts a file
+    nothing vouches for."""
     directory = pathlib.Path(directory)
     sums = read_sums(directory / 'SHA256SUMS')
+    notes = []
+    if digests is not None and 'SHA256SUMS' in digests and sha256(directory / 'SHA256SUMS') != digests['SHA256SUMS']:
+        raise ToolError('SHA256SUMS does not match the digest GitHub recorded for it')
     for name in names:
-        if name not in sums:
+        actual = sha256(directory / name)
+        if digests is not None and name in digests and actual != digests[name]:
+            raise ToolError('%s does not match the digest GitHub recorded for it' % name)
+        if name in sums:
+            if actual != sums[name]:
+                raise ToolError('%s does not match SHA256SUMS' % name)
+        elif digests is not None and name in digests:
+            notes.append('%s is not listed in SHA256SUMS; it matches the sha256 digest GitHub recorded '
+                         'for the asset, so it is used' % name)
+        elif digests is not None:
+            raise ToolError('%s is not listed in SHA256SUMS and GitHub records no digest for it, so nothing '
+                            'vouches for these bytes; add its line to that release\'s SHA256SUMS from a copy '
+                            'you trust, or give --previous a release that lists it' % name)
+        else:
             raise ToolError('%s is not listed in SHA256SUMS' % name)
-        if sha256(directory / name) != sums[name]:
-            raise ToolError('%s does not match SHA256SUMS' % name)
+    return notes
 
 
 # ---------------------------------------------------------------- Google OAuth pair
@@ -317,6 +361,7 @@ def main(argv=None):
     command.add_argument('names', nargs='+')
     command = commands.add_parser('verify-sums')
     command.add_argument('--dir', required=True)
+    command.add_argument('--digests')
     command.add_argument('names', nargs='+')
     command = commands.add_parser('google-env')
     command.add_argument('action', choices=('check', 'copy'))
@@ -365,7 +410,8 @@ def main(argv=None):
         elif args.command == 'sums':
             write_sums(args.dir, args.out, args.names, args.append)
         elif args.command == 'verify-sums':
-            verify_sums(args.dir, args.names)
+            for note in verify_sums(args.dir, args.names, read_digests(args.digests) if args.digests else None):
+                print('release_tools: ' + note)
         elif args.command == 'google-env':
             if args.action == 'check' and len(args.paths) == 1:
                 google_check(args.paths[0])

@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Write a release's studio-update.json from local SHA256SUMS; optionally upload it with gh.
 
+--upload also writes the plan's own line into that SHA256SUMS and uploads both files: the agent
+and the next release's prev stage check the plan against the release's SHA256SUMS, and 1.0.38
+shipped a plan uploaded on its own, which its SHA256SUMS did not list.
+
 The plan is validated by the same policy the background update agent enforces, so a
 release can never publish a plan the agent would reject (unknown args, other
 entrypoints, hashes that are not in SHA256SUMS).
@@ -11,6 +15,7 @@ fromSourceCommits entry it accepted), or both. scripts/release/release.sh passes
 previous plan it downloaded and checked against that release's SHA256SUMS.
 """
 import argparse
+import hashlib
 import json
 import os
 import pathlib
@@ -57,6 +62,30 @@ def previous_sources(path):
     return list(dict.fromkeys(sources))
 
 
+def sums_with(data, name, digest):
+    """SHA256SUMS bytes with `name` listed at `digest`: its earlier line (if any) dropped and the
+    new one added at the end, every other line kept as it was."""
+    agent.parse_sums(data)  # Refuses a malformed or repeating SHA256SUMS before anything is written.
+    kept = []
+    for line in data.decode('utf-8').splitlines():
+        listed = line.rstrip('\r').split(None, 1)
+        if not line.strip() or (len(listed) == 2 and listed[1].lstrip('*') in (name, './' + name)):
+            continue
+        kept.append(line.rstrip('\r'))
+    return ('\n'.join(kept + ['%s  %s' % (digest, name)]) + '\n').encode()
+
+
+def write_atomically(path, data):
+    temporary = path.with_name('.' + path.name + '.tmp-' + uuid.uuid4().hex)
+    try:
+        temporary.write_bytes(data)
+        temporary.chmod(0o644)  # Public release assets; they contain only names and hashes.
+        os.replace(str(temporary), str(path))
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
 def default_root(helpers):
     for suffix in ('.tar.gz', '.tgz'):
         if helpers.endswith(suffix):
@@ -99,7 +128,8 @@ def main(argv=None):
                         help="the previous release's studio-update.json; its source commits may upgrade too")
     parser.add_argument('--arg', action='append', default=[], help='helper flag: ' + ', '.join(agent.ALLOWED_ARGS))
     parser.add_argument('--output', type=pathlib.Path, default=pathlib.Path(agent.PLAN_ASSET))
-    parser.add_argument('--upload', metavar='TAG', help='also run gh release upload TAG ... --clobber')
+    parser.add_argument('--upload', metavar='TAG',
+                        help='also add the plan to --sha256sums and gh release upload both to TAG --clobber')
     parser.add_argument('--repo', default=agent.DEFAULT_REPOSITORY)
     args = parser.parse_args(normalize_argv(list(sys.argv[1:] if argv is None else argv)))
     try:
@@ -110,26 +140,25 @@ def main(argv=None):
         plan = build_plan(args.version, args.source_commit, sums, args.runtime, args.helpers,
                           args.helpers_root or default_root(args.helpers), sources, args.arg)
         output = args.output.resolve()
-        data = (json.dumps(plan, indent=2) + '\n').encode()
-        temporary = output.with_name('.' + output.name + '.tmp-' + uuid.uuid4().hex)
-        try:
-            temporary.write_bytes(data)
-            temporary.chmod(0o644)  # A public release asset; contains only names and hashes.
-            os.replace(str(temporary), str(output))
-        finally:
-            if temporary.exists():
-                temporary.unlink()
-        uploaded = False
+        sums_path = args.sha256sums.resolve()
         if args.upload:
             if args.upload != 'v' + args.version:
                 raise agent.AgentError('Upload tag must be v' + args.version)
             if output.name != agent.PLAN_ASSET:
                 raise agent.AgentError('The uploaded file must be named ' + agent.PLAN_ASSET)
+            if sums_path.name != 'SHA256SUMS':
+                raise agent.AgentError('--upload also uploads --sha256sums, so it must be named SHA256SUMS')
             if not agent.REPOSITORY.fullmatch(args.repo):
                 raise agent.AgentError('Invalid --repo')
-            result = subprocess.run([find_gh(), 'release', 'upload', args.upload, str(output), '--repo', args.repo,
-                                     '--clobber'], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                    stderr=subprocess.DEVNULL, timeout=300)
+        data = (json.dumps(plan, indent=2) + '\n').encode()
+        write_atomically(output, data)
+        uploaded = False
+        if args.upload:
+            write_atomically(sums_path, sums_with(sums_path.read_bytes(), agent.PLAN_ASSET,
+                                                  hashlib.sha256(data).hexdigest()))
+            result = subprocess.run([find_gh(), 'release', 'upload', args.upload, str(output), str(sums_path),
+                                     '--repo', args.repo, '--clobber'], stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300)
             if result.returncode != 0:
                 raise agent.AgentError('gh release upload failed; output withheld')
             uploaded = True

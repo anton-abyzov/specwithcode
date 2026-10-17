@@ -549,6 +549,7 @@ it.live("Update now holds the service before draining, then closes terminals", (
           stoppedThreads: 2,
           blockers: [],
           held: true,
+          holdReason: "install",
           interruptedRuns: 1,
           openTerminals: 2,
         });
@@ -581,6 +582,49 @@ it.live("Update now holds the service before draining, then closes terminals", (
         const cancelled = yield* preparation.prepare({ stopWork: false, releaseHold: true });
         assert.equal(cancelled.held, false);
         assert.isFalse(yield* hold.isHeld);
+      }),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("an app-restart drain holds the service only briefly", () =>
+  Effect.gen(function* () {
+    const hold = yield* holdFor();
+    const fixture = newFixture(false, { hold });
+    yield* run(
+      fixture,
+      Effect.gen(function* () {
+        const preparation = yield* Preparation.ServiceUpdatePreparation;
+        const drained = yield* Clock.currentTimeMillis;
+        const result = yield* preparation.prepare({
+          stopWork: true,
+          hold: true,
+          reason: "app-restart",
+        });
+        assert.isTrue(result.held);
+        // Other windows learn why, and leave this hold to the service.
+        assert.equal(result.holdReason, "app-restart");
+        assert.equal((yield* preparation.prepare({ stopWork: false })).holdReason, "app-restart");
+        const current = yield* hold.current;
+        assert.isTrue(current._tag === "Some");
+        if (current._tag === "Some") {
+          const ttlMs = current.value.expiresAtMs - current.value.startedAtMs;
+          assert.equal(ttlMs, Hold.APP_RESTART_HOLD_TTL_MS);
+          assert.isBelow(current.value.expiresAtMs - drained, Hold.HOLD_TTL_MS);
+        }
+        // An install request keeps the full time limit.
+        yield* preparation.prepare({ stopWork: false, releaseHold: true });
+        const installed = yield* preparation.prepare({
+          stopWork: true,
+          hold: true,
+          reason: "install",
+        });
+        assert.equal(installed.holdReason, "install");
+        const install = yield* hold.current;
+        assert.isTrue(install._tag === "Some");
+        if (install._tag === "Some") {
+          assert.equal(install.value.expiresAtMs - install.value.startedAtMs, Hold.HOLD_TTL_MS);
+        }
       }),
     );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

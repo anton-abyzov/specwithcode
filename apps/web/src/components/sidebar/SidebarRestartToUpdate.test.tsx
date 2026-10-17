@@ -112,6 +112,7 @@ const bridge: {
   >;
   cancelServiceUpdate?: ReturnType<typeof vi.fn<() => Promise<StudioServiceUpdateState>>>;
   getUpdatePreferences: ReturnType<typeof vi.fn>;
+  ownsBundledService?: ReturnType<typeof vi.fn<() => Promise<boolean>>>;
 } = {
   checkForUpdate: vi.fn(async () => {
     if (state.feed !== null) {
@@ -150,8 +151,10 @@ const bridge: {
     downloadAutomatically: true,
     installAutomatically: true,
   })),
+  ownsBundledService: vi.fn(async () => true),
 };
 const cancelServiceUpdate = bridge.cancelServiceUpdate!;
+const ownsBundledService = bridge.ownsBundledService!;
 
 const blocker = (kind: ServiceUpdateBlocker["kind"], count: number, title: string | null = null) =>
   ({
@@ -235,6 +238,10 @@ beforeEach(() => {
   });
   bridge.cancelServiceUpdate = cancelServiceUpdate;
   cancelServiceUpdate.mockClear();
+  // The app started its own service unless a test attaches it to one.
+  bridge.ownsBundledService = ownsBundledService;
+  ownsBundledService.mockReset();
+  ownsBundledService.mockResolvedValue(true);
   resetServiceUpdateFlowForTests();
   resetConfirmDialogForTests();
   focused = true;
@@ -428,12 +435,41 @@ describe("SidebarRestartToUpdate", () => {
   });
 
   it("leaves a fleet-installed service running through an app restart", async () => {
+    // The app attached to the launchd service rather than starting its own.
+    ownsBundledService.mockResolvedValue(false);
     state.service = {
       ...serviceWaiting,
       status: "up-to-date",
       availableVersion: null,
       downloadedVersion: null,
     };
+    render();
+    await click();
+    expect(calls).not.toContain("prepare:true+hold");
+    expect(calls.at(-1)).toBe("installUpdate:0.2.5");
+  });
+
+  it("never drains a service the app attached to, even when the agent reports no service", async () => {
+    // The 2026-10-16 case: attached to a launchd service the agent did not
+    // recognise ("not-managed"); the drain held it for fifteen minutes.
+    ownsBundledService.mockResolvedValue(false);
+    state.service = { ...serviceWaiting, status: "not-managed", identity: null };
+    render();
+    await click();
+    expect(calls).not.toContain("prepare:true+hold");
+    expect(calls.at(-1)).toBe("installUpdate:0.2.5");
+  });
+
+  it("drains the service it started even when no agent reports on it", async () => {
+    // Linux and Windows: no update agent, so no service state, but the app's own backend.
+    state.service = null;
+    render();
+    await click();
+    expect(calls).toEqual(["prepare:false", "prepare:true+hold", "installUpdate:0.2.5"]);
+  });
+
+  it("does not drain when the desktop cannot say it started the service", async () => {
+    delete bridge.ownsBundledService;
     render();
     await click();
     expect(calls).not.toContain("prepare:true+hold");
@@ -1139,8 +1175,61 @@ describe("SidebarRestartToUpdate", () => {
       });
     });
 
-    it("does not ask while the agent has no update under way", async () => {
-      state.service = { ...serviceWaiting, status: "up-to-date" };
+    it("looks once while the agent is idle and leaves a service that is not held alone", async () => {
+      agent = { ...serviceWaiting, status: "up-to-date" };
+      state.service = agent;
+      checked = { ...checked, held: false };
+      render();
+      await advance(0);
+      expect(mountCalls).toEqual(["prepare:false"]);
+      expect(calls).toEqual([]);
+      expect(state.addToast).not.toHaveBeenCalled();
+    });
+
+    it("releases a hold an app restart left while the agent is idle", async () => {
+      agent = { ...serviceWaiting, status: "up-to-date" };
+      state.service = agent;
+      render();
+      await advance(0);
+      expect(mountCalls).toEqual(["prepare:false"]);
+      expect(calls).toEqual(["cancelServiceUpdate", "prepare:release"]);
+      expect(state.addToast).not.toHaveBeenCalled();
+    });
+
+    it("releases a hold while the agent is in error", async () => {
+      agent = { ...serviceWaiting, status: "error", message: "Download failed" };
+      state.service = agent;
+      render();
+      await advance(0);
+      expect(mountCalls).toEqual(["prepare:false"]);
+      expect(calls).toEqual(["cancelServiceUpdate", "prepare:release"]);
+    });
+
+    it("releases a hold on a service no agent manages", async () => {
+      agent = { ...serviceWaiting, status: "not-managed", identity: null };
+      state.service = agent;
+      render();
+      await advance(0);
+      expect(calls).toEqual(["cancelServiceUpdate", "prepare:release"]);
+    });
+
+    it.each(["up-to-date", "downloaded"] as const)(
+      "leaves a hold taken for an app restart to the service (agent %s)",
+      async (status) => {
+        // Releasing it would let work start again just before the app quits.
+        agent = { ...serviceWaiting, status };
+        state.service = agent;
+        checked = { ...checked, holdReason: "app-restart" };
+        render();
+        await advance(0);
+        expect(mountCalls).toEqual(["prepare:false"]);
+        expect(calls).toEqual([]);
+        expect(state.addToast).not.toHaveBeenCalled();
+      },
+    );
+
+    it("does not ask while the agent may be about to take up a request", async () => {
+      state.service = { ...serviceWaiting, status: "available" };
       render();
       await advance(0);
       expect(mountCalls).toEqual([]);

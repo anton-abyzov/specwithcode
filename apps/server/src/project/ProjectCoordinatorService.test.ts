@@ -15,6 +15,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   ProjectWorkspaceError,
+  SERVICE_UPDATE_IN_PROGRESS_MESSAGE,
   type Project,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadShell,
@@ -37,6 +38,8 @@ import * as Providers from "../provider/ProviderRegistry.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
 import { provider } from "../studio/fixtures.ts";
+import { OrchestratorDispatchError } from "../orchestration-v2/Orchestrator.ts";
+import { ServiceUpdateInProgressError } from "../serviceUpdate/ServiceUpdateHold.ts";
 
 const id = ProjectId.make("project:coordinator");
 const commandId = CommandId.make("request:one");
@@ -67,6 +70,7 @@ const fixture = (afterCoordinatorLaunch: Effect.Effect<void> = Effect.void) => {
   const runs: OrchestrationV2Run[] = [];
   const turnItems: Array<{ type: string; failure?: { class: string } }> = [];
   const updates: Projects.ProjectUpdateInput[] = [];
+  let sendFailure: unknown = null;
   const dependencies = Layer.mergeAll(
     Layer.mock(EventSink.EventSinkV2)({ readByCommandId: () => Stream.empty }),
     Layer.mock(Projects.ProjectService)({
@@ -117,15 +121,17 @@ const fixture = (afterCoordinatorLaunch: Effect.Effect<void> = Effect.void) => {
     Layer.mock(Threads.ThreadManagementService)({
       getThreadShell: (threadId) => Effect.sync(() => shells.get(threadId) ?? null),
       sendToThread: (input) =>
-        Effect.sync(() => {
-          if (!receipts.has(input.commandId)) {
-            receipts.add(input.commandId);
-            sends.push(input);
-          }
-          return {
-            message: { attachments: input.attachments },
-          } as Threads.ThreadManagementSendResult;
-        }),
+        sendFailure !== null
+          ? (Effect.fail(sendFailure) as never)
+          : Effect.sync(() => {
+              if (!receipts.has(input.commandId)) {
+                receipts.add(input.commandId);
+                sends.push(input);
+              }
+              return {
+                message: { attachments: input.attachments },
+              } as Threads.ThreadManagementSendResult;
+            }),
     }),
     Layer.mock(Launch.ThreadLaunchService)({
       launch: (input) =>
@@ -173,6 +179,9 @@ const fixture = (afterCoordinatorLaunch: Effect.Effect<void> = Effect.void) => {
     },
     setSettings: (patch: Partial<ServerSettings>) => {
       serverSettings = { ...serverSettings, ...patch };
+    },
+    setSendFailure: (failure: unknown) => {
+      sendFailure = failure;
     },
   };
 };
@@ -588,6 +597,34 @@ it.effect.each(["deleted", "foreign"] as const)(
       }).pipe(Effect.provide(Coordinator.layer), Effect.provide(f.dependencies));
     }),
 );
+it.effect("says a message was refused for an update instead of that the project failed", () =>
+  Effect.gen(function* () {
+    const f = fixture();
+    yield* Effect.gen(function* () {
+      const service = yield* Coordinator.ProjectCoordinatorService;
+      yield* service.start({ projectId: id, commandId });
+      f.setSendFailure(
+        new OrchestratorDispatchError({
+          commandId: CommandId.make("request:two"),
+          commandType: "message.dispatch",
+          cause: new ServiceUpdateInProgressError({ action: "message.dispatch" }),
+        }),
+      );
+      const refused = yield* service
+        .send({ projectId: id, commandId: CommandId.make("request:two"), prompt: "Hello" })
+        .pipe(Effect.flip);
+      expect(refused.code).toBe("update_in_progress");
+      expect(refused.message).toBe(SERVICE_UPDATE_IN_PROGRESS_MESSAGE);
+
+      f.setSendFailure(new Error("database is locked"));
+      const failed = yield* service
+        .send({ projectId: id, commandId: CommandId.make("request:three"), prompt: "Hello" })
+        .pipe(Effect.flip);
+      expect(failed.code).toBe("operation_failed");
+    }).pipe(Effect.provide(Coordinator.layer.pipe(Layer.provideMerge(f.dependencies))));
+  }),
+);
+
 it.effect("rejects foreign sources, paused projects and missing model choices before launch", () =>
   Effect.gen(function* () {
     const f = fixture();

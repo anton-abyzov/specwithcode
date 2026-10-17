@@ -10,6 +10,7 @@ import { TestClock } from "effect/testing";
 import * as ProjectEnrichment from "./ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
+import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
 const identity = (workspaceRoot: string, version = 1): RepositoryIdentity => ({
   canonicalKey: `example.test/v${version}${workspaceRoot}`,
@@ -340,6 +341,52 @@ it.effect("deduplicates requests, bounds pending work, and reloads invalidated r
         }),
       ),
     );
+  }),
+);
+
+it.effect("keeps a missing workspace root as a miss instead of retrying it", () =>
+  Effect.gen(function* () {
+    const faviconScans = yield* Ref.make(0);
+    const layerMetadata = Layer.merge(
+      Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolve: (workspaceRoot) => Effect.succeed(identity(workspaceRoot)),
+      }),
+      Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+        resolvePath: (workspaceRoot) =>
+          Ref.update(faviconScans, (count) => count + 1).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new ProjectFaviconResolver.ProjectFaviconResolutionError({
+                  operation: "normalize-workspace",
+                  workspaceRoot,
+                  cause: new WorkspacePaths.WorkspaceRootNotExistsError({
+                    workspaceRoot,
+                    normalizedWorkspaceRoot: workspaceRoot,
+                  }),
+                }),
+              ),
+            ),
+          ),
+      }),
+    );
+
+    yield* Effect.gen(function* () {
+      const service = yield* ProjectEnrichment.ProjectEnrichmentService;
+      yield* service.getAvailable("/gone");
+      yield* waitForAvailable(service, "/gone", (value) => value.repositoryIdentity !== null);
+      for (let attempt = 0; attempt < 100 && (yield* Ref.get(faviconScans)) === 0; attempt += 1) {
+        yield* Effect.yieldNow;
+      }
+      assert.equal(yield* Ref.get(faviconScans), 1);
+      // Refreshes well past the five-second failure retry find the miss cached.
+      for (let refresh = 0; refresh < 6; refresh += 1) {
+        yield* TestClock.adjust("10 seconds");
+        yield* service.getAvailable("/gone");
+        yield* Effect.yieldNow;
+      }
+      assert.equal(yield* Ref.get(faviconScans), 1);
+      assert.isNull((yield* service.peek("/gone")).faviconPath);
+    }).pipe(Effect.provide(layer(layerMetadata)));
   }),
 );
 

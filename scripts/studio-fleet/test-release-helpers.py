@@ -123,6 +123,52 @@ class PreviousPlan(unittest.TestCase):
                 self.assertEqual(make_update_plan.main(argv + ['--previous-plan', str(previous)]), 2)
 
 
+class UploadedPlanInSums(unittest.TestCase):
+    """1.0.38's plan was uploaded with --upload, which left it out of the release's SHA256SUMS."""
+
+    def test_upload_lists_the_plan_in_sha256sums_and_uploads_both(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            calls = root / 'gh-calls.jsonl'
+            gh = root / 'gh'
+            gh.write_text('#!%s\nimport json, sys\nopen(%r, "a").write(json.dumps(sys.argv[1:]) + "\\n")\n'
+                          % (sys.executable, str(calls)))
+            gh.chmod(0o755)
+            sums = root / 'SHA256SUMS'
+            # A stale plan line from an earlier run is replaced, not repeated.
+            sums.write_text('%s  runtime.tar.gz\n%s  helpers-root.tar.gz\n%s *studio-update.json\n'
+                            % ('1' * 64, '2' * 64, '3' * 64))
+            output = root / 'studio-update.json'
+            argv = ['--version', '1.2.3', '--source-commit', 'd' * 40, '--sha256sums', str(sums),
+                    '--runtime', 'runtime.tar.gz', '--helpers', 'helpers-root.tar.gz', '--output', str(output),
+                    '--from-source', A, '--upload', 'v1.2.3', '--repo', 'owner/repo']
+            original = make_update_plan.find_gh
+            make_update_plan.find_gh = lambda: str(gh)
+            try:
+                for _ in range(2):
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        self.assertEqual(make_update_plan.main(argv), 0)
+                listed = update_agent.parse_sums(sums.read_bytes())
+                self.assertEqual(listed, {'runtime.tar.gz': '1' * 64, 'helpers-root.tar.gz': '2' * 64,
+                                          'studio-update.json': hashlib.sha256(output.read_bytes()).hexdigest()})
+                uploads = [json.loads(line) for line in calls.read_text().splitlines()]
+                self.assertEqual(len(uploads), 2)
+                self.assertEqual(uploads[0], ['release', 'upload', 'v1.2.3', str(output.resolve()),
+                                              str(sums.resolve()), '--repo', 'owner/repo', '--clobber'])
+                # The uploaded name must be SHA256SUMS; refused before anything is written or run.
+                other = root / 'sums.txt'
+                other.write_bytes(sums.read_bytes())
+                output.unlink()
+                index = argv.index('--sha256sums') + 1
+                with contextlib.redirect_stderr(io.StringIO()) as errors:
+                    self.assertEqual(make_update_plan.main(argv[:index] + [str(other)] + argv[index + 1:]), 2)
+                self.assertIn('must be named SHA256SUMS', errors.getvalue())
+                self.assertFalse(output.exists())
+                self.assertEqual(len(calls.read_text().splitlines()), 2)
+            finally:
+                make_update_plan.find_gh = original
+
+
 FAKE_UPDATE = r'''
 import json, pathlib, sys
 log = pathlib.Path(__file__).resolve().parents[3] / 'calls.jsonl'

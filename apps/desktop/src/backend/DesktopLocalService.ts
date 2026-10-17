@@ -75,6 +75,17 @@ export interface AttachedLocalService {
   readonly runtime: RunningServerRuntimeState;
   readonly descriptor: ExecutionEnvironmentDescriptor;
   readonly httpBaseUrl: URL;
+  /**
+   * Found through a fleet installation receipt that installed a launchd service
+   * for this home. The fleet launcher starts the server without the Node IPC
+   * launcher, so its runtime state never says `serviceManaged`.
+   */
+  readonly installedService?: boolean;
+}
+
+/** Whether the attached server is an installed service that outlives the app. */
+export function isInstalledService(service: AttachedLocalService | null): boolean {
+  return service !== null && (service.runtime.serviceManaged || service.installedService === true);
 }
 
 export type LocalServiceDiscovery =
@@ -123,6 +134,13 @@ export class DesktopLocalService extends Context.Service<
     readonly discover: (options?: DiscoverOptions) => Effect.Effect<LocalServiceDiscovery>;
     readonly attach: (service: AttachedLocalService) => Effect.Effect<void>;
     readonly attached: Effect.Effect<Option.Option<AttachedLocalService>>;
+    /** Records that the app started its own backend instead of attaching to one. */
+    readonly markSpawned: Effect.Effect<void>;
+    /**
+     * Whether the local backend is one this app started, which quits with it.
+     * Never true while attached to a running service.
+     */
+    readonly ownsBundledService: Effect.Effect<boolean>;
     /** A bearer for the attached service, minted through that installation's own CLI. */
     readonly bearerToken: Effect.Effect<
       string,
@@ -230,6 +248,7 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
   const attachedRef = yield* Ref.make(Option.none<AttachedLocalService>());
+  const spawnedRef = yield* Ref.make(false);
   const tokenRef = yield* Ref.make(Option.none<string>());
   const mutex = yield* Semaphore.make(1);
   const readRuntime = (stateDir: string) =>
@@ -348,6 +367,7 @@ export const make = Effect.gen(function* () {
                 runtime,
                 descriptor: descriptor.value,
                 httpBaseUrl: new URL(runtime.origin),
+                installedService: candidate.serviceInstalled,
               },
             } as const;
           }
@@ -530,6 +550,11 @@ export const make = Effect.gen(function* () {
         Effect.andThen(Ref.set(tokenRef, Option.none())),
       ),
     attached: Ref.get(attachedRef),
+    markSpawned: Ref.set(spawnedRef, true),
+    ownsBundledService: Effect.map(
+      Effect.all([Ref.get(spawnedRef), Ref.get(attachedRef)]),
+      ([spawned, attached]) => spawned && Option.isNone(attached),
+    ),
     bearerToken,
   });
 });
@@ -540,6 +565,7 @@ export const layer = Layer.effect(DesktopLocalService, make);
 export const layerTest = (input?: {
   readonly attached?: AttachedLocalService;
   readonly bearer?: string;
+  readonly spawned?: boolean;
 }) =>
   Layer.succeed(
     DesktopLocalService,
@@ -550,6 +576,8 @@ export const layerTest = (input?: {
         ),
       attach: () => Effect.void,
       attached: Effect.succeed(Option.fromUndefinedOr(input?.attached)),
+      markSpawned: Effect.void,
+      ownsBundledService: Effect.succeed(input?.spawned === true && !input.attached),
       bearerToken:
         input?.attached && input.bearer
           ? Effect.succeed(input.bearer)

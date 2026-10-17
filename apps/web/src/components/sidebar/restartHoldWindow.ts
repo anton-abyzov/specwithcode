@@ -1,7 +1,4 @@
-import type {
-  DesktopUpdatePreferences,
-  StudioServiceUpdateState,
-} from "@specweave-studio/contracts";
+import type { DesktopBridge, DesktopUpdatePreferences } from "@specweave-studio/contracts";
 
 /** "Restart when idle" waits this long for running work unless Settings says otherwise. */
 export const DEFAULT_FORCE_INSTALL_AFTER_MINUTES = 2;
@@ -40,9 +37,21 @@ export function describeHoldCountdown(since: number, now: number, minutes: numbe
 }
 
 /**
- * Whether this app runs its own service, which quits with it on an update
- * restart. A fleet-installed service (launchd) keeps running through it.
+ * Whether this app started the service it uses, which quits with it on an
+ * update restart, so its work is stopped for the update first. The desktop
+ * knows: an attached service (one installed with launchd, or any server that
+ * already owned the Studio home) keeps running through the restart and is never
+ * drained or held for it, whatever the update agent reports. Desktops from
+ * before the answer existed are treated as attached: holding a service that
+ * outlives the restart would refuse everyone's work until the hold runs out.
  */
-export function servesLocally(serviceState: StudioServiceUpdateState | null): boolean {
-  return serviceState === null || serviceState.status === "not-managed";
+export async function appOwnsLocalService(
+  bridge: Pick<DesktopBridge, "ownsBundledService"> | undefined,
+): Promise<boolean> {
+  const owns = bridge?.ownsBundledService;
+  if (!owns) return false;
+  return owns().then(
+    (value) => value === true,
+    () => false,
+  );
 }

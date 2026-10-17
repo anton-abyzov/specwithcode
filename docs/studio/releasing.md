@@ -28,7 +28,9 @@ skips every stage already done; `--self-test` checks the script itself with stub
    (`~/.local/share/specweave/specwithcode-public/rules.json`) must exist.
 3. The first run makes the persistent trees in `~/Projects/github/release.noindex/` (`build`,
    `test` and a clone of the public repository; the `.noindex` folder keeps Spotlight out of their
-   `node_modules`). Set a GitHub noreply `user.email` in the public clone when preflight asks.
+   `node_modules`). The trees stage gives the public clone its own commit identity, the owner's
+   GitHub noreply address (`PUBLIC_GIT_NAME` and `PUBLIC_GIT_EMAIL` in release.env override it);
+   a noreply `user.email` already set there is kept.
 
 ### Stages
 
@@ -41,23 +43,23 @@ make, and refuses to start a second run of a version without `--resume`.
 | --------------- | ---------------------------------------------------------------------------------------------------------------------- | ----------------------- |
 | preflight       | version policy, release.env and the files it names, toolchain, `gh auth`; drops anaconda from PATH; warns on high load | every run               |
 | trees           | makes or checks the build, test and public trees                                                                       | every run               |
-| prev            | downloads and checks the previous release's plan, helpers manifest and `SHA256SUMS`                                    | once                    |
+| prev            | downloads the previous release's plan, helpers manifest and `SHA256SUMS`; checks them (sums or GitHub's digest)        | once                    |
 | bump            | `release/<version>` from `main`, the version bump commit                                                               | once                    |
-| candidate       | pushes the build tree's HEAD to `release/<version>`, checks it out in the test tree, cleans and installs both          | per candidate           |
+| candidate       | pushes HEAD to `release/<version>`, checks it out in the test tree, cleans and installs both, checks Electron          | per candidate           |
 | stage1          | contrast tests, every other package's tests, the typecheck gate and fleet tests, four at a time                        | per candidate           |
 | server          | `test-sharded.mjs --shards 3` in the background, alongside build to drafts                                             | per candidate           |
-| build           | the Google pair only, then `APP_VERSION=<version> vp run build:desktop`                                                | per candidate           |
+| build           | the Electron check, the Google pair only, then `APP_VERSION=<version> vp run build:desktop`                            | per candidate           |
 | bundle          | `bundle.mjs`, `verify-bundle.mjs` on the archive, the Google sign-in check, all before signing                         | per candidate           |
 | sign            | `build-desktop-artifact.ts --signed --skip-build` on the verified build, `mac-signature.mjs`                           | per candidate           |
 | helpers         | `make_helpers.py`, compared with the previous manifest                                                                 | per candidate           |
-| plan            | `SHA256SUMS`, `make_update_plan.py --previous-plan`, the plan added to `SHA256SUMS`                                    | per candidate           |
+| plan            | `SHA256SUMS`, `make_update_plan.py --previous-plan`, the plan added to `SHA256SUMS`, every asset checked in it         | per candidate           |
 | drafts          | `notes.md`, both draft releases with every asset, a `publish.mjs` check without `--tag`/`--push`                       | per candidate           |
 | server-wait     | waits for the server suite; when it failed, deletes both drafts                                                        | per candidate           |
 | quit-desktop    | quits `/Applications/SpecWithCode.app` (TERM to its own pid)                                                           | until the desktop stage |
-| publish-private | publishes the private release and checks the tag is the candidate                                                      | once                    |
+| publish-private | checks the draft's `SHA256SUMS`, publishes the private release, checks the tag is the candidate                        | once                    |
+| publish-public  | `publish.mjs --tag --push`, checks the draft's `SHA256SUMS`, then the public release                                   | once                    |
 | fleet-m4        | `fleet_rollout.py --only m4`: forced, held 15 minutes, until M4 runs the release                                       | once                    |
 | fleet-workers   | `fleet_rollout.py --only workers`: M1 and M3 together, polled the same way                                             | once                    |
-| publish-public  | `publish.mjs --tag --push`, then the public release                                                                    | once                    |
 | desktop         | rollback zip, swap the app in `/Applications`, check its signature and version, open it                                | once                    |
 | merge           | the `release/<version>` pull request into `main`                                                                       | once                    |
 
@@ -65,6 +67,24 @@ Preflight checks each file and value exists without printing any. The candidate 
 `pnpm install --frozen-lockfile` would change `pnpm-lock.yaml`; stage 1 runs every workspace
 package with a test script except the root and `apps/server`, so a new package cannot be left out.
 Nothing is public before publish-public, and nothing installs anywhere before publish-private.
+The fleet stages come after publish-public, and refuse to start while the public release is not
+published: the hosts' update agents read the public feed (`update_agent.DEFAULT_REPOSITORY`), so
+they cannot see a release that is only private. Releases up to 1.0.39 ran the fleet first and
+published public by hand; a staging folder from that order resumes at its first unmarked stage.
+
+Before a draft is published, its own `SHA256SUMS` is downloaded, compared with the one built and
+checked to list `studio-update.json` and the helpers manifest. 1.0.38 shipped sums without the
+plan: it was uploaded on its own afterwards with `make_update_plan.py --upload`, which now writes
+the plan's line into `SHA256SUMS` and uploads both. A previous release whose sums leave out the
+plan is still handled: the prev stage accepts the plan only when it matches the sha256 digest
+GitHub recorded for that asset, and stops when there is none.
+
+pnpm runs Electron's postinstall only when it links the package, and the build tree keeps
+`node_modules`, so an Electron download that an earlier install skipped stays missing. The
+candidate stage checks the runtime with `apps/desktop/scripts/ensure-electron-runtime.mjs
+--check`, runs Electron's own `install.js` when it is incomplete, and stops with the missing paths
+when it still is. The build stage checks again, so a folder whose candidate stage ran before the
+check existed is covered when it resumes.
 
 The plan passes `--allow-project-migrations` and `--allow-existing-browser-heartbeat` to
 `update.py`, as the plans of 1.0.30 to 1.0.37 did. Without the first, a release that migrates

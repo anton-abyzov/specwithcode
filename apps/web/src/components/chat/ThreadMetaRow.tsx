@@ -71,8 +71,9 @@ export interface ThreadMetaRun {
 }
 
 const CHIP =
-  "inline-flex h-6 min-w-0 max-w-full items-center gap-1.5 rounded-md border border-border/60 bg-card/90 px-2 text-xs text-muted-foreground shadow-xs backdrop-blur-sm";
-const CHIP_ACTION = "cursor-pointer hover:bg-accent hover:text-foreground";
+  "inline-flex h-6 min-w-0 max-w-full items-center gap-1.5 rounded-md border border-border/60 lane-surface px-2 text-xs text-muted-foreground shadow-xs";
+// lane-surface paints its fill as layers, so hover tints the layer rather than bg-*.
+const CHIP_ACTION = "cursor-pointer hover:text-foreground hover:[--lane-tint:var(--accent)]";
 
 function MetaChip(props: {
   readonly tip: string;

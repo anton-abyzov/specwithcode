@@ -2,6 +2,13 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 import { ProjectId } from "./baseSchemas.ts";
 import { ProjectWorkspaceError } from "./projectWorkspace.ts";
+import {
+  SERVICE_UPDATE_IN_PROGRESS_MESSAGE,
+  SERVICE_UPDATE_VERIFYING_MESSAGE,
+} from "./serviceUpdatePreparation.ts";
+
+const encodeError = Schema.encodeSync(ProjectWorkspaceError);
+const decodeError = Schema.decodeUnknownSync(ProjectWorkspaceError);
 
 describe("project workspace error transport", () => {
   it.each([
@@ -19,6 +26,23 @@ describe("project workspace error transport", () => {
     expect(decoded.code).toBe(code);
     expect(decoded.message).toContain(message);
     expect(decoded.message).not.toMatch(/memory|KiB/);
+  });
+
+  it("carries the update hold's own message across the wire", () => {
+    for (const [verifying, message] of [
+      [undefined, SERVICE_UPDATE_IN_PROGRESS_MESSAGE],
+      [true, SERVICE_UPDATE_VERIFYING_MESSAGE],
+    ] as const) {
+      const error = new ProjectWorkspaceError({
+        projectId: ProjectId.make("project"),
+        code: "update_in_progress",
+        ...(verifying === undefined ? {} : { verifying }),
+      });
+      const encoded = encodeError(error);
+      const decoded = decodeError(encoded);
+      expect(decoded.code).toBe("update_in_progress");
+      expect(decoded.message).toBe(message);
+    }
   });
 
   it("retains quota guidance for actual memory validation failures", () => {

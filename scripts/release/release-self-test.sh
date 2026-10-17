@@ -9,7 +9,11 @@
 # stages with the server suite on --changed, stage 1 rerunning its failures first, refusing a
 # new candidate once published, missing release-gates interfaces, a failed lookup of the previous
 # release, guards for unpushed release-branch work, untracked fix files and a stale public tag,
-# the timing comparison and release_tools.py's own unit tests (test-release-tools.py).
+# the timing comparison and release_tools.py's own unit tests (test-release-tools.py). Also:
+# public before the fleet, a staging folder from the earlier order (fleet before public) resuming,
+# the fleet stages refusing a release the public feed does not show, the Electron runtime repair
+# and its failure, the plan checked into SHA256SUMS before drafts and on the draft before
+# publishing, the previous release's digests file and the public clone's noreply identity.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -123,6 +127,9 @@ EOF
   : > "$root/trees.noindex/test/scripts/studio-fleet/run-tests.sh"
   : > "$root/trees.noindex/test/scripts/release/test-sharded.mjs"
   : > "$root/trees.noindex/build/scripts/studio-fleet/make_helpers.py"
+  mkdir -p "$root/trees.noindex/build/apps/desktop/scripts" "$root/trees.noindex/build/apps/desktop/node_modules/electron"
+  : > "$root/trees.noindex/build/apps/desktop/scripts/ensure-electron-runtime.mjs"
+  : > "$root/trees.noindex/build/apps/desktop/node_modules/electron/install.js"
 }
 
 use_machine() {  # use_machine ROOT VERSION
@@ -190,13 +197,17 @@ check 'argument errors write nothing' test -z "$(find "$ARGS_HOME" -mindepth 1 -
 DRY_HOME="$WORK/dry-home"
 mkdir -p "$DRY_HOME"
 STUB_ENV=(HOME="$DRY_HOME" RELEASE_STUB= RELEASE_STAGING_ROOT= RELEASE_TREES= RELEASE_ENV=)
-EXPECTED_ORDER="preflight trees prev bump candidate stage1 server build bundle sign helpers plan drafts server-wait quit-desktop publish-private fleet-m4 fleet-workers publish-public desktop merge"
+EXPECTED_ORDER="preflight trees prev bump candidate stage1 server build bundle sign helpers plan drafts server-wait quit-desktop publish-private publish-public fleet-m4 fleet-workers desktop merge"
 dry_ok() {
   run 0 9.9.9 --dry-run || return 1
   [ "$(sed -n 's/^> \([a-z0-9-]*\).*/\1/p' "$LAST_OUT" | tr '\n' ' ' | sed 's/ $//')" = "$EXPECTED_ORDER" ] || return 1
   has 'would stop: the installer and updater accept only 1.x.y' && has 'Dry-run done: nothing was run or written.' &&
     has 'test-sharded.mjs --shards 3' && has 'fleet_rollout.py --version 9.9.9 --only m4 --hold-minutes 15' &&
-    has '--arg=--allow-project-migrations --arg=--allow-existing-browser-heartbeat' || return 1
+    has '--arg=--allow-project-migrations --arg=--allow-existing-browser-heartbeat' &&
+    has 'electron-check: (in ' && has 'sums-check: python3 -B' && has 'fetch-sums-private: gh release download v9.9.9' &&
+    has "verify-sums --dir $DRY_HOME/.specwithcode/release-staging/9.9.9/prev --digests" &&
+    has 'fleet-feed: stop unless v9.9.9 is published on anton-abyzov/specwithcode' &&
+    has 'public-identity: (in ' && has 'same-sums-public: stop unless' || return 1
   run 0 9.9.9 --dry-run --no-project-migrations || return 1
   lacks 'allow-project-migrations' && has '--arg=--allow-existing-browser-heartbeat'
 }
@@ -279,18 +290,18 @@ BEFORE="$(lines)"
 finish_ok() {
   run 0 1.2.0 --resume || return 1
   has 'SpecWithCode 1.2.0 is released.' && has 'Stage timings for 1.2.0, compared with 1.1.0' || return 1
-  [ "$(stages_after "$BEFORE")" = "publish-private fleet-m4 fleet-workers publish-public desktop merge " ] || return 1
+  [ "$(stages_after "$BEFORE")" = "publish-private publish-public fleet-m4 fleet-workers desktop merge " ] || return 1
   local order
   order="$(awk -F '\t' -v from="$BEFORE" 'NR > from { printf "%s ", $2 }' "$STUB_LOG")"
   case "$order" in
-    *publish-private*fleet-m4*fleet-workers*public-untag*mirror-publish*publish-public*desktop-install*desktop-open*pr-merge*) ;;
+    *fetch-sums-private*check-sums-private*publish-private*public-untag*mirror-publish*fetch-sums-public*check-sums-public*publish-public*fleet-m4*fleet-workers*desktop-install*desktop-open*pr-merge*) ;;
     *) return 1 ;;
   esac
   grep -q 'fleet_rollout.py --version 1.2.0 --only m4 --hold-minutes 15' "$STUB_LOG" &&
     grep -q 'publish.mjs --public .* --ref '"$SHA_B"' --tag --push' "$STUB_LOG" &&
     [ "$(cat "$STAGE/published.sha")" = "$SHA_B" ]
 }
-check 'publish private, M4, then M1 and M3, then public, desktop and merge' finish_ok
+check 'publish private, then public, then M4, then M1 and M3, desktop and merge' finish_ok
 stub_set RELEASE_STUB_OUTPUT=
 
 BEFORE="$(lines)"
@@ -387,6 +398,138 @@ untracked_refused() {
   run 0 1.3.1 --resume --stop-after candidate && [ "$(cat "$STAGE/candidate.sha")" = "$SHA_A" ] && logged push-candidate
 }
 check 'a new candidate with untracked files is refused before the clean' untracked_refused
+
+# ---------------------------------------------------------------- feeds, sums, Electron, identity
+
+S="$WORK/s"
+make_machine "$S"
+use_machine "$S" 1.4.0
+# A fresh public clone: no identity of its own yet.
+stub_set "RELEASE_STUB_STATUS=electron-check=1" "RELEASE_STUB_OUTPUT=public-email= public-name="
+stage_line() {  # stage_line STAGE LABEL: the first command logged under that label
+  [ -f "$STUB_LOG" ] || return 0
+  awk -F '\t' -v stage="$1" -v label="$2" '$1 == stage && $2 == label { print $3; exit }' "$STUB_LOG"
+}
+labels_of() {  # labels_of STAGE: every label logged in that stage, in order
+  [ -f "$STUB_LOG" ] || return 0
+  awk -F '\t' -v stage="$1" '$1 == stage { printf "%s ", $2 }' "$STUB_LOG"
+}
+prepared_ok() {
+  run 0 1.4.0 --stop-after publish-private || return 1
+  has "electron's runtime is missing or incomplete" || return 1
+  case "$(labels_of candidate)" in *install-build*electron-reset*electron-install*) ;; *) return 1 ;; esac
+  case "$(stage_line candidate electron-reset)" in */apps/desktop/node_modules/electron/dist*/path.txt) ;; *) return 1 ;; esac
+  [ "$(stage_line trees public-email)" = 'git config --local user.email 979819+anton-abyzov@users.noreply.github.com' ] &&
+    [ "$(stage_line trees public-name)" = 'git config --local user.name Anton Abyzov' ] || return 1
+  [ "$(cat "$STAGE/prev/assets.json")" = '[]' ] &&
+    stage_line prev prev-assets > /dev/null && stage_line prev prev-verify | grep -q -- "--digests $STAGE/prev/assets.json studio-update.json" || return 1
+  case "$(labels_of plan)" in *sums-plan*sums-check*) ;; *) return 1 ;; esac
+  stage_line plan sums-check | grep -q 'deployment-helpers-manifest.json studio-update.json$' || return 1
+  [ -f "$STAGE/markers/publish-private" ] && [ ! -f "$STAGE/markers/publish-public" ]
+}
+check 'Electron repaired by its install.js, noreply identity set, plan in the sums before drafts' prepared_ok
+
+# Today's main ran fleet-m4 before publish-public: a folder it left after M4 resumes with public
+# next, then M1 and M3; a fleet stage never asks a host for a release the public feed lacks.
+state_write_marker() { printf '%s\n' "$2" > "$STAGE/markers/$1"; }
+state_write_marker fleet-m4 once
+stub_set RELEASE_STUB_STATUS= RELEASE_STUB_OUTPUT=published-fleet-feed=true
+BEFORE="$(lines)"
+old_order_guard_ok() {
+  run 1 1.4.0 --resume || return 1
+  has '= fleet-m4: done' && has 'is not published on anton-abyzov/specwithcode, the feed the fleet' || return 1
+  [ "$(stages_after "$BEFORE")" = "publish-public " ] && [ -f "$STAGE/markers/publish-public" ] &&
+    ! awk -F '\t' -v from="$BEFORE" 'NR > from && $2 == "fleet-workers"' "$STUB_LOG" | grep -q . &&
+    [ ! -f "$STAGE/markers/fleet-workers" ]
+}
+check 'a folder from the fleet-first order resumes public first; the fleet refuses an unpublished feed' old_order_guard_ok
+stub_set RELEASE_STUB_OUTPUT=
+BEFORE="$(lines)"
+old_order_finish_ok() {
+  run 0 1.4.0 --resume || return 1
+  [ "$(stages_after "$BEFORE")" = "fleet-workers desktop merge " ] && has 'SpecWithCode 1.4.0 is released.'
+}
+check '... and then finishes with M1 and M3, desktop and merge' old_order_finish_ok
+
+U="$WORK/u"
+make_machine "$U"
+use_machine "$U" 1.4.1
+stub_set "RELEASE_STUB_STATUS=electron-check=1 electron-recheck=1"
+electron_refused() {
+  run 1 1.4.1 || return 1
+  has "electron's dist is still missing or incomplete" && [ ! -f "$STAGE/markers/candidate" ] &&
+    [ -z "$(labels_of stage1)" ]
+}
+check 'an Electron runtime still missing after install.js stops the candidate stage' electron_refused
+stub_set RELEASE_STUB_STATUS=same-sums-private=1
+draft_sums_refused() {
+  run 1 1.4.1 --resume || return 1
+  has 'SHA256SUMS on anton-abyzov/specwithcode is not' || return 1
+  case "$(labels_of publish-private)" in *publish-private*) return 1 ;; esac
+  [ ! -f "$STAGE/published.sha" ] && [ ! -f "$STAGE/markers/publish-private" ]
+}
+check 'a draft whose SHA256SUMS is not the built one is never published' draft_sums_refused
+stub_set RELEASE_STUB_STATUS= RELEASE_STUB_FAIL=publish-private:check-sums-private
+draft_plan_refused() {
+  run 1 1.4.1 --resume || return 1
+  case "$(labels_of publish-private)" in *publish-private*) return 1 ;; esac
+  [ ! -f "$STAGE/published.sha" ]
+}
+check 'a draft whose SHA256SUMS leaves out the plan is never published' draft_plan_refused
+stub_set RELEASE_STUB_FAIL=
+stub_set RELEASE_STUB_OUTPUT=published-fleet-feed=true
+m4_feed_refused() {
+  run 1 1.4.1 --resume || return 1
+  has 'is not published on anton-abyzov/specwithcode, the feed the fleet' && [ -f "$STAGE/markers/publish-public" ] &&
+    [ -z "$(labels_of fleet-m4)" ] && [ ! -f "$STAGE/markers/fleet-m4" ]
+}
+check 'fleet-m4 asks M4 for nothing while the public feed lacks the release' m4_feed_refused
+stub_set RELEASE_STUB_OUTPUT=
+
+# A folder whose candidate stage ran without the Electron check (today's main) resumes at build:
+# the build stage checks again and repairs the runtime before the desktop build.
+W="$WORK/w"
+make_machine "$W"
+use_machine "$W" 1.4.3
+stub_set RELEASE_STUB_STATUS=
+BEFORE="$(lines)"
+build_electron_ok() {
+  run 0 1.4.3 --stop-after stage1 || return 1
+  [ -f "$STAGE/markers/candidate" ] || return 1
+  stub_set RELEASE_STUB_STATUS=electron-check=1
+  run 0 1.4.3 --resume --stop-after build || return 1
+  has '= candidate: done' && has "build: electron's runtime is missing or incomplete" || return 1
+  case "$(labels_of build)" in *electron-reset*electron-install*build-desktop*) ;; *) return 1 ;; esac
+  stub_set "RELEASE_STUB_STATUS=electron-check=1 electron-recheck=1"
+  remove_marker build
+  run 1 1.4.3 --resume --stop-after build || return 1
+  has "electron's dist is still missing or incomplete" && [ ! -f "$STAGE/markers/build" ]
+}
+remove_marker() { rm -f "$STAGE/markers/$1"; }
+check 'the build stage repairs a missing Electron runtime too, and stops when it stays missing' build_electron_ok
+stub_set RELEASE_STUB_STATUS=
+
+V="$WORK/v"
+make_machine "$V"
+use_machine "$V" 1.4.2
+stub_set "RELEASE_STUB_OUTPUT=public-email=7+me@users.noreply.github.com public-name=Me"
+identity_kept() {
+  run 0 1.4.2 --stop-after trees || return 1
+  [ -z "$(stage_line trees public-email)" ] && [ -z "$(stage_line trees public-name)" ]
+}
+check 'a noreply identity already in the public clone is kept' identity_kept
+stub_set RELEASE_STUB_OUTPUT=public-email=me@example.com
+BEFORE="$(lines)"
+identity_replaced() {
+  run 0 1.4.2 --resume --stop-after trees || return 1
+  awk -F '\t' -v from="$BEFORE" 'NR > from && $2 == "public-email"' "$STUB_LOG" |
+    grep -q 'user.email 979819+anton-abyzov@users.noreply.github.com$'
+}
+check 'a personal address in the public clone is replaced by the noreply one' identity_replaced
+stub_set "RELEASE_STUB_OUTPUT=committer=Me<me@example.com>"
+identity_env_refused() { run 1 1.4.2 --resume --stop-after trees && has "the public clone's committer is not a GitHub noreply address"; }
+check 'a personal committer from the environment still stops the release' identity_env_refused
+stub_set RELEASE_STUB_OUTPUT=
 
 # ---------------------------------------------------------------- timing comparison
 

@@ -92,8 +92,12 @@ class Holder:
         node = service_sqlite_node()
         command = ([node, '--no-warnings', '--input-type=module', '--eval', NODE_HOLDER, str(path), mode] if node
                    else [sys.executable, '-B', '-c', HOLDER, str(path), mode])
-        self.process = subprocess.Popen(command, stdout=subprocess.PIPE, text=True)
-        assert self.process.stdout.readline().strip() == 'ready'
+        self.process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        line = self.process.stdout.readline().strip()
+        if line != 'ready':
+            self.process.kill()
+            _, errors = self.process.communicate(timeout=10)
+            raise AssertionError('the holder did not start: ' + (errors or line or 'no output'))
 
     def crashed(self, within=0.3):
         """The holder's exit status, or None while it still runs `within` seconds on. A loaded host
@@ -104,11 +108,16 @@ class Holder:
             time.sleep(0.05)
         return self.process.poll()
 
+    def errors(self):
+        """What the holder wrote to stderr; call only after it exited."""
+        return self.process.stderr.read()
+
     def close(self):
         if self.process.poll() is None:
             self.process.kill()
         self.process.wait(10)
         self.process.stdout.close()
+        self.process.stderr.close()
 
 
 class LiveDatabase(unittest.TestCase):
@@ -118,10 +127,11 @@ class LiveDatabase(unittest.TestCase):
         self.root = pathlib.Path(temporary.name).resolve()
         self.database = self.root / 'statev2.sqlite'
 
-    def hold(self, mode):
-        holder = Holder(self.database, mode)
+    def hold(self, mode, database=None):
+        database = database or self.database
+        holder = Holder(database, mode)
         self.addCleanup(holder.close)
-        if mode == 'dropped' and live_database.service_locks(self.database) != {'database': None, 'index': None}:
+        if mode == 'dropped' and live_database.service_locks(database) != {'database': None, 'index': None}:
             self.skipTest("this holder's SQLite keeps its locks when another descriptor closes")
         return holder
 
@@ -146,11 +156,27 @@ class LiveDatabase(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform == 'darwin', 'the truncated index faults at the 16 KiB page on macOS')
     def test_a_plain_read_only_open_crashes_a_holder_that_lost_its_index_lock(self):
-        holder = self.hold('dropped')
-        reader = sqlite3.connect('file:' + str(self.database) + '?mode=ro', uri=True)
-        reader.execute('SELECT count(*) FROM t').fetchone()
-        reader.close()
-        self.assertEqual(holder.crashed(within=30), -signal.SIGBUS)
+        # The plain reader takes the holder for gone and rebuilds the index under it. The holder's
+        # next read usually faults on the truncated page; on a loaded host it can land while the
+        # rebuild still runs and fail with SQLITE_BUSY_RECOVERY (261), which a reader that keeps
+        # the holder's index also never causes. A holder the host never schedules while the reader
+        # is open finds the index rebuilt and lives on, so that one outcome gets a fresh holder.
+        for attempt in range(5):
+            database = self.root / str(attempt) / 'statev2.sqlite'
+            database.parent.mkdir()
+            holder = self.hold('dropped', database)
+            reader = sqlite3.connect('file:' + str(database) + '?mode=ro', uri=True)
+            reader.execute('SELECT count(*) FROM t').fetchone()
+            reader.close()
+            status = holder.crashed(within=30)
+            if status is None:
+                holder.close()
+                continue
+            if status != -signal.SIGBUS:
+                self.assertEqual(status, 1)
+                self.assertIn('errcode: 261', holder.errors())
+            return
+        self.fail('five holders survived a plain read-only open of their database')
 
     def test_the_safe_reader_never_resets_the_index_of_a_holder_that_lost_its_locks(self):
         holder = self.hold('dropped')

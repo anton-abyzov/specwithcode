@@ -239,6 +239,7 @@ const bootstrap = Effect.gen(function* () {
         origin: discovery.service.httpBaseUrl.href,
         baseDir: discovery.service.baseDir,
         serviceManaged: discovery.service.runtime.serviceManaged,
+        installedService: discovery.service.installedService === true,
         serverVersion: discovery.service.descriptor.serverVersion,
       });
       if (!(yield* Ref.get(state.quitting))) {
@@ -306,6 +307,8 @@ const bootstrap = Effect.gen(function* () {
     if (settings.wslOnly === true && settings.wslBackendEnabled === true) {
       yield* desktopWindow.showConnectingSplash;
     }
+    // This backend quits with the app, so an app restart may stop its work first.
+    yield* (yield* DesktopLocalService.DesktopLocalService).markSpawned;
     yield* primaryBackend.start;
     yield* logBootstrapInfo("bootstrap backend start requested");
     yield* appActivation.start.pipe(

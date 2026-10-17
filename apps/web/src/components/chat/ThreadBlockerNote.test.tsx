@@ -15,8 +15,8 @@ describe("ThreadBlockerNote", () => {
 
   it("paints an opaque card so timeline rows never show through", () => {
     const html = renderToStaticMarkup(<ThreadBlockerNote blocker="Waiting on review" />);
-    expect(html).toContain("bg-card");
-    expect(html).not.toMatch(/(?:^|\s)bg-warning\/\d+/);
+    expect(html).toContain("lane-surface");
+    expect(html).not.toMatch(/(?:^|\s)bg-(?:card|warning)\/\d+/);
   });
 
   it("clamps a long blocker to three lines and keeps the full text", () => {

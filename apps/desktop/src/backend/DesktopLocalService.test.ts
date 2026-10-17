@@ -474,6 +474,44 @@ describe("DesktopLocalService.bearerToken", () => {
   });
 });
 
+describe("DesktopLocalService.ownsBundledService", () => {
+  it.effect("is true only for a backend the app started itself", () =>
+    withDescriptorServer((origin) => {
+      const { home } = makeHomeWithInstalledService(origin);
+      return Effect.gen(function* () {
+        const service = yield* DesktopLocalService.DesktopLocalService;
+        // Before bootstrap decides, nothing is owned.
+        assert.isFalse(yield* service.ownsBundledService);
+        yield* service.markSpawned;
+        assert.isTrue(yield* service.ownsBundledService);
+      }).pipe(
+        Effect.provide(layerFor(home)),
+        Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
+      );
+    }),
+  );
+
+  it.effect("is false while attached to a running service", () =>
+    withDescriptorServer((origin) => {
+      const { home } = makeHomeWithInstalledService(origin);
+      return Effect.gen(function* () {
+        const service = yield* DesktopLocalService.DesktopLocalService;
+        const discovery = yield* service.discover();
+        assert.equal(discovery._tag, "running");
+        if (discovery._tag !== "running") return;
+        yield* service.attach(discovery.service);
+        assert.isFalse(yield* service.ownsBundledService);
+        // Even a stray spawn mark does not make an attached service the app's own.
+        yield* service.markSpawned;
+        assert.isFalse(yield* service.ownsBundledService);
+      }).pipe(
+        Effect.provide(layerFor(home)),
+        Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
+      );
+    }),
+  );
+});
+
 describe("DesktopLocalService.discover", () => {
   it.effect("finds the installed service in its own home beside the default one", () =>
     withDescriptorServer((origin) => {
@@ -486,6 +524,11 @@ describe("DesktopLocalService.discover", () => {
         assert.equal(discovery.service.baseDir, studioHome);
         assert.equal(discovery.service.httpBaseUrl.origin, origin);
         assert.equal(discovery.service.descriptor.serverVersion, "0.1.4");
+        // launchd starts the fleet service without the Node launcher, so its
+        // runtime state never says serviceManaged; the receipt does.
+        assert.isFalse(discovery.service.runtime.serviceManaged);
+        assert.isTrue(discovery.service.installedService);
+        assert.isTrue(DesktopLocalService.isInstalledService(discovery.service));
       }).pipe(
         Effect.provide(layerFor(home)),
         Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),

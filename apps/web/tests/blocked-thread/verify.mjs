@@ -40,7 +40,8 @@ const browser = await chromium.launch({
 });
 const receipt = { headless: true, checks: [], screenshots: [] };
 try {
-  for (const theme of ["light", "dark"]) {
+  // "translucent" gives the theme's canvas and card alpha, as an imported theme may.
+  for (const theme of ["light", "dark", "translucent"]) {
     for (const width of [1440, 390]) {
       const page = await browser.newPage({ viewport: { width, height: 1000 } });
       await page.route("**/*", (route) =>
@@ -48,7 +49,12 @@ try {
       );
       const errors = [];
       page.on("pageerror", (error) => errors.push(error.message));
-      await page.goto(`${origin}/?theme=${theme}`);
+      await page.goto(`${origin}/?theme=${theme === "dark" ? "dark" : "light"}`);
+      if (theme === "translucent")
+        await page.addStyleTag({
+          content:
+            "html{--background:oklch(1 0 0 / 0.5)!important;--card:oklch(1 0 0 / 0.4)!important}",
+        });
       await page.locator("[data-case]").first().waitFor();
       const overlay = page.locator('[data-case="none-with-notes"]');
       assert.equal(await overlay.getAttribute("data-status"), "");
@@ -67,35 +73,29 @@ try {
         const box = await note.boundingBox();
         assert.ok(box && box.width <= width, "note fits the viewport");
       }
-      // The note overlays scrolled rows: its fill must be opaque and its own
-      // text must be the topmost element wherever it is drawn.
+      // The lane overlays scrolled rows. Nothing in it may let a transcript
+      // row show through or draw over its text, and the timeline's inset must
+      // keep the first row below it as it grows.
       const lane = page.locator('[data-case="overlay-lane"]');
-      await lane.locator("[data-overlay-scroller]").evaluate((element) => {
-        element.scrollTop = 120;
-      });
+      const scroller = lane.locator("[data-overlay-scroller]");
       const laneNote = lane.locator("[data-thread-blocker]");
-      const opaque = await laneNote.evaluate((element) => {
-        const probe = document.createElement("canvas").getContext("2d");
-        probe.fillStyle = getComputedStyle(element).backgroundColor;
-        probe.fillRect(0, 0, 1, 1);
-        return probe.getImageData(0, 0, 1, 1).data[3] === 255;
-      });
-      assert.ok(opaque, "blocker note background is opaque");
-      const covered = await laneNote.evaluate((element) => {
-        const text = element.querySelector("[data-thread-blocker-text]");
-        const rect = text.getBoundingClientRect();
-        const misses = [];
-        for (const fx of [0.1, 0.5, 0.9])
-          for (const fy of [0.2, 0.5, 0.8]) {
-            const hit = document.elementFromPoint(
-              rect.left + rect.width * fx,
-              rect.top + rect.height * fy,
-            );
-            if (!hit || !element.contains(hit)) misses.push([fx, fy, hit?.tagName ?? null]);
+      await lane.scrollIntoViewIfNeeded();
+      const firstRowClear = () =>
+        // The inset is measured, so give it a few frames to follow the lane.
+        lane.evaluate(async (section) => {
+          let gap = -Infinity;
+          for (let frame = 0; frame < 30 && gap < 0; frame += 1) {
+            await new Promise((resolve) => requestAnimationFrame(resolve));
+            const bottom = section
+              .querySelector("[data-banner-lane]")
+              .getBoundingClientRect().bottom;
+            gap =
+              section.querySelector('[data-transcript-row="0"]').getBoundingClientRect().top -
+              bottom;
           }
-        return misses;
-      });
-      assert.deepEqual(covered, [], "nothing draws over the blocker text");
+          return gap;
+        });
+      assert.ok((await firstRowClear()) >= 0, "first row starts below the lane");
       const toggle = laneNote.getByRole("button", { name: "Show more" });
       assert.equal(await toggle.count(), 1, "long blocker starts clamped");
       const clampedHeight = (await laneNote.boundingBox()).height;
@@ -105,6 +105,80 @@ try {
         "Show more expands the note",
       );
       assert.equal(await laneNote.getByRole("button", { name: "Show less" }).count(), 1);
+      assert.ok((await firstRowClear()) >= 0, "the inset follows the expanded lane");
+      await scroller.evaluate((element) => {
+        element.scrollTop = 240;
+      });
+      const surfaces =
+        '[data-slot="alert"], [data-thread-meta], [data-thread-plan-card], [data-thread-blocker]';
+      const overlaps = await lane.evaluate((section, selector) => {
+        const misses = [];
+        for (const surface of section.querySelectorAll(selector)) {
+          const rect = surface.getBoundingClientRect();
+          for (const fx of [0.08, 0.3, 0.5, 0.7, 0.92])
+            for (const fy of [0.08, 0.3, 0.5, 0.7, 0.92]) {
+              const hit = document.elementFromPoint(
+                rect.left + rect.width * fx,
+                rect.top + rect.height * fy,
+              );
+              if (!hit || !surface.contains(hit) || hit.closest("[data-transcript-row]"))
+                misses.push([
+                  surface.outerHTML.slice(0, 60),
+                  fx,
+                  fy,
+                  hit?.textContent?.slice(0, 40),
+                ]);
+            }
+        }
+        return misses;
+      }, surfaces);
+      assert.deepEqual(overlaps, [], "no transcript row is topmost inside a lane surface");
+      // Pixels, not hit tests: the whole lane (gaps beside the alert included),
+      // the dock and each surface look the same with the rows under them shown
+      // or hidden, so nothing shows through.
+      const regions = await lane.evaluate(
+        (section, selector) =>
+          [
+            ...section.querySelectorAll(
+              `[data-banner-lane], ${selector}, [data-thread-progress-dock]`,
+            ),
+          ].map((element) => {
+            const rect = element.getBoundingClientRect();
+            return {
+              name:
+                element.getAttribute("data-thread-meta") ??
+                element.getAttribute("data-slot") ??
+                (element.hasAttribute("data-banner-lane") ? "lane" : null) ??
+                [...element.attributes].find((a) => a.name.startsWith("data-thread"))?.name,
+              clip: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+            };
+          }),
+        surfaces,
+      );
+      const shoot = () =>
+        Promise.all(regions.map((region) => page.screenshot({ clip: region.clip })));
+      const shown = await shoot();
+      const hideRows = await page.addStyleTag({
+        content: "[data-transcript-row]{visibility:hidden}",
+      });
+      const hidden = await shoot();
+      const seeThrough = regions
+        .filter((_, index) => !shown[index].equals(hidden[index]))
+        .map((region) => region.name);
+      assert.deepEqual(seeThrough, [], "transcript rows show through the lane");
+      await hideRows.evaluate((element) => element.remove());
+      // A row revealed at the top (a collapsed report, a found match) lands below the lane.
+      const revealGap = await lane.evaluate((section) => {
+        section.querySelector('[data-transcript-row="30"]').scrollIntoView({ block: "start" });
+        const bottom = section.querySelector("[data-banner-lane]").getBoundingClientRect().bottom;
+        return (
+          section.querySelector('[data-transcript-row="30"]').getBoundingClientRect().top - bottom
+        );
+      });
+      assert.ok(revealGap >= 0, `revealed row lands below the lane (${revealGap}px)`);
+      await scroller.evaluate((element) => {
+        element.scrollTop = 240;
+      });
       await lane.screenshot({ path: path.join(output, `blocked-lane-${theme}-${width}.png`) });
       assert.deepEqual(errors, []);
       const file = path.join(output, `blocked-thread-${theme}-${width}.png`);

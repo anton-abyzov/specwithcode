@@ -34,6 +34,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as ServerConfig from "../config.ts";
 import { readFleetConfig } from "../studioFleet.ts";
 import * as ProjectAdmission from "./ProjectAdmission.ts";
+import { mapProjectFailure } from "./ProjectWorkspaceFailure.ts";
 import {
   addProjectLibraryArtifact,
   ProjectLibraryProblem,
@@ -203,10 +204,6 @@ const make = Effect.gen(function* () {
     sql<ProjectMemoryFile>`SELECT name, content, revision, updated_at AS "updatedAt", byte_length AS "byteLength" FROM project_memory WHERE project_id = ${projectId} AND name = ${name}`.pipe(
       Effect.map((found) => found[0]),
     );
-  const mapFailure = (projectId: ProjectId) =>
-    Effect.mapError((error: unknown) =>
-      isProjectWorkspaceError(error) ? error : fail(projectId, "operation_failed"),
-    );
   const readWorkspace = ({ projectId }: { projectId: ProjectId }) =>
     Effect.gen(function* () {
       const project = yield* requireProject(projectId);
@@ -218,7 +215,7 @@ const make = Effect.gen(function* () {
           totalBytes: files.reduce((sum, entry) => sum + entry.byteLength, 0),
         },
       };
-    }).pipe(mapFailure(projectId));
+    }).pipe(mapProjectFailure(projectId, "workspace.read"));
   const readMemory = ({ projectId, name }: { projectId: ProjectId; name: string }) =>
     Effect.gen(function* () {
       yield* requireProject(projectId);
@@ -226,7 +223,7 @@ const make = Effect.gen(function* () {
       const found = yield* file(projectId, name);
       if (!found) return yield* fail(projectId, "not_found");
       return { ...found };
-    }).pipe(mapFailure(projectId));
+    }).pipe(mapProjectFailure(projectId, "memory.read"));
   const writeMemory = (input: ProjectMemoryWriteInput) =>
     sql
       .withTransaction(
@@ -257,7 +254,7 @@ const make = Effect.gen(function* () {
           return { name, content, revision, updatedAt, byteLength };
         }),
       )
-      .pipe(mapFailure(input.projectId));
+      .pipe(mapProjectFailure(input.projectId, "memory.write"));
   const deleteMemory = (input: { projectId: ProjectId; name: string; expectedRevision: number }) =>
     sql
       .withTransaction(
@@ -269,7 +266,7 @@ const make = Effect.gen(function* () {
           return { deleted: true as const };
         }),
       )
-      .pipe(mapFailure(input.projectId));
+      .pipe(mapProjectFailure(input.projectId, "memory.delete"));
   const assertAdmission = (projectId: ProjectId) =>
     Effect.gen(function* () {
       const project = yield* requireProject(projectId);
@@ -332,7 +329,7 @@ const make = Effect.gen(function* () {
         ],
         ["memory_index", memoryIndexSection((yield* file(projectId, "MEMORY.md"))?.content)],
       ]);
-    }).pipe(mapFailure(projectId));
+    }).pipe(mapProjectFailure(projectId, "context.snapshot"));
   const libraryFailure =
     (projectId: ProjectId) =>
     (error: unknown): ProjectLibraryError =>

@@ -23,6 +23,10 @@ import {
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
 } from "./chatAttachment.ts";
 import { ModelSelection } from "./modelSelection.ts";
+import {
+  SERVICE_UPDATE_IN_PROGRESS_MESSAGE,
+  SERVICE_UPDATE_VERIFYING_MESSAGE,
+} from "./serviceUpdatePreparation.ts";
 
 // Sized for memory brought over from another tool: a long-lived project keeps
 // hundreds of topic files and megabytes of notes. A prompt carries only MEMORY.md
@@ -168,9 +172,12 @@ export class ProjectWorkspaceError extends Schema.TaggedError<ProjectWorkspaceEr
       "unsupported_provider",
       "busy",
       "transferred",
+      "update_in_progress",
       "operation_failed",
     ]),
     projectId: ProjectId,
+    /** With `update_in_progress`: the update is installed and its release is being checked. */
+    verifying: Schema.optional(Schema.Boolean),
   },
 ) {
   override get message(): string {
@@ -195,7 +202,12 @@ export class ProjectWorkspaceError extends Schema.TaggedError<ProjectWorkspaceEr
       unsupported_provider:
         "This provider cannot use additional project folders under the current permissions. Use Codex or Claude, or an ACP provider already running with Full access and no restrictive sandbox or approval override.",
       busy: "Finish or stop active project work before deleting the project.",
-      transferred: "This coordinator handed off ownership. Open its successor; an uncertain transfer must be retried with the same handoff.",
+      transferred:
+        "This coordinator handed off ownership. Open its successor; an uncertain transfer must be retried with the same handoff.",
+      update_in_progress:
+        this.verifying === true
+          ? SERVICE_UPDATE_VERIFYING_MESSAGE
+          : SERVICE_UPDATE_IN_PROGRESS_MESSAGE,
       operation_failed: "The project operation failed. Reload and try again.",
     };
     return messages[this.code];

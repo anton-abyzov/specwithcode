@@ -11,9 +11,11 @@ const alertVariants = cva("relative rounded-xl border px-3.5 py-3 text-card-fore
   },
   variants: {
     // "glass" floats the alert over content; alert-glass tints from data-variant.
+    // "lane" is opaque, for the banner lane that overlays the scrolled timeline.
     surface: {
       default: "",
       glass: "alert-glass",
+      lane: "alert-lane",
     },
     variant: {
       default: "bg-transparent dark:bg-input/32 [&_svg]:text-muted-foreground",

@@ -47,6 +47,7 @@ import {
   PROVIDERS,
   RELEASE_FEED_URL,
   buildStatusServices,
+  decodeHealthWatch,
   neededFeeds,
   type CoordinatorState,
   type FeedId,
@@ -131,6 +132,7 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const historyPath = path.join(config.stateDir, "status-history.json");
+  const healthWatchPath = path.join(config.baseDir, "health", "latest.json");
   const startedAt = yield* Clock.currentTimeMillis;
 
   // Read before this run records its own: the previous run clears the file
@@ -212,6 +214,12 @@ export const make = Effect.gen(function* () {
     return fleetConfig === null ? null : discoverFleet(fleetConfig, config.host);
   }).pipe(Effect.orElseSucceed(() => null));
 
+  const readHealthWatch = fs.readFileString(healthWatchPath).pipe(
+    Effect.flatMap(decodeJson),
+    Effect.map(decodeHealthWatch),
+    Effect.orElseSucceed(() => null),
+  );
+
   const readTailscale = readTailscaleStatus.pipe(
     Effect.map((status): TailscaleState => ({ state: "running", dnsName: status.magicDnsName })),
     Effect.orElseSucceed((): TailscaleState => ({ state: "unavailable" })),
@@ -239,12 +247,13 @@ export const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => false),
     );
     const threads = yield* readThreads;
-    const [coordinators, fleet, tailscale, releaseFeed] = yield* Effect.all(
+    const [coordinators, fleet, tailscale, releaseFeed, healthWatch] = yield* Effect.all(
       [
         readCoordinators(threads),
         readFleet,
         readTailscale,
         Effect.promise(() => isReachable(RELEASE_FEED_URL)),
+        readHealthWatch,
       ],
       { concurrency: "unbounded" },
     );
@@ -267,6 +276,7 @@ export const make = Effect.gen(function* () {
       tailscale,
       feeds,
       releaseFeedReachable: releaseFeed,
+      healthWatch,
     };
     const services = buildStatusServices(inputs);
     const previous = yield* currentHistory;

@@ -6,6 +6,7 @@ import {
   describeDesktopUpdateStatus,
   getArm64IntelBuildWarningDescription,
   getDesktopUpdateActionError,
+  getDesktopUpdateBusyNotice,
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateInstallConfirmationMessage,
   getDesktopUpdateReleaseHistoryUrl,
@@ -384,5 +385,41 @@ describe("describeDesktopUpdateStatus", () => {
         "1h ago",
       ),
     ).toBe("Update 1.1.0 is downloaded. Last checked 1h ago.");
+  });
+});
+
+describe("getDesktopUpdateBusyNotice", () => {
+  it("names the version and progress of a running download", () => {
+    expect(
+      getDesktopUpdateBusyNotice(
+        { ...baseState, status: "downloading", availableVersion: "1.0.36", downloadPercent: 64.9 },
+        null,
+      ).title,
+    ).toBe("Downloading update 1.0.36 (64%)");
+  });
+
+  it("covers a download that has been requested but not reported yet", () => {
+    expect(
+      getDesktopUpdateBusyNotice(
+        { ...baseState, status: "available", availableVersion: "1.0.36" },
+        "download",
+      ).title,
+    ).toBe("Starting the download of 1.0.36");
+  });
+
+  it("explains builds without automatic updates", () => {
+    expect(
+      getDesktopUpdateBusyNotice({ ...baseState, enabled: false, status: "disabled" }, null),
+    ).toEqual({
+      title: "Automatic updates are off",
+      description: "This build does not update itself.",
+    });
+  });
+
+  it("falls back to a check in progress and to loading state", () => {
+    expect(getDesktopUpdateBusyNotice({ ...baseState, status: "checking" }, "check").title).toBe(
+      "Checking for updates",
+    );
+    expect(getDesktopUpdateBusyNotice(null, null).title).toBe("Update status is loading");
   });
 });

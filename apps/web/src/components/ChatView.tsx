@@ -661,6 +661,7 @@ import { deriveThreadPlanView, displayFolder } from "../studio/threadPlanProgres
 import { useThreadIncrementProgress } from "../studio/useThreadIncrementProgress";
 import { ThreadPlanCard } from "./chat/ThreadPlanCard";
 import { ThreadBlockerNote } from "./chat/ThreadBlockerNote";
+import { ThreadProgressDock } from "./chat/ThreadProgressDock";
 import {
   LinkIncrementDialogHost,
   openLinkIncrementDialog,
@@ -2107,6 +2108,7 @@ function useChatViewState(props: ChatViewProps) {
   // Banners overlay the top of the timeline; the timeline reserves their height.
   const [timelineBannerOverlayRef, timelineBannerOverlayHeight] =
     useElementHeight<HTMLDivElement>();
+  const timelineBannerOverlayHeightRef = useLatestRef(timelineBannerOverlayHeight);
   const shouldUsePlanSidebarSheet = chatUsesPanelSheet(
     layoutMode,
     workspaceLayoutWidth,
@@ -4917,6 +4919,7 @@ function useChatViewState(props: ChatViewProps) {
     threadSyncPhase,
     timelineAnchorMessageId,
     timelineBannerOverlayHeight,
+    timelineBannerOverlayHeightRef,
     timelineBannerOverlayRef,
     timelineEntries,
     timelineMessages,
@@ -5119,6 +5122,7 @@ function useChatViewActions(
     threadPanelPresentation,
     threadStatus,
     timelineAnchorMessageId,
+    timelineBannerOverlayHeightRef,
     timelineEntries,
     transcriptOnly,
     turnDiffSummaries,
@@ -7448,13 +7452,14 @@ function useChatViewActions(
             index: anchorIndex,
             animated: true,
             viewPosition: 0,
-            viewOffset: CHAT_LIST_ANCHOR_OFFSET,
+            // Land below the banner lane, not under it.
+            viewOffset: CHAT_LIST_ANCHOR_OFFSET + timelineBannerOverlayHeightRef.current,
           });
         });
       };
       requestAnimationFrame(() => positionAnchor(12));
     },
-    [legendListRef],
+    [legendListRef, timelineBannerOverlayHeightRef],
   );
   const onTimelineAnchorSizeChanged = useCallback(
     (messageId: MessageId) => {
@@ -13542,10 +13547,7 @@ export default function ChatView(props: ChatViewProps) {
               threadPullRequests.length > 0 ||
               threadOrigin !== null ||
               timelineWorkingFolder !== null ? (
-                <div
-                  className="mx-auto flex w-full max-w-(--chat-content-max-width) flex-col gap-1.5 px-3 pt-2 sm:px-5"
-                  data-thread-progress-dock
-                >
+                <ThreadProgressDock>
                   <ThreadMetaRow
                     key={`meta:${activeThread.id}`}
                     origin={threadOrigin}
@@ -13569,7 +13571,7 @@ export default function ChatView(props: ChatViewProps) {
                   {activeThreadBlocker !== null ? (
                     <ThreadBlockerNote blocker={activeThreadBlocker} />
                   ) : null}
-                </div>
+                </ThreadProgressDock>
               ) : null}
             </div>
             {/* Messages Wrapper */}

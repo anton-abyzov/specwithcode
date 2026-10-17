@@ -147,6 +147,58 @@ export interface StatusInputs {
   readonly feeds: Partial<Record<FeedId, FeedReading>>;
   /** null when not checked yet. */
   readonly releaseFeedReachable: boolean | null;
+  /** The external health watch's last report; absent or null when none is written. */
+  readonly healthWatch?: HealthWatchReading | null;
+}
+
+/**
+ * `<baseDir>/health/latest.json`, written every few minutes by
+ * `scripts/studio-fleet/fleet_health.py --write` from a LaunchAgent. It reads
+ * what this process cannot see about itself: an update hold left behind, a
+ * failed install, failed user-facing RPCs and warning floods.
+ */
+export interface HealthWatchReading {
+  readonly status: "ok" | "degraded" | "down";
+  readonly checkedAtMs: number;
+  readonly problems: ReadonlyArray<string>;
+}
+
+/** A report older than this no longer speaks for the service. */
+export const HEALTH_WATCH_STALE_MS = 15 * 60_000;
+
+export function decodeHealthWatch(raw: unknown): HealthWatchReading | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const { status, checkedAt, problems } = raw as Record<string, unknown>;
+  const checkedAtMs = typeof checkedAt === "string" ? Date.parse(checkedAt) : Number.NaN;
+  if (
+    (status !== "ok" && status !== "degraded" && status !== "down") ||
+    !Number.isFinite(checkedAtMs)
+  ) {
+    return null;
+  }
+  return {
+    status,
+    checkedAtMs,
+    problems: Array.isArray(problems)
+      ? problems.filter((entry): entry is string => typeof entry === "string")
+      : [],
+  };
+}
+
+function healthWatchComponent(reading: HealthWatchReading, now: number): StatusComponent {
+  const age = formatDuration(Math.max(0, now - reading.checkedAtMs));
+  if (now - reading.checkedAtMs > HEALTH_WATCH_STALE_MS) {
+    return component("health-watch", "Health watch", "unknown", `Last report ${age} ago.`);
+  }
+  if (reading.status === "ok") {
+    return component("health-watch", "Health watch", "operational", `Checked ${age} ago.`);
+  }
+  return component(
+    "health-watch",
+    "Health watch",
+    reading.status === "down" ? "partial_outage" : "degraded",
+    reading.problems.length > 0 ? reading.problems.join("; ") : `Reported ${reading.status}.`,
+  );
 }
 
 export interface BuiltService {
@@ -307,6 +359,7 @@ export function buildStatusServices(input: StatusInputs): ReadonlyArray<BuiltSer
       input.databaseOk ? null : "The state database did not answer.",
     ),
     component("mcp", "MCP endpoint", "operational", "Served at /mcp for agent tools."),
+    ...(input.healthWatch ? [healthWatchComponent(input.healthWatch, input.now)] : []),
   ];
   services.push({
     id: "local-service",
