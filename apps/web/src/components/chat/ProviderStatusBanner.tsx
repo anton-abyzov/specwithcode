@@ -118,7 +118,7 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
       <Alert
         variant={isWarning ? "warning" : "error"}
         role={incompatible && incompatible.status !== "broken" ? "status" : "alert"}
-        surface="glass"
+        surface="lane"
         controlAlignment="first-line"
       >
         <InfoIcon />

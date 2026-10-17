@@ -75,9 +75,7 @@ export function getDesktopUpdateButtonTooltip(state: DesktopUpdateState): string
     return `Update ${state.availableVersion ?? "available"} ready to download`;
   }
   if (state.status === "downloading") {
-    const progress =
-      typeof state.downloadPercent === "number" ? ` (${Math.floor(state.downloadPercent)}%)` : "";
-    return `Downloading update${progress}`;
+    return `${describeDesktopUpdateDownload(state)}. Restart to update appears when it finishes.`;
   }
   if (state.status === "downloaded") {
     return `Update ${state.downloadedVersion ?? state.availableVersion ?? "ready"} downloaded. Click to restart and install.`;
@@ -95,6 +93,57 @@ export function getDesktopUpdateButtonTooltip(state: DesktopUpdateState): string
     return state.message ?? "Update failed";
   }
   return "Up to date";
+}
+
+function describeDesktopUpdateDownload(state: DesktopUpdateState): string {
+  const version = state.availableVersion ? ` ${state.availableVersion}` : "";
+  const progress =
+    typeof state.downloadPercent === "number" ? ` (${Math.floor(state.downloadPercent)}%)` : "";
+  return `Downloading update${version}${progress}`;
+}
+
+export interface DesktopUpdateBusyNotice {
+  readonly title: string;
+  readonly description: string;
+}
+
+/**
+ * What a press on the sidebar update button says while it cannot act, so a
+ * download, a check or an update-less build never looks like a dead button.
+ */
+export function getDesktopUpdateBusyNotice(
+  state: DesktopUpdateState | null,
+  pendingAction: "check" | "download" | null,
+): DesktopUpdateBusyNotice {
+  if (!state) {
+    return {
+      title: "Update status is loading",
+      description: "Try again in a moment.",
+    };
+  }
+  if (state.status === "downloading") {
+    return {
+      title: describeDesktopUpdateDownload(state),
+      description:
+        "You can keep working. Restart to update appears at the bottom of the sidebar when the download finishes.",
+    };
+  }
+  if (pendingAction === "download") {
+    return {
+      title: `Starting the download${state.availableVersion ? ` of ${state.availableVersion}` : ""}`,
+      description: "Progress shows on this button.",
+    };
+  }
+  if (!state.enabled || state.status === "disabled") {
+    return {
+      title: "Automatic updates are off",
+      description: state.message ?? "This build does not update itself.",
+    };
+  }
+  return {
+    title: "Checking for updates",
+    description: "The result appears in a moment.",
+  };
 }
 
 export function getDesktopUpdateInstallConfirmationMessage(

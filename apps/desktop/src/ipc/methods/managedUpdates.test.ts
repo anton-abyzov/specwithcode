@@ -114,6 +114,8 @@ function fixture() {
       bearerToken: Effect.sync(getBearer),
       discover: () => Effect.die("unexpected discovery"),
       attach: () => Effect.die("unexpected attach"),
+      markSpawned: Effect.die("unexpected spawn"),
+      ownsBundledService: Effect.succeed(false),
     }),
   );
   const method = makeManagedUpdateConsentMethod({ resolve, invoke });

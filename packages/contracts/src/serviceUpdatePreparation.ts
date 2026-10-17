@@ -2,6 +2,13 @@ import * as Schema from "effect/Schema";
 
 import { NonNegativeInt, ProjectId, ThreadId } from "./baseSchemas.ts";
 
+/** Shown for work refused while the service is held for an update. */
+export const SERVICE_UPDATE_IN_PROGRESS_MESSAGE =
+  "SpecWithCode is installing an update. Send this again after it restarts.";
+/** Shown after the restart, while the update helper still checks the new release. */
+export const SERVICE_UPDATE_VERIFYING_MESSAGE =
+  "SpecWithCode is finishing an update. Send this again in a minute.";
+
 /**
  * Work that keeps the Studio service from installing an update. The service's
  * update helper refuses to snapshot the database while any of it exists, so
@@ -37,6 +44,9 @@ export const ServiceUpdateBlocker = Schema.Struct({
 });
 export type ServiceUpdateBlocker = typeof ServiceUpdateBlocker.Type;
 
+export const ServiceUpdatePrepareReason = Schema.Literals(["app-restart", "install"]);
+export type ServiceUpdatePrepareReason = typeof ServiceUpdatePrepareReason.Type;
+
 export const ServerPrepareServiceUpdateInput = Schema.Struct({
   /**
    * True stops every running task first, as Stop would, cancels queued
@@ -53,6 +63,13 @@ export const ServerPrepareServiceUpdateInput = Schema.Struct({
   hold: Schema.optional(Schema.Boolean),
   /** Cancels the update hold and lets work start again. Ignores `stopWork`. */
   releaseHold: Schema.optional(Schema.Boolean),
+  /**
+   * Why the caller asks. `app-restart` drains before the app restarts, which
+   * ends a bundled service: its hold is short, since no install request may
+   * follow. `install` (the default) precedes an install request to the update
+   * agent. Older services ignore it.
+   */
+  reason: Schema.optional(ServiceUpdatePrepareReason),
 });
 export type ServerPrepareServiceUpdateInput = typeof ServerPrepareServiceUpdateInput.Type;
 
@@ -69,6 +86,12 @@ export const ServerPrepareServiceUpdateResult = Schema.Struct({
    * the request (ISO time). A forced install request can retry until then.
    */
   holdUntil: Schema.optional(Schema.String),
+  /**
+   * While held: why. A window that finds an `app-restart` hold leaves it to the
+   * service, which ends it soon when no install request follows; releasing it
+   * would let work start again just before the app quits. Older services omit it.
+   */
+  holdReason: Schema.optional(ServiceUpdatePrepareReason),
   /** Turns this call interrupted; the person can continue each by hand after the update. */
   interruptedRuns: Schema.optional(NonNegativeInt),
   /** Terminals that are open now, or that this call closed when it stops work. */

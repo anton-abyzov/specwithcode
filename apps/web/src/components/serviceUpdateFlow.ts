@@ -217,6 +217,17 @@ const AGENT_WORKING: ReadonlySet<StudioServiceUpdateStatus> = new Set([
   "installing",
 ]);
 
+// The agent will not install anything in these states: a hold left on the
+// service has nothing to wait for.
+const AGENT_SETTLED: ReadonlySet<StudioServiceUpdateStatus> = new Set([
+  "not-managed",
+  "disabled",
+  "up-to-date",
+  "installed",
+  "manual-required",
+  "error",
+]);
+
 /**
  * Withdraws the install request. `withdrawn` is false when the desktop could
  * not save that, so the agent may still install. Older desktops cannot
@@ -264,7 +275,10 @@ async function run(start: ServiceUpdateProgress): Promise<void> {
   // A retry times its install afresh.
   const { installingSince: _previousInstall, ...fresh } = start;
   setState({ progress: fresh, waitedLong: false });
-  const prepared = await callPrepare({ stopWork: true, hold: true }, STOP_WORK_TIMEOUT_MS);
+  const prepared = await callPrepare(
+    { stopWork: true, hold: true, reason: "install" },
+    STOP_WORK_TIMEOUT_MS,
+  );
   if (current !== attempt) return;
   holdSeen = prepared?.held === true;
   lastBlockerCheck = Date.now();
@@ -580,13 +594,17 @@ export async function isServiceWorkRunning(): Promise<boolean | null> {
  * true when the service answered.
  */
 export async function drainWorkForAppRestart(): Promise<boolean> {
-  const prepared = await callPrepare({ stopWork: true, hold: true }, STOP_WORK_TIMEOUT_MS);
+  // A short hold: should the service outlive the restart, it lets work start again soon.
+  const prepared = await callPrepare(
+    { stopWork: true, hold: true, reason: "app-restart" },
+    STOP_WORK_TIMEOUT_MS,
+  );
   return prepared !== null;
 }
 
 /** Lets work start again after a drained app restart did not happen. */
 export async function releaseAppRestartDrain(): Promise<void> {
-  await callPrepare({ stopWork: false, releaseHold: true }, QUICK_CALL_MS);
+  await callPrepare({ stopWork: false, releaseHold: true, reason: "app-restart" }, QUICK_CALL_MS);
 }
 
 /** "Update now" again (or "Try again") for the update already under way. */
@@ -642,14 +660,22 @@ export async function cancelServiceUpdate(): Promise<void> {
  * After a reload, an app restart or in another window, the service may still
  * be held for an update this window did not start, refusing new work. While
  * the agent may still install it, show it here with "Cancel update"; when the
- * agent has moved on, release the hold, since nothing else will.
+ * agent is idle or failed, release the hold, since nothing else will. An
+ * app restart that drained a service it did not take down leaves such a hold
+ * with the agent idle, so the agent's state alone never skips the look.
  */
 async function adoptHeldUpdate(
   serviceState: StudioServiceUpdateState | null,
   prepare: PrepareServiceUpdate,
 ): Promise<void> {
   if (adoptChecked || adopting) return;
-  if (serviceState === null || !AGENT_WORKING.has(serviceState.status)) return;
+  // "available" or "starting": the agent may be about to take up another
+  // window's request; look again once it says more.
+  if (
+    serviceState === null ||
+    (!AGENT_WORKING.has(serviceState.status) && !AGENT_SETTLED.has(serviceState.status))
+  )
+    return;
   if (state.progress !== null || state.starting) return;
   adopting = true;
   const current = attempt;
@@ -659,10 +685,19 @@ async function adoptHeldUpdate(
     // Not held (yet): another window may start an update later, so look again on
     // the next state change rather than once per window.
     if (checked === null || checked.held !== true) return;
+    // A drain before an app restart (this window's or another's) is not an
+    // update to follow or release: the app is about to quit, and the service
+    // ends the hold itself soon when no install request follows.
+    if (checked.holdReason === "app-restart") return;
     adoptChecked = true;
     const agent = (await readAgentState()) ?? serviceState;
     if (current !== attempt || state.progress !== null || state.starting) return;
     if (!AGENT_WORKING.has(agent.status)) {
+      // Not yet settled either: decide on a later state change.
+      if (!AGENT_SETTLED.has(agent.status)) {
+        adoptChecked = false;
+        return;
+      }
       await withdrawRequest();
       if (current === attempt && state.progress === null) {
         await callPrepare({ stopWork: false, releaseHold: true }, QUICK_CALL_MS);

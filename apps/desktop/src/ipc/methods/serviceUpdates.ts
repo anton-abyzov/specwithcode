@@ -74,7 +74,10 @@ export const controllerForAttachedService = (
   makeServiceUpdateController({
     homeDirectory: environment.homeDirectory,
     platform: environment.platform,
-    attachedStudioHome: service?.runtime.serviceManaged ? service.baseDir : null,
+    // A fleet service started by launchd never says serviceManaged; its
+    // installation receipt does.
+    attachedStudioHome:
+      service !== null && DesktopLocalService.isInstalledService(service) ? service.baseDir : null,
     agentScriptPath: () => {
       const candidates = [
         ...environment.resolveResourcePathCandidates("studio-updater/update_agent.py"),
@@ -378,8 +381,8 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
     const attached = Option.getOrNull(
       yield* (yield* DesktopLocalService.DesktopLocalService).attached,
     );
-    const serviceVersion = attached?.runtime.serviceManaged
-      ? attached.descriptor.serverVersion
+    const serviceVersion = DesktopLocalService.isInstalledService(attached)
+      ? attached?.descriptor.serverVersion
       : undefined;
     const current = yield* readState;
     if (

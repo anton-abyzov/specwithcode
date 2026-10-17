@@ -9,7 +9,12 @@
 # Stages, in order (docs/studio/releasing.md has the runbook):
 #   preflight trees prev bump candidate stage1 [server starts here, in the background]
 #   build bundle sign helpers plan drafts server-wait
-#   quit-desktop publish-private fleet-m4 fleet-workers publish-public desktop merge
+#   quit-desktop publish-private publish-public fleet-m4 fleet-workers desktop merge
+#
+# publish-public comes before the fleet stages: the hosts' update agents read the public feed
+# (update_agent.DEFAULT_REPOSITORY), so a release only on the private one is invisible to them.
+# Stage names never change, so a staging folder from an earlier order resumes at the first stage
+# it has no marker for.
 #
 # State lives in ~/.specwithcode/release-staging/<version>/: a marker per finished stage (holding
 # the candidate commit it passed for), logs/<stage>.log (appended, one header per run) and
@@ -46,7 +51,7 @@ RELEASE_ENV="${RELEASE_ENV:-$HOME/.config/skill-studio-release/release.env}"
 STAGING_ROOT="${RELEASE_STAGING_ROOT:-$HOME/.specwithcode/release-staging}"
 TREES="${RELEASE_TREES:-$HOME/Projects/github/release.noindex}"
 APP="${RELEASE_DESKTOP_APP:-/Applications/SpecWithCode.app}"
-STAGE_NAMES="preflight trees prev bump candidate stage1 build bundle sign helpers plan drafts server-wait quit-desktop publish-private fleet-m4 fleet-workers publish-public desktop merge"
+STAGE_NAMES="preflight trees prev bump candidate stage1 build bundle sign helpers plan drafts server-wait quit-desktop publish-private publish-public fleet-m4 fleet-workers desktop merge"
 VERSION_RE='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
 POLICY_RE='^1\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
 STUB_SHA_DEFAULT=1111111111111111111111111111111111111111
@@ -116,7 +121,10 @@ stub_value() {
     loadavg) printf '{ 1.00 1.00 1.00 }\n' ;;
     ncpu) printf '16\n' ;;
     releases) printf '[{"tagName":"v%s","isDraft":false}]\n' "${RELEASE_STUB_PREVIOUS:-1.99.0}" ;;
-    committer) printf 'Release <1+release@users.noreply.github.com> 0 +0000\n' ;;
+    prev-assets) printf '[]\n' ;;
+    committer | author) printf 'Release <1+release@users.noreply.github.com> 0 +0000\n' ;;
+    public-email) printf '1+release@users.noreply.github.com\n' ;;
+    public-name) printf 'Release\n' ;;
     release-flags) printf -- '--latest --prerelease=false\n' ;;
     published-*) printf 'false\n' ;;
     draft-state) printf 'true\n' ;;
@@ -324,6 +332,10 @@ load_env() {
   fi
   NODE_VERSION="${NODE_VERSION:-22.20.0}"
   PUBLIC_CLONE="${PUBLIC_CLONE:-$TREES/public}"
+  # The public clone's own commit identity (its .git/config, not the global one): the owner's
+  # GitHub noreply address, so a public snapshot or tag never carries a personal address.
+  PUBLIC_GIT_NAME="${PUBLIC_GIT_NAME:-Anton Abyzov}"
+  PUBLIC_GIT_EMAIL="${PUBLIC_GIT_EMAIL:-979819+anton-abyzov@users.noreply.github.com}"
   PUBLIC_RULES="${STUDIO_PUBLIC_RULES:-$HOME/.local/share/specweave/specwithcode-public/rules.json}"
   FLEET_HOSTS="${STUDIO_FLEET_HOSTS:-$HOME/.local/share/specweave/fleet/hosts.json}"
   BUILD="$TREES/build"
@@ -506,17 +518,50 @@ stage_trees() {
   if [ ! -e "$PUBLIC_CLONE/.git" ]; then
     x clone-public -- git clone -q "https://github.com/$PUBLIC_REPO.git" "$PUBLIC_CLONE"
   fi
-  case "$(q committer -C "$PUBLIC_CLONE" -- git var GIT_COMMITTER_IDENT)" in
-    *"@users.noreply.github.com>"*) ;;
-    *) check_fail "set a GitHub noreply user.email in $PUBLIC_CLONE (git -C $PUBLIC_CLONE config user.email <id>+<login>@users.noreply.github.com)" ;;
+  public_identity
+}
+
+# publish.mjs commits and tags in the public clone and refuses an author or committer that is not
+# a GitHub noreply address. A Mac without a global git identity has none, and a global one may be
+# personal, so the clone gets its own: a local noreply address stays, anything else is replaced.
+public_identity() {
+  local email name ident upper
+  case "$PUBLIC_GIT_EMAIL" in
+    ?*@users.noreply.github.com) ;;
+    *) check_fail "PUBLIC_GIT_EMAIL ($PUBLIC_GIT_EMAIL) is not a GitHub noreply address" ;;
   esac
+  if [ "$MODE" = dry ]; then
+    say "    public-identity: (in $PUBLIC_CLONE) git config --local user.email $PUBLIC_GIT_EMAIL and user.name, unless it has a noreply one"
+    return 0
+  fi
+  email="$(q public-email -C "$PUBLIC_CLONE" --may-fail -- git config --local --get user.email)"
+  name="$(q public-name -C "$PUBLIC_CLONE" --may-fail -- git config --local --get user.name)"
+  case "$email" in
+    ?*@users.noreply.github.com) ;;
+    *) x public-email -C "$PUBLIC_CLONE" -- git config --local user.email "$PUBLIC_GIT_EMAIL" ;;
+  esac
+  if [ -z "$name" ]; then x public-name -C "$PUBLIC_CLONE" -- git config --local user.name "$PUBLIC_GIT_NAME"; fi
+  # GIT_AUTHOR_EMAIL or GIT_COMMITTER_EMAIL in the environment still wins over any config.
+  for ident in committer author; do
+    upper="$(printf '%s' "$ident" | tr '[:lower:]' '[:upper:]')"
+    case "$(q "$ident" -C "$PUBLIC_CLONE" -- git var "GIT_${upper}_IDENT")" in
+      *"@users.noreply.github.com>"*) ;;
+      *) check_fail "the public clone's $ident is not a GitHub noreply address; unset GIT_${upper}_EMAIL or set user.email in $PUBLIC_CLONE" ;;
+    esac
+  done
 }
 
 stage_prev() {
+  local listing
   ensure_dir "$STAGE/prev"
   x prev-download -- gh release download "v$PREV" -R "$PRIVATE_REPO" -p studio-update.json \
     -p deployment-helpers-manifest.json -p SHA256SUMS -D "$STAGE/prev" --clobber
-  x prev-verify -- python3 -B "$TOOLS" verify-sums --dir "$STAGE/prev" studio-update.json deployment-helpers-manifest.json
+  # GitHub's own sha256 of each asset. 1.0.38 shipped a SHA256SUMS without studio-update.json:
+  # a file the sums leave out is used only when it matches this digest, and refused otherwise.
+  listing="$(q prev-assets -- gh api "repos/$PRIVATE_REPO/releases/tags/v$PREV" --jq '[.assets[] | {name, digest}]')"
+  state_write "$STAGE/prev/assets.json" "$listing"
+  x prev-verify -- python3 -B "$TOOLS" verify-sums --dir "$STAGE/prev" --digests "$STAGE/prev/assets.json" \
+    studio-update.json deployment-helpers-manifest.json
 }
 
 stage_bump() {
@@ -553,6 +598,31 @@ stage_candidate() {
   done
   t lockfile-unchanged -C "$TEST" -- git diff --quiet -- pnpm-lock.yaml ||
     die "pnpm install changed pnpm-lock.yaml at $SHA12; commit the lockfile fix"
+  electron_runtime
+}
+
+# pnpm runs electron's postinstall (install.js, which downloads dist/) only when it links the
+# package. The build tree keeps node_modules across `git clean -e node_modules`, so with an
+# unchanged lockfile `pnpm install` changes nothing and a dist that an earlier install skipped
+# or cut short stays missing; the signed build then fails late. CI runs ensure:electron after
+# every install for the same reason. Here electron's own install.js repairs it (it checks the
+# download against electron's published checksums), and the check after it stops the release
+# with the paths that are missing.
+electron_runtime() {
+  local desktop="$BUILD/apps/desktop" electron="$BUILD/apps/desktop/node_modules/electron"
+  local check=(node scripts/ensure-electron-runtime.mjs --check)
+  need_file "$desktop/scripts/ensure-electron-runtime.mjs" "the Electron runtime check"
+  if [ "$MODE" = dry ]; then
+    say "    electron-check: (in $desktop) ${check[*]}; when it fails, electron's install.js and the check again"
+    return 0
+  fi
+  if t electron-check -C "$desktop" -- "${check[@]}" 2> /dev/null; then return 0; fi
+  say "$CURRENT_STAGE: electron's runtime is missing or incomplete in $electron; running its install.js"
+  need_file "$electron/install.js" "electron's install script (pnpm install did not link electron)"
+  x electron-reset -- rm -rf "$electron/dist" "$electron/path.txt"
+  x electron-install -C "$electron" -- node install.js
+  t electron-recheck -C "$desktop" -- "${check[@]}" ||
+    die "electron's dist is still missing or incomplete in $electron after install.js; see the paths above, check that ELECTRON_SKIP_BINARY_DOWNLOAD and npm ignore-scripts are unset, then --resume"
 }
 
 # ---------------------------------------------------------------- stage 1: everything but the server
@@ -825,6 +895,9 @@ load_google_pair() {  # Exports only the two Google OAuth variables; never evalu
 
 stage_build() {
   need_file "${GOOGLE_OAUTH_ENV_FILE:-}" "the Google OAuth pair"
+  # Again here: a staging folder whose candidate stage ran before this check existed (or an
+  # Electron folder changed since) resumes at build, and the signed build needs the runtime.
+  electron_runtime
   (
     load_google_pair
     x build-desktop -C "$BUILD" -- env APP_VERSION="$VERSION" node node_modules/vite-plus/bin/vp run build:desktop
@@ -900,6 +973,9 @@ EOF
     --source-commit "$SHA" --sha256sums "$ASSETS/SHA256SUMS" --runtime "$runtime" --helpers "$helpers" \
     --previous-plan "$STAGE/prev/studio-update.json" --output "$ASSETS/studio-update.json" "${args[@]}"
   x sums-plan -- python3 -B "$TOOLS" sums --dir "$ASSETS" --out "$ASSETS/SHA256SUMS" --append studio-update.json
+  # The prev stage of the next release and every host's agent check the plan against SHA256SUMS.
+  x sums-check -- python3 -B "$TOOLS" verify-sums --dir "$ASSETS" "${names[@]}" "$runtime" "$helpers" \
+    deployment-helpers-manifest.json studio-update.json
 }
 
 # ---------------------------------------------------------------- drafts and publishing
@@ -994,7 +1070,18 @@ stage_quit_desktop() {
 }
 
 publish() {  # publish REPO NOTES LABEL: flip the draft and check it is public
+  local check="$STAGE/published-check/$3"
   release_flags
+  # What the draft holds, not what the assets folder holds: its SHA256SUMS must be this
+  # candidate's and list the plan and helpers manifest it carries (1.0.38's did not list the plan).
+  remove_owned "$check"
+  ensure_dir "$check"
+  x "fetch-sums-$3" -- gh release download "v$VERSION" -R "$1" -p SHA256SUMS -p studio-update.json \
+    -p deployment-helpers-manifest.json -D "$check" --clobber
+  x "check-sums-$3" -- python3 -B "$TOOLS" verify-sums --dir "$check" studio-update.json deployment-helpers-manifest.json
+  if [ "$MODE" = dry ]; then say "    same-sums-$3: stop unless $check/SHA256SUMS is $ASSETS/SHA256SUMS"; fi
+  t "same-sums-$3" -- cmp -s "$check/SHA256SUMS" "$ASSETS/SHA256SUMS" ||
+    die "SHA256SUMS on $1 is not $ASSETS/SHA256SUMS; upload it to the draft again, then --resume"
   x "notes-$3" -- gh release edit "v$VERSION" -R "$1" --notes-file "$2"
   x "publish-$3" -- gh release edit "v$VERSION" -R "$1" --draft=false ${FLAGS[@]+"${FLAGS[@]}"}
   [ "$(q "published-$3" -- gh release view "v$VERSION" -R "$1" --json isDraft -q .isDraft)" = false ] ||
@@ -1009,11 +1096,24 @@ stage_publish_private() {
   state_write "$STAGE/published.sha" "$SHA"
 }
 
+# The fleet's update agents find releases on the public feed: asking a host for a version that
+# feed does not show leaves it waiting until the rollout's deadline.
+fleet_feed_ready() {
+  if [ "$MODE" = dry ]; then
+    say "    fleet-feed: stop unless v$VERSION is published on $PUBLIC_REPO"
+    return 0
+  fi
+  [ "$(q published-fleet-feed -- gh release view "v$VERSION" -R "$PUBLIC_REPO" --json isDraft -q .isDraft)" = false ] ||
+    die "v$VERSION is not published on $PUBLIC_REPO, the feed the fleet's update agents read; publish-public comes first"
+}
+
 stage_fleet_m4() {
+  fleet_feed_ready
   x fleet-m4 -C "$BUILD" -- python3 -B scripts/studio-fleet/fleet_rollout.py --version "$VERSION" --only m4 --hold-minutes 15
 }
 
 stage_fleet_workers() {
+  fleet_feed_ready
   x fleet-workers -C "$BUILD" -- python3 -B scripts/studio-fleet/fleet_rollout.py --version "$VERSION" --only workers
 }
 
@@ -1168,9 +1268,9 @@ main() {
   run_stage server-wait sha
   if ! is_done desktop once; then run_stage quit-desktop always; fi
   run_stage publish-private once
+  run_stage publish-public once
   run_stage fleet-m4 once
   run_stage fleet-workers once
-  run_stage publish-public once
   run_stage desktop once
   run_stage merge once
   if [ "$MODE" = dry ]; then

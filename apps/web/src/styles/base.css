@@ -375,6 +375,44 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(studio-m
   }
 }
 
+/* Surfaces in the chat banner lane float over the scrolled timeline, so they
+   must hide it. Imported themes may give --card or --background alpha; the
+   system Canvas color under both keeps the stack opaque. Tint with --lane-tint. */
+@utility lane-surface {
+  --lane-tint: transparent;
+  background:
+    linear-gradient(var(--lane-tint), var(--lane-tint)), linear-gradient(var(--card), var(--card)),
+    linear-gradient(var(--background), var(--background)), Canvas;
+}
+
+/* alert-glass's tints on an opaque lane surface. */
+@utility alert-lane {
+  --alert-lane-tint: transparent;
+  background:
+    linear-gradient(
+      color-mix(in srgb, var(--alert-lane-tint) 8%, transparent),
+      color-mix(in srgb, var(--alert-lane-tint) 8%, transparent)
+    ),
+    linear-gradient(var(--card), var(--card)),
+    linear-gradient(var(--background), var(--background)), Canvas !important;
+
+  &[data-variant="error"] {
+    --alert-lane-tint: var(--destructive);
+  }
+
+  &[data-variant="info"] {
+    --alert-lane-tint: var(--info);
+  }
+
+  &[data-variant="success"] {
+    --alert-lane-tint: var(--success);
+  }
+
+  &[data-variant="warning"] {
+    --alert-lane-tint: var(--warning);
+  }
+}
+
 @utility dialog-glass {
   background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));

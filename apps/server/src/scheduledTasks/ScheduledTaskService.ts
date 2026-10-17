@@ -53,7 +53,7 @@ import { isMissedFixedTimeRun, isSameSchedule } from "./Schedule.ts";
 import { redactHeaders, redactQuery, renderWebhookPrompt } from "./webhookTemplate.ts";
 import { constantTimeEquals, verifyWebhookSignature } from "./webhookVerification.ts";
 import * as ProjectAdmission from "../project/ProjectAdmission.ts";
-import { assertTaskAdmission } from "./ScheduledTaskAdmission.ts";
+import { assertTaskAdmission, suspendedProjectState } from "./ScheduledTaskAdmission.ts";
 import { reserveRun, completeRun } from "./ScheduledTaskRunReceipt.ts";
 
 import {
@@ -496,6 +496,42 @@ export const layer = Layer.effect(
         .refuse("scheduled-task.run")
         .pipe(Effect.catch((refused) => Effect.fail(taskError(refused.message, { taskId }))));
 
+    // An archived or paused project refuses its routines until it is restored.
+    // Its due runs move on to their next time instead of failing on every poll,
+    // and the first one says why, once per task.
+    const suspendedTasks = yield* Ref.make<ReadonlySet<string>>(new Set());
+    const deferSuspendedRun = Effect.fn("ScheduledTaskService.deferSuspendedRun")(function* (
+      task: ScheduledTask,
+      state: "archived" | "paused",
+      now: DateTime.DateTime,
+    ) {
+      const next = nextRunAt(task, now);
+      const first = yield* Ref.modify(suspendedTasks, (ids) =>
+        ids.has(task.id) ? [false, ids] : [true, new Set([...ids, task.id])],
+      );
+      if (first) {
+        yield* Effect.logWarning("Scheduled task skipped while its project is not active", {
+          taskId: task.id,
+          projectId: task.projectId,
+          reason: state,
+          nextRunAt: next,
+        });
+      }
+      yield* sql`
+        UPDATE scheduled_tasks
+        SET next_run_at = ${next},
+            updated_at = ${iso(now)}
+        WHERE task_id = ${task.id}
+          AND next_run_at IS ${task.nextRunAt}
+      `.pipe(
+        Effect.mapError((cause) =>
+          taskError("Could not reschedule schedule task run.", { taskId: task.id, cause }),
+        ),
+      );
+      yield* notifyChanged;
+      return { ...task, nextRunAt: next, updatedAt: iso(now) };
+    });
+
     const runTask = Effect.fn("ScheduledTaskService.runTask")(function* (
       task: ScheduledTask,
       trigger: "scheduled" | "manual" | "webhook",
@@ -565,10 +601,22 @@ export const layer = Layer.effect(
           if (reason !== null) return yield* new WebhookDeliverySkipped({ reason });
         }
 
-        yield* assertTaskAdmission(active).pipe(
+        const suspended = yield* assertTaskAdmission(active).pipe(
           Effect.provideService(ProjectStore.ProjectStoreV2, projects),
           Effect.provideService(SqlClient.SqlClient, sql),
+          Effect.as(null),
+          Effect.catch((error) => {
+            const state = trigger === "scheduled" ? suspendedProjectState(error) : null;
+            return state === null ? Effect.fail(error) : Effect.succeed(state);
+          }),
         );
+        if (suspended !== null) return yield* deferSuspendedRun(active, suspended, startedAt);
+        yield* Ref.update(suspendedTasks, (ids) => {
+          if (!ids.has(active.id)) return ids;
+          const next = new Set(ids);
+          next.delete(active.id);
+          return next;
+        });
         yield* markRunning(active, startedAtIso);
         yield* Ref.set(admitted, true);
         yield* notifyChanged;

@@ -24,7 +24,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as ServerConfig from "../config.ts";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 import * as ProjectAdmission from "./ProjectAdmission.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as ProjectWorkspaceService from "./ProjectWorkspaceService.ts";
@@ -32,6 +31,7 @@ import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as CoordinatorAttachments from "./ProjectCoordinatorAttachments.ts";
 import { workerFollowUpPrefix } from "./workerFollowUp.ts";
+import { mapProjectFailure } from "./ProjectWorkspaceFailure.ts";
 import {
   isProjectModelSelectionCompatible,
   projectCompatibleProviders,
@@ -62,8 +62,6 @@ export class ProjectCoordinatorService extends Context.Service<
   }
 >()("specweave-studio/project/ProjectCoordinatorService") {}
 
-const isProjectWorkspaceError = Schema.is(ProjectWorkspaceError);
-
 const make = Effect.gen(function* () {
   const eventSink = yield* EventSink.EventSinkV2;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -79,10 +77,6 @@ const make = Effect.gen(function* () {
   const locks = yield* KeyedLock.make<ProjectId>();
   const fail = (projectId: ProjectId, code: ProjectWorkspaceError["code"]) =>
     new ProjectWorkspaceError({ projectId, code });
-  const mapFailure = (projectId: ProjectId) =>
-    Effect.mapError((error: unknown) =>
-      isProjectWorkspaceError(error) ? error : fail(projectId, "operation_failed"),
-    );
   const ensure = (input: ProjectCoordinatorStartInput) =>
     locks
       .withLock(
@@ -184,7 +178,7 @@ const make = Effect.gen(function* () {
           return { threadId, created: true };
         }),
       )
-      .pipe(mapFailure(input.projectId));
+      .pipe(mapProjectFailure(input.projectId, "coordinator.start"));
   /**
    * The model the next coordinator turn names: the saved one unless its
    * provider is limited (see resolveCoordinatorTurnSelection), so a
@@ -347,7 +341,7 @@ const make = Effect.gen(function* () {
           return result;
         }),
       );
-    }).pipe(mapFailure(input.projectId));
+    }).pipe(mapProjectFailure(input.projectId, "coordinator.send"));
   const start = (input: ProjectCoordinatorStartInput) =>
     input.prompt?.trim() ? send({ ...input, prompt: input.prompt }) : ensure(input);
   /**

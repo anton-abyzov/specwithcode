@@ -1162,12 +1162,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       rows,
       anchorMessageId,
       (row) => (row.kind === "message" && row.message.role === "user" ? row.message.id : null),
-      { anchorOffset: CHAT_TIMELINE_ANCHOR_OFFSET },
+      // The anchored turn sits below the banner lane that overlays the list's top.
+      { anchorOffset: CHAT_TIMELINE_ANCHOR_OFFSET + contentInsetStart },
     );
     return config
       ? { ...config, onReady: handleAnchorReady, onSizeChanged: handleAnchorSizeChanged }
       : undefined;
-  }, [anchorMessageId, handleAnchorReady, handleAnchorSizeChanged, rows]);
+  }, [anchorMessageId, contentInsetStart, handleAnchorReady, handleAnchorSizeChanged, rows]);
   const maintainVisibleContentPosition = useMemo(
     () => ({
       data: true,
@@ -1530,10 +1531,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           className="relative h-full min-h-0"
           data-assistant-citation-viewport="true"
           data-conversation-find-scope=""
-          // Pinned "Show less" footers ride above the composer that overlays the list's end.
+          // Pinned "Show less" footers ride above the composer that overlays the list's end;
+          // revealed tops land below the banner lane that overlays its start.
           style={
             {
               "--composer-timeline-inset": `${contentInsetEndAdjustment}px`,
+              "--timeline-banner-inset": `${contentInsetStart}px`,
             } as CSSProperties
           }
         >
@@ -1582,7 +1585,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             onScroll={handleScroll}
             onItemSizeChanged={reportContentOverflow}
             className={cn(
-              "messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
+              "messages-timeline-scroll scrollbar-gutter-both scroll-pt-[calc(var(--timeline-banner-inset,0px)+0.75rem)] h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
               topFadeEnabled && "topbar-scroll-fade",
             )}
             ListHeaderComponent={listHeader}
@@ -1599,7 +1602,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               void listRef.current?.scrollToIndex({
                 index: item.rowIndex,
                 animated: true,
-                viewOffset: 24,
+                viewOffset: 24 + contentInsetStart,
               });
             }}
           />

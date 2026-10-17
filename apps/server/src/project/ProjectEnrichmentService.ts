@@ -10,10 +10,12 @@ import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
+import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
 const DEFAULT_CACHE_CAPACITY = 512;
 const DEFAULT_MAX_PENDING = 512;
@@ -88,6 +90,17 @@ function isSuccessfullyResolved<A, E>(cached: Option.Option<Exit.Exit<A, E>>): b
   });
 }
 
+const isWorkspaceRootNotExistsError = Schema.is(WorkspacePaths.WorkspaceRootNotExistsError);
+
+/**
+ * A project whose folder does not exist here (a path from another machine, a
+ * deleted checkout) has no icon: kept as a miss, not retried and warned about on
+ * every refresh. Moving the project's root invalidates it.
+ */
+function isMissingWorkspaceRoot(error: ProjectFaviconResolver.ProjectFaviconResolutionError) {
+  return error.operation === "normalize-workspace" && isWorkspaceRootNotExistsError(error.cause);
+}
+
 interface EnrichmentWorkLane {
   readonly pendingRoots: Ref.Ref<ReadonlySet<string>>;
   readonly queue: Queue.Queue<string>;
@@ -116,7 +129,16 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
     },
   );
   const faviconCache = yield* Cache.makeWith(
-    (workspaceRoot: string) => Effect.exit(faviconResolver.resolvePath(workspaceRoot)),
+    (workspaceRoot: string) =>
+      Effect.exit(
+        faviconResolver
+          .resolvePath(workspaceRoot)
+          .pipe(
+            Effect.catch((error) =>
+              isMissingWorkspaceRoot(error) ? Effect.succeed(null) : Effect.fail(error),
+            ),
+          ),
+      ),
     {
       capacity: cacheCapacity,
       timeToLive: Exit.match({

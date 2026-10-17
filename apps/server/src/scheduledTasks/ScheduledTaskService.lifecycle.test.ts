@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -159,6 +160,62 @@ it.effect("refuses manual and due routines for paused, archived or deleted proje
         assert.equal(state.launches, 1);
       }),
     );
+  }).pipe(Effect.provide(Sqlite.layerMemory)),
+);
+
+it.effect("moves an archived project's due routine to its next time instead of retrying it", () =>
+  Effect.gen(function* () {
+    const { state, run, sql } = yield* harness;
+    const warnings: Array<unknown> = [];
+    const logger = Logger.make(({ message, logLevel }) => {
+      if (logLevel === "Warn") warnings.push(message);
+    });
+    yield* TestClock.setTime(Date.parse("2026-10-16T20:00:00.000Z"));
+    yield* run((service) =>
+      Effect.gen(function* () {
+        yield* service.upsert(taskInput());
+        const nextRunAt = Effect.map(
+          sql<{ next_run_at: string }>`SELECT next_run_at FROM scheduled_tasks`,
+          (rows) => rows[0]?.next_run_at,
+        );
+        state.policy = "archived";
+        yield* sql`UPDATE scheduled_tasks SET next_run_at = '2026-10-16T19:59:00.000Z'`;
+        yield* state.due;
+        assert.equal(state.launches, 0);
+        // Not due again on the next poll: the run waits for its next interval.
+        assert.equal(yield* nextRunAt, "2026-10-16T20:01:00.000Z");
+        yield* TestClock.adjust("5 seconds");
+        yield* state.due;
+        yield* TestClock.adjust("1 minute");
+        yield* state.due;
+        assert.equal(state.launches, 0);
+        assert.isAbove(Date.parse((yield* nextRunAt) ?? ""), Date.parse("2026-10-16T20:01:00Z"));
+        const skipped = warnings.filter((message) =>
+          JSON.stringify(message).includes(
+            "Scheduled task skipped while its project is not active",
+          ),
+        );
+        // Said once, with the task and why, however many runs it skips.
+        assert.equal(skipped.length, 1);
+        assert.include(JSON.stringify(skipped[0]), '"reason":"archived"');
+        assert.include(JSON.stringify(skipped[0]), '"taskId":"routine"');
+        assert.isFalse(
+          warnings.some((message) => JSON.stringify(message).includes("Scheduled task run failed")),
+        );
+        const [row] = yield* sql<{
+          run_count: number;
+          last_run_status: string;
+        }>`SELECT run_count,last_run_status FROM scheduled_tasks`;
+        assert.equal(row?.run_count, 0);
+        assert.equal(row?.last_run_status, "never");
+
+        // Restored: the routine runs at its next time.
+        state.policy = "active";
+        yield* TestClock.adjust("1 minute");
+        yield* state.due;
+        assert.equal(state.launches, 1);
+      }),
+    ).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
   }).pipe(Effect.provide(Sqlite.layerMemory)),
 );
 

@@ -136,7 +136,7 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
       : (plan.current ?? (allDone ? "All done" : "No tasks yet"));
   return (
     <section
-      className="pointer-events-auto rounded-xl border border-border/70 bg-card/95 text-sm shadow-xs backdrop-blur-sm"
+      className="pointer-events-auto rounded-xl border border-border/70 lane-surface text-sm shadow-xs"
       aria-label={fromIncrement ? `Increment ${increment.incrementId} progress` : "Plan progress"}
       data-thread-plan-card={plan.source}
     >

@@ -31,8 +31,10 @@ import { fixtureProjectDatabase } from "../project/ProjectWorkspace.testkit.ts";
 import * as Hold from "./ServiceUpdateHold.ts";
 import { awaitGateOpen, makeGatedHold } from "./UpdateInstallGate.testkit.ts";
 
-const holdAt = (agentStatePath: string, options: { pollMs?: number; maxMs?: number } = {}) =>
-  Hold.makeWithOptions({ agentStatePath, ...options });
+const holdAt = (
+  agentStatePath: string,
+  options: { pollMs?: number; maxMs?: number; noRequestMs?: number } = {},
+) => Hold.makeWithOptions({ agentStatePath, ...options });
 
 const missingStatePath = "/nonexistent/specweave-studio-test/updates/state.json";
 
@@ -296,6 +298,82 @@ it.live("releases itself once the update agent handled this request", () =>
       handledInstallRequestAt: requested,
     });
     assert.isTrue(yield* awaitSelfRelease(hold));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("ends a hold no install request follows while the agent is idle", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dir = yield* fs.makeTempDirectoryScoped({ prefix: "service-update-hold-no-request-" });
+    const statePath = path.join(dir, "state.json");
+    // The 2026-10-16 case: an app restart drained a service it did not take
+    // down, and the agent never heard of an install.
+    yield* writeJson(statePath, { status: "up-to-date", updatedAt: yield* isoIn(-60_000) });
+    yield* writeJson(path.join(dir, "config.json"), { installRequestedAt: yield* isoIn(-30_000) });
+    const hold = yield* holdAt(statePath, { pollMs: 10, noRequestMs: 100 });
+    yield* hold.acquire({ reason: "app-restart" });
+    yield* Effect.sleep(Duration.millis(50));
+    assert.isTrue(yield* hold.isHeld);
+    assert.isTrue(yield* awaitSelfRelease(hold));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("keeps a hold whose request came, and one whose drain is still running", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dir = yield* fs.makeTempDirectoryScoped({ prefix: "service-update-hold-requested-" });
+    const statePath = path.join(dir, "state.json");
+    yield* writeJson(statePath, { status: "downloaded", updatedAt: yield* isoIn(-60_000) });
+    const hold = yield* holdAt(statePath, { pollMs: 10, noRequestMs: 50 });
+
+    // A drain cannot be followed by a request before it ends.
+    yield* hold.acquire({ draining: true });
+    yield* Effect.sleep(Duration.millis(150));
+    assert.isTrue(yield* hold.isHeld);
+
+    yield* hold.acquire();
+    yield* writeJson(path.join(dir, "config.json"), {
+      installRequestedAt: yield* isoIn(1),
+      installMode: "force",
+    });
+    yield* Effect.sleep(Duration.millis(150));
+    assert.isTrue(yield* hold.isHeld);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("keeps a hold without a request while the agent is busy", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dir = yield* fs.makeTempDirectoryScoped({ prefix: "service-update-hold-busy-agent-" });
+    const statePath = path.join(dir, "state.json");
+    yield* writeJson(statePath, { status: "installing", updatedAt: yield* isoIn(-60_000) });
+    const hold = yield* holdAt(statePath, { pollMs: 10, noRequestMs: 50 });
+    yield* hold.acquire();
+    yield* Effect.sleep(Duration.millis(150));
+    assert.isTrue(yield* hold.isHeld);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("an app restart's drain leaves an install hold as it is", () =>
+  Effect.gen(function* () {
+    const hold = yield* holdAt(missingStatePath);
+    const install = yield* hold.acquire({ reason: "install" });
+    yield* Effect.sleep(Duration.millis(5));
+    const restart = yield* hold.acquire({
+      reason: "app-restart",
+      ttlMs: Hold.APP_RESTART_HOLD_TTL_MS,
+    });
+    // Neither shortened nor started over, so the install request still counts.
+    assert.deepEqual(restart, { ...install, reason: "install" });
+    // An install after an app restart's drain takes the hold over.
+    const restartHold = yield* holdAt(missingStatePath);
+    yield* restartHold.acquire({ reason: "app-restart", ttlMs: Hold.APP_RESTART_HOLD_TTL_MS });
+    const taken = yield* restartHold.acquire({ reason: "install" });
+    assert.equal(taken.reason, "install");
+    assert.equal(taken.expiresAtMs - taken.startedAtMs, Hold.HOLD_TTL_MS);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 

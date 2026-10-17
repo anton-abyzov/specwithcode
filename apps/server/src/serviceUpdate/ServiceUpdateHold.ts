@@ -12,7 +12,9 @@
  * The hold lives in memory: the restart that installs the update ends it. It
  * also ends when its time runs out, when it is released, and when the update
  * agent records that it handled this hold's request (`updates/state.json`
- * handledInstallRequestAt equals `updates/config.json` installRequestedAt).
+ * handledInstallRequestAt equals `updates/config.json` installRequestedAt), and
+ * when no request arrives soon after the drain while the agent is idle (an app
+ * restart that drained a service it did not take down).
  * While the agent is still snapshotting or installing that request the time
  * limit moves with it, up to `HOLD_MAX_MS`.
  *
@@ -26,7 +28,11 @@
  *
  * @module ServiceUpdateHold
  */
-import type { OrchestrationV2ServerCommand } from "@specweave-studio/contracts";
+import {
+  SERVICE_UPDATE_IN_PROGRESS_MESSAGE,
+  SERVICE_UPDATE_VERIFYING_MESSAGE,
+  type OrchestrationV2ServerCommand,
+} from "@specweave-studio/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -44,11 +50,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as ServerConfig from "../config.ts";
 import * as UpdateInstallGate from "./UpdateInstallGate.ts";
 
-export const SERVICE_UPDATE_IN_PROGRESS_MESSAGE =
-  "SpecWithCode is installing an update. Send this again after it restarts.";
-/** Shown after the restart, while the update helper still checks the new release. */
-export const SERVICE_UPDATE_VERIFYING_MESSAGE =
-  "SpecWithCode is finishing an update. Send this again in a minute.";
+export { SERVICE_UPDATE_IN_PROGRESS_MESSAGE, SERVICE_UPDATE_VERIFYING_MESSAGE };
 
 /** Refused because the service is held for an update; the message is shown as is. */
 export class ServiceUpdateInProgressError extends Schema.TaggedError<ServiceUpdateInProgressError>()(
@@ -64,6 +66,18 @@ export class ServiceUpdateInProgressError extends Schema.TaggedError<ServiceUpda
 
 /** Backstop: a hold whose request the agent never takes up ends after this long. */
 export const HOLD_TTL_MS = 15 * 60_000;
+/**
+ * A hold taken before an app restart. The restart that takes a bundled service
+ * down ends it at once; a service that outlives the app must not stay held for
+ * long when no install follows.
+ */
+export const APP_RESTART_HOLD_TTL_MS = 90_000;
+/**
+ * A hold the update agent has no install request for after this long ends with
+ * reason `no-request`, unless the agent is busy: the desktop writes the request
+ * within seconds of the drain, so a hold without one has nothing to wait for.
+ */
+export const NO_REQUEST_RELEASE_MS = 60_000;
 /**
  * The longest a hold lasts while the agent stays busy on its request: the
  * agent's retry window (FORCE_WINDOW, 15 min) plus one install (APPLY_TIMEOUT,
@@ -126,13 +140,32 @@ export interface ServiceUpdateHoldState {
   readonly holdId: string;
   readonly startedAtMs: number;
   readonly expiresAtMs: number;
+  /** Who asked for the hold (`acquire`'s reason): "install" or "app-restart". */
+  readonly reason?: string;
 }
 
 export interface ServiceUpdateHoldShape {
-  /** Holds the service, or extends the current hold; only requests made after this count. */
-  readonly acquire: (input?: { readonly ttlMs?: number }) => Effect.Effect<ServiceUpdateHoldState>;
+  /**
+   * Holds the service, or extends the current hold; only requests made after
+   * this count. `reason` names the caller in the logs.
+   */
+  readonly acquire: (input?: {
+    readonly ttlMs?: number;
+    readonly reason?: string;
+    /**
+     * Held for a drain still under way: no install request can come before it
+     * ends, so a missing one does not end the hold. The drain acquires again
+     * without it when it is done.
+     */
+    readonly draining?: boolean;
+  }) => Effect.Effect<ServiceUpdateHoldState>;
   /** Ends the hold; false when none was held. */
   readonly release: (reason: string) => Effect.Effect<boolean>;
+  /**
+   * Counts a command refused while held. The first refusal of each hold is
+   * logged; the release logs how many followed.
+   */
+  readonly recordRefusal: (action: string) => Effect.Effect<void>;
   /** The hold "Update now" set in this process, if any. */
   readonly current: Effect.Effect<Option.Option<ServiceUpdateHoldState>>;
   /** True while the update helper's install gate is live (see `UpdateInstallGate`). */
@@ -216,6 +249,16 @@ const epochMillis = (value: unknown): number | null =>
   typeof value === "string"
     ? Option.getOrNull(Option.map(DateTime.make(value), DateTime.toEpochMillis))
     : null;
+
+/**
+ * Whether the agent's files hold an install request made since `startedAtMs`,
+ * or the agent's record of one it handled.
+ */
+export function hasRequestSince(reading: AgentStateReading, startedAtMs: number): boolean {
+  const requestedAtMs =
+    epochMillis(reading.installRequestedAt) ?? epochMillis(reading.handledInstallRequestAt);
+  return requestedAtMs !== null && requestedAtMs >= startedAtMs;
+}
 
 /**
  * What the agent's files say about the request made for a hold that began at
@@ -304,6 +347,8 @@ export interface ServiceUpdateHoldOptions {
   readonly pollMs?: number;
   /** Overrides `HOLD_MAX_MS`, for tests. */
   readonly maxMs?: number;
+  /** Overrides `NO_REQUEST_RELEASE_MS`, for tests. */
+  readonly noRequestMs?: number;
   /** The helper's install gate; `install-gate.json` beside the state by default. */
   readonly installGatePath?: string;
   /** Whether the helper named by the gate still runs; for tests. */
@@ -321,6 +366,7 @@ export const makeWithOptions = (options: ServiceUpdateHoldOptions) =>
     const holdMarkerPath =
       options.holdMarkerPath ?? path.join(path.dirname(options.agentStatePath), HOLD_MARKER_FILE);
     const pollMs = options.pollMs ?? AGENT_POLL_MS;
+    const noRequestMs = options.noRequestMs ?? NO_REQUEST_RELEASE_MS;
     const installGatePath =
       options.installGatePath ??
       path.join(path.dirname(options.agentStatePath), UpdateInstallGate.INSTALL_GATE_FILE);
@@ -348,9 +394,18 @@ export const makeWithOptions = (options: ServiceUpdateHoldOptions) =>
       return until !== null && (yield* Clock.currentTimeMillis) < until;
     });
     const state = yield* Ref.make<
-      Option.Option<ServiceUpdateHoldState & { readonly released: Deferred.Deferred<void> }>
+      Option.Option<
+        ServiceUpdateHoldState & {
+          readonly released: Deferred.Deferred<void>;
+          readonly reason: string;
+          /** With no install request by then (and an idle agent) the hold ends. */
+          readonly requestDueAtMs: number;
+        }
+      >
     >(Option.none());
     let holds = 0;
+    // Commands refused under the current hold: the first is logged, the rest counted.
+    let refusals = { holdId: "", count: 0 };
 
     // Best effort: without the file the helper refuses to reap, which is the safe outcome.
     // One writer at a time, and a write only while the hold it describes is current, so a
@@ -396,19 +451,27 @@ export const makeWithOptions = (options: ServiceUpdateHoldOptions) =>
         if (Option.isNone(previous)) return false;
         yield* removeMarker;
         yield* Deferred.succeed(previous.value.released, undefined);
-        yield* Effect.logInfo("service-update.hold.released", {
-          holdId: previous.value.holdId,
-          reason,
-        });
+        const now = yield* Clock.currentTimeMillis;
+        // At Warn: the fleet logs nothing quieter, and a hold refuses everyone's work.
+        yield* Effect.logWarning(
+          reason === "expired" ? "service-update.hold.expired" : "service-update.hold.released",
+          {
+            holdId: previous.value.holdId,
+            reason,
+            acquiredFor: previous.value.reason,
+            heldMs: now - previous.value.startedAtMs,
+            refusals: refusals.holdId === previous.value.holdId ? refusals.count : 0,
+          },
+        );
         return true;
       });
 
     const current = Effect.gen(function* () {
       const held = yield* Ref.get(state);
       if (Option.isNone(held)) return Option.none<ServiceUpdateHoldState>();
-      const { holdId, startedAtMs, expiresAtMs } = held.value;
+      const { holdId, startedAtMs, expiresAtMs, reason } = held.value;
       if ((yield* Clock.currentTimeMillis) < expiresAtMs) {
-        return Option.some({ holdId, startedAtMs, expiresAtMs });
+        return Option.some({ holdId, startedAtMs, expiresAtMs, reason });
       }
       yield* release("expired");
       return Option.none<ServiceUpdateHoldState>();
@@ -417,26 +480,48 @@ export const makeWithOptions = (options: ServiceUpdateHoldOptions) =>
     const acquire: ServiceUpdateHoldShape["acquire"] = (input) =>
       Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis;
-        const expiresAtMs = now + (input?.ttlMs ?? HOLD_TTL_MS);
+        const ttlMs = input?.ttlMs ?? HOLD_TTL_MS;
+        const expiresAtMs = now + ttlMs;
+        const reason = input?.reason ?? "install";
+        const requestDueAtMs = input?.draining === true ? expiresAtMs : now + noRequestMs;
         const existing = yield* current;
         const released = yield* Deferred.make<void>();
         const next = yield* Ref.modify(state, (held) => {
+          // An app restart's drain must not cut short, or orphan the request
+          // of, an install hold already under way: that hold stays as it is.
+          if (Option.isSome(held) && held.value.reason === "install" && reason === "app-restart")
+            return [held.value, held] as const;
           // A repeated "Update now" asks the agent again: older requests no longer count.
           const value = Option.isSome(held)
-            ? { ...held.value, startedAtMs: now, expiresAtMs }
+            ? { ...held.value, startedAtMs: now, expiresAtMs, reason, requestDueAtMs }
             : {
                 holdId: `service-update-hold:${now}:${(holds += 1)}`,
                 startedAtMs: now,
                 expiresAtMs,
                 released,
+                reason,
+                requestDueAtMs,
               };
           return [value, Option.some(value)] as const;
         });
-        yield* writeMarker({ holdId: next.holdId, startedAtMs: next.startedAtMs, expiresAtMs });
+        yield* writeMarker({
+          holdId: next.holdId,
+          startedAtMs: next.startedAtMs,
+          expiresAtMs: next.expiresAtMs,
+        });
         if (Option.isNone(existing)) {
-          yield* Effect.logInfo("service-update.hold.acquired", { holdId: next.holdId });
+          yield* Effect.logWarning("service-update.hold.acquired", {
+            holdId: next.holdId,
+            reason,
+            ttlMs,
+          });
         }
-        return { holdId: next.holdId, startedAtMs: next.startedAtMs, expiresAtMs };
+        return {
+          holdId: next.holdId,
+          startedAtMs: next.startedAtMs,
+          expiresAtMs: next.expiresAtMs,
+          reason: next.reason,
+        };
       });
 
     const awaitReleased: Effect.Effect<void> = Effect.gen(function* () {
@@ -493,11 +578,51 @@ export const makeWithOptions = (options: ServiceUpdateHoldOptions) =>
       Effect.orElseSucceed(() => Option.none<AgentStateReading>()),
     );
 
+    const recordRefusal = (action: string) =>
+      Effect.gen(function* () {
+        const held = yield* Ref.get(state);
+        if (Option.isNone(held)) return;
+        if (refusals.holdId !== held.value.holdId)
+          refusals = { holdId: held.value.holdId, count: 0 };
+        refusals.count += 1;
+        if (refusals.count === 1) {
+          yield* Effect.logWarning("service-update.hold.refused-work", {
+            holdId: held.value.holdId,
+            acquiredFor: held.value.reason,
+            action,
+          });
+        }
+      });
+
     const check = Effect.gen(function* () {
       const held = yield* current;
       if (Option.isNone(held)) return;
       const reading = yield* readAgentState;
       if (Option.isNone(reading)) return;
+      // A hold nobody asked the agent to install for (an app restart that did
+      // not take the service down, a closed window) would refuse work until its
+      // time runs out. Once the request had time to arrive, end it.
+      if (
+        !hasRequestSince(reading.value, held.value.startedAtMs) &&
+        !(AGENT_BUSY_STATUSES as ReadonlyArray<unknown>).includes(reading.value.status)
+      ) {
+        const now = yield* Clock.currentTimeMillis;
+        const latest = yield* Ref.get(state);
+        if (
+          Option.isSome(latest) &&
+          latest.value.startedAtMs === held.value.startedAtMs &&
+          now >= latest.value.requestDueAtMs
+        ) {
+          yield* Effect.logWarning("service-update.hold.no-request", {
+            holdId: latest.value.holdId,
+            acquiredFor: latest.value.reason,
+            heldMs: now - latest.value.startedAtMs,
+            agentStatus: String(reading.value.status),
+          });
+          yield* release("no-request");
+        }
+        return;
+      }
       const verdict = agentVerdictForHold({
         reading: reading.value,
         startedAtMs: held.value.startedAtMs,
@@ -539,6 +664,7 @@ export const makeWithOptions = (options: ServiceUpdateHoldOptions) =>
     return ServiceUpdateHold.of({
       acquire,
       release,
+      recordRefusal,
       current,
       installGated,
       isHeld: Effect.flatMap(current, (held) =>
@@ -578,13 +704,14 @@ const viewOf = (hold: Option.Option<ServiceUpdateHoldShape>): ServiceUpdateHoldV
       refuse: () => Effect.void,
     };
   }
-  const { isHeld, awaitReleased, current, installGated } = hold.value;
+  const { isHeld, awaitReleased, current, installGated, recordRefusal } = hold.value;
   return {
     isHeld,
     awaitReleased,
     refuse: (action) =>
       Effect.gen(function* () {
         if (Option.isSome(yield* current)) {
+          yield* recordRefusal(action);
           return yield* new ServiceUpdateInProgressError({ action });
         }
         if (yield* installGated) {

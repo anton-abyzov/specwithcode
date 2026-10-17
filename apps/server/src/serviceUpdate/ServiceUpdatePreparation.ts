@@ -34,6 +34,7 @@ import {
   ThreadId,
   type ServerPrepareServiceUpdateInput,
   type ServerPrepareServiceUpdateResult,
+  type ServiceUpdatePrepareReason,
   type ServiceUpdateBlocker,
   type ServiceUpdateBlockerKind,
 } from "@specweave-studio/contracts";
@@ -614,15 +615,32 @@ export const makeWithTimings = (timings: ServiceUpdatePreparationTimings) =>
     const holdUntil = Effect.gen(function* () {
       if (Option.isNone(hold)) return {};
       const current = yield* hold.value.current;
-      return Option.isNone(current)
-        ? {}
-        : { holdUntil: DateTime.formatIso(DateTime.makeUnsafe(current.value.expiresAtMs)) };
+      if (Option.isNone(current)) return {};
+      const holdReason = current.value.reason;
+      return {
+        holdUntil: DateTime.formatIso(DateTime.makeUnsafe(current.value.expiresAtMs)),
+        ...(holdReason === "app-restart" || holdReason === "install" ? { holdReason } : {}),
+      };
     });
 
-    const drain = (input: { readonly holding: boolean }) =>
+    const drain = (input: {
+      readonly holding: boolean;
+      readonly reason: ServiceUpdatePrepareReason;
+    }) =>
       Effect.gen(function* () {
+        // An app restart may never be followed by an install request: hold briefly.
+        const ttlMs =
+          input.reason === "app-restart" ? ServiceUpdateHold.APP_RESTART_HOLD_TTL_MS : undefined;
+        const acquire = (draining: boolean) =>
+          Option.isSome(hold) && input.holding
+            ? hold.value.acquire({
+                reason: input.reason,
+                draining,
+                ...(ttlMs === undefined ? {} : { ttlMs }),
+              })
+            : Effect.void;
         // Held before the drain, so nothing new starts behind it.
-        if (input.holding && Option.isSome(hold)) yield* hold.value.acquire();
+        yield* acquire(true);
         const deadline = (yield* Clock.currentTimeMillis) + timings.deadlineMs;
         const drained = yield* stopWork({
           rounds: input.holding ? HELD_STOP_ROUNDS : STOP_ROUNDS,
@@ -648,12 +666,22 @@ export const makeWithTimings = (timings: ServiceUpdatePreparationTimings) =>
           rows = yield* readBlockerRows;
         }
         // The hold's time limit starts again now, as the install request is written.
-        if (input.holding && Option.isSome(hold)) yield* hold.value.acquire();
+        yield* acquire(false);
         return { rows, drained };
       });
 
     const prepare = (input: ServerPrepareServiceUpdateInput) =>
       Effect.gen(function* () {
+        const reason = input.reason ?? "install";
+        // A hold refuses everyone's work: record who asked for one, at the level the fleet logs.
+        if (input.stopWork || input.releaseHold === true) {
+          yield* Effect.logWarning("service-update.prepare.requested", {
+            reason,
+            stopWork: input.stopWork,
+            hold: input.hold === true,
+            releaseHold: input.releaseHold === true,
+          });
+        }
         if (input.releaseHold === true) {
           if (Option.isSome(hold)) yield* hold.value.release("cancelled");
           return {
@@ -686,7 +714,7 @@ export const makeWithTimings = (timings: ServiceUpdatePreparationTimings) =>
           yield* Effect.logWarning("service-update.hold.refused", {
             reason: "no service update is on its way",
           });
-        const { rows, drained } = yield* drain({ holding }).pipe(
+        const { rows, drained } = yield* drain({ holding, reason }).pipe(
           // A drain that failed or was cut off (a closed window) installs nothing:
           // nobody would release the hold, so work may start again now.
           Effect.onError(() =>
@@ -702,7 +730,8 @@ export const makeWithTimings = (timings: ServiceUpdatePreparationTimings) =>
           interruptedRuns: drained.interruptedRuns,
           openTerminals: drained.closedTerminals,
         };
-        yield* Effect.logInfo("service-update.prepare", {
+        yield* Effect.logWarning("service-update.prepare", {
+          reason,
           stoppedThreads: result.stoppedThreads,
           interruptedRuns: result.interruptedRuns,
           openTerminals: result.openTerminals,

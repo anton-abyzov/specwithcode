@@ -17,7 +17,7 @@ export function ThreadBlockerNote({ blocker }: { blocker: string }) {
   const clamped = long && !expanded;
   return (
     <section
-      className="pointer-events-auto flex items-start gap-2 rounded-xl border border-warning/40 bg-card bg-linear-to-b from-warning/8 to-warning/8 px-3 py-2 text-sm shadow-xs dark:from-warning/16 dark:to-warning/16"
+      className="pointer-events-auto flex items-start gap-2 rounded-xl border border-warning/40 lane-surface px-3 py-2 text-sm shadow-xs [--lane-tint:color-mix(in_srgb,var(--warning)_8%,transparent)] dark:[--lane-tint:color-mix(in_srgb,var(--warning)_16%,transparent)]"
       aria-label="Blocked"
       data-thread-blocker
     >

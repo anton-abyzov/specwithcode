@@ -2,7 +2,12 @@
 import type { ServerProvider } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildStatusServices, publicIncidents, type StatusInputs } from "./catalog.ts";
+import {
+  buildStatusServices,
+  decodeHealthWatch,
+  publicIncidents,
+  type StatusInputs,
+} from "./catalog.ts";
 import { parseGoogleCloudIncidents, parseStatuspageSummary, parseXaiStatusRss } from "./feeds.ts";
 import {
   dayLevel,
@@ -343,5 +348,42 @@ describe("status catalog", () => {
     expect(services.find((entry) => entry.id === "github")!.level).toBe("unknown");
     expect(services.find((entry) => entry.id === "updates")!.level).toBe("unknown");
     expect(services.find((entry) => entry.id === "provider:claude")!.level).toBe("operational");
+  });
+
+  it("degrades the local service when the health watch reports a stale update hold", () => {
+    const healthWatch = decodeHealthWatch({
+      status: "degraded",
+      checkedAt: new Date(NOW - 2 * 60_000).toISOString(),
+      problems: ["Update hold refuses new work: no install request since it began, held for 3m00s"],
+    });
+    const local = buildStatusServices(inputs({ healthWatch })).find(
+      (entry) => entry.id === "local-service",
+    )!;
+    expect(local.level).toBe("degraded");
+    expect(local.detail).toBe(
+      "Health watch: Update hold refuses new work: no install request since it began, held for 3m00s",
+    );
+    expect(local.tracksIncidents).toBe(true);
+  });
+
+  it("ignores a missing, malformed or stale health watch report", () => {
+    expect(decodeHealthWatch({ status: "fine", checkedAt: "2026-10-16T15:00:00Z" })).toBeNull();
+    expect(decodeHealthWatch(null)).toBeNull();
+    const stale = decodeHealthWatch({
+      status: "down",
+      checkedAt: new Date(NOW - 60 * 60_000).toISOString(),
+      problems: ["Server does not answer"],
+    });
+    const local = buildStatusServices(inputs({ healthWatch: stale })).find(
+      (entry) => entry.id === "local-service",
+    )!;
+    expect(local.level).toBe("operational");
+    expect(local.components.find((entry) => entry.id === "health-watch")).toMatchObject({
+      level: "unknown",
+      detail: "Last report 1 hr ago.",
+    });
+    expect(
+      buildStatusServices(inputs()).find((entry) => entry.id === "local-service")!.components,
+    ).toHaveLength(3);
   });
 });

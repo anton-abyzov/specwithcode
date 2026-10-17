@@ -28,6 +28,20 @@ const folder = {
 };
 
 describe("ThreadMetaRow", () => {
+  it("paints opaque chips so timeline rows never show through", () => {
+    const html = renderToStaticMarkup(
+      <ThreadMetaRow
+        origin={null}
+        folder={folder}
+        run={null}
+        pullRequests={[pr(2060, "open", "2026-10-15T09:00:00Z")]}
+        onOpenPullRequest={() => {}}
+      />,
+    );
+    expect(html).toContain("lane-surface");
+    expect(html).not.toMatch(/(?:^|\s)bg-card\/\d+|backdrop-blur/);
+  });
+
   it("is one row: folder, duration, then pull requests; a worker has no origin chip", () => {
     const html = renderToStaticMarkup(
       <ThreadMetaRow
@@ -45,13 +59,7 @@ describe("ThreadMetaRow", () => {
     );
     expect(html.match(/data-thread-meta-row/g)).toHaveLength(1);
     const order = [...html.matchAll(/data-thread-meta="([^"]+)"/g)].map((match) => match[1]);
-    expect(order).toEqual([
-      "folder",
-      "duration",
-      "pull-request",
-      "pull-request",
-      "pull-request",
-    ]);
+    expect(order).toEqual(["folder", "duration", "pull-request", "pull-request", "pull-request"]);
     expect(html).not.toContain("Worker");
     expect(html).not.toContain("Subagent of");
     // The folder chip shows its name only; the path waits in the tooltip.

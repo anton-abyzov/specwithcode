@@ -84,6 +84,17 @@ describe("legacy update controller attachment binding", () => {
         expect(controllerForAttachedService(environment, service).installation()).toBeNull();
       }
     }));
+  it("binds a fleet service found through its receipt though its runtime never says managed", () =>
+    withInstallations((_home, environment, attached) => {
+      const service = {
+        ...attached("m4"),
+        runtime: { ...attached("m4").runtime, serviceManaged: false },
+        installedService: true,
+      };
+      expect(controllerForAttachedService(environment, service).installation()?.identity).toBe(
+        "m4",
+      );
+    }));
   it("fails closed for ambiguous unscoped callers", () =>
     withInstallations((home) => {
       expect(

@@ -1286,6 +1286,12 @@ export interface DesktopBridge {
   getLocalEnvironmentBootstraps: () => readonly DesktopEnvironmentBootstrap[];
   getLocalEnvironmentEnabled?: () => boolean;
   setLocalEnvironmentEnabled?: (enabled: boolean) => Promise<void>;
+  /**
+   * Whether the local backend is one this app started, which quits with it on
+   * an update restart. False while attached to an installed service; absent on
+   * older desktop builds.
+   */
+  ownsBundledService?: () => Promise<boolean>;
   getLocalEnvironmentBearerToken: () => Promise<string>;
   getClientSettings: () => Promise<ClientSettings | null>;
   setClientSettings: (settings: ClientSettings) => Promise<void>;

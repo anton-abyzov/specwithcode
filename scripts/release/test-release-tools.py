@@ -84,6 +84,64 @@ class Sums(Temporary):
         self.assertEqual(cli('verify-sums', '--dir', str(self.root), 'missing.zip')[0], 1)
 
 
+class PreviousWithoutPlanInSums(Temporary):
+    """The prev stage: 1.0.38 shipped a SHA256SUMS without studio-update.json."""
+
+    def release(self, plan_listed, plan_digest='right', sums_digest='right'):
+        (self.root / 'studio-update.json').write_text('{"version": "1.0.38"}\n')
+        (self.root / 'deployment-helpers-manifest.json').write_text('{"files": []}\n')
+        names = ['deployment-helpers-manifest.json'] + (['studio-update.json'] if plan_listed else [])
+        self.assertEqual(cli('sums', '--dir', str(self.root), '--out', str(self.root / 'SHA256SUMS'), *names)[0], 0)
+        assets = []
+        for name in ('SHA256SUMS', 'studio-update.json', 'deployment-helpers-manifest.json'):
+            kind = {'SHA256SUMS': sums_digest, 'studio-update.json': plan_digest}.get(name, 'right')
+            digest = {'right': 'sha256:' + release_tools.sha256(self.root / name), 'wrong': 'sha256:' + '0' * 64,
+                      'none': None}[kind]
+            assets.append({'name': name, 'digest': digest})
+        (self.root / 'assets.json').write_text(json.dumps(assets))
+
+    def verify(self):
+        return cli('verify-sums', '--dir', str(self.root), '--digests', str(self.root / 'assets.json'),
+                   'studio-update.json', 'deployment-helpers-manifest.json')
+
+    def test_listed_plan_passes_with_or_without_digests(self):
+        self.release(plan_listed=True)
+        self.assertEqual(self.verify()[:2], (0, ''))
+        self.release(plan_listed=True, plan_digest='none', sums_digest='none')
+        self.assertEqual(self.verify()[:2], (0, ''))
+
+    def test_unlisted_plan_is_accepted_only_on_its_github_digest(self):
+        self.release(plan_listed=False)
+        code, out, _err = self.verify()
+        self.assertEqual(code, 0)
+        self.assertIn('studio-update.json is not listed in SHA256SUMS; it matches the sha256 digest', out)
+
+    def test_unlisted_plan_without_a_digest_is_refused(self):
+        self.release(plan_listed=False, plan_digest='none')
+        code, _out, err = self.verify()
+        self.assertEqual(code, 1)
+        self.assertIn('studio-update.json is not listed in SHA256SUMS and GitHub records no digest', err)
+        # Without --digests the old rule stands: not listed is not verified.
+        self.assertEqual(cli('verify-sums', '--dir', str(self.root), 'studio-update.json')[0], 1)
+
+    def test_a_digest_that_disagrees_is_refused_even_when_listed(self):
+        self.release(plan_listed=False, plan_digest='wrong')
+        self.assertIn('studio-update.json does not match the digest', self.verify()[2])
+        self.release(plan_listed=True, plan_digest='wrong')
+        self.assertIn('studio-update.json does not match the digest', self.verify()[2])
+        self.release(plan_listed=True, sums_digest='wrong')
+        code, _out, err = self.verify()
+        self.assertEqual(code, 1)
+        self.assertIn('SHA256SUMS does not match the digest', err)
+
+    def test_unreadable_asset_list_is_refused(self):
+        self.release(plan_listed=False)
+        (self.root / 'assets.json').write_text('')
+        self.assertEqual(self.verify()[0], 1)
+        (self.root / 'assets.json').write_text('{"message": "Not Found"}')
+        self.assertEqual(self.verify()[0], 1)
+
+
 class GooglePair(Temporary):
     SECRET = 'value-that-must-not-print'
 

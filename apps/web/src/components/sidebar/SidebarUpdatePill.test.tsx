@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 const state = vi.hoisted(() => ({
   app: null as DesktopUpdateState | null,
   addToast: vi.fn(),
+  closeToast: vi.fn(),
   announceDownload: vi.fn(),
   confirm: vi.fn(async () => true),
 }));
@@ -17,7 +18,7 @@ vi.mock("../../localApi", () => ({
   ensureLocalApi: () => ({ dialogs: { confirm: state.confirm } }),
 }));
 vi.mock("../ui/toast", () => ({
-  toastManager: { add: state.addToast },
+  toastManager: { add: state.addToast, close: state.closeToast },
   stackedThreadToast: (toast: unknown) => toast,
 }));
 vi.mock("../desktopUpdate.toast", () => ({
@@ -160,6 +161,7 @@ describe("manual sidebar update checks", () => {
   beforeEach(() => {
     state.app = current;
     state.addToast.mockReset();
+    state.closeToast.mockReset();
     state.announceDownload.mockReset();
     state.confirm.mockClear();
     bridge.checkForUpdate.mockReset();
@@ -341,5 +343,56 @@ describe("manual sidebar update checks", () => {
     expect(renderer!.root.findByType("button").props["aria-label"]).toBe(
       "Download failed for 1.0.11. Click to retry.",
     );
+  });
+  it("explains a press during a download instead of ignoring it", async () => {
+    state.app = {
+      ...current,
+      status: "downloading",
+      availableVersion: "1.0.36",
+      downloadPercent: 20.4,
+    };
+    state.addToast.mockReturnValueOnce("notice-1").mockReturnValueOnce("notice-2");
+    render();
+    const button = renderer!.root.findByType("button");
+    expect(button.props["aria-disabled"]).toBeUndefined();
+    expect(button.props["aria-busy"]).toBe(true);
+    expect(button.props["aria-label"]).toBe(
+      "Downloading update 1.0.36 (20%). Restart to update appears when it finishes.",
+    );
+
+    await click();
+    expect(state.addToast).toHaveBeenCalledExactlyOnceWith({
+      type: "info",
+      title: "Downloading update 1.0.36 (20%)",
+      description:
+        "You can keep working. Restart to update appears at the bottom of the sidebar when the download finishes.",
+    });
+
+    await click();
+    expect(state.closeToast).toHaveBeenCalledExactlyOnceWith("notice-1");
+    expect(state.addToast).toHaveBeenCalledTimes(2);
+    expect(bridge.downloadUpdate).not.toHaveBeenCalled();
+    expect(bridge.checkForUpdate).not.toHaveBeenCalled();
+  });
+
+  it("says why a build without automatic updates cannot check", async () => {
+    state.app = {
+      ...current,
+      enabled: false,
+      status: "disabled",
+      message: "Automatic updates are not available in this build.",
+    };
+    render();
+    expect(renderer!.root.findByType("button").props["aria-label"]).toBe(
+      "Automatic updates are not available in this build.",
+    );
+
+    await click();
+    expect(state.addToast).toHaveBeenCalledExactlyOnceWith({
+      type: "info",
+      title: "Automatic updates are off",
+      description: "Automatic updates are not available in this build.",
+    });
+    expect(bridge.checkForUpdate).not.toHaveBeenCalled();
   });
 });

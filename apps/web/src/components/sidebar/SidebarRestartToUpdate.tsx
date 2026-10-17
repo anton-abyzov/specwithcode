@@ -29,12 +29,12 @@ import {
   type LatestUpdateProgress,
 } from "./latestAppUpdate";
 import {
+  appOwnsLocalService,
   DEFAULT_FORCE_INSTALL_AFTER_MINUTES,
   describeHoldCountdown,
   forceInstallAfterLabel,
   forceInstallAfterMinutes,
   holdWindowElapsed,
-  servesLocally,
 } from "./restartHoldWindow";
 import { RestartRunningWorkList } from "./RestartRunningWorkList";
 import {
@@ -197,11 +197,14 @@ function SidebarRestartToUpdateButton() {
           if (!started) return;
         }
         if (view.app) {
-          // The bundled service quits with the app. Stopped here for the
+          // A service this app started quits with it. Stopped here for the
           // update, its running work continues after the restart; killed by
-          // the quit, it would end as cancelled.
+          // the quit, it would end as cancelled. A service the app attached to
+          // keeps running, so it is never drained or held for the restart.
           const drained =
-            !view.service && servesLocally(serviceState) && (await drainWorkForAppRestart());
+            !view.service &&
+            (await appOwnsLocalService(bridge)) &&
+            (await drainWorkForAppRestart());
           // A background check or download can hold the updater for a moment:
           // wait for it, showing what runs, instead of failing with "busy".
           const result = await installWhenUpdaterFree(bridge, appVersion, setFetching).finally(() =>

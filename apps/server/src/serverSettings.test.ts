@@ -37,6 +37,21 @@ const decodeSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 const decodeServerSettingsJson = Schema.decodeUnknownEffect(Schema.fromJsonString(ServerSettings));
 
+/**
+ * Rewrites a watched settings file until the service reports a change. On a loaded Mac the event
+ * for a write made just after a directory watch starts can be lost (1 in 60 at load 780), while a
+ * path the service does not watch never reports a change however often it is written.
+ */
+const writeUntilChanged = <A>(changes: Stream.Stream<A>, filePath: string, contents: string) =>
+  Effect.gen(function* () {
+    for (let attempt = 0; attempt < 6; attempt++) {
+      yield* writeFileStringAtomically({ filePath, contents });
+      const change = yield* changes.pipe(Stream.runHead, Effect.timeoutOption("5 seconds"));
+      if (Option.isSome(change)) return change.value;
+    }
+    return Option.none<A>();
+  });
+
 const layerServerSettings = () =>
   ServerSettingsModule.layer.pipe(
     Layer.provide(ServerSecretStore.layer),
@@ -192,12 +207,11 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         yield* service.start;
         const changes = yield* service.subscribeChanges;
 
-        yield* writeFileStringAtomically({
-          filePath: linkedSettingsPath,
-          contents: `{ "responseStreamingMode": "paragraph" }`,
-        });
-
-        const change = yield* changes.pipe(Stream.runHead, Effect.timeout("15 seconds"));
+        const change = yield* writeUntilChanged(
+          changes,
+          linkedSettingsPath,
+          `{ "responseStreamingMode": "paragraph" }`,
+        );
         assert.equal(Option.getOrUndefined(change)?.responseStreamingMode, "paragraph");
       }),
     ).pipe(TestClock.withLive, Effect.provide(layerServerSettings())),
@@ -228,11 +242,11 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         assert.equal(Option.getOrUndefined(repointed)?.responseStreamingMode, "paragraph");
 
         const editChanges = yield* service.subscribeChanges;
-        yield* writeFileStringAtomically({
-          filePath: secondSettingsPath,
-          contents: `{ "responseStreamingMode": "turn" }`,
-        });
-        const edited = yield* editChanges.pipe(Stream.runHead, Effect.timeout("15 seconds"));
+        const edited = yield* writeUntilChanged(
+          editChanges,
+          secondSettingsPath,
+          `{ "responseStreamingMode": "turn" }`,
+        );
         assert.equal(Option.getOrUndefined(edited)?.responseStreamingMode, "turn");
       }),
     ).pipe(TestClock.withLive, Effect.provide(layerServerSettings())),
@@ -252,12 +266,11 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         yield* service.start;
         const changes = yield* service.subscribeChanges;
 
-        yield* writeFileStringAtomically({
-          filePath: linkedSettingsPath,
-          contents: `{ "responseStreamingMode": "paragraph" }`,
-        });
-
-        const change = yield* changes.pipe(Stream.runHead, Effect.timeout("15 seconds"));
+        const change = yield* writeUntilChanged(
+          changes,
+          linkedSettingsPath,
+          `{ "responseStreamingMode": "paragraph" }`,
+        );
         assert.equal(Option.getOrUndefined(change)?.responseStreamingMode, "paragraph");
       }),
     ).pipe(TestClock.withLive, Effect.provide(layerServerSettings())),
