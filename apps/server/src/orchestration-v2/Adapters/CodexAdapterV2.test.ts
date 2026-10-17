@@ -821,6 +821,48 @@ describe("CodexAdapterV2 process spawning", () => {
     }).pipe(Effect.provideService(HostProcessPlatform, "linux")),
   );
 
+  it.effect("launches the app-server with the headless browser environment", () =>
+    Effect.gen(function* () {
+      const spawnedEnvironments: Array<NodeJS.ProcessEnv | undefined> = [];
+      const spawner = ChildProcessSpawner.make((command) => {
+        if (ChildProcess.isStandardCommand(command)) spawnedEnvironments.push(command.options.env);
+        return Effect.fail(
+          PlatformError.systemError({ _tag: "NotFound", module: "ChildProcess", method: "spawn" }),
+        );
+      });
+      const factory = yield* CodexAdapterV2.CodexAppServerClientFactory.pipe(
+        Effect.provide(CodexAdapterV2.layerAppServerClientFactory),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(
+          ProviderEventLoggers.ProviderEventLoggers,
+          ProviderEventLoggers.NoOpProviderEventLoggers,
+        ),
+      );
+      yield* factory
+        .open({
+          instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+          threadId: ThreadId.make("thread-headless-env"),
+          providerSessionId: ProviderSessionId.make("provider-session-headless-env"),
+          runtimePolicy: ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: "/workspace",
+          }),
+          settings: DEFAULT_CODEX_SETTINGS,
+          environment: { KEEP: "1", PWDEBUG: "1", PLAYWRIGHT_HTML_OPEN: "always" },
+        })
+        .pipe(Effect.scoped, Effect.exit);
+
+      assert.lengthOf(spawnedEnvironments, 1);
+      assert.include(spawnedEnvironments[0], {
+        KEEP: "1",
+        PWDEBUG: "0",
+        PLAYWRIGHT_HTML_OPEN: "never",
+        SPECWEAVE_STUDIO_THREAD_ID: "thread-headless-env",
+      });
+    }).pipe(Effect.provideService(HostProcessPlatform, "linux")),
+  );
+
   it.effect("expands ~ in the configured binary path before spawning", () =>
     Effect.gen(function* () {
       const spawnedCommands: Array<string> = [];

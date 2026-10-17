@@ -3,12 +3,39 @@ import type { ResponseStyle } from "@specweave-studio/contracts";
 /**
  * Set on every provider process SpecWithCode starts, so Playwright stays out of
  * its debugger and never opens an HTML report window whatever the agent runs.
- * The prose below covers what an environment variable cannot.
+ * Cursor's SDK runs inside the server process and Managed Agents run remotely,
+ * so neither has a child environment to set. The prose below covers what an
+ * environment variable cannot.
  */
 export const HEADLESS_BROWSER_ENVIRONMENT = {
   PWDEBUG: "0",
   PLAYWRIGHT_HTML_OPEN: "never",
 } as const;
+
+/**
+ * `environment` with HEADLESS_BROWSER_ENVIRONMENT applied last, so an inherited
+ * or provider-supplied value cannot turn it off. Every provider spawn site uses
+ * this; providerSpawnSites.test.ts checks it.
+ */
+export function withHeadlessBrowserEnvironment(
+  environment: NodeJS.ProcessEnv | undefined,
+): NodeJS.ProcessEnv {
+  return { ...environment, ...HEADLESS_BROWSER_ENVIRONMENT };
+}
+
+/**
+ * Child-process `env`/`extendEnv` options with the headless variables applied.
+ * Without an explicit environment the child inherits the server's, so the
+ * variables extend it rather than replace it.
+ */
+export function headlessChildProcessEnvironment(options: {
+  readonly env?: NodeJS.ProcessEnv | undefined;
+  readonly extendEnv?: boolean | undefined;
+}): { readonly env: NodeJS.ProcessEnv; readonly extendEnv: boolean } {
+  return options.env === undefined
+    ? { env: { ...HEADLESS_BROWSER_ENVIRONMENT }, extendEnv: true }
+    : { env: withHeadlessBrowserEnvironment(options.env), extendEnv: options.extendEnv ?? false };
+}
 
 export const STUDIO_HEADLESS_INSTRUCTIONS = `<browser_automation>
 Run every automated browser check, screenshot, recording and scraper headless (headless: true; Python headless=True) and save evidence to files. Never fall back to a visible browser, Inspector, DevTools or the user's own browser without the user's approval. Stop only processes you started, by PID. Pass this rule to agents you delegate to.

@@ -228,6 +228,47 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
     ),
   );
 
+  it.effect("runs the Claude CLI with the headless browser environment", () =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const previous = {
+          PWDEBUG: process.env.PWDEBUG,
+          PLAYWRIGHT_HTML_OPEN: process.env.PLAYWRIGHT_HTML_OPEN,
+        };
+        // An inherited inspector setting must not reach the CLI; the fixture
+        // exits with code 13 when it sees anything but the headless values.
+        process.env.PWDEBUG = "1";
+        process.env.PLAYWRIGHT_HTML_OPEN = "always";
+        return previous;
+      }),
+      () =>
+        withFakeClaudeEnv(
+          { output: JSON.stringify({ structured_output: { subject: "Headless", body: "" } }) },
+          (textGeneration) =>
+            Effect.gen(function* () {
+              const generated = yield* textGeneration.generateCommitMessage({
+                cwd: process.cwd(),
+                branch: "feature/claude-headless",
+                stagedSummary: "M README.md",
+                stagedPatch: "diff --git a/README.md b/README.md",
+                modelSelection: createModelSelection(
+                  ProviderInstanceId.make("claudeAgent"),
+                  SYNTHETIC_CLAUDE_THINKING_MODEL,
+                ),
+              });
+              expect(generated.subject).toBe("Headless");
+            }),
+        ),
+      (previous) =>
+        Effect.sync(() => {
+          for (const [key, value] of Object.entries(previous)) {
+            if (value === undefined) delete process.env[key];
+            else process.env[key] = value;
+          }
+        }),
+    ),
+  );
+
   it.effect("keeps a configured custom alias opaque to the Claude CLI", () =>
     withFakeClaudeEnv(
       {

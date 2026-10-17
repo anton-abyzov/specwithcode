@@ -19,9 +19,13 @@ import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import { codexExecLaunchArgs, resolveCodexLaunchArgs } from "../provider/codexLaunchArgs.ts";
+import { withHeadlessBrowserEnvironment } from "../provider/RuntimeInstructions.ts";
 import * as TextGenerationOperations from "./TextGenerationOperations.ts";
 import { normalizeCliError, toJsonSchemaObject } from "./TextGenerationUtils.ts";
-import { codexModelFamily, getModelSelectionStringOptionValue } from "@specweave-studio/shared/model";
+import {
+  codexModelFamily,
+  getModelSelectionStringOptionValue,
+} from "@specweave-studio/shared/model";
 import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
 
 const CODEX_TIMEOUT_MS = 180_000;
@@ -208,12 +212,12 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         { env: effectiveEnvironment },
       );
       const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-        env: {
+        env: withHeadlessBrowserEnvironment({
           ...effectiveEnvironment,
           ...(effectiveConfig.homePath
             ? { CODEX_HOME: expandHomePath(effectiveConfig.homePath) }
             : {}),
-        },
+        }),
         cwd,
         shell: spawnCommand.shell,
         stdin: {

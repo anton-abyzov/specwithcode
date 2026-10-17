@@ -10,6 +10,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as EffectAcpErrors from "@specweave-studio/effect-acp/errors";
 import type * as EffectAcpSchema from "@specweave-studio/effect-acp/compat";
 import * as NodeBuffer from "node:buffer";
+import { headlessChildProcessEnvironment } from "../RuntimeInstructions.ts";
 
 /**
  * Client-side implementation of the ACP `terminal` capability.
@@ -155,7 +156,8 @@ function acpTerminalCommand(input: {
 }) {
   return ChildProcess.make(input.request.command, input.request.args ?? [], {
     cwd: input.request.cwd ?? input.defaultCwd,
-    ...(input.environment === undefined ? {} : { env: input.environment }),
+    // Agents run browser checks here too, so the headless variables win.
+    ...headlessChildProcessEnvironment({ env: input.environment }),
     shell: input.shellCommands === true && (input.request.args?.length ?? 0) === 0,
     forceKillAfter: input.forceKillAfter ?? "5 seconds",
   });

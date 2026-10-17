@@ -231,6 +231,17 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.equal(options.extraArgs?.effort, "xhigh");
   });
 
+  it("makeClaudeQueryOptions starts Claude Code with the headless browser environment", () => {
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "headless-env",
+      resume: false,
+      cwd: "/workspace",
+      environment: { KEEP: "1", PWDEBUG: "1", PLAYWRIGHT_HTML_OPEN: "always" },
+    });
+    assert.include(options.env, { KEEP: "1", PWDEBUG: "0", PLAYWRIGHT_HTML_OPEN: "never" });
+  });
+
   it("workflow context participates in query reuse identity", () => {
     const policy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
       CLAUDE_TEST_RUNTIME_POLICY,

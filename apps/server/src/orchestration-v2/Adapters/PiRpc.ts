@@ -31,6 +31,7 @@ import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { resolveSpawnCommand } from "@specweave-studio/shared/shell";
 
 import { signalProcessGroup } from "../../process/processGroup.ts";
+import { withHeadlessBrowserEnvironment } from "../../provider/RuntimeInstructions.ts";
 
 export class PiRpcError extends Schema.TaggedError<PiRpcError>()("PiRpcError", {
   operation: Schema.String,
@@ -224,7 +225,7 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
     .spawn(
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
-        env: options.env,
+        env: withHeadlessBrowserEnvironment(options.env),
         extendEnv: false,
         shell: spawnCommand.shell,
         detached: platform !== "win32",

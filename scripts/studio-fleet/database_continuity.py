@@ -62,8 +62,29 @@ def schema(db):
                             for table in tables}}
 
 
-def capture_connection(db):
-    """Capture the complete database inside the caller's open read transaction."""
+def widened_tables(db, structure, widen_from):
+    """Tables that gained trailing columns since `widen_from` (an earlier capture's
+    schema['columns']): the earlier columns' rows hashed as the earlier capture hashed
+    them, and how many rows hold a value in an added column. Hashes and counts only.
+    The caller decides which of these widenings it accepts."""
+    widened = {}
+    for table, old in sorted(widen_from.items()):
+        new = structure['columns'].get(table)
+        if not (isinstance(old, list) and old and new and len(new) > len(old) and new[:len(old)] == old):
+            continue
+        names = ','.join(identifier(column[1]) for column in old)
+        rows = list(db.execute('SELECT ' + names + ' FROM ' + identifier(table)))
+        filled = ' OR '.join(identifier(column[1]) + ' IS NOT NULL' for column in new[len(old):])
+        widened[table] = {'added': new[len(old):],
+                          'typed': {'count': len(rows), 'sha256': typed_rows_hash(rows)},
+                          'legacy': {'count': len(rows), 'sha256': legacy_rows_hash(rows)},
+                          'filledRows': db.execute('SELECT count(*) FROM ' + identifier(table) + ' WHERE ' + filled).fetchone()[0]}
+    return widened
+
+
+def capture_connection(db, widen_from=None):
+    """Capture the complete database inside the caller's open read transaction. With
+    `widen_from`, also measure tables that gained columns since then (widened_tables)."""
     assert db.in_transaction, 'Complete database capture requires an existing read transaction'
     structure = schema(db)
     tables, legacy, sequences = {}, {}, None
@@ -77,7 +98,12 @@ def capture_connection(db):
             sequences = sorted([list(row) for row in rows], key=encoded)
     summary = {'schemaSha256': digest(encoded(structure)), 'tables': tables}
     if sequences is not None: summary['sqliteSequence'] = sequences
-    return {'schema': structure, 'summary': summary, 'legacy': legacy}
+    capture = {'schema': structure, 'summary': summary, 'legacy': legacy}
+    if widen_from is not None:
+        # Only when a table widened, so an unchanged database captures exactly as without.
+        widened = widened_tables(db, structure, widen_from)
+        if widened: capture['widened'] = widened
+    return capture
 
 
 def bind_rows(capture, rows):
