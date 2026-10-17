@@ -143,6 +143,16 @@ def failed_since(status, version, since):
     return at is not None and at >= since and 'left to finish' not in (status.get('message') or '')
 
 
+def left_running(status, version, since):
+    """True when the agent gave up waiting on an install of `version` (at or after `since`) and
+    left the helper to finish: its checks after the restart may still roll it back."""
+    last = status.get('lastInstall')
+    if since is None or not isinstance(last, dict) or last.get('version') != version or last.get('result') != 'failed':
+        return False
+    at = update_request._time(last.get('at'))
+    return at is not None and at >= since and 'left to finish' in (status.get('message') or '')
+
+
 def roll_host(identity, call, version, force, hold_minutes, deadline, poll, clock, sleep, say):
     """Asks one host for `version` and waits until it reports it installed."""
     begin = clock()
@@ -183,7 +193,14 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
             if failures >= STATUS_FAILURES:
                 raise
             continue
-        if status.get('version') == version:
+        if status.get('version') == version and failed_since(status, version, first[0]):
+            # The new release kept running after a check following the restart failed
+            # (rollback held for a person to review): it runs, but the update is not confirmed.
+            raise RolloutError('%s runs %s, but a check after the restart failed, so the update is not confirmed: %s (receipt %s)' % (
+                identity, version, status.get('message') or '', status['lastInstall'].get('receipt')))
+        # The installed version flips before the updater's checks after the restart finish.
+        if (status.get('version') == version and status.get('status') != 'installing'
+                and not left_running(status, version, first[0])):
             seconds = int(clock() - begin)
             say('%s: installed %s after %ds' % (identity, version, seconds))
             return {'identity': identity, 'result': 'installed', 'requests': requests, 'seconds': seconds}

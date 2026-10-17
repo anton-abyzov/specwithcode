@@ -484,6 +484,14 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("spawns Pi with the headless browser environment", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      yield* openRuntime(fake);
+      assert.include(fake.lastSpawn().env, { PWDEBUG: "0", PLAYWRIGHT_HTML_OPEN: "never" });
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("injects the Studio MCP extension and bearer when a session exists", () =>
     Effect.gen(function* () {
       McpProviderSession.setMcpProviderSession({

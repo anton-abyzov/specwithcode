@@ -11,7 +11,11 @@ import * as Scope from "effect/Scope";
 import { createModelSelection } from "@specweave-studio/shared/model";
 import { expect } from "vite-plus/test";
 
-import { CodexSettings, ProviderInstanceId, TextGenerationError } from "@specweave-studio/contracts";
+import {
+  CodexSettings,
+  ProviderInstanceId,
+  TextGenerationError,
+} from "@specweave-studio/contracts";
 
 import * as ServerConfig from "../config.ts";
 import * as TextGeneration from "./TextGeneration.ts";
@@ -94,6 +98,9 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         "function fail(message, code) {",
         '  process.stderr.write(message + "\\n");',
         "  process.exit(code);",
+        "}",
+        'if (process.env.PWDEBUG !== "0" || process.env.PLAYWRIGHT_HTML_OPEN !== "never") {',
+        '  fail("text generation must run with the headless browser environment", 10);',
         "}",
         "if (check.requireArg !== null && !originalArgs.includes(` ${check.requireArg} `)) {",
         '  fail("missing arg: " + check.requireArg, 8);',
@@ -191,6 +198,25 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
           }),
       ),
   );
+  it.effect("runs codex exec with the headless browser environment", () =>
+    // The fake CLI exits with code 10 unless it sees the headless values.
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ title: "Headless title" }),
+        environment: { PWDEBUG: "1", PLAYWRIGHT_HTML_OPEN: "always" },
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const result = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Describe this change",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
+          expect(result.title).toBe("Headless title");
+        }),
+    ),
+  );
+
   it.effect("generates and sanitizes commit messages without branch by default", () =>
     withFakeCodexEnv(
       {

@@ -208,6 +208,69 @@ class RolloutOrder(unittest.TestCase):
                 else:
                     self.assertEqual(run()['m4']['result'], 'installed')
 
+    def test_a_new_version_counts_only_once_its_checks_pass(self):
+        """The installed version flips while the updater still checks the restart; a check that
+        then fails, keeping the new release for review, fails the rollout instead of passing it."""
+        for outcome in ('updated', 'failed'):
+            with self.subTest(outcome=outcome):
+                clock = Clock()
+                fleet = Fleet(clock, polls={'m4': 10 ** 6})
+                real, seen = fleet.host('m4'), []
+
+                def m4(argv, real=real, seen=seen, outcome=outcome, fleet=fleet):
+                    reply = real(argv)
+                    if argv[0] == 'request':
+                        reply['request'] = {'installRequestedAt': '2026-10-16T12:00:00.000Z'}
+                    elif argv[0] == 'status' and fleet.calls('m4', 'request'):
+                        seen.append(1)
+                        reply['version'] = NEW
+                        if len(seen) < 4:
+                            reply['status'] = 'installing'
+                        else:
+                            reply.update({'status': 'up-to-date' if outcome == 'updated' else 'error',
+                                          'lastInstall': {'version': NEW, 'at': '2026-10-16T12:00:05.000000+00:00',
+                                                          'result': outcome, 'receipt': '/r.json'}})
+                    return reply
+
+                hosts = fleet.hosts()
+                hosts['m4'] = m4
+                run = lambda: fleet_rollout.roll_host('m4', m4, NEW, True, 15, 3600, 15, clock, clock.sleep, quiet)
+                seen.clear()
+                if outcome == 'updated':
+                    self.assertEqual(run()['result'], 'installed')
+                    self.assertEqual(len(seen), 4)
+                else:
+                    with self.assertRaises(fleet_rollout.RolloutError) as caught:
+                        run()
+                    self.assertIn('not confirmed', str(caught.exception))
+                    self.assertIn('/r.json', str(caught.exception))
+
+    def test_an_install_left_running_is_not_yet_installed(self):
+        """An install the agent left to finish may still roll back; the poll waits for its outcome."""
+        clock = Clock()
+        fleet = Fleet(clock, polls={'m4': 10 ** 6})
+        real, seen = fleet.host('m4'), []
+
+        def m4(argv, real=real, seen=seen, fleet=fleet):
+            reply = real(argv)
+            if argv[0] == 'request':
+                reply['request'] = {'installRequestedAt': '2026-10-16T12:00:00.000Z'}
+            elif argv[0] == 'status' and fleet.calls('m4', 'request'):
+                seen.append(1)
+                reply['version'] = NEW
+                if len(seen) < 3:
+                    reply.update({'status': 'error',
+                                  'message': 'Installing SpecWithCode %s is taking longer than 15 minutes; it was left to finish.' % NEW,
+                                  'lastInstall': {'version': NEW, 'at': '2026-10-16T12:00:05.000000+00:00',
+                                                  'result': 'failed', 'receipt': '/r.json'}})
+                else:
+                    reply.update({'status': 'up-to-date', 'lastInstall': {'version': NEW, 'at': '2026-10-16T12:20:00.000000+00:00',
+                                                                         'result': 'updated', 'receipt': '/r.json'}})
+            return reply
+
+        self.assertEqual(fleet_rollout.roll_host('m4', m4, NEW, True, 15, 3600, 15, clock, clock.sleep, quiet)['result'], 'installed')
+        self.assertEqual(len(seen), 3)
+
     def test_installed_host_gets_no_request(self):
         clock = Clock()
         fleet = Fleet(clock)

@@ -399,11 +399,11 @@ class ApplyRecovery(unittest.TestCase):
   public=self.snapshot(identity)
   self.auth_snapshot_phases.append(self.restarted)
   return public,auth_heartbeat.read_auth_sessions(self.own/'userdata',public['rows'])
- def snapshot_since(self,identity,expected_rows,include_auth=False):
+ def snapshot_since(self,identity,expected_rows,include_auth=False,widen_from=None):
   if self.real_db:
    public=self.snapshot(identity)
    if self.capture_database:
-    public['rows'],auth,carried,public['databaseCapture']=update._read_state(self.own/'userdata',include_auth,expected_rows,True)
+    public['rows'],auth,carried,public['databaseCapture']=update._read_state(self.own/'userdata',include_auth,expected_rows,True,widen_from)
    else:
     public['rows'],auth,carried=update._rows_snapshot(self.own/'userdata',include_auth,expected_rows)
    if include_auth:self.auth_snapshot_phases.append(self.restarted)
@@ -1384,6 +1384,62 @@ class ApplyRecovery(unittest.TestCase):
                              'DROP TABLE auth_pairing_links',
                              'ALTER TABLE auth_pairing_links_new RENAME TO auth_pairing_links',
                              pattern='table definition changed during migration')
+ def captured_schedule_state(self):
+  return self.use_captured_waiting_state('DROP TABLE scheduled_tasks','CREATE TABLE scheduled_tasks(\n  id TEXT PRIMARY KEY,\n  title TEXT NOT NULL,\n  enabled INTEGER NOT NULL DEFAULT 1,\n  secret\n)',
+                                         "INSERT INTO scheduled_tasks VALUES ('task-1','Nightly',1,X'7365637265740001'),('task-2','Weekly',0,NULL)")
+ def test_migration_may_add_an_empty_column_to_a_protected_table(self):
+  # Migration 066 (1.0.39): ALTER TABLE scheduled_tasks ADD COLUMN run_policy_json TEXT.
+  self.captured_schedule_state()
+  self.migrate_real('ALTER TABLE scheduled_tasks ADD COLUMN run_policy_json TEXT','ALTER TABLE scheduled_tasks ADD COLUMN note')
+  self.execute(allow_project_migrations=True);result=json.loads(self.output.read_text())
+  self.assertEqual(result['phase'],'verified');self.assertEqual(result['rowPreservation'],'verified-migration')
+  self.assertEqual(result['migrationProtectedCells'],'typed-verified')
+  self.assertEqual(result['migrationAddedColumns'],{'scheduled_tasks':['run_policy_json','note']})
+ def test_an_added_column_never_excuses_a_changed_earlier_cell(self):
+  for statement,pattern in [("UPDATE scheduled_tasks SET title='Edited' WHERE id='task-1'",'rows changed during migration'),
+                            ("UPDATE scheduled_tasks SET secret=lower(hex(secret)) WHERE id='task-1'",'types changed during migration'),
+                            ("DELETE FROM scheduled_tasks WHERE id='task-2'",'rows changed during migration'),
+                            ("INSERT INTO scheduled_tasks(id,title) VALUES ('planted','Planted')",'rows changed during migration')]:
+   with self.subTest(statement=statement):
+    self.setUp();self.captured_schedule_state()
+    self.reject_real_migration('ALTER TABLE scheduled_tasks ADD COLUMN run_policy_json TEXT',statement,pattern=pattern);self.tearDown()
+ def test_migration_rejects_a_filled_or_constrained_new_protected_column(self):
+  for statements,pattern in [(('ALTER TABLE scheduled_tasks ADD COLUMN run_policy_json TEXT',"UPDATE scheduled_tasks SET run_policy_json='{}' WHERE id='task-1'"),'filled a new column'),
+                             (("ALTER TABLE scheduled_tasks ADD COLUMN run_policy_json TEXT DEFAULT '{}'",),'constraint or default'),
+                             (("ALTER TABLE scheduled_tasks ADD COLUMN run_policy_json TEXT NOT NULL DEFAULT ''",),'constraint or default'),
+                             (("ALTER TABLE scheduled_tasks ADD COLUMN run_policy_json TEXT CHECK (run_policy_json IS NULL)",),'table definition changed'),
+                             (("ALTER TABLE scheduled_tasks ADD COLUMN owner TEXT REFERENCES projection_projects(project_id)",),'definition changed'),
+                             (('ALTER TABLE auth_pairing_links ADD COLUMN scope TEXT',),None),
+                             (('ALTER TABLE auth_sessions ADD COLUMN scope TEXT',),'auth sessions or history'),
+                             (('ALTER TABLE orchestration_events ADD COLUMN extra TEXT',),'auth sessions or history')]:
+   with self.subTest(statements=statements):
+    self.setUp();self.captured_schedule_state()
+    if pattern is None:
+     # Pairing links widen like any other protected table, empty and unconstrained.
+     self.migrate_real(*statements);self.execute(allow_project_migrations=True)
+     self.assertEqual(json.loads(self.output.read_text())['migrationAddedColumns'],{'auth_pairing_links':['scope']})
+    else:
+     self.reject_real_migration(*statements,pattern=pattern)
+    self.tearDown()
+ def test_a_widened_migration_with_a_heartbeat_reads_back_with_its_captures(self):
+  state=self.use_captured_heartbeat_state()
+  self.restart_with_project_save_and_heartbeat(state,'ALTER TABLE scheduled_tasks ADD COLUMN run_policy_json TEXT')
+  self.execute(allow_project_migrations=True,allow_existing_browser_heartbeat=True);result=json.loads(self.output.read_text())
+  self.assertEqual(result['phase'],'verified');self.assertEqual(result['migrationAddedColumns'],{'scheduled_tasks':['run_policy_json']})
+  before,after,witness=result['before']['rows'],result['after']['rows'],result['authHeartbeatWitness']
+  captures={'before_capture':result['before']['databaseCapture'],'after_capture':result['after']['databaseCapture']}
+  current=auth_heartbeat.read_auth_sessions(state,after)
+  self.assertEqual(update.verify_migration_heartbeat_witness(before,after,witness,current,identity='m4',state=state,**captures),witness)
+  with self.assertRaisesRegex(AssertionError,'History'):
+   update.verify_migration_heartbeat_witness(before,after,witness,current,identity='m4',state=state)
+  with self.assertRaisesRegex(AssertionError,'both database captures'):
+   update.verify_migration_heartbeat_witness(before,after,witness,current,identity='m4',state=state,before_capture=captures['before_capture'])
+ def test_an_unwidened_migration_capture_matches_a_plain_capture(self):
+  # verify_update_database compares a later plain capture with the receipt's after capture.
+  self.use_captured_waiting_state();self.migrate_real(check=False)
+  self.execute(allow_project_migrations=True);result=json.loads(self.output.read_text())
+  self.assertEqual(result['phase'],'verified');self.assertNotIn('widened',result['after']['databaseCapture'])
+  self.assertNotIn('migrationAddedColumns',result)
  def test_migration_may_add_an_index_on_a_protected_table(self):
   self.use_captured_waiting_state()
   self.migrate_real('CREATE INDEX auth_pairing_links_by_id ON auth_pairing_links(id)')

@@ -75,6 +75,42 @@ describe("AcpClientTerminals", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.effect("runs every terminal command with the headless browser environment", () =>
+    Effect.gen(function* () {
+      const printHeadless =
+        "process.stdout.write([process.env.PWDEBUG, process.env.PLAYWRIGHT_HTML_OPEN, typeof process.env.PATH].join('|'))";
+      const cases = [
+        // No environment of its own: the child inherits the server's, PATH included.
+        { environmentForSession: undefined, env: undefined },
+        // An agent asking for the Playwright inspector still gets headless settings.
+        {
+          environmentForSession: () => ({ PATH: process.env.PATH, PLAYWRIGHT_HTML_OPEN: "always" }),
+          env: [{ name: "PWDEBUG", value: "1" }],
+        },
+      ];
+      for (const { environmentForSession, env } of cases) {
+        const terminals = yield* makeAcpClientTerminals({
+          spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+          defaultCwd: process.cwd(),
+          ...(environmentForSession === undefined ? {} : { environmentForSession }),
+        });
+        yield* Effect.addFinalizer(() => terminals.disposeAll);
+        const created = yield* terminals.create({
+          sessionId: "session",
+          command: process.execPath,
+          args: ["-e", printHeadless],
+          ...(env === undefined ? {} : { env }),
+        });
+        yield* terminals.waitForExit({ sessionId: "session", terminalId: created.terminalId });
+        const output = yield* terminals.output({
+          sessionId: "session",
+          terminalId: created.terminalId,
+        });
+        expect(output.output).toBe("0|never|string");
+      }
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("runs Devin shell source with arguments, pipes, and session fallback variables", () =>
     Effect.gen(function* () {
       const terminals = yield* makeAcpClientTerminals({

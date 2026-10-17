@@ -116,7 +116,7 @@ import {
 } from "../../provider/EventNdjsonLogger.ts";
 import { ProviderEventLoggers } from "../../provider/ProviderEventLoggers.ts";
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "../../provider/codexLaunchArgs.ts";
-import { HEADLESS_BROWSER_ENVIRONMENT } from "../../provider/RuntimeInstructions.ts";
+import { withHeadlessBrowserEnvironment } from "../../provider/RuntimeInstructions.ts";
 import {
   mergeNativeSubscriptionEnvironment,
   mergeProviderInstanceEnvironment,
@@ -1386,7 +1386,8 @@ const layerCodexAppServerClientFactoryCommand = (
               command: options.command,
               args: [...(options.args ?? [])],
               ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
-              ...(options.env === undefined ? {} : { env: options.env, extendEnv: true }),
+              env: withHeadlessBrowserEnvironment(options.env),
+              extendEnv: true,
             });
             const handle = yield* spawner.spawn(command).pipe(
               Effect.provideService(Scope.Scope, scope),
@@ -1496,14 +1497,13 @@ export const layerAppServerClientFactory: Layer.Layer<
       open: (input) =>
         Effect.gen(function* () {
           const scope = yield* Scope.Scope;
-          const environment = {
+          const environment = withHeadlessBrowserEnvironment({
             ...input.environment,
-            ...HEADLESS_BROWSER_ENVIRONMENT,
             ...(input.settings.homePath ? { CODEX_HOME: input.settings.homePath } : {}),
             // SpecWeave hooks read it: inside Studio they save a checkpoint
             // instead of asking the model to hand off.
             SPECWEAVE_STUDIO_THREAD_ID: input.threadId,
-          };
+          });
           const command = yield* makeCodexAppServerSpawnCommand({
             command: input.settings.binaryPath || "codex",
             args: codexAppServerArgs(

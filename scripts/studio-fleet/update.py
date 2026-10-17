@@ -5,6 +5,7 @@ if not __debug__:
 
 import argparse
 import contextlib
+import copy
 import datetime
 import errno
 import hashlib
@@ -110,9 +111,10 @@ def release_verified(release):
 AUTHORITY_TABLES = ('auth_pairing_links', 'auth_sessions', 'provider_session_runtime',
                     'scheduled_tasks', 'scheduled_task_run_receipts')
 
-def _read_state(state, include_auth, since=None, include_database=False):
+def _read_state(state, include_auth, since=None, include_database=False, widen_from=None):
     """Protected rows, private auth, rows appended after `since` and the complete database
-    capture, all measured in one read-only transaction."""
+    capture, all measured in one read-only transaction. `widen_from` (an earlier capture's
+    schema columns) also measures tables that gained columns since (accepted_widenings)."""
     db = live_database.connect(state / 'statev2.sqlite')
     try:
         db.execute('BEGIN')
@@ -149,7 +151,10 @@ def _read_state(state, include_auth, since=None, include_database=False):
         carried = carried_since(db, tables, since) if since is not None else None
         # Complete schema and typed cells of every table, bound to the protected rows in
         # this same read transaction. Hashes and schema text only; no cell values.
-        database = continuity.capture_connection(db) if include_database else None
+        database = None
+        if include_database:
+            database = (continuity.capture_connection(db) if widen_from is None
+                        else continuity.capture_connection(db, widen_from))
         if database is not None: continuity.bind_rows(database, proof)
         return proof, auth, carried, database
     finally:
@@ -546,7 +551,7 @@ def _service(identity):
 
 SERVICE_KEYS = ('home', 'own', 'installation', 'receipt', 'label', 'plist', 'wrapper', 'launcher', 'content', 'node', 'runtime')
 
-def _snapshot(identity, include_auth, since=None):
+def _snapshot(identity, include_auth, since=None, widen_from=None):
     service = _service(identity)
     home, own, installation, receipt, label, plist, wrapper, launcher, content, node, runtime = (service[key] for key in SERVICE_KEYS)
     protected = {'launcher': launcher, 'plist': plist, 'wrapper': wrapper, 'installation': installation,
@@ -558,7 +563,7 @@ def _snapshot(identity, include_auth, since=None):
     file_hashes = {name: digest(data) for name, data in contents.items()}
     assert_database_attached(runtime['pid'], own / 'userdata')
     assert_database_locked(own / 'userdata')
-    rows, auth, carried, database = _read_state(own / 'userdata', include_auth, since, True)
+    rows, auth, carried, database = _read_state(own / 'userdata', include_auth, since, True, widen_from)
     other = {str(port): listeners(port) for port in OTHER_SERVICE_PORTS if port != receipt['port']}
     proof = {'schemaVersion': 1, 'identity': identity, 'uid': service['owner'].uid, 'port': receipt['port'], 'webSessionPolicy': service['owner'].policy, 'serviceLabel': label, 'servicePid': runtime['pid'],
             'archiveSha256': receipt['archiveSha256'], 'artifactSourceCommit': receipt['sourceCommit'],
@@ -631,12 +636,55 @@ def snapshot_with_auth(identity):
     """Return the unchanged public snapshot plus private auth; never serialize the pair."""
     return _snapshot(identity, True)[:2]
 
-def snapshot_since(identity, expected_rows, include_auth=False):
+def snapshot_since(identity, expected_rows, include_auth=False, widen_from=None):
     """Snapshot (and private auth when asked) plus the rows appended after `expected_rows`."""
-    return _snapshot(identity, include_auth, expected_rows)
+    return _snapshot(identity, include_auth, expected_rows, widen_from)
 
 def is_projection_table(table):
     return table.startswith('projection_') or '_projection_' in table
+
+def _column_definition(column):
+    """How SQLite writes `ALTER TABLE ... ADD COLUMN name [type]` into the table's sql."""
+    return column[1] + (' ' + column[2] if column[2] else '')
+
+def accepted_widenings(before_capture, after_capture, before):
+    """Protected tables a migration widened with plain nullable columns, as
+    `ALTER TABLE t ADD COLUMN c [type]` does: every earlier column, row and typed cell is
+    unchanged (compared through the earlier columns), and every added column has no
+    constraint, no default and no value in any row. {table: widening} from the after
+    capture. Projection tables may change anyway; auth_sessions and the event and receipt
+    logs are never widened."""
+    accepted = {}
+    for table, widening in (after_capture.get('widened') or {}).items():
+        if table not in before.get('counts', {}) or is_projection_table(table):
+            continue
+        assert table != 'auth_sessions' and table not in LOG_TABLES, \
+            'A migration added columns to the auth sessions or history tables'
+        for column in widening['added']:
+            # PRAGMA table_xinfo: cid, name, type, notnull, dflt_value, pk, hidden.
+            assert column[3] == 0 and column[4] is None and column[5] == 0 and column[6] == 0, \
+                'A migration added a protected column with a constraint or default'
+            assert re.fullmatch('[a-z0-9_]+', column[1]) and re.fullmatch('[A-Z]*', column[2]), \
+                'A migration added a protected column with an unexpected name or type'
+        assert widening['filledRows'] == 0, 'A migration filled a new column of a protected table'
+        old = [item for item in before_capture['schema']['objects'] if item[0] == 'table' and item[1] == table]
+        new = [item for item in after_capture['schema']['objects'] if item[0] == 'table' and item[1] == table]
+        assert len(old) == len(new) == 1 and isinstance(old[0][3], str) and old[0][3].endswith(')'), \
+            'History, provider, schedule or pairing table definition changed during migration'
+        widened_sql = old[0][3][:-1] + ''.join(', ' + _column_definition(column) for column in widening['added']) + ')'
+        assert new[0][:3] == old[0][:3] and new[0][3] == widened_sql, \
+            'History, provider, schedule or pairing table definition changed during migration'
+        accepted[table] = widening
+    return accepted
+
+def narrowed_rows(rows, widenings):
+    """`rows` with each widened table hashed through its earlier columns, so the
+    byte-identical comparison of protected rows applies to every earlier cell."""
+    narrowed = copy.deepcopy(rows)
+    for table, widening in widenings.items():
+        narrowed['counts'][table] = widening['legacy']['count']
+        narrowed['hashes'][table] = widening['legacy']['sha256']
+    return narrowed
 
 def assert_migration_preserved(before, after, carried=None):
     """A new release's migrations may add tables and rebuild projections. Nothing is lost:
@@ -678,11 +726,14 @@ def typed_auth_rows(auth):
 def typed_auth_rows_hash(auth):
     return digest(('studio-migration-auth-typed-v1\n' + '\n'.join(typed_auth_rows(auth))).encode())
 
-def verify_migration_heartbeat_witness(before, after, witness, current_auth, *, identity, state=None, web_session_policy=None):
+def verify_migration_heartbeat_witness(before, after, witness, current_auth, *, identity, state=None, web_session_policy=None,
+                                       before_capture=None, after_capture=None):
     """Recheck actual migration snapshots and type-bound complete private auth.
 
     Appended logs require a fresh, coherent read of the trusted database at `state`.
-    Receipt counts alone cannot prove that earlier log rows survived.
+    Receipt counts alone cannot prove that earlier log rows survived. A migration that
+    added columns to a protected table (accepted_widenings) needs the receipt's before and
+    after database captures.
     """
     carried = None
     if state is not None:
@@ -701,7 +752,13 @@ def verify_migration_heartbeat_witness(before, after, witness, current_auth, *, 
                            current_auth, identity=identity, web_session_policy=web_session_policy)
     original = restore_witness(current_auth, heartbeat, before)
     assert typed_auth_rows_hash(original) == typed['beforeSha256'], 'Reconstructed auth cell values or types changed'
-    assert_migration_preserved(before, auth_comparison(after, before), carried)
+    widenings = {}
+    if before_capture is not None or after_capture is not None:
+        assert before_capture is not None and after_capture is not None, 'Widened migration readback needs both database captures'
+        continuity.bind_rows(before_capture, before)
+        continuity.bind_rows(after_capture, after)
+        widenings = accepted_widenings(before_capture, after_capture, before)
+    assert_migration_preserved(before, auth_comparison(narrowed_rows(after, widenings), before), carried)
     return witness
 
 def prove_migration_preserved(before, after, original_auth, current_auth, restart_started_at,
@@ -745,7 +802,7 @@ def prove_migration_preserved(before, after, original_auth, current_auth, restar
     assert_migration_preserved(before, comparison, carried)
     return heartbeat
 
-def assert_migration_typed_cells(before_capture, after_capture, before, after, carried=None):
+def assert_migration_typed_cells(before_capture, after_capture, before, after, carried=None, widenings=None):
     """Protected tables a migration must keep byte-identical also keep each cell's SQLite type.
 
     The protected-row hash writes a BLOB as its hex text, so a pairing credential, provider
@@ -761,10 +818,15 @@ def assert_migration_typed_cells(before_capture, after_capture, before, after, c
             continue
         assert table in old and table in new, 'A protected table disappeared during migration'
         expected = old[table]
-        actual = carried.get('typedLogPrefix', {}).get(table) if table in logs and new[table] != expected else new[table]
+        if table in (widenings or {}):
+            actual = widenings[table]['typed']
+        elif table in logs and new[table] != expected:
+            actual = carried.get('typedLogPrefix', {}).get(table)
+        else:
+            actual = new[table]
         assert actual == expected, 'History, provider, schedule or pairing cell values or types changed during migration'
 
-def assert_migration_protected_schema(before_capture, after_capture, before):
+def assert_migration_protected_schema(before_capture, after_capture, before, widenings=None):
     """Protected tables a migration must keep byte-identical also keep their definition,
     columns and foreign keys, and no new trigger may touch a session, pairing, provider or
     schedule table.
@@ -780,10 +842,15 @@ def assert_migration_protected_schema(before_capture, after_capture, before):
     for table in before.get('counts', {}):
         if is_projection_table(table) or table == 'auth_sessions':
             continue
-        assert old['columns'].get(table) == new['columns'].get(table), \
-            'History, provider, schedule or pairing columns changed during migration'
         assert old['foreignKeys'].get(table) == new['foreignKeys'].get(table), \
             'History, provider, schedule or pairing foreign keys changed during migration'
+        if table in (widenings or {}):
+            # accepted_widenings checked the added columns and the widened definition.
+            assert old['columns'].get(table) + widenings[table]['added'] == new['columns'].get(table), \
+                'History, provider, schedule or pairing columns changed during migration'
+            continue
+        assert old['columns'].get(table) == new['columns'].get(table), \
+            'History, provider, schedule or pairing columns changed during migration'
         assert definition(old['objects'], table) == definition(new['objects'], table), \
             'History, provider, schedule or pairing table definition changed during migration'
     existing = {encoded(item) for item in old['objects']}
@@ -1179,11 +1246,15 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         # the loop is bounded by time, not attempts: the rollback must finish well inside the
         # update agent's APPLY_TIMEOUT (900 s), which kills the helper outright.
         restarted_at = time.monotonic()
+        # A migration may widen a protected table (accepted_widenings); measure it in the
+        # same read as the after-snapshot.
+        widen = ({'widen_from': before['databaseCapture']['schema']['columns']}
+                 if allow_project_migrations and 'databaseCapture' in before else {})
         ready_by = min(restarted_at + READINESS_DEADLINE_SECONDS, started + READY_BY_SECONDS_FROM_START)
         while time.monotonic() < ready_by:
             time.sleep(0.5)
             try:
-                after, current_auth, after_carried = snapshot_since(identity, before['rows'], capture_auth)
+                after, current_auth, after_carried = snapshot_since(identity, before['rows'], capture_auth, **widen)
                 if after['servicePid'] != before['servicePid']: break
             # A process inventory that timed out twice is retried here like any other
             # not-yet-ready reading, rather than rolling back a service that is starting.
@@ -1199,18 +1270,22 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         heartbeat = None
         appended = False
         migration_cells = None
+        widenings = {}
         if allow_project_migrations:
+            if 'databaseCapture' in before:
+                assert 'databaseCapture' in after, 'Complete database proof missing after restart'
+                widenings = accepted_widenings(before['databaseCapture'], after['databaseCapture'], before['rows'])
             heartbeat = prove_migration_preserved(
-                before['rows'], after['rows'], original_auth, current_auth,
+                before['rows'], narrowed_rows(after['rows'], widenings), original_auth, current_auth,
                 restart_started_at, after['observedAt'], identity=identity,
                 allow_existing_browser_heartbeat=allow_existing_browser_heartbeat,
                 carried=after_carried, web_session_policy=policy)
             if 'databaseCapture' in before:
                 assert 'databaseCapture' in after, 'Complete database proof missing after restart'
                 assert_migration_typed_cells(before['databaseCapture'], after['databaseCapture'],
-                                             before['rows'], after['rows'], after_carried)
+                                             before['rows'], after['rows'], after_carried, widenings)
                 assert_migration_protected_schema(before['databaseCapture'], after['databaseCapture'],
-                                                  before['rows'])
+                                                  before['rows'], widenings)
                 migration_cells = 'typed-verified'
         elif allow_existing_browser_heartbeat:
             # Rows the services appended carry forward as below (a project's startup settings
@@ -1274,6 +1349,10 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
                   'settingsContinuity': settings_continuity_report}
         if migration_cells is not None:
             result['migrationProtectedCells'] = migration_cells
+        if widenings:
+            # Names only: which protected tables gained which empty columns.
+            result['migrationAddedColumns'] = {table: [column[1] for column in widening['added']]
+                                               for table, widening in sorted(widenings.items())}
         if 'serverBrowserStop' in progress:
             result['serverBrowserStop'] = progress['serverBrowserStop']
         if 'cliAliasKeptAside' in progress:

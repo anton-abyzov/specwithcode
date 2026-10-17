@@ -30,6 +30,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
 import * as ServerConfig from "../config.ts";
 import { resolveBaseDir } from "../os-jank.ts";
+import { withHeadlessBrowserEnvironment } from "../provider/RuntimeInstructions.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { baseDirFlag } from "./config.ts";
 import { resolveCliCommand } from "./invocation.ts";
@@ -124,7 +125,7 @@ const pickAgent = (agents: ReadonlyArray<TriageAgent>) =>
  * the UI, and the harness's own permission prompts gate every action. Resolves
  * with the child's exit code.
  */
-const runInteractiveSession = (input: {
+export const runInteractiveSession = (input: {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
   readonly shell: boolean;
@@ -133,6 +134,8 @@ const runInteractiveSession = (input: {
   Effect.callback<number, TriageAgentSpawnError>((resume) => {
     const child = NodeChildProcess.spawn(input.command, [...input.args], {
       cwd: input.cwd,
+      // The agent may run browser checks, so the headless variables win.
+      env: withHeadlessBrowserEnvironment(process.env),
       stdio: "inherit",
       shell: input.shell,
     });

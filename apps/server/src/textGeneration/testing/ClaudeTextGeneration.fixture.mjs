@@ -29,6 +29,9 @@ const settingsIndex = argv.indexOf("--settings");
 if (settingsIndex === -1 || JSON.parse(argv[settingsIndex + 1]).disableAllHooks !== true) {
   fail("text generation must disable hooks", 10);
 }
+if (process.env.PWDEBUG !== "0" || process.env.PLAYWRIGHT_HTML_OPEN !== "never") {
+  fail("text generation must run with the headless browser environment", 13);
+}
 const cwdMustNotBe = process.env.STUDIO_FAKE_CLAUDE_CWD_MUST_NOT_BE;
 if (cwdMustNotBe && NodeFS.realpathSync(process.cwd()) === NodeFS.realpathSync(cwdMustNotBe)) {
   fail("text generation ran in the project directory", 11);

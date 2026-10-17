@@ -237,3 +237,88 @@ server.listen(0, "127.0.0.1", () => {
     10_000,
   );
 });
+
+describe("OpenCode server environment", () => {
+  effectIt.live(
+    "starts the server with the headless browser environment",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const environment = yield* HostProcessEnvironment;
+        const executablePath = yield* HostProcessExecutablePath;
+        const platform = yield* HostProcessPlatform;
+        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "studio-opencode-headless-" });
+        const isWindows = platform === "win32";
+        const binaryPath = path.join(tempDir, isWindows ? "opencode.cmd" : "opencode");
+        const scriptPath = path.join(tempDir, "opencode.mjs");
+
+        yield* fs.writeFileString(
+          scriptPath,
+          `import { createServer } from "node:http";
+const server = createServer((request, response) => {
+  response.setHeader("Content-Type", "application/json");
+  if (request.url.startsWith("/global/health")) {
+    response.end(JSON.stringify({ healthy: true, version: "1.14.19" }));
+    return;
+  }
+  response.end(JSON.stringify({
+    PWDEBUG: process.env.PWDEBUG,
+    PLAYWRIGHT_HTML_OPEN: process.env.PLAYWRIGHT_HTML_OPEN,
+    KEEP: process.env.STUDIO_TEST_KEEP,
+  }));
+});
+server.listen(0, "127.0.0.1", () => {
+  process.stdout.write("opencode server listening on http://127.0.0.1:" + server.address().port + "\\n");
+});
+`,
+        );
+        yield* fs.writeFileString(
+          binaryPath,
+          [
+            ...(isWindows ? ["@echo off"] : ["#!/bin/sh"]),
+            isWindows
+              ? '"%STUDIO_TEST_NODE_BINARY%" "%STUDIO_TEST_OPENCODE_SCRIPT%" %*'
+              : 'exec "$STUDIO_TEST_NODE_BINARY" "$STUDIO_TEST_OPENCODE_SCRIPT" "$@"',
+            "",
+          ].join("\n"),
+        );
+        if (!isWindows) {
+          yield* fs.chmod(binaryPath, 0o755);
+        }
+
+        const runtime = yield* OpenCodeRuntime.OpenCodeRuntime;
+        const server = yield* runtime.startOpenCodeServerProcess({
+          binaryPath,
+          directory: tempDir,
+          port: 0,
+          environment: {
+            ...environment,
+            STUDIO_TEST_NODE_BINARY: executablePath,
+            STUDIO_TEST_OPENCODE_SCRIPT: scriptPath,
+            STUDIO_TEST_KEEP: "1",
+            // The provider instance asks for the inspector; the headless policy wins.
+            PWDEBUG: "1",
+            PLAYWRIGHT_HTML_OPEN: "always",
+          },
+        });
+        const response = yield* HttpClient.get(`${server.url}/env`);
+
+        expect(JSON.parse(yield* response.text)).toEqual({
+          PWDEBUG: "0",
+          PLAYWRIGHT_HTML_OPEN: "never",
+          KEEP: "1",
+        });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide([
+          OpenCodeRuntime.layer.pipe(
+            Layer.provide(OpenCodeServerLedger.layerTest),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+          FetchHttpClient.layer,
+        ]),
+      ),
+    20_000,
+  );
+});

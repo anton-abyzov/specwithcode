@@ -36,6 +36,7 @@ import {
   scopeClaudeModelCatalog,
 } from "../provider/ClaudeModelCatalog.ts";
 import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
+import { withHeadlessBrowserEnvironment } from "../provider/RuntimeInstructions.ts";
 
 const CLAUDE_TIMEOUT_MS = 180_000;
 
@@ -201,7 +202,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         { env: claudeEnvironment },
       );
       const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-        env: claudeEnvironment,
+        env: withHeadlessBrowserEnvironment(claudeEnvironment),
         cwd: workingDirectory,
         shell: spawnCommand.shell,
         stdin: {

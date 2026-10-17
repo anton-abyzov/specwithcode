@@ -32,6 +32,7 @@ import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { signalProcessGroup } from "../../process/processGroup.ts";
 import { appendAcpStderrTail, sanitizeAcpStderrExcerpt } from "./AcpStderr.ts";
 import { normalizeAcpTerminalAuthMethod } from "./AcpTerminalAuthentication.ts";
+import { headlessChildProcessEnvironment } from "../RuntimeInstructions.ts";
 import {
   collectSessionConfigOptionValues,
   decideToolCallUpdateEmission,
@@ -1588,8 +1589,10 @@ export const make = (
       .spawn(
         ChildProcess.make(containedSpawnCommand.command, containedSpawnCommand.args, {
           ...(options.spawn.cwd ? { cwd: options.spawn.cwd } : {}),
-          ...(spawnEnvironment ? { env: spawnEnvironment } : {}),
-          extendEnv: options.spawn.extendEnv ?? true,
+          ...headlessChildProcessEnvironment({
+            env: spawnEnvironment,
+            extendEnv: options.spawn.extendEnv ?? true,
+          }),
           ...(options.ownDetachedProcessGroup === undefined
             ? {}
             : { detached: options.ownDetachedProcessGroup }),

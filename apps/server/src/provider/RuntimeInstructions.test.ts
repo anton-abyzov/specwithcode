@@ -2,13 +2,52 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildRuntimeInstructions,
   HEADLESS_BROWSER_ENVIRONMENT,
+  headlessChildProcessEnvironment,
   responseStyleInstructions,
   STUDIO_CONCISE_RESPONSE_STYLE_INSTRUCTIONS,
   STUDIO_DETAILED_RESPONSE_STYLE_INSTRUCTIONS,
   STUDIO_HEADLESS_INSTRUCTIONS,
   STUDIO_OUTPUT_FORMATTING_INSTRUCTIONS,
   STUDIO_WRITING_INSTRUCTIONS,
+  withHeadlessBrowserEnvironment,
 } from "./RuntimeInstructions.ts";
+
+describe("headless browser environment", () => {
+  it("applies the headless variables over an inherited or provider value", () => {
+    const environment = { PATH: "/usr/bin", PWDEBUG: "1", PLAYWRIGHT_HTML_OPEN: "always" };
+    expect(withHeadlessBrowserEnvironment(environment)).toEqual({
+      PATH: "/usr/bin",
+      PWDEBUG: "0",
+      PLAYWRIGHT_HTML_OPEN: "never",
+    });
+    // The caller's environment object is left as it was.
+    expect(environment.PWDEBUG).toBe("1");
+    expect(withHeadlessBrowserEnvironment(undefined)).toEqual(HEADLESS_BROWSER_ENVIRONMENT);
+  });
+
+  it("extends the inherited environment when a child process has none of its own", () => {
+    // Effect replaces the child environment unless extendEnv is set, so an
+    // absent env must not become a two-variable environment without PATH.
+    expect(headlessChildProcessEnvironment({})).toEqual({
+      env: { PWDEBUG: "0", PLAYWRIGHT_HTML_OPEN: "never" },
+      extendEnv: true,
+    });
+    expect(headlessChildProcessEnvironment({ extendEnv: false })).toEqual({
+      env: { PWDEBUG: "0", PLAYWRIGHT_HTML_OPEN: "never" },
+      extendEnv: true,
+    });
+  });
+
+  it("keeps an explicit child environment and its extendEnv choice", () => {
+    expect(headlessChildProcessEnvironment({ env: { HOME: "/h", PWDEBUG: "console" } })).toEqual({
+      env: { HOME: "/h", PWDEBUG: "0", PLAYWRIGHT_HTML_OPEN: "never" },
+      extendEnv: false,
+    });
+    expect(
+      headlessChildProcessEnvironment({ env: { HOME: "/h" }, extendEnv: true }).extendEnv,
+    ).toBe(true);
+  });
+});
 
 describe("buildRuntimeInstructions", () => {
   it("asks only for the pull requests the server cannot detect", () => {

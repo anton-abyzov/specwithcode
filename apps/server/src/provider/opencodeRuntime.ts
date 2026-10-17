@@ -1,6 +1,10 @@
 import * as NodeURL from "node:url";
 
-import type { ChatAttachment, ProviderApprovalDecision, RuntimeMode } from "@specweave-studio/contracts";
+import type {
+  ChatAttachment,
+  ProviderApprovalDecision,
+  RuntimeMode,
+} from "@specweave-studio/contracts";
 import {
   createOpencodeClient,
   type Agent,
@@ -33,6 +37,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { signalProcessGroup } from "../process/processGroup.ts";
 import { isWindowsCommandNotFound } from "../processRunner.ts";
 import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
+import { withHeadlessBrowserEnvironment } from "./RuntimeInstructions.ts";
 import { collectStreamAsString } from "./providerSnapshot.ts";
 import * as NetService from "@specweave-studio/shared/Net";
 import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
@@ -702,7 +707,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
           ChildProcess.make(spawnCommand.command, spawnCommand.args, {
             detached: hostPlatform !== "win32",
             shell: spawnCommand.shell,
-            env: {
+            env: withHeadlessBrowserEnvironment({
               ...input.environment,
               ...(serverPassword !== undefined ? { OPENCODE_SERVER_PASSWORD: serverPassword } : {}),
               // Respect an OPENCODE_CONFIG_CONTENT provided by the caller or
@@ -713,7 +718,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
               // relying on inheritance) because `extendEnv` is false whenever
               // `input.environment` is provided.
               OPENCODE_CONFIG_CONTENT: resolveOpenCodeConfigContent(input.environment),
-            },
+            }),
             extendEnv: input.environment === undefined,
           }),
         )
