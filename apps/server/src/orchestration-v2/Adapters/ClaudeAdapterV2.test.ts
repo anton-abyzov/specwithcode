@@ -58,6 +58,7 @@ import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { PreviewControlsToolkit } from "../../mcp/toolkits/previewControls/tools.ts";
 import { HtmlToolkit } from "../../mcp/toolkits/html/tools.ts";
 import { MachinesToolkit } from "../../mcp/toolkits/machines/tools.ts";
+import { CloudToolkit } from "../../mcp/toolkits/cloud/tools.ts";
 import { EnvironmentToolkit } from "../../mcp/toolkits/environment/tools.ts";
 import { ProjectToolkit } from "../../mcp/toolkits/project/tools.ts";
 import { WorktreeToolkit } from "../../mcp/toolkits/worktree/tools.ts";
@@ -861,6 +862,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       ...Object.values(PreviewControlsToolkit.tools),
       ...Object.values(HtmlToolkit.tools),
       ...Object.values(MachinesToolkit.tools),
+      ...Object.values(CloudToolkit.tools),
     ]
       .filter((tool) => Context.get(tool.annotations, Tool.Readonly))
       .map((tool) => `mcp__studio-code__${tool.name}`)
@@ -2261,6 +2263,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly uuid: string;
     readonly error: "authentication_failed" | "rate_limit" | "server_error" | undefined;
     readonly parentToolUseId?: string | null;
+    readonly text?: string;
   }) =>
     claudeSdkFrame({
       type: "assistant",
@@ -2269,7 +2272,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         id: `msg_${input.uuid}`,
         type: "message",
         role: "assistant",
-        content: [{ type: "text", text: "Claude could not complete this request." }],
+        content: [{ type: "text", text: input.text ?? "Claude could not complete this request." }],
         stop_reason: null,
         stop_sequence: null,
         usage: {
@@ -3260,6 +3263,71 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       if (terminal.status !== "failed") return;
       assert.include(terminal.failure.message, expected);
       assert.equal(terminal.failure.class, recovered ? "provider_error" : "usage_limit");
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  it.effect.each([
+    { source: "the CLI's limit message", earlierEvent: false },
+    { source: "an earlier event for the same window", earlierEvent: true },
+  ])("keeps the reset time from $source when the rejection has none", ({ earlierEvent }) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      // A whole minute, as the CLI's message states it.
+      const resetsAt = (Math.floor(DateTime.toEpochMillis(now) / 60_000) + 180) * 60;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make(`attempt-claude-reset-${earlierEvent}`),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      if (earlierEvent)
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "rate_limit_event",
+            rate_limit_info: { status: "allowed_warning", rateLimitType: "five_hour", resetsAt },
+            uuid: "00000000-0000-4000-8000-000000000640",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+      const resetClock = DateTime.toPartsUtc(DateTime.makeUnsafe(resetsAt * 1000));
+      const hour12 = resetClock.hour % 12 || 12;
+      const meridiem = resetClock.hour < 12 ? "am" : "pm";
+      const minutes = String(resetClock.minute).padStart(2, "0");
+      yield* Queue.offerAll(harness.sdkMessages, [
+        claudeSdkFrame({
+          type: "rate_limit_event",
+          rate_limit_info: { status: "rejected", rateLimitType: "five_hour" },
+          uuid: "00000000-0000-4000-8000-000000000641",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        makeAssistantErrorFrame({
+          uuid: "00000000-0000-4000-8000-000000000642",
+          error: "rate_limit",
+          text: earlierEvent
+            ? "Claude could not complete this request."
+            : `You've hit your session limit · resets ${hour12}:${minutes}${meridiem} (UTC)`,
+        }),
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000643",
+          result: "API Error",
+          isError: true,
+          terminalReason: "api_error",
+        }),
+      ]);
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "failed");
+      if (terminal.status !== "failed") return;
+      assert.equal(terminal.failure.class, "usage_limit");
+      assert.equal(
+        terminal.failure.resetAt,
+        DateTime.formatIso(DateTime.makeUnsafe(resetsAt * 1000)),
+      );
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 

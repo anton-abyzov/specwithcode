@@ -8,6 +8,7 @@ streams to a host) in a temporary private home.
 Run: cd scripts/studio-fleet && python3 -B test-fleet-rollout.py
 """
 import contextlib
+import copy
 import io
 import json
 import os
@@ -19,6 +20,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -77,6 +79,7 @@ class Fleet(object):
                     self.left[identity] = remaining - 1
                 self.log.append((identity, 'status', self.version[identity], list(argv)))
                 return {'identity': identity, 'version': self.version[identity],
+                        'installFinalized': self.version[identity] == NEW,
                         'status': 'installed' if self.version[identity] == NEW else self.status[identity],
                         'message': None if self.version[identity] == NEW else self.message[identity],
                         'downloadedVersion': NEW, 'availableVersion': self.available.get(identity, NEW)}
@@ -94,6 +97,80 @@ def quiet(_line):
 
 
 class RolloutOrder(unittest.TestCase):
+    def test_descriptor_switch_waits_for_final_receipt_before_workers(self):
+        clock, reads = Clock(), []
+        fleet = Fleet(clock, polls={'m4': 0})
+        hosts = fleet.hosts()
+        real = hosts['m4']
+
+        def pending(argv):
+            reply = real(argv)
+            if argv[0] == 'status' and reply.get('version') == NEW:
+                reads.append(len(fleet.log))
+                reply['installFinalized'] = len(reads) >= 4
+                reply['status'] = 'installed' if reply['installFinalized'] else 'installing'
+            return reply
+
+        hosts['m4'] = pending
+        fleet_rollout.rollout(NEW, hosts, clock=clock, sleep=clock.sleep, say=quiet)
+        self.assertEqual(len(reads), 4)
+        self.assertTrue(all(entry[0] == 'm4' for entry in fleet.log[:reads[-1]]))
+
+    def test_target_descriptor_without_final_receipt_never_starts_workers(self):
+        for only in ('all', 'workers'):
+            with self.subTest(only=only):
+                clock, fleet = Clock(), Fleet(Clock())
+                fleet.version['m4'] = NEW
+                hosts = fleet.hosts()
+                real = hosts['m4']
+
+                def pending(argv):
+                    reply = real(argv)
+                    reply.update({'installFinalized': False, 'status': 'installing'})
+                    return reply
+
+                hosts['m4'] = pending
+                with self.assertRaises(fleet_rollout.RolloutError):
+                    fleet_rollout.rollout(NEW, hosts, only=only, local_deadline=90,
+                                         clock=clock, sleep=clock.sleep, say=quiet)
+                self.assertEqual(fleet.asked, {})
+
+    def test_failed_final_check_after_descriptor_switch_stops_workers(self):
+        clock, fleet = Clock(), Fleet(Clock(), polls={'m4': 0})
+        hosts = fleet.hosts()
+        real = hosts['m4']
+
+        def failed(argv):
+            reply = real(argv)
+            if argv[0] == 'request':
+                reply['request'] = {'installRequestedAt': '2026-10-17T00:26:00Z'}
+            elif reply.get('version') == NEW:
+                reply.update({'installFinalized': False, 'status': 'error',
+                              'lastInstall': {'version': NEW, 'result': 'failed',
+                                              'at': '2026-10-17T00:32:00Z', 'receipt': '/failed.json'}})
+            return reply
+
+        hosts['m4'] = failed
+        with self.assertRaisesRegex(fleet_rollout.RolloutError, 'it failed'):
+            fleet_rollout.rollout(NEW, hosts, clock=clock, sleep=clock.sleep, say=quiet)
+        self.assertFalse(any(entry[0] != 'm4' for entry in fleet.log))
+
+    def test_joined_automatic_install_failure_is_not_retried(self):
+        clock, calls = Clock(), []
+
+        def automatic(argv):
+            calls.append(argv)
+            self.assertEqual(argv[0], 'status', 'joining a live install must never request a retry')
+            if len(calls) == 1:
+                return {'version': NEW, 'status': 'installing', 'installRequestedAt': None}
+            return {'version': OLD, 'status': 'error', 'installFinalized': False,
+                    'lastInstall': {'version': NEW, 'result': 'failed',
+                                    'at': '2026-10-17T00:32:00Z', 'receipt': '/automatic-failed.json'}}
+
+        with self.assertRaisesRegex(fleet_rollout.RolloutError, 'it failed'):
+            fleet_rollout.rollout(NEW, {'m4': automatic}, clock=clock, sleep=clock.sleep, say=quiet)
+        self.assertEqual(len(calls), 2)
+
     def run_rollout(self, fleet, clock, **options):
         options.setdefault('poll', 15)
         return fleet_rollout.rollout(NEW, fleet.hosts(), clock=clock, sleep=clock.sleep, say=quiet, **options)
@@ -224,6 +301,7 @@ class RolloutOrder(unittest.TestCase):
                     elif argv[0] == 'status' and fleet.calls('m4', 'request'):
                         seen.append(1)
                         reply['version'] = NEW
+                        reply['installFinalized'] = len(seen) >= 4 and outcome == 'updated'
                         if len(seen) < 4:
                             reply['status'] = 'installing'
                         else:
@@ -258,6 +336,7 @@ class RolloutOrder(unittest.TestCase):
             elif argv[0] == 'status' and fleet.calls('m4', 'request'):
                 seen.append(1)
                 reply['version'] = NEW
+                reply['installFinalized'] = len(seen) >= 3
                 if len(seen) < 3:
                     reply.update({'status': 'error',
                                   'message': 'Installing SpecWithCode %s is taking longer than 15 minutes; it was left to finish.' % NEW,
@@ -418,6 +497,97 @@ class RequestCommand(unittest.TestCase):
         self.assertEqual((report['version'], report['installedVersion'], report['downloadedVersion']),
                          (OLD, '1.0.39', NEW))
         self.assertEqual(report['status'], 'waiting-for-quiet')
+        self.assertFalse(report['installFinalized'])
+
+    def completion_fixture(self):
+        installation = {'identity': 'm9', 'version': NEW, 'sourceCommit': 'a' * 40,
+                        'archiveSha256': 'b' * 64, 'service': {'label': 'com.specweave.studio.m9'}}
+        receipt = self.own / 'updates' / 'receipts' / 'completed.json'
+        receipt.parent.mkdir(exist_ok=True)
+        snapshot = {'schemaVersion': 1, 'identity': 'm9', 'serviceLabel': installation['service']['label'],
+                    'artifactSourceCommit': installation['sourceCommit'],
+                    'archiveSha256': installation['archiveSha256']}
+        proof = {'phase': 'verified', 'before': dict(snapshot), 'after': dict(snapshot),
+                 'preservedRowsAuthAndIdentity': True, 'originalServicesPreserved': True,
+                 'onlyKnownOwnedServiceRestarted': True}
+        state = {'installedVersion': NEW, 'installedSourceCommit': installation['sourceCommit'],
+                 'status': 'installed', 'lastInstall': {'version': NEW, 'result': 'updated',
+                 'at': '2026-10-17T00:33:00Z', 'receipt': str(receipt)}}
+        return installation, state, proof, receipt
+
+    def test_finalization_requires_source_bound_guarded_receipt(self):
+        base = self.completion_fixture()
+        mutations = [
+            ('valid', lambda i, s, p: None, True),
+            ('failed agent', lambda i, s, p: s['lastInstall'].update(result='failed'), False),
+            ('old agent version', lambda i, s, p: s.update(installedVersion=OLD), False),
+            ('old source', lambda i, s, p: s.update(installedSourceCommit='c' * 40), False),
+            ('old completion', lambda i, s, p: s['lastInstall'].update(version=OLD), False),
+            ('no completion time', lambda i, s, p: s['lastInstall'].update(at=None), False),
+            ('failed receipt', lambda i, s, p: p.update(result='update-failed'), False),
+            ('unfinished receipt', lambda i, s, p: p.update(phase='restart-requested'), False),
+            ('unproven preservation', lambda i, s, p: p.update(preservedRowsAuthAndIdentity=False), False),
+            ('unproven services', lambda i, s, p: p.update(originalServicesPreserved=False), False),
+            ('unproven restart', lambda i, s, p: p.update(onlyKnownOwnedServiceRestarted=False), False),
+            ('wrong identity', lambda i, s, p: p['after'].update(identity='m4'), False),
+            ('wrong service', lambda i, s, p: p['after'].update(serviceLabel='foreign'), False),
+            ('wrong source', lambda i, s, p: p['after'].update(artifactSourceCommit='c' * 40), False),
+            ('wrong archive', lambda i, s, p: p['after'].update(archiveSha256='c' * 64), False),
+            ('malformed snapshot', lambda i, s, p: p.update(before=[]), False),
+            ('malformed source', lambda i, s, p: i.update(sourceCommit=None), False),
+            ('malformed service', lambda i, s, p: i.update(service=None), False),
+        ]
+        for name, mutate, expected in mutations:
+            with self.subTest(name=name):
+                installation, state, proof, receipt = copy.deepcopy(base)
+                mutate(installation, state, proof)
+                (self.own / 'installation.json').write_text(json.dumps(installation))
+                (self.own / 'updates' / 'state.json').write_text(json.dumps(state))
+                receipt.write_text(json.dumps(proof))
+                self.assertEqual(self.cli('status', '--identity', 'm9')[1]['installFinalized'], expected)
+
+    def test_completion_marker_missing_or_unowned_receipt_fails_closed(self):
+        installation, state, proof, receipt = self.completion_fixture()
+        (self.own / 'installation.json').write_text(json.dumps(installation))
+        state_path = self.own / 'updates' / 'state.json'
+        state_path.write_text(json.dumps(state))
+        receipt.write_text(json.dumps(proof))
+        for name in ('install-in-progress.json', 'install-gate.json'):
+            marker = self.own / 'updates' / name
+            marker.write_text('{}')
+            self.assertFalse(self.cli('status', '--identity', 'm9')[1]['installFinalized'])
+            marker.unlink()
+        receipt.unlink()
+        self.assertFalse(self.cli('status', '--identity', 'm9')[1]['installFinalized'])
+        receipt.write_text('not JSON')
+        self.assertFalse(self.cli('status', '--identity', 'm9')[1]['installFinalized'])
+        outside = self.home / 'unowned.json'
+        outside.write_text(json.dumps(proof))
+        receipt.unlink()
+        receipt.symlink_to(outside)
+        self.assertFalse(self.cli('status', '--identity', 'm9')[1]['installFinalized'])
+        state['lastInstall']['receipt'] = str(outside)
+        state_path.write_text(json.dumps(state))
+        self.assertFalse(self.cli('status', '--identity', 'm9')[1]['installFinalized'])
+
+    def test_completion_refuses_files_changing_during_receipt_read(self):
+        for changed in ('state.json', 'installation.json', 'install-gate.json'):
+            with self.subTest(changed=changed):
+                installation, state, proof, receipt = self.completion_fixture()
+                (self.own / 'installation.json').write_text(json.dumps(installation))
+                (self.own / 'updates' / 'state.json').write_text(json.dumps(state))
+                receipt.write_text(json.dumps(proof))
+                real = update_request._read_json
+
+                def racing(path):
+                    value = real(path)
+                    if path == receipt:
+                        target = self.own / changed if changed == 'installation.json' else self.own / 'updates' / changed
+                        target.write_text('{}')
+                    return value
+
+                with mock.patch.object(update_request, '_read_json', side_effect=racing):
+                    self.assertFalse(self.cli('status', '--identity', 'm9')[1]['installFinalized'])
 
     def test_the_streamed_program_runs_on_the_system_python(self):
         """What fleet_rollout sends a host: the module sources on stdin, no files on the host."""
@@ -429,6 +599,11 @@ class RequestCommand(unittest.TestCase):
         with self.assertRaises(fleet_rollout.RolloutError) as caught:
             host(['request', '--identity', 'm9', '--version', 'x'])
         self.assertIn('Invalid version', str(caught.exception))
+        installation, state, proof, receipt = self.completion_fixture()
+        (self.own / 'installation.json').write_text(json.dumps(installation))
+        (self.own / 'updates' / 'state.json').write_text(json.dumps(state))
+        receipt.write_text(json.dumps(proof))
+        self.assertTrue(host(['status', '--identity', 'm9'])['installFinalized'])
 
     def test_command_line_dry_run_contacts_nobody(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -15,85 +15,294 @@ import * as Capacity from "./Capacity.ts";
 import { SwitchFetch } from "./SwitchClient.ts";
 import { provider, rawAccount, rawSnapshot, settings } from "./fixtures.ts";
 
-const run = <A, E>(effect: Effect.Effect<A, E, Capacity.Capacity>, raw: unknown, native = [provider()], config = settings, unavailable = false, routeVerified: boolean | CodexNativeRouteCheckError = true, refreshed = native, refreshIds: string[] = [], switchOptions: { refreshedRaw?: unknown; refreshBusy?: boolean; requests?: string[]; malformedJson?: boolean;
-  } = {}) =>
-  Effect.runPromise(effect.pipe(Effect.provide(Capacity.layer), Effect.provide(Layer.mergeAll(
-    Layer.succeed(NativeRoute.NativeRoute, { verify: () => typeof routeVerified === "boolean" ? Effect.succeed(routeVerified) : Effect.fail(routeVerified) }),
-    Layer.mock(Settings.ServerSettingsService)({ getSettings: Effect.succeed(config) }),
-    Layer.mock(Providers.ProviderRegistry)({ getProviders: Effect.succeed(native), refreshInstance: (id) => Effect.sync(() => { refreshIds.push(id); return refreshed; }) }),
-  )), Effect.provideService(HostProcessEnvironment, {}), Effect.provideService(SwitchFetch,
-    (async (url) => {
-      if (unavailable) throw new Error("synthetic-secret-error");
-      if (switchOptions.malformedJson) return new Response("{", { headers: { "Content-Type": "application/json" } });
-      const path = new URL(String(url)).pathname; switchOptions.requests?.push(path);
-      if (path === "/api/refresh" && switchOptions.refreshBusy) return Response.json({}, { status: 409 });
-      return Response.json(path === "/api/refresh" && "refreshedRaw" in switchOptions ? switchOptions.refreshedRaw : raw);
-    }) as typeof fetch)));
-const start = (id = "codex") => Effect.flatMap(Capacity.Capacity, (capacity) => capacity.assertNativeStart(ProviderInstanceId.make(id), "/workspace"));
+const run = <A, E>(
+  effect: Effect.Effect<A, E, Capacity.Capacity>,
+  raw: unknown,
+  native = [provider()],
+  config = settings,
+  unavailable = false,
+  routeVerified: boolean | CodexNativeRouteCheckError = true,
+  refreshed = native,
+  refreshIds: string[] = [],
+  switchOptions: {
+    refreshedRaw?: unknown;
+    refreshBusy?: boolean;
+    requests?: string[];
+    malformedJson?: boolean;
+  } = {},
+) =>
+  Effect.runPromise(
+    effect.pipe(
+      Effect.provide(Capacity.layer),
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.succeed(NativeRoute.NativeRoute, {
+            verify: () =>
+              typeof routeVerified === "boolean"
+                ? Effect.succeed(routeVerified)
+                : Effect.fail(routeVerified),
+          }),
+          Layer.mock(Settings.ServerSettingsService)({ getSettings: Effect.succeed(config) }),
+          Layer.mock(Providers.ProviderRegistry)({
+            getProviders: Effect.succeed(native),
+            refreshInstance: (id) =>
+              Effect.sync(() => {
+                refreshIds.push(id);
+                return refreshed;
+              }),
+          }),
+        ),
+      ),
+      Effect.provideService(HostProcessEnvironment, {}),
+      Effect.provideService(SwitchFetch, (async (url) => {
+        if (unavailable) throw new Error("synthetic-secret-error");
+        if (switchOptions.malformedJson)
+          return new Response("{", { headers: { "Content-Type": "application/json" } });
+        const path = new URL(String(url)).pathname;
+        switchOptions.requests?.push(path);
+        if (path === "/api/refresh" && switchOptions.refreshBusy)
+          return Response.json({}, { status: 409 });
+        return Response.json(
+          path === "/api/refresh" && "refreshedRaw" in switchOptions
+            ? switchOptions.refreshedRaw
+            : raw,
+        );
+      }) as typeof fetch),
+    ),
+  );
+const start = (id = "codex") =>
+  Effect.flatMap(Capacity.Capacity, (capacity) =>
+    capacity.assertNativeStart(ProviderInstanceId.make(id), "/workspace"),
+  );
 describe("blocking usage reset estimates", () => {
   const scenarios = [
-    { name: "weekly exhaustion ignores an earlier session reset", session: 10, weekly: 100, sessionHours: 1, weeklyHours: 72, expectedHours: 72 },
-    { name: "every exhausted window must reset", session: 100, weekly: 100, sessionHours: 4, weeklyHours: 2, expectedHours: 4 },
-    { name: "an unknown blocker reset makes recovery unknown", session: 100, weekly: 100, sessionHours: 1, weeklyHours: null, expectedHours: null },
-    { name: "an expired blocker observation cannot predict recovery", session: 100, weekly: 100, sessionHours: 1, weeklyHours: -1, expectedHours: null },
-    { name: "below-limit windows cannot explain a denial", session: 10, weekly: 25, sessionHours: 1, weeklyHours: 72, expectedHours: null },
-    { name: "spend controls do not recover with a usage window", session: 100, weekly: 100, sessionHours: 1, weeklyHours: 72, expectedHours: null, spendControlReached: true },
-    { name: "workspace denials have no inferred window recovery", session: 100, weekly: 100, sessionHours: 1, weeklyHours: 72, expectedHours: null, rateLimitReachedType: "workspace_member_usage_limit_reached" },
+    {
+      name: "weekly exhaustion ignores an earlier session reset",
+      session: 10,
+      weekly: 100,
+      sessionHours: 1,
+      weeklyHours: 72,
+      expectedHours: 72,
+    },
+    {
+      name: "every exhausted window must reset",
+      session: 100,
+      weekly: 100,
+      sessionHours: 4,
+      weeklyHours: 2,
+      expectedHours: 4,
+    },
+    {
+      name: "an unknown blocker reset makes recovery unknown",
+      session: 100,
+      weekly: 100,
+      sessionHours: 1,
+      weeklyHours: null,
+      expectedHours: null,
+    },
+    {
+      name: "an expired blocker observation cannot predict recovery",
+      session: 100,
+      weekly: 100,
+      sessionHours: 1,
+      weeklyHours: -1,
+      expectedHours: null,
+    },
+    {
+      name: "below-limit windows cannot explain a denial",
+      session: 10,
+      weekly: 25,
+      sessionHours: 1,
+      weeklyHours: 72,
+      expectedHours: null,
+    },
+    {
+      name: "spend controls do not recover with a usage window",
+      session: 100,
+      weekly: 100,
+      sessionHours: 1,
+      weeklyHours: 72,
+      expectedHours: null,
+      spendControlReached: true,
+    },
+    {
+      name: "workspace denials have no inferred window recovery",
+      session: 100,
+      weekly: 100,
+      sessionHours: 1,
+      weeklyHours: 72,
+      expectedHours: null,
+      rateLimitReachedType: "workspace_member_usage_limit_reached",
+    },
   ] as const;
   it.each(scenarios)("native: $name", async (scenario) => {
     const now = DateTime.toEpochMillis(DateTime.nowUnsafe());
     const at = (hours: number) => DateTime.formatIso(DateTime.makeUnsafe(now + hours * 3600000));
     const base = provider("codex", "codex", now);
-    const native = { ...base, usageLimits: { ...base.usageLimits!,
-      nativeAllowanceObservedAt: DateTime.formatIso(DateTime.makeUnsafe(now)), ordinaryUsageAllowed: false,
-      spendControlReached: "spendControlReached" in scenario,
-      rateLimitReachedType: "rateLimitReachedType" in scenario ? scenario.rateLimitReachedType : "rate_limit_reached",
-      windows: [
-        { id: "primary", kind: "session" as const, label: "Session", usedPercent: scenario.session, resetsAt: at(scenario.sessionHours) },
-        { id: "secondary", kind: "weekly" as const, label: "Weekly", usedPercent: scenario.weekly,
-          ...(scenario.weeklyHours === null ? {} : { resetsAt: at(scenario.weeklyHours) }) },
-        { id: "other:primary", kind: "session" as const, label: "Other bucket", usedPercent: 100, resetsAt: at(200) },
-      ],
-    } };
-    const error = await run(start(), null, [native], settings, true).catch((error: unknown) => error);
+    const native = {
+      ...base,
+      usageLimits: {
+        ...base.usageLimits!,
+        nativeAllowanceObservedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
+        ordinaryUsageAllowed: false,
+        spendControlReached: "spendControlReached" in scenario,
+        rateLimitReachedType:
+          "rateLimitReachedType" in scenario ? scenario.rateLimitReachedType : "rate_limit_reached",
+        windows: [
+          {
+            id: "primary",
+            kind: "session" as const,
+            label: "Session",
+            usedPercent: scenario.session,
+            resetsAt: at(scenario.sessionHours),
+          },
+          {
+            id: "secondary",
+            kind: "weekly" as const,
+            label: "Weekly",
+            usedPercent: scenario.weekly,
+            ...(scenario.weeklyHours === null ? {} : { resetsAt: at(scenario.weeklyHours) }),
+          },
+          {
+            id: "other:primary",
+            kind: "session" as const,
+            label: "Other bucket",
+            usedPercent: 100,
+            resetsAt: at(200),
+          },
+        ],
+      },
+    };
+    const error = await run(start(), null, [native], settings, true).catch(
+      (error: unknown) => error,
+    );
     expect(error).toMatchObject({ _tag: "ProviderSetupError", usageLimit: {} });
-    expect((error as { usageLimit: { resetAt?: string } }).usageLimit.resetAt)
-      .toBe(scenario.expectedHours === null ? undefined : at(scenario.expectedHours));
-    expect((error as { detail: string }).detail.includes("Next observed reset"))
-      .toBe(scenario.expectedHours !== null);
+    expect((error as { usageLimit: { resetAt?: string } }).usageLimit.resetAt).toBe(
+      scenario.expectedHours === null ? undefined : at(scenario.expectedHours),
+    );
+    expect((error as { detail: string }).detail.includes("Next observed reset")).toBe(
+      scenario.expectedHours !== null,
+    );
+  });
+  it("reads a Claude denial's reset from Claude's own window ids", async () => {
+    const now = DateTime.toEpochMillis(DateTime.nowUnsafe());
+    const at = (hours: number) => DateTime.formatIso(DateTime.makeUnsafe(now + hours * 3600000));
+    const base = provider("claudeAgent", "claudeAgent", now);
+    const native = {
+      ...base,
+      usageLimits: {
+        ...base.usageLimits!,
+        nativeAllowanceObservedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
+        ordinaryUsageAllowed: false,
+        rateLimitReachedType: "rate_limit_reached",
+        windows: [
+          {
+            id: "five_hour",
+            kind: "session" as const,
+            label: "Session",
+            usedPercent: 100,
+            resetsAt: at(3),
+          },
+          {
+            id: "seven_day",
+            kind: "weekly" as const,
+            label: "Weekly",
+            usedPercent: 40,
+            resetsAt: at(90),
+          },
+          {
+            id: "seven_day_fable",
+            kind: "weekly" as const,
+            label: "Weekly · Fable",
+            modelScope: "Fable",
+            usedPercent: 100,
+            resetsAt: at(120),
+          },
+        ],
+      },
+    };
+    const error = await run(start("claudeAgent"), null, [native], settings, true).catch(
+      (error: unknown) => error,
+    );
+    expect(error).toMatchObject({ _tag: "ProviderSetupError", usageLimit: { resetAt: at(3) } });
   });
   it.each(scenarios)("companion: $name", async (scenario) => {
     const now = Math.floor(DateTime.toEpochMillis(DateTime.nowUnsafe()) / 1000) * 1000;
     const at = (hours: number) => now / 1000 + hours * 3600;
     const raw = rawSnapshot(now);
     const base = raw.accounts[0]!;
-    const snapshot = { ...raw, accounts: [{ ...base, status: "exhausted", quota: { ...base.quota,
-      ordinaryUsageAllowed: false, spendControlReached: "spendControlReached" in scenario,
-      rateLimitReachedType: "rateLimitReachedType" in scenario ? scenario.rateLimitReachedType : "rate_limit_reached",
-      window: { usedPercent: scenario.session, resetsAt: at(scenario.sessionHours) },
-      weekly: { usedPercent: scenario.weekly, resetsAt: scenario.weeklyHours === null ? null : at(scenario.weeklyHours) },
-      windows: [{ id: "other:primary", bucketId: "other", appliesToSelection: false, usedPercent: 100, resetsAt: at(200) }],
-    } }] };
+    const snapshot = {
+      ...raw,
+      accounts: [
+        {
+          ...base,
+          status: "exhausted",
+          quota: {
+            ...base.quota,
+            ordinaryUsageAllowed: false,
+            spendControlReached: "spendControlReached" in scenario,
+            rateLimitReachedType:
+              "rateLimitReachedType" in scenario
+                ? scenario.rateLimitReachedType
+                : "rate_limit_reached",
+            window: { usedPercent: scenario.session, resetsAt: at(scenario.sessionHours) },
+            weekly: {
+              usedPercent: scenario.weekly,
+              resetsAt: scenario.weeklyHours === null ? null : at(scenario.weeklyHours),
+            },
+            windows: [
+              {
+                id: "other:primary",
+                bucketId: "other",
+                appliesToSelection: false,
+                usedPercent: 100,
+                resetsAt: at(200),
+              },
+            ],
+          },
+        },
+      ],
+    };
     const error = await run(start(), snapshot).catch((error: unknown) => error);
     expect(error).toMatchObject({ _tag: "ProviderSetupError", usageLimit: {} });
-    expect((error as { usageLimit: { resetAt?: string } }).usageLimit.resetAt)
-      .toBe(scenario.expectedHours === null ? undefined : DateTime.formatIso(DateTime.makeUnsafe(at(scenario.expectedHours) * 1000)));
-    expect((error as { detail: string }).detail.includes("Next observed reset"))
-      .toBe(scenario.expectedHours !== null);
+    expect((error as { usageLimit: { resetAt?: string } }).usageLimit.resetAt).toBe(
+      scenario.expectedHours === null
+        ? undefined
+        : DateTime.formatIso(DateTime.makeUnsafe(at(scenario.expectedHours) * 1000)),
+    );
+    expect((error as { detail: string }).detail.includes("Next observed reset")).toBe(
+      scenario.expectedHours !== null,
+    );
   });
   it("includes every applicable companion window beyond its summary pair", async () => {
     const now = Math.floor(DateTime.toEpochMillis(DateTime.nowUnsafe()) / 1000) * 1000;
-    const raw = rawSnapshot(now), account = raw.accounts[0]!, later = now / 1000 + 72 * 3600;
+    const raw = rawSnapshot(now),
+      account = raw.accounts[0]!,
+      later = now / 1000 + 72 * 3600;
     account.quota.window.usedPercent = 100;
-    Object.assign(account.quota, { windows: [
-      { id: "codex:additional", bucketId: "codex", appliesToSelection: true, usedPercent: 100, resetsAt: later },
-    ] });
-    await expect(run(start(), raw)).rejects.toMatchObject({ usageLimit: { resetAt: DateTime.formatIso(DateTime.makeUnsafe(later * 1000)) } });
+    Object.assign(account.quota, {
+      windows: [
+        {
+          id: "codex:additional",
+          bucketId: "codex",
+          appliesToSelection: true,
+          usedPercent: 100,
+          resetsAt: later,
+        },
+      ],
+    });
+    await expect(run(start(), raw)).rejects.toMatchObject({
+      usageLimit: { resetAt: DateTime.formatIso(DateTime.makeUnsafe(later * 1000)) },
+    });
   });
 });
 describe("native session admission", () => {
-
-  const creditStart = (now: number) => Clock.clockWith((clock) => Effect.flatMap(Capacity.Capacity, (capacity) => capacity.assertNativeStart(ProviderInstanceId.make("codex"), "/workspace", { allowCredits: true, expectedQuotaPoolId: `codex:sha256:${"a".repeat(64)}`,
+  const creditStart = (now: number) =>
+    Clock.clockWith((clock) =>
+      Effect.flatMap(Capacity.Capacity, (capacity) =>
+        capacity.assertNativeStart(ProviderInstanceId.make("codex"), "/workspace", {
+          allowCredits: true,
+          expectedQuotaPoolId: `codex:sha256:${"a".repeat(64)}`,
         }),
       ).pipe(
         Effect.provideService(Clock.Clock, {
@@ -503,12 +712,20 @@ describe("native session admission", () => {
     expect(attempts).toEqual(["codex"]);
   });
   it("says a timed-out sign-in probe did not finish instead of asking a signed-in user to sign in", async () => {
-    const native = [{
-      ...provider(),
-      status: "warning" as const,
-      auth: { status: "unknown" as const, type: "status-check-failed", label: "Status check did not finish" },
-    }];
-    const error = await run(start(), rawSnapshot(), native, settings, false, true, native).catch((cause: unknown) => cause);
+    const native = [
+      {
+        ...provider(),
+        status: "warning" as const,
+        auth: {
+          status: "unknown" as const,
+          type: "status-check-failed",
+          label: "Status check did not finish",
+        },
+      },
+    ];
+    const error = await run(start(), rawSnapshot(), native, settings, false, true, native).catch(
+      (cause: unknown) => cause,
+    );
     expect((error as { detail: string }).detail).toMatch(/sign-in status check did not finish/);
     expect((error as { detail: string }).detail).not.toMatch(/authorization is unverified/);
   });
@@ -795,6 +1012,90 @@ describe("native session admission", () => {
       await expect(run(start(), raw)).rejects.toThrow(/blocked/);
     },
   );
+  describe("an exhausted Claude profile after a new sign-in", () => {
+    // The local service still holds the read of the account signed in before:
+    // weekly limit reached, reset in four days. The person has since signed in
+    // with an account that has room, which only a new read shows.
+    const exhausted = (now: number) => {
+      const raw = rawSnapshot(now);
+      const account = rawAccount("claude-1", now);
+      account.status = "exhausted";
+      account.quota.weekly = { usedPercent: 100, resetsAt: Math.floor(now / 1000) + 4 * 86400 };
+      return { ...raw, accounts: [account] };
+    };
+    const signedIn = (now: number) => ({
+      ...rawSnapshot(now),
+      accounts: [rawAccount("claude-1", now)],
+    });
+
+    it("re-reads before refusing and admits the account that has room", async () => {
+      const now = DateTime.toEpochMillis(DateTime.nowUnsafe());
+      const requests: string[] = [];
+      const refreshed: string[] = [];
+      const native = [provider("claudeAgent", "claudeAgent", now)];
+      await expect(
+        run(
+          start("claudeAgent"),
+          exhausted(now),
+          native,
+          settings,
+          false,
+          true,
+          native,
+          refreshed,
+          {
+            refreshedRaw: signedIn(now),
+            requests,
+          },
+        ),
+      ).resolves.toBeUndefined();
+      expect(requests).toEqual(["/api/state", "/api/refresh"]);
+      expect(refreshed).toEqual(["claudeAgent"]);
+    });
+
+    it("keeps a limit the re-read confirms, and re-reads at most once a minute", async () => {
+      const now = DateTime.toEpochMillis(DateTime.nowUnsafe());
+      const requests: string[] = [];
+      const native = [provider("claudeAgent", "claudeAgent", now)];
+      const twice = Effect.flip(start("claudeAgent")).pipe(
+        Effect.zip(Effect.flip(start("claudeAgent"))),
+      );
+      const [first, second] = await run(
+        twice,
+        exhausted(now),
+        native,
+        settings,
+        false,
+        true,
+        native,
+        [],
+        {
+          refreshedRaw: exhausted(now),
+          requests,
+        },
+      );
+      for (const error of [first, second])
+        expect(error).toMatchObject({
+          _tag: "ProviderSetupError",
+          usageLimit: {
+            resetAt: DateTime.formatIso(
+              DateTime.makeUnsafe((Math.floor(now / 1000) + 4 * 86400) * 1000),
+            ),
+          },
+        });
+      expect(requests).toEqual(["/api/state", "/api/refresh", "/api/state"]);
+    });
+
+    it("refuses on the cached read when the re-read fails", async () => {
+      const now = DateTime.toEpochMillis(DateTime.nowUnsafe());
+      const native = [provider("claudeAgent", "claudeAgent", now)];
+      await expect(
+        run(start("claudeAgent"), exhausted(now), native, settings, false, true, native, [], {
+          refreshBusy: true,
+        }),
+      ).rejects.toMatchObject({ _tag: "ProviderSetupError", usageLimit: {} });
+    });
+  });
   it("permits supported consumer auth with explicitly unknown quotas, without inventing ready capacity", async () => {
     const now = DateTime.toEpochMillis(DateTime.nowUnsafe());
     const raw = {

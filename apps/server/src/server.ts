@@ -62,6 +62,7 @@ import * as ProviderInstanceRegistryHydration from "./provider/ProviderInstanceR
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as ServiceUpdateHold from "./serviceUpdate/ServiceUpdateHold.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
+import * as CloudSessions from "./cloudSessions/CloudSessions.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as DeviceService from "./device/DeviceService.ts";
@@ -100,6 +101,7 @@ import * as StudioCapacity from "./studio/Capacity.ts";
 import * as StudioNativeRoute from "./studio/NativeRoute.ts";
 import * as StudioHttp from "./studio/http.ts";
 import * as StudioFleetHttp from "./studioFleetHttp.ts";
+import * as CloudSessionsHttp from "./cloudSessionsHttp.ts";
 import * as RemoteWorkers from "./fleet/RemoteWorkers.ts";
 import * as DeviceSignInHttp from "./auth/deviceSignInHttp.ts";
 import * as ProviderUsageLimitsIngestion from "./provider/ProviderUsageLimitsIngestion.ts";
@@ -407,6 +409,13 @@ const layerVcs = Layer.empty.pipe(
 const layerCheckpointStore = CheckpointStore.layer.pipe(Layer.provide(layerVcsDriverRegistry));
 
 const layerPortScanner = PortScanner.layer.pipe(Layer.provide(ProcessRunner.layer));
+
+// Anthropic cloud sessions through the user's Claude Code CLI; the MCP tools and the Settings API share it.
+const layerCloudSessions = CloudSessions.layer.pipe(
+  Layer.provide(layerPtyAdapter),
+  Layer.provide(ProcessRunner.layer),
+  Layer.provide(layerServerSettings),
+);
 
 const layerTerminal = TerminalManager.layer.pipe(
   Layer.provide(layerPtyAdapter),
@@ -763,7 +772,9 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(PullRequestHttp.layer),
       Layer.provide(ProjectHttp.layer),
       Layer.provide(ServerHttp.layerServerEnvironmentHttpApi),
-      Layer.provide(Layer.merge(StudioHttp.layer, StudioFleetHttp.layer)),
+      Layer.provide(
+        Layer.mergeAll(StudioHttp.layer, StudioFleetHttp.layer, CloudSessionsHttp.layer),
+      ),
       Layer.provide(DeviceSignInHttp.layer),
       Layer.provide(WebhookRoute.layer.pipe(Layer.provide(RelayDeliveryProof.layer))),
       Layer.provide(AuthHttp.layerAuthenticatedAuth),
@@ -800,6 +811,7 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),
   Layer.provide(layerCommandReadiness),
+  Layer.provide(layerCloudSessions),
   Layer.provide(ServerHttp.layerBrowserApiCors),
   Layer.provide(ServerHttp.layerHttpCompression),
 );

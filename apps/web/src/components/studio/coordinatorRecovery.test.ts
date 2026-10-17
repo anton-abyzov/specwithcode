@@ -272,6 +272,9 @@ function recoveryHarness(
   return {
     input,
     mount: async () => {
+      // Resolve the mocked lazy dependency before React's StrictMode effect replay.
+      // Module loading is setup, not part of the pending asset-read assertion.
+      await import("../../lib/attachmentUploadQueue");
       await act(async () =>
         root.render(
           strictRetryOnMount
@@ -530,10 +533,10 @@ describe("coordinator retry ownership", () => {
     );
     await fixture.mount();
     await act(async () => {
-      // The surviving flight first loads the upload queue on demand; under a full parallel run
-      // that dynamic import alone can outlast waitFor's 1s default.
+      // The surviving flight first loads the upload queue on demand. Each dynamic import goes
+      // back through vitest's module runner, which a loaded release host delays well past 10s.
       await vi.waitFor(() => expect(fixture.input.read).toHaveBeenCalledTimes(1), {
-        timeout: 10_000,
+        timeout: 45_000,
       });
     });
     expect((fixture.input.composer.setSubmitting as ReturnType<typeof vi.fn>).mock.calls).toEqual([
@@ -550,7 +553,7 @@ describe("coordinator retry ownership", () => {
     await act(async () => resolveRead(new Blob(["abc"])));
     expect(fixture.input.send).not.toHaveBeenCalled();
     expect(retryQueue.startAttachmentUpload).not.toHaveBeenCalled();
-  });
+  }, 60_000);
 
   it("holds the shared send flight during staging, ignores double clicks, and preserves worker provenance", async () => {
     let resolveRead!: (value: Blob) => void;

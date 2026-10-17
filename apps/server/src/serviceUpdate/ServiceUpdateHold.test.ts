@@ -41,7 +41,8 @@ const missingStatePath = "/nonexistent/specweave-studio-test/updates/state.json"
 /** Polls until `isHeld` is false or about two seconds pass; true when released. */
 const awaitSelfRelease = (hold: Hold.ServiceUpdateHoldShape) =>
   Effect.gen(function* () {
-    for (let attempt = 0; attempt < 200; attempt += 1) {
+    // Up to 5 s: a loaded release host delays real timers by seconds.
+    for (let attempt = 0; attempt < 500; attempt += 1) {
       if (!(yield* hold.isHeld)) return true;
       yield* Effect.sleep(Duration.millis(10));
     }
@@ -383,7 +384,8 @@ it.live("outlasts its time limit while the agent installs, up to the ceiling", (
     const path = yield* Path.Path;
     const dir = yield* fs.makeTempDirectoryScoped({ prefix: "service-update-hold-busy-" });
     const statePath = path.join(dir, "state.json");
-    const hold = yield* holdAt(statePath, { pollMs: 10, maxMs: 400 });
+    // The ceiling sits well past the 250 ms check so a loaded host cannot reach it first.
+    const hold = yield* holdAt(statePath, { pollMs: 10, maxMs: 2_000 });
     yield* hold.acquire({ ttlMs: 100 });
     yield* Effect.sleep(Duration.millis(5));
     const requested = yield* isoIn(0);

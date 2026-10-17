@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { UsageWarningLabel } from "../../src/components/chat/UsageWarningLabel";
 import { createRoot } from "react-dom/client";
 import {
@@ -66,42 +67,50 @@ const creditProvider: ServerProvider = {
     credits: { hasCredits: true, unlimited: false, balance: "39034.0733405" },
   },
 };
-const item = usageLimitRecoveryBannerItem({
-  ...(params.has("credits")
-    ? {
-        credits: {
-          provider: creditProvider,
-          context: {
-            environmentId: "test",
-            projectId: "test",
-            threadId: "test",
-            draftId: null,
-            runtimeMode: "approval-required",
-            selection: { instanceId: creditProvider.instanceId, model: "gpt-6.1-sol" },
-            allowed: true,
-          },
-          onContinue: async () => {
-            document.body.dataset.creditContinued = "true";
-          },
-        },
-      }
-    : {}),
-  canCheck: true,
-  runId,
-  resetAt,
-  stoppedAt: new Date().toISOString(),
-  snoozedUntil: null,
-  recovery,
-  fallback: {
-    label: "Claude",
-    model: "claude-opus",
-    automatic: false,
-    onContinue: async () => {},
-  },
-  onChange: async () => {},
-});
-
 function Fixture() {
+  const [choice, setChoice] = useState<OrchestrationV2LimitRecovery | null>(
+    params.has("unarmed") ? null : recovery,
+  );
+  const item = usageLimitRecoveryBannerItem({
+    ...(params.has("credits")
+      ? {
+          credits: {
+            provider: creditProvider,
+            context: {
+              environmentId: "test",
+              projectId: "test",
+              threadId: "test",
+              draftId: null,
+              runtimeMode: "approval-required",
+              selection: { instanceId: creditProvider.instanceId, model: "gpt-6.1-sol" },
+              allowed: true,
+            },
+            onContinue: async () => {
+              document.body.dataset.creditContinued = "true";
+            },
+          },
+        }
+      : {}),
+    canCheck: !params.has("claude"),
+    runId,
+    resetAt,
+    stoppedAt: new Date().toISOString(),
+    snoozedUntil: null,
+    recovery: choice,
+    fallback: {
+      label: params.has("claude") ? "Codex" : "Claude",
+      model: "claude-opus",
+      automatic: false,
+      onContinue: async () => {
+        document.body.dataset.handoff = "true";
+      },
+    },
+    onChange: async (change) => {
+      document.body.dataset.recoveryChange = JSON.stringify(change);
+      setChoice((previous) => ({ ...recovery, ...previous, ...change }));
+    },
+  });
+
   return (
     <main className="flex min-h-screen flex-col justify-end bg-background px-3 pb-6 sm:px-5">
       {params.has("resolved") ? (
@@ -116,7 +125,10 @@ function Fixture() {
         >
           <ComposerBanner.Dock>
             <ComposerBanner.Column>
-              <ComposerBannerStack className="relative z-0" items={params.has("resolved") ? [] : [item]} />
+              <ComposerBannerStack
+                className="relative z-0"
+                items={params.has("resolved") ? [] : [item]}
+              />
             </ComposerBanner.Column>
           </ComposerBanner.Dock>
           <ComposerSurface.Host>

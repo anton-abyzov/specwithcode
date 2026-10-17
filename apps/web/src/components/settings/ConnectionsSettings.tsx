@@ -100,6 +100,7 @@ import {
 } from "./EnvironmentRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { StudioFleetConnections, StudioListenerRow } from "./StudioFleetConnections";
+import { CloudSessionsConnections } from "./CloudSessionsConnections";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
 import { GitHubRoutingSettings } from "./GitHubRoutingSettings";
 import { Input } from "../ui/input";
@@ -4188,6 +4189,9 @@ export function ConnectionsSettings() {
           environmentId={primaryEnvironmentId}
           savedEnvironmentIds={savedEnvironments.map((environment) => environment.environmentId)}
         />
+      ) : null}
+      {primaryEnvironmentId ? (
+        <CloudSessionsConnections environmentId={primaryEnvironmentId} />
       ) : null}
       {primarySettings}
       <SettingsSection

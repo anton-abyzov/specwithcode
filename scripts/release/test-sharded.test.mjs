@@ -1,6 +1,6 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 
 import { parseArgs, readShardReport, verdict } from "./test-sharded.mjs";
@@ -60,14 +60,23 @@ describe("test-sharded verdict", () => {
     });
     expect(verdict([shard(1, 0, 4), shard(2, 0, 0)], {})).toEqual({ ok: true, reason: "passed" });
   });
+
+  it("rejects an empty changed run when server tests changed", () => {
+    expect(
+      verdict([shard(1, 0, 0), shard(2, 0, 0)], {
+        changed: "abc123",
+        changedTestFiles: ["apps/server/src/cloudSessions/CloudSessions.test.ts"],
+      }),
+    ).toEqual({ ok: false, reason: "no shard ran a changed server test file" });
+  });
 });
 
 describe("test-sharded reports", () => {
   it("counts files and lists failed ones relative to the server", () => {
-    const dir = mkdtempSync(join(tmpdir(), "test-sharded-"));
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "test-sharded-"));
     try {
-      const file = join(dir, "server-1.json");
-      writeFileSync(
+      const file = NodePath.join(dir, "server-1.json");
+      NodeFS.writeFileSync(
         file,
         JSON.stringify({
           numTotalTests: 5,
@@ -84,14 +93,14 @@ describe("test-sharded reports", () => {
         tests: 5,
         failedTests: 1,
       });
-      expect(readShardReport(join(dir, "missing.json"))).toEqual({
+      expect(readShardReport(NodePath.join(dir, "missing.json"))).toEqual({
         files: 0,
         failedFiles: [],
         tests: 0,
         failedTests: 0,
       });
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      NodeFS.rmSync(dir, { recursive: true, force: true });
     }
   });
 });

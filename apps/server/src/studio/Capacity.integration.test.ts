@@ -134,7 +134,11 @@ async function companion() {
                   Effect.sync(() => {
                     h.routes.push({ entry, cwd, baseEnv });
                     return h.routeVerified;
-                  }).pipe(Effect.flatMap((verified) => h.routeFailure ? Effect.fail(h.routeFailure) : Effect.succeed(verified))),
+                  }).pipe(
+                    Effect.flatMap((verified) =>
+                      h.routeFailure ? Effect.fail(h.routeFailure) : Effect.succeed(verified),
+                    ),
+                  ),
               }),
               Layer.mock(Settings.ServerSettingsService)({
                 getSettings: Effect.sync(() => h.config),
@@ -346,7 +350,9 @@ describe("capacity service with a real local companion transport", () => {
           expect((error as { detail: string }).detail).not.toContain("Next observed reset");
         }
         expect(h.requests).toEqual([wire("GET", "/api/state"), wire("POST", "/api/refresh", "{}")]);
-        expect(h.refreshIds).toEqual([]);
+        // An exhausted verdict re-reads native status once before refusing (a new
+        // sign-in or an early reset shows only there); the companion is not asked twice.
+        expect(h.refreshIds).toEqual(kind === "exhausted" ? ["codex"] : []);
       }),
   );
 

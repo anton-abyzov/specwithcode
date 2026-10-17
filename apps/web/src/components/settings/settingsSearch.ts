@@ -1049,6 +1049,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     cloudOnly: true,
   },
   {
+    id: "cloud-sessions",
+    title: "Anthropic cloud sessions",
+    to: "/settings/connections",
+    searchTerms: ["cloud session anthropic claude vm remote teleport claude.ai plan"],
+  },
+  {
     id: "private-machines-auto-connect",
     title: "Connect private machines automatically",
     to: "/settings/connections",

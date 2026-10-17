@@ -177,13 +177,56 @@ def _identity_home(home, identity):
 
 
 def installed(home, identity):
-    """The installed version: installation.json (the installer's receipt) wins over the agent's
-    last state.json."""
+    """The current descriptor's version, which may change before guarded verification ends."""
     own = _identity_home(home, identity)
     version = _read_json(own / 'installation.json').get('version')
     if _version(version) is None:
         version = _read_json(own / 'updates' / 'state.json').get('installedVersion')
     return version if _version(version) is not None else None
+
+
+def finalized(own, identity, installation, state):
+    """A descriptor switch alone is provisional. Require the agent's successful completion
+    and its source-bound guarded receipt, after both install markers have gone away."""
+    updates = own / 'updates'
+    last = state.get('lastInstall')
+    if (not isinstance(last, dict) or last.get('result') != 'updated'
+            or _time(last.get('at')) is None or _version(installation.get('version')) is None
+            or last.get('version') != installation.get('version')
+            or state.get('installedVersion') != installation.get('version')
+            or state.get('installedSourceCommit') != installation.get('sourceCommit')
+            or installation.get('identity') != identity
+            or any(os.path.lexists(str(updates / name))
+                   for name in ('install-in-progress.json', 'install-gate.json'))):
+        return False
+    try:
+        path = pathlib.Path(last['receipt'])
+        if path.parent != updates / 'receipts' or path.parent.is_symlink():
+            return False
+        proof = _read_json(path)
+        before, after = proof.get('before'), proof.get('after')
+        source, archive = installation.get('sourceCommit'), installation.get('archiveSha256')
+        service = installation.get('service')
+        label = service.get('label') if isinstance(service, dict) else None
+        return (isinstance(source, str) and re.fullmatch('[0-9a-f]{40}', source) is not None
+                and isinstance(archive, str) and re.fullmatch('[0-9a-f]{64}', archive) is not None
+                and isinstance(label, str) and bool(label)
+                and proof.get('phase') == 'verified' and proof.get('result') in (None, 'updated')
+                and all(proof.get(flag) is True for flag in ('preservedRowsAuthAndIdentity',
+                        'originalServicesPreserved', 'onlyKnownOwnedServiceRestarted'))
+                and isinstance(before, dict) and isinstance(after, dict)
+                and all(part.get('schemaVersion') == 1 and part.get('identity') == identity
+                        and part.get('serviceLabel') == label for part in (before, after))
+                and isinstance(before.get('artifactSourceCommit'), str)
+                and re.fullmatch('[0-9a-f]{40}', before['artifactSourceCommit']) is not None
+                and after.get('artifactSourceCommit') == source and after.get('archiveSha256') == archive
+                # Refuse a mixed read if an agent started/finished another pass during this check.
+                and installation == _read_json(own / 'installation.json')
+                and state == _read_json(updates / 'state.json')
+                and not any(os.path.lexists(str(updates / name))
+                            for name in ('install-in-progress.json', 'install-gate.json')))
+    except (KeyError, TypeError, ValueError, OSError, RequestError):
+        return False
 
 
 def status(home, identity):
@@ -198,6 +241,7 @@ def status(home, identity):
         report[key] = state.get(key)
     for key in ('installRequestedAt', 'installMode', 'installHoldUntil', 'installCancelledAt', 'installRequest'):
         report[key] = config.get(key)
+    report['installFinalized'] = finalized(own, identity, receipt, state)
     return report
 
 

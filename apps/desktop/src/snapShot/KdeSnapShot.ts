@@ -116,7 +116,8 @@ export class KdeCaptureSetup {
       if (!bundle)
         return {
           status: "error",
-          message: "The capture helper is missing from this build. Update or reinstall SpecWithCode.",
+          message:
+            "The capture helper is missing from this build. Update or reinstall SpecWithCode.",
         };
       if (!installed.equals(bundle) || entry.toString() !== kdeCaptureDesktopEntry(executable))
         return {
@@ -171,6 +172,7 @@ export class KdeCaptureSetup {
       try {
         const staged = NodePath.join(staging, KDE_CAPTURE_EXECUTABLE);
         await NodeFSP.writeFile(staged, bundle, { mode: 0o755 });
+        await NodeFSP.chmod(staged, 0o755);
         await NodeFSP.rename(staged, executable);
         await NodeFSP.writeFile(stagedDesktop, kdeCaptureDesktopEntry(executable), {
           mode: 0o644,

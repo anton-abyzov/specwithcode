@@ -2,6 +2,11 @@ import "vite-plus/test/config";
 import { defineConfig } from "vite-plus";
 import * as NodeURL from "node:url";
 
+// Exclude private state inside this checkout, not a managed worktree's parent home.
+const WORKSPACE_GLOB_ROOT = NodeURL.fileURLToPath(new URL("./", import.meta.url))
+  .replaceAll("\\", "/")
+  .replace(/([*?[\]{}()!+@])/g, "\\$1");
+
 /** Import restrictions every file keeps, including the one module exempt from the glyph rule. */
 const RESTRICTED_IMPORT_PATHS = [
   {
@@ -63,8 +68,8 @@ export default defineConfig({
     environment: "node",
     exclude: [
       "**/.repos/**",
-      "**/.specwithcode/**",
-      "**/.specweave-studio/**",
+      WORKSPACE_GLOB_ROOT + "**/.specwithcode/**",
+      WORKSPACE_GLOB_ROOT + "**/.specweave-studio/**",
       "**/node_modules/**",
       "**/dist/**",
       "**/dist-electron/**",

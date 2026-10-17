@@ -118,6 +118,7 @@ import {
   claudeRateLimitEventToUpdate,
   type ClaudeScopedLimitNames,
 } from "../../provider/claudeUsageLimits.ts";
+import { parseClaudeLimitReset } from "../../provider/claudeLimitReset.ts";
 import type { ServerProviderShape } from "../../provider/ServerProvider.ts";
 import { mergeNativeSubscriptionEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import {
@@ -1115,6 +1116,7 @@ export const CLAUDE_READ_ONLY_STUDIO_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = 
   "mcp__studio-code__studio_project_list",
   "mcp__studio-code__studio_project_read",
   "mcp__studio-code__studio_machine_list",
+  "mcp__studio-code__studio_cloud_session_list",
   "mcp__studio-code__studio_project_memory_list",
   "mcp__studio-code__studio_project_memory_read",
   "mcp__studio-code__studio_project_plan_read",
@@ -2990,6 +2992,8 @@ interface ActiveClaudeTurnContext {
   readonly rejectedRateLimitTypes: Set<string>;
   readonly rateLimitResetTimes: Map<string, string | null>;
   latestAssistantRateLimited: boolean;
+  /** The reset the CLI's own limit message names, for a stop no event dated. */
+  assistantLimitResetAt: string | null;
   readonly subagentsByTaskId: Map<string, ActiveClaudeSubagent>;
   readonly subagentsByToolUseId: Map<string, ActiveClaudeSubagent>;
   readonly subagentNodesByTaskId: Map<string, OrchestrationV2ExecutionNode["id"]>;
@@ -3325,6 +3329,9 @@ export function makeClaudeAdapterV2(
         const activeTurn = yield* Ref.make<ActiveClaudeTurnContext | null>(null);
         const interruptedTurns = yield* Ref.make(new Set<OrchestrationV2ProviderTurn["id"]>());
         const steeredTurns = yield* Ref.make(new Set<OrchestrationV2ProviderTurn["id"]>());
+        // The last reset each window reported in this session. A rejection
+        // that arrives without `resetsAt` reuses it, so the stop keeps a reset.
+        const knownLimitResets = new Map<string, number>();
         const queryContext = yield* Ref.make<ClaudeLiveQueryContext | null>(null);
         const openedNativeThreads = yield* Ref.make(new Set<string>());
         const latestPlanByKind = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact>());
@@ -5851,6 +5858,13 @@ export function makeClaudeAdapterV2(
               : { overageIncluded: undefined };
             const update = claudeRateLimitEventToUpdate(rateLimitInfo, names);
             const now = yield* DateTime.now;
+            const reportedResetMs = (rateLimitInfo.resetsAt ?? NaN) * 1000;
+            if (
+              Number.isFinite(reportedResetMs) &&
+              reportedResetMs > 0 &&
+              reportedResetMs < 8.64e15
+            )
+              knownLimitResets.set(rateLimitInfo.rateLimitType ?? "unknown", reportedResetMs);
             if (update && adapterOptions.onUsageLimits) {
               yield* adapterOptions.onUsageLimits({
                 ...update,
@@ -5879,12 +5893,14 @@ export function makeClaudeAdapterV2(
             const limitType = rateLimitInfo.rateLimitType ?? "unknown";
             if (blocked) {
               context.rejectedRateLimitTypes.add(limitType);
-              const resetMs = (rateLimitInfo.resetsAt ?? NaN) * 1000;
+              const knownResetMs = knownLimitResets.get(limitType);
+              const resetMs =
+                knownResetMs !== undefined && knownResetMs > DateTime.toEpochMillis(now)
+                  ? knownResetMs
+                  : NaN;
               context.rateLimitResetTimes.set(
                 limitType,
-                Number.isFinite(resetMs) && resetMs > 0 && resetMs < 8.64e15
-                  ? DateTime.formatIso(DateTime.makeUnsafe(resetMs))
-                  : null,
+                Number.isFinite(resetMs) ? DateTime.formatIso(DateTime.makeUnsafe(resetMs)) : null,
               );
             } else if (
               rateLimitInfo.status === "allowed" ||
@@ -6037,6 +6053,14 @@ export function makeClaudeAdapterV2(
             context.nativeMessageCursor = message.uuid;
             if (message.parent_tool_use_id === null) {
               context.latestAssistantRateLimited = message.error === "rate_limit";
+              if (message.error === "rate_limit") {
+                const text = message.message.content
+                  .flatMap((block) => (block.type === "text" ? [block.text] : []))
+                  .join("\n");
+                context.assistantLimitResetAt =
+                  parseClaudeLimitReset(text, DateTime.toEpochMillis(yield* DateTime.now)) ??
+                  context.assistantLimitResetAt;
+              }
               if (message.error === "authentication_failed") {
                 context.authenticationFailureMessage = claudeSignedOutMessage({
                   configDir: adapterOptions.environment.CLAUDE_CONFIG_DIR,
@@ -6775,11 +6799,20 @@ export function makeClaudeAdapterV2(
               (usageLimited
                 ? "Claude usage limit reached. Send the message again once the limit resets."
                 : undefined);
+            // Every rejected window must reset; the CLI's own message names
+            // the reset of the window that stopped the turn when no event did.
             const resetTimes = Array.from(context.rateLimitResetTimes.values());
-            const resetAt =
-              resetTimes.length > 0 && resetTimes.every((time) => time !== null)
-                ? resetTimes.reduce((latest, time) => (time! > latest ? time! : latest), "")
+            const knownResets = resetTimes.filter((time): time is string => time !== null);
+            const eventResetAt =
+              resetTimes.length > 0 && knownResets.length === resetTimes.length
+                ? knownResets.reduce((latest, time) => (time > latest ? time : latest), "")
                 : null;
+            const resetAt =
+              context.assistantLimitResetAt === null
+                ? eventResetAt
+                : [...knownResets, context.assistantLimitResetAt].reduce((latest, time) =>
+                    time > latest ? time : latest,
+                  );
             const resultFailure = interrupted
               ? null
               : providerFailureFromResult(message, failureHint, usageLimited);
@@ -7699,6 +7732,7 @@ export function makeClaudeAdapterV2(
               rejectedRateLimitTypes: new Set(),
               rateLimitResetTimes: new Map(),
               latestAssistantRateLimited: false,
+              assistantLimitResetAt: null,
               subagentsByTaskId: new Map(),
               subagentsByToolUseId: new Map(),
               subagentNodesByTaskId: new Map(),

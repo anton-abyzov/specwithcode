@@ -5,6 +5,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   PullRequestOperationError,
+  PullRequestUnavailableError,
   RunId,
   ThreadId,
   TurnItemId,
@@ -168,7 +169,7 @@ interface HarnessOptions {
   readonly snapshot: TestShellSnapshot;
   readonly summary?: (
     input: PullRequestRef,
-  ) => Effect.Effect<PullRequestSummary, PullRequestOperationError>;
+  ) => Effect.Effect<PullRequestSummary, PullRequestService.PullRequestError>;
   readonly stack?: (
     input: PullRequestRef,
   ) => Effect.Effect<PullRequestStack | null, PullRequestOperationError>;
@@ -918,6 +919,36 @@ describe("PullRequestSyncReactor", () => {
       }),
     ),
   );
+
+  it.effect("keeps unsupported hosts visible without emitting recurring warnings", () => {
+    const logs: Array<{ level: string; message: unknown }> = [];
+    const logger = Logger.make(({ logLevel, message }) => {
+      logs.push({ level: logLevel, message });
+    });
+    return Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([
+            makeThread("unsupported", { pullRequests: [makeLink(7, { state: "open" })] }),
+          ]),
+          summary: () =>
+            Effect.fail(new PullRequestUnavailableError({ reason: "provider-unsupported" })),
+        });
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          yield* sweepAgain(fixture, reactor);
+          assert.strictEqual((yield* Ref.get(fixture.summaryCalls))[0]?.number, 7);
+          assert.strictEqual((yield* Ref.get(fixture.syncCommands)).length, 0);
+          assert.strictEqual(logs.filter((entry) => entry.level === "Warn").length, 0);
+        }).pipe(
+          Effect.provide(
+            fixture.layer.pipe(Layer.provide(Logger.layer([logger], { mergeWithExisting: false }))),
+          ),
+        );
+      }),
+    );
+  });
 
   it.effect("leaves a rate limited host unread until its pause ends", () => {
     const skips: Array<ReadonlyArray<unknown>> = [];

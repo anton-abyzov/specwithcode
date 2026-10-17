@@ -65,6 +65,13 @@ The background service does not apply to a server run this way; update it with
 There is no `specwithcode` executable for Intel Macs, so building from source is the only
 way to run a server there.
 
+## Linux server
+
+Releases ship a server archive for Linux x64 and arm64 (`studio-<version>-linux-<arch>-<commit>.tar.gz`).
+It runs on Node.js 22.20 or later 22.x and needs no compiler. There is no Linux desktop app;
+control the server from the Mac desktop app, the web app or a phone. [Linux worker](./linux-worker.md)
+walks through install, Tailscale, the user service and pairing it with your Mac as a fleet worker.
+
 ## Windows Subsystem for Linux
 
 Windows builds are not published yet; this applies to a Windows desktop app built from source.
@@ -149,5 +156,6 @@ For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 - [Working with threads](./thread-sidebar.md): start tasks and organize parallel work.
 - [Permission modes](./permission-modes.md): choose when agents ask before acting.
 - [Remote access](./remote-access.md): connect from another device.
+- [Linux worker](./linux-worker.md): run workers on a Linux machine or VPS.
 - [Running in the background](./background-service.md): keep a Linux or macOS host available.
 - [Updating SpecWithCode](./updating.md): update the app and connected servers.

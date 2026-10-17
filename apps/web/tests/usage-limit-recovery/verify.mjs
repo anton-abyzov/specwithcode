@@ -44,7 +44,7 @@ const browser = await chromium.launch({
 });
 const errors = [];
 const receipt = [];
-const BUTTONS = ["Continue with Claude", "Cancel auto-resume", "Check now", "Snooze until reset"];
+const BUTTONS = ["Continue with Claude", "Check now", "Snooze until reset"];
 try {
   const page = await browser.newPage({ reducedMotion: "reduce" });
   page.on("pageerror", (error) => errors.push(String(error)));
@@ -95,6 +95,18 @@ try {
       );
       const details = await card.getByRole("button", { name: "Show notice details" }).count();
       assert.equal(details, 0, `${label}: reset text needs a details tap`);
+      const checkbox = card.getByRole("checkbox", {
+        name: "Auto-continue when usage is available",
+      });
+      assert.equal(await checkbox.isChecked(), true);
+      await checkbox.uncheck();
+      assert.equal(await checkbox.isChecked(), false);
+      assert.equal(
+        JSON.parse(await page.locator("body").getAttribute("data-recovery-change")).autoResume,
+        false,
+      );
+      await checkbox.check();
+      assert.equal(await checkbox.isChecked(), true);
       const buttons = [];
       for (const name of BUTTONS) {
         const box = await card.getByRole("button", { name, exact: true }).boundingBox();
@@ -142,6 +154,41 @@ try {
       });
     }
   }
+  for (const width of [375, 768, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(`${origin}/?claude=1&unarmed=1&status=none&theme=dark`);
+    const checkbox = page.getByRole("checkbox", { name: "Auto-continue when the limit resets" });
+    assert.equal(await checkbox.isChecked(), false);
+    await checkbox.check();
+    assert.equal(await checkbox.isChecked(), true);
+    assert.equal(await page.getByRole("button", { name: "Check now" }).count(), 0);
+    await checkbox.uncheck();
+    assert.equal(
+      JSON.parse(await page.locator("body").getAttribute("data-recovery-change")).autoResume,
+      false,
+    );
+    await checkbox.check();
+    assert.equal(
+      JSON.parse(await page.locator("body").getAttribute("data-recovery-change")).autoResume,
+      true,
+    );
+    await page.getByRole("button", { name: "Continue with Codex", exact: true }).click();
+    assert.equal(await page.locator("body").getAttribute("data-handoff"), "true");
+    assert.equal(
+      JSON.parse(await page.locator("body").getAttribute("data-recovery-change")).autoResume,
+      false,
+    );
+    assert.equal(await checkbox.isChecked(), false);
+    assert.equal(
+      await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
+      false,
+    );
+    await page.screenshot({
+      path: path.join(output, `claude-auto-continue-${width}.png`),
+      fullPage: true,
+    });
+    receipt.push({ width, claudeCheckboxToggle: "passed", handoff: "passed" });
+  }
   for (const width of [320, 768, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`${origin}/?credits=1&status=none`);
@@ -162,7 +209,10 @@ try {
     assert.equal(await resolved.innerText(), "Usage limit resolved — chat continued.");
     assert.equal(await resolved.getByText(/Retry after/).count(), 0);
     assert.equal(await page.getByRole("button", { name: "Continue using credits" }).count(), 0);
-    await page.screenshot({ path: path.join(output, `resolved-warning-${width}.png`), fullPage: true });
+    await page.screenshot({
+      path: path.join(output, `resolved-warning-${width}.png`),
+      fullPage: true,
+    });
     receipt.push({ width, creditContinuation: "passed" });
   }
   assert.deepEqual(errors, []);

@@ -192,8 +192,8 @@ or interrupted turn manually.
 Queued messages stay saved while the limit blocks the thread. They run after
 the continuation finishes. If the queue was held by a restart, resume it then.
 
-When the provider reports a reset time, choose **Resume at reset** to schedule a
-continuation. You can cancel it from the thread. Enable **Auto-resume limited
+When the provider reports a reset time, tick **Auto-continue when the limit resets**
+to schedule a continuation. Untick it to cancel. Enable **Auto-resume limited
 threads** in **Settings → General** on web and desktop, or **Settings → Thread
 behavior** on mobile, to schedule limit stops by default.
 The environment must be running when the reset arrives; it resumes overdue

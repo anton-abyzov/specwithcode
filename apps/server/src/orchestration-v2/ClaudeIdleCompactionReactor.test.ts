@@ -1,6 +1,6 @@
 import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId, ThreadId } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
-import { describe, expect, it } from "@effect/vitest";
+import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 
 import {
   claudeIdleCompactionPolicy,
@@ -91,6 +91,30 @@ describe("idleCompactionUsedTokens", () => {
 });
 
 describe("idle compaction policy", () => {
+  // The policy merges process.env beneath the instance environment, so cache and
+  // minimum variables inherited from the host shell would decide these cases.
+  const HOST_VARIABLES = [
+    "CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS",
+    "CLAUDE_CODE_MESSAGES_PROMPT_CACHE_TTL",
+    "CLAUDE_CODE_PROMPT_CACHE_TTL",
+    "DISABLE_PROMPT_CACHING",
+    "ENABLE_PROMPT_CACHING_1H",
+    "FORCE_PROMPT_CACHING_5M",
+  ];
+  const saved = new Map<string, string | undefined>();
+  beforeEach(() => {
+    for (const name of HOST_VARIABLES) {
+      saved.set(name, process.env[name]);
+      delete process.env[name];
+    }
+  });
+  afterEach(() => {
+    for (const [name, value] of saved) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+
   it("never goes below Claude Code's 100K floor", () => {
     expect(idleCompactMinTokens(undefined)).toBe(100_000);
     expect(idleCompactMinTokens("50000")).toBe(100_000);

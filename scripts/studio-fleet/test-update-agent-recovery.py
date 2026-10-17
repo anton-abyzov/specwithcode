@@ -304,10 +304,10 @@ class AutomaticRecovery(RecoveryCase):
         self.run_agent()
         state = self.state()
         self.assertEqual((state['status'], state['installedVersion']), ('error', '0.2.0'))
-        self.assertIn('0.2.0 is running, but a check after the restart failed', state['message'])
+        self.assertIn('0.2.0 was kept after a restart check failed', state['message'])
         self.assertNotIn('did not install', state['message'])
 
-    def test_a_kept_release_whose_rollback_failed_is_named_as_running(self):
+    def test_a_kept_release_whose_rollback_failed_does_not_claim_liveness(self):
         self.fake.add_release()
         self.config(quietMinutes=0)
         self.control(applyFailAfterSwitch=True, switchReceipt={
@@ -315,7 +315,24 @@ class AutomaticRecovery(RecoveryCase):
             'rollback': 'held-new-release-state-restore-failed'})
         self.run_agent()
         self.run_agent()
-        self.assertIn('0.2.0 is running, but a check after the restart failed', self.state()['message'])
+        self.assertIn('0.2.0 was kept after a restart check failed', self.state()['message'])
+        self.assertNotIn('is running', self.state()['message'])
+
+    def test_failed_bootstrap_after_bootout_does_not_turn_old_observation_into_liveness(self):
+        self.fake.add_release()
+        self.config(quietMinutes=0)
+        # Bootout succeeded, then state restore and recovery bootstrap failed. The helper
+        # leaves the old observation and new pointers, but the service can now be stopped.
+        self.control(applyFailAfterSwitch=True, switchReceipt={
+            'pointers': 'new-release', 'attemptedAfter': {'servicePid': 5151},
+            'rollback': 'held-new-release-stopping',
+            'rollbackError': 'AssertionError: Owned operation failed; arbitrary command output withheld'})
+        self.run_agent()
+        self.run_agent()
+        state = self.state()
+        self.assertEqual((state['status'], state['lastInstall']['result']), ('error', 'failed'))
+        self.assertIn('not confirmed', state['message'])
+        self.assertNotIn('is running', state['message'])
 
     def test_a_new_version_on_disk_without_a_kept_restart_is_still_reported_as_not_installed(self):
         self.fake.add_release()

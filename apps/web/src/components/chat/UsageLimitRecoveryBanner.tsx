@@ -9,6 +9,7 @@ import {
 import { GaugeIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "../ui/button";
+import { Checkbox } from "../ui/checkbox";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 
 type RecoveryProps = {
@@ -69,10 +70,13 @@ function useNowUntil(untilMs: number): number {
 export function ResetCountdown({
   resetAt,
   waiting,
+  autoContinuing,
   automaticLabel,
 }: {
   resetAt: string | null;
   waiting?: boolean;
+  /** The thread's auto-continue box is ticked. */
+  autoContinuing?: boolean;
   automaticLabel?: string | null;
 }) {
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
@@ -88,15 +92,20 @@ export function ResetCountdown({
     ? resetMs > nowMs
       ? "The reset is close, so this thread waits and resumes here instead of switching."
       : "Resuming here now that the limit has reset."
-    : automaticLabel
-      ? `Continuing with ${automaticLabel} by project rule.`
-      : null;
+    : autoContinuing && Number.isFinite(resetMs)
+      ? resetMs > nowMs
+        ? "This thread continues by itself at the reset."
+        : "Continuing now that the limit has reset."
+      : automaticLabel
+        ? `Continuing with ${automaticLabel} by project rule.`
+        : null;
   return <>{[when, next].filter(Boolean).join(". ")}</>;
 }
 
 export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBannerStackItem {
-  const { runId, resetAt, stoppedAt } = props;
-  const canSchedule = resetAt !== null && Date.parse(resetAt) > Date.parse(stoppedAt);
+  const { runId, resetAt, recovery } = props;
+  const autoContinuing =
+    recovery?.runId === runId && recovery.resetAt === resetAt && recovery.autoResume;
   return {
     id: `usage-limit-recovery:${runId}`,
     variant: "warning",
@@ -107,13 +116,12 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
       <ResetCountdown
         resetAt={resetAt}
         waiting={props.waiting === true}
+        autoContinuing={autoContinuing}
         automaticLabel={props.fallback?.automatic ? props.fallback.label : null}
       />
     ),
-    actions:
-      canSchedule || props.canCheck || props.fallback || props.device || props.credits ? (
-        <RecoveryActions key={`${runId}:${resetAt}`} {...props} />
-      ) : null,
+    // The auto-continue checkbox always shows; without a reset time it says why it is off.
+    actions: <RecoveryActions key={`${runId}:${resetAt}`} {...props} />,
     // Up to four buttons plus a status line: beside the title they squeezed it to 0 px.
     actionsLayout: "wrap-below",
   };
@@ -143,8 +151,9 @@ function RecoveryActions({
     return () => window.clearTimeout(timer);
   }, [resetAt, nowMs]);
 
-  const scheduled =
-    recovery?.runId === runId && recovery.resetAt === resetAt && recovery.autoResume;
+  const scheduled = Boolean(
+    recovery?.runId === runId && recovery.resetAt === resetAt && recovery.autoResume,
+  );
   const snoozed =
     recovery?.snooze === true &&
     recovery.runId === runId &&
@@ -156,6 +165,9 @@ function RecoveryActions({
     setPending(true);
     setError(null);
     try {
+      // A device handoff creates another thread. Disarm this stopped run first
+      // so the source cannot also resume when its reset arrives.
+      if (scheduled) await onChange({ runId, resetAt, autoResume: false });
       await target.onContinue();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : `Could not continue on ${target.label}.`);
@@ -185,42 +197,68 @@ function RecoveryActions({
     }
     setPending(false);
   }
+  const canAutoContinue = canSchedule || canCheck === true;
+  const handoffs = [fallback, device].filter((target) => target != null);
   return (
     <div className="flex flex-wrap items-center gap-2">
+      <label
+        className="flex basis-full items-center gap-2 text-xs text-foreground has-data-disabled:text-muted-foreground"
+        title={
+          canAutoContinue
+            ? "Saved for this thread. SpecWithCode continues the stopped turn by itself, even after a restart."
+            : undefined
+        }
+      >
+        <Checkbox
+          aria-label={
+            canCheck
+              ? "Auto-continue when usage is available"
+              : "Auto-continue when the limit resets"
+          }
+          checked={scheduled}
+          disabled={pending || !canAutoContinue}
+          onCheckedChange={() => void toggle("resume")}
+        />
+        {canCheck ? "Auto-continue when usage is available" : "Auto-continue when the limit resets"}
+        {pending ? <span className="text-muted-foreground">Saving...</span> : null}
+      </label>
+      {!canAutoContinue ? (
+        <p className="basis-full text-xs text-muted-foreground">
+          {handoffs.length > 0
+            ? "The provider did not say when this limit resets, so the thread cannot continue by itself. Hand it off now, or send a message after the reset."
+            : "The provider did not say when this limit resets, so the thread cannot continue by itself. Send a message after the reset."}
+        </p>
+      ) : null}
+      {handoffs.length > 0 ? (
+        <div className="flex basis-full flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">
+            {scheduled ? "Or hand off now:" : "Hand off now instead of waiting:"}
+          </span>
+          {fallback ? (
+            <Button
+              size="xs"
+              variant={waiting ? "ghost" : "outline"}
+              disabled={pending}
+              title={`Hand this thread to ${fallback.label} (${fallback.model}) with its context and continue the stopped turn`}
+              onClick={() => void continueElsewhere(fallback)}
+            >
+              {`Continue with ${fallback.label}`}
+            </Button>
+          ) : null}
+          {device ? (
+            <Button
+              size="xs"
+              variant={waiting ? "ghost" : "outline"}
+              disabled={pending}
+              title={`Start a thread on ${device.label} (${device.model}) with a written handoff of this conversation. Changes not pushed from this device do not go with it.`}
+              onClick={() => void continueElsewhere(device)}
+            >
+              {`Continue on ${device.label}`}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
       {credits ? <CreditRecoveryAction {...credits} /> : null}
-      {fallback ? (
-        <Button
-          size="xs"
-          variant={waiting ? "ghost" : "outline"}
-          disabled={pending}
-          title={`Hand this thread to ${fallback.label} (${fallback.model}) with its context and continue the stopped turn`}
-          onClick={() => void continueElsewhere(fallback)}
-        >
-          {`Continue with ${fallback.label}`}
-        </Button>
-      ) : null}
-      {device ? (
-        <Button
-          size="xs"
-          variant={waiting ? "ghost" : "outline"}
-          disabled={pending}
-          title={`Start a thread on ${device.label} (${device.model}) with a written handoff of this conversation. Changes not pushed from this device do not go with it.`}
-          onClick={() => void continueElsewhere(device)}
-        >
-          {`Continue on ${device.label}`}
-        </Button>
-      ) : null}
-      {canSchedule || canCheck ? (
-        <Button size="xs" variant="ghost" disabled={pending} onClick={() => void toggle("resume")}>
-          {pending
-            ? "Saving..."
-            : scheduled
-              ? "Cancel auto-resume"
-              : canCheck
-                ? "Resume when available"
-                : "Resume at reset"}
-        </Button>
-      ) : null}
       {canCheck ? (
         <Button
           size="xs"
@@ -245,14 +283,14 @@ function RecoveryActions({
         <p role="status" className="basis-full text-xs text-muted-foreground">
           {recovery.availability.status === "allowed"
             ? scheduled
-              ? "Last check allowed ordinary usage; auto-resume is armed."
-              : "Last check allowed ordinary usage. Choose Resume when available to continue."
+              ? "Last check allowed ordinary usage; auto-continue is on."
+              : "Last check allowed ordinary usage. Tick Auto-continue to continue."
             : recovery.availability.status === "denied"
               ? "This profile still denies ordinary usage."
               : recovery.availability.status === "changed"
                 ? "The account or profile changed. Automatic recovery is blocked."
                 : scheduled && (!recovery.explicitArm || !recovery.armedAffinity)
-                  ? "Check now, then cancel and choose Resume when available to confirm the current profile."
+                  ? "Check now, then untick and tick Auto-continue again to confirm the current profile."
                   : "Ordinary usage permission could not be verified. The thread remains stopped."}
         </p>
       ) : null}

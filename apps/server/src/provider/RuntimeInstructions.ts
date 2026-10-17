@@ -70,7 +70,7 @@ export const STUDIO_WRITING_INSTRUCTIONS = `<writing>
 
 /** Shared by both styles: the app reads `**Blockers:**` to mark a thread Blocked. */
 const REPORT_RULES =
-  "When you are blocked, end with a paragraph opening **Blockers:** that asks the one question, with the options and your recommendation. Put long inventories, tables and logs in a file and give its full path. Never shorten errors, failing tests, security warnings or confirmations before destructive actions; quote errors exactly.";
+  "A blocker is a decision only the user can make or a step only they can take outside the app. Anything an agent can settle (another session's run, CI, a merge, a retry, a safe default) is not one: settle it or name it as the next step. When you are blocked, end with a paragraph opening **Blockers:** that asks the one question, with the options and your recommendation. Put long inventories, tables and logs in a file and give its full path. Never shorten errors, failing tests, security warnings or confirmations before destructive actions; quote errors exactly.";
 
 /**
  * How every SpecWithCode agent writes, whatever its provider: the user's reply,
