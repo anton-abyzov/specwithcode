@@ -21,23 +21,14 @@
 // A shard that gets no files passes; a full run (no --changed) in which no shard ran a test
 // file fails. Shard TMPDIRs are short directories under the system temporary directory,
 // because long paths overflow the 104-byte limit on unix socket paths, and are removed after.
-import { spawn } from "node:child_process";
-import {
-  closeSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  openSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const server = join(root, "apps/server");
+const root = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "../..");
+const server = NodePath.join(root, "apps/server");
 
 export function parseArgs(argv) {
   const options = {
@@ -79,33 +70,36 @@ export function parseArgs(argv) {
 
 /** Test files and failed files from one shard's vitest JSON report, relative to apps/server. */
 export function readShardReport(file, serverRoot = server) {
-  if (!existsSync(file)) return { files: 0, failedFiles: [], tests: 0, failedTests: 0 };
-  const report = JSON.parse(readFileSync(file, "utf8"));
+  if (!NodeFS.existsSync(file)) return { files: 0, failedFiles: [], tests: 0, failedTests: 0 };
+  const report = JSON.parse(NodeFS.readFileSync(file, "utf8"));
   const results = report.testResults ?? [];
   return {
     files: results.length,
     failedFiles: results
       .filter((result) => result.status === "failed")
-      .map((result) => relative(serverRoot, result.name).replaceAll("\\", "/")),
+      .map((result) => NodePath.relative(serverRoot, result.name).replaceAll("\\", "/")),
     tests: report.numTotalTests ?? 0,
     failedTests: report.numFailedTests ?? 0,
   };
 }
 
 /** Pass or fail for the whole run, and why. */
-export function verdict(shards, { changed }) {
+export function verdict(shards, { changed, changedTestFiles = [] }) {
   const failed = shards.filter((shard) => shard.exitCode !== 0 || shard.timedOut);
   if (failed.length > 0)
     return { ok: false, reason: `shard ${failed.map((shard) => shard.index).join(", ")} failed` };
   const files = shards.reduce((sum, shard) => sum + shard.files, 0);
   if (files === 0 && changed === undefined)
     return { ok: false, reason: "no shard ran a test file" };
+  if (files === 0 && changedTestFiles.length > 0)
+    return { ok: false, reason: "no shard ran a changed server test file" };
   return { ok: true, reason: files === 0 ? "no test file is affected by the changes" : "passed" };
 }
 
 // Each shard leads a process group of its own, so stopping it also stops the vitest workers it
 // forked; a signal to the shard's leader alone leaves them running tests into a removed TMPDIR.
-const detached = process.platform !== "win32";
+// oxlint-disable-next-line studio/no-global-process-runtime -- Standalone runner has no Effect runtime.
+const detached = NodeOS.platform() !== "win32";
 function signalShard(child, signal) {
   try {
     if (detached) process.kill(-child.pid, signal);
@@ -116,12 +110,12 @@ function signalShard(child, signal) {
 }
 
 function runShard(index, options, out) {
-  const tmp = mkdtempSync(join(tmpdir(), `sws${index}-`));
-  const log = join(out, `server-${index}.log`);
-  const report = join(out, `server-${index}.json`);
-  rmSync(report, { force: true });
+  const tmp = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), `sws${index}-`));
+  const log = NodePath.join(out, `server-${index}.log`);
+  const report = NodePath.join(out, `server-${index}.json`);
+  NodeFS.rmSync(report, { force: true });
   const argv = [
-    join(root, "node_modules/vite-plus/bin/vp"),
+    NodePath.join(root, "node_modules/vite-plus/bin/vp"),
     "test",
     "run",
     "--shard",
@@ -146,8 +140,8 @@ function runShard(index, options, out) {
   const began = Date.now();
   return new Promise((done) => {
     // The shard writes straight to its log, so a killed or crashed shard still leaves one.
-    const fd = openSync(log, "w");
-    const child = spawn(process.execPath, argv, {
+    const fd = NodeFS.openSync(log, "w");
+    const child = NodeChildProcess.spawn(process.execPath, argv, {
       cwd: server,
       env,
       stdio: ["ignore", fd, fd],
@@ -167,14 +161,14 @@ function runShard(index, options, out) {
       children.delete(child);
       // Whatever the shard left in its group (workers of a killed shard) goes with it.
       if (child.pid !== undefined) signalShard(child, "SIGKILL");
-      closeSync(fd);
-      if (error) writeFileSync(log, `\n${error.stack ?? error}\n`, { flag: "a" });
-      writeFileSync(join(out, `server-${index}.exit`), `${exitCode ?? 1}\n`);
+      NodeFS.closeSync(fd);
+      if (error) NodeFS.writeFileSync(log, `\n${error.stack ?? error}\n`, { flag: "a" });
+      NodeFS.writeFileSync(NodePath.join(out, `server-${index}.exit`), `${exitCode ?? 1}\n`);
       try {
-        rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+        NodeFS.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
       } catch (cleanup) {
         // A leftover temporary directory must not cost the run its summary.
-        writeFileSync(log, `\ntest-sharded.mjs: could not remove ${tmp}: ${cleanup}\n`, {
+        NodeFS.writeFileSync(log, `\ntest-sharded.mjs: could not remove ${tmp}: ${cleanup}\n`, {
           flag: "a",
         });
       }
@@ -209,7 +203,7 @@ async function main() {
     process.exit(2);
   }
   if (options.help) {
-    const text = readFileSync(fileURLToPath(import.meta.url), "utf8").split("\n");
+    const text = NodeFS.readFileSync(NodeURL.fileURLToPath(import.meta.url), "utf8").split("\n");
     console.log(
       text
         .slice(
@@ -221,10 +215,10 @@ async function main() {
     );
     return;
   }
-  if (!existsSync(join(root, "node_modules/vite-plus/bin/vp")))
+  if (!NodeFS.existsSync(NodePath.join(root, "node_modules/vite-plus/bin/vp")))
     throw new Error("Install dependencies first: node_modules/vite-plus is missing");
-  const out = resolve(options.out);
-  mkdirSync(out, { recursive: true });
+  const out = NodePath.resolve(options.out);
+  NodeFS.mkdirSync(out, { recursive: true });
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"])
     process.once(signal, () => {
       if (stopping !== null) return;
@@ -246,17 +240,28 @@ async function main() {
   const shards = await Promise.all(
     Array.from({ length: options.shards }, (_, i) => runShard(i + 1, options, out)),
   );
-  const result = verdict(shards, options);
+  const changedTestFiles =
+    options.changed === undefined
+      ? []
+      : NodeChildProcess.execFileSync(
+          "git",
+          ["diff", "--name-only", "--diff-filter=ACMR", options.changed, "--", "apps/server"],
+          { cwd: root, encoding: "utf8" },
+        )
+          .split("\n")
+          .filter((file) => /\.(test|spec)\.[cm]?[jt]sx?$/.test(file));
+  const result = verdict(shards, { ...options, changedTestFiles });
   const summary = {
     shards,
     changed: options.changed ?? null,
+    changedTestFiles,
     filters: options.filters,
     wallSeconds: Math.round((Date.now() - began) / 100) / 10,
     ok: result.ok,
     reason: result.reason,
     failedFiles: shards.flatMap((shard) => shard.failedFiles),
   };
-  writeFileSync(join(out, "shards.json"), `${JSON.stringify(summary, null, 2)}\n`);
+  NodeFS.writeFileSync(NodePath.join(out, "shards.json"), `${JSON.stringify(summary, null, 2)}\n`);
 
   console.log("SHARD  EXIT  SECONDS  FILES  TESTS  FAILED");
   for (const shard of shards)
@@ -277,7 +282,10 @@ async function main() {
   if (!result.ok) process.exitCode = 1;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (
+  process.argv[1] &&
+  NodePath.resolve(process.argv[1]) === NodeURL.fileURLToPath(import.meta.url)
+) {
   main().catch((error) => {
     console.error(error.stack ?? String(error));
     process.exit(1);

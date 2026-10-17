@@ -136,6 +136,7 @@ export class HyprlandCaptureSetup {
     try {
       const staged = NodePath.join(staging, HYPRLAND_CAPTURE_EXECUTABLE);
       await NodeFSP.writeFile(staged, bundle, { mode: 0o755, flag: "wx" });
+      await NodeFSP.chmod(staged, 0o755);
       await NodeFSP.rename(staged, executable);
     } finally {
       await NodeFSP.rm(staging, { recursive: true, force: true });
@@ -170,7 +171,9 @@ export async function captureHyprlandWindow(
   if (state.status !== "ready")
     throw new Error(`${state.message} Open Settings → SnapShots to continue setup.`);
   const executable = hyprlandCaptureExecutable(paths);
-  const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "studio-hyprland-capture-"));
+  const directory = await NodeFSP.mkdtemp(
+    NodePath.join(NodeOS.tmpdir(), "studio-hyprland-capture-"),
+  );
   const cleanup = () => NodeFSP.rm(directory, { recursive: true, force: true });
   let retained = false;
   try {

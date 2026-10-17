@@ -1,8 +1,8 @@
 # Usage limit recovery card fixture
 
-This renders the production `usageLimitRecoveryBannerItem` in the production `ComposerBannerStack`, inside the composer's own column and with the app's compiled CSS. The card has the most crowded real shape: a fallback provider, armed auto-resume, Check now, Snooze until reset and a status line. Its callbacks are no-ops; it never reaches a server or provider.
+This renders the production `usageLimitRecoveryBannerItem` in the production `ComposerBannerStack`, inside the composer's own column and with the app's compiled CSS. The card has the most crowded real shape: a fallback provider, armed auto-resume, Check now, Snooze until reset and a status line. Checkbox updates and handoff clicks are recorded locally; it never reaches a server or provider.
 
-`verify.mjs` checks, at 320, 375, 768, 1024, 1440 and 1920 px in light and dark and with and without the status line, that "Usage limit reached" stays wider than 100 px and unclipped, that the reset text keeps its width and is shown in full (clock time included, nothing clipped, no details button needed), that no button covers the title or leaves the card, that the buttons sit below the title on phone widths, that the status line is under the buttons, and that the page has no horizontal overflow.
+`verify.mjs` checks, at 320, 375, 768, 1024, 1440 and 1920 px in light and dark and with and without the status line, that "Usage limit reached" stays wider than 100 px and unclipped, that the reset text keeps its width and is shown in full (clock time included, nothing clipped, no details button needed), that no button covers the title or leaves the card, that the buttons sit below the title on phone widths, that the status line is under the buttons, and that the page has no horizontal overflow. It also toggles the saved recovery choice and checks the Claude checkbox and handoff action at phone, tablet and desktop widths.
 
 From the repository root, using Node 22.20:
 

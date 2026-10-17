@@ -904,20 +904,38 @@ stage_build() {
   )
 }
 
+# verify_bundle LABEL ARCHIVE FRESH: the archive is what hosts install, so verify it unpacked in a
+# fresh folder, not the build output.
+verify_bundle() {
+  if t verify-bundle-takes-archives -- grep -q 'tar\.gz' "$BUILD/scripts/studio-fleet/verify-bundle.mjs"; then
+    x "$1" -C "$BUILD" -- node scripts/studio-fleet/verify-bundle.mjs "$2"
+  else
+    ensure_dir "$3"
+    x "unpack-$1" -- tar -xzf "$2" -C "$3"
+    x "$1" -C "$BUILD" -- node scripts/studio-fleet/verify-bundle.mjs "$3"
+  fi
+}
+
+# The Linux worker archives: the same runtime stamped for each target, so a Linux VPS can join the
+# fleet (docs/user/linux-worker.md). Built here because every native dependency ships all targets.
+LINUX_ARCHS="x64 arm64"
+
 stage_bundle() {
   local archive="$ASSETS/studio-$VERSION-$SHA12.tar.gz" runtime="$STAGE/runtime-$SHA12"
-  local verify="$STAGE/google-verify-$SHA12" fresh="$STAGE/verify-runtime-$SHA12"
+  local verify="$STAGE/google-verify-$SHA12" fresh="$STAGE/verify-runtime-$SHA12" target
   ensure_dir "$ASSETS"
   remove_owned "$runtime" "$archive" "$archive.receipt.json" "$verify" "$fresh"
   x bundle -C "$BUILD" -- node scripts/studio-fleet/bundle.mjs --out "$runtime" --archive "$archive"
-  # The archive is what hosts install: verify it unpacked in a fresh folder, not the build output.
-  if t verify-bundle-takes-archives -- grep -q 'tar\.gz' "$BUILD/scripts/studio-fleet/verify-bundle.mjs"; then
-    x verify-bundle -C "$BUILD" -- node scripts/studio-fleet/verify-bundle.mjs "$archive"
-  else
-    ensure_dir "$fresh"
-    x unpack-runtime -- tar -xzf "$archive" -C "$fresh"
-    x verify-bundle -C "$BUILD" -- node scripts/studio-fleet/verify-bundle.mjs "$fresh"
-  fi
+  verify_bundle verify-bundle "$archive" "$fresh"
+  for target in $LINUX_ARCHS; do
+    remove_owned "$STAGE/runtime-linux-$target-$SHA12" "$ASSETS/studio-$VERSION-linux-$target-$SHA12.tar.gz" \
+      "$ASSETS/studio-$VERSION-linux-$target-$SHA12.tar.gz.receipt.json" "$STAGE/verify-runtime-linux-$target-$SHA12"
+    x "bundle-linux-$target" -C "$BUILD" -- node scripts/studio-fleet/bundle.mjs \
+      --out "$STAGE/runtime-linux-$target-$SHA12" --archive "$ASSETS/studio-$VERSION-linux-$target-$SHA12.tar.gz" \
+      --platform linux --arch "$target"
+    verify_bundle "verify-bundle-linux-$target" "$ASSETS/studio-$VERSION-linux-$target-$SHA12.tar.gz" \
+      "$STAGE/verify-runtime-linux-$target-$SHA12"
+  done
   x google-verify -C "$BUILD" -- env STUDIO_TEST_REQUIRE_BUILTIN_GOOGLE=1 node scripts/studio-google/verify.mjs "$verify"
 }
 
@@ -951,8 +969,14 @@ desktop_assets() {
     "SpecWithCode-$VERSION-arm64.zip" "SpecWithCode-$VERSION-arm64.zip.blockmap" SpecWithCode-arm64.dmg latest-mac.yml
 }
 
+linux_assets() {
+  local target
+  for target in $LINUX_ARCHS; do printf '%s\n' "studio-$VERSION-linux-$target-$SHA12.tar.gz"; done
+}
+
 release_assets() {
   desktop_assets
+  linux_assets
   printf '%s\n' "studio-$VERSION-$SHA12.tar.gz" "studio-$VERSION-deployment-helpers-$SHA12.tar.gz" \
     deployment-helpers-manifest.json studio-update.json SHA256SUMS
 }
@@ -962,6 +986,7 @@ stage_plan() {
   local names=() args=() name
   while read -r name; do names+=("$name"); done << EOF
 $(desktop_assets)
+$(linux_assets)
 EOF
   # The plans of 1.0.30 to 1.0.37 passed both flags. Without --allow-project-migrations a release
   # that migrates fails and rolls back on every host, also on one that skipped the migrating release.

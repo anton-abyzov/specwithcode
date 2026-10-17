@@ -186,6 +186,12 @@ describe("buildRuntimeInstructions", () => {
     expect(concise).toContain("only when the result needs them");
     // reportDocument.ts reads this label to mark the thread Blocked.
     expect(concise).toContain("end with a paragraph opening **Blockers:**");
+    // Only the user's own decisions count, so agent-settleable work never reads as Blocked.
+    for (const style of ["concise", "detailed"] as const) {
+      expect(responseStyleInstructions(style)).toContain(
+        "A blocker is a decision only the user can make or a step only they can take outside the app",
+      );
+    }
     expect(concise).toContain("Ask workers and subagents you brief to report the same way");
   });
 

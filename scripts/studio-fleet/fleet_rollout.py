@@ -6,12 +6,12 @@ M4, the Mac this runs on, goes first with one forced request bound to the versio
 instead of waiting for a quiet period. A forced request never stops running work (that stays
 the desktop's Update now), so a busy service keeps M4 waiting; its status message, printed as
 it changes, says what is still running so a person can decide. The script polls the installed
-version, never 'downloaded', and asks again only after the hold has ended, because each new
+version and finalized guarded receipt, never 'downloaded', and asks again only after the hold has ended, because each new
 request restarts the agent's escalation.
 
 M1 and M3 restart their tunnels to M4 when they update, and auth or orchestration events in
 the middle of M4's snapshot and apply fail its guarded prestate, so they are asked only after
-M4 reports the new version, and then together with a plain version-bound request.
+M4 completes verification of the new version, and then together with a plain version-bound request.
 
 Each request is written by update_request.py, streamed with studio_paths.py to the host's
 /usr/bin/python3 (over the pinned fleet SSH key for M1 and M3, the network-transition.py
@@ -22,7 +22,7 @@ fleet_hosts.load_hosts(); nothing here names an address.
     python3 -B scripts/studio-fleet/fleet_rollout.py --version 1.0.37 --only m4
     python3 -B scripts/studio-fleet/fleet_rollout.py --version 1.0.37 --only workers --dry-run
 
-Exit 0 when every host chosen reports the version, 1 when one does not, 2 for bad arguments.
+Exit 0 when every host chosen has finalized the version, 1 when one has not, 2 for bad arguments.
 """
 import argparse
 import datetime
@@ -133,14 +133,16 @@ class Printer(object):
             self.stream.flush()
 
 
-def failed_since(status, version, since):
+def failed_since(status, version, since, changed_attempt=False):
     """True when the agent recorded a failed install of `version` at or after `since` (the host's
-    time of this rollout's first request) and it is not an install left running past its timeout."""
+    time of this rollout's first request), or a joined automatic attempt wrote a new result.
+    An install left running past its timeout is not a completed failure."""
     last = status.get('lastInstall')
-    if since is None or not isinstance(last, dict) or last.get('version') != version or last.get('result') != 'failed':
+    if not isinstance(last, dict) or last.get('version') != version or last.get('result') != 'failed':
         return False
     at = update_request._time(last.get('at'))
-    return at is not None and at >= since and 'left to finish' not in (status.get('message') or '')
+    return (at is not None and (changed_attempt or (since is not None and at >= since))
+            and 'left to finish' not in (status.get('message') or ''))
 
 
 def left_running(status, version, since):
@@ -156,8 +158,9 @@ def left_running(status, version, since):
 def roll_host(identity, call, version, force, hold_minutes, deadline, poll, clock, sleep, say):
     """Asks one host for `version` and waits until it reports it installed."""
     begin = clock()
-    current = call(['status', '--identity', identity]).get('version')
-    if current == version:
+    status = call(['status', '--identity', identity])
+    current = status.get('version')
+    if current == version and status.get('installFinalized') is True:
         say('%s: already on %s' % (identity, version))
         return {'identity': identity, 'result': 'already-installed', 'requests': 0, 'seconds': 0}
     if _tuple(current) is not None and _tuple(current) > _tuple(version):
@@ -177,8 +180,12 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
             first[0] = update_request._time((reply.get('request') or {}).get('installRequestedAt'))
         return clock()
 
-    first = [None]
-    asked, requests, seen, failures, status = ask(), 1, None, 0, {}
+    # Joining an in-progress target install must not restart it. Its request supplies the
+    # host-clock boundary for detecting a later rollback, even if the descriptor is target.
+    first = [update_request._time(status.get('installRequestedAt')) if current == version else None]
+    joined, initial_last = current == version, status.get('lastInstall')
+    asked, requests = (clock(), 0) if joined else (ask(), 1)
+    seen, failures = None, 0
     while True:
         if clock() - begin >= deadline:
             raise RolloutError('%s did not install %s within %d min; last: %s %s' % (
@@ -196,17 +203,17 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
         if status.get('version') == version and failed_since(status, version, first[0]):
             # The new release kept running after a check following the restart failed
             # (rollback held for a person to review): it runs, but the update is not confirmed.
-            raise RolloutError('%s runs %s, but a check after the restart failed, so the update is not confirmed: %s (receipt %s)' % (
+            raise RolloutError('%s runs %s, but it failed a check after the restart, so the update is not confirmed: %s (receipt %s)' % (
                 identity, version, status.get('message') or '', status['lastInstall'].get('receipt')))
-        # The installed version flips before the updater's checks after the restart finish.
-        if (status.get('version') == version and status.get('status') != 'installing'
-                and not left_running(status, version, first[0])):
+        # The installed version flips before the updater's checks after the restart finish;
+        # only the agent's successful, receipt-backed completion counts.
+        if status.get('version') == version and status.get('installFinalized') is True:
             seconds = int(clock() - begin)
             say('%s: installed %s after %ds' % (identity, version, seconds))
             return {'identity': identity, 'result': 'installed', 'requests': requests, 'seconds': seconds}
         if status.get('status') == 'manual-required':
             raise RolloutError('%s needs a manual upgrade: %s' % (identity, status.get('message') or ''))
-        if failed_since(status, version, first[0]):
+        if failed_since(status, version, first[0], joined and status.get('lastInstall') != initial_last):
             # The guarded update rolled back. Asking again would restart the service to fail the
             # same way; a person reads the receipt first. An install left running past its
             # timeout is not a failure yet: its message says so and the poll goes on.
@@ -221,7 +228,7 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
         if line != seen:
             say(line)
             seen = line
-        if clock() - asked >= window:
+        if not joined and status.get('version') != version and clock() - asked >= window:
             say('%s: the %s window ended without an install; asking once more' % (identity, 'hold' if force else 'request'))
             asked = ask()
             requests += 1
@@ -237,10 +244,10 @@ def rollout(version, hosts, only='all', hold_minutes=15, local_deadline=75 * 60,
                                    clock, sleep, say)
     if only in ('all', 'workers'):
         if only == 'workers':
-            current = hosts[LOCAL](['status', '--identity', LOCAL]).get('version')
-            if current != version:
-                raise RolloutError('M4 runs %s, not %s: install it first (--only m4); M1 and M3 never go '
-                                   'while M4 is updating' % (current, version))
+            status = hosts[LOCAL](['status', '--identity', LOCAL])
+            if status.get('version') != version or status.get('installFinalized') is not True:
+                raise RolloutError('M4 has not finalized %s (descriptor %s): install it first (--only m4); '
+                                   'M1 and M3 never go while M4 is updating' % (version, status.get('version')))
         errors, lock = [], threading.Lock()
 
         def worker(identity):

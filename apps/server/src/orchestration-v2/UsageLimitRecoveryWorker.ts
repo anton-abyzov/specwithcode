@@ -23,6 +23,18 @@ import {
   recoverySnoozeBlocks,
 } from "./usageLimitRecovery.ts";
 
+/**
+ * New limit stops arm auto-resume when the project or the global setting asks
+ * for it. Every project stores `autoResume: false` by default, so letting the
+ * project value win made the global setting a no-op.
+ */
+export function autoResumeByDefault(
+  projectAutoResume: boolean | undefined,
+  preferences: { readonly autoResumeLimitedThreads: boolean },
+): boolean {
+  return projectAutoResume === true || preferences.autoResumeLimitedThreads;
+}
+
 /** The persisted run and reset form the identity of one recovery opportunity. */
 export function limitRecoveryCommand(
   thread: ProjectionStore.ProjectionLimitRecoveryCandidate,
@@ -154,7 +166,7 @@ export const makeSweep = Effect.gen(function* () {
         // This is an auto-arm default. Existing explicit per-thread recovery remains authoritative.
         const rule = resolveProjectSettings(preferences, shell.projectId).settings;
         const autoResume =
-          (project.value.workspaceSettings?.autoResume ?? preferences.autoResumeLimitedThreads) ||
+          autoResumeByDefault(project.value.workspaceSettings?.autoResume, preferences) ||
           waitRuleArmsResume(thread, rule, nowMs);
         const arm = limitRecoveryCommand(
           thread,
@@ -184,9 +196,10 @@ export const makeSweep = Effect.gen(function* () {
               const armAt = DateTime.toEpochMillis(yield* DateTime.now);
               const freshArm = limitRecoveryCommand(
                 current,
-                (currentProject.value.workspaceSettings?.autoResume ??
-                  preferences.autoResumeLimitedThreads) ||
-                  waitRuleArmsResume(current, rule, armAt),
+                autoResumeByDefault(
+                  currentProject.value.workspaceSettings?.autoResume,
+                  preferences,
+                ) || waitRuleArmsResume(current, rule, armAt),
                 armAt,
                 preferences.snoozeLimitedThreads,
               );
@@ -249,9 +262,10 @@ export const makeSweep = Effect.gen(function* () {
               return;
             const command = limitRecoveryCommand(
               current,
-              (currentProject.value.workspaceSettings?.autoResume ??
-                preferences.autoResumeLimitedThreads) ||
-                waitRuleArmsResume(current, rule, at),
+              autoResumeByDefault(
+                currentProject.value.workspaceSettings?.autoResume,
+                preferences,
+              ) || waitRuleArmsResume(current, rule, at),
               at,
               preferences.snoozeLimitedThreads,
             );

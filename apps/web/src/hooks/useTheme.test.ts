@@ -26,7 +26,9 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("theme failure handling", () => {
+// Each case re-imports the theme modules cold (vi.resetModules), which takes
+// longer than the 15 s default on a loaded release host.
+describe("theme failure handling", { timeout: 60_000 }, () => {
   it("preserves exact storage causes and operation context", async () => {
     const readCause = new Error("storage read blocked");
     const writeCause = new Error("storage quota exceeded");

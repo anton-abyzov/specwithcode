@@ -36,7 +36,12 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as Availability from "./UsageLimitAvailability.ts";
-import { limitRecoveryCommand, makeSweep, waitRuleArmsResume } from "./UsageLimitRecoveryWorker.ts";
+import {
+  autoResumeByDefault,
+  limitRecoveryCommand,
+  makeSweep,
+  waitRuleArmsResume,
+} from "./UsageLimitRecoveryWorker.ts";
 import {
   applyLimitObservation,
   hasFreshLimitPermission,
@@ -809,4 +814,157 @@ it("arms the resume at reset when the wait rule holds back an automatic switch",
     ),
     true,
   );
+});
+
+/**
+ * A Claude thread stops on its 5-hour limit. Claude has no availability probe,
+ * so the reset time alone decides: nothing happens before it, the thread
+ * continues once after it, and a sweep built after a restart does the same
+ * from the persisted choice.
+ */
+const claudeLimitStop = (resetMs: number) => {
+  const claude = ProviderInstanceId.make("claudeAgent");
+  const reset = DateTime.formatIso(DateTime.makeUnsafe(resetMs));
+  return {
+    ...candidate(),
+    id: ThreadId.make("claude-limited"),
+    providerInstanceId: claude,
+    latestRunCompletedAt: DateTime.makeUnsafe(0),
+    updatedAt: DateTime.makeUnsafe(0),
+    usageLimitResetAt: reset,
+    limitRecovery: null,
+  } satisfies ProjectionStore.ProjectionLimitRecoveryCandidate;
+};
+
+const claudeSweepHarness = (input: {
+  thread: ProjectionStore.ProjectionLimitRecoveryCandidate;
+  projectAutoResume?: boolean;
+  globalAutoResume?: boolean;
+}) => {
+  const projectId = ProjectId.make("claude-limit-project");
+  const state = { current: input.thread, commands: [] as OrchestrationV2ServerCommand[] };
+  const deps = Layer.mergeAll(
+    ProjectAdmission.layer,
+    Layer.mock(Settings.ServerSettingsService)({
+      getSettings: Effect.succeed({
+        ...DEFAULT_SERVER_SETTINGS,
+        providerLimitAction: "wait" as const,
+        autoResumeLimitedThreads: input.globalAutoResume ?? false,
+      }),
+    }),
+    Layer.mock(Availability.UsageLimitAvailability)({
+      // What the real service answers for a provider without a native probe.
+      check: () => Effect.succeed({ codex: false, observation: null }),
+    }),
+    Layer.mock(ProjectStore.ProjectStoreV2)({
+      get: () =>
+        Effect.succeed(
+          Option.some({
+            projectId,
+            deletedAt: null,
+            workspaceSettings: {
+              ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+              autoResume: input.projectAutoResume ?? false,
+            },
+          } as ProjectStore.ProjectRow),
+        ),
+    }),
+    Layer.mock(ProjectionStore.ProjectionStoreV2)({
+      getLimitRecoveryCandidates: () => Effect.sync(() => [state.current]),
+      getThreadShell: () => Effect.sync(() => ({ ...state.current, projectId }) as never),
+    }),
+    Layer.mock(ThreadManagement.ThreadManagementService)({
+      dispatch: (command) =>
+        Effect.sync(() => {
+          state.commands.push(command);
+          if (command.type === "thread.metadata.update" && command.limitRecovery)
+            state.current = {
+              ...state.current,
+              limitRecovery: updateLimitRecovery(
+                state.current.limitRecovery,
+                command.limitRecovery,
+                command.commandId,
+                command.limitRecoveryPolicyArm === true,
+              )!,
+            };
+          return { sequence: state.commands.length, storedEvents: [] };
+        }),
+    }),
+  );
+  // A fresh sweep per call: nothing survives in memory, as after a restart.
+  const sweep = Effect.flatMap(makeSweep, (run) => run()).pipe(Effect.provide(deps));
+  return { state, sweep };
+};
+
+it.effect("auto-continues a Claude thread once its limit resets, across a restart", () =>
+  Effect.gen(function* () {
+    const resetMs = 5 * 60 * 60_000;
+    const { state, sweep } = claudeSweepHarness({ thread: claudeLimitStop(resetMs) });
+    // Nothing is armed until the person ticks the box.
+    yield* sweep;
+    assert.deepEqual(state.commands, []);
+    // The checkbox sends exactly this update.
+    state.current = {
+      ...state.current,
+      limitRecovery: updateLimitRecovery(
+        null,
+        {
+          runId: state.current.latestRunId!,
+          resetAt: state.current.usageLimitResetAt!,
+          autoResume: true,
+        },
+        CommandId.make("checkbox"),
+      )!,
+    };
+    yield* TestClock.adjust("4 hours");
+    yield* sweep;
+    assert.deepEqual(state.commands, [], "no resume before the reset");
+    yield* TestClock.adjust("1 hour");
+    yield* TestClock.adjust("1 minute");
+    yield* sweep;
+    assert.lengthOf(state.commands, 1);
+    const resume = state.commands[0]!;
+    assert.equal(resume.type, "message.dispatch");
+    if (resume.type !== "message.dispatch") return;
+    assert.equal(resume.text, "Continue where you left off.");
+    assert.equal(resume.usageLimitContinuationOfRunId, state.current.latestRunId);
+    // A second sweep repeats the same command id, which the receipt store dedupes.
+    yield* sweep;
+    assert.equal(state.commands[1]?.commandId, resume.commandId);
+  }),
+);
+
+it.effect("arms a Claude stop by itself when only the global auto-resume setting is on", () =>
+  Effect.gen(function* () {
+    const { state, sweep } = claudeSweepHarness({
+      thread: claudeLimitStop(60 * 60_000),
+      globalAutoResume: true,
+    });
+    yield* sweep;
+    assert.lengthOf(state.commands, 1);
+    assert.equal(state.commands[0]?.type, "thread.metadata.update");
+    assert.isTrue(state.current.limitRecovery?.autoResume);
+    yield* TestClock.adjust("61 minutes");
+    yield* sweep;
+    assert.equal(state.commands.at(-1)?.type, "message.dispatch");
+  }),
+);
+
+it.effect("leaves a Claude stop without a reset time for the person to continue", () =>
+  Effect.gen(function* () {
+    const { state, sweep } = claudeSweepHarness({
+      thread: { ...claudeLimitStop(0), usageLimitResetAt: null },
+      globalAutoResume: true,
+    });
+    yield* TestClock.adjust("6 hours");
+    yield* sweep;
+    assert.deepEqual(state.commands, []);
+  }),
+);
+
+it("lets either the project or the global setting arm new stops", () => {
+  assert.isTrue(autoResumeByDefault(false, { autoResumeLimitedThreads: true }));
+  assert.isTrue(autoResumeByDefault(true, { autoResumeLimitedThreads: false }));
+  assert.isTrue(autoResumeByDefault(undefined, { autoResumeLimitedThreads: true }));
+  assert.isFalse(autoResumeByDefault(false, { autoResumeLimitedThreads: false }));
 });

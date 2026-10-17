@@ -2,7 +2,7 @@ import { createHighlighterCore } from "@shikijs/core";
 import { createJavaScriptRegexEngine } from "@shikijs/engine-javascript";
 import typescript from "@shikijs/langs/typescript";
 import dark from "@shikijs/themes/github-dark-default";
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { createIncrementalSnippet } from "./incrementalSnippet";
 import { highlightCodeSnippet } from "./shikiReviewHighlighter";
@@ -15,6 +15,16 @@ const highlighter = await createHighlighterCore({
 const rendered = (lines: ReturnType<typeof highlighter.codeToTokensBase>) =>
   lines.map((line) => line.map(({ content, color, fontStyle }) => ({ content, color, fontStyle })));
 const options = { lang: "typescript", theme: "github-dark-default" };
+
+// Shiki stops tokenizing a line after 500 ms (vscode-textmate measures it with Date.now) and
+// returns the rest as one plain token, so on a loaded host two highlights of the same code can
+// differ. Freezing only Date keeps that limit from firing; timers stay real.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("incremental snippet highlighting", () => {
   it("matches full highlighting through partial lines, multiline syntax, edits and truncation", async () => {

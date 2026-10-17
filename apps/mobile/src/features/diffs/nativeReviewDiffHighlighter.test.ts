@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { NativeReviewDiffRow } from "./nativeReviewDiffSurface";
 import type { NativeReviewDiffFile } from "./nativeReviewDiffTypes";
@@ -34,7 +34,15 @@ vi.mock("react-native-shiki-engine", async () => {
   return { isNativeEngineAvailable: () => true, createNativeEngine: createJavaScriptRegexEngine };
 });
 
+// Shiki stops tokenizing a line after 500 ms (vscode-textmate measures it with Date.now) and
+// returns the rest as one plain token, so on a loaded host the expected grammar state is lost.
+// Freezing only Date keeps that limit from firing; timers stay real.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+});
+
 afterEach(() => {
+  vi.useRealTimers();
   tokenization.calls = [];
   tokenization.afterCall = undefined;
 });

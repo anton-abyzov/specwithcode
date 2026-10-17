@@ -15,7 +15,10 @@ import {
 } from "@specweave-studio/contracts";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import {
+  canTakeTurn,
+  FALLBACK_USAGE_MAX_AGE_MS,
   isClaudeApiKeyProvider,
+  isPerTokenProvider,
   limitRestartRequest,
   limitStopWaitsForReset,
   providerUsedPercent,
@@ -887,12 +890,68 @@ export const makeSweep = Effect.gen(function* () {
       ),
     );
   };
+  // A fallback needs a recent usage read of the provider it moves to, and an
+  // idle host stops reading providers nobody uses. A current stop the
+  // `switch` rule would move, but that finds no target, reads the signed-in
+  // providers it could move to; without this the thread waits for the reset
+  // with another provider sitting free. Each provider at most once per read
+  // lifetime, so a stop nothing can take costs one read, not one per sweep.
+  const targetReads = yield* Ref.make(new Map<ProviderInstanceId, number>());
+  const refreshStaleTargets = Effect.fn("ProviderFallbackWorker.refreshStaleTargets")(function* (
+    thread: FallbackThread,
+    candidates: ReadonlyArray<ServerProvider>,
+    rule: ProviderFallbackRule,
+    nowMs: number,
+  ) {
+    if (
+      rule.providerLimitAction !== "switch" ||
+      !stoppedOnLimit(thread) ||
+      waitsForReset(thread, rule, nowMs) ||
+      !limitStopIsCurrent(thread, nowMs)
+    )
+      return false;
+    const readAt = yield* Ref.get(targetReads);
+    const stale = candidates.filter((provider) => {
+      if (
+        provider.instanceId === thread.providerInstanceId ||
+        !canTakeTurn(provider) ||
+        provider.auth.status !== "authenticated" ||
+        isPerTokenProvider(provider) ||
+        provider.usageLimits?.unavailable !== undefined ||
+        nowMs - (readAt.get(provider.instanceId) ?? -Infinity) < FALLBACK_USAGE_MAX_AGE_MS
+      )
+        return false;
+      const limits = provider.usageLimits;
+      const observedAt = Date.parse(limits?.nativeAllowanceObservedAt ?? limits?.checkedAt ?? "");
+      return !Number.isFinite(observedAt) || nowMs - observedAt > FALLBACK_USAGE_MAX_AGE_MS;
+    });
+    if (stale.length === 0) return false;
+    yield* Ref.update(targetReads, (current) => {
+      const next = new Map(current);
+      for (const provider of stale) next.set(provider.instanceId, nowMs);
+      return next;
+    });
+    yield* Effect.forEach(
+      stale,
+      (provider) =>
+        registry.refreshInstance(provider.instanceId).pipe(
+          Effect.timeoutOption("60 seconds"),
+          Effect.catchCause(() => Effect.void),
+        ),
+      { concurrency: "unbounded", discard: true },
+    );
+    yield* Effect.logInfo("orchestration-v2.provider-fallback.targets-read", {
+      threadId: thread.id,
+      instanceIds: stale.map((provider) => provider.instanceId),
+    });
+    return true;
+  });
   return Effect.fn("ProviderFallbackWorker.sweep")(function* () {
     const now = DateTime.toEpochMillis(yield* DateTime.now);
     if (now - (yield* Ref.get(lastRunAt)) < PROVIDER_FALLBACK_SWEEP_INTERVAL_MS) return;
     yield* Ref.set(lastRunAt, now);
     const preferences = yield* settings.getSettings;
-    const providers = yield* registry.getProviders;
+    let providers = yield* registry.getProviders;
     // The way back does not depend on a rule: a thread the rule moved must
     // not keep spending after the rule is turned off.
     if (!anyLimitRule(preferences) && !providers.some(isClaudeApiKeyProvider)) return;
@@ -937,7 +996,14 @@ export const makeSweep = Effect.gen(function* () {
       };
       const stepFor = (current: FallbackThread) =>
         providerLimitStep(current, providersFor(current), resolved, now, options);
-      const step = stepFor(thread);
+      let step = stepFor(thread);
+      if (
+        step === null &&
+        (yield* refreshStaleTargets(thread, providersFor(thread), resolved, now))
+      ) {
+        providers = yield* registry.getProviders;
+        step = stepFor(thread);
+      }
       if (step === null) {
         // Nothing to continue: a thread the rule moved to API credits goes back
         // to its subscription. Sent once: after that, where the thread runs is

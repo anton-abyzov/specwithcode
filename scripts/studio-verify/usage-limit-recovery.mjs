@@ -98,9 +98,11 @@ try {
     assert.deepEqual(await page.evaluate(() => window.fixture.commands), [
       { runId: "run-fixture", resetAt: null, checkNow: true },
     ]);
-    await section.getByRole("button", { name: "Resume when available", exact: true }).click();
-    await section.getByRole("button", { name: "Cancel auto-resume", exact: true }).waitFor();
-    await section.getByRole("button", { name: "Cancel auto-resume", exact: true }).click();
+    await section
+      .getByRole("checkbox", { name: "Auto-continue when usage is available", exact: true })
+      .check();
+    assert.equal(await section.getByRole("checkbox").isChecked(), true);
+    await section.getByRole("checkbox").uncheck();
     assert.equal((await page.evaluate(() => window.fixture.commands)).at(-1).autoResume, false);
     assert.equal(
       await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),

@@ -117,8 +117,13 @@ using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 ## When a provider runs out
 
 When a turn stops on a usage limit, the banner above the composer counts down to the reset and
-offers **Resume at reset**, **Check now** and, when another signed-in provider can take the thread,
-**Continue with Codex** (or whichever provider is the fallback). Continuing hands the thread over with its context, in the
+shows an **Auto-continue when the limit resets** checkbox. Tick it and the thread continues by itself
+at the reset, even if the app restarted in between; the choice is saved per thread, for workers and
+the coordinator alike. Claude threads get the reset from Claude's limit message (for example
+"resets 5:20am (America/New_York)") when the CLI sends no reset event. Under the checkbox,
+**Hand off now** offers **Continue with Codex** (or whichever provider is the fallback) and
+**Continue on** another device of the project, for when waiting is not an option. Codex threads
+also get **Check now**. Continuing hands the thread over with its context, in the
 same worktree, and the stopped turn picks up where it left off. A thread the limit stopped on its
 very first message has nothing to continue, so SpecWithCode sends that message again on the fallback. See
 [Context in portable handoffs](portable-handoffs.md) for what the handoff carries. Switching back

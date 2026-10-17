@@ -1155,14 +1155,14 @@ class Agent(object):
         if outcome == 'interrupted':
             return 'error', 'The install of SpecWithCode %s was interrupted; SpecWithCode is on %s.' % (version, current)
         if inst is not None and inst['version'] == version and self.kept_after_restart(receipt):
-            # The new release is running but a check after the restart failed; the helper kept it for review.
-            return 'error', ('SpecWithCode %s is running, but a check after the restart failed, so the update was '
-                             'not confirmed. See the update receipt.' % version)
+            # Retained pointers and a past observation do not prove liveness after a failed rollback.
+            return 'error', ('SpecWithCode %s was kept after a restart check failed. The update was not '
+                             'confirmed. See the update receipt.' % version)
         return 'error', 'SpecWithCode %s did not install; SpecWithCode stayed on %s. See the update receipt.' % (version, current)
 
     def kept_after_restart(self, receipt):
         """True only when the helper restarted into the new release, observed it and kept it (any `held-*`
-        rollback: kept for review, or a rollback whose checks or restores failed)."""
+        rollback: kept for review, or a rollback whose checks or restores failed). Not current liveness."""
         try:
             value = read_json(owned(pathlib.Path(receipt), self.home), self.home) if receipt else None
         except (AgentError, OSError):

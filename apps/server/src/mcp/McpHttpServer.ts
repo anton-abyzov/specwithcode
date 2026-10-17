@@ -37,6 +37,8 @@ import { ProjectMemoryToolkit } from "./toolkits/projectMemory/tools.ts";
 import * as ProjectMemoryHandlers from "./toolkits/projectMemory/handlers.ts";
 import { MachinesToolkit } from "./toolkits/machines/tools.ts";
 import * as MachinesHandlers from "./toolkits/machines/handlers.ts";
+import * as CloudHandlers from "./toolkits/cloud/handlers.ts";
+import { CloudToolkit } from "./toolkits/cloud/tools.ts";
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
 import * as ProjectHandlers from "./toolkits/project/handlers.ts";
 import { AttachmentToolkit } from "./toolkits/attachment/tools.ts";
@@ -842,6 +844,8 @@ export const layerOrchestratorToolkit = toolkitRegistration(
 
 export const layerThreadToolkit = toolkitRegistration(ThreadToolkit, ThreadHandlers.layer);
 
+export const layerCloudToolkit = toolkitRegistration(CloudToolkit, CloudHandlers.layer);
+
 const layerWorktreeToolkitRegistration = toolkitRegistration(
   WorktreeToolkit,
   WorktreeHandlers.layer,
@@ -909,6 +913,7 @@ export const layer = Layer.mergeAll(
   layerAttachmentRegistration,
   layerProjectRegistration,
   toolkitRegistration(MachinesToolkit, MachinesHandlers.layer),
+  layerCloudToolkit,
   layerProjectMemoryRegistration,
   toolkitRegistration(ProjectPlanToolkit, ProjectPlanHandlers.layer),
   toolkitRegistration(ProjectConnectionsToolkit, ProjectConnectionsHandlers.layer),

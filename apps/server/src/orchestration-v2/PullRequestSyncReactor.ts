@@ -1,6 +1,7 @@
 import { siblingPullRequestUrl } from "@specweave-studio/shared/changeRequestUrl";
 import {
   CommandId,
+  PullRequestUnavailableError,
   type PullRequestSummary,
   type ThreadId,
   type ThreadPullRequestKey,
@@ -41,6 +42,7 @@ const SLOW_SYNC_INTERVAL_MS = 15 * 60 * 1_000;
 const PULL_REQUEST_CLOSE_COMMAND = /\b(?:gh\s+pr|glab\s+mr)\s+(?:merge|close)\b/u;
 
 const isPullRequestProviderError = Schema.is(PullRequestProviderError);
+const isPullRequestUnavailableError = Schema.is(PullRequestUnavailableError);
 
 type SnapshotFields = Omit<ThreadPullRequestSnapshot, "syncedAt">;
 
@@ -348,7 +350,7 @@ export const make = Effect.gen(function* () {
     });
 
     // Failed host reads by reason: how many, and the first key that failed that way.
-    const skips = new Map<string, { count: number; readonly key: string }>();
+    const skips = new Map<string, { count: number; readonly key: string; expected: boolean }>();
     const readGroup = (key: string, entries: ReadonlyArray<LinkEntry>, pauseKey: string) =>
       syncGroup(key, entries).pipe(
         Effect.catchCause((cause) => {
@@ -358,9 +360,15 @@ export const make = Effect.gen(function* () {
             pausedUntil.set(pauseKey, Math.max(retryAt, pausedUntil.get(pauseKey) ?? 0));
           }
           const reason = skipReason(cause);
+          const failure = Cause.squash(cause);
+          const expected =
+            isPullRequestUnavailableError(failure) && failure.reason === "provider-unsupported";
           const skip = skips.get(reason);
-          if (skip === undefined) skips.set(reason, { count: 1, key });
-          else skip.count += 1;
+          if (skip === undefined) skips.set(reason, { count: 1, key, expected });
+          else {
+            skip.count += 1;
+            skip.expected &&= expected;
+          }
           return Effect.void;
         }),
       );
@@ -388,8 +396,9 @@ export const make = Effect.gen(function* () {
     );
     // A host failure such as a signed-out CLI fails every due pull request the same way, so a
     // sweep reports one line per reason rather than one per pull request.
-    for (const [reason, { count, key }] of skips) {
-      yield* Effect.logWarning("pull request sync skipped", { count, key, reason });
+    for (const [reason, { count, key, expected }] of skips) {
+      const log = expected ? Effect.logDebug : Effect.logWarning;
+      yield* log("pull request sync skipped", { count, key, reason });
     }
   });
 

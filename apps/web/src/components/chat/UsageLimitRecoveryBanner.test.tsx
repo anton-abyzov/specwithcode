@@ -12,6 +12,7 @@ import {
   usageLimitRecoveryBannerItem,
 } from "./UsageLimitRecoveryBanner";
 vi.mock("../ui/button", () => ({ Button: "button" }));
+vi.mock("../ui/checkbox", () => ({ Checkbox: "checkbox" }));
 let renderer: ReactTestRenderer | undefined;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -40,6 +41,9 @@ const recovery: OrchestrationV2LimitRecovery = {
 };
 const button = (text: string) =>
   renderer!.root.findAllByType("button").find((node) => node.children.join("") === text)!;
+const autoContinue = () => renderer!.root.findByType("checkbox" as never);
+const rendered = (node = renderer!.root): string =>
+  node.children.map((child) => (typeof child === "string" ? child : rendered(child))).join(" ");
 it.each([null, "2026-10-01T00:00:00.000Z", future])(
   "checks permission even when reset is %s without enabling auto-resume",
   async (resetAt) => {
@@ -50,7 +54,8 @@ it.each([null, "2026-10-01T00:00:00.000Z", future])(
     });
     await act(async () => button("Check now").props.onClick());
     expect(change).toHaveBeenCalledWith({ runId, resetAt, checkNow: true });
-    expect(button("Resume when available")).toBeDefined();
+    expect(autoContinue().props["aria-label"]).toBe("Auto-continue when usage is available");
+    expect(autoContinue().props.disabled).toBe(false);
   },
 );
 it("arms and cancels explicitly, renders fresh permission without claiming a retry happened", async () => {
@@ -75,9 +80,10 @@ it("arms and cancels explicitly, renders fresh permission without claiming a ret
     );
   });
   expect(renderer!.root.findByProps({ role: "status" }).children.join("")).toContain(
-    "Choose Resume when available",
+    "Tick Auto-continue to continue",
   );
-  await act(async () => button("Resume when available").props.onClick());
+  expect(autoContinue().props.checked).toBe(false);
+  await act(async () => autoContinue().props.onCheckedChange(true));
   expect(change).toHaveBeenCalledWith({ runId, resetAt: future, autoResume: true });
   await act(() =>
     renderer!.update(
@@ -92,7 +98,8 @@ it("arms and cancels explicitly, renders fresh permission without claiming a ret
       </>,
     ),
   );
-  await act(async () => button("Cancel auto-resume").props.onClick());
+  expect(autoContinue().props.checked).toBe(true);
+  await act(async () => autoContinue().props.onCheckedChange(false));
   expect(change).toHaveBeenLastCalledWith({ runId, resetAt: future, autoResume: false });
 });
 it("shows denial and request errors while disabling duplicate checks", async () => {
@@ -119,15 +126,43 @@ it("shows denial and request errors while disabling duplicate checks", async () 
   );
   expect(button("Check requested").props.disabled).toBe(true);
 });
-it("preserves reset scheduling for other providers", () => {
-  expect(
-    usageLimitRecoveryBannerItem({
-      ...props,
-      canCheck: false,
-      resetAt: null,
-      onChange: async () => {},
-    }).actions,
-  ).toBeNull();
+it("explains a disabled auto-continue when the provider gave no reset time", async () => {
+  await act(() => {
+    renderer = create(
+      <>
+        {
+          usageLimitRecoveryBannerItem({
+            ...props,
+            canCheck: false,
+            resetAt: null,
+            onChange: async () => {},
+          }).actions
+        }
+      </>,
+    );
+  });
+  expect(autoContinue().props.disabled).toBe(true);
+  expect(rendered()).toContain("did not say when this limit resets");
+  expect(rendered()).not.toContain("Hand off now");
+});
+it("auto-continues a Claude thread at its reset when the box is ticked", async () => {
+  const change = vi.fn().mockResolvedValue(undefined);
+  const claude = { ...props, canCheck: false, onChange: change };
+  await act(() => {
+    renderer = create(<>{usageLimitRecoveryBannerItem(claude).actions}</>);
+  });
+  expect(autoContinue().props.checked).toBe(false);
+  expect(autoContinue().props["aria-label"]).toBe("Auto-continue when the limit resets");
+  expect(autoContinue().props.disabled).toBe(false);
+  expect(button("Check now")).toBeUndefined();
+  await act(async () => autoContinue().props.onCheckedChange(true));
+  expect(change).toHaveBeenCalledWith({ runId, resetAt: future, autoResume: true });
+  const armed = usageLimitRecoveryBannerItem({
+    ...claude,
+    recovery: { ...recovery, autoResume: true },
+  });
+  await act(() => renderer!.update(<>{armed.description}</>));
+  expect(text()).toContain("This thread continues by itself at the reset.");
 });
 it("offers to continue the stopped turn with another ready provider", async () => {
   const change = vi.fn().mockResolvedValue(undefined);
@@ -143,7 +178,9 @@ it("offers to continue the stopped turn with another ready provider", async () =
     renderer = create(<>{item.actions}</>);
   });
   // No reset time and no check: the provider switch is the only way forward.
-  expect(button("Resume at reset")).toBeUndefined();
+  expect(autoContinue().props.disabled).toBe(true);
+  expect(rendered()).toContain("Hand off now instead of waiting:");
+  expect(rendered()).toContain("Hand it off now, or send a message after the reset.");
   await act(async () => button("Continue with Codex").props.onClick());
   expect(onContinue).toHaveBeenCalledOnce();
   expect(change).not.toHaveBeenCalled();
@@ -205,6 +242,29 @@ it("offers a new thread on another device", async () => {
   });
   await act(async () => button("Continue on MacBook M3").props.onClick());
   expect(onContinue).toHaveBeenCalledOnce();
+});
+it("disarms the source before a handoff and stops if cancellation fails", async () => {
+  const onContinue = vi.fn().mockResolvedValue(undefined);
+  const change = vi.fn().mockResolvedValue(undefined);
+  const item = usageLimitRecoveryBannerItem({
+    ...props,
+    recovery: { ...recovery, autoResume: true },
+    onChange: change,
+    device: { label: "MacBook M3", model: "Opus", onContinue },
+  });
+  await act(() => {
+    renderer = create(<>{item.actions}</>);
+  });
+  await act(async () => button("Continue on MacBook M3").props.onClick());
+  expect(change).toHaveBeenCalledWith({ runId, resetAt: future, autoResume: false });
+  expect(change.mock.invocationCallOrder[0]).toBeLessThan(onContinue.mock.invocationCallOrder[0]!);
+  onContinue.mockClear();
+  change.mockRejectedValue(new Error("Could not save recovery choice."));
+  await act(async () => button("Continue on MacBook M3").props.onClick());
+  expect(onContinue).not.toHaveBeenCalled();
+  expect(renderer!.root.findByProps({ role: "alert" }).children.join("")).toBe(
+    "Could not save recovery choice.",
+  );
 });
 it("formats how far off a reset is", () => {
   const now = Date.parse("2026-10-10T12:00:00.000Z");

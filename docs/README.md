@@ -18,6 +18,8 @@
 - [Usage and limits](./user/usage.md)
 - [Product usage data](./user/telemetry.md)
 - [Remote access](./user/remote-access.md)
+- [Anthropic cloud sessions](./user/cloud-sessions.md)
+- [Linux worker](./user/linux-worker.md)
 - [Running in the background](./user/background-service.md)
 - [Updating SpecWithCode](./user/updating.md)
 - Provider guides: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md) · [OpenCode](./user/providers-opencode.md) · [Antigravity](./user/providers-antigravity.md) · [Pi](./user/providers-pi.md)

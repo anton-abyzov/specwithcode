@@ -19,6 +19,14 @@ import {
   StudioFleetWorkersStopInput,
 } from "./studioFleet.ts";
 import {
+  CloudSessionCreateInput,
+  CloudSessionCreateResult,
+  CloudSessionSendInput,
+  CloudSessionSendResult,
+  CloudSessionsQuery,
+  CloudSessionsSnapshot,
+} from "./cloudSessions.ts";
+import {
   DeviceSignInApproveInput,
   DeviceSignInApproveResult,
   DeviceSignInPollInput,
@@ -927,6 +935,47 @@ class EnvironmentStudioFleetHttpApi extends HttpApiGroup.make("studioFleet")
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
+/**
+ * Anthropic cloud sessions started through this server's Claude Code CLI.
+ * Reads need orchestration:read; starting or messaging one needs
+ * orchestration:operate and a same-origin request, like fleet changes.
+ */
+class EnvironmentCloudSessionsHttpApi extends HttpApiGroup.make("cloudSessions")
+  .add(
+    HttpApiEndpoint.get("cloudSessions", "/api/studio/cloud-sessions", {
+      headers: OptionalBearerHeaders,
+      query: CloudSessionsQuery,
+      success: CloudSessionsSnapshot,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentHttpInternalServerError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("createCloudSession", "/api/studio/cloud-sessions", {
+      headers: OptionalBearerHeaders,
+      payload: CloudSessionCreateInput,
+      success: CloudSessionCreateResult,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        EnvironmentHttpBadRequestError,
+        EnvironmentHttpForbiddenError,
+        EnvironmentHttpInternalServerError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("sendCloudSession", "/api/studio/cloud-sessions/send", {
+      headers: OptionalBearerHeaders,
+      payload: CloudSessionSendInput,
+      success: CloudSessionSendResult,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        EnvironmentHttpBadRequestError,
+        EnvironmentHttpForbiddenError,
+        EnvironmentHttpInternalServerError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
 const DeviceSignInPublicErrors = [
   EnvironmentHttpBadRequestError,
   EnvironmentHttpForbiddenError,
@@ -980,4 +1029,5 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentWebhooksHttpApi)
   .add(EnvironmentStudioHttpApi)
   .add(EnvironmentStudioFleetHttpApi)
+  .add(EnvironmentCloudSessionsHttpApi)
   .add(EnvironmentDeviceSignInHttpApi) {}

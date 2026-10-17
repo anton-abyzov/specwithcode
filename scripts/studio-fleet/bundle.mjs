@@ -22,8 +22,18 @@ function option(name) {
   assert.ok(index >= 0 && args[index + 1], `Required: ${name}`);
   return resolve(args[index + 1]);
 }
+function optional(name, fallback) {
+  const index = args.indexOf(name);
+  return index >= 0 && args[index + 1] ? args[index + 1] : fallback;
+}
 const output = option('--out');
 const archive = option('--archive');
+// A mac build host also produces the Linux worker archives: the runtime is the same JavaScript,
+// and every native dependency ships its builds for all supported targets.
+const platform = optional('--platform', process.platform);
+const arch = optional('--arch', process.arch);
+assert.ok(['darwin', 'linux'].includes(platform) && ['arm64', 'x64'].includes(arch),
+  'Supported targets: --platform darwin|linux, --arch arm64|x64');
 assert.ok(!existsSync(output) && !existsSync(archive), 'Bundle destinations must be new');
 // Build output may live on an external volume; copy its directory, not the alias.
 const dist = realpathSync(join(root, 'apps/server/dist'));
@@ -59,7 +69,7 @@ for (const file of MAC_SERVICE_UPDATER_FILES) {
 }
 for (const file of ['LICENSE', 'UPSTREAM.md']) cpSync(join(root, file), join(output, file));
 const manifest = { schemaVersion: 1, product: 'SpecWeave Studio', version,
-  sourceCommit, runtime: 'Node22.20.0', platform: process.platform, arch: process.arch,
+  sourceCommit, runtime: 'Node22.20.0', platform, arch,
   lockSha256: hash(lock), runtimeRoots: [...roots].sort(), packages: [], files: [],
   resourceTelemetry: 'unavailable-until-verified-sidecar', noAuthOrUserStores: true };
 
@@ -129,6 +139,17 @@ for (const name of roots) {
   const destination = join(output, 'node_modules', name);
   mkdirSync(dirname(destination), { recursive: true });
   symlinkSync(relative(dirname(destination), bundledTarget), destination);
+}
+// The target's own native builds must be in the archive, or the server will not start there.
+// Each napi package is a pnpm volume of its own; node-pty ships every prebuild in one tree.
+assert.ok(existsSync(join(output, 'node_modules/node-pty/prebuilds', `${platform}-${arch}`)),
+  `node-pty has no prebuild for ${platform}-${arch}`);
+const gnu = platform === 'linux' ? '-gnu' : '';
+const bundledVolumes = readdirSync(join(output, 'node_modules/.pnpm'));
+for (const prefix of [`@napi-rs+keyring-${platform}-${arch}${gnu}@`, `@yuuang+ffi-rs-${platform}-${arch}${gnu}@`,
+  `@ff-labs+fff-bin-${platform}-${arch}${gnu}@`, `@cursor+sdk-${platform}-${arch}@`]) {
+  assert.ok(bundledVolumes.some((volume) => volume.startsWith(prefix)),
+    `Native build for ${platform}-${arch} is not bundled: ${prefix}`);
 }
 writeFileSync(join(output, 'package.json'), JSON.stringify(runtimePackage(version), null, 2) + '\n');
 const notices = await generateThirdPartyLicenseManifest({

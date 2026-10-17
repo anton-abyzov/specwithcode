@@ -58,6 +58,9 @@ job_command() {
       exec /bin/bash "$ROOT/scripts/studio-fleet/run-tests.sh" --out "$OUT_DIR/fleet"
       ;;
     pkg:*)
+      if [ "${1#pkg:}" = apps/desktop ]; then
+        node "$ROOT/apps/desktop/scripts/ensure-electron-runtime.mjs" || return $?
+      fi
       cd "$ROOT/${1#pkg:}"
       exec node --run test
       ;;

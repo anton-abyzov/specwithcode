@@ -96,7 +96,9 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("published theme refresh", () => {
+// Each case re-imports the theme modules cold (vi.resetModules), which takes
+// longer than the 15 s default on a loaded release host.
+describe("published theme refresh", { timeout: 60_000 }, () => {
   it.each(["dark", "system"] as const)(
     "updates the React snapshot when appearance changes in %s mode",
     async (mode) => {

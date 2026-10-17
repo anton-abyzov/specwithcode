@@ -24,8 +24,9 @@ export function UsageLimitRecoveryCard({
     Date.parse(resetAt) > Date.parse(thread.latestRun?.completedAt ?? thread.updatedAt);
   const runId = thread.latestRun?.runId;
   const recovery = thread.limitRecovery;
-  const scheduled =
-    recovery?.runId === runId && recovery?.resetAt === resetAt && recovery?.autoResume;
+  const scheduled = Boolean(
+    recovery?.runId === runId && recovery?.resetAt === resetAt && recovery?.autoResume,
+  );
   if (
     thread.runtime?.status !== "failed" ||
     thread.runtime.lastErrorClass !== "usage_limit" ||
@@ -76,14 +77,14 @@ export function UsageLimitRecoveryCard({
       {canSchedule ? (
         <View className="flex-row flex-wrap gap-2">
           <Pressable
-            accessibilityRole="button"
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: scheduled, disabled: pending }}
             disabled={pending}
             onPress={() => void toggle("resume")}
-            className="self-start rounded-lg bg-subtle px-3 py-2 active:opacity-70"
+            className="flex-row items-center gap-2 self-start rounded-lg bg-subtle px-3 py-2 active:opacity-70"
           >
-            <Text className="text-sm text-foreground">
-              {scheduled ? "Cancel auto-resume" : "Resume at reset"}
-            </Text>
+            <Text className="text-sm text-foreground">{scheduled ? "☑" : "☐"}</Text>
+            <Text className="text-sm text-foreground">Auto-continue when the limit resets</Text>
           </Pressable>
           <Pressable
             accessibilityRole="button"

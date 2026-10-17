@@ -1423,3 +1423,105 @@ describe("limitFallbackReturnCommand", () => {
     ).toBeNull();
   });
 });
+
+describe("sweep switch path with a stale fallback read", () => {
+  // The coordinator stopped on a weekly limit four days from its reset. Codex
+  // is signed in with room, but this idle host last read it 20 minutes ago.
+  const stoppedAt = Date.parse("2026-10-17T04:42:26.000Z");
+  const limited = {
+    ...idle,
+    status: "failed" as const,
+    lastErrorClass: "usage_limit" as const,
+    projectId: null,
+    usageLimitResetAt: "2026-10-21T02:00:00.000Z",
+    latestRunCompletedAt: DateTime.makeUnsafe(stoppedAt),
+  };
+  const settings = {
+    ...DEFAULT_SERVER_SETTINGS,
+    providerLimitAction: "switch" as const,
+    providerLimitFallbackModelSelection: null,
+  };
+  const codexAt = (at: number) => {
+    const codex = withUsage(provider(codexId, "codex", at), 45);
+    const windows = codex.usageLimits!.windows.map((window) => ({
+      ...window,
+      resetsAt: "2026-10-22T06:15:00.000Z",
+    }));
+    return { ...codex, usageLimits: { ...codex.usageLimits!, windows } };
+  };
+
+  function harness(fresh: (at: number) => ServerProvider) {
+    const state = {
+      providers: [
+        withUsage(provider(claudeId, "claudeAgent", stoppedAt), 100),
+        codexAt(stoppedAt - 20 * 60_000),
+      ],
+      refreshed: [] as string[],
+      dispatched: [] as OrchestrationV2ServerCommand[],
+    };
+    const deps = Layer.mergeAll(
+      Layer.mock(Projects.ProjectService)({
+        getById: () => Effect.succeed(Option.some(legacyProject)),
+      }),
+      Layer.mock(Settings.ServerSettingsService)({ getSettings: Effect.succeed(settings) }),
+      Layer.mock(Providers.ProviderRegistry)({
+        getProviders: Effect.sync(() => state.providers),
+        refreshInstance: (id) =>
+          Effect.gen(function* () {
+            state.refreshed.push(id);
+            const at = DateTime.toEpochMillis(yield* DateTime.now);
+            state.providers = state.providers.map((entry) =>
+              entry.instanceId === id ? fresh(at) : entry,
+            );
+            return state.providers;
+          }),
+      }),
+      Layer.mock(Instances.ProviderInstanceRegistry)({
+        getInstance: () => Effect.succeed(undefined),
+      }),
+      Layer.mock(ProjectionStore.ProjectionStoreV2)({
+        getShellSnapshot: () => Effect.succeed({ threads: [limited] } as never),
+        getThreadShell: () => Effect.succeed(limited as never),
+        getThreadRecords: (threadId) =>
+          Effect.fail(new ProjectionStore.ProjectionStoreThreadNotFoundError({ threadId })),
+      }),
+      Layer.mock(ThreadManagement.ThreadManagementService)({
+        dispatch: (command) =>
+          Effect.sync(() => (state.dispatched.push(command), { sequence: 1, storedEvents: [] })),
+      }),
+    );
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(stoppedAt + 30_000);
+      const sweep = yield* makeSweep;
+      return { state, sweep };
+    }).pipe(Effect.provide(deps), Effect.provideService(ProviderFallbackEnv, {}));
+  }
+
+  itEffect.effect("reads the signed-in fallback and moves the stopped thread to it", () =>
+    Effect.gen(function* () {
+      const { state, sweep } = yield* harness(codexAt);
+      yield* sweep();
+      expect(state.refreshed).toEqual([codexId]);
+      expect(state.dispatched).toHaveLength(1);
+      expect(state.dispatched[0]).toMatchObject({
+        type: "message.dispatch",
+        manualContinuationOfRunId: limited.latestRunId,
+        modelSelection: { instanceId: codexId, model: "gpt-6" },
+      });
+    }),
+  );
+
+  itEffect.effect("reads a fallback that stays unusable once per read lifetime", () =>
+    Effect.gen(function* () {
+      const { state, sweep } = yield* harness((at) => codexAt(at - 20 * 60_000));
+      yield* sweep();
+      yield* TestClock.adjust("31 seconds");
+      yield* sweep();
+      expect(state.refreshed).toEqual([codexId]);
+      expect(state.dispatched).toEqual([]);
+      yield* TestClock.adjust("5 minutes");
+      yield* sweep();
+      expect(state.refreshed).toEqual([codexId, codexId]);
+    }),
+  );
+});

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { ReviewRenderableLineRow } from "./reviewModel";
 import {
@@ -6,6 +6,16 @@ import {
   highlightReviewSelectedLines,
   highlightSourceFile,
 } from "./shikiReviewHighlighter";
+
+// Shiki stops tokenizing a line after 500 ms (vscode-textmate measures it with Date.now) and
+// returns the rest as one plain token, so on a loaded host two highlights of the same code can
+// differ. Freezing only Date keeps that limit from firing; timers stay real.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("highlightSourceFile", () => {
   it("preserves one highlighted token row per source line without trailing newlines", async () => {
