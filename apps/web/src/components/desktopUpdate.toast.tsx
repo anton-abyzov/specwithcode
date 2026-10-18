@@ -1,10 +1,12 @@
 import type { DesktopBridge, DesktopUpdateState } from "@specweave-studio/contracts";
 import { ArrowRightIcon } from "lucide-react";
+import { useEffect } from "react";
 
 import {
   getDesktopUpdateDownloadedVersion,
   getDesktopUpdateReleaseUrl,
 } from "./desktopUpdate.logic";
+import { useDesktopUpdateState } from "../state/desktopUpdate";
 import { toastManager } from "./ui/toast";
 
 type DesktopUpdateShell = Pick<DesktopBridge, "openExternal">;
@@ -98,4 +100,33 @@ export function showDesktopUpdateDownloadedToast(
       </>
     ),
   });
+}
+
+/**
+ * Toasts "Update downloaded" when `state` reports a finished download,
+ * however it got there: a background download, a click in Settings or the
+ * sidebar. Once per version (see showDesktopUpdateDownloadedToast).
+ */
+export function announceDesktopUpdateDownloaded(
+  shell: DesktopUpdateShell | undefined,
+  state: DesktopUpdateState | null,
+): void {
+  if (!shell || state === null || state.status !== "downloaded") return;
+  showDesktopUpdateDownloadedToast(shell, state);
+}
+
+/** Mount once per window: shows the downloaded toast when the state turns downloaded. */
+export function useDesktopUpdateDownloadedToast(state: DesktopUpdateState | null): void {
+  useEffect(() => {
+    announceDesktopUpdateDownloaded(
+      typeof window === "undefined" ? undefined : window.desktopBridge,
+      state,
+    );
+  }, [state]);
+}
+
+/** Renders nothing; announces a finished app download once per version. */
+export function DesktopUpdateDownloadedToast(): null {
+  useDesktopUpdateDownloadedToast(useDesktopUpdateState());
+  return null;
 }

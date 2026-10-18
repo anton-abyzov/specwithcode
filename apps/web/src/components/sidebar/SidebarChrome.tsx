@@ -28,6 +28,7 @@ import { SidebarRestartToUpdate } from "./SidebarRestartToUpdate";
 import { SidebarServerUpdate } from "./SidebarServerUpdate";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
 import { ModStatusItems } from "../../mods/ModPanes";
+import { DesktopUpdateDownloadedToast } from "../desktopUpdate.toast";
 
 const isSettingsPath = (pathname: string) =>
   pathname === "/settings" || pathname.startsWith("/settings/");
@@ -177,6 +178,7 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
       <SidebarUpdateArchitectureWarning />
       <ModStatusItems />
       <SidebarRestartToUpdate />
+      <DesktopUpdateDownloadedToast />
       <SidebarUtilityMenu />
     </SidebarFooter>
   );

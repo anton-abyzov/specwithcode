@@ -10,6 +10,7 @@ const mock = vi.hoisted(() => ({
   check: vi.fn(),
   confirm: vi.fn(),
   native: vi.fn(),
+  install: vi.fn(),
 }));
 vi.mock("../../state/managedUpdates", () => ({
   managedUpdates: { status: () => null, enroll: "enroll", revoke: "revoke", check: "check" },
@@ -132,7 +133,7 @@ it("native cancellation never falls through to a remote administrator request", 
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", { desktopBridge: { requestManagedUpdateConsent: mock.native } });
   mock.native.mockResolvedValue(null);
-  mock.query.data = status;
+  mock.query.data = { ...status, remoteConsent: "enrolled", revision: 3 };
   mock.query.error = null;
   await act(async () => {
     rendered = create(
@@ -142,17 +143,151 @@ it("native cancellation never falls through to a remote administrator request", 
   await act(async () =>
     rendered!.root
       .findAllByType("button")
-      .find((button) => button.props.children === "Allow this connection")!
+      .find((button) => button.props.children === "Revoke permission")!
       .props.onClick(),
   );
   expect(mock.native).toHaveBeenCalledWith({
-    action: "enroll",
+    action: "revoke",
     installationId: "desk",
     environmentId: status.environmentId,
-    expectedRevision: 0,
+    expectedRevision: 3,
   });
-  expect(mock.enroll).not.toHaveBeenCalled();
+  expect(mock.revoke).not.toHaveBeenCalled();
   expect(mock.confirm).not.toHaveBeenCalled();
+});
+
+describe("this Mac's own service and its update agent", () => {
+  it("says the local service is managed by this Mac's updater instead of asking for permission", () => {
+    const html = renderToStaticMarkup(<ManagedUpdatesView {...props} local />);
+    expect(html).toContain("Managed by this Mac&#x27;s updater.");
+    expect(html).not.toContain("no update permission");
+    expect(html).not.toContain("Allow this connection");
+    expect(html).not.toContain("administrator must approve");
+    expect(html).not.toContain("Check only");
+    // A remote connection still shows its permission.
+    expect(renderToStaticMarkup(<ManagedUpdatesView {...props} />)).toContain(
+      "Allow this connection",
+    );
+  });
+
+  it("names a turned-off, stopped or overdue agent and offers Repair only where it can run", () => {
+    const repair = vi.fn();
+    const disabled = renderToStaticMarkup(
+      <ManagedUpdatesView
+        {...props}
+        local
+        onRepair={repair}
+        status={{ ...status, agentLoaded: false, agentDisabled: true, stale: false }}
+      />,
+    );
+    expect(disabled).toContain("Update agent is turned off in launchd.");
+    expect(disabled).toContain(">Repair</button>");
+    const checkedAt = new Date(Date.now() - 4 * 3_600_000 - 60_000).toISOString();
+    for (const changes of [
+      { agentLoaded: false, agentDisabled: false },
+      { agentLoaded: true, agentDisabled: false, stale: true },
+    ]) {
+      const html = renderToStaticMarkup(
+        <ManagedUpdatesView
+          {...props}
+          onRepair={repair}
+          status={{ ...status, checkedAt, ...changes }}
+        />,
+      );
+      expect(html).toContain("Update agent not running · last check 4h ago.");
+      expect(html).toContain(">Repair</button>");
+    }
+    const never = renderToStaticMarkup(
+      <ManagedUpdatesView
+        {...props}
+        status={{ ...status, agentLoaded: false, agentDisabled: false }}
+      />,
+    );
+    expect(never).toContain("Update agent not running · last check never.");
+    expect(never).not.toContain(">Repair</button>"); // No desktop here to repair it.
+    for (const healthy of [
+      { agentLoaded: true, agentDisabled: false, stale: false },
+      {}, // An older service that does not report the agent.
+    ]) {
+      const html = renderToStaticMarkup(
+        <ManagedUpdatesView {...props} onRepair={repair} status={{ ...status, ...healthy }} />,
+      );
+      expect(html).not.toContain("Update agent");
+      expect(html).not.toContain(">Repair</button>");
+    }
+    expect(repair).not.toHaveBeenCalled();
+  });
+
+  it("repairs only on a click, through the desktop, and shows why it failed", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", { desktopBridge: { repairServiceUpdateAgent: mock.install } });
+    mock.query.data = { ...status, agentLoaded: false, agentDisabled: true, stale: false };
+    mock.query.error = null;
+    mock.install.mockResolvedValue({
+      status: "error",
+      message: "The update agent could not be repaired: Operation not permitted (exit 1)",
+    });
+    await act(async () => {
+      rendered = create(
+        <ManagedUpdatesSection
+          environmentId={status.environmentId}
+          label="This Mac"
+          reachable
+          local
+        />,
+      );
+    });
+    expect(mock.install).not.toHaveBeenCalled();
+    await act(async () =>
+      rendered!.root
+        .findAllByType("button")
+        .find((button) => button.props.children === "Repair")!
+        .props.onClick(),
+    );
+    expect(mock.install).toHaveBeenCalledTimes(1);
+    expect(mock.install).toHaveBeenCalledWith();
+    expect(rendered!.root.findAll((node) => node.props.role === "alert")[0]!.props.children).toBe(
+      "The update agent could not be repaired: Operation not permitted (exit 1)",
+    );
+    expect(mock.query.refresh).toHaveBeenCalled();
+    expect(mock.enroll).not.toHaveBeenCalled();
+    expect(mock.native).not.toHaveBeenCalled();
+  });
+
+  it("offers no Repair on a desktop that cannot repair, even with an install method", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", { desktopBridge: { installServiceUpdate: mock.install } });
+    mock.query.data = { ...status, agentLoaded: false, agentDisabled: true };
+    mock.query.error = null;
+    await act(async () => {
+      rendered = create(
+        <ManagedUpdatesSection
+          environmentId={status.environmentId}
+          label="This Mac"
+          reachable
+          local
+        />,
+      );
+    });
+    expect(
+      rendered!.root.findAllByType("button").some((button) => button.props.children === "Repair"),
+    ).toBe(false);
+  });
+
+  it("offers no Repair for another machine's service", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", { desktopBridge: { repairServiceUpdateAgent: mock.install } });
+    mock.query.data = { ...status, agentLoaded: false, agentDisabled: true };
+    mock.query.error = null;
+    await act(async () => {
+      rendered = create(
+        <ManagedUpdatesSection environmentId={status.environmentId} label="Office" reachable />,
+      );
+    });
+    expect(
+      rendered!.root.findAllByType("button").some((button) => button.props.children === "Repair"),
+    ).toBe(false);
+  });
 });
 it("check-only sends no enrollment, configuration or installation request", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);

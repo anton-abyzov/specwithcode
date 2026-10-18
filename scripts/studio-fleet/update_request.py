@@ -14,6 +14,15 @@ wrote. It touches only the identity's updates/config.json, never the service or 
     python3 -B update_request.py request --identity m4 --version 1.0.37 [--force --hold-minutes 15] [--kickstart]
     python3 -B update_request.py status --identity m4
 
+With --kickstart a request is written only while the agent's launchd job is loaded and enabled,
+and a kickstart launchd refuses exits non-zero with launchctl's reason: a request nothing starts
+would lapse unseen. status adds whether the job is loaded (agentLoaded), turned off with
+`launchctl disable` (agentDisabled), and whether its last check is overdue (stale).
+
+It also holds the agent's launchd helpers (update_agent.py is at its file-size cap): the one
+launchctl transport, the disabled-label check install_launch_agent runs before any bootout,
+and the Repair that Settings runs only when a person asks for it.
+
 scripts/studio-fleet/fleet_rollout.py streams this file to each fleet host and runs it there.
 """
 import argparse
@@ -28,6 +37,9 @@ import sys
 import tempfile
 
 REQUEST_TTL = datetime.timedelta(minutes=10)
+# update_agent.CHECK_INTERVAL: a scheduled agent checks this often. A last check older than
+# twice this means the agent is not running its passes.
+CHECK_INTERVAL = datetime.timedelta(minutes=60)
 # A request dated this far ahead of the agent's clock was not written by this computer's app.
 CLOCK_SKEW = datetime.timedelta(minutes=5)
 EXPIRED = 'The update request expired before it could start; choose Update now again.'
@@ -229,7 +241,7 @@ def finalized(own, identity, installation, state):
         return False
 
 
-def status(home, identity):
+def status(home, identity, run=None, launchd=True):
     own = _identity_home(home, identity)
     state = _read_json(own / 'updates' / 'state.json')
     config = _read_json(own / 'updates' / 'config.json')
@@ -242,6 +254,7 @@ def status(home, identity):
     for key in ('installRequestedAt', 'installMode', 'installHoldUntil', 'installCancelledAt', 'installRequest'):
         report[key] = config.get(key)
     report['installFinalized'] = finalized(own, identity, receipt, state)
+    report.update(agent_status(identity, state, config, run, launchd=launchd, home=home))
     return report
 
 
@@ -280,15 +293,119 @@ def write_request(home, identity, version, force=False, hold_minutes=HOLD_MAX_MI
     return {key: config[key] for key in ('installRequestedAt', 'installMode', 'installHoldUntil', 'installRequest')}
 
 
-def kickstart(identity):
-    """Starts the agent's launchd job now instead of at its next 10-minute run."""
-    label = 'gui/%d/com.specweave.studio.%s.updater' % (os.getuid(), identity)
+# ---------------------------------------------------------------- launchd
+
+# install_launch_agent's exit status when launchd has the label turned off: nothing was booted
+# out or loaded, and only Repair (a person's click) turns it back on.
+DISABLED_EXIT = 3
+DISABLED = 'Update agent is turned off in launchd'
+NOT_LOADED = 'Update agent is not loaded in launchd'
+_LAUNCHCTL_TEXT = 400
+
+
+def agent_label(identity):
+    return 'com.specweave.studio.%s.updater' % identity
+
+
+def launchctl_run(args, timeout=30):
+    """(exit status, stdout, stderr) of one launchctl call; status 1 and the error's name when
+    launchctl cannot run at all. The only place the fleet scripts here start launchctl."""
     try:
-        result = subprocess.run([LAUNCHCTL, 'kickstart', label], stdin=subprocess.DEVNULL,
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return result.returncode == 0
+        result = subprocess.run([LAUNCHCTL] + list(args), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, timeout=timeout)
+    except (OSError, subprocess.SubprocessError) as error:
+        return 1, '', type(error).__name__
+    return (result.returncode, result.stdout.decode('utf-8', 'replace'),
+            result.stderr.decode('utf-8', 'replace'))
+
+
+def launchctl_reason(code, *texts):
+    """One line for an error message: launchctl's own words, else its exit status."""
+    text = ' '.join(' '.join(part.split()) for part in texts if part and part.strip())
+    return (text[:_LAUNCHCTL_TEXT] + ' (exit %d)' % code) if text else 'exit %d' % code
+
+
+def label_disabled(listing, label):
+    """True when `launchctl print-disabled <domain>` lists `label` as disabled (`=> true` before
+    macOS 13)."""
+    pattern = r'^\s*"%s"\s*=>\s*(?:disabled|true)\s*$' % re.escape(label)
+    return re.search(pattern, listing or '', re.M) is not None
+
+
+def agent_health(domain, label, run=None):
+    """{'agentLoaded', 'agentDisabled'} as launchd sees the agent's job now. Read-only: `print`
+    and `print-disabled` change nothing. agentDisabled is None when launchd did not answer."""
+    run = run or launchctl_run
+    code, listing, _ = run(['print-disabled', domain])
+    disabled = label_disabled(listing, label) if code == 0 else None
+    return {'agentLoaded': run(['print', domain + '/' + label])[0] == 0, 'agentDisabled': disabled}
+
+
+def stale(checked_at, check_automatically, now=None):
+    """True when the agent should have checked by now and has not: automatic checks are on
+    and its last check is older than twice CHECK_INTERVAL. A job that never checked is
+    reported through agentLoaded and agentDisabled instead."""
+    at = _time(checked_at)
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    return bool(check_automatically) and at is not None and now - at > 2 * CHECK_INTERVAL
+
+
+def agent_status(identity, state, config, run=None, uid=None, now=None, launchd=True, home=None):
+    """agentLoaded, agentDisabled and stale for status(); both launchd fields are None off macOS,
+    when `launchd` is false (a temporary test home has no launchd job of its own) and when
+    `home` has no LaunchAgents plist for the agent (it was never installed or the owner removed
+    it), so Settings never offers to repair an agent nobody set up."""
+    plist = None if home is None else (
+        pathlib.Path(home) / 'Library' / 'LaunchAgents' / (agent_label(identity) + '.plist'))
+    if sys.platform != 'darwin' or not launchd or (plist is not None and not plist.exists()):
+        health = {'agentLoaded': None, 'agentDisabled': None}
+    else:
+        health = agent_health('gui/%d' % (os.getuid() if uid is None else uid), agent_label(identity), run)
+    health['stale'] = stale(state.get('checkedAt'), config.get('checkAutomatically', True), now)
+    return health
+
+
+def repair_launch_agent(identity, uid, launchctl, install, failure, out):
+    """Settings' Repair, run only when a person clicks it: turn the agent's label back on
+    (`launchctl enable`), load its job through `install` (install_launch_agent, which
+    bootstraps a job that is not loaded) and start one pass. Never run on its own: the owner
+    may have turned the agent off on purpose. `launchctl(args, output)` returns the exit
+    status and appends stdout and stderr to `output`."""
+    target = 'gui/%d/%s' % (uid, agent_label(identity))
+
+    def call(args, what):
+        output = []
+        code = launchctl(args, output)
+        if code != 0:
+            raise failure('launchctl could not %s: %s' % (what, launchctl_reason(code, *output[1:2])))
+
+    call(['enable', target], 'turn the update agent back on')
+    code = install()
+    if code != 0:
+        return code
+    call(['kickstart', target], 'start the update agent')
+    out(json.dumps({'result': 'repaired', 'label': agent_label(identity)}))
+    return 0
+
+
+def kickstart(identity, run=None):
+    """Starts the agent's launchd job now instead of at its next 10-minute run. (True, None),
+    or (False, launchctl's reason)."""
+    code, _, error = (run or launchctl_run)(['kickstart', 'gui/%d/%s' % (os.getuid(), agent_label(identity))],
+                                            timeout=15)
+    return (True, None) if code == 0 else (False, launchctl_reason(code, error))
+
+
+def ready_to_kick(identity, run=None):
+    """None when the agent's job can be kicked, else why not, before any request is written."""
+    if sys.platform != 'darwin':
+        return 'LaunchAgents are only available on macOS'
+    health = agent_health('gui/%d' % os.getuid(), agent_label(identity), run)
+    if health['agentDisabled']:
+        return '%s (launchctl disable); nothing would handle the request' % DISABLED
+    if not health['agentLoaded']:
+        return '%s; nothing would handle the request' % NOT_LOADED
+    return None
 
 
 def main(argv=None):
@@ -310,7 +427,8 @@ def main(argv=None):
     home = pathlib.Path(args.home) if args.home else pathlib.Path.home()
     try:
         if args.command == 'status':
-            report = status(home, args.identity)
+            # launchd jobs belong to the user, not to a --home: a test home reads no live job.
+            report = status(home, args.identity, launchd=not args.home)
         else:
             current, wanted = installed(home, args.identity), _version(args.version)
             if current is not None and wanted is not None and _version(current) > wanted:
@@ -318,9 +436,18 @@ def main(argv=None):
             if current == args.version:
                 report = {'identity': args.identity, 'result': 'already-installed', 'version': current}
             else:
+                refused = ready_to_kick(args.identity) if args.kickstart else None
+                if refused:
+                    raise RequestError(refused)
                 report = {'identity': args.identity, 'result': 'requested',
                           'request': write_request(home, args.identity, args.version, args.force, args.hold_minutes)}
-                report['kicked'] = kickstart(args.identity) if args.kickstart else None
+                report['kicked'] = None
+                if args.kickstart:
+                    kicked, reason = kickstart(args.identity)
+                    if not kicked:
+                        raise RequestError('The request was written but launchctl could not start the update '
+                                           'agent: %s' % reason)
+                    report['kicked'] = True
     except (RequestError, OSError) as error:
         message = str(error) if isinstance(error, RequestError) else '%s (%s)' % (type(error).__name__, error.strerror)
         print(json.dumps({'identity': args.identity, 'error': message}))

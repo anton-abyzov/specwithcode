@@ -29,6 +29,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.browserExtensionReconnect]: AuthTerminalOperateScope,
   [WS_METHODS.browserExtensionStop]: AuthTerminalOperateScope,
   [WS_METHODS.browserExtensionInstallFolder]: AuthFilesystemWriteScope,
+  // Lets another machine's threads act in the signed-in Chrome here.
+  [WS_METHODS.browserExtensionPeer]: AuthAccessWriteScope,
   [WS_METHODS.nativeConnectionApply]: AuthFilesystemWriteScope,
   [WS_METHODS.managedUpdatesEnroll]: AuthAccessWriteScope,
   [WS_METHODS.managedUpdatesRevoke]: AuthAccessWriteScope,

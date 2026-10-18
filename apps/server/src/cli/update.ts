@@ -171,6 +171,23 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
   return Option.some(input.launchedAs);
 });
 
+/** The first file named `command` in a directory on this shell's PATH. */
+const findCommandOnPath = Effect.fn("cli.update.find_command_on_path")(function* (command: string) {
+  const path = yield* Path.Path;
+  const fs = yield* FileSystem.FileSystem;
+  const environment = yield* HostProcessEnvironment;
+  const platform = yield* HostProcessPlatform;
+  const delimiter = platform === "win32" ? ";" : ":";
+  for (const directory of (environment["PATH"] ?? "").split(delimiter)) {
+    if (directory.length === 0) continue;
+    const candidate = path.join(directory, command);
+    if (yield* fs.exists(candidate).pipe(Effect.orElseSucceed(() => false))) {
+      return candidate;
+    }
+  }
+  return undefined;
+});
+
 /**
  * The path the executable was started through. Node keeps the shell's
  * spelling in argv0: a launcher symlink or `./specweave-studio` resolves against the
@@ -179,23 +196,36 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
  */
 export const resolveLauncherPath = Effect.gen(function* () {
   const path = yield* Path.Path;
-  const fs = yield* FileSystem.FileSystem;
   const invokedAs = yield* HostProcessInvokedAs;
   const cwd = yield* HostProcessWorkingDirectory;
-  const environment = yield* HostProcessEnvironment;
-  const platform = yield* HostProcessPlatform;
   if (invokedAs.includes("/") || invokedAs.includes("\\")) {
     return path.resolve(cwd, invokedAs);
   }
-  const delimiter = platform === "win32" ? ";" : ":";
-  for (const directory of (environment["PATH"] ?? "").split(delimiter)) {
-    if (directory.length === 0) continue;
-    const candidate = path.join(directory, invokedAs);
-    if (yield* fs.exists(candidate).pipe(Effect.orElseSucceed(() => false))) {
-      return candidate;
-    }
+  return yield* findCommandOnPath(invokedAs);
+});
+
+/**
+ * The launcher this process was started through, for repointing or removing
+ * it. The executable sees it in argv0. A Node bundle runs under node, so
+ * argv0 is node; its POSIX launcher script exports the name it was run as in
+ * STUDIO_CLI_NAME, which is looked up on PATH the same way. Callers still
+ * check that the result is a symlink into this home's versions tree.
+ */
+export const resolveLaunchedAs = Effect.gen(function* () {
+  if (yield* HostProcessIsExecutable) return yield* resolveLauncherPath;
+  const environment = yield* HostProcessEnvironment;
+  const platform = yield* HostProcessPlatform;
+  const cliName = environment["STUDIO_CLI_NAME"];
+  if (
+    platform === "win32" ||
+    cliName === undefined ||
+    cliName.length === 0 ||
+    cliName.includes("/") ||
+    cliName.includes("\\")
+  ) {
+    return undefined;
   }
-  return undefined;
+  return yield* findCommandOnPath(cliName);
 });
 
 /**
@@ -550,7 +580,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     ),
   );
 
-  const launchedAs = (yield* HostProcessIsExecutable) ? yield* resolveLauncherPath : undefined;
+  const launchedAs = yield* resolveLaunchedAs;
   const repointed = yield* repointLauncher({
     launchedAs,
     versionsDir: path.dirname(runtime.versionDir),

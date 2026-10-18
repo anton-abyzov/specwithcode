@@ -3,9 +3,16 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
+import {
+  HostProcessEnvironment,
+  HostProcessInvokedAs,
+  HostProcessIsExecutable,
+  HostProcessPlatform,
+  HostProcessWorkingDirectory,
+} from "@specweave-studio/shared/hostProcess";
 
 import { findOwnedLauncher } from "./uninstall.ts";
+import { resolveLaunchedAs } from "./update.ts";
 
 it.layer(NodeServices.layer)("specweave-studio uninstall launcher", (it) => {
   it.effect("claims only a launcher that points into this home's runtime tree", () =>
@@ -32,6 +39,38 @@ it.layer(NodeServices.layer)("specweave-studio uninstall launcher", (it) => {
       assert.isUndefined(yield* findOwnedLauncher({ launchedAs: theirs, versionsDir }));
       assert.isUndefined(yield* findOwnedLauncher({ launchedAs: copy, versionsDir }));
       assert.isUndefined(yield* findOwnedLauncher({ launchedAs: undefined, versionsDir }));
+    }).pipe(Effect.scoped, Effect.provideService(HostProcessPlatform, "linux")),
+  );
+  it.effect("claims a node-bundle launcher only through STUDIO_CLI_NAME", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "studio-uninstall-node-bundle-" });
+      const versionsDir = path.join(root, "runtime/versions");
+      const launcher = path.join(versionsDir, "1.0.0/specweave-studio");
+      yield* fs.makeDirectory(path.dirname(launcher), { recursive: true });
+      yield* fs.writeFileString(launcher, "#!/bin/sh\n");
+      const onPath = path.join(root, "bin/specwithcode");
+      yield* fs.makeDirectory(path.dirname(onPath), { recursive: true });
+      yield* fs.symlink(launcher, onPath);
+      const launchedAs = (env: Record<string, string>) =>
+        resolveLaunchedAs.pipe(
+          Effect.provideService(HostProcessIsExecutable, false),
+          Effect.provideService(HostProcessInvokedAs, "node"),
+          Effect.provideService(HostProcessEnvironment, { PATH: path.dirname(onPath), ...env }),
+          Effect.provideService(HostProcessWorkingDirectory, root),
+        );
+
+      assert.equal(
+        yield* findOwnedLauncher({
+          launchedAs: yield* launchedAs({ STUDIO_CLI_NAME: "specwithcode" }),
+          versionsDir,
+        }),
+        onPath,
+      );
+      assert.isUndefined(
+        yield* findOwnedLauncher({ launchedAs: yield* launchedAs({}), versionsDir }),
+      );
     }).pipe(Effect.scoped, Effect.provideService(HostProcessPlatform, "linux")),
   );
 });

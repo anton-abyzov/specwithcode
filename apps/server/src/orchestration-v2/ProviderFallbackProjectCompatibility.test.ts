@@ -20,7 +20,7 @@ import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
 import * as Instances from "../provider/ProviderInstanceRegistry.ts";
 import * as Providers from "../provider/ProviderRegistry.ts";
-import * as Settings from "../serverSettings.ts";
+import { fallbackPolicyTestLayer } from "./providerFallbackPolicyTestHelpers.ts";
 import * as Projects from "../project/ProjectService.ts";
 import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
 import { provider } from "../studio/fixtures.ts";
@@ -128,13 +128,11 @@ function sweepFixture(
             )
           : Effect.succeed(Option.fromNullishOr(projects.find((project) => project.id === id))),
     }),
-    Layer.mock(Settings.ServerSettingsService)({
-      getSettings: Effect.succeed({
-        ...DEFAULT_SERVER_SETTINGS,
-        providerLimitAction: "switch",
-        providerLimitSwitchAtPercent: 95,
-        providerLimitFallbackModelSelection: { instanceId: copilot.instanceId, model: "opus" },
-      }),
+    fallbackPolicyTestLayer({
+      ...DEFAULT_SERVER_SETTINGS,
+      providerLimitAction: "switch",
+      providerLimitSwitchAtPercent: 95,
+      providerLimitFallbackModelSelection: { instanceId: copilot.instanceId, model: "opus" },
     }),
     // Fallback only trusts a fresh usage read, so each sweep sees one taken now.
     Layer.mock(Providers.ProviderRegistry)({

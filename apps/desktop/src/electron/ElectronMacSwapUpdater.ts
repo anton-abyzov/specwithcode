@@ -127,6 +127,8 @@ export function makeMacSwapUpdater(
   let allowDowngrade = false;
   let autoInstallOnAppQuit = false;
   let candidate: Candidate | null = null;
+  // The manifest of a release never changes, so it is read once per asset.
+  let manifestCache: { readonly assetId: number; readonly text: string } | null = null;
   let pending: Pending | null = null;
   let installStarted = false;
 
@@ -186,8 +188,11 @@ export function makeMacSwapUpdater(
       events.emit("update-not-available");
       return;
     }
-    const manifestResponse = await openReleaseAsset(feed, selected.manifestAsset.id, fetchImpl);
-    const manifest = parseUpdateManifest(await manifestResponse.text());
+    if (manifestCache?.assetId !== selected.manifestAsset.id) {
+      const manifestResponse = await openReleaseAsset(feed, selected.manifestAsset.id, fetchImpl);
+      manifestCache = { assetId: selected.manifestAsset.id, text: await manifestResponse.text() };
+    }
+    const manifest = parseUpdateManifest(manifestCache.text);
     if (manifest === null || manifest.version !== selected.version) {
       throw new Error(
         `Release ${selected.release.tagName} has an unreadable ${selected.manifestAsset.name}.`,

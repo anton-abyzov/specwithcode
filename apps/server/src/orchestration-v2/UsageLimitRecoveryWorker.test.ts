@@ -7,7 +7,6 @@ import { assert, it } from "@effect/vitest";
 import {
   ProjectId,
   CommandId,
-  DEFAULT_SERVER_SETTINGS,
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   OrchestrationV2Command,
   ProviderInstanceId,
@@ -266,9 +265,7 @@ it.effect(
                 Option.some({ projectId: ProjectId.make("project") } as ProjectStore.ProjectRow),
               ),
           }),
-          Layer.mock(Settings.ServerSettingsService)({
-            getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
-          }),
+          Settings.layerTest(),
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
             getLimitRecoveryCandidates: () => Effect.succeed([current]),
             getThreadShell: () =>
@@ -512,12 +509,9 @@ it.effect.each([
       const commands: OrchestrationV2ServerCommand[] = [];
       const deps = Layer.mergeAll(
         ProjectAdmission.layer,
-        Layer.mock(Settings.ServerSettingsService)({
-          getSettings: Effect.succeed({
-            ...DEFAULT_SERVER_SETTINGS,
-            autoResumeLimitedThreads: false,
-            snoozeLimitedThreads: false,
-          }),
+        Settings.layerTest({
+          autoResumeLimitedThreads: false,
+          snoozeLimitedThreads: false,
         }),
         Layer.mock(Availability.UsageLimitAvailability)({
           check: () =>
@@ -631,9 +625,7 @@ it.effect.each(["paused", "archived", "deleted", "missing"] as const)(
       };
       const deps = Layer.mergeAll(
         ProjectAdmission.layer,
-        Layer.mock(Settings.ServerSettingsService)({
-          getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
-        }),
+        Settings.layerTest(),
         Layer.mock(Availability.UsageLimitAvailability)({
           check: () =>
             Effect.gen(function* () {
@@ -723,9 +715,7 @@ it.effect("serializes final project policy and resume dispatch with a competing 
     };
     const deps = Layer.mergeAll(
       ProjectAdmission.layer,
-      Layer.mock(Settings.ServerSettingsService)({
-        getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
-      }),
+      Settings.layerTest(),
       Layer.mock(Availability.UsageLimitAvailability)({
         check: () => Effect.succeed({ codex: false, mayResume: true, observation: null }),
       }),
@@ -845,12 +835,9 @@ const claudeSweepHarness = (input: {
   const state = { current: input.thread, commands: [] as OrchestrationV2ServerCommand[] };
   const deps = Layer.mergeAll(
     ProjectAdmission.layer,
-    Layer.mock(Settings.ServerSettingsService)({
-      getSettings: Effect.succeed({
-        ...DEFAULT_SERVER_SETTINGS,
-        providerLimitAction: "wait" as const,
-        autoResumeLimitedThreads: input.globalAutoResume ?? false,
-      }),
+    Settings.layerTest({
+      providerLimitAction: "wait",
+      autoResumeLimitedThreads: input.globalAutoResume ?? false,
     }),
     Layer.mock(Availability.UsageLimitAvailability)({
       // What the real service answers for a provider without a native probe.
@@ -968,3 +955,302 @@ it("lets either the project or the global setting arm new stops", () => {
   assert.isTrue(autoResumeByDefault(undefined, { autoResumeLimitedThreads: true }));
   assert.isFalse(autoResumeByDefault(false, { autoResumeLimitedThreads: false }));
 });
+
+const policyProjectId = ProjectId.make("recovery-policy-race");
+const policyRaceHarness = (
+  input: {
+    settings?: Parameters<typeof Settings.layerTest>[0];
+    query?: Effect.Effect<void>;
+    projectRead?: Effect.Effect<void>;
+    commit?: Effect.Effect<void>;
+    check?: Effect.Effect<void>;
+    resume?: Effect.Effect<void>;
+  } = {},
+) => {
+  const state = {
+    current: null as ProjectionStore.ProjectionLimitRecoveryCandidate | null,
+    commands: [] as OrchestrationV2ServerCommand[],
+    queries: 0,
+    projectReads: 0,
+    checks: 0,
+  };
+  const deps = Layer.mergeAll(
+    ProjectAdmission.layer,
+    Settings.layerTest({
+      autoResumeLimitedThreads: true,
+      snoozeLimitedThreads: false,
+      providerLimitAction: "ask",
+      ...input.settings,
+    }),
+    Layer.mock(ProjectStore.ProjectStoreV2)({
+      get: () =>
+        Effect.gen(function* () {
+          if (++state.projectReads === 1 && input.projectRead) yield* input.projectRead;
+          return Option.some({
+            projectId: policyProjectId,
+            deletedAt: null,
+            workspaceSettings: DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+          } as ProjectStore.ProjectRow);
+        }),
+    }),
+    Layer.mock(ProjectionStore.ProjectionStoreV2)({
+      getLimitRecoveryCandidates: () =>
+        Effect.gen(function* () {
+          if (++state.queries === 1 && input.query) yield* input.query;
+          return state.current ? [state.current] : [];
+        }),
+      getThreadShell: () =>
+        Effect.sync(() =>
+          state.current ? ({ ...state.current, projectId: policyProjectId } as never) : null,
+        ),
+    }),
+    Layer.mock(Availability.UsageLimitAvailability)({
+      check: () =>
+        Effect.gen(function* () {
+          state.checks++;
+          if (input.check) yield* input.check;
+          return { codex: false, observation: null };
+        }),
+    }),
+    Layer.mock(ThreadManagement.ThreadManagementService)({
+      dispatch: (command) =>
+        Effect.gen(function* () {
+          if (command.type === "thread.metadata.update" && input.commit) yield* input.commit;
+          if (command.type === "message.dispatch" && input.resume) yield* input.resume;
+          state.commands.push(command);
+          if (command.type === "thread.metadata.update" && command.limitRecovery)
+            state.current = {
+              ...state.current!,
+              limitRecovery: updateLimitRecovery(
+                state.current!.limitRecovery,
+                command.limitRecovery,
+                command.commandId,
+                command.limitRecoveryPolicyArm === true,
+              )!,
+            };
+          if (command.type === "message.dispatch")
+            state.current = { ...state.current!, status: "running" };
+          return { sequence: state.commands.length, storedEvents: [] };
+        }),
+    }),
+  );
+  return { state, deps };
+};
+
+it.effect.each(["global", "project-wait", "snooze"] as const)(
+  "does not use stale %s policy after a blocked candidate query finds a new stop",
+  (policy) =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const { state, deps } = policyRaceHarness({
+        settings: {
+          autoResumeLimitedThreads: policy === "global",
+          snoozeLimitedThreads: policy === "snooze",
+          ...(policy === "project-wait"
+            ? {
+                projectSettingsOverrides: {
+                  [policyProjectId]: {
+                    providerLimitAction: "switch",
+                    providerLimitWaitUnderMinutes: 30,
+                  },
+                },
+              }
+            : {}),
+        },
+        query: Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release))),
+      });
+      yield* Effect.gen(function* () {
+        const settings = yield* Settings.ServerSettingsService;
+        const sweep = yield* makeSweep;
+        const running = yield* sweep().pipe(Effect.forkScoped);
+        yield* Deferred.await(entered);
+        yield* settings.updateSettings({
+          autoResumeLimitedThreads: false,
+          snoozeLimitedThreads: false,
+          projectSettingsOverrides: {
+            [policyProjectId]: {
+              providerLimitAction: "ask",
+              providerLimitRedeemResets: false,
+              providerLimitSpendCredits: false,
+              providerLimitUseApiCredits: false,
+            },
+          },
+        });
+        // The fixture does not even exist until the settings write has completed.
+        state.current = claudeLimitStop(60_000);
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(running);
+        assert.deepEqual(state.commands, []);
+        yield* TestClock.adjust("2 minutes");
+        yield* sweep();
+        assert.deepEqual(state.commands, []);
+        assert.equal(state.checks, 0);
+      }).pipe(Effect.provide(deps));
+    }).pipe(Effect.scoped),
+);
+
+it.effect("rechecks settings after waiting for project admission", () =>
+  Effect.gen(function* () {
+    const held = yield* Deferred.make<void>();
+    const selected = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const { state, deps } = policyRaceHarness({
+      projectRead: Deferred.succeed(selected, undefined).pipe(Effect.asVoid),
+    });
+    state.current = claudeLimitStop(60_000);
+    yield* Effect.gen(function* () {
+      const admission = yield* ProjectAdmission.ProjectAdmission;
+      const settings = yield* Settings.ServerSettingsService;
+      const sweep = yield* makeSweep;
+      const holder = yield* admission
+        .withLock(
+          policyProjectId,
+          Deferred.succeed(held, undefined).pipe(Effect.andThen(Deferred.await(release))),
+        )
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(held);
+      const running = yield* sweep().pipe(Effect.forkScoped);
+      yield* Deferred.await(selected);
+      yield* settings.updateSettings({ autoResumeLimitedThreads: false });
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(holder);
+      yield* Fiber.join(running);
+      assert.deepEqual(state.commands, []);
+    }).pipe(Effect.provide(deps));
+  }).pipe(Effect.scoped),
+);
+
+it.effect("serializes the policy arm commit before a competing settings write", () =>
+  Effect.gen(function* () {
+    const entered = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const attempted = yield* Deferred.make<void>();
+    const written = yield* Deferred.make<void>();
+    const order: string[] = [];
+    const { state, deps } = policyRaceHarness({
+      commit: Deferred.succeed(entered, undefined).pipe(
+        Effect.andThen(Deferred.await(release)),
+        Effect.tap(() =>
+          Effect.sync(() => {
+            order.push("arm");
+          }),
+        ),
+        Effect.asVoid,
+      ),
+    });
+    state.current = claudeLimitStop(60_000);
+    yield* Effect.gen(function* () {
+      const settings = yield* Settings.ServerSettingsService;
+      const sweep = yield* makeSweep;
+      const running = yield* sweep().pipe(Effect.forkScoped);
+      yield* Deferred.await(entered);
+      const writing = yield* Deferred.succeed(attempted, undefined).pipe(
+        Effect.andThen(settings.updateSettings({ autoResumeLimitedThreads: false })),
+        Effect.tap(() =>
+          Effect.sync(() => {
+            order.push("write");
+          }),
+        ),
+        Effect.tap(() => Deferred.succeed(written, undefined)),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Deferred.await(attempted);
+      yield* Effect.yieldNow;
+      assert.isTrue(Option.isNone(yield* Deferred.poll(written)));
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(running);
+      yield* Fiber.join(writing);
+      assert.deepEqual(order, ["arm", "write"]);
+      assert.isTrue(state.current!.limitRecovery!.autoResume);
+    }).pipe(Effect.provide(deps));
+  }).pipe(Effect.scoped),
+);
+
+it.effect(
+  "keeps explicit recovery and releases settings during availability and continuation",
+  () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const resuming = yield* Deferred.make<void>();
+      const finishResume = yield* Deferred.make<void>();
+      const { state, deps } = policyRaceHarness({
+        check: Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release))),
+        resume: Deferred.succeed(resuming, undefined).pipe(
+          Effect.andThen(Deferred.await(finishResume)),
+        ),
+      });
+      const stop = claudeLimitStop(60_000);
+      state.current = {
+        ...stop,
+        limitRecovery: updateLimitRecovery(
+          null,
+          {
+            runId: stop.latestRunId!,
+            resetAt: stop.usageLimitResetAt!,
+            autoResume: true,
+          },
+          CommandId.make("explicit-recovery"),
+        )!,
+      };
+      const explicit = state.current.limitRecovery;
+      yield* TestClock.adjust("2 minutes");
+      yield* Effect.gen(function* () {
+        const settings = yield* Settings.ServerSettingsService;
+        const sweep = yield* makeSweep;
+        const running = yield* sweep().pipe(Effect.forkScoped);
+        yield* Deferred.await(entered);
+        // Completion before the check is released proves no settings lock spans the probe.
+        yield* settings.updateSettings({ autoResumeLimitedThreads: false });
+        yield* Deferred.succeed(release, undefined);
+        yield* Deferred.await(resuming);
+        yield* settings.updateSettings({ snoozeLimitedThreads: true });
+        yield* Deferred.succeed(finishResume, undefined);
+        yield* Fiber.join(running);
+        assert.deepEqual(
+          state.commands.map((command) => command.type),
+          ["message.dispatch"],
+        );
+        assert.deepEqual(state.current!.limitRecovery, explicit);
+      }).pipe(Effect.provide(deps));
+    }).pipe(Effect.scoped),
+);
+
+it.effect("does not arm a new stop with policy captured before an availability check", () =>
+  Effect.gen(function* () {
+    const entered = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const { state, deps } = policyRaceHarness({
+      check: Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release))),
+    });
+    const stop = claudeLimitStop(60_000);
+    state.current = {
+      ...stop,
+      limitRecovery: updateLimitRecovery(
+        null,
+        {
+          runId: stop.latestRunId!,
+          resetAt: stop.usageLimitResetAt!,
+          autoResume: true,
+        },
+        CommandId.make("explicit-before-new-stop"),
+      )!,
+    };
+    yield* TestClock.adjust("2 minutes");
+    yield* Effect.gen(function* () {
+      const settings = yield* Settings.ServerSettingsService;
+      const sweep = yield* makeSweep;
+      const running = yield* sweep().pipe(Effect.forkScoped);
+      yield* Deferred.await(entered);
+      yield* settings.updateSettings({ autoResumeLimitedThreads: false });
+      state.current = { ...claudeLimitStop(180_000), latestRunId: RunId.make("new-stop") };
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(running);
+      yield* TestClock.adjust("2 minutes");
+      yield* sweep();
+      assert.deepEqual(state.commands, []);
+      assert.isNull(state.current.limitRecovery);
+    }).pipe(Effect.provide(deps));
+  }).pipe(Effect.scoped),
+);

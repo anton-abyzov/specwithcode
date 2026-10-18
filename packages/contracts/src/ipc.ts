@@ -1434,6 +1434,12 @@ export interface DesktopBridge {
   getUpdateState: () => Promise<DesktopUpdateState>;
   setUpdateChannel: (channel: DesktopUpdateChannel) => Promise<DesktopUpdateState>;
   checkForUpdate: () => Promise<DesktopUpdateCheckResult>;
+  /**
+   * Checks only when the last check is over a minute old and automatic checks
+   * are on; for opening the Settings page with the version row. Absent on
+   * desktop builds predating it.
+   */
+  checkForUpdateIfStale?: () => Promise<void>;
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: (options?: DesktopUpdateInstallOptions) => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
@@ -1460,6 +1466,11 @@ export interface DesktopBridge {
    * Rejects when the withdrawal could not be saved.
    */
   cancelServiceUpdate?: () => Promise<StudioServiceUpdateState>;
+  /**
+   * Settings' Repair of this Mac's update agent (launchctl enable, bootstrap,
+   * kickstart), only on a person's click; absent on desktops without Repair.
+   */
+  repairServiceUpdateAgent?: () => Promise<StudioServiceUpdateState>;
   onServiceUpdateState?: (listener: (state: StudioServiceUpdateState) => void) => () => void;
   /** Present when the desktop shell accepts `specweave-studio app` activation requests. */
   appActivation?: {

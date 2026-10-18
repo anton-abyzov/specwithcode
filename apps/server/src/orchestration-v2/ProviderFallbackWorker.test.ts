@@ -18,7 +18,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import * as Instances from "../provider/ProviderInstanceRegistry.ts";
 import * as Providers from "../provider/ProviderRegistry.ts";
-import * as Settings from "../serverSettings.ts";
+import { fallbackPolicyTestLayer } from "./providerFallbackPolicyTestHelpers.ts";
 import * as Projects from "../project/ProjectService.ts";
 import { provider } from "../studio/fixtures.ts";
 import {
@@ -898,7 +898,7 @@ describe("sweep redeem path", () => {
       Layer.mock(Projects.ProjectService)({
         getById: () => Effect.succeed(Option.some(legacyProject)),
       }),
-      Layer.mock(Settings.ServerSettingsService)({ getSettings: Effect.succeed(settings) }),
+      fallbackPolicyTestLayer(settings),
       Layer.mock(Providers.ProviderRegistry)({
         getProviders: Effect.succeed([input.cached]),
         refreshInstance: () => Effect.sync(() => ((state.refreshed += 1), [state.fresh])),
@@ -1113,9 +1113,7 @@ describe("sweep API credit path", () => {
       Layer.mock(Projects.ProjectService)({
         getById: () => Effect.succeed(Option.some(legacyProject)),
       }),
-      Layer.mock(Settings.ServerSettingsService)({
-        getSettings: Effect.succeed(input.settings ?? ruleOn),
-      }),
+      fallbackPolicyTestLayer(input.settings ?? ruleOn),
       Layer.mock(Providers.ProviderRegistry)({
         getProviders: Effect.succeed([input.cached, api]),
       }),
@@ -1629,7 +1627,7 @@ describe("sweep switch path with a stale fallback read", () => {
       Layer.mock(Projects.ProjectService)({
         getById: () => Effect.succeed(Option.some(legacyProject)),
       }),
-      Layer.mock(Settings.ServerSettingsService)({ getSettings: Effect.succeed(settings) }),
+      fallbackPolicyTestLayer(settings),
       Layer.mock(Providers.ProviderRegistry)({
         getProviders: Effect.sync(() => state.providers),
         refreshInstance: (id) =>
@@ -1749,9 +1747,7 @@ describe("a stopped worker and its coordinator", () => {
     };
     const deps = Layer.mergeAll(
       Layer.mock(Projects.ProjectService)({ getById: () => Effect.succeed(Option.some(project)) }),
-      Layer.mock(Settings.ServerSettingsService)({
-        getSettings: Effect.succeed({ ...DEFAULT_SERVER_SETTINGS, providerLimitAction: "switch" }),
-      }),
+      fallbackPolicyTestLayer({ ...DEFAULT_SERVER_SETTINGS, providerLimitAction: "switch" }),
       Layer.mock(Providers.ProviderRegistry)({
         getProviders: Effect.succeed([claudeSpent, copilot]),
       }),

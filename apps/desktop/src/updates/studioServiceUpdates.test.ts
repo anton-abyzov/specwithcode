@@ -12,9 +12,13 @@ import {
   cancelServiceInstallChange,
   findManagedServiceInstallations,
   hasPendingForcedInstall,
+  launchdFailureReason,
   makeServiceUpdateController,
   parseServiceInstallOptions,
   refreshThenRunAgent,
+  repairServiceAgent,
+  SERVICE_AGENT_DISABLED_MESSAGE,
+  ServiceAgentError,
   SERVICE_INSTALL_HOLD_LIMIT_MS,
   SERVICE_INSTALL_REQUEST_TTL_MS,
   serviceInstallRequestRecord,
@@ -631,15 +635,164 @@ describe("studioServiceUpdates", () => {
       expect(calls).toEqual(["ensure", "kick", "ensured"]);
     });
 
-    it("fails when the kick does", async () => {
-      await expect(
-        Effect.runPromise(
+    it("fails with launchctl's reason when the kick does", async () => {
+      const error = await Effect.runPromise(
+        Effect.flip(
           refreshThenRunAgent({
             ensureAgent: async () => {},
+            runAgentNow: () =>
+              Promise.reject(
+                new ServiceAgentError({
+                  step: "kickstart",
+                  message:
+                    "launchctl could not start the update agent: Operation not permitted (exit 1)",
+                }),
+              ),
+          }),
+        ),
+      );
+      expect(error.step).toBe("kickstart");
+      expect(error.message).toBe(
+        "launchctl could not start the update agent: Operation not permitted (exit 1)",
+      );
+    });
+
+    it("names the failed refresh too when the kick fails after it", async () => {
+      const error = await Effect.runPromise(
+        Effect.flip(
+          refreshThenRunAgent({
+            ensureAgent: () => Promise.reject(new Error("python failed")),
             runAgentNow: () => Promise.reject(new Error("launchctl failed")),
           }),
         ),
-      ).rejects.toThrow("Effect.tryPromise");
+      );
+      expect(error.message).toBe(
+        "The update agent did not start: launchctl failed (refreshing it failed too: The update agent did not start: python failed)",
+      );
+    });
+
+    it("never kicks a job launchd has turned off", async () => {
+      const calls: string[] = [];
+      const error = await Effect.runPromise(
+        Effect.flip(
+          refreshThenRunAgent({
+            ensureAgent: () =>
+              Promise.reject(
+                new ServiceAgentError({
+                  step: "disabled",
+                  message: SERVICE_AGENT_DISABLED_MESSAGE,
+                }),
+              ),
+            runAgentNow: async () => {
+              calls.push("kick");
+            },
+          }),
+        ),
+      );
+      expect(error).toMatchObject({ step: "disabled", message: SERVICE_AGENT_DISABLED_MESSAGE });
+      expect(calls).toEqual([]);
+    });
+  });
+
+  describe("agent failures and Repair", () => {
+    it("keeps what launchctl or the helper said", () => {
+      expect(
+        launchdFailureReason({
+          code: 3,
+          stdout: '{"result": "disabled", "message": "Update agent is turned off in launchd"}\n',
+          stderr: "",
+        }),
+      ).toBe("Update agent is turned off in launchd");
+      expect(
+        launchdFailureReason({
+          code: 1,
+          stdout: "",
+          stderr:
+            "update-agent m4: error: launchctl could not load the update agent:\n Bootstrap failed: 5\n",
+        }),
+      ).toBe(
+        "update-agent m4: error: launchctl could not load the update agent: Bootstrap failed: 5 (exit 1)",
+      );
+      expect(launchdFailureReason({ code: 113, stdout: "", stderr: "" })).toBe("exit 113");
+      expect(launchdFailureReason({ message: "spawn ENOENT" })).toBe("spawn ENOENT");
+    });
+
+    it("reports Repair's outcome as the message Settings shows", async () => {
+      await expect(
+        Effect.runPromise(repairServiceAgent({ repairAgent: async () => {} })),
+      ).resolves.toBe(null);
+      await expect(
+        Effect.runPromise(
+          repairServiceAgent({
+            repairAgent: () =>
+              Promise.reject(
+                new ServiceAgentError({
+                  step: "repair",
+                  message:
+                    "The update agent could not be repaired: Operation not permitted (exit 1)",
+                }),
+              ),
+          }),
+        ),
+      ).resolves.toBe("The update agent could not be repaired: Operation not permitted (exit 1)");
+    });
+
+    it("maps the helper's exits to typed failures and runs Repair only through the agent", async () => {
+      const home = NodeFS.mkdtempSync(Path.join(NodeOS.tmpdir(), "service-agent-"));
+      try {
+        const studioHome = Path.join(home, ".specweave-studio", "m4");
+        NodeFS.mkdirSync(studioHome, { recursive: true });
+        NodeFS.writeFileSync(
+          Path.join(studioHome, "installation.json"),
+          installationJson("m4", { studioHome, stateDir: Path.join(studioHome, "userdata") }),
+        );
+        // A stand-in for update_agent.py: records its arguments, never runs launchctl.
+        const script = Path.join(home, "fake_agent.py");
+        const record = Path.join(home, "argv.json");
+        NodeFS.writeFileSync(
+          script,
+          [
+            "import json, os, sys",
+            `open(${JSON.stringify(record)}, 'w').write(json.dumps(sys.argv[1:]))`,
+            `mode = open(${JSON.stringify(Path.join(home, "mode"))}).read().strip()`,
+            "if mode == 'disabled':",
+            "    print(json.dumps({'result': 'disabled', 'label': 'x', 'message': 'Update agent is turned off in launchd'}))",
+            "    sys.exit(3)",
+            "if mode == 'broken':",
+            "    print('update-agent m4: error: launchctl could not load the update agent: Bootstrap failed: 5', file=sys.stderr)",
+            "    sys.exit(1)",
+            "print(json.dumps({'result': 'repaired'}))",
+          ].join("\n"),
+        );
+        const controller = makeServiceUpdateController({
+          homeDirectory: home,
+          platform: "darwin",
+          agentScriptPath: () => script,
+        });
+        const mode = (value: string) => NodeFS.writeFileSync(Path.join(home, "mode"), value);
+        const argv = () => JSON.parse(NodeFS.readFileSync(record, "utf8")) as string[];
+
+        mode("disabled");
+        await expect(controller.ensureAgent()).rejects.toMatchObject({
+          step: "disabled",
+          message: SERVICE_AGENT_DISABLED_MESSAGE,
+        });
+        expect(argv()).toEqual(["--identity", "m4", "--install-launch-agent"]);
+
+        mode("broken");
+        await expect(controller.ensureAgent()).rejects.toMatchObject({
+          step: "refresh",
+          message:
+            "The update agent could not be installed: update-agent m4: error: launchctl could not load the update agent: Bootstrap failed: 5 (exit 1)",
+        });
+        await expect(controller.repairAgent()).rejects.toMatchObject({ step: "repair" });
+
+        mode("ok");
+        await expect(controller.repairAgent()).resolves.toBeUndefined();
+        expect(argv()).toEqual(["--identity", "m4", "--repair-launch-agent"]);
+      } finally {
+        NodeFS.rmSync(home, { recursive: true, force: true });
+      }
     });
   });
 });

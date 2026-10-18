@@ -12,6 +12,7 @@ vi.mock("./ui/toast", () => ({
 
 import {
   __resetDesktopUpdateAnnouncementForTests,
+  announceDesktopUpdateDownloaded,
   showDesktopUpdateDownloadedToast,
 } from "./desktopUpdate.toast";
 
@@ -134,5 +135,28 @@ describe("showDesktopUpdateDownloadedToast", () => {
         title: "Unable to open release notes",
       });
     });
+  });
+});
+
+describe("announceDesktopUpdateDownloaded", () => {
+  beforeEach(() => {
+    testState.addToast.mockReset();
+    __resetDesktopUpdateAnnouncementForTests();
+  });
+
+  it("toasts once when the state turns downloaded, without a click", () => {
+    const shell = { openExternal: vi.fn(async () => true) };
+    announceDesktopUpdateDownloaded(shell, downloadedState({ status: "downloading" }));
+    expect(testState.addToast).not.toHaveBeenCalled();
+    announceDesktopUpdateDownloaded(shell, downloadedState());
+    announceDesktopUpdateDownloaded(shell, downloadedState());
+    expect(testState.addToast).toHaveBeenCalledTimes(1);
+    expect(testState.addToast.mock.calls[0]?.[0]).toMatchObject({ title: "Update downloaded" });
+  });
+
+  it("does nothing outside the desktop app", () => {
+    announceDesktopUpdateDownloaded(undefined, downloadedState());
+    announceDesktopUpdateDownloaded({ openExternal: vi.fn(async () => true) }, null);
+    expect(testState.addToast).not.toHaveBeenCalled();
   });
 });

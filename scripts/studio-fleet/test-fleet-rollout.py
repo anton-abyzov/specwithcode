@@ -739,6 +739,29 @@ class RequestCommand(unittest.TestCase):
         (self.own / 'updates').mkdir(parents=True)
         (self.own / 'installation.json').write_text(json.dumps({'identity': 'm9', 'version': OLD}))
         self.config = self.own / 'updates' / 'config.json'
+        self.plist = self.home / 'Library' / 'LaunchAgents' / (update_request.agent_label('m9') + '.plist')
+        self.plist.parent.mkdir(parents=True)
+        self.plist.write_text('<plist/>')
+        # launchd as the stub reports it; a test never reaches the real launchctl.
+        self.launchd = {'loaded': True, 'disabled': False, 'kick': (0, ''), 'calls': []}
+        patcher = mock.patch.object(update_request, 'launchctl_run', self.fake_launchctl)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        platform = mock.patch.object(update_request.sys, 'platform', 'darwin')
+        platform.start()
+        self.addCleanup(platform.stop)
+
+    def fake_launchctl(self, args, timeout=30):
+        self.launchd['calls'].append(list(args))
+        label = 'com.specweave.studio.m9.updater'
+        if args[0] == 'print-disabled':
+            return 0, '{\n\t"com.example.other" => disabled\n\t"%s" => %s\n}\n' % (
+                label, 'disabled' if self.launchd['disabled'] else 'enabled'), ''
+        if args[0] == 'print':
+            return (0, '', '') if self.launchd['loaded'] else (113, '', 'Could not find service "%s"' % label)
+        self.assertEqual(args, ['kickstart', 'gui/%d/%s' % (os.getuid(), label)])
+        code, error = self.launchd['kick']
+        return code, '', error
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -814,6 +837,61 @@ class RequestCommand(unittest.TestCase):
                          (OLD, '1.0.39', NEW))
         self.assertEqual(report['status'], 'waiting-for-quiet')
         self.assertFalse(report['installFinalized'])
+
+    def test_status_reports_the_agent_job_as_launchd_sees_it(self):
+        old = '2026-10-18T02:00:00Z'
+        (self.own / 'updates' / 'state.json').write_text(json.dumps({'status': 'up-to-date', 'checkedAt': old}))
+        late = update_request._time('2026-10-18T06:30:00Z')
+        report = update_request.status(self.home, 'm9')
+        self.assertEqual((report['agentLoaded'], report['agentDisabled']), (True, False))
+        self.launchd.update(loaded=False, disabled=True)
+        report = update_request.status(self.home, 'm9')
+        self.assertEqual((report['agentLoaded'], report['agentDisabled']), (False, True))
+        self.assertTrue(update_request.agent_status('m9', {'checkedAt': old}, {}, now=late)['stale'])
+        self.assertFalse(update_request.agent_status('m9', {'checkedAt': '2026-10-18T05:00:00Z'}, {}, now=late)['stale'])
+        self.assertFalse(update_request.agent_status('m9', {'checkedAt': old}, {'checkAutomatically': False},
+                                                     now=late)['stale'])
+        self.assertFalse(update_request.agent_status('m9', {'checkedAt': None}, {}, now=late)['stale'])
+        # No plist: the agent was never set up (or was removed), so nothing reads as broken.
+        self.plist.unlink()
+        report = update_request.status(self.home, 'm9')
+        self.assertEqual((report['agentLoaded'], report['agentDisabled']), (None, None))
+        # A temporary --home has no launchd job of its own: the command line reads none for it.
+        del self.launchd['calls'][:]
+        code, report = self.cli('status', '--identity', 'm9')
+        self.assertEqual((code, report['agentLoaded'], report['agentDisabled']), (0, None, None))
+        self.assertEqual(self.launchd['calls'], [])
+
+    def test_disabled_labels_are_read_from_print_disabled(self):
+        label = 'com.specweave.studio.m4.updater'
+        self.assertTrue(update_request.label_disabled('\t"%s" => disabled\n' % label, label))
+        self.assertTrue(update_request.label_disabled('\t"%s" => true\n' % label, label))  # Before macOS 13.
+        self.assertFalse(update_request.label_disabled('\t"%s" => enabled\n' % label, label))
+        self.assertFalse(update_request.label_disabled('\t"%s.extra" => disabled\n' % label, label))
+        self.assertFalse(update_request.label_disabled('', label))
+
+    def test_a_kicked_request_is_written_only_for_a_job_that_can_run(self):
+        for change, words in (({'disabled': True, 'loaded': False}, 'turned off in launchd'),
+                              ({'loaded': False}, 'not loaded in launchd')):
+            self.launchd.update(loaded=True, disabled=False)
+            self.launchd.update(change)
+            code, reply = self.cli('request', '--identity', 'm9', '--version', NEW, '--kickstart')
+            self.assertEqual(code, 1)
+            self.assertIn(words, reply['error'])
+            self.assertIn('nothing would handle the request', reply['error'])
+            self.assertFalse(self.config.exists())
+            self.assertNotIn('kickstart', [call[0] for call in self.launchd['calls']])
+
+    def test_a_refused_kickstart_fails_with_launchctl_reason(self):
+        self.launchd['kick'] = (37, 'Operation not permitted while System Integrity Protection is engaged')
+        code, reply = self.cli('request', '--identity', 'm9', '--version', NEW, '--kickstart')
+        self.assertEqual(code, 1)
+        self.assertIn('could not start the update agent', reply['error'])
+        self.assertIn('Operation not permitted', reply['error'])
+        self.assertIn('exit 37', reply['error'])
+        self.launchd['kick'] = (0, '')
+        code, reply = self.cli('request', '--identity', 'm9', '--version', NEW, '--kickstart')
+        self.assertEqual((code, reply['result'], reply['kicked']), (0, 'requested', True))
 
     def completion_fixture(self):
         installation = {'identity': 'm9', 'version': NEW, 'sourceCommit': 'a' * 40,
