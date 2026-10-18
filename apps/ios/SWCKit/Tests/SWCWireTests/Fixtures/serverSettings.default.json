@@ -1,0 +1,164 @@
+{
+  "agentInstructions": "",
+  "claudeWorkflowMode": "on-request",
+  "responseStyle": "concise",
+  "worktreeCleanup": null,
+  "storageCleanup": {
+    "worktreeAfterDays": null,
+    "worktreeOnMerge": false,
+    "worktreeOnDelete": false,
+    "worktreeUnchanged": false,
+    "browserArtifactsAfterDays": null,
+    "logsAfterDays": null
+  },
+  "worktreesDirectory": "",
+  "previousWorktreesDirectories": [],
+  "responseStreamingMode": "paragraph",
+  "enableProviderUpdateChecks": true,
+  "continueThreadsAfterServerUpdate": true,
+  "enableAgentBrowserAccess": true,
+  "agentBrowserProfileId": null,
+  "projectAgentBrowserAccessOverrides": {},
+  "defaultAutoPull": false,
+  "defaultProjectScripts": [],
+  "projectScriptOverrides": {},
+  "projectAutoPullOverrides": {},
+  "defaultModelSelection": null,
+  "defaultModelProviders": [],
+  "defaultRuntimeMode": "approval-required",
+  "projectSettingsOverrides": {},
+  "projectSettingsFolded": false,
+  "projectSettingsSimplified": false,
+  "enableAgentDeviceAccess": false,
+  "enableAgentComputerAccess": true,
+  "enableDeviceSupport": false,
+  "deviceOnboardingCompleted": false,
+  "deviceHosts": [],
+  "sidebarAutoSettleAfterDays": 3,
+  "snoozeLimitedThreads": false,
+  "autoResumeLimitedThreads": false,
+  "providerLimitAction": "switch",
+  "providerLimitFallbackModelSelection": null,
+  "providerLimitSwitchAtPercent": 95,
+  "providerLimitWaitUnderMinutes": 30,
+  "providerLimitRedeemResets": false,
+  "providerLimitSpendCredits": false,
+  "providerLimitUseApiCredits": false,
+  "sidebarAutoSettleOnMerge": true,
+  "backgroundActivity": {
+    "schemaVersion": 1,
+    "profile": "balanced",
+    "overrides": {}
+  },
+  "automaticGitFetchInterval": 30000,
+  "providerHealthRefreshInterval": 300000,
+  "backgroundActivityProfile": "balanced",
+  "defaultTheme": "",
+  "defaultThemeSetAt": "",
+  "environmentIcon": null,
+  "newWorktreesStartFromOrigin": true,
+  "worktreeSubmodules": null,
+  "addProjectBaseDirectory": "",
+  "sidebarProjectOrder": {
+    "pinned": [],
+    "unpinned": []
+  },
+  "textGenerationModelSelection": {
+    "instanceId": "codex",
+    "model": "gpt-6-luna",
+    "options": [
+      {
+        "id": "reasoningEffort",
+        "value": "low"
+      }
+    ]
+  },
+  "branchNamingMode": "static",
+  "branchNamePrefix": "specweave-studio",
+  "branchNameInstructions": "",
+  "removeAgentCreditsOnMerge": false,
+  "sourceControlWritingStyle": {
+    "mode": "repo_conventions",
+    "customInstructions": "",
+    "followChangeRequestTemplates": true
+  },
+  "sourceControlWriterModelSelection": null,
+  "pullRequestMergeMethod": null,
+  "threadFinishAction": "pull_request",
+  "providers": {
+    "codex": {
+      "enabled": true,
+      "binaryPath": "codex",
+      "homePath": "",
+      "shadowHomePath": "",
+      "launchArgs": "",
+      "customModels": []
+    },
+    "claudeAgent": {
+      "enabled": true,
+      "binaryPath": "claude",
+      "homePath": "",
+      "customModels": [],
+      "launchArgs": "",
+      "autoCompactWindow": "",
+      "idleCompaction": true
+    },
+    "cursor": {
+      "enabled": false,
+      "customModels": []
+    },
+    "grok": {
+      "enabled": false,
+      "binaryPath": "grok",
+      "customModels": []
+    },
+    "pi": {
+      "enabled": false,
+      "binaryPath": "pi",
+      "launchArgs": "",
+      "customModels": []
+    },
+    "opencode": {
+      "enabled": false,
+      "binaryPath": "opencode",
+      "serverUrl": "",
+      "serverPassword": "",
+      "customModels": []
+    },
+    "antigravity": {
+      "enabled": false,
+      "authMethod": "oauth-personal",
+      "apiKey": "",
+      "gcpProject": "",
+      "gcpLocation": "",
+      "binaryPath": "",
+      "customModels": []
+    }
+  },
+  "providerInstances": {},
+  "observability": {
+    "otlpTracesUrl": "",
+    "otlpMetricsUrl": "",
+    "otlpLogsUrl": ""
+  },
+  "bitbucket": {
+    "email": "",
+    "accessToken": "",
+    "apiToken": ""
+  },
+  "voice": {
+    "provider": "local",
+    "localVoiceId": "",
+    "rate": 0.47,
+    "elevenLabsVoiceId": "",
+    "elevenLabsApiKey": ""
+  },
+  "github": {
+    "hosts": {},
+    "tokens": {}
+  },
+  "usageLimitSources": {},
+  "cursorKeychainUsageEnabled": false,
+  "usagePriceOverrides": {},
+  "usageModelAliases": {}
+}

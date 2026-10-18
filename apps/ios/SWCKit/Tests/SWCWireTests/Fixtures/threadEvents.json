@@ -1,0 +1,331 @@
+[
+  {
+    "kind": "event",
+    "sequence": 200,
+    "event": {
+      "id": "ev_pin",
+      "threadId": "thr_1",
+      "occurredAt": "2026-10-18T06:15:00.250Z",
+      "type": "thread.pinned",
+      "payload": {
+        "createdBy": "user",
+        "creationSource": "mobile",
+        "id": "thr_1",
+        "projectId": "proj_1",
+        "title": "Fix login",
+        "providerInstanceId": "claudeAgent",
+        "modelSelection": {
+          "instanceId": "claudeAgent",
+          "model": "claude-opus-5-5"
+        },
+        "runtimeMode": "full-access",
+        "interactionMode": "default",
+        "branch": "fix/login",
+        "worktreePath": null,
+        "activeProviderThreadId": null,
+        "lineage": {
+          "parentThreadId": null,
+          "relationshipToParent": null,
+          "rootThreadId": "thr_1"
+        },
+        "forkedFrom": null,
+        "createdAt": "2026-10-18T06:00:00.000Z",
+        "updatedAt": "2026-10-18T06:10:00.000Z",
+        "archivedAt": null,
+        "settledOverride": null,
+        "settledAt": null,
+        "pinnedAt": "2026-10-18T06:09:00.000Z",
+        "pinOrderKey": "a0",
+        "lastVisitedAt": "2026-10-18T06:05:00.000Z",
+        "deletedAt": null
+      }
+    }
+  },
+  {
+    "kind": "event",
+    "sequence": 201,
+    "event": {
+      "id": "ev_meta",
+      "threadId": "thr_1",
+      "occurredAt": "2026-10-18T06:15:00.250Z",
+      "type": "thread.metadata-updated",
+      "payload": {
+        "createdBy": "user",
+        "creationSource": "mobile",
+        "id": "thr_1",
+        "projectId": "proj_1",
+        "title": "Fix login flow",
+        "providerInstanceId": "claudeAgent",
+        "modelSelection": {
+          "instanceId": "claudeAgent",
+          "model": "claude-opus-5-5"
+        },
+        "runtimeMode": "full-access",
+        "interactionMode": "default",
+        "branch": "fix/login",
+        "worktreePath": null,
+        "activeProviderThreadId": null,
+        "lineage": {
+          "parentThreadId": null,
+          "relationshipToParent": null,
+          "rootThreadId": "thr_1"
+        },
+        "forkedFrom": null,
+        "createdAt": "2026-10-18T06:00:00.000Z",
+        "updatedAt": "2026-10-18T06:10:00.000Z",
+        "archivedAt": null,
+        "settledOverride": null,
+        "settledAt": null,
+        "pinnedAt": "2026-10-18T06:09:00.000Z",
+        "pinOrderKey": "a0",
+        "lastVisitedAt": "2026-10-18T06:05:00.000Z",
+        "deletedAt": null
+      }
+    }
+  },
+  {
+    "kind": "event",
+    "sequence": 202,
+    "event": {
+      "id": "ev_run_c",
+      "threadId": "thr_1",
+      "runId": "run_2",
+      "occurredAt": "2026-10-18T06:15:00.250Z",
+      "type": "run.created",
+      "payload": {
+        "id": "run_2",
+        "threadId": "thr_1",
+        "ordinal": 2,
+        "providerInstanceId": "claudeAgent",
+        "modelSelection": {
+          "instanceId": "claudeAgent",
+          "model": "claude-opus-5-5",
+          "options": [
+            {
+              "id": "effort",
+              "value": "high"
+            },
+            {
+              "id": "fastMode",
+              "value": true
+            }
+          ]
+        },
+        "providerThreadId": "pt_1",
+        "userMessageId": "msg_3",
+        "rootNodeId": "node_r",
+        "activeAttemptId": null,
+        "status": "queued",
+        "queuePosition": 1,
+        "requestedAt": "2026-10-18T06:11:00.000Z",
+        "startedAt": null,
+        "completedAt": null,
+        "checkpointId": null,
+        "contextHandoffId": null
+      }
+    }
+  },
+  {
+    "kind": "event",
+    "sequence": 203,
+    "event": {
+      "id": "ev_run_u",
+      "threadId": "thr_1",
+      "runId": "run_2",
+      "driver": "claudeAgent",
+      "providerInstanceId": "claudeAgent",
+      "occurredAt": "2026-10-18T06:15:00.250Z",
+      "type": "run.updated",
+      "payload": {
+        "id": "run_2",
+        "threadId": "thr_1",
+        "ordinal": 2,
+        "providerInstanceId": "claudeAgent",
+        "modelSelection": {
+          "instanceId": "claudeAgent",
+          "model": "claude-opus-5-5",
+          "options": [
+            {
+              "id": "effort",
+              "value": "high"
+            },
+            {
+              "id": "fastMode",
+              "value": true
+            }
+          ]
+        },
+        "providerThreadId": "pt_1",
+        "userMessageId": "msg_3",
+        "rootNodeId": "node_r",
+        "activeAttemptId": null,
+        "status": "running",
+        "queuePosition": null,
+        "requestedAt": "2026-10-18T06:11:00.000Z",
+        "startedAt": "2026-10-18T06:11:02.000Z",
+        "completedAt": null,
+        "checkpointId": null,
+        "contextHandoffId": null
+      }
+    }
+  },
+  {
+    "kind": "event",
+    "sequence": 204,
+    "event": {
+      "id": "ev_msg",
+      "threadId": "thr_1",
+      "occurredAt": "2026-10-18T06:15:00.250Z",
+      "type": "message.updated",
+      "payload": {
+        "createdBy": "agent",
+        "creationSource": "mcp",
+        "senderThreadId": "thr_coord",
+        "id": "msg_4",
+        "threadId": "thr_1",
+        "runId": "run_2",
+        "nodeId": null,
+        "role": "assistant",
+        "text": "Done.",
+        "attachments": [
+          {
+            "type": "image",
+            "id": "att_1",
+            "name": "shot.png",
+            "mimeType": "image/png",
+            "sizeBytes": 2048
+          }
+        ],
+        "streaming": false,
+        "createdAt": "2026-10-18T06:12:00.000Z",
+        "updatedAt": "2026-10-18T06:12:01.000Z"
+      }
+    }
+  },
+  {
+    "kind": "event",
+    "sequence": 205,
+    "event": {
+      "id": "ev_item",
+      "threadId": "thr_1",
+      "occurredAt": "2026-10-18T06:15:00.250Z",
+      "type": "turn-item.updated",
+      "payload": {
+        "id": "ti_asst",
+        "threadId": "thr_1",
+        "runId": "run_1",
+        "nodeId": null,
+        "providerThreadId": null,
+        "providerTurnId": null,
+        "nativeItemRef": null,
+        "parentItemId": null,
+        "ordinal": 1,
+        "status": "running",
+        "title": null,
+        "startedAt": "2026-10-18T06:00:03.000Z",
+        "completedAt": null,
+        "updatedAt": "2026-10-18T06:00:05.123Z",
+        "type": "assistant_message",
+        "messageId": "msg_2",
+        "text": "Looking at **auth.ts** now.",
+        "streaming": true
+      }
+    }
+  },
+  {
+    "kind": "event",
+    "sequence": 206,
+    "event": {
+      "id": "ev_plan",
+      "threadId": "thr_1",
+      "occurredAt": "2026-10-18T06:15:00.250Z",
+      "type": "plan.updated",
+      "payload": {
+        "id": "plan_p",
+        "threadId": "thr_1",
+        "runId": "run_2",
+        "nodeId": "node_p",
+        "status": "draft",
+        "kind": "proposed_plan",
+        "markdown": "# Plan\n- step"
+      }
+    }
+  },
+  {
+    "kind": "event",
+    "sequence": 207,
+    "event": {
+      "id": "ev_req",
+      "threadId": "thr_1",
+      "occurredAt": "2026-10-18T06:15:00.250Z",
+      "type": "runtime-request.updated",
+      "payload": {
+        "id": "req_1",
+        "nodeId": "node_a",
+        "providerTurnId": null,
+        "nativeRequestRef": null,
+        "kind": "command",
+        "status": "pending",
+        "responseCapability": {
+          "type": "live",
+          "providerSessionId": "ps_1"
+        },
+        "createdAt": "2026-10-18T06:13:00.000Z",
+        "resolvedAt": null
+      }
+    }
+  },
+  {
+    "kind": "event",
+    "sequence": 208,
+    "event": {
+      "id": "ev_req2",
+      "threadId": "thr_1",
+      "occurredAt": "2026-10-18T06:15:00.250Z",
+      "type": "runtime-request.updated",
+      "payload": {
+        "id": "req_2",
+        "nodeId": "node_a",
+        "providerTurnId": null,
+        "nativeRequestRef": null,
+        "kind": "user_input",
+        "status": "resolved",
+        "responseCapability": {
+          "type": "not_resumable",
+          "reason": "Session ended"
+        },
+        "createdAt": "2026-10-18T06:13:00.000Z",
+        "resolvedAt": "2026-10-18T06:14:00.000Z",
+        "answers": {
+          "q1": "Postgres"
+        }
+      }
+    }
+  },
+  {
+    "kind": "event",
+    "sequence": 209,
+    "event": {
+      "id": "ev_att",
+      "threadId": "thr_1",
+      "occurredAt": "2026-10-18T06:15:00.250Z",
+      "type": "run-attempt.created",
+      "payload": {
+        "id": "att_r1",
+        "runId": "run_2",
+        "attemptOrdinal": 1,
+        "rootNodeId": "node_r",
+        "providerInstanceId": "claudeAgent",
+        "providerThreadId": "pt_1",
+        "providerTurnId": null,
+        "reason": "initial",
+        "status": "running",
+        "startedAt": "2026-10-18T06:11:01.000Z",
+        "completedAt": null
+      }
+    }
+  },
+  {
+    "kind": "synchronized"
+  }
+]

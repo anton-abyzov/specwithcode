@@ -1,0 +1,24 @@
+{
+  "id": "proj_1",
+  "title": "SpecWeave",
+  "workspaceRoot": "/Users/x/specweave",
+  "defaultModelSelection": null,
+  "workspaceSettings": {
+    "kind": "code",
+    "environment": {
+      "additionalFolders": [],
+      "repositories": []
+    },
+    "revision": 3,
+    "goal": "",
+    "instructions": "",
+    "coordinatorModelSelection": null,
+    "coordinatorThreadId": "project-coordinator:proj_1",
+    "paused": false,
+    "archived": false,
+    "autoResume": false
+  },
+  "scripts": [],
+  "createdAt": "2026-10-01T00:00:00.000Z",
+  "updatedAt": "2026-10-01T00:00:00.000Z"
+}
