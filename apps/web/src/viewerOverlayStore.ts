@@ -1,5 +1,6 @@
 import type { ScopedThreadRef } from "@specweave-studio/contracts";
-import { useEffect, useId, useRef } from "react";
+import { createContext, type ReactNode, useEffect, useId, useRef } from "react";
+import { createPortal } from "react-dom";
 import { create } from "zustand";
 
 /** One level of the header's trail: what it is and its name. */
@@ -40,6 +41,13 @@ interface ViewerOverlayState {
   readonly slot: HTMLElement | null;
   /** Where the active viewer renders its actions, in the overlay's header. */
   readonly actionsSlot: HTMLElement | null;
+  /**
+   * Where the thread beside the viewer shows its composer when the page
+   * behind owns it (the coordinator's), so steering stays beside the viewer.
+   */
+  readonly threadComposerSlot: HTMLElement | null;
+  /** Threads whose page owns their composer and lends it to the overlay, by `threadOwnerKey`. */
+  readonly composerOwners: ReadonlyArray<string>;
   /** The source thread is folded away, so the viewer takes the whole overlay. */
   readonly threadCollapsed: boolean;
   readonly open: (entry: ViewerOverlayEntry) => void;
@@ -47,13 +55,22 @@ interface ViewerOverlayState {
   readonly close: (key: string) => void;
   readonly setSlot: (slot: HTMLElement | null) => void;
   readonly setActionsSlot: (slot: HTMLElement | null) => void;
+  readonly setThreadComposerSlot: (slot: HTMLElement | null) => void;
+  readonly ownComposer: (threadKey: string) => () => void;
   readonly setThreadCollapsed: (collapsed: boolean) => void;
+}
+
+/** A thread's key among `composerOwners`. */
+export function threadOwnerKey(threadRef: ScopedThreadRef): string {
+  return `${threadRef.environmentId}:${threadRef.threadId}`;
 }
 
 export const useViewerOverlayStore = create<ViewerOverlayState>()((set) => ({
   active: null,
   slot: null,
   actionsSlot: null,
+  threadComposerSlot: null,
+  composerOwners: [],
   threadCollapsed: false,
   open: (entry) => set({ active: entry }),
   update: (key, details) =>
@@ -63,6 +80,15 @@ export const useViewerOverlayStore = create<ViewerOverlayState>()((set) => ({
   close: (key) => set((state) => (state.active?.key === key ? { active: null } : state)),
   setSlot: (slot) => set({ slot }),
   setActionsSlot: (actionsSlot) => set({ actionsSlot }),
+  setThreadComposerSlot: (threadComposerSlot) => set({ threadComposerSlot }),
+  ownComposer: (threadKey) => {
+    set((state) => ({ composerOwners: [...state.composerOwners, threadKey] }));
+    return () =>
+      set((state) => {
+        const index = state.composerOwners.indexOf(threadKey);
+        return index < 0 ? state : { composerOwners: state.composerOwners.toSpliced(index, 1) };
+      });
+  },
   setThreadCollapsed: (threadCollapsed) => set({ threadCollapsed }),
 }));
 
@@ -151,4 +177,37 @@ export function useViewerOverlay(options: {
   const content = useViewerOverlayStore((state) => state.slot);
   const actions = useViewerOverlayStore((state) => state.actionsSlot);
   return open && active && content ? { content, actions } : null;
+}
+
+/**
+ * True inside the overlay's thread. A thread view outside it stops taking
+ * keys and pastes while the overlay is open: what is in front gets them.
+ */
+export const InViewerOverlay = createContext(false);
+
+/**
+ * A composer its page owns, moved beside the viewer while the overlay shows
+ * that page's thread, and back when the overlay closes or folds the thread.
+ * It stays the same composer, with its draft, attachments and send.
+ */
+export function ViewerThreadComposerPortal(props: {
+  readonly threadRef: ScopedThreadRef | null;
+  readonly children: ReactNode;
+}): ReactNode {
+  const environmentId = props.threadRef?.environmentId;
+  const threadId = props.threadRef?.threadId;
+  useEffect(() => {
+    if (environmentId === undefined || threadId === undefined) return;
+    return useViewerOverlayStore
+      .getState()
+      .ownComposer(threadOwnerKey({ environmentId, threadId }));
+  }, [environmentId, threadId]);
+  const target = useViewerOverlayStore((state) =>
+    threadId !== undefined &&
+    state.active?.threadRef?.environmentId === environmentId &&
+    state.active?.threadRef?.threadId === threadId
+      ? state.threadComposerSlot
+      : null,
+  );
+  return target ? createPortal(props.children, target) : props.children;
 }

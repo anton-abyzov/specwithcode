@@ -68,6 +68,7 @@ export * from "./browserImport.ts";
 export * from "./browserProfile.ts";
 export * from "./externalBrowser.ts";
 export * from "./device.ts";
+export * from "./computerUse.ts";
 export * from "./preview.ts";
 export * from "./previewAutomation.ts";
 export * from "./resourceTelemetry.ts";
@@ -90,5 +91,3 @@ export * from "./machineHandoff.ts";
 export * from "./logicalProject.ts";
 export * from "./managedUpdates.ts";
 export * from "./muse.ts";
-
-export * from "./cloudSessions.ts";

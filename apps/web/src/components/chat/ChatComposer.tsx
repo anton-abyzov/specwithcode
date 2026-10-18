@@ -1397,6 +1397,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   sendDisabledReason: string | null;
   isConnecting: boolean;
   isEnvironmentUnavailable: boolean;
+  waitingFor: string | null;
   hasSendableContent: boolean;
   canResume: boolean;
   preserveComposerFocusOnPointerDown?: boolean;
@@ -1438,6 +1439,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         sendDisabledReason={props.sendDisabledReason}
         isConnecting={props.isConnecting}
         isEnvironmentUnavailable={props.isEnvironmentUnavailable}
+        waitingFor={props.waitingFor}
         isPreparingWorktree={props.isPreparingWorktree}
         hasSendableContent={props.hasSendableContent}
         canResume={props.canResume}
@@ -7702,7 +7704,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       showMobilePendingAnswerActions && "max-sm:pb-12",
                       isComposerResting &&
                         "my-0 max-h-8 min-h-8 overflow-hidden py-0 whitespace-pre! leading-8",
-                      isComposerApprovalState && "min-h-10",
+                      (isComposerApprovalState || isChoiceOnlyPendingQuestion) && "min-h-10",
                     )}
                     placeholderClassName={cn(
                       isComposerResting &&
@@ -7725,15 +7727,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                             : "Type your own answer, or leave this blank to use the selected option"
                           : showPlanFollowUpPrompt && activeProposedPlan
                             ? "Add feedback to refine the plan, or leave this blank to implement it"
-                            : projectSelectionRequired
-                              ? "Choose a project above to start a thread"
-                              : routesProjectMessage
-                                ? "Message the project coordinator…"
-                                : showProviderUnavailable
-                                  ? "Enable a provider in Settings to send a message"
-                                  : phase === "disconnected"
-                                    ? DISCONNECTED_COMPOSER_PLACEHOLDER
-                                    : "Ask anything, @tag files/folders, $use skills, or / for commands"
+                            : environmentUnavailable !== null
+                              ? `Waiting for ${environmentUnavailable.label}. What you type stays here until it is back`
+                              : projectSelectionRequired
+                                ? "Choose a project above to start a thread"
+                                : routesProjectMessage
+                                  ? "Message the project coordinator…"
+                                  : showProviderUnavailable
+                                    ? "Enable a provider in Settings to send a message"
+                                    : phase === "disconnected"
+                                      ? DISCONNECTED_COMPOSER_PLACEHOLDER
+                                      : "Ask anything, @tag files/folders, $use skills, or / for commands"
                     }
                     disabled={
                       isConnecting ||
@@ -7892,6 +7896,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       noProviderAvailable ||
                       projectSelectionRequired
                     }
+                    waitingFor={environmentUnavailable?.label ?? null}
                     isPreparingWorktree={isPreparingWorktree}
                     hasSendableContent={composerSendState.hasSendableContent}
                     canResume={showResumeAction}

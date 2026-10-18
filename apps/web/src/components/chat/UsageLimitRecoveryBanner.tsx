@@ -1,3 +1,4 @@
+import { ApiCreditRecoveryAction, type ApiCreditRecoveryProps } from "./ApiCreditRecoveryAction";
 import { CreditRecoveryAction, type CreditRecoveryProps } from "./CreditRecoveryAction";
 import { useClientSettings } from "../../hooks/useSettings";
 import { formatDisplayDate } from "../../lib/displayDates";
@@ -15,6 +16,10 @@ import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 type RecoveryProps = {
   canCheck?: boolean;
   credits?: CreditRecoveryProps | null;
+  /** API accounts the stopped turn can continue on, or the way to add one. */
+  apiCredits?: ApiCreditRecoveryProps | null;
+  /** The thread's own API account ran out of credits (not a subscription limit). */
+  creditsExhausted?: boolean;
   runId: RunId;
   resetAt: string | null;
   stoppedAt: string;
@@ -111,8 +116,14 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
     variant: "warning",
     priority: "urgent",
     icon: <GaugeIcon />,
-    title: props.credits ? "Included usage limit reached" : "Usage limit reached",
-    description: (
+    title: props.creditsExhausted
+      ? "API credits used up"
+      : props.credits
+        ? "Included usage limit reached"
+        : "Usage limit reached",
+    description: props.creditsExhausted ? (
+      "This API account has no credits left. Add funds to it, or continue on another account."
+    ) : (
       <ResetCountdown
         resetAt={resetAt}
         waiting={props.waiting === true}
@@ -130,6 +141,7 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
 function RecoveryActions({
   canCheck,
   credits,
+  apiCredits,
   runId,
   resetAt,
   stoppedAt,
@@ -259,6 +271,7 @@ function RecoveryActions({
         </div>
       ) : null}
       {credits ? <CreditRecoveryAction {...credits} /> : null}
+      {apiCredits ? <ApiCreditRecoveryAction {...apiCredits} /> : null}
       {canCheck ? (
         <Button
           size="xs"

@@ -16,6 +16,7 @@ const ALL_MCP_CAPABILITIES = [
   "orchestration",
   "worktree",
   "device",
+  "computer",
   "pull-requests",
 ] as const;
 export type McpCapability = (typeof ALL_MCP_CAPABILITIES)[number];
@@ -105,11 +106,12 @@ export const requireMcpCapability = <const C extends McpCapability>(
   );
 
 /**
- * Preview tabs and device sessions belong to the calling thread, so their
- * capabilities are only ever granted to thread callers. A scope that carries
- * one without a thread is refused the same way as a missing capability.
+ * Preview tabs, device sessions and desktop control belong to the calling
+ * thread, so their capabilities are only ever granted to thread callers. A
+ * scope that carries one without a thread is refused the same way as a
+ * missing capability.
  */
-export const requireThreadMcpCapability = <const C extends "preview" | "device">(
+export const requireThreadMcpCapability = <const C extends "preview" | "device" | "computer">(
   capability: C,
 ): Effect.Effect<McpThreadInvocationScope, McpCapabilityError<C>, McpInvocationContext> =>
   McpInvocationContext.pipe(

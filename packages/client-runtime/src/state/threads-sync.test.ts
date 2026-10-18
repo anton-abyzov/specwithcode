@@ -105,7 +105,8 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     readonly hasMoreHistory: boolean;
     readonly latestLocalTurnOrdinal?: number | null;
   };
-  readonly httpSnapshot?: ThreadSnapshotLoadResult;
+  readonly httpSnapshot?: ThreadSnapshotLoadResult | Ref.Ref<ThreadSnapshotLoadResult>;
+  readonly untilListed?: Effect.Effect<void>;
   readonly completionMarker?: boolean;
   readonly resumeCache?: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]>;
   readonly loadCached?: ReturnType<Persistence.EnvironmentCacheStore["Service"]["loadThread"]>;
@@ -160,12 +161,13 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   const snapshotLoader = ThreadSnapshotLoader.ThreadSnapshotLoader.of({
     load: (_prepared, threadId) =>
       Ref.update(loaderCalls, (count) => count + 1).pipe(
-        Effect.as(
-          threadId === THREAD_ID
-            ? (options?.httpSnapshot ??
-                ({ _tag: "unavailable" } satisfies ThreadSnapshotLoadResult))
-            : ({ _tag: "unavailable" } satisfies ThreadSnapshotLoadResult),
-        ),
+        Effect.andThen(() => {
+          const configured = options?.httpSnapshot;
+          if (threadId !== THREAD_ID || configured === undefined) {
+            return Effect.succeed({ _tag: "unavailable" } satisfies ThreadSnapshotLoadResult);
+          }
+          return "_tag" in configured ? Effect.succeed(configured) : Ref.get(configured);
+        }),
       ),
   });
   const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
@@ -215,7 +217,11 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     clearVcsRefs: () => Effect.void,
     clear: () => Effect.void,
   });
-  let makeThreadState = makeEnvironmentThreadState(THREAD_ID, options?.resumeCache).pipe(
+  let makeThreadState = makeEnvironmentThreadState(
+    THREAD_ID,
+    options?.resumeCache,
+    options?.untilListed === undefined ? undefined : { untilListed: options.untilListed },
+  ).pipe(
     Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
     Effect.provideService(Persistence.EnvironmentCacheStore, cache),
     Effect.provideService(ThreadSnapshotLoader.ThreadSnapshotLoader, snapshotLoader),
@@ -1564,6 +1570,42 @@ describe("EnvironmentThreads", () => {
       expect(yield* Ref.get(harness.retryCount)).toBe(0);
       expect(yield* Ref.get(harness.loaderCalls)).toBe(1);
       expect((yield* Ref.get(harness.latest)).status).toBe("deleted");
+    }),
+  );
+
+  it.effect("loads a thread missing at first once the environment lists it", () =>
+    Effect.gen(function* () {
+      const httpSnapshot = yield* Ref.make<ThreadSnapshotLoadResult>({ _tag: "missing" });
+      const listed = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({ httpSnapshot, untilListed: Deferred.await(listed) });
+
+      yield* awaitThreadState(harness.observed, (value) => value.status === "deleted");
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(0);
+
+      // The first message creates the thread, and the shell lists it.
+      yield* Ref.set(httpSnapshot, {
+        _tag: "present",
+        snapshot: { snapshotSequence: 7, projection: BASE_PROJECTION },
+      });
+      yield* Deferred.succeed(listed, undefined);
+      yield* TestClock.adjust("1 second");
+
+      const state = yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "live" && Option.isSome(value.data),
+      );
+      expect(Option.getOrThrow(state.data)).toEqual(BASE_PROJECTION);
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(2);
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(1);
+      expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(7);
+
+      // Its reply arrives as a live event.
+      yield* Queue.offer(harness.inputs, titleUpdated("Current Time", 8));
+      const updated = yield* awaitThreadState(
+        harness.observed,
+        (value) => Option.isSome(value.data) && value.data.value.thread.title === "Current Time",
+      );
+      expect(updated.status).toBe("live");
     }),
   );
 

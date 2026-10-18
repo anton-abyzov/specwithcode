@@ -18,6 +18,7 @@ import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
 import { ProjectFolderService } from "./ProjectFolderChange.ts";
 import * as ProjectService from "./ProjectService.ts";
 import { projectMutationOperation } from "./ProjectMutation.ts";
+import { temporarySessionIdFor } from "./TemporaryProjects.ts";
 
 export const failProjectMutation = Effect.fn("environment.projects.failMutation")(function* (
   cause:
@@ -31,6 +32,7 @@ export const failProjectMutation = Effect.fn("environment.projects.failMutation"
       confirmation_required: "project_confirmation_required",
       active_work: "project_active_work",
       environment_active: "project_environment_active",
+      name_taken: "project_name_taken",
     } as const;
     return yield* failEnvironmentInvalidRequest(reason[cause.reason]);
   }
@@ -72,10 +74,13 @@ export const layer = HttpApiBuilder.group(
         "mutate",
         Effect.fn("environment.projects.mutate")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
-          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          const session = yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
           const operation = projectMutationOperation(
             { ...projects, changeFolder: folders.change },
             args.payload,
+            args.payload.type === "project.create"
+              ? yield* temporarySessionIdFor(session.sessionId)
+              : undefined,
           );
           return yield* startup
             .enqueueCommand(operation)

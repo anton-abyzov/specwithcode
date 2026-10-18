@@ -27,17 +27,19 @@ function record(value: unknown): Record<string, unknown> | undefined {
 /**
  * Reads the usage of a `session/prompt` response.
  *
- * Two shapes exist. The ACP `usage` field (still marked unstable) carries
+ * Three shapes exist. The ACP `usage` field (still marked unstable) carries
  * `inputTokens`, `outputTokens`, `thoughtTokens`, `cachedReadTokens` and
  * `cachedWriteTokens`. Grok Build instead puts its own totals under
- * `_meta.usage`, with `cacheCreationTokens` and `reasoningTokens`. An agent
- * that reports neither leaves the turn unreported; nothing is estimated.
+ * `_meta.usage`, with `cacheCreationTokens` and `reasoningTokens`. Gemini CLI
+ * reports `_meta.quota.token_count` with snake_case `input_tokens` (the prompt
+ * count, cache included) and `output_tokens` (candidates only, no thinking).
+ * An agent that reports none leaves the turn unreported; nothing is estimated.
  */
 export function readAcpPromptUsage(result: unknown): AcpTurnUsageCounts | undefined {
   const response = record(result);
-  const standard = record(response?.usage);
-  const usage = standard ?? record(record(response?._meta)?.usage);
-  if (!usage) return undefined;
+  const meta = record(response?._meta);
+  const usage = record(response?.usage) ?? record(meta?.usage);
+  if (!usage) return readGeminiCliQuota(record(record(meta?.quota)?.token_count));
 
   const reportedInput = count(usage.inputTokens);
   const outputTokens = count(usage.outputTokens);
@@ -72,6 +74,21 @@ export function readAcpPromptUsage(result: unknown): AcpTurnUsageCounts | undefi
       reasoning !== undefined && outputTokens !== undefined
         ? Math.min(outputTokens, reasoning)
         : undefined,
+  };
+}
+
+function readGeminiCliQuota(
+  tokenCount: Record<string, unknown> | undefined,
+): AcpTurnUsageCounts | undefined {
+  const inputTokens = count(tokenCount?.input_tokens);
+  const outputTokens = count(tokenCount?.output_tokens);
+  if (inputTokens === undefined && outputTokens === undefined) return undefined;
+  return {
+    inputTokens,
+    outputTokens,
+    cachedInputTokens: undefined,
+    cacheCreationTokens: undefined,
+    reasoningTokens: undefined,
   };
 }
 

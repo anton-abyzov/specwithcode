@@ -17,7 +17,7 @@ import {
   ProjectMessageRoutingContext,
   type ProjectMessageRouting,
 } from "../../studio/projectMessageRouting";
-import { UserMessageProvenance } from "./UserMessageProvenance";
+import { UserMessageExecutionOrigin, UserMessageProvenance } from "./UserMessageProvenance";
 
 vi.mock("../../state/environments", () => ({
   useEnvironment: (environmentId: string) => (environmentId === "env-m1" ? { label: "M1" } : null),
@@ -46,15 +46,21 @@ const run = (id: string, provider: string, model: string): HandoffTimelineRun =>
   modelSelection: { instanceId: ProviderInstanceId.make(provider), model },
 });
 const runs = [run("original-run", "claude", "opus-original"), run("new-run", "codex", "gpt-new")];
-const markup = (input: ChatMessage, executionEnvironment = environmentId, recordedRuns = runs) =>
-  renderToStaticMarkup(
-    <UserMessageProvenance
-      message={input}
-      runs={recordedRuns}
-      environmentId={executionEnvironment}
-      onOpenThread={() => {}}
-    />,
+// The sender line above the bubble and the execution origin in the hover row under it.
+const markup = (input: ChatMessage, executionEnvironment = environmentId, recordedRuns = runs) => {
+  const props = {
+    message: input,
+    runs: recordedRuns,
+    environmentId: executionEnvironment,
+    onOpenThread: () => {},
+  };
+  return renderToStaticMarkup(
+    <>
+      <UserMessageProvenance {...props} />
+      <UserMessageExecutionOrigin {...props} />
+    </>,
   );
+};
 
 describe("request execution provenance", () => {
   it("keeps each request's recorded model after later runs switch providers", () => {
@@ -65,6 +71,14 @@ describe("request execution provenance", () => {
     expect(latest).toContain("M1 · Codex · GPT New");
     expect(original).toContain('data-environment-id="env-m1"');
     expect(original).toContain('data-run-id="original-run"');
+  });
+
+  it("prints no line above the user's own message; where it ran sits in the hover row", () => {
+    const props = { message: message(), runs, environmentId, onOpenThread: () => {} };
+    expect(renderToStaticMarkup(<UserMessageProvenance {...props} />)).toBe("");
+    expect(renderToStaticMarkup(<UserMessageExecutionOrigin {...props} />)).toContain(
+      "M1 · Claude Code · Opus Original",
+    );
   });
 
   it("marks missing run history explicitly and preserves unknown host identity", () => {

@@ -33,7 +33,7 @@ SpecWithCode is not a cloud service: work runs on the machine you choose and sto
 
 The app updates itself from this repository's releases. Turn that off in **Settings → About**, or set `SPECWITHCODE_DISABLE_AUTO_UPDATE=true` (the older `STUDIO_DISABLE_AUTO_UPDATE` is still accepted).
 
-More: [install](docs/user/install.md), [first run](docs/user/welcome-wizard.md), [providers](docs/user/providers-claude.md), [remote access](docs/user/remote-access.md), [cloud sessions](docs/user/cloud-sessions.md), [updating](docs/user/updating.md).
+More: [install](docs/user/install.md), [first run](docs/user/welcome-wizard.md), [providers](docs/user/providers-claude.md), [remote access](docs/user/remote-access.md), [your own VPS](docs/user/linux-worker.md), [updating](docs/user/updating.md).
 
 To connect Copilot, Grok or Gemini, use **Add or manage providers** in the model picker. [Provider setup](docs/studio/copilot-and-grok.md) explains installation, sign-in and model discovery; a connected usage source only reports quota.
 

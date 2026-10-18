@@ -111,6 +111,7 @@ const layerTest = Layer.mergeAll(RuntimeLayer.layer, RuntimeLayer.layerEventSink
   Layer.provide(ProviderTurnStartServiceTestkit.layer),
   Layer.provide(
     Layer.succeed(ProjectEnrichmentService.ProjectEnrichmentService, {
+      repositoryIdentityNow: () => Effect.succeed(null),
       peek: () =>
         Effect.succeed({
           repositoryIdentity: null,

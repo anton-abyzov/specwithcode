@@ -11,7 +11,7 @@ import type {
  * coordinator nobody configured starts on). The coordinator is a router; its own
  * possibly cheaper model never silently becomes the worker default.
  */
-function workerDefault(
+export function projectWorkerDefault(
   project: Pick<Project, "defaultModelSelection">,
   hostDefault: ModelSelection | null,
 ): ModelSelection | null {
@@ -22,19 +22,26 @@ function namesModel(target: OrchestratorMcpTarget | undefined): boolean {
   return Boolean(target?.providerInstanceId || target?.driverKind || target?.model);
 }
 
+/**
+ * `launchSelection` replaces the worker default when its provider has no room
+ * (see workerLaunchWithRoom); a moved selection carries no options, since the
+ * default's belong to another model.
+ */
 export function projectDelegationTarget(
   project: Pick<Project, "workspaceSettings" | "defaultModelSelection">,
   callerThreadId: ThreadId,
   target: OrchestratorMcpTarget | undefined,
   hostDefault: ModelSelection | null = null,
+  launchSelection?: ModelSelection | null,
 ): OrchestratorMcpTarget | undefined {
-  const selected = workerDefault(project, hostDefault);
+  const preferred = projectWorkerDefault(project, hostDefault);
   if (
     project.workspaceSettings?.coordinatorThreadId !== callerThreadId ||
-    !selected ||
+    !preferred ||
     namesModel(target)
   )
     return target;
+  const selected = launchSelection ?? preferred;
   return {
     providerInstanceId: selected.instanceId,
     model: selected.model,
@@ -56,7 +63,7 @@ export function needsExplicitWorkerTarget(
 ): boolean {
   return (
     project.workspaceSettings?.coordinatorThreadId === callerThreadId &&
-    !workerDefault(project, hostDefault) &&
+    !projectWorkerDefault(project, hostDefault) &&
     !namesModel(target)
   );
 }

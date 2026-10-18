@@ -359,6 +359,44 @@ const make = Effect.gen(function* () {
       yield* setProblem(target.id, null);
     });
 
+  /**
+   * A grant stored for this machine at the address it had before `fleet add`
+   * moved it. Workers were allowed on the machine (pinned by its environment
+   * id), not on an address, so an active one is minted again at the new
+   * address with the same access. Called only under the machine lock.
+   */
+  const carryToNewAddress = (target: FleetTarget) =>
+    Effect.gen(function* () {
+      if (!target.managementToken) return;
+      const moved = yield* secrets.get(secretName(target.id)).pipe(
+        Effect.map((bytes) =>
+          Option.flatMap(bytes, (value) => decodeStoredGrant(new TextDecoder().decode(value))).pipe(
+            Option.filter(
+              (grant) =>
+                grant.machineId === target.id &&
+                grant.environmentId === target.environmentId &&
+                grant.origin !== target.url &&
+                grant.status === "active" &&
+                grant.clientLabel === clientName &&
+                (grant.v === 1 || grant.coordinatorEnvironmentId === localEnvironmentId),
+            ),
+            Option.getOrUndefined,
+          ),
+        ),
+        Effect.orElseSucceed(() => undefined),
+      );
+      if (moved === undefined) return;
+      const now = yield* Clock.currentTimeMillis;
+      if (!(Date.parse(moved.expiresAt) > now)) return;
+      const previous = (yield* Ref.get(lastMint)).get(target.id);
+      if (previous !== undefined && now - previous < Duration.toMillis(MINT_INTERVAL)) return;
+      yield* Ref.update(lastMint, (current) => new Map(current).set(target.id, now));
+      if (yield* mintAndStore(target, moved.access, undefined))
+        yield* Effect.logInfo("Moved worker access to a fleet machine's new address.", {
+          machineId: target.id,
+        });
+    });
+
   const allow: FleetWorkerGrants["Service"]["allow"] = (input) =>
     Effect.gen(function* () {
       const target = yield* findTarget(input.machineId);
@@ -408,6 +446,7 @@ const make = Effect.gen(function* () {
       return yield* lock.withLock(
         target.id,
         Effect.gen(function* () {
+          yield* carryToNewAddress(target);
           yield* renewIfDue(target, yield* readGrant(target));
           const grant = yield* readGrant(target);
           if (grant === undefined)
@@ -456,6 +495,7 @@ const make = Effect.gen(function* () {
         .withLock(
           target.id,
           Effect.gen(function* () {
+            yield* carryToNewAddress(target);
             yield* renewIfDue(target, yield* readGrant(target));
           }),
         )

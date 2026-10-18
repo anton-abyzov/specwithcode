@@ -1,5 +1,8 @@
 import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+  logicalProjectTitle,
+  PROJECT_NAME_MAX_LENGTH,
+  projectNameKey,
   type LogicalProject,
   type ProjectCoordinatorBinding,
   type ProjectWorkspacePatch,
@@ -44,6 +47,8 @@ export interface ProjectCreateCommand {
   readonly scripts?: ReadonlyArray<ProjectScript>;
   /** Internal handoff seed; public create payloads cannot supply this field. */
   readonly initialWorkerModelSelection?: ModelSelection | null;
+  /** Internal: the temporary auth session creating the project; see TemporaryProjects. */
+  readonly temporarySessionId?: string;
 }
 
 export interface ProjectMetaUpdateCommand {
@@ -134,8 +139,22 @@ export class ProjectDefaultModelConflictError extends Schema.TaggedError<Project
   }
 }
 
+/** A rename would give the project another project's name, ignoring case. */
+export class ProjectNameTakenError extends Schema.TaggedError<ProjectNameTakenError>()(
+  "ProjectNameTakenError",
+  {
+    projectId: ProjectId,
+    conflictingProjectId: ProjectId,
+  },
+) {
+  override get message(): string {
+    return "Another project already has this name. Choose a different one.";
+  }
+}
+
 export const ProjectCommandRejection = Schema.Union([
   ProjectCommandInvariantError,
+  ProjectNameTakenError,
   ProjectCommandMissingProjectError,
   ProjectWorkspaceConflictError,
   ProjectSettingsRevisionConflictError,
@@ -159,6 +178,41 @@ export interface ProjectCommandState {
   readonly project: ProjectRow | undefined;
   /** The active project that holds the command's requested workspace root, if any. */
   readonly workspaceOwner: ProjectRow | undefined;
+  /** Another active project already named like the command's new title, if any. */
+  readonly nameOwner?: ProjectRow | undefined;
+}
+
+/** Whether this command renames the project; ownership transfers carry the identity's own name. */
+export function renamesProject(command: ProjectCommand): command is ProjectMetaUpdateCommand & {
+  readonly title: string;
+} {
+  return (
+    command.type === "project.meta.update" && command.title !== undefined && !command.ownership
+  );
+}
+
+/**
+ * The other project that already has `title`, ignoring case. Checkouts of the same
+ * logical project, or of the same repository, are one project in the sidebar and may
+ * share a name; `sameRepository` says whether two rows are checkouts of one repository.
+ */
+export function findProjectNameOwner(input: {
+  readonly rows: ReadonlyArray<ProjectRow>;
+  readonly projectId: ProjectId;
+  readonly title: string;
+  readonly sameRepository?: (a: ProjectRow, b: ProjectRow) => boolean;
+}): ProjectRow | undefined {
+  const target = input.rows.find((row) => row.projectId === input.projectId);
+  const identity = target?.workspaceSettings?.logicalProject?.id;
+  const key = projectNameKey(input.title);
+  return input.rows.find(
+    (row) =>
+      row.deletedAt === null &&
+      row.projectId !== input.projectId &&
+      projectNameKey(logicalProjectTitle(row)) === key &&
+      (identity === undefined || row.workspaceSettings?.logicalProject?.id !== identity) &&
+      !(target && input.sameRepository?.(target, row)),
+  );
 }
 
 const monogramSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
@@ -235,6 +289,9 @@ export function planProjectCommand(input: {
             ...(command.initialCoordinatorBinding
               ? { coordinatorBinding: command.initialCoordinatorBinding }
               : {}),
+            ...(command.temporarySessionId
+              ? { temporarySessionId: command.temporarySessionId }
+              : {}),
           },
           createdAt: occurredAt,
           updatedAt: occurredAt,
@@ -245,6 +302,24 @@ export function planProjectCommand(input: {
     case "project.meta.update": {
       const project = activeProject;
       if (project === undefined) return missingProject();
+      // Keeping the current name never collides with itself, and changing only its
+      // case collides with nothing but itself.
+      const renamed = renamesProject(command) && command.title !== logicalProjectTitle(project);
+      if (renamed && command.title.length > PROJECT_NAME_MAX_LENGTH) {
+        return invariant(`Project names must be at most ${PROJECT_NAME_MAX_LENGTH} characters.`);
+      }
+      if (
+        renamed &&
+        state.nameOwner !== undefined &&
+        state.nameOwner.projectId !== command.projectId
+      ) {
+        return Result.fail(
+          new ProjectNameTakenError({
+            projectId: command.projectId,
+            conflictingProjectId: state.nameOwner.projectId,
+          }),
+        );
+      }
       if (command.onlyIfDefaultModelUnset && project.defaultModelSelection !== null) {
         return Result.fail(new ProjectDefaultModelConflictError({ projectId: command.projectId }));
       }

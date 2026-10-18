@@ -188,7 +188,7 @@ public final class StudioNativeControlsModule: Module {
       let presenter = appContext?.utilities?.currentViewController()
     else { throw URLError(.cannotLoadFromNetwork) }
     let file = StudioNativeFilePresentation(identifier: identifier, sources: presentationSources,
-                                        sourceIdentifier: sourceIdentifier) { [weak self] error in
+                                            sourceIdentifier: sourceIdentifier) { [weak self] error in
       self?.filePresentation = nil
       if let error { promise.reject(error) } else { promise.resolve(nil) }
     }

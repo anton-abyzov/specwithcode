@@ -1,4 +1,4 @@
-import { assert, it } from "@effect/vitest";
+import { afterEach, assert, beforeEach, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import type * as Context from "effect/Context";
@@ -26,6 +26,28 @@ import * as ForgejoPullRequestProvider from "../pullRequest/ForgejoPullRequestPr
 import * as SourceControlDiscovery from "./SourceControlDiscovery.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 import { firstNonEmptyLine } from "./SourceControlProviderDiscovery.ts";
+
+// gh reads these before any stored login, so a token in the host's environment
+// (a release runner's GH_TOKEN, a developer's shell) would replace the fake gh.
+const TOKEN_VARIABLES = [
+  "GH_TOKEN",
+  "GITHUB_TOKEN",
+  "GH_ENTERPRISE_TOKEN",
+  "GITHUB_ENTERPRISE_TOKEN",
+];
+const savedTokens = new Map<string, string | undefined>();
+beforeEach(() => {
+  for (const name of TOKEN_VARIABLES) {
+    savedTokens.set(name, process.env[name]);
+    delete process.env[name];
+  }
+});
+afterEach(() => {
+  for (const [name, value] of savedTokens) {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
+});
 
 const layerSourceControlProviderRegistryTest = (input: {
   readonly bitbucket: Partial<BitbucketApi.BitbucketApi["Service"]>;

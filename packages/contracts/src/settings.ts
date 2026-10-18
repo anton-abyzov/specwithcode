@@ -1319,12 +1319,17 @@ export type WorktreeCleanup = typeof WorktreeCleanup.Type;
 export const ThreadFinishAction = Schema.Literals(["leave", "pull_request", "auto_merge"]);
 export type ThreadFinishAction = typeof ThreadFinishAction.Type;
 
+/** Provider instances that serve the default model, in the order to try them. */
+export const DefaultModelProviders = Schema.Array(ProviderInstanceId).check(Schema.isMaxLength(16));
+export type DefaultModelProviders = typeof DefaultModelProviders.Type;
+
 export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "agentInstructions",
   "claudeWorkflowMode",
   "responseStyle",
   "worktreeCleanup",
   "defaultModelSelection",
+  "defaultModelProviders",
   "defaultRuntimeMode",
   "defaultThreadEnvMode",
   "newWorktreesStartFromOrigin",
@@ -1368,6 +1373,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   responseStyle: Schema.optionalKey(ResponseStyle),
   worktreeCleanup: Schema.optionalKey(WorktreeCleanup),
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  defaultModelProviders: Schema.optionalKey(DefaultModelProviders),
   defaultRuntimeMode: Schema.optionalKey(RuntimeMode),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
@@ -1509,6 +1515,12 @@ export const ServerSettings = Schema.Struct({
   defaultModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /**
+   * Other providers that serve the default model, in the order a thread
+   * tries them when the default's own provider has no room. Empty tries
+   * every provider that lists the same model.
+   */
+  defaultModelProviders: DefaultModelProviders.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   defaultRuntimeMode: RuntimeMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE)),
   ),
@@ -1541,6 +1553,14 @@ export const ServerSettings = Schema.Struct({
    * unaffected.
    */
   enableAgentDeviceAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
+   * Whether this machine offers computer use: every agent it runs, in every
+   * project and with every provider, gets the `computer_*` MCP tools
+   * (screenshots, clicks, typing, opening apps). A machine-wide choice with no
+   * project override. The actions run inside the desktop app, so they also
+   * need the operating system's Screen Recording and Accessibility permissions.
+   */
+  enableAgentComputerAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /**
    * Whether this server may install and run Studio's device helper processes.
    * Kept separate from agent access so enabling the user's Device panel does
@@ -1957,6 +1977,7 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
   ),
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  defaultModelProviders: Schema.optionalKey(DefaultModelProviders),
   defaultRuntimeMode: Schema.optionalKey(RuntimeMode),
   /**
    * Per-project entry replacement: each entry replaces that project's whole
@@ -1969,6 +1990,7 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Record(ProjectId, Schema.NullOr(ProjectSettingsOverrides)),
   ),
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
+  enableAgentComputerAccess: Schema.optionalKey(Schema.Boolean),
   enableDeviceSupport: Schema.optionalKey(Schema.Boolean),
   deviceOnboardingCompleted: Schema.optionalKey(Schema.Boolean),
   deviceHosts: Schema.optionalKey(SshDeviceHostConfigs),

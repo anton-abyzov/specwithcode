@@ -167,6 +167,10 @@
       "types": "./src/usageWindows.ts",
       "import": "./src/usageWindows.ts"
     },
+    "./modelIdentity": {
+      "types": "./src/modelIdentity.ts",
+      "import": "./src/modelIdentity.ts"
+    },
     "./providerFallback": {
       "types": "./src/providerFallback.ts",
       "import": "./src/providerFallback.ts"

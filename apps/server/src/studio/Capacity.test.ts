@@ -1,6 +1,7 @@
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 import { ProviderInstanceId, ProviderDriverKind } from "@specweave-studio/contracts";
+import type { ServerProvider } from "@specweave-studio/contracts";
 import { HostProcessEnvironment } from "@specweave-studio/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as Clock from "effect/Clock";
@@ -29,6 +30,7 @@ const run = <A, E>(
     refreshBusy?: boolean;
     requests?: string[];
     malformedJson?: boolean;
+    refreshFailures?: number;
   } = {},
 ) =>
   Effect.runPromise(
@@ -62,6 +64,10 @@ const run = <A, E>(
         switchOptions.requests?.push(path);
         if (path === "/api/refresh" && switchOptions.refreshBusy)
           return Response.json({}, { status: 409 });
+        if (path === "/api/refresh" && (switchOptions.refreshFailures ?? 0) > 0) {
+          switchOptions.refreshFailures! -= 1;
+          return Response.json({}, { status: 500 });
+        }
         return Response.json(
           path === "/api/refresh" && "refreshedRaw" in switchOptions
             ? switchOptions.refreshedRaw
@@ -850,22 +856,17 @@ describe("native session admission", () => {
     expect(attempts).toEqual(["codex"]);
     expect(requests).toEqual(["/api/state", "/api/refresh"]);
   });
-  it("fails closed when stale quota refresh is busy and does not retry or admit its cache", async () => {
+  it("waits out a busy stale quota refresh, then reads its result instead of refreshing again", async () => {
     const requests: string[] = [];
+    const exhausted = rawSnapshot(DateTime.toEpochMillis(DateTime.nowUnsafe()) - 16 * 60000);
+    exhausted.accounts[0]!.quota.weekly.usedPercent = 100;
     await expect(
-      run(
-        start(),
-        rawSnapshot(DateTime.toEpochMillis(DateTime.nowUnsafe()) - 16 * 60000),
-        [provider()],
-        settings,
-        false,
-        true,
-        [provider()],
-        [],
-        { refreshBusy: true, requests },
-      ),
-    ).rejects.toThrow(/refresh is already running/);
-    expect(requests).toEqual(["/api/state", "/api/refresh"]);
+      run(start(), exhausted, [provider()], settings, false, true, [provider()], [], {
+        refreshBusy: true,
+        requests,
+      }),
+    ).rejects.toThrow(/blocked, busy, exhausted or unverified/);
+    expect(requests).toEqual(["/api/state", "/api/refresh", "/api/state"]);
   });
   it("does not admit an exhausted refreshed quota or a malformed refresh response", async () => {
     const stale = rawSnapshot(DateTime.toEpochMillis(DateTime.nowUnsafe()) - 16 * 60000),
@@ -881,8 +882,10 @@ describe("native session admission", () => {
         /no remaining permitted usage under its current usage limit\. Select/,
       ),
     });
+    const full = rawSnapshot(DateTime.toEpochMillis(DateTime.nowUnsafe()) - 16 * 60000);
+    full.accounts[0]!.quota.window.usedPercent = 100;
     await expect(
-      run(start(), stale, [provider()], settings, false, true, [provider()], [], {
+      run(start(), full, [provider()], settings, false, true, [provider()], [], {
         refreshedRaw: {},
       }),
     ).rejects.toThrow(/Fresh subscription capacity could not be verified/);
@@ -989,6 +992,8 @@ describe("native session admission", () => {
     async (status) => {
       const raw = rawSnapshot();
       raw.accounts[0]!.status = status;
+      // A stale verdict alone falls back to the reading; a full one still refuses.
+      if (status === "stale") raw.accounts[0]!.quota.weekly.usedPercent = 100;
       await expect(run(start(), raw)).rejects.toThrow(
         status === "exhausted"
           ? /no remaining permitted usage/
@@ -1012,6 +1017,145 @@ describe("native session admission", () => {
       await expect(run(start(), raw)).rejects.toThrow(/blocked/);
     },
   );
+  describe("a stale reading the local service cannot re-verify", () => {
+    const minutesAgo = (minutes: number) =>
+      rawSnapshot(DateTime.toEpochMillis(DateTime.nowUnsafe()) - minutes * 60000);
+    const full = (minutes: number) => {
+      const raw = minutesAgo(minutes);
+      raw.accounts[0]!.quota.weekly.usedPercent = 100;
+      return raw;
+    };
+    const startWith = (raw: unknown, options: Parameters<typeof run>[8] = {}) =>
+      run(start(), raw, [provider()], settings, false, true, [provider()], [], options);
+
+    it("admits a roomy last reading when the refresh is busy", async () => {
+      await expect(startWith(minutesAgo(16), { refreshBusy: true })).resolves.toBeUndefined();
+    });
+    it("retries a failed refresh once and enforces its answer", async () => {
+      const requests: string[] = [];
+      const exhausted = rawSnapshot();
+      exhausted.accounts[0]!.status = "exhausted";
+      await expect(
+        startWith(minutesAgo(16), { refreshFailures: 1, refreshedRaw: exhausted, requests }),
+      ).rejects.toThrow(/no remaining permitted usage/);
+      expect(requests).toEqual(["/api/state", "/api/refresh", "/api/refresh"]);
+    });
+    it("admits a roomy last reading when both refresh attempts fail", async () => {
+      const requests: string[] = [];
+      await expect(
+        startWith(minutesAgo(16), { refreshFailures: 2, requests }),
+      ).resolves.toBeUndefined();
+      expect(requests).toEqual(["/api/state", "/api/refresh", "/api/refresh"]);
+    });
+    it("refuses a full last reading when both refresh attempts fail", async () => {
+      await expect(startWith(full(16), { refreshFailures: 2 })).rejects.toThrow(
+        /Fresh subscription capacity could not be verified/,
+      );
+    });
+    it("admits a roomy last reading when the refresh returns an unverifiable answer", async () => {
+      await expect(startWith(minutesAgo(16), { refreshedRaw: {} })).resolves.toBeUndefined();
+      await expect(
+        startWith(minutesAgo(16), { refreshedRaw: minutesAgo(20) }),
+      ).resolves.toBeUndefined();
+    });
+    it("does not trust a reading older than twelve hours", async () => {
+      await expect(startWith(minutesAgo(13 * 60), { refreshFailures: 2 })).rejects.toThrow(
+        /Fresh subscription capacity could not be verified/,
+      );
+    });
+    it.each(["active", "blocked", "auth-required"])(
+      "still refuses a %s profile whose reading has room",
+      async (status) => {
+        const raw = minutesAgo(16);
+        raw.accounts[0]!.status = status;
+        await expect(startWith(raw, { refreshFailures: 2 })).rejects.toThrow(
+          /could not be verified/,
+        );
+      },
+    );
+    it("still refuses when the native provider denies new work", async () => {
+      const denied = {
+        ...provider(),
+        usageLimits: {
+          ...provider().usageLimits!,
+          ordinaryUsageAllowed: false,
+          nativeAllowanceObservedAt: DateTime.formatIso(DateTime.nowUnsafe()),
+        },
+      };
+      await expect(
+        run(start(), minutesAgo(16), [denied], settings, false, true, [denied], [], {
+          refreshFailures: 2,
+        }),
+      ).rejects.toThrow(/no remaining permitted usage/);
+    });
+  });
+  describe("a Claude CLI billed to API credits", () => {
+    // Claude Code signed in to the Claude Console reports "API Usage Billing":
+    // the probe sees a key and no plan, so the snapshot carries auth type apiKey.
+    const consoleSignIn = (now: number, overrides: Partial<ServerProvider["auth"]> = {}) => {
+      const base = provider("claudeAgent", "claudeAgent", now);
+      return {
+        ...base,
+        auth: {
+          status: "authenticated" as const,
+          type: "apiKey",
+          label: "Claude API Key",
+          ...overrides,
+        },
+        usageLimits: { checkedAt: base.checkedAt, windows: [] },
+      } satisfies ServerProvider;
+    };
+
+    it("admits a Console sign-in without a subscription or capacity check", async () => {
+      const now = DateTime.toEpochMillis(DateTime.nowUnsafe());
+      const requests: string[] = [];
+      const refreshed: string[] = [];
+      const native = [consoleSignIn(now)];
+      await expect(
+        run(
+          start("claudeAgent"),
+          rawSnapshot(now),
+          native,
+          settings,
+          false,
+          true,
+          native,
+          refreshed,
+          {
+            requests,
+          },
+        ),
+      ).resolves.toBeUndefined();
+      expect(requests).toEqual([]);
+      expect(refreshed).toEqual([]);
+    });
+
+    it("re-reads an expired status once, then admits the Console sign-in", async () => {
+      const now = DateTime.toEpochMillis(DateTime.nowUnsafe());
+      const refreshed: string[] = [];
+      await expect(
+        run(
+          start("claudeAgent"),
+          rawSnapshot(now),
+          [consoleSignIn(now - 16 * 60_000)],
+          settings,
+          false,
+          true,
+          [consoleSignIn(now)],
+          refreshed,
+        ),
+      ).resolves.toBeUndefined();
+      expect(refreshed).toEqual(["claudeAgent"]);
+    });
+
+    it("still refuses a CLI that is not signed in", async () => {
+      const now = DateTime.toEpochMillis(DateTime.nowUnsafe());
+      const native = [consoleSignIn(now, { status: "unauthenticated" })];
+      await expect(
+        run(start("claudeAgent"), rawSnapshot(now), native, settings, false, true, native),
+      ).rejects.toThrow(/authorization is unverified/);
+    });
+  });
   describe("an exhausted Claude profile after a new sign-in", () => {
     // The local service still holds the read of the account signed in before:
     // weekly limit reached, reset in four days. The person has since signed in

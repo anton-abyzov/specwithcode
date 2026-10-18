@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { CollapsibleReport, reportBodyOverflows } from "./CollapsibleReport";
 
-const LONG = Array.from({ length: 20 }, (_, i) => `Finding ${i + 1}.`).join("\n");
+const LONG = Array.from({ length: 100 }, (_, i) => `Finding ${i + 1}.`).join("\n");
 
 describe("CollapsibleReport", () => {
   it("folds a long report behind Show full report", () => {

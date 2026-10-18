@@ -19,7 +19,19 @@
     "scripts": {
       // Knip loads its preprocessor through a CLI option; native verification and
       // worktree setup (from specweave-studio.json) run directly.
-      "entry": ["knip-schemas.ts", "mobile-native-client.ts", "setup-worktree.ts"],
+      "entry": [
+        "knip-schemas.ts",
+        "mobile-native-client.ts",
+        "setup-worktree.ts",
+        // Standalone verifiers and reports run directly with node.
+        "*.mjs",
+        "*/**/*.{js,mjs,ts,tsx}",
+      ],
+    },
+    "apps/chrome-extension": {
+      // manifest.json loads the service worker, popup and tab group scripts by filename;
+      // the store screenshot renderer runs directly.
+      "entry": ["src/*.js", "store/screenshots/src/render.mjs"],
     },
     "apps/server": {
       // Vite+ pack entries and the launcher used by installed background services.
@@ -33,6 +45,10 @@
         "scripts/update-test-shard-weights.ts",
         "scripts/verify-background-live.ts",
         "src/provider/testFixtures/*.mjs",
+        // Run directly by the studio verification scripts.
+        "src/studio/verify.mjs",
+        // Compile-time layer type assertions, checked by tsc only.
+        "src/ws.layer-types.ts",
       ],
       // Keep the transitive Effect runtime pinned for standalone npm installs.
       // The Vite+ web build prerequisite.
@@ -63,7 +79,8 @@
       // Vitest loads this through the per-file @vitest-environment directive.
       "ignoreDependencies": ["jsdom"],
       // Worktree setup (scripts/setup-worktree.ts) runs this directly.
-      "entry": ["scripts/warm-dep-cache.ts"],
+      // Browser verification fixtures under tests/ are served and run directly.
+      "entry": ["scripts/warm-dep-cache.ts", "tests/*/**/*.{js,mjs,ts,tsx,css}"],
       // UI component modules are copied and adapted as cohesive sets. Keep their
       // named subcomponents even before they have callers; the file audit still
       // reports an entire component module when nothing imports it.

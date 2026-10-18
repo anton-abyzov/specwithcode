@@ -13,6 +13,7 @@ import { projectWorkspace } from "../../studio/projectWorkspace";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
 import { useEnvironment } from "../../state/environments";
+import { machineStatus } from "../../lib/machineStatus";
 import { Button } from "../ui/button";
 import { ConnectionMatrix } from "./ConnectionMatrix";
 
@@ -61,6 +62,7 @@ export function NativeConnectionsPanel({
   if (!connected)
     return (
       <p role="status" className="text-sm text-muted-foreground">
+        {environment ? `${machineStatus(environment.connection).text.replace(/…$/, "")}. ` : ""}
         Connect this machine to inspect its MCP configurations.
       </p>
     );
@@ -71,10 +73,10 @@ export function NativeConnectionsPanel({
       </p>
     );
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="font-medium">Connections library</h2>
-        <Button variant="outline" size="sm" disabled={query.isPending} onClick={query.refresh}>
+        <h3 className="text-sm font-medium">Connections library</h3>
+        <Button variant="outline" size="xs" disabled={query.isPending} onClick={query.refresh}>
           {query.isPending ? "Scanning…" : "Refresh configurations"}
         </Button>
       </div>

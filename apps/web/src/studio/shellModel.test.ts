@@ -477,3 +477,41 @@ describe("blocked threads", () => {
     expect(threadStatusWord(thread({ reportedBlocker: null }))).toBeNull();
   });
 });
+
+describe("threads on an unreachable host", () => {
+  const blocked = thread({ reportedBlocker: "Commit these changes, or discard them?" });
+  const offline = new Set([blocked.environmentId as string]);
+
+  it("says the host is offline instead of Blocked and does not wait on the person", () => {
+    expect(threadStatusWord(blocked, true)).toBe("Host offline");
+    expect(threadTone(blocked, true)).toBe("idle");
+    expect(waitingCount([blocked], offline)).toBe(0);
+    expect(threadsSummary([blocked], 0, offline)).toBe("Nothing is waiting on you.");
+  });
+
+  it("lists it as idle rather than working from a stale runtime", () => {
+    const groups = buildThreadPaneGroups(
+      [
+        blocked,
+        thread({
+          id: "worker-2",
+          reportedBlocker: "Commit these changes, or discard them?",
+          runtime: running,
+        }),
+      ],
+      "activity",
+      "",
+      undefined,
+      offline,
+    );
+    expect(groups.find((g) => g.group === "Idle")?.threads).toHaveLength(2);
+    expect(groups.find((g) => g.group === "Waiting on you")?.threads).toHaveLength(0);
+  });
+
+  it("keeps a resolved thread resolved and is unchanged once the host is back", () => {
+    expect(threadTone({ ...blocked, settledOverride: "settled" }, true)).toBe("resolved");
+    expect(threadStatusWord({ ...blocked, settledOverride: "settled" }, true)).toBeNull();
+    expect(threadStatusWord(blocked, false)).toBe("Blocked");
+    expect(waitingCount([blocked], new Set())).toBe(1);
+  });
+});

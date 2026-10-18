@@ -13,11 +13,17 @@ import {
   limitRestartRequest,
   providerUsedPercent,
   isClaudeApiKeyProvider,
+  isApiCreditExhaustedMessage,
+  isApiCreditProvider,
   isDirectClaudeApiKeyProvider,
   resolveApiCreditSelection,
+  resolveApiCreditSelections,
   resolveCoordinatorTurnSelection,
   resolveProviderFallback,
+  resolveSameModelElsewhere,
   limitStopWaitsForReset,
+  provenFallbackSelection,
+  resolveWorkerLaunchSelection,
   shouldSwitchBeforeTurn,
   usageAtThreshold,
   usageResetAt,
@@ -472,6 +478,108 @@ describe("Claude API credits", () => {
     ).toBeNull();
   });
 
+  it("rotates from an API account that ran out of credits to the next one", () => {
+    const second = provider("claudeApi2", "claudeAgent", null, {
+      auth: { status: "authenticated", type: "apiKey", apiKeyBilling: true },
+    });
+    const onFirst = { instanceId: apiKey.instanceId, model: "claudeAgent-small" };
+    expect(
+      resolveApiCreditSelection({ providers: [claude, apiKey, second], current: onFirst }),
+    ).toBeNull();
+    expect(
+      resolveApiCreditSelection({
+        providers: [claude, apiKey, second],
+        current: onFirst,
+        rotate: true,
+      }),
+    ).toEqual({ instanceId: second.instanceId, model: "claudeAgent-small" });
+    // Never rotates onto the subscription or from one.
+    expect(
+      resolveApiCreditSelection({ providers: [claude, apiKey], current: onFirst, rotate: true }),
+    ).toBeNull();
+    expect(
+      resolveApiCreditSelection({ providers: [claude, apiKey], current, rotate: true }),
+    ).toBeNull();
+  });
+
+  it("lists every API account a limited thread can continue on", () => {
+    const second = provider("claudeApi2", "claudeAgent", null, {
+      auth: { status: "authenticated", type: "apiKey", apiKeyBilling: true },
+    });
+    const proxy = provider("claudeProxy", "claudeAgent", null, {
+      auth: { status: "authenticated", type: "apiKey" },
+    });
+    expect(
+      resolveApiCreditSelections({ providers: [claude, apiKey, proxy, second, codex], current }),
+    ).toEqual([
+      { instanceId: apiKey.instanceId, model: "claudeAgent-small" },
+      { instanceId: second.instanceId, model: "claudeAgent-small" },
+    ]);
+    // From a proxy thread nothing moves: it is billed per token already.
+    expect(
+      resolveApiCreditSelections({
+        providers: [proxy, apiKey],
+        current: { instanceId: proxy.instanceId, model: "claudeAgent-small" },
+      }),
+    ).toEqual([]);
+  });
+
+  it("offers xAI and OpenAI API keys for Grok and Codex threads", () => {
+    const grok = provider("grok", "grok", 100, {
+      auth: { status: "authenticated", type: "cached_token" },
+    });
+    const grokApi = provider("grokApi", "grok", null, {
+      auth: { status: "authenticated", type: "api_key", label: "xAI API key" },
+    });
+    const codexApi = provider("codexApi", "codex", null, {
+      auth: { status: "authenticated", type: "apiKey" },
+    });
+    expect([grok, grokApi, codex, codexApi, apiKey, claude].map(isApiCreditProvider)).toEqual([
+      false,
+      true,
+      false,
+      true,
+      true,
+      false,
+    ]);
+    expect(
+      resolveApiCreditSelections({
+        providers: [grok, grokApi, codexApi, apiKey],
+        current: { instanceId: grok.instanceId, model: "grok-default" },
+      }),
+    ).toEqual([{ instanceId: grokApi.instanceId, model: "grok-default" }]);
+    expect(
+      resolveApiCreditSelections({
+        providers: [codex, grokApi, codexApi],
+        current: { instanceId: codex.instanceId, model: "codex-small" },
+      }),
+    ).toEqual([{ instanceId: codexApi.instanceId, model: "codex-small" }]);
+    // The automatic rule stays Claude's own.
+    expect(
+      resolveApiCreditSelection({
+        providers: [grok, grokApi],
+        current: { instanceId: grok.instanceId, model: "grok-default" },
+      }),
+    ).toBeNull();
+  });
+
+  it("recognises the API's out-of-credit refusal", () => {
+    expect(
+      isApiCreditExhaustedMessage(
+        "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+      ),
+    ).toBe(true);
+    expect(
+      isApiCreditExhaustedMessage(
+        "Credit balance too low · Add funds: https://platform.claude.com/settings/billing",
+      ),
+    ).toBe(true);
+    expect(isApiCreditExhaustedMessage("Claude API rate limit reached. Try again later.")).toBe(
+      false,
+    );
+    expect(isApiCreditExhaustedMessage(undefined)).toBe(false);
+  });
+
   it("does not suggest unverified API capacity even when the rule names it", () => {
     const input = {
       providers: [claude, apiKey],
@@ -891,5 +999,248 @@ describe("coordinatorFallbackReason", () => {
         ]),
       ).text,
     ).toBe("session at 96% used");
+  });
+});
+
+describe("workers and their coordinator", () => {
+  const claudeSelection = {
+    instanceId: ProviderInstanceId.make("claudeAgent"),
+    model: "claudeAgent-default",
+  };
+  const copilotSelection = {
+    instanceId: ProviderInstanceId.make("copilot"),
+    model: "claude-opus-5.5",
+  };
+  // An agent that reports no usage at all, as Copilot does.
+  const copilot = provider("copilot", "acpRegistry", null);
+  const spentClaude = provider("claudeAgent", "claudeAgent", 100);
+  const roomyClaude = provider("claudeAgent", "claudeAgent", 40);
+  const switchRule = {
+    ...rule,
+    providerLimitAction: "switch" as const,
+    providerLimitSwitchAtPercent: 95,
+    providerLimitWaitUnderMinutes: 30,
+  };
+  const launch = (over: Partial<Parameters<typeof resolveWorkerLaunchSelection>[0]>) =>
+    resolveWorkerLaunchSelection({
+      preferred: claudeSelection,
+      coordinator: copilotSelection,
+      providers: [spentClaude, copilot],
+      rule: switchRule,
+      nowMs: now,
+      ...over,
+    });
+
+  it("starts a worker on the project's worker model while it has room", () => {
+    expect(launch({ providers: [roomyClaude, copilot] })).toEqual({
+      selection: claudeSelection,
+      reason: "preferred",
+    });
+  });
+
+  it("starts a worker where the coordinator runs when the worker model is spent", () => {
+    expect(launch({})).toEqual({ selection: copilotSelection, reason: "coordinator" });
+    const denied = {
+      ...roomyClaude,
+      usageLimits: { ...roomyClaude.usageLimits!, ordinaryUsageAllowed: false },
+    };
+    expect(launch({ providers: [denied, copilot] }).reason).toBe("coordinator");
+    expect(
+      launch({
+        providers: [roomyClaude, copilot],
+        limitedInstanceIds: new Set([claudeSelection.instanceId]),
+      }).reason,
+    ).toBe("coordinator");
+  });
+
+  it("keeps the worker model under the wait rule or a reset within the wait", () => {
+    expect(launch({ rule: { ...switchRule, providerLimitAction: "wait" } })).toEqual({
+      selection: claudeSelection,
+      reason: "waits-for-reset",
+    });
+    // The spent window resets at 15:00, three hours on; a four-hour wait covers it.
+    expect(launch({ rule: { ...switchRule, providerLimitWaitUnderMinutes: 240 } })).toEqual({
+      selection: claudeSelection,
+      reason: "preferred-resets-soon",
+    });
+  });
+
+  it("falls back to another provider with room when the coordinator cannot take it", () => {
+    const signedOut = { ...copilot, auth: { status: "unauthenticated" as const } };
+    expect(launch({ providers: [spentClaude, signedOut, codex] })).toEqual({
+      selection: { instanceId: codex.instanceId, model: "codex-default" },
+      reason: "fallback",
+    });
+    expect(launch({ coordinator: claudeSelection, providers: [spentClaude, codex] }).reason).toBe(
+      "fallback",
+    );
+    const paid = { ...copilot, auth: { status: "authenticated" as const, type: "apiKey" } };
+    expect(launch({ providers: [spentClaude, paid] })).toEqual({
+      selection: claudeSelection,
+      reason: "no-room",
+    });
+  });
+
+  it("offers the coordinator's model to a stopped worker without a usage read", () => {
+    const pick = (proven: typeof copilotSelection | null, limited?: ReadonlySet<string>) =>
+      resolveProviderFallback({
+        providers: [spentClaude, copilot],
+        currentInstanceId: claudeSelection.instanceId,
+        currentModel: claudeSelection.model,
+        rule,
+        nowMs: now,
+        belowPercent: 95,
+        anyReady: true,
+        proven,
+        ...(limited === undefined ? {} : { limitedInstanceIds: limited }),
+      });
+    // Copilot never reports usage, so it counts as having room until a stop
+    // there marks it limited.
+    expect(pick(null)).toEqual({ instanceId: copilot.instanceId, model: "acpRegistry-default" });
+    expect(pick(null, new Set([copilot.instanceId]))).toBeNull();
+    expect(pick(copilotSelection)).toEqual(copilotSelection);
+    const fullCopilot = provider("copilot", "acpRegistry", 97);
+    expect(
+      resolveProviderFallback({
+        providers: [spentClaude, fullCopilot],
+        currentInstanceId: claudeSelection.instanceId,
+        rule,
+        nowMs: now,
+        belowPercent: 95,
+        proven: copilotSelection,
+      }),
+    ).toBeNull();
+  });
+
+  it("treats the coordinator as proven only while it is not stopped on the limit", () => {
+    const worker = { id: "worker" as never, providerInstanceId: claudeSelection.instanceId };
+    const coordinator = {
+      id: "coordinator" as never,
+      providerInstanceId: copilotSelection.instanceId,
+      modelSelection: copilotSelection,
+      status: "completed",
+    };
+    expect(provenFallbackSelection(worker, coordinator)).toEqual(copilotSelection);
+    expect(
+      provenFallbackSelection(worker, {
+        ...coordinator,
+        status: "failed",
+        lastErrorClass: "usage_limit",
+      }),
+    ).toBeNull();
+    expect(provenFallbackSelection({ ...worker, id: coordinator.id }, coordinator)).toBeNull();
+    expect(
+      provenFallbackSelection(
+        { ...worker, providerInstanceId: copilotSelection.instanceId },
+        coordinator,
+      ),
+    ).toBeNull();
+    expect(provenFallbackSelection(worker, null)).toBeNull();
+  });
+});
+
+describe("the recommended model from another provider", () => {
+  const opusOn = (
+    id: string,
+    driver: string,
+    used: number | null,
+    slug: string,
+    extra: { isCustom?: boolean } = {},
+  ) => {
+    const base = provider(id, driver, used);
+    return {
+      ...base,
+      models: [
+        ...base.models,
+        { slug, name: "Claude Opus 5.5", isCustom: extra.isCustom ?? false, capabilities: null },
+      ],
+    };
+  };
+  const opus = {
+    instanceId: ProviderInstanceId.make("claudeAgent"),
+    model: "claude-opus-5-5",
+    options: [{ id: "effort", value: "high" }],
+  };
+  const spentClaude = opusOn("claudeAgent", "claudeAgent", 100, "claude-opus-5-5");
+  // Copilot reports no usage; the person added Opus 5.5 to it as a custom model.
+  const copilot = opusOn("copilot", "acpRegistry", null, "claude-opus-5.5", { isCustom: true });
+  const workCopilot = opusOn("copilot-work", "acpRegistry", null, "claude-opus-5.5");
+  const otherClaude = opusOn("claude-2", "claudeAgent", 20, "claude-opus-5-5");
+  const codexRoomy = provider("codex", "codex", 10);
+  const switchRule = {
+    ...rule,
+    providerLimitAction: "switch" as const,
+    providerLimitSwitchAtPercent: 95,
+  };
+
+  it("starts a worker on the same model from another provider before anything else", () => {
+    const codexSelection = { instanceId: codexRoomy.instanceId, model: "codex-default" };
+    expect(
+      resolveWorkerLaunchSelection({
+        preferred: opus,
+        coordinator: codexSelection,
+        providers: [spentClaude, codexRoomy, copilot],
+        rule: switchRule,
+        nowMs: now,
+      }),
+    ).toEqual({
+      selection: { instanceId: copilot.instanceId, model: "claude-opus-5.5" },
+      reason: "same-model",
+    });
+    // A stop there marks it limited: then the coordinator's model.
+    expect(
+      resolveWorkerLaunchSelection({
+        preferred: opus,
+        coordinator: codexSelection,
+        providers: [spentClaude, codexRoomy, copilot],
+        rule: switchRule,
+        nowMs: now,
+        limitedInstanceIds: new Set([copilot.instanceId]),
+      }),
+    ).toEqual({ selection: codexSelection, reason: "coordinator" });
+  });
+
+  it("tries the project's listed providers in order, then the same driver, then verified room", () => {
+    const pick = (order?: ReadonlyArray<string>) =>
+      resolveSameModelElsewhere({
+        providers: [spentClaude, copilot, workCopilot, otherClaude],
+        current: opus,
+        order: order?.map((id) => ProviderInstanceId.make(id)),
+        nowMs: now,
+        belowPercent: 95,
+      });
+    // Another Claude account keeps the effort option; a Copilot pick drops it.
+    expect(pick()).toEqual({
+      instanceId: otherClaude.instanceId,
+      model: "claude-opus-5-5",
+      options: opus.options,
+    });
+    expect(pick(["copilot-work", "copilot"])).toEqual({
+      instanceId: workCopilot.instanceId,
+      model: "claude-opus-5.5",
+    });
+  });
+
+  it("moves a coordinator stopped on its spent subscription to the same model elsewhere", () => {
+    expect(
+      resolveProviderFallback({
+        providers: [spentClaude, codexRoomy, copilot],
+        currentInstanceId: spentClaude.instanceId,
+        currentModel: opus.model,
+        rule: switchRule,
+        nowMs: now,
+        belowPercent: 95,
+        anyReady: true,
+      }),
+    ).toEqual({ instanceId: copilot.instanceId, model: "claude-opus-5.5" });
+    // Never onto a provider billed per token, even with the same model.
+    const paid = { ...copilot, auth: { status: "authenticated" as const, type: "apiKey" } };
+    expect(
+      resolveSameModelElsewhere({
+        providers: [spentClaude, paid],
+        current: opus,
+        nowMs: now,
+      }),
+    ).toBeNull();
   });
 });

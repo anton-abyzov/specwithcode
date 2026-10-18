@@ -41,6 +41,7 @@ import { useThreadVisitedMigration } from "../hooks/useThreadVisitedMigration";
 import ThreadSidebar from "./Sidebar";
 import { ViewerOverlayHost } from "./ViewerOverlayHost";
 import StudioSidebar from "./studio/shell/StudioSidebar";
+import { UnreachableHostsProvider } from "../studio/unreachableHosts";
 import { SidebarBrandWidthProbe } from "./sidebar/SidebarChrome";
 import { MainAppLocationTracker } from "./sidebar/mainAppLocation";
 import { useSidebarStageBackdropVariant } from "./SidebarStageBackdrop";
@@ -305,47 +306,49 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   }, [navigate, pathname]);
 
   return (
-    <PanelAnimationSuppressionProvider value={panelAnimationsSuppressed}>
-      <SidebarProvider
-        className="h-dvh! min-h-0!"
-        data-panel-animations={routePanelAnimationsActive ? "true" : "false"}
-        defaultOpen
-        style={sidebarProviderStyle}
-      >
-        <SidebarBrandWidthProbe onWidthChange={setBrandWidth} />
-        <ProjectProjectionRetention />
-        <Sidebar
-          side="left"
-          collapsible="offcanvas"
-          data-app-sidebar=""
-          role="navigation"
-          aria-label="Projects and chats"
-          resizable={{
-            maxWidth: sidebarMaximumWidth,
-            minWidth: sidebarMinimumWidth,
-            shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
-              nextWidth <= currentWidth ||
-              wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
-            storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
-            onResize: setSidebarWidth,
-          }}
+    <UnreachableHostsProvider>
+      <PanelAnimationSuppressionProvider value={panelAnimationsSuppressed}>
+        <SidebarProvider
+          className="h-dvh! min-h-0!"
+          data-panel-animations={routePanelAnimationsActive ? "true" : "false"}
+          defaultOpen
+          style={sidebarProviderStyle}
         >
-          {/* Settings opens as a sheet over the app, so the app sidebar stays. */}
-          {legacySidebarEnabled ? (
-            <LegacyThreadSidebar />
-          ) : inboxSidebarEnabled ? (
-            <ThreadSidebar />
-          ) : (
-            <StudioSidebar />
-          )}
-          <SidebarRail onDoubleClick={resetSidebarWidth} />
-        </Sidebar>
-        {children}
-        <SidebarControl />
-        <ViewerOverlayHost />
-        <NavigationHistoryShortcuts />
-        <MainAppLocationTracker />
-      </SidebarProvider>
-    </PanelAnimationSuppressionProvider>
+          <SidebarBrandWidthProbe onWidthChange={setBrandWidth} />
+          <ProjectProjectionRetention />
+          <Sidebar
+            side="left"
+            collapsible="offcanvas"
+            data-app-sidebar=""
+            role="navigation"
+            aria-label="Projects and chats"
+            resizable={{
+              maxWidth: sidebarMaximumWidth,
+              minWidth: sidebarMinimumWidth,
+              shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
+                nextWidth <= currentWidth ||
+                wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
+              storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
+              onResize: setSidebarWidth,
+            }}
+          >
+            {/* Settings opens as a sheet over the app, so the app sidebar stays. */}
+            {legacySidebarEnabled ? (
+              <LegacyThreadSidebar />
+            ) : inboxSidebarEnabled ? (
+              <ThreadSidebar />
+            ) : (
+              <StudioSidebar />
+            )}
+            <SidebarRail onDoubleClick={resetSidebarWidth} />
+          </Sidebar>
+          {children}
+          <SidebarControl />
+          <ViewerOverlayHost />
+          <NavigationHistoryShortcuts />
+          <MainAppLocationTracker />
+        </SidebarProvider>
+      </PanelAnimationSuppressionProvider>
+    </UnreachableHostsProvider>
   );
 }

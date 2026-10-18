@@ -18,7 +18,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { HttpClient } from "effect/http";
-import { Atom } from "effect/reactivity";
+import { Atom, type AtomRegistry } from "effect/reactivity";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
@@ -49,6 +49,8 @@ import {
   type EnvironmentThreadState,
   type EnvironmentThreadStatus,
 } from "./threadState.ts";
+
+const MISSING_THREAD_RELOAD_DELAY = "250 millis";
 
 function statusWithoutLiveData(
   data: Option.Option<OrchestrationV2ThreadProjection>,
@@ -166,9 +168,19 @@ function cachedThreadState(value: EnvironmentThreadState): EnvironmentThreadStat
   };
 }
 
+export interface EnvironmentThreadStateOptions {
+  /**
+   * Completes once the environment lists this thread. A new chat's view can
+   * load before its first message creates the thread; with this, that miss
+   * waits for the thread instead of staying deleted until the view remounts.
+   */
+  readonly untilListed?: Effect.Effect<void>;
+}
+
 export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make")(function* (
   threadId: ThreadIdType,
   resumeCache?: ThreadResumeCache,
+  options?: EnvironmentThreadStateOptions,
 ) {
   const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
   const cache = yield* Persistence.EnvironmentCacheStore;
@@ -824,6 +836,20 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     );
   });
 
+  // A missing thread parks here. A new chat's view can load before its first
+  // message creates the thread, so when the environment lists it, load again;
+  // the pause keeps a list that runs ahead of the snapshot from spinning.
+  const reloadOnceListed = Effect.gen(function* () {
+    if (options?.untilListed === undefined) return yield* Effect.never;
+    yield* options.untilListed;
+    yield* Effect.sleep(MISSING_THREAD_RELOAD_DELAY);
+    yield* SubscriptionRef.update(state, (value) =>
+      value.status === "deleted"
+        ? { ...EMPTY_ENVIRONMENT_THREAD_STATE, status: "synchronizing" as const }
+        : value,
+    );
+  });
+
   yield* markSynchronizing;
   yield* Effect.forkScoped(
     subscribeDynamic(
@@ -831,10 +857,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       Effect.fn("EnvironmentThreadState.makeSubscribeInput")(function* (session) {
         let current = yield* SubscriptionRef.get(state);
         // A prior definitive miss (or delete event) already cleared this thread.
-        // Park the subscription attempt without opening the socket so we do not
-        // retry forever against a known-missing id.
+        // Do not open the socket against a known-missing id.
         if (current.status === "deleted") {
-          return yield* Effect.never;
+          yield* reloadOnceListed;
+          current = yield* SubscriptionRef.get(state);
         }
 
         const supportsCompletionMarker = yield* session.initialConfig.pipe(
@@ -845,7 +871,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         yield* markSynchronizing;
         yield* Ref.set(resumingLive, false);
 
-        if (Option.isNone(current.data)) {
+        while (Option.isNone(current.data)) {
           const prepared = yield* SubscriptionRef.get(supervisor.prepared).pipe(
             Effect.flatMap(
               Option.match({
@@ -893,15 +919,18 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             }
             case "missing": {
               // Definitive HTTP 404: clear any stale cache and do not open or
-              // retry a socket subscription for this attempt.
+              // retry a socket subscription against a known-missing id.
               yield* setDeleted();
-              return yield* Effect.never;
+              yield* reloadOnceListed;
+              current = yield* SubscriptionRef.get(state);
+              continue;
             }
             case "unavailable": {
               // Transient HTTP failure: fall through to the socket path.
               break;
             }
           }
+          break;
         }
 
         const sequence = yield* SubscriptionRef.get(lastSequence);
@@ -938,13 +967,36 @@ function threadStateChanges(
   environmentId: EnvironmentIdType,
   threadId: ThreadIdType,
   resumeCache?: ThreadResumeCache,
+  options?: EnvironmentThreadStateOptions,
 ) {
   return followStreamInEnvironment(
     environmentId,
     Stream.unwrap(
-      makeEnvironmentThreadState(threadId, resumeCache).pipe(Effect.map(SubscriptionRef.changes)),
+      makeEnvironmentThreadState(threadId, resumeCache, options).pipe(
+        Effect.map(SubscriptionRef.changes),
+      ),
     ),
   );
+}
+
+/** Completes once `listedAtom` reads true, now or later. */
+function untilAtomIsTrue(registry: AtomRegistry.AtomRegistry, listedAtom: Atom.Atom<boolean>) {
+  return Effect.callback<void>((resume) => {
+    let done = false;
+    let unsubscribe: (() => void) | undefined;
+    unsubscribe = registry.subscribe(
+      listedAtom,
+      (listed) => {
+        if (!listed || done) return;
+        done = true;
+        unsubscribe?.();
+        resume(Effect.void);
+      },
+      { immediate: true },
+    );
+    if (done) unsubscribe();
+    return Effect.sync(() => unsubscribe?.());
+  });
 }
 
 export function createEnvironmentThreadStateAtoms<R, E>(
@@ -955,6 +1007,13 @@ export function createEnvironmentThreadStateAtoms<R, E>(
     | R,
     E
   >,
+  options?: {
+    /** Whether the environment lists the thread; lets a not-yet-created thread load later. */
+    readonly threadListedAtom?: (
+      environmentId: EnvironmentIdType,
+      threadId: ThreadIdType,
+    ) => Atom.Atom<boolean>;
+  },
 ) {
   // Cache definitions must outlive collectible live-atom definitions. The
   // registry retains these nodes without retaining environment or RPC scopes.
@@ -975,7 +1034,15 @@ export function createEnvironmentThreadStateAtoms<R, E>(
         (get) => {
           get.mount(resumeAtom);
           const resume = get.once(resumeAtom);
-          const live = threadStateChanges(environmentId, threadId, resume);
+          const listedAtom = options?.threadListedAtom?.(environmentId, threadId);
+          const live = threadStateChanges(
+            environmentId,
+            threadId,
+            resume,
+            listedAtom === undefined
+              ? undefined
+              : { untilListed: untilAtomIsTrue(get.registry, listedAtom) },
+          );
           return resume.snapshot === undefined
             ? live
             : Stream.concat(Stream.succeed(cachedThreadState(resume.snapshot.state)), live);

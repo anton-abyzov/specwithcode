@@ -421,9 +421,11 @@ export function buildThreadPaneGroups(
   query = "",
   /** Working subagents per `environmentId:threadId`: an idle thread with one is still working. */
   runningSubagents?: ReadonlyMap<string, number>,
+  /** Hosts that cannot be reached now; their threads are listed as idle. */
+  unreachable?: ReadonlySet<string>,
 ): ThreadPaneGroup[] {
   const groupOf = (thread: EnvironmentThreadShell) => {
-    const group = projectThreadGroup(thread);
+    const group = projectThreadGroup(thread, unreachable?.has(thread.environmentId) ?? false);
     return group === "Idle" &&
       (runningSubagents?.get(`${thread.environmentId}:${thread.id}`) ?? 0) > 0
       ? "Working"
@@ -453,8 +455,15 @@ export function buildThreadPaneGroups(
   return groups;
 }
 
-export function waitingCount(threads: readonly EnvironmentThreadShell[]): number {
-  return threads.filter((thread) => projectThreadGroup(thread) === "Waiting on you").length;
+export function waitingCount(
+  threads: readonly EnvironmentThreadShell[],
+  unreachable?: ReadonlySet<string>,
+): number {
+  return threads.filter(
+    (thread) =>
+      projectThreadGroup(thread, unreachable?.has(thread.environmentId) ?? false) ===
+      "Waiting on you",
+  ).length;
 }
 
 /** The header line under "Welcome back": what needs the person, then what is moving. */
@@ -462,9 +471,13 @@ export function threadsSummary(
   threads: readonly EnvironmentThreadShell[],
   /** Workers this project runs on other machines, which are not threads here. */
   remoteWorkers = 0,
+  unreachable?: ReadonlySet<string>,
 ): string {
-  const waiting = waitingCount(threads);
-  const working = threads.filter((thread) => projectThreadGroup(thread) === "Working").length;
+  const waiting = waitingCount(threads, unreachable);
+  const working = threads.filter(
+    (thread) =>
+      projectThreadGroup(thread, unreachable?.has(thread.environmentId) ?? false) === "Working",
+  ).length;
   if (threads.length === 0)
     return remoteWorkers > 0
       ? `${remoteWorkers === 1 ? "One worker runs" : `${remoteWorkers} workers run`} on another machine.`
@@ -486,10 +499,11 @@ export const THREAD_GROUPS_FOLDED_BY_DEFAULT: readonly ProjectThreadGroup[] = ["
 export type ThreadTone = "waiting" | "working" | "failed" | "resolved" | "idle";
 
 /** What a row's status dot says; failed is called out so it is not read as a question. */
-export function threadTone(thread: EnvironmentThreadShell): ThreadTone {
+export function threadTone(thread: EnvironmentThreadShell, hostOffline = false): ThreadTone {
   const status = resolveSidebarThreadStatus(thread);
-  const group = projectThreadGroup(thread);
+  const group = projectThreadGroup(thread, hostOffline);
   if (group === "Resolved") return "resolved";
+  if (hostOffline) return "idle";
   if (status === "failed") return "failed";
   if (group === "Waiting on you") return "waiting";
   if (group === "Working" || threadRuntimeIsActive(thread.runtime)) return "working";
@@ -500,8 +514,13 @@ export function threadTone(thread: EnvironmentThreadShell): ThreadTone {
  * The word a row leads its second line with when the thread wants something
  * or is busy; a quiet thread says nothing and lets its model speak.
  */
-export function threadStatusWord(thread: EnvironmentThreadShell): string | null {
-  if (threadTone(thread) === "resolved") return null;
+export function threadStatusWord(
+  thread: EnvironmentThreadShell,
+  hostOffline = false,
+): string | null {
+  if (threadTone(thread, hostOffline) === "resolved") return null;
+  // Its last known state is stale; "Blocked" or "Working" would be a guess.
+  if (hostOffline) return "Host offline";
   const status = resolveSidebarThreadStatus(thread);
   if (status === "approval") return "Approval requested";
   if (status === "input") return "Answer needed";

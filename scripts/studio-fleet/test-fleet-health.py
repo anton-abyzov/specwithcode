@@ -146,6 +146,7 @@ def make_home(root, port, incident=False):
     write(logs / 'server.trace.ndjson.1', ''.join(json.dumps(span) + '\n' for span in spans[2:3]))
     write(logs / 'server.trace.ndjson', ''.join(json.dumps(span) + '\n' for span in spans[:2] + spans[3:]))
     write(base / 'stdout.log', log)
+    os.utime(base / 'stdout.log', (NOW.timestamp(), NOW.timestamp()))
     return base
 
 
@@ -304,16 +305,116 @@ class FleetHealth(unittest.TestCase):
                  for index in range(21)]
         lines.insert(0, log_line(NOW - datetime.timedelta(minutes=30), 'Scheduled task run failed'))
         write(base / 'stdout.log', ''.join(lines))
+        os.utime(base / 'stdout.log', (NOW.timestamp(), NOW.timestamp()))
         flood = fleet_health.check_log_flood(base, NOW)
         self.assertEqual(flood['level'], 'degraded')
         self.assertEqual(flood['floods'][0]['count'], 21)
         write(base / 'stdout.log', ''.join(lines[:21]))
+        os.utime(base / 'stdout.log', (NOW.timestamp(), NOW.timestamp()))
         self.assertEqual(fleet_health.check_log_flood(base, NOW)['level'], 'ok')
 
     def test_log_time_before_midnight_belongs_to_the_previous_day(self):
         now = datetime.datetime(2026, 10, 17, 0, 3).astimezone()
         self.assertEqual(fleet_health.log_time(now, 23, 58, 0, 0).day, 16)
         self.assertEqual(fleet_health.log_time(now, 0, 1, 0, 0).day, 17)
+
+    def test_stale_stdout_does_not_replay_old_clock_times_as_a_current_flood(self):
+        base = make_home(self.root, closed_port())
+        path = base / 'stdout.log'
+        write(path, ''.join(log_line(NOW - datetime.timedelta(days=1, seconds=index),
+                                    'Scheduled task run failed') for index in range(21)))
+        modified = (NOW - datetime.timedelta(hours=2)).timestamp()
+        os.utime(path, (modified, modified))
+        flood = fleet_health.check_log_flood(base, NOW)
+        self.assertEqual(flood['level'], 'ok', flood)
+        self.assertIn('not modified', flood['summary'])
+        self.assertEqual(flood['byLevel'], {})
+        self.assertEqual(flood['floods'], [])
+        self.assertEqual(flood['top'], [])
+
+    def test_fresh_stdout_still_counts_a_flood_across_midnight(self):
+        base = make_home(self.root, closed_port())
+        path = base / 'stdout.log'
+        now = datetime.datetime(2026, 10, 17, 0, 3).astimezone()
+        write(path, ''.join(log_line(now - datetime.timedelta(seconds=10 * index),
+                                    'Scheduled task run failed') for index in range(21)))
+        os.utime(path, (now.timestamp(), now.timestamp()))
+        flood = fleet_health.check_log_flood(base, now)
+        self.assertEqual(flood['level'], 'degraded', flood)
+        self.assertEqual(flood['floods'][0]['count'], 21)
+
+    def test_stdout_modified_at_window_start_is_included(self):
+        base = make_home(self.root, closed_port())
+        path = base / 'stdout.log'
+        cutoff = NOW - datetime.timedelta(minutes=10)
+        write(path, log_line(cutoff, 'Scheduled task run failed') * 21)
+        os.utime(path, (cutoff.timestamp(), cutoff.timestamp()))
+        flood = fleet_health.check_log_flood(base, NOW)
+        self.assertEqual(flood['level'], 'degraded', flood)
+        self.assertEqual(flood['floods'][0]['count'], 21)
+
+    def test_fresh_append_does_not_replay_prior_day_warnings(self):
+        base = make_home(self.root, closed_port())
+        path = base / 'stdout.log'
+        now = datetime.datetime(2026, 10, 18, 20, 40).astimezone()
+        yesterday = now - datetime.timedelta(days=1)
+        history = ''.join(log_line(yesterday - datetime.timedelta(seconds=index),
+                                   'Scheduled task run failed') for index in range(21))
+        # Only informational messages bridge midnight; they must still date warnings.
+        history += log_line(yesterday.replace(hour=23, minute=59), 'Checkpoint', 'INFO')
+        history += log_line(now.replace(hour=0, minute=1), 'Checkpoint', 'INFO')
+        history += log_line(now - datetime.timedelta(minutes=4), 'Pull request sync skipped', 'INFO')
+        write(path, history)
+        os.utime(path, (now.timestamp(), now.timestamp()))
+        flood = fleet_health.check_log_flood(base, now)
+        self.assertEqual(flood['level'], 'ok', flood)
+        self.assertEqual(flood['byLevel'].get('WARN', 0), 0, flood)
+
+    def test_prior_days_do_not_hide_a_current_warning_flood(self):
+        base = make_home(self.root, closed_port())
+        path = base / 'stdout.log'
+        now = datetime.datetime(2026, 10, 18, 20, 40).astimezone()
+        lines = []
+        for days in (2, 1):
+            day = now - datetime.timedelta(days=days)
+            lines.append(log_line(day, 'Historical failure'))
+            lines.append(log_line(day.replace(hour=23, minute=59), 'Checkpoint', 'DEBUG'))
+            lines.append(log_line((day + datetime.timedelta(days=1)).replace(hour=0, minute=1),
+                                  'Checkpoint', 'INFO'))
+        lines.extend(log_line(now - datetime.timedelta(seconds=index), 'Current failure')
+                     for index in range(21))
+        write(path, ''.join(lines))
+        os.utime(path, (now.timestamp(), now.timestamp()))
+        flood = fleet_health.check_log_flood(base, now)
+        self.assertEqual(flood['level'], 'degraded', flood)
+        self.assertEqual(flood['floods'], [{'level': 'WARN', 'message': 'Current failure', 'count': 21}])
+        self.assertEqual(flood['byLevel']['WARN'], 21)
+
+    def test_historical_replay_does_not_move_future_rows_into_the_window(self):
+        base = make_home(self.root, closed_port())
+        path = base / 'stdout.log'
+        tomorrow = NOW + datetime.timedelta(days=1)
+        write(path, ''.join(log_line(tomorrow - datetime.timedelta(seconds=index),
+                                    'Future failure') for index in range(21)))
+        os.utime(path, (tomorrow.timestamp(), tomorrow.timestamp()))
+        flood = fleet_health.check_log_flood(base, NOW)
+        self.assertEqual(flood['level'], 'ok', flood)
+        self.assertEqual(flood['byLevel'].get('WARN', 0), 0)
+
+    def test_small_out_of_order_midnight_write_does_not_hide_current_flood(self):
+        base = make_home(self.root, closed_port())
+        path = base / 'stdout.log'
+        now = datetime.datetime(2026, 10, 18, 0, 3).astimezone()
+        midnight = now.replace(minute=0)
+        lines = [log_line(midnight + datetime.timedelta(seconds=index), 'Current failure')
+                 for index in range(21)]
+        lines.append(log_line(midnight - datetime.timedelta(seconds=2), 'Delayed write', 'INFO'))
+        lines.append(log_line(now, 'Fresh write', 'INFO'))
+        write(path, ''.join(lines))
+        os.utime(path, (now.timestamp(), now.timestamp()))
+        flood = fleet_health.check_log_flood(base, now)
+        self.assertEqual(flood['level'], 'degraded', flood)
+        self.assertEqual(flood['floods'][0]['count'], 21)
 
     def test_check_never_writes_inside_the_base_dir(self):
         with EnvironmentServer() as server:

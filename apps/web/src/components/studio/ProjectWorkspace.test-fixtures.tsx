@@ -345,7 +345,7 @@ vi.mock("../../state/use-atom-query-runner", () => ({
   useAtomQueryRunner: () => async () => ({ _tag: "Failure" }),
 }));
 vi.mock("../../state/threads", () => ({
-  threadEnvironment: { loadEarlierHistory: {}, updateMetadata: {} },
+  threadEnvironment: { loadEarlierHistory: {}, updateMetadata: {}, startTurn: {} },
 }));
 vi.mock("../../hooks/useThreadActions", () => ({
   useThreadActions: () => ({

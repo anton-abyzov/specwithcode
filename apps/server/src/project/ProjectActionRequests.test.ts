@@ -292,9 +292,12 @@ it.effect("delete runs only on approval, with the card exempt from the active-wo
       action: "delete",
       reason: "Replaced by the new site.",
     });
-    expect(card(world).questions[0]?.question).toContain(
-      'Delete the project "Old site" and its 0 threads? This cannot be undone.',
-    );
+    // The first paragraph is what the card asks; consequences and the reason sit below it.
+    expect(card(world).questions[0]?.question.split("\n\n")).toEqual([
+      'Delete the project "Old site" and its 0 threads?',
+      "This cannot be undone. Project memory, plans and routines are removed; source folders and Git branches stay. Archiving keeps everything instead.",
+      "Reason: Replaced by the new site.",
+    ]);
     expect(world.deletes).toEqual([]);
     yield* answer(requestId, "Approve");
     expect(world.deletes).toMatchObject([

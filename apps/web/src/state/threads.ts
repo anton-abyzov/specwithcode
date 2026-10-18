@@ -1,6 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import { enabledEnvironmentIds } from "@specweave-studio/client-runtime/state/connections";
-import { arrayElementsEqual } from "@specweave-studio/client-runtime/state/entities";
+import {
+  arrayElementsEqual,
+  parseThreadKey,
+  threadKey,
+} from "@specweave-studio/client-runtime/state/entities";
 import {
   createEnvironmentThreadDetailAtoms,
   createEnvironmentThreadShellAtoms,
@@ -9,7 +13,11 @@ import {
   type EnvironmentThreadState,
   createThreadEnvironmentAtoms,
 } from "@specweave-studio/client-runtime/state/threads";
-import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@specweave-studio/contracts";
+import type {
+  EnvironmentId,
+  OrchestrationV2ThreadShell,
+  ThreadId,
+} from "@specweave-studio/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
@@ -21,14 +29,25 @@ export const threadEnvironment = createThreadEnvironmentAtoms(
   connectionAtomRuntime,
   environmentSnapshotAtom,
 );
-const environmentThreads = createEnvironmentThreadStateAtoms(connectionAtomRuntime);
-export const environmentThreadDetails = createEnvironmentThreadDetailAtoms(
-  environmentThreads.stateAtom,
-);
 export const environmentThreadShells = createEnvironmentThreadShellAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   snapshotAtom: threadEnvironment.snapshotAtom,
 });
+const threadListedAtom = Atom.family((key: string) => {
+  const ref = parseThreadKey(key);
+  return Atom.map(environmentThreadShells.threadShellAtom(ref), (shell) => shell !== null).pipe(
+    Atom.withLabel(`web-thread-listed:${key}`),
+  );
+});
+// A new chat's detail view can mount before its first message creates the
+// thread; the listing tells it when to load.
+const environmentThreads = createEnvironmentThreadStateAtoms(connectionAtomRuntime, {
+  threadListedAtom: (environmentId, threadId) =>
+    threadListedAtom(threadKey({ environmentId, threadId })),
+});
+export const environmentThreadDetails = createEnvironmentThreadDetailAtoms(
+  environmentThreads.stateAtom,
+);
 
 const EMPTY_THREAD_STATE_ATOM = Atom.make(AsyncResult.success(EMPTY_ENVIRONMENT_THREAD_STATE)).pipe(
   Atom.withLabel("web-environment-thread:empty"),

@@ -59,14 +59,32 @@ export function checkedPrompt(prompt: string, check: ScheduledTaskCheck, output:
 }
 
 /**
- * Whether a run must use the task's own model. A person who picked a model in
- * the routine form chose it; an agent's routine only recorded the model it
- * happened to run on, so its runs follow the thread instead.
+ * Whether a run must use the task's own model. Only a routine someone set to
+ * "Use a specific model" does; every other run follows the project, so one
+ * provider running out never stops a routine. The model a routine saved
+ * without that choice is just what it happened to be made with.
  */
-export function isModelPinned(
-  task: Pick<ScheduledTask, "modelPinned" | "creationSource">,
-): boolean {
-  return task.modelPinned ?? task.creationSource !== "mcp";
+export function isModelPinned(task: Pick<ScheduledTask, "modelPinned">): boolean {
+  return task.modelPinned === true;
+}
+
+/**
+ * The message a routine with no thread of its own sends the project's
+ * coordinator: which routine fired, where any thread it starts should work
+ * when the routine names a checkout, then the routine's prompt.
+ */
+export function routineCoordinatorPrompt(
+  task: Pick<ScheduledTask, "title" | "workspaceStrategy">,
+  prompt: string,
+): string {
+  const strategy = task.workspaceStrategy;
+  const where =
+    strategy.type === "worktree"
+      ? ` Run any thread it needs in a new worktree from ${strategy.baseRef}${strategy.startFromOrigin === true ? " on origin" : ""}.`
+      : strategy.type === "existing_worktree"
+        ? ` Run any thread it needs in the checkout ${strategy.worktreePath}.`
+        : "";
+  return `Routine "${task.title}" fired. Answer it yourself or start the threads it needs.${where}\n\n${prompt}`;
 }
 
 /**

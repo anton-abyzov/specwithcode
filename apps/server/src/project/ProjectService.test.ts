@@ -676,6 +676,120 @@ it.layer(layerTest)("ProjectService", (it) => {
       assert.equal((yield* service.create(input)).id, projectId);
     }),
   );
+
+  it.effect("refuses a rename to another project's name, ignoring case", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const taken = ProjectId.make("project:names:taken");
+      const renamed = ProjectId.make("project:names:renamed");
+      yield* service.create({
+        commandId: CommandId.make("names:create:taken"),
+        projectId: taken,
+        title: "Unique Names Alpha",
+        workspaceRoot: "/work/names-alpha",
+      });
+      yield* service.create({
+        commandId: CommandId.make("names:create:renamed"),
+        projectId: renamed,
+        title: "Unique Names Beta",
+        workspaceRoot: "/work/names-beta",
+      });
+      const refused = yield* service
+        .update({
+          commandId: CommandId.make("names:rename:clash"),
+          projectId: renamed,
+          title: "unique names ALPHA",
+        })
+        .pipe(Effect.flip);
+      assert.equal(refused._tag === "ProjectRequestDeniedError" && refused.reason, "name_taken");
+      assert.include(refused.message, "already has this name");
+      assert.equal(Option.getOrThrow(yield* service.getById(renamed)).title, "Unique Names Beta");
+      // A case change of its own name, and a free name, are both fine.
+      const recased = yield* service.update({
+        commandId: CommandId.make("names:rename:case"),
+        projectId: renamed,
+        title: "UNIQUE NAMES BETA",
+      });
+      assert.equal(recased.title, "UNIQUE NAMES BETA");
+      const freed = yield* service.update({
+        commandId: CommandId.make("names:rename:free"),
+        projectId: renamed,
+        title: "Unique Names Gamma",
+      });
+      assert.equal(freed.title, "Unique Names Gamma");
+      // Only the name changes; the folder stays where it is.
+      assert.equal(freed.workspaceRoot, "/work/names-beta");
+    }),
+  );
+
+  it.effect("lets checkouts of one repository share a name, and frees a deleted one's", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const first = ProjectId.make("project:names:repo-a");
+      const second = ProjectId.make("project:names:repo-b");
+      const gone = ProjectId.make("project:names:gone");
+      // The test resolver names a repository after the folder's last segment.
+      yield* service.create({
+        commandId: CommandId.make("names:create:repo-a"),
+        projectId: first,
+        title: "Shared Repo Name",
+        workspaceRoot: "/work/a/names-shared",
+      });
+      yield* service.create({
+        commandId: CommandId.make("names:create:repo-b"),
+        projectId: second,
+        title: "Second Checkout",
+        workspaceRoot: "/work/b/names-shared",
+      });
+      const shared = yield* service.update({
+        commandId: CommandId.make("names:rename:shared"),
+        projectId: second,
+        title: "shared repo name",
+      });
+      assert.equal(shared.title, "shared repo name");
+
+      yield* service.create({
+        commandId: CommandId.make("names:create:gone"),
+        projectId: gone,
+        title: "Deleted Project Name",
+        workspaceRoot: "/work/names-gone",
+      });
+      yield* service.delete({ commandId: CommandId.make("names:delete:gone"), projectId: gone });
+      const reused = yield* service.update({
+        commandId: CommandId.make("names:rename:reuse"),
+        projectId: first,
+        title: "Deleted Project Name",
+      });
+      assert.equal(reused.title, "Deleted Project Name");
+    }),
+  );
+
+  it.effect("refuses a rename over 120 characters", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const projectId = ProjectId.make("project:names:long");
+      yield* service.create({
+        commandId: CommandId.make("names:create:long"),
+        projectId,
+        title: "Long Name Target",
+        workspaceRoot: "/work/names-long",
+      });
+      yield* service
+        .update({
+          commandId: CommandId.make("names:rename:long"),
+          projectId,
+          title: "x".repeat(121),
+        })
+        .pipe(Effect.flip);
+      assert.equal(Option.getOrThrow(yield* service.getById(projectId)).title, "Long Name Target");
+      const longest = yield* service.update({
+        commandId: CommandId.make("names:rename:longest"),
+        projectId,
+        title: "x".repeat(120),
+      });
+      assert.equal(longest.title.length, 120);
+    }),
+  );
 });
 
 it.effect(

@@ -390,7 +390,8 @@ export const layerWithOptions = (
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const agentAccessSettings = Effect.fn("ProviderSessionManagerV2.agentAccessSettings")(
         function* (threadId: ThreadId) {
-          if (Option.isNone(serverSettings)) return { browser: true, device: false };
+          if (Option.isNone(serverSettings))
+            return { browser: true, device: false, computer: false };
           return yield* Effect.gen(function* () {
             const settings = yield* serverSettings.value.getSettings;
             const thread = yield* projectionStore.getThread(threadId);
@@ -401,6 +402,8 @@ export const layerWithOptions = (
             const deviceOverridden = entries.some(
               (entry) => entry.enableAgentDeviceAccess !== undefined,
             );
+            // Computer use is offered by the machine, so every project and worker inherits it.
+            const computer = settings.enableAgentComputerAccess;
             if (browserOverridden || deviceOverridden) {
               const project = Option.isSome(projectService)
                 ? yield* projectService.value.getById(thread.projectId)
@@ -409,19 +412,21 @@ export const layerWithOptions = (
                 return {
                   browser: browserOverridden ? false : settings.enableAgentBrowserAccess,
                   device: deviceOverridden ? false : settings.enableAgentDeviceAccess,
+                  computer,
                 };
             }
             const effective = resolveProjectSettings(settings, thread.projectId).settings;
             return {
               browser: effective.enableAgentBrowserAccess,
               device: effective.enableAgentDeviceAccess,
+              computer,
             };
           }).pipe(
             Effect.catch((cause) =>
               Effect.logWarning(
-                "Could not resolve agent access; withholding browser and device tools.",
+                "Could not resolve agent access; withholding browser, device and computer tools.",
                 { threadId, cause },
-              ).pipe(Effect.as({ browser: false, device: false })),
+              ).pipe(Effect.as({ browser: false, device: false, computer: false })),
             ),
           );
         },
@@ -517,13 +522,17 @@ export const layerWithOptions = (
                 // the credential it started with, so a thread that detaches and
                 // re-attaches across a workspace handoff must come back to the
                 // same token or the process's tool calls fail auth.
-                const { browser: browserToolsAvailable, device: deviceToolsAvailable } =
-                  yield* agentAccessSettings(threadId);
+                const {
+                  browser: browserToolsAvailable,
+                  device: deviceToolsAvailable,
+                  computer: computerToolsAvailable,
+                } = yield* agentAccessSettings(threadId);
                 const capabilities = new Set<
                   import("../mcp/McpInvocationContext.ts").McpCapability
                 >(["orchestration", "worktree", "pull-requests"]);
                 if (browserToolsAvailable) capabilities.add("preview");
                 if (deviceToolsAvailable) capabilities.add("device");
+                if (computerToolsAvailable) capabilities.add("computer");
                 // Only this instance's own credential is reused or replaced:
                 // another provider's session for the thread keeps its own.
                 const existing = McpProviderSession.readMcpProviderSession(
@@ -553,7 +562,8 @@ export const layerWithOptions = (
                     // A flipped browser-access setting must not survive through
                     // credential reuse: rotate so the new scope reflects it.
                     resolved.capabilities.has("preview") === browserToolsAvailable &&
-                    resolved.capabilities.has("device") === deviceToolsAvailable
+                    resolved.capabilities.has("device") === deviceToolsAvailable &&
+                    resolved.capabilities.has("computer") === computerToolsAvailable
                   ) {
                     // The thread's next lookup without an instance (a
                     // provider reading its slot) gets this instance's again.

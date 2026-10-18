@@ -53,9 +53,13 @@ const THREAD: OrchestrationV2ThreadProjection = {
 };
 const SNAPSHOT: OrchestrationV2ThreadDetailSnapshot = { snapshotSequence: 7, projection: THREAD };
 
+let listedRegistry: AtomRegistry.AtomRegistry | undefined;
+
 const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?: {
   readonly snapshot?: OrchestrationV2ThreadDetailSnapshot;
   readonly snapshotUnavailable?: boolean;
+  /** The server answers 404 until this atom reads true, as for a chat not created yet. */
+  readonly listedAtom?: Atom.Writable<boolean>;
 }) {
   const subscriptions = yield* Queue.unbounded<{
     readonly afterSequence: number | undefined;
@@ -195,6 +199,9 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
               if (options?.snapshotUnavailable === true) {
                 return { _tag: "unavailable" as const };
               }
+              if (options?.listedAtom !== undefined && !listedRegistry?.get(options.listedAtom)) {
+                return { _tag: "missing" as const };
+              }
               return {
                 _tag: "present" as const,
                 snapshot,
@@ -213,7 +220,11 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
       ),
     ),
   );
-  const raw = createEnvironmentThreadStateAtoms(runtime);
+  const listedAtom = options?.listedAtom;
+  const raw = createEnvironmentThreadStateAtoms(
+    runtime,
+    listedAtom === undefined ? undefined : { threadListedAtom: () => listedAtom },
+  );
   const details = createEnvironmentThreadDetailAtoms(raw.stateAtom);
   const ref = { environmentId: TARGET.environmentId, threadId: THREAD_ID };
   const stateAtom = details.stateAtom(ref);
@@ -222,6 +233,7 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
     (registry) => Effect.sync(() => registry.dispose()),
   );
   const registry = yield* makeRegistry;
+  listedRegistry = registry;
 
   return {
     registry,
@@ -276,6 +288,29 @@ describe("createEnvironmentThreadStateAtoms", () => {
       unmountStatus();
       yield* Deferred.await(first.closed);
       expect(h.counts().active).toBe(0);
+    }),
+  );
+
+  it.effect("loads a new chat once the shell lists it after a first 404", () =>
+    Effect.gen(function* () {
+      const listed = Atom.make(false);
+      const h = yield* makeHarness({ listedAtom: listed });
+      const unmount = h.registry.mount(h.stateAtom);
+      yield* observeState(h.registry, h.stateAtom, (state) => state.status === "deleted");
+      expect(h.counts().opened).toBe(0);
+
+      h.registry.set(listed, true);
+      const first = yield* Queue.take(h.subscriptions);
+      yield* Queue.offer(first.events, { kind: "synchronized" });
+      const state = yield* observeState(
+        h.registry,
+        h.stateAtom,
+        (value) => value.status === "live",
+      );
+      expect(Option.isSome(state.data)).toBe(true);
+      expect(h.counts()).toMatchObject({ httpLoads: 2, opened: 1, active: 1 });
+      unmount();
+      yield* Deferred.await(first.closed);
     }),
   );
 

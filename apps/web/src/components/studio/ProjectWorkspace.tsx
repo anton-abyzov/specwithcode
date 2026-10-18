@@ -8,6 +8,7 @@ import { useSettingsProjectGroups } from "../settings/useSettingsProjectGroups";
 import { derivePhysicalProjectKey, deriveLogicalProjectKey } from "../../logicalProject";
 import { useAllEnvironmentShellsBootstrapped, useProjects } from "../../state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
+import { useUnreachableHosts } from "../../studio/unreachableHosts";
 import { isHostedStaticApp } from "../../hostedPairing";
 import {
   useClientSettings,
@@ -113,19 +114,22 @@ export function ProjectWorkspace({
   const machinesLoaded = useClientSettingsHydrationStatus() === "ready";
   // The coordinator runs on the chosen checkout's machine; the choice is saved per project.
   const ownership = logicalCoordinator(members);
-  const { member, savedMachineMissing } = ownership
-    ? { member: ownership.member, savedMachineMissing: false }
+  const unreachable = useUnreachableHosts();
+  const { member, savedMachineMissing, savedMachineOffline } = ownership
+    ? { member: ownership.member, savedMachineMissing: false, savedMachineOffline: false }
     : checkoutKey
       ? {
           member: members.find((candidate) => coordinatorMachineKey(candidate) === checkoutKey),
           savedMachineMissing: !members.some(
             (candidate) => coordinatorMachineKey(candidate) === checkoutKey,
           ),
+          savedMachineOffline: false,
         }
       : resolveCoordinatorMachine({
           members,
           saved: savedMachines[projectKey],
           primaryEnvironmentId,
+          unreachable,
         });
   // The thread open when the checkout changed belongs to the old machine. The
   // panel closes, and until the URL catches up the new checkout does not see it,
@@ -233,7 +237,7 @@ export function ProjectWorkspace({
         machine: m.environmentLabel ?? m.environmentId,
         folder: m.workspaceRoot,
       }))}
-      savedMachineMissing={savedMachineMissing}
+      savedMachineMissing={savedMachineMissing || savedMachineOffline}
       onCheckout={machinesLoaded ? chooseMachine : null}
       selected={paneSelected}
       setSelected={setSelected}

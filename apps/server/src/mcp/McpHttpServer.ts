@@ -37,8 +37,6 @@ import { ProjectMemoryToolkit } from "./toolkits/projectMemory/tools.ts";
 import * as ProjectMemoryHandlers from "./toolkits/projectMemory/handlers.ts";
 import { MachinesToolkit } from "./toolkits/machines/tools.ts";
 import * as MachinesHandlers from "./toolkits/machines/handlers.ts";
-import * as CloudHandlers from "./toolkits/cloud/handlers.ts";
-import { CloudToolkit } from "./toolkits/cloud/tools.ts";
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
 import * as ProjectHandlers from "./toolkits/project/handlers.ts";
 import { AttachmentToolkit } from "./toolkits/attachment/tools.ts";
@@ -75,6 +73,13 @@ import {
   ChromeStandardToolkit,
 } from "./toolkits/chrome/tools.ts";
 import * as BrowserExtension from "../browserExtension/BrowserExtension.ts";
+import * as ComputerUseBroker from "../computerUse/ComputerUseBroker.ts";
+import * as ComputerHandlers from "./toolkits/computer/handlers.ts";
+import {
+  ComputerScreenshotTool,
+  ComputerScreenshotToolkit,
+  ComputerStandardToolkit,
+} from "./toolkits/computer/tools.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
 
 /** Where an MCP client discovers how to sign in (RFC 9728), at this request's own origin. */
@@ -589,7 +594,7 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
 
 interface ImageToolResult {
   readonly screenshot: {
-    readonly mimeType: "image/png";
+    readonly mimeType: "image/png" | "image/jpeg";
     readonly data: string;
     readonly width: number;
     readonly height: number;
@@ -776,6 +781,32 @@ const registerChromeScreenshot = Effect.fn("McpHttpServer.registerChromeScreensh
   );
 });
 
+const registerComputerScreenshot = Effect.fn("McpHttpServer.registerComputerScreenshot")(
+  function* () {
+    const broker = yield* ComputerUseBroker.ComputerUseBroker;
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    const built = yield* ComputerScreenshotToolkit;
+    yield* registerImageTool(
+      ComputerScreenshotTool,
+      (payload) =>
+        built
+          .handle("computer_screenshot", payload)
+          .pipe(Stream.unwrap, Stream.run(Sink.last()), Effect.flatMap(Effect.fromOption)),
+      (effect) =>
+        effect.pipe(
+          Effect.provideService(ComputerUseBroker.ComputerUseBroker, broker),
+          Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
+        ),
+      "screenshot",
+      // Computer tool errors are written by the server and the desktop app for the agent.
+      (error) =>
+        typeof (error as { reason?: unknown })?.reason === "string"
+          ? (error as { reason: string }).reason
+          : "Computer screenshot failed.",
+    );
+  },
+);
+
 const isOrchestratorMcpFailure = Schema.is(OrchestratorMcpFailure);
 
 const registerHtmlPreview = Effect.fn("McpHttpServer.registerHtmlPreview")(function* () {
@@ -844,8 +875,6 @@ export const layerOrchestratorToolkit = toolkitRegistration(
 
 export const layerThreadToolkit = toolkitRegistration(ThreadToolkit, ThreadHandlers.layer);
 
-export const layerCloudToolkit = toolkitRegistration(CloudToolkit, CloudHandlers.layer);
-
 const layerWorktreeToolkitRegistration = toolkitRegistration(
   WorktreeToolkit,
   WorktreeHandlers.layer,
@@ -898,6 +927,11 @@ export const layerChromeToolkit = Layer.mergeAll(
   imageToolRegistration(registerChromeScreenshot(), ChromeHandlers.layerScreenshot),
 );
 
+export const layerComputerToolkit = Layer.mergeAll(
+  toolkitRegistration(ComputerStandardToolkit, ComputerHandlers.layerStandard),
+  imageToolRegistration(registerComputerScreenshot(), ComputerHandlers.layerScreenshot),
+);
+
 export const layerMcpTransport = McpServer.layerHttp({
   // MCP serverInfo identity agents already registered; see docs/studio/naming.md.
   name: "SpecWeave Studio",
@@ -913,7 +947,6 @@ export const layer = Layer.mergeAll(
   layerAttachmentRegistration,
   layerProjectRegistration,
   toolkitRegistration(MachinesToolkit, MachinesHandlers.layer),
-  layerCloudToolkit,
   layerProjectMemoryRegistration,
   toolkitRegistration(ProjectPlanToolkit, ProjectPlanHandlers.layer),
   toolkitRegistration(ProjectConnectionsToolkit, ProjectConnectionsHandlers.layer),
@@ -925,4 +958,5 @@ export const layer = Layer.mergeAll(
   layerDeviceToolkit,
   layerHtmlToolkit,
   layerChromeToolkit,
+  layerComputerToolkit,
 ).pipe(Layer.provideMerge(layerMcpTransport));

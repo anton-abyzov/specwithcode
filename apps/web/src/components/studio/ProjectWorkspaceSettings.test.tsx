@@ -132,6 +132,9 @@ vi.mock("../settings/settingsLayout", () => ({
 vi.mock("../settings/ProviderLimitSettings", () => ({
   ProviderLimitSettings: () => <p>When a provider runs out</p>,
 }));
+vi.mock("../settings/RecommendedModelProviders", () => ({
+  RecommendedModelProviders: () => <p>Also served by</p>,
+}));
 vi.mock("../settings/ProjectOverrides", () => ({
   ProjectOverrides: ({ checkouts }: { checkouts: readonly { id: string }[] }) => (
     <p data-project-overrides={checkouts.map((checkout) => checkout.id).join(",")} />
@@ -323,10 +326,14 @@ describe("project settings and memory", () => {
   });
   it("edits this project's usage limit rule from the General tab", async () => {
     await render("general");
-    const scoped = container.querySelector("[data-settings-project]");
-    expect(scoped?.getAttribute("data-settings-project")).toBe("atlas");
-    expect(scoped?.textContent).toContain("Usage limits");
-    expect(scoped?.textContent).toContain("When a provider runs out");
+    const scopes = [...container.querySelectorAll("[data-settings-project]")];
+    expect(scopes.map((scoped) => scoped.getAttribute("data-settings-project"))).toEqual([
+      "atlas",
+      "atlas",
+    ]);
+    expect(scopes[0]?.textContent).toContain("Also served by");
+    expect(scopes[1]?.textContent).toContain("Usage limits");
+    expect(scopes[1]?.textContent).toContain("When a provider runs out");
   });
   it("lists this project's overrides on the General tab", async () => {
     await render("general");

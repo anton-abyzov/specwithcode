@@ -168,4 +168,46 @@ describe("pooled quota bars name the account and the machine", () => {
     expect(details).toContain("Claude Max");
     expect(details).toContain("Machine");
   });
+
+  it("says a kept read is from an offline machine and when it was taken", async () => {
+    const kept = claudeOn({ status: "authenticated", email: "away@example.com" }, 100);
+    await render(
+      new Map([
+        [
+          EnvironmentId.make("m3"),
+          {
+            ...machine("Anton's MacBook Pro", [
+              {
+                ...kept,
+                usageLimits: {
+                  checkedAt: "2026-10-15T09:00:00.000Z",
+                  windows: [
+                    {
+                      id: "seven_day",
+                      kind: "weekly",
+                      label: "Weekly",
+                      usedPercent: 100,
+                      windowDurationMins: 7 * 24 * 60,
+                      resetsAt: "2026-10-15T10:00:00.000Z",
+                    },
+                  ],
+                },
+              },
+            ]),
+            connection: { phase: "reconnecting" },
+          },
+        ],
+      ]),
+    );
+    expect(segments()).toEqual([
+      expect.stringMatching(
+        /^away@example\.com on Anton's MacBook Pro · offline: 100% left, reset$/,
+      ),
+    ]);
+    const segment = container.querySelector<HTMLButtonElement>("button[aria-label^='away@']")!;
+    await act(async () => segment.click());
+    const details = document.body.textContent ?? "";
+    expect(details).toContain("reset since the last read");
+    expect(details).toContain("3h 0m ago · machine offline");
+  });
 });

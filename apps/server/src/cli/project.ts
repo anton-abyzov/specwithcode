@@ -36,6 +36,7 @@ import {
   clearPersistedServerRuntimeState,
   readPersistedServerRuntimeState,
 } from "../serverRuntimeState.ts";
+import { PROJECT_CLI_SESSION_LABEL } from "../project/TemporaryProjects.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { type CliAuthLocationFlags, projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
@@ -217,7 +218,7 @@ const withProjectCliSessionToken = <A, E, R>(
   Effect.acquireUseRelease(
     environmentAuth.issueSession({
       scopes: AuthAdministrativeScopes,
-      label: "specweave-studio project cli",
+      label: PROJECT_CLI_SESSION_LABEL,
     }),
     (issued) => run(issued.token),
     (issued) => environmentAuth.revokeSession(issued.sessionId).pipe(Effect.ignore({ log: true })),

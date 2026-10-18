@@ -2,10 +2,18 @@ import { scopeProjectRef } from "@specweave-studio/client-runtime/environment";
 import { isScratchProject } from "@specweave-studio/client-runtime/state/projects";
 import { AuthOrchestrationOperateScope, type EnvironmentId } from "@specweave-studio/contracts";
 import { Link } from "@tanstack/react-router";
-import { ArrowLeftIcon, CheckIcon, ChevronDownIcon, LaptopIcon, Link2Icon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  CheckIcon,
+  ChevronDownIcon,
+  LaptopIcon,
+  Link2Icon,
+  RotateCwIcon,
+} from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
 
 import { useComposerDraftStore, type DraftId } from "~/composerDraftStore";
+import { environmentCatalog } from "~/connection/catalog";
 import { useScratchProject } from "~/hooks/useScratchProject";
 import { useClientSettings, useLegacySidebarEnabled } from "~/hooks/useSettings";
 import { useProjectCoordinatorHandoff } from "~/hooks/useProjectCoordinatorHandoff";
@@ -20,6 +28,9 @@ import {
 } from "~/studio/projectListVisibility";
 import { useEnvironments } from "~/state/environments";
 import { readEnvironmentScope, useEnvironmentsWithScope } from "~/state/session";
+import { useAtomCommand } from "~/state/use-atom-command";
+import { machineLastSeenAt, useMachineLastSeenVersion } from "~/lib/machineLastSeen";
+import { lastSeenLabel, machineStatus } from "~/lib/machineStatus";
 import {
   Menu,
   MenuGroup,
@@ -64,6 +75,9 @@ export function DraftMachinePicker(props: Props) {
   const [choosingEnvironmentId, setChoosingEnvironmentId] = useState<EnvironmentId | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
+  useMachineLastSeenVersion();
+  const [retrying, setRetrying] = useState<ReadonlySet<EnvironmentId>>(new Set());
   const requestRef = useRef<object | null>(null);
   const latest = useRef({ props, environments, projects, grouping });
   latest.current = { props, environments, projects, grouping };
@@ -87,6 +101,12 @@ export function DraftMachinePicker(props: Props) {
     (item) => item.environmentId === draft?.environmentId,
   );
   const activeLabel = activeEnvironment?.label ?? "Unavailable machine";
+  const activeStatus = activeEnvironment
+    ? machineStatus(activeEnvironment.connection, permitted.has(activeEnvironment.environmentId))
+    : null;
+  const activeUnreachable = activeEnvironment
+    ? activeEnvironment.connection.phase !== "connected"
+    : true;
   const locked = disabled || !draft || Boolean(draft.promotedTo);
   const attachmentsBlock = draftHasMachineBoundContent(composer);
   const activeProject = projects.find(
@@ -190,6 +210,21 @@ export function DraftMachinePicker(props: Props) {
     }
   }
 
+  // A retry asks the machine's supervisor to try now. The row's own status
+  // reports the outcome, so the marker only lasts until the attempt settles.
+  async function retryMachine(environmentId: EnvironmentId) {
+    setRetrying((current) => new Set(current).add(environmentId));
+    try {
+      await retryEnvironment(environmentId);
+    } finally {
+      setRetrying((current) => {
+        const next = new Set(current);
+        next.delete(environmentId);
+        return next;
+      });
+    }
+  }
+
   function chooseMachine(environmentId: EnvironmentId) {
     setError(null);
     if (attachmentsBlock && environmentId !== draft?.environmentId) {
@@ -223,7 +258,7 @@ export function DraftMachinePicker(props: Props) {
       >
         <MenuTrigger
           render={<ComposerControl />}
-          aria-label={`Machine: ${activeLabel}${props.autoEnvironmentLabel ? `, ${props.autoEnvironmentLabel}` : ""}`}
+          aria-label={`Machine: ${activeLabel}${activeUnreachable && activeStatus ? `, ${activeStatus.text}` : ""}${props.autoEnvironmentLabel ? `, ${props.autoEnvironmentLabel}` : ""}`}
           data-composer-shortcut="composer.host"
           data-composer-context-control
           disabled={locked}
@@ -232,6 +267,14 @@ export function DraftMachinePicker(props: Props) {
           <LaptopIcon aria-hidden className="size-4 shrink-0" />
           <span className="shrink-0">Machine</span>
           <span className="min-w-0 truncate">{activeLabel}</span>
+          {activeUnreachable && (
+            <span
+              className="shrink-0 text-xs text-warning-foreground"
+              data-draft-machine-unreachable=""
+            >
+              {activeStatus?.retryable ? "Can't reach" : (activeStatus?.text ?? "Not saved")}
+            </span>
+          )}
           {props.autoEnvironmentLabel && (
             <span className="shrink-0 text-xs text-muted-foreground">Auto</span>
           )}
@@ -316,22 +359,62 @@ export function DraftMachinePicker(props: Props) {
                   environment.connection.phase,
                   permitted.has(environment.environmentId),
                 );
+                const status = machineStatus(
+                  environment.connection,
+                  permitted.has(environment.environmentId),
+                );
+                const isRetrying = retrying.has(environment.environmentId);
+                const detail = [
+                  status.reason,
+                  reason
+                    ? lastSeenLabel(machineLastSeenAt(environment.environmentId), Date.now())
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ");
+                // An unreachable machine can't take the draft, but its row
+                // retries the connection instead of sitting disabled.
+                const retryRow = Boolean(reason) && status.retryable;
                 return (
                   <MenuItem
                     key={environment.environmentId}
                     closeOnClick={false}
-                    disabled={Boolean(reason) || pending || locked}
-                    onClick={() => chooseMachine(environment.environmentId)}
+                    disabled={(Boolean(reason) && !retryRow) || pending || locked || isRetrying}
+                    onClick={() =>
+                      retryRow
+                        ? void retryMachine(environment.environmentId)
+                        : chooseMachine(environment.environmentId)
+                    }
+                    {...(retryRow
+                      ? { "aria-label": `Retry ${environment.label}: ${status.text}` }
+                      : {})}
+                    data-machine-status={environment.connection.phase}
                   >
                     <LaptopIcon aria-hidden className="size-4 shrink-0" />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate">{environment.label}</span>
-                      <span className="block text-xs text-muted-foreground">
-                        {reason ?? "Connected"}
+                      <span
+                        className={`block text-xs ${retryRow ? "text-warning-foreground" : "text-muted-foreground"}`}
+                      >
+                        {isRetrying ? "Retrying…" : status.text}
                       </span>
+                      {detail && !isRetrying && (
+                        <span
+                          className="block truncate text-xs text-muted-foreground"
+                          title={detail}
+                        >
+                          {detail}
+                        </span>
+                      )}
                     </span>
                     {environment.environmentId === draft?.environmentId && (
                       <CheckIcon aria-label="Selected machine" />
+                    )}
+                    {retryRow && !isRetrying && (
+                      <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+                        <RotateCwIcon aria-hidden className="size-3" />
+                        Retry
+                      </span>
                     )}
                   </MenuItem>
                 );

@@ -40,6 +40,9 @@ import {
 } from "./BranchToolbarBranchSelector";
 import { BranchToolbarEnvironmentSelector } from "./BranchToolbarEnvironmentSelector";
 import { BranchToolbarEnvModeSelector } from "./BranchToolbarEnvModeSelector";
+import { availableScratchWorkspaceRoot } from "@specweave-studio/client-runtime/operations/projects";
+import { isScratchProject } from "@specweave-studio/client-runtime/state/projects";
+import { useEnvironments } from "../state/environments";
 import { PreviousWorktreeItemContent } from "./PreviousWorktreeItemContent";
 import { ComposerControl } from "./chat/ComposerControl";
 import {
@@ -539,6 +542,18 @@ export const BranchToolbar = memo(function BranchToolbar({
       ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
       : null;
   const activeProject = useProject(activeProjectRef);
+  const { environments } = useEnvironments();
+  const activeEnvironment = environments.find((entry) => entry.environmentId === environmentId);
+  // A chat without a project works in its own folder, not a git worktree.
+  const isScratchChat =
+    activeProject !== null &&
+    isScratchProject(
+      activeProject,
+      availableScratchWorkspaceRoot(
+        activeEnvironment?.connection.phase,
+        activeEnvironment?.serverConfig,
+      ),
+    );
   const hasActiveThread = serverThread !== null || draftThread !== null;
   const activeWorktreePath = forceNewWorktree
     ? null
@@ -626,6 +641,7 @@ export const BranchToolbar = memo(function BranchToolbar({
             effectiveEnvMode={effectiveEnvMode}
             activeWorktreePath={activeWorktreePath}
             workspaceRoot={activeProject.workspaceRoot}
+            {...(isScratchChat ? { workspaceKindLabel: "Chat folder", chatFolder: true } : {})}
             onEnvModeChange={onEnvModeChange}
           />
         ) : null}

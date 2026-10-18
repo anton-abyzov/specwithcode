@@ -45,7 +45,6 @@ describe("usable fallback evidence", () => {
   it.each([false, true])("fails closed for unknown or invalid capacity, named=%s", (named) => {
     const base = candidate();
     for (const over of [
-      { usageLimits: undefined },
       { auth: { status: "unknown" as const } },
       {
         usageLimits: {
@@ -53,7 +52,12 @@ describe("usable fallback evidence", () => {
           checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now - FALLBACK_USAGE_MAX_AGE_MS - 1)),
         },
       },
-      { usageLimits: { ...base.usageLimits!, checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now + 1)) } },
+      {
+        usageLimits: {
+          ...base.usageLimits!,
+          checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now + 1)),
+        },
+      },
       { usageLimits: { ...base.usageLimits!, unavailable: { reason: "probeFailed" as const } } },
       { usageLimits: { ...base.usageLimits!, windows: [] } },
       { usageLimits: { ...base.usageLimits!, ordinaryUsageAllowed: false } },
@@ -76,6 +80,20 @@ describe("usable fallback evidence", () => {
     ])
       expect(pick(candidate(over), named)).toBeNull();
   });
+  it.each([false, true])(
+    "takes a provider that reports no usage only while it can take a turn, named=%s",
+    (named) => {
+      const silent = { usageLimits: undefined };
+      expect(pick(candidate(silent), named)?.model).toBe("grok-4.7");
+      for (const over of [
+        { status: "error" as const },
+        { enabled: false },
+        { auth: { status: "unauthenticated" as const } },
+        { auth: { status: "authenticated" as const, type: "api_key" } },
+      ])
+        expect(pick(candidate({ ...silent, ...over }), named)).toBeNull();
+    },
+  );
   it("requires renewed allowance when an exhausted window resets despite another active window", () => {
     const base = candidate();
     expect(

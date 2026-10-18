@@ -240,14 +240,14 @@ const probeEnvironmentDescriptor = (
     return { _tag: "descriptor", descriptor } as const;
   }).pipe(Effect.catch((outcome) => Effect.succeed(outcome)));
 
-interface DiscoveredPairTarget {
+export interface DiscoveredPairTarget {
   readonly baseDir: string;
   readonly variant: PairStateVariant;
   readonly state: PersistedServerRuntimeState;
   readonly descriptor: ExecutionEnvironmentDescriptor;
 }
 
-const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
+export const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
   explicitBaseDir: string | undefined,
 ) {
   const bases: Array<string> = [];
@@ -307,7 +307,7 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
  * choice pinned to where the runtime state was actually found, independent of
  * ambient environment variables.
  */
-const makePairServerConfig = Effect.fn(function* (input: {
+export const makePairServerConfig = Effect.fn(function* (input: {
   readonly target: DiscoveredPairTarget;
   readonly logLevel: ServerConfig.ServerConfig["Service"]["logLevel"];
 }) {
@@ -371,7 +371,7 @@ const awaitEnvironmentDescriptor = Effect.fn(function* (baseUrl: string) {
   return last;
 });
 
-const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase")(
+export const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase")(
   function* (input: { readonly target: DiscoveredPairTarget; readonly servePort: number }) {
     const notes: Array<string> = [];
     const status = yield* readTailscaleStatus.pipe(

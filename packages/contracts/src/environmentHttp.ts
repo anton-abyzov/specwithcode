@@ -9,6 +9,8 @@ import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
 import * as HttpServerRespondable from "effect/http/HttpServerRespondable";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import {
+  StudioFleetAddInput,
+  StudioFleetAddResult,
   StudioFleetSnapshot,
   StudioFleetConnectInput,
   StudioFleetConnectResult,
@@ -18,14 +20,6 @@ import {
   StudioFleetWorkersResult,
   StudioFleetWorkersStopInput,
 } from "./studioFleet.ts";
-import {
-  CloudSessionCreateInput,
-  CloudSessionCreateResult,
-  CloudSessionSendInput,
-  CloudSessionSendResult,
-  CloudSessionsQuery,
-  CloudSessionsSnapshot,
-} from "./cloudSessions.ts";
 import {
   DeviceSignInApproveInput,
   DeviceSignInApproveResult,
@@ -132,6 +126,7 @@ export const EnvironmentRequestInvalidReason = Schema.Literals([
   "project_environment_active",
   "project_environment_invalid",
   "project_folder_change_refused",
+  "project_name_taken",
 ]);
 export type EnvironmentRequestInvalidReason = typeof EnvironmentRequestInvalidReason.Type;
 
@@ -194,6 +189,8 @@ export class EnvironmentRequestInvalidError extends Schema.TaggedError<Environme
         return "Finish or stop active project work before deleting the project.";
       case "project_folder_change_refused":
         return "The project folder did not change. Check the folder in project settings before trying again.";
+      case "project_name_taken":
+        return "Another project already has this name. Choose a different one.";
       default:
         return `The environment rejected the request (${this.reason}).`;
     }
@@ -901,6 +898,19 @@ class EnvironmentStudioFleetHttpApi extends HttpApiGroup.make("studioFleet")
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
+    HttpApiEndpoint.post("addFleetMachine", "/api/studio/fleet/machines", {
+      headers: OptionalBearerHeaders,
+      payload: StudioFleetAddInput,
+      success: StudioFleetAddResult,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        EnvironmentHttpBadRequestError,
+        EnvironmentHttpForbiddenError,
+        EnvironmentHttpInternalServerError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
     HttpApiEndpoint.post("allowFleetWorkers", "/api/studio/fleet/workers/allow", {
       headers: OptionalBearerHeaders,
       payload: StudioFleetWorkersAllowInput,
@@ -932,47 +942,6 @@ class EnvironmentStudioFleetHttpApi extends HttpApiGroup.make("studioFleet")
       query: StudioFleetRemoteWorkersQuery,
       success: StudioFleetRemoteWorkersResult,
       error: [...EnvironmentScopedOperationErrors, EnvironmentHttpInternalServerError],
-    }).middleware(EnvironmentAuthenticatedAuth),
-  ) {}
-
-/**
- * Anthropic cloud sessions started through this server's Claude Code CLI.
- * Reads need orchestration:read; starting or messaging one needs
- * orchestration:operate and a same-origin request, like fleet changes.
- */
-class EnvironmentCloudSessionsHttpApi extends HttpApiGroup.make("cloudSessions")
-  .add(
-    HttpApiEndpoint.get("cloudSessions", "/api/studio/cloud-sessions", {
-      headers: OptionalBearerHeaders,
-      query: CloudSessionsQuery,
-      success: CloudSessionsSnapshot,
-      error: [...EnvironmentScopedOperationErrors, EnvironmentHttpInternalServerError],
-    }).middleware(EnvironmentAuthenticatedAuth),
-  )
-  .add(
-    HttpApiEndpoint.post("createCloudSession", "/api/studio/cloud-sessions", {
-      headers: OptionalBearerHeaders,
-      payload: CloudSessionCreateInput,
-      success: CloudSessionCreateResult,
-      error: [
-        ...EnvironmentScopedOperationErrors,
-        EnvironmentHttpBadRequestError,
-        EnvironmentHttpForbiddenError,
-        EnvironmentHttpInternalServerError,
-      ],
-    }).middleware(EnvironmentAuthenticatedAuth),
-  )
-  .add(
-    HttpApiEndpoint.post("sendCloudSession", "/api/studio/cloud-sessions/send", {
-      headers: OptionalBearerHeaders,
-      payload: CloudSessionSendInput,
-      success: CloudSessionSendResult,
-      error: [
-        ...EnvironmentScopedOperationErrors,
-        EnvironmentHttpBadRequestError,
-        EnvironmentHttpForbiddenError,
-        EnvironmentHttpInternalServerError,
-      ],
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
@@ -1029,5 +998,4 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentWebhooksHttpApi)
   .add(EnvironmentStudioHttpApi)
   .add(EnvironmentStudioFleetHttpApi)
-  .add(EnvironmentCloudSessionsHttpApi)
   .add(EnvironmentDeviceSignInHttpApi) {}

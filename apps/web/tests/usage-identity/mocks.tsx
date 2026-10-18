@@ -78,10 +78,16 @@ const grok = (email: string | undefined, used: number) =>
     [weekly("subscription", "Weekly", used, 120)],
   );
 
-function machine(label: string, providers: ServerProvider[]) {
+// A second Claude home that is signed out reads no limits at all.
+const { usageLimits: _none, ...signedOutClaude } = {
+  ...provider("claudeAgent", "Claude marketing", { status: "unauthenticated" }, []),
+  instanceId: ProviderInstanceId.make("claude_marketing"),
+};
+
+function machine(label: string, providers: ServerProvider[], phase = "connected") {
   return {
     entry: { target: { label } },
-    connection: { phase: "connected" },
+    connection: { phase },
     serverConfig: { providers, usageLimitSources: [] },
   };
 }
@@ -99,18 +105,34 @@ const presentations = new Map([
     EnvironmentId.make("mbp"),
     machine(
       "Anton's MacBook Pro",
-      scenario === "one"
+      scenario === "offline"
         ? [
-            // Quota still reads, but nobody is signed in to chat here.
-            provider(
-              "claudeAgent",
-              "Claude",
-              { status: "unauthenticated" },
-              [session(0, 4)],
-              "error",
-            ),
+            // The app lost the machine five hours ago; its weekly reset since.
+            {
+              ...claude("anton.personal@example.com", [0, 100, 93], 4.4),
+              usageLimits: {
+                checkedAt: at(-5),
+                windows: [
+                  { ...session(0, 4.4), resetsAt: undefined },
+                  weekly("seven_day", "Weekly", 100, -1),
+                  weekly("seven_day_fable", "Weekly · Fable", 93, -1),
+                ],
+              },
+            },
           ]
-        : [claude("anton.personal@example.com", [0, 9, 3], 4.4), grok(undefined, 64)],
+        : scenario === "one"
+          ? [
+              // Quota still reads, but nobody is signed in to chat here.
+              provider(
+                "claudeAgent",
+                "Claude",
+                { status: "unauthenticated" },
+                [session(0, 4)],
+                "error",
+              ),
+            ]
+          : [claude("anton.personal@example.com", [0, 9, 3], 4.4), grok(undefined, 64)],
+      scenario === "offline" ? "reconnecting" : "connected",
     ),
   ],
   [
@@ -119,6 +141,7 @@ const presentations = new Map([
       claude("anton.team-account@example.com", [0, 77, 50], 4.9),
       codex("anton.team-account@example.com", [6, 23], 2.8),
       grok("anton.team-account@example.com", 12),
+      ...(scenario === "offline" ? [signedOutClaude] : []),
     ]),
   ],
 ]);

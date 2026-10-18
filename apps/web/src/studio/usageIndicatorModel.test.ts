@@ -34,6 +34,7 @@ function account(
     accentColor: undefined,
     environments: [],
     sourceLabel: null,
+    offline: false,
     redeem: null,
     limits: {
       checkedAt: at(0),

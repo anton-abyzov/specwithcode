@@ -26,6 +26,7 @@ import { OpenInPicker } from "./OpenInPicker";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
+import { TurnChatIntoProject } from "./TurnChatIntoProject";
 
 export interface ThreadDetailsPanelProps extends Pick<
   ComponentProps<typeof ThreadDetailsCard>,
@@ -65,6 +66,11 @@ export interface ThreadDetailsPanelProps extends Pick<
     input: NewProjectScriptInput,
   ) => Promise<ProjectScriptActionResult>;
   onDeleteProjectScript: (scriptId: string) => Promise<ProjectScriptActionResult>;
+  /**
+   * Set for a chat without a project. Its folder (null until the first send)
+   * is its own, so the shared No project folder's scripts and Git are not offered.
+   */
+  chatFolder?: { readonly path: string | null; readonly chatTitle: string | null } | undefined;
 }
 
 export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
@@ -109,6 +115,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
       anchor={props.anchor}
       handle={props.handle}
       onPresentationChange={props.onPresentationChange}
+      inlineOpenByDefault={props.draftId !== undefined}
     >
       {(density) => (
         <>
@@ -147,7 +154,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                 />
               ) : null}
 
-              {props.activeProjectScripts ? (
+              {props.activeProjectScripts && !props.chatFolder ? (
                 <ProjectScriptsControl
                   environmentId={props.environmentId}
                   displayMode="panel"
@@ -163,7 +170,22 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
             </div>
           </ThreadDetailsSection>
 
-          {props.gitCwd ? (
+          {props.chatFolder?.path ? (
+            <ThreadDetailsSection
+              headingId="thread-details-chat-folder-heading"
+              title="Chat folder"
+              showHeading={false}
+              separated={density === "full"}
+            >
+              <TurnChatIntoProject
+                environmentId={props.environmentId}
+                folder={props.chatFolder.path}
+                chatTitle={props.chatFolder.chatTitle}
+              />
+            </ThreadDetailsSection>
+          ) : null}
+
+          {props.gitCwd && !props.chatFolder ? (
             <ThreadDetailsSection
               headingId="thread-details-version-control-heading"
               title="Version Control"

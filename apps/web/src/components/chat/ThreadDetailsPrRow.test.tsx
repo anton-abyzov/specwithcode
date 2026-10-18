@@ -6,7 +6,9 @@ import { afterEach, expect, it, vi } from "vite-plus/test";
 const state = vi.hoisted(() => ({
   status: "success" as PullRequestCheck["status"],
   extraStatus: null as PullRequestCheck["status"] | null,
+  mergeability: "mergeable" as "mergeable" | "conflicting",
   perform: vi.fn(),
+  startHandoff: vi.fn(),
 }));
 
 vi.mock("~/state/entities", () => ({ useServerConfigs: () => new Map() }));
@@ -17,9 +19,10 @@ vi.mock("~/state/query", () => ({
     data: {
       number: 1,
       title: "Test PR",
+      url: "https://github.com/acme/atlas/pull/1",
       state: "open",
       isDraft: false,
-      mergeability: "mergeable",
+      mergeability: state.mergeability,
       headBranch: "feature",
       baseBranch: "main",
       changedFiles: 1,
@@ -42,7 +45,7 @@ vi.mock("~/state/query", () => ({
 }));
 vi.mock("../pullRequest/usePullRequestActions", () => ({
   usePullRequestActionRunner: () => ({ actionPending: false, perform: state.perform }),
-  usePullRequestHandoffs: () => ({ handoff: null, startHandoff: vi.fn() }),
+  usePullRequestHandoffs: () => ({ handoff: null, startHandoff: state.startHandoff }),
 }));
 vi.mock("../ui/popover", () => ({
   Popover: ({ children }: { children: ReactNode }) => children,
@@ -75,6 +78,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
   state.status = "success";
   state.extraStatus = null;
+  state.mergeability = "mergeable";
+  state.startHandoff.mockReset();
 });
 
 it("requires a new merge click after passing checks become pending and pass again", () => {
@@ -149,3 +154,49 @@ it.each<[PullRequestCheck["status"], PullRequestCheck["status"], string]>([
     .map((span) => span.children.filter((child) => typeof child === "string").join(""));
   expect(text.filter((value) => /^\d+\/\d+$/.test(value))).toEqual(count ? [count] : []);
 });
+
+it.each([
+  ["the thread's own branch", "feature", true],
+  ["another branch", "other", false],
+  ["no branch", null, false],
+] as const)(
+  "resolves conflicts on %s in place only when it is the PR's head",
+  (_, branch, inPlace) => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    state.mergeability = "conflicting";
+    const onResolveInThread = vi.fn(async () => true);
+    act(() => {
+      renderer = create(
+        <ThreadDetailsPrRow
+          environmentId={EnvironmentId.make("environment")}
+          pr={null}
+          number={1}
+          status={null}
+          project={null}
+          label="Test PR"
+          openAriaLabel="Open PR"
+          onOpen={vi.fn()}
+          threadBranch={branch}
+          onResolveInThread={onResolveInThread}
+        />,
+      );
+    });
+    act(() => {
+      renderer.root
+        .findAllByType("button")
+        .find((button) => button.children.includes("Resolve"))!
+        .props.onClick();
+    });
+    if (inPlace) {
+      expect(onResolveInThread).toHaveBeenCalledWith({
+        number: 1,
+        url: "https://github.com/acme/atlas/pull/1",
+        conflict: { headBranch: "feature", baseBranch: "main" },
+      });
+      expect(state.startHandoff).not.toHaveBeenCalled();
+    } else {
+      expect(onResolveInThread).not.toHaveBeenCalled();
+      expect(state.startHandoff).toHaveBeenCalledWith("conflicts", expect.anything());
+    }
+  },
+);

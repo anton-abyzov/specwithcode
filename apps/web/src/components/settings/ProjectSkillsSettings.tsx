@@ -2,6 +2,7 @@ import {
   EnvironmentId,
   summarizeProjectSkills,
   type ProjectId,
+  type ProjectSkillPresence,
   type ProjectSkillRow,
   type ProjectSkillsSnapshot,
 } from "@specweave-studio/contracts";
@@ -18,8 +19,11 @@ import { type ReactNode, useMemo, useRef, useState } from "react";
 
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
+import type { ProviderInstanceEntry } from "../../providerInstances";
 import { useEnvironmentQuery } from "../../state/query";
 import { projectWorkspace } from "../../studio/projectWorkspace";
+import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
+import { useProviderEntries } from "../studio/shell/ModelBadge";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -153,7 +157,7 @@ function ExternalLink({
       rel="noreferrer noopener"
       aria-label={label}
       className={cn(
-        "inline-flex min-w-0 items-center gap-1 underline-offset-2 hover:text-foreground hover:underline",
+        "inline-flex min-w-0 items-center gap-1 rounded-sm underline-offset-2 hover:text-foreground hover:underline focus-visible:text-foreground focus-visible:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         className,
       )}
       onClick={(event) => event.stopPropagation()}
@@ -195,14 +199,51 @@ function SourceCell({ row }: { row: ProjectSkillRow }) {
     );
   }
   return (
-    <ExternalLink
-      href={links.repoUrl}
-      label={`Open the source of ${row.name}: ${source}`}
-      className="max-w-full text-muted-foreground"
-    >
-      <span className="truncate">{links.label}</span>
-      <ExternalLinkIcon aria-hidden className="size-3 shrink-0" />
-    </ExternalLink>
+    <div className="flex min-w-0 flex-col items-start gap-0.5">
+      <ExternalLink
+        href={links.repoUrl}
+        label={`Open the source of ${row.name}: ${links.repoUrl}`}
+        className="max-w-full text-muted-foreground"
+      >
+        <span className="truncate">{links.label}</span>
+        <ExternalLinkIcon aria-hidden className="size-3 shrink-0" />
+      </ExternalLink>
+      {links.registryUrl ? (
+        <ExternalLink
+          href={links.registryUrl}
+          label={`Open ${row.name} on verified-skill.com: ${links.registryUrl}`}
+          className="max-w-full text-2xs text-muted-foreground"
+        >
+          <BadgeCheckIcon aria-hidden className="size-3 shrink-0 text-success-foreground" />
+          <span className="truncate">verified-skill.com</span>
+        </ExternalLink>
+      ) : null}
+    </div>
+  );
+}
+
+type ProviderEntries = ReadonlyMap<string, ProviderInstanceEntry>;
+
+/** The provider's own mark, the same one the model picker and thread headers draw. */
+function SkillProviderMark({
+  presence,
+  entries,
+  dimmed = false,
+}: {
+  presence: ProjectSkillPresence;
+  entries: ProviderEntries;
+  dimmed?: boolean;
+}) {
+  const entry = entries.get(presence.instanceId) ?? null;
+  return (
+    <ProviderInstanceIcon
+      driverKind={entry?.driverKind ?? presence.driver}
+      displayName={presence.label}
+      acpRegistryAgentId={entry?.acpRegistryAgentId}
+      acpRegistryIconUrl={entry?.acpRegistryIconUrl}
+      className="z-auto"
+      iconClassName={cn("size-3.5", dimmed ? "opacity-50" : "opacity-100")}
+    />
   );
 }
 
@@ -216,7 +257,15 @@ function StatusBadge({ row }: { row: ProjectSkillRow }) {
   return row.issues.length > 0 ? <Hinted hint={row.issues.join("\n")}>{badge}</Hinted> : badge;
 }
 
-function SkillRow({ row, onOpen }: { row: ProjectSkillRow; onOpen: (name: string) => void }) {
+function SkillRow({
+  row,
+  entries,
+  onOpen,
+}: {
+  row: ProjectSkillRow;
+  entries: ProviderEntries;
+  onOpen: (name: string) => void;
+}) {
   const issue = row.issues[0];
   return (
     <TableRow
@@ -251,6 +300,11 @@ function SkillRow({ row, onOpen }: { row: ProjectSkillRow; onOpen: (name: string
             {projectSkillProviderBadges(row).map((badge) => (
               <Hinted key={badge.key} hint={badge.title}>
                 <Badge size="sm" variant={badge.enabled ? "outline" : "secondary"}>
+                  <SkillProviderMark
+                    presence={badge.presence}
+                    entries={entries}
+                    dimmed={!badge.enabled}
+                  />
                   {badge.enabled ? badge.label : `${badge.label} (off)`}
                 </Badge>
               </Hinted>
@@ -297,7 +351,7 @@ const DRIFT_LABELS: Readonly<Record<ProjectSkillRow["drift"], string>> = {
 };
 
 /** Everything known about one skill: where each agent loads it from, its lock and its problems. */
-function SkillDetails({ row }: { row: ProjectSkillRow }) {
+function SkillDetails({ row, entries }: { row: ProjectSkillRow; entries: ProviderEntries }) {
   const links = projectSkillSourceLinks(row);
   const problems = [...new Set([...row.issues, ...row.doctor])];
   return (
@@ -354,6 +408,7 @@ function SkillDetails({ row }: { row: ProjectSkillRow }) {
             {row.providers.map((presence) => (
               <li key={`${presence.instanceId}:${presence.path}`} className="space-y-0.5">
                 <div className="flex flex-wrap items-center gap-1.5">
+                  <SkillProviderMark presence={presence} entries={entries} />
                   <span className="font-medium text-foreground">{presence.label}</span>
                   <Badge size="sm" variant="outline">
                     {projectSkillLevel(presence.scope)}
@@ -382,6 +437,28 @@ function SkillDetails({ row }: { row: ProjectSkillRow }) {
         <h3 className="font-medium text-foreground">Install</h3>
         <dl>
           <DetailItem term="Source">{row.lock?.source ?? "—"}</DetailItem>
+          {links?.registryUrl ? (
+            <DetailItem term="verified-skill.com">
+              <ExternalLink
+                href={links.registryUrl}
+                label={`Open ${row.name} on verified-skill.com: ${links.registryUrl}`}
+                className="break-all text-foreground underline"
+              >
+                {links.registryUrl}
+              </ExternalLink>
+            </DetailItem>
+          ) : null}
+          {links?.repoUrl ? (
+            <DetailItem term="Repository">
+              <ExternalLink
+                href={links.repoUrl}
+                label={`Open the source of ${row.name}: ${links.repoUrl}`}
+                className="break-all text-foreground underline"
+              >
+                {links.repoUrl}
+              </ExternalLink>
+            </DetailItem>
+          ) : null}
           <DetailItem term="Version">{row.lock?.version ?? "—"}</DetailItem>
           <DetailItem term="Tier">{row.lock?.tier ?? "—"}</DetailItem>
           <DetailItem term="Installed">
@@ -405,11 +482,13 @@ function FacetGroup({
   options,
   value,
   onChange,
+  renderIcon,
 }: {
   label: string;
   options: ReadonlyArray<ProjectSkillFacetOption>;
   value: ReadonlyArray<string>;
   onChange: (next: Array<string>) => void;
+  renderIcon?: (value: string) => ReactNode;
 }) {
   if (options.length < 2 && value.length === 0) return null;
   return (
@@ -432,6 +511,7 @@ function FacetGroup({
             size="compact"
             data-facet={option.value}
           >
+            {renderIcon?.(option.value)}
             {option.label}
             <span className="ms-1 text-muted-foreground tabular-nums">{option.count}</span>
           </Toggle>
@@ -515,6 +595,14 @@ export function ProjectSkillsView({
     ? (snapshot?.rows.find((candidate) => candidate.name === openSkill) ?? null)
     : null;
   const attention = snapshot ? projectSkillAttentionCount(snapshot.rows) : 0;
+  const entries = useProviderEntries(environmentId);
+  const presenceByLabel = useMemo(() => {
+    const byLabel = new Map<string, ProjectSkillPresence>();
+    for (const row of snapshot?.rows ?? [])
+      for (const presence of row.providers)
+        if (!byLabel.has(presence.label)) byLabel.set(presence.label, presence);
+    return byLabel;
+  }, [snapshot]);
 
   return (
     <SettingsSection
@@ -581,6 +669,12 @@ export function ProjectSkillsView({
               options={facets.providers}
               value={providers}
               onChange={setProviders}
+              renderIcon={(label) => {
+                const presence = presenceByLabel.get(label);
+                return presence ? (
+                  <SkillProviderMark presence={presence} entries={entries} />
+                ) : null;
+              }}
             />
             <FacetGroup label="Level" options={facets.levels} value={levels} onChange={setLevels} />
             <FacetGroup label="Tier" options={facets.tiers} value={tiers} onChange={setTiers} />
@@ -655,7 +749,9 @@ export function ProjectSkillsView({
                     </TableCell>
                   </TableRow>
                 ) : (
-                  rows.map((row) => <SkillRow key={row.name} row={row} onOpen={setOpenSkill} />)
+                  rows.map((row) => (
+                    <SkillRow key={row.name} row={row} entries={entries} onOpen={setOpenSkill} />
+                  ))
                 )}
               </TableBody>
             </Table>
@@ -667,7 +763,8 @@ export function ProjectSkillsView({
               if (!open) setOpenSkill(null);
             }}
           >
-            <SheetPopup className="max-w-lg" data-testid="skill-details">
+            {/* The page also renders inside the Settings dialog; the sheet must cover it. */}
+            <SheetPopup className="max-w-lg" layer="dialog" data-testid="skill-details">
               {detailRow ? (
                 <>
                   <SheetHeader>
@@ -676,7 +773,7 @@ export function ProjectSkillsView({
                       <SheetDescription>{detailRow.description}</SheetDescription>
                     ) : null}
                   </SheetHeader>
-                  <SkillDetails row={detailRow} />
+                  <SkillDetails row={detailRow} entries={entries} />
                 </>
               ) : null}
             </SheetPopup>

@@ -17,9 +17,12 @@ export function ThreadDetailsCard({
   anchor,
   handle,
   onPresentationChange,
+  inlineOpenByDefault = false,
   children,
 }: {
   threadRef: ScopedThreadRef;
+  /** Open inline until the user chooses otherwise: a draft's card. */
+  inlineOpenByDefault?: boolean;
   anchor: RefObject<Element | null>;
   handle: ReturnType<typeof PopoverCreateHandle>;
   onPresentationChange: (presentation: ThreadPanelPresentation) => void;
@@ -43,7 +46,12 @@ export function ThreadDetailsCard({
     : null;
   const mode = placement ? "inline" : "popover";
   const inlineOpen = useRightPanelStore((state) =>
-    selectThreadPanelOpen(state.threadPanelVisibilityByThreadKey, threadRef, "inline"),
+    selectThreadPanelOpen(
+      state.threadPanelVisibilityByThreadKey,
+      threadRef,
+      "inline",
+      inlineOpenByDefault,
+    ),
   );
   const popoverOpen = useRightPanelStore((state) =>
     selectThreadPanelOpen(state.threadPanelVisibilityByThreadKey, threadRef, "popover"),
@@ -79,8 +87,10 @@ export function ThreadDetailsCard({
   useLayoutEffect(() => {
     onPresentationChange(mode);
     if (mode === "inline" && popoverOpen)
-      useRightPanelStore.getState().setThreadPanelOpen(threadRef, "popover", false);
-  }, [mode, onPresentationChange, threadRef, popoverOpen]);
+      useRightPanelStore
+        .getState()
+        .setThreadPanelOpen(threadRef, "popover", false, inlineOpenByDefault);
+  }, [mode, onPresentationChange, threadRef, popoverOpen, inlineOpenByDefault]);
   useLayoutEffect(() => {
     const element = contentElement;
     if (!element || density === "essential") return;
@@ -137,7 +147,9 @@ export function ThreadDetailsCard({
       handle={handle}
       open={mode === "popover" && popoverOpen}
       onOpenChange={(open) =>
-        useRightPanelStore.getState().setThreadPanelOpen(threadRef, "popover", open)
+        useRightPanelStore
+          .getState()
+          .setThreadPanelOpen(threadRef, "popover", open, inlineOpenByDefault)
       }
     >
       {placement ? (

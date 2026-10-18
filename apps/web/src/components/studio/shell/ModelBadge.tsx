@@ -39,20 +39,27 @@ export function useProviderEntries(
 }
 
 // A host that has not answered yet still gets the right mark for a built-in instance.
-const DRIVER_BY_HINT: ReadonlyArray<readonly [RegExp, string]> = [
+// Gemini CLI is an ACP Registry agent, not Antigravity.
+const DRIVER_BY_HINT: ReadonlyArray<readonly [RegExp, string, string?]> = [
   [/claude/i, "claudeAgent"],
   [/codex|openai/i, "codex"],
   [/grok/i, "grok"],
   [/cursor/i, "cursor"],
   [/opencode/i, "opencode"],
-  [/antigravity|gemini/i, "antigravity"],
+  [/antigravity/i, "antigravity"],
+  [/gemini/i, "acpRegistry", "gemini"],
   [/^pi\b/i, "pi"],
 ];
 
-function guessDriver(instanceId: string): ProviderDriverKind {
-  for (const [pattern, driver] of DRIVER_BY_HINT)
-    if (pattern.test(instanceId)) return ProviderDriverKind.make(driver);
-  return isProviderDriverKind(instanceId) ? instanceId : ProviderDriverKind.make("unknown");
+function guessDriver(instanceId: string): {
+  driverKind: ProviderDriverKind;
+  agentId?: string | undefined;
+} {
+  for (const [pattern, driver, agentId] of DRIVER_BY_HINT)
+    if (pattern.test(instanceId)) return { driverKind: ProviderDriverKind.make(driver), agentId };
+  return {
+    driverKind: isProviderDriverKind(instanceId) ? instanceId : ProviderDriverKind.make("unknown"),
+  };
 }
 
 /** The provider's mark alone, for rows too narrow to carry the words beside it. */
@@ -61,7 +68,8 @@ export function ModelBadgeMark(props: {
   instanceId: string;
   provider: string;
 }) {
-  const driverKind = props.entry?.driverKind ?? guessDriver(props.instanceId);
+  const guess = props.entry ? null : guessDriver(props.instanceId);
+  const driverKind = props.entry?.driverKind ?? guess!.driverKind;
   const registryIcon = resolveProviderInstanceAcpRegistryIconUrl({
     driverKind,
     agentId: props.entry?.acpRegistryAgentId,
@@ -80,7 +88,7 @@ export function ModelBadgeMark(props: {
       driverKind={driverKind}
       displayName={props.entry?.displayName ?? props.provider}
       accentColor={props.entry?.accentColor}
-      acpRegistryAgentId={props.entry?.acpRegistryAgentId}
+      acpRegistryAgentId={props.entry?.acpRegistryAgentId ?? guess?.agentId}
       acpRegistryIconUrl={props.entry?.acpRegistryIconUrl}
       className="sws-model-mark"
       iconClassName="size-3.5"

@@ -1,9 +1,10 @@
 #!/bin/bash
-# The local pull request gate (GitHub Actions is off for this repository). Run it on the PR
+# The pull request gate. .github/workflows/pr-gate.yml runs it on every ready PR; run it here on the PR
 # branch before `gh pr merge`; it exits non-zero when anything fails.
 #
 #   bash scripts/studio-verify/pr-gate.sh [--base origin/main] [--out DIR] [--jobs N]
 #                                          [--server-shards N] [--keep-going] [--only J]...
+#                                          [--skip J]...
 #   bash scripts/studio-verify/pr-gate.sh --list
 #
 # Stage 1, at most --jobs at a time (default 3):
@@ -12,7 +13,9 @@
 #     (`pnpm -r ls`), one process, log and exit code per package; the root's own `test`
 #     (`vp run -r test`) would run every package again, the server included
 #   - scripts/studio-verify/typecheck-gate.sh (fails only on diagnostics beyond the baseline)
-#   - scripts/studio-fleet/run-tests.sh (every fleet test)
+#   - scripts/studio-fleet/run-tests.sh (every fleet test), on macOS only: the fleet runs
+#     under launchd with the system Python, so on Linux the job is left out and said so
+#     (.github/workflows/pr-gate-fleet.yml runs it on a Mac runner when the fleet changes)
 #   - a coverage guard: every workspace package with a `test` script is in stage 1 or is
 #     apps/server, and no package has tracked *.test.* files without a `test` script, so a
 #     new package or a package's first test cannot go unrun
@@ -27,6 +30,9 @@
 # --only J   run only stage-1 job J (contrast, typecheck, fleet or a package directory;
 #            repeatable) and no server stage, to reproduce one failure. A partial run never
 #            passes the gate: it exits 3 when what it ran passed.
+# --skip J   leave stage-1 job J out because something else runs it (pr-gate.yml runs the
+#            typecheck gate in its own job: the server's tsc peaks near 11 GB, more than a
+#            16 GB runner has beside two test suites). Repeatable; named in the output.
 #
 # Environment: PR_GATE_TIMEOUT (seconds per stage-1 job, default 1200), VITEST_MAX_WORKERS
 # (vitest workers per package suite, default 4). Ctrl-C or a TERM stops every job and shard.
@@ -101,6 +107,7 @@ SHARDS=2
 KEEP_GOING=0
 LIST=0
 ONLY=""
+SKIP=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --base) [ $# -ge 2 ] || die "--base needs a ref"; BASE="$2"; shift 2;;
@@ -110,6 +117,7 @@ while [ $# -gt 0 ]; do
     --keep-going) KEEP_GOING=1; shift;;
     --list) LIST=1; shift;;
     --only) [ $# -ge 2 ] || die "--only needs a job"; ONLY="$ONLY ${2%/}"; shift 2;;
+    --skip) [ $# -ge 2 ] || die "--skip needs a job"; SKIP="$SKIP ${2%/}"; shift 2;;
     -h|--help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$SELF"; exit 0;;
     # pnpm run passes the `--` of `pnpm run <script> -- <options>` through.
     --) shift;;
@@ -149,7 +157,7 @@ NOTESTS=""
 {
   echo contrast
   echo typecheck
-  echo fleet
+  if [ "$(uname -s)" = Darwin ]; then echo fleet; fi
 } > "$JOBLIST"
 while read -r dir has_test; do
   if [ "$has_test" != "1" ]; then
@@ -168,6 +176,17 @@ while read -r dir has_test; do
   fi
 done < "$PACKAGES"
 grep -qx "apps/server 1" "$PACKAGES" || UNCOVERED="$UNCOVERED apps/server(no-test-script)"
+
+for job in $SKIP; do
+  if grep -qx "$job" "$JOBLIST"; then
+    grep -vx "$job" "$JOBLIST" > "$JOBLIST.skip" || true
+  elif grep -qx "pkg:$job" "$JOBLIST"; then
+    grep -vx "pkg:$job" "$JOBLIST" > "$JOBLIST.skip" || true
+  else
+    die "no stage-1 job $job to skip (see --list)"
+  fi
+  mv "$JOBLIST.skip" "$JOBLIST"
+done
 
 if [ -n "$ONLY" ]; then
   : > "$JOBLIST.only"
@@ -198,6 +217,10 @@ fi
 
 echo "PR gate: HEAD $(git -C "$ROOT" rev-parse --short HEAD) against $BASE (merge base $(git -C "$ROOT" rev-parse --short "$MERGE_BASE")); logs in $OUT"
 echo "Stage 1: $(wc -l < "$JOBLIST" | tr -d ' ') jobs, $JOBS at a time"
+if [ "$(uname -s)" != Darwin ] && [ -z "$ONLY" ]; then
+  echo "fleet: not run on $(uname -s); the fleet tests need macOS (pr-gate-fleet.yml, release stage 1)"
+fi
+for job in $SKIP; do echo "$job: skipped (--skip); run it separately"; done
 began=$(date +%s)
 runner=0
 job_pool "$JOBLIST" "$JOBS" bash "$SELF" --run-one "$OUT" || runner=$?

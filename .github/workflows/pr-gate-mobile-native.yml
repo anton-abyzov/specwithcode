@@ -1,0 +1,52 @@
+name: PR Gate (mobile native)
+
+# The mobile app's native regressions (apps/mobile/scripts/*.test.ts) compile the patched Expo
+# sources under ThreadSanitizer, so they need macOS and run nowhere else before release stage 1;
+# pr-gate.yml skips them on Linux. Run them on a Mac runner for pull requests that change the
+# patches, the regressions, or the dependency pins those patches are keyed to.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "patches/**"
+      - "pnpm-workspace.yaml"
+      - "pnpm-lock.yaml"
+      - "apps/mobile/scripts/**"
+      - ".github/workflows/pr-gate-mobile-native.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-gate-mobile-native-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    name: PR Gate (mobile native)
+    if: github.event_name == 'workflow_dispatch' || !github.event.pull_request.draft
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version: 22.20.0
+          cache: true
+          run-install: true
+
+      - name: Run the native regressions
+        working-directory: apps/mobile
+        env:
+          CI: "1"
+        run: node ../../node_modules/vite-plus/bin/vp test run --config ../../vite.config.ts --dir . scripts/permissions-service.test.ts scripts/notification-center-manager.test.ts

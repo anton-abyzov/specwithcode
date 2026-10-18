@@ -68,6 +68,39 @@ describe("readAcpPromptUsage", () => {
     });
   });
 
+  it("reads Gemini CLI's _meta.quota totals", () => {
+    // Shape returned by Gemini CLI 0.63.0 for a Gemini 4 Argon turn on Vertex AI.
+    expect(
+      readAcpPromptUsage({
+        stopReason: "end_turn",
+        _meta: {
+          quota: {
+            token_count: { input_tokens: 54300, output_tokens: 670 },
+            model_usage: [
+              {
+                model: "gemini-4-argon",
+                token_count: { input_tokens: 54300, output_tokens: 670 },
+              },
+            ],
+          },
+        },
+      }),
+    ).toEqual({
+      inputTokens: 54300,
+      outputTokens: 670,
+      cachedInputTokens: undefined,
+      cacheCreationTokens: undefined,
+      reasoningTokens: undefined,
+    });
+    expect(
+      readAcpPromptUsage({
+        usage: { inputTokens: 5, outputTokens: 1 },
+        _meta: { quota: { token_count: { input_tokens: 9, output_tokens: 9 } } },
+      }),
+    ).toMatchObject({ inputTokens: 5, outputTokens: 1 });
+    expect(readAcpPromptUsage({ _meta: { quota: { token_count: {} } } })).toBeUndefined();
+  });
+
   it("leaves a response without usage unreported", () => {
     expect(readAcpPromptUsage({ stopReason: "end_turn" })).toBeUndefined();
     expect(readAcpPromptUsage({ stopReason: "end_turn", usage: null })).toBeUndefined();

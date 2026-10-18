@@ -756,7 +756,11 @@ const CoordinatorMessageRow = memo(function CoordinatorMessageRow({
             />
           </ReportArtifact>
         ) : (
-          <ProjectMessageBody text={displayText} collapsible={message.role === "user"}>
+          <ProjectMessageBody
+            text={displayText}
+            // A worker's answer follows the report rule, not the fold for the person's own prompts.
+            collapsible={message.role === "user" && author !== "Message from a worker"}
+          >
             <CollapsibleReport
               text={text}
               streaming={message.streaming}

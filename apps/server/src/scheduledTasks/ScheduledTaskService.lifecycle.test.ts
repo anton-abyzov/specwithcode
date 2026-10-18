@@ -1,6 +1,11 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import { CommandId, ScheduledTaskUpsertInput, type ProjectId } from "@specweave-studio/contracts";
+import {
+  CommandId,
+  ScheduledTaskUpsertInput,
+  ThreadId,
+  type ProjectId,
+} from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
@@ -109,6 +114,24 @@ const harness = Effect.gen(function* () {
           }),
       }),
       Layer.mock(ProjectCoordinator.ProjectCoordinatorService)({
+        // A routine with no thread wakes the project's coordinator: counted
+        // as a launch, then posted into the coordinator thread as a send.
+        start: (input) =>
+          Effect.sync(() => {
+            state.launches++;
+          }).pipe(
+            Effect.andThen(Effect.suspend(() => state.dispatchStarted)),
+            Effect.andThen(Effect.suspend(() => state.dispatchGate)),
+            Effect.andThen(
+              sql`INSERT OR IGNORE INTO orchestration_v2_projection_threads ${sql.insert({ thread_id: `project-coordinator:${input.projectId}`, project_id: input.projectId, title: "Coordinator", default_provider: "codex", runtime_mode: "full-access", interaction_mode: "default", created_at: "2026-10-09T00:00:00Z", updated_at: "2026-10-09T00:00:00Z", deleted_at: null, payload_json: "{}" })}`.pipe(
+                Effect.orDie,
+              ),
+            ),
+            Effect.as({
+              threadId: ThreadId.make(`project-coordinator:${input.projectId}`),
+              created: false,
+            }),
+          ),
         nextTurnModel: () => Effect.sync(() => state.nextTurnModel as never),
       }),
       Layer.mock(Scheduler.Scheduler)({
@@ -300,6 +323,33 @@ it.effect("runs in a bound thread on the coordinator's next model, not the one s
   }).pipe(Effect.provide(Sqlite.layerMemory)),
 );
 
+it.effect("sends a routine with no thread to the coordinator, on the coordinator's model", () =>
+  Effect.gen(function* () {
+    const { run, state } = yield* harness;
+    yield* run((service) =>
+      Effect.gen(function* () {
+        // Made in the routine form with a model picked: it still follows the project.
+        const { task } = yield* service.upsert(
+          taskInput({ title: "Disk space watch", workspaceStrategy: { type: "root" } }),
+        );
+        state.nextTurnModel = { instanceId: "copilot", model: "claude-opus-5.5" };
+        yield* service.runNow({ id: task.id });
+        assert.equal(state.launches, 1);
+        assert.equal(state.sends, 1);
+        assert.equal(
+          (state.sent[0] as { readonly threadId?: string }).threadId,
+          "project-coordinator:project-a",
+        );
+        assert.equal(
+          state.sent[0]?.text,
+          'Routine "Disk space watch" fired. Answer it yourself or start the threads it needs.\n\nReview synthetic fixture',
+        );
+        assert.deepEqual(state.sent[0]?.modelSelection, state.nextTurnModel);
+      }),
+    );
+  }).pipe(Effect.provide(Sqlite.layerMemory)),
+);
+
 it.effect("wakes the thread only when a command routine's check passes", () =>
   Effect.gen(function* () {
     const { run, state, seedThread } = yield* harness;
@@ -413,7 +463,7 @@ it.effect("retains an uncertain receipt after dispatch succeeds but saving its r
     assert.equal(failure.reason, "run_outcome_unknown");
     assert.include(failure.message, "Run dispatched but its receipt could not be saved");
     assert.equal(state.launches, 1);
-    assert.equal(state.sends, 0);
+    assert.equal(state.sends, 1);
     const rows = () => sql`SELECT * FROM scheduled_task_run_receipts WHERE command_id=${commandId}`;
     const pending = yield* rows();
     assert.equal(pending.length, 1);
@@ -432,7 +482,7 @@ it.effect("retains an uncertain receipt after dispatch succeeds but saving its r
     assert.equal(retried.reason, "run_outcome_unknown");
     assert.include(retried.message, "already admitted");
     assert.equal(state.launches, 1);
-    assert.equal(state.sends, 0);
+    assert.equal(state.sends, 1);
     assert.deepEqual(yield* rows(), pending);
   }).pipe(Effect.provide(Sqlite.layerMemory)),
 );

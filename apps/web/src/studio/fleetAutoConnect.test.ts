@@ -5,6 +5,7 @@ import {
   FLEET_RETRY_MS,
   fleetAttemptsAwaitingRetry,
   fleetMachinesAwaitingReach,
+  fleetMachineSaved,
   fleetMachinesToAutoConnect,
   readSkippedFleetEnvironments,
   setFleetEnvironmentSkipped,
@@ -158,5 +159,44 @@ describe("automatic private machine connection", () => {
       },
     };
     expect(() => setFleetEnvironmentSkipped(m1, true, blocked)).not.toThrow();
+  });
+
+  it("adds a machine's new address when its server lists it somewhere this browser never paired", () => {
+    const moved: StudioFleetSnapshot = {
+      ...snapshot,
+      machines: [
+        { ...machine("m1", m1, 443), url: "https://m1.tailnet.ts.net" },
+        machine("m3", m3, 8444),
+      ],
+    };
+    const saved = new Set<string>([m1, m3]);
+    const origins = new Map<string, ReadonlySet<string>>([
+      [m1, new Set(["https://fixture.tailnet.ts.net:8443"])],
+      [m3, new Set(["https://fixture.tailnet.ts.net:8444"])],
+    ]);
+    expect(
+      ids(
+        fleetMachinesToAutoConnect({
+          snapshot: moved,
+          currentEnvironmentId: m4,
+          savedEnvironmentIds: saved,
+          savedRouteOrigins: origins,
+          skippedEnvironmentIds: none,
+          attemptedEnvironmentIds: none,
+        }),
+      ),
+    ).toEqual(["m1"]);
+    // Once the new address is saved too, nothing is left to do; without route
+    // information a saved machine counts as reached, as before.
+    expect(
+      fleetMachineSaved(
+        moved.machines[0]!,
+        saved,
+        new Map([
+          [m1, new Set(["https://fixture.tailnet.ts.net:8443", "https://m1.tailnet.ts.net"])],
+        ]),
+      ),
+    ).toBe(true);
+    expect(fleetMachineSaved(moved.machines[0]!, saved)).toBe(true);
   });
 });

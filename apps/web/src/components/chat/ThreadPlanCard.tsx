@@ -1,9 +1,11 @@
 /**
  * The thread's plan card: done, current and next at a glance, from the
  * SpecWeave increment the thread works on or the agent's own todo list.
- * Collapsed it is one line; open it lists every step, the increment's
- * acceptance criteria and links to its spec and folder. A worker thread with
- * neither still shows one, with what it is doing now and "Link increment".
+ * Collapsed it is one chip-high line that shares the row with the thread's
+ * meta chips; open it takes the whole row and lists every step, the
+ * increment's acceptance criteria and links to its spec and folder. A worker
+ * thread with neither still shows one: what it is doing now, or a small
+ * "No plan" chip that opens "Link increment".
  */
 import {
   CheckCircle2Icon,
@@ -130,40 +132,54 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
   const criteria = fromIncrement ? increment.criteria : [];
   const criteriaMet = criteria.filter((criterion) => criterion.met).length;
   const allDone = plan.total > 0 && plan.completed >= plan.total;
+  // Nothing to say yet: a chip, not a full-width bar.
+  const empty = plan.source === "none" && status === null;
   const headline =
     plan.source === "none"
-      ? (status ?? "No plan yet")
+      ? (status ?? "No plan")
       : (plan.current ?? (allDone ? "All done" : "No tasks yet"));
   return (
     <section
-      className="pointer-events-auto rounded-xl border border-border/70 lane-surface text-sm shadow-xs"
+      className={cn(
+        "pointer-events-auto rounded-md border border-border/60 lane-surface text-xs shadow-xs",
+        expanded ? "basis-full" : empty ? "shrink-0" : "min-w-[min(100%,16rem)] flex-1",
+      )}
       aria-label={fromIncrement ? `Increment ${increment.incrementId} progress` : "Plan progress"}
       data-thread-plan-card={plan.source}
+      data-plan-empty={empty || undefined}
     >
       <button
         type="button"
-        className="flex w-full min-w-0 items-center gap-2 px-3 py-2 text-left"
+        className="flex h-6 w-full min-w-0 items-center gap-1.5 px-2 text-left"
         aria-expanded={expanded}
         aria-controls={listId}
         onClick={() => setExpanded((open) => !open)}
       >
-        <ListTodoIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
-        <span className="shrink-0 text-muted-foreground">
-          {fromIncrement ? increment.incrementId.replace(/^(\d+)-.*/u, "$1") : "Plan"}
-        </span>
-        <span className="min-w-0 flex-1 truncate text-foreground/85" data-plan-current>
+        <ListTodoIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+        {empty ? null : (
+          <span className="shrink-0 text-muted-foreground">
+            {fromIncrement ? increment.incrementId.replace(/^(\d+)-.*/u, "$1") : "Plan"}
+          </span>
+        )}
+        <span
+          className={cn(
+            "min-w-0 truncate",
+            empty ? "text-muted-foreground" : "flex-1 text-foreground/85",
+          )}
+          data-plan-current
+        >
           {plan.current ? <span className="sr-only">Now: </span> : null}
           {headline}
         </span>
         {plan.next && !expanded ? (
-          <span className="hidden max-w-[35%] shrink truncate text-xs text-muted-foreground sm:inline">
+          <span className="hidden max-w-[35%] shrink truncate text-muted-foreground sm:inline">
             Next: {plan.next}
           </span>
         ) : null}
         {plan.total > 0 ? (
           <span
             className={cn(
-              "shrink-0 text-xs tabular-nums",
+              "shrink-0 tabular-nums",
               allDone ? "text-success-foreground" : "text-muted-foreground",
             )}
             data-plan-count
@@ -174,7 +190,7 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
         <ChevronDownIcon
           aria-hidden
           className={cn(
-            "size-4 shrink-0 text-muted-foreground transition-transform",
+            "size-3.5 shrink-0 text-muted-foreground transition-transform",
             expanded && "rotate-180",
           )}
         />
@@ -182,7 +198,7 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
       {expanded ? (
         <div
           id={listId}
-          className="max-h-[45vh] overflow-y-auto border-t border-border/60 px-3 pt-2 pb-2.5"
+          className="max-h-[45vh] overflow-y-auto border-t border-border/60 px-3 pt-2 pb-2.5 text-sm"
         >
           {fromIncrement ? (
             <p className="mb-1.5 text-xs text-muted-foreground">

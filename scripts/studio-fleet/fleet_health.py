@@ -50,6 +50,7 @@ FLOOD_COUNT = 20
 STDOUT_TAIL_BYTES = 8 << 20
 USER_FACING_PREFIXES = ('ws.rpc.', 'RpcClient.')
 LOG_LINE = re.compile(r'^\[(\d\d):(\d\d):(\d\d)\.(\d{3})\] (WARN|ERROR|FATAL) \(#\d+\): (.*)$')
+LOG_CLOCK = re.compile(r'^\[(\d\d):(\d\d):(\d\d)\.(\d{3})\] [A-Z]+ \(#\d+\):')
 ERROR_STATUS = re.compile(r'"code":\s*"2"')  # Cheap filter before parsing; OTLP status code 2 is ERROR.
 CAUSE_LINE = re.compile(r'\[cause\]: ([^\n]+)')
 # Paths in messages (workspace roots, thread ids) would split one failure into many groups.
@@ -342,29 +343,70 @@ def log_time(now_local, hours, minutes, seconds, millis):
     return stamp
 
 
+def dated_log_lines(text, latest):
+    """Infer dates from observed midnight rollovers, including informational headers.
+
+    A clock-only log cannot reveal whole silent days. Use the last file write as
+    the upper bound, and treat large reverse clock jumps as midnight crossings;
+    small out-of-order writes must not silently age an entire current flood.
+    """
+    cursor = None
+    for line in reversed(text.split('\n')):
+        clock = LOG_CLOCK.match(line)
+        if not clock:
+            continue
+        hours, mins, secs, millis = (int(part) for part in clock.groups())
+        try:
+            if cursor is None:
+                stamp = log_time(latest, hours, mins, secs, millis)
+            else:
+                stamp = cursor.replace(hour=hours, minute=mins, second=secs,
+                                       microsecond=millis * 1000)
+                if stamp - cursor > datetime.timedelta(hours=12):
+                    stamp -= datetime.timedelta(days=1)
+                elif cursor - stamp > datetime.timedelta(hours=12):
+                    # A delayed pre-midnight write may follow newer midnight rows.
+                    # Keep the cursor at the earliest time seen so small disorder
+                    # cannot cumulatively shift the inferred timeline forward.
+                    next_day = stamp + datetime.timedelta(days=1)
+                    if next_day - cursor <= datetime.timedelta(minutes=5) and next_day <= latest:
+                        stamp = next_day
+        except ValueError:
+            continue
+        cursor = min(cursor, stamp) if cursor is not None else stamp
+        yield stamp, line
+
+
 def check_log_flood(base, now, minutes=FLOOD_MINUTES, limit=FLOOD_COUNT):
     """(e) One warning or error message logged more than `limit` times in the last minutes."""
     path = base / 'stdout.log'
+    now_local = now.astimezone()
+    cutoff = now_local - datetime.timedelta(minutes=minutes)
     try:
+        # Time-only stamps can match today's clock even when the entire file is old.
+        # An untouched log cannot contain warnings from this observation window.
+        modified = path.stat().st_mtime
+        if modified < cutoff.timestamp():
+            return finding('log', OK, 'stdout.log not modified in the last %d min' % minutes,
+                           minutes=minutes, limit=limit, byLevel={}, floods=[], top=[])
         text = read_tail(path, STDOUT_TAIL_BYTES)
     except OSError:
         return finding('log', OK, 'No stdout.log')
-    now_local = now.astimezone()
-    cutoff = now_local - datetime.timedelta(minutes=minutes)
     counts = collections.Counter()
     levels = collections.Counter()
-    for line in text.split('\n'):
+    latest = datetime.datetime.fromtimestamp(modified).astimezone()
+    for stamp, line in dated_log_lines(text, latest):
         match = LOG_LINE.match(line)
         if not match:
             continue
-        hours, mins, secs, millis = (int(part) for part in match.groups()[:4])
-        if log_time(now_local, hours, mins, secs, millis) < cutoff:
+        if stamp < cutoff or stamp > now_local + datetime.timedelta(minutes=1):
             continue
         counts[(match.group(5), match.group(6).strip())] += 1
         levels[match.group(5)] += 1
     floods = [{'level': level, 'message': message, 'count': count}
               for (level, message), count in counts.most_common() if count > limit]
     details = {'minutes': minutes, 'limit': limit, 'byLevel': dict(levels), 'floods': floods,
+               'timestampQualification': 'Dates inferred from clock order; silent whole-day gaps remain ambiguous.',
                'top': [{'level': level, 'message': message, 'count': count}
                        for (level, message), count in counts.most_common(5)]}
     if floods:

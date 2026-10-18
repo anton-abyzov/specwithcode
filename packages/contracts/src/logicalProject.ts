@@ -41,6 +41,17 @@ export function logicalProjectTitle(project: {
   return project.workspaceSettings?.logicalProject?.title ?? project.title;
 }
 
+/** The longest name a rename may give a project. */
+export const PROJECT_NAME_MAX_LENGTH = 120;
+
+/**
+ * Two project names are the same when they match ignoring case and surrounding
+ * space: "SpecWeave" and " specweave " collide, so neither can take the other's name.
+ */
+export function projectNameKey(name: string): string {
+  return name.normalize("NFC").trim().toLowerCase();
+}
+
 /** A relinquished binding never becomes active through an ordinary settings edit. */
 export const ProjectCoordinatorBinding = Schema.Struct({
   epoch: NonNegativeInt,

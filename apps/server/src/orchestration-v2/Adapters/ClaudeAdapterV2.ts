@@ -34,6 +34,7 @@ import type {
   WebSearchOutput,
 } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
 import { parseCliArgs } from "@specweave-studio/shared/cliArgs";
+import { isApiCreditExhaustedMessage } from "@specweave-studio/shared/providerFallback";
 import { HostProcessEnvironment } from "@specweave-studio/shared/hostProcess";
 import { applyClaudePromptEffortPrefix } from "@specweave-studio/shared/model";
 import {
@@ -1116,7 +1117,6 @@ export const CLAUDE_READ_ONLY_STUDIO_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = 
   "mcp__studio-code__studio_project_list",
   "mcp__studio-code__studio_project_read",
   "mcp__studio-code__studio_machine_list",
-  "mcp__studio-code__studio_cloud_session_list",
   "mcp__studio-code__studio_project_memory_list",
   "mcp__studio-code__studio_project_memory_read",
   "mcp__studio-code__studio_project_plan_read",
@@ -2739,13 +2739,21 @@ function providerFailureFromResult(
   failureHint?: string,
   usageLimited = false,
 ): OrchestrationV2ProviderFailure | null {
+  const listedError = resultUserFacingError(message);
+  // An API key whose account has no credits left: another account, or the
+  // subscription, can take the turn, so it stops like a usage limit.
+  const creditsExhausted = [
+    listedError,
+    failureHint,
+    message.subtype === "success" ? message.result : message.errors.join("\n"),
+  ].some(isApiCreditExhaustedMessage);
   const failureClass =
     message.terminal_reason === "blocking_limit" ||
     (message.subtype === "success" && message.api_error_status === 429) ||
-    usageLimited
+    usageLimited ||
+    creditsExhausted
       ? "usage_limit"
       : "provider_error";
-  const listedError = resultUserFacingError(message);
   const structuredError = isOverloadedResult(message)
     ? "Claude API is overloaded (529). Try again shortly."
     : message.subtype === "success" && message.api_error_status === 429
@@ -2767,8 +2775,9 @@ function providerFailureFromResult(
   const apiErrorStatus = message.api_error_status ?? null;
   return makeProviderFailure({
     message: listedError ?? structuredError ?? failureHint ?? message.result,
-    code:
-      apiErrorStatus === null
+    code: creditsExhausted
+      ? "credit_balance_too_low"
+      : apiErrorStatus === null
         ? (message.terminal_reason ?? "sdk_result_error")
         : `api_error_${apiErrorStatus}`,
     class: failureClass,
@@ -2989,6 +2998,8 @@ interface ActiveClaudeTurnContext {
   readonly ignoredTaskIds: Set<string>;
   readonly announcedUsageLimits: Set<string>;
   authenticationFailureMessage: string | undefined;
+  /** The CLI's own "Credit balance too low" text: the API key's account has no credits left. */
+  creditsExhaustedMessage: string | undefined;
   readonly rejectedRateLimitTypes: Set<string>;
   readonly rateLimitResetTimes: Map<string, string | null>;
   latestAssistantRateLimited: boolean;
@@ -6061,6 +6072,13 @@ export function makeClaudeAdapterV2(
                   parseClaudeLimitReset(text, DateTime.toEpochMillis(yield* DateTime.now)) ??
                   context.assistantLimitResetAt;
               }
+              if (message.error === "billing_error") {
+                const text = message.message.content
+                  .flatMap((block) => (block.type === "text" ? [block.text] : []))
+                  .join("\n")
+                  .trim();
+                if (isApiCreditExhaustedMessage(text)) context.creditsExhaustedMessage = text;
+              }
               if (message.error === "authentication_failed") {
                 context.authenticationFailureMessage = claudeSignedOutMessage({
                   configDir: adapterOptions.environment.CLAUDE_CONFIG_DIR,
@@ -6796,6 +6814,7 @@ export function makeClaudeAdapterV2(
                 message.terminal_reason === "blocking_limit");
             const failureHint =
               context.authenticationFailureMessage ??
+              context.creditsExhaustedMessage ??
               (usageLimited
                 ? "Claude usage limit reached. Send the message again once the limit resets."
                 : undefined);
@@ -7729,6 +7748,7 @@ export function makeClaudeAdapterV2(
               ignoredTaskIds: new Set(),
               announcedUsageLimits: new Set(),
               authenticationFailureMessage: undefined,
+              creditsExhaustedMessage: undefined,
               rejectedRateLimitTypes: new Set(),
               rateLimitResetTimes: new Map(),
               latestAssistantRateLimited: false,

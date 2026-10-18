@@ -21,6 +21,7 @@ import {
   presentQuestionOption,
   questionOptionIndexForKey,
   questionOptionLetter,
+  splitQuestionText,
 } from "./questionCard.logic";
 
 /**
@@ -65,6 +66,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
     <ComposerPendingUserInputCard
       key={activePrompt.requestId}
       prompt={activePrompt}
+      waitingCount={pendingUserInputs.length - 1}
       disabled={disabled}
       isResponding={respondingRequestIds.includes(activePrompt.requestId)}
       answers={answers}
@@ -80,6 +82,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
 
 const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard({
   prompt,
+  waitingCount,
   disabled,
   isResponding,
   answers,
@@ -91,6 +94,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   renderText,
 }: {
   prompt: PendingUserInput;
+  /** Requests queued behind this one; each shows after this one is answered. */
+  waitingCount: number;
   disabled: boolean;
   isResponding: boolean;
   answers: Record<string, PendingUserInputDraftAnswer>;
@@ -252,6 +257,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   }
 
   const customAnswerActive = progress.customAnswer.trim().length > 0;
+  const { headline, details } = splitQuestionText(activeQuestion.question);
 
   return (
     <Collapsible
@@ -273,12 +279,21 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
             {activeQuestion.header}
           </span>
           {isCollapsed ? (
-            <span className="min-w-0 flex-1 truncate text-secondary-label">
-              {activeQuestion.question}
-            </span>
+            <span className="min-w-0 flex-1 truncate text-secondary-label">{headline}</span>
           ) : null}
         </ComposerBanner.Content>
         <ComposerBanner.Actions>
+          {waitingCount > 0 ? (
+            <span
+              data-pending-user-input-waiting={waitingCount}
+              className="rounded px-1.5 py-px text-3xs font-medium whitespace-nowrap bg-muted text-muted-foreground tabular-nums"
+            >
+              <span aria-hidden>+{waitingCount} more</span>
+              <span className="sr-only">
+                {`${waitingCount} more ${waitingCount === 1 ? "request is" : "requests are"} waiting; each opens after you answer this one`}
+              </span>
+            </span>
+          ) : null}
           {prompt.questions.length > 1 ? (
             <span className="text-3xs font-medium text-muted-foreground tabular-nums">
               {questionIndex + 1}/{prompt.questions.length}
@@ -317,14 +332,22 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
             data-question-card-request={prompt.requestId}
           >
             <div className="text-sm leading-snug font-medium text-foreground">
-              {renderText(activeQuestion.question, "question")}
+              {renderText(headline, "question")}
             </div>
+            {details !== null ? (
+              <div
+                className="mt-1.5 text-xs leading-snug text-muted-foreground"
+                data-question-details
+              >
+                {renderText(details, "description")}
+              </div>
+            ) : null}
             {activeQuestion.multiSelect ? (
               <p className="mt-1 text-secondary-label text-xs">Select one or more options.</p>
             ) : null}
             <div
               role={activeQuestion.multiSelect ? "group" : "radiogroup"}
-              aria-label={activeQuestion.question}
+              aria-label={headline}
               className="mt-2 divide-y divide-border/60"
               onKeyDown={moveOptionFocus}
             >

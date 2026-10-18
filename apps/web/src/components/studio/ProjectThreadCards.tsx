@@ -5,6 +5,7 @@
  */
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import { ChevronRightIcon } from "lucide-react";
+import { useState } from "react";
 
 import {
   threadCardActions,
@@ -13,7 +14,12 @@ import {
   type ThreadCardAction,
 } from "../../studio/projectThreadCards";
 import { useThreadCardGitStatus } from "../../studio/useThreadCardGitStatus";
+import {
+  useResolveConflictsRequestedFor,
+  useResolveThreadConflicts,
+} from "../../studio/useResolveThreadConflicts";
 import { threadAttentionNote } from "../../studio/projectWorkspaceModel";
+import { useHostOffline } from "../../studio/unreachableHosts";
 import { PULL_REQUEST_STATE_PRESENTATION, PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { Tip } from "./shell/Tip";
 import { ThreadLinkChipButton } from "../ThreadLinkChip";
@@ -51,8 +57,9 @@ export function ProjectThreadChip({
 
 /**
  * A thread the coordinator started, as the project chat shows one: its status
- * dot, title and state. The whole card opens the thread; beside it, "Create PR"
- * while its checkout has work no pull request carries, "View PR" once it has one.
+ * dot, title and state. The whole card opens the thread; beside it, "Resolve
+ * conflicts" while its open pull request conflicts with the base branch, "Create
+ * PR" while its checkout has work no pull request carries, "View PR" once it has one.
  */
 export function ProjectThreadCard({
   thread,
@@ -71,11 +78,24 @@ export function ProjectThreadCard({
   onCreatePullRequest: () => void;
   onOpenPullRequest: (url: string) => void;
 }) {
-  const status = threadCardStatus(thread);
-  const blocker = threadAttentionNote(thread);
+  const hostOffline = useHostOffline(thread.environmentId);
+  const status = threadCardStatus(thread, hostOffline);
+  // An unreachable host's last report is stale; the card says the host is offline instead.
+  const blocker = hostOffline ? null : threadAttentionNote(thread);
   const git = useThreadCardGitStatus(thread, projectRoot);
   const pullRequest = threadCardPullRequest(thread, git);
-  const actions = threadCardActions({ thread, git, pullRequest, canChange });
+  const resolveRequestedFor = useResolveConflictsRequestedFor({
+    environmentId: thread.environmentId,
+    threadId: thread.id,
+  });
+  const actions = threadCardActions({
+    thread,
+    git,
+    pullRequest,
+    canChange,
+    working: status.tone === "working",
+    resolveRequestedFor,
+  });
   const title = thread.title.trim() || "Untitled thread";
   const incrementProgress = useThreadIncrementProgress({
     environmentId: thread.environmentId,
@@ -103,7 +123,7 @@ export function ProjectThreadCard({
         <Tip label={title} side="top">
           <span className="sws-thread-card-title">{title}</span>
         </Tip>
-        {status.tone === "idle" ? null : (
+        {status.tone === "idle" && !hostOffline ? null : (
           <span className="sws-thread-card-status">{status.label}</span>
         )}
         {plan ? <PlanProgressChip plan={plan} /> : null}
@@ -132,6 +152,7 @@ export function ProjectThreadCard({
             <ThreadCardActionButton
               key={action.kind}
               action={action}
+              thread={thread}
               title={title}
               onCreatePullRequest={onCreatePullRequest}
               onOpenPullRequest={onOpenPullRequest}
@@ -145,15 +166,19 @@ export function ProjectThreadCard({
 
 function ThreadCardActionButton({
   action,
+  thread,
   title,
   onCreatePullRequest,
   onOpenPullRequest,
 }: {
   action: ThreadCardAction;
+  thread: EnvironmentThreadShell;
   title: string;
   onCreatePullRequest: () => void;
   onOpenPullRequest: (url: string) => void;
 }) {
+  if (action.kind === "resolve_conflicts")
+    return <ResolveConflictsButton action={action} thread={thread} title={title} />;
   if (action.kind === "create_pr")
     return (
       <Tip label="Commit, push and open a pull request with this thread's changes">
@@ -182,6 +207,41 @@ function ThreadCardActionButton({
       >
         <presentation.Icon aria-hidden className={presentation.toneClassName} />
         View PR
+      </button>
+    </Tip>
+  );
+}
+
+/** Sends the thread's own agent the request to merge the base in, resolve and push. */
+function ResolveConflictsButton({
+  action,
+  thread,
+  title,
+}: {
+  action: Extract<ThreadCardAction, { kind: "resolve_conflicts" }>;
+  thread: EnvironmentThreadShell;
+  title: string;
+}) {
+  const resolve = useResolveThreadConflicts();
+  const [sending, setSending] = useState(false);
+  const base = action.conflict.baseBranch;
+  return (
+    <Tip
+      label={`#${action.number} conflicts with ${base}. Ask this thread to merge ${base} in, resolve the conflicts, re-run the checks and push.`}
+    >
+      <button
+        type="button"
+        className="sws-thread-card-action"
+        data-action="resolve-conflicts"
+        aria-label={`Resolve the conflicts on pull request #${action.number} in ${title}`}
+        disabled={sending}
+        onClick={() => {
+          setSending(true);
+          void resolve(thread, action).finally(() => setSending(false));
+        }}
+      >
+        <PullRequestGlyph.conflicting aria-hidden />
+        {sending ? "Sending..." : "Resolve conflicts"}
       </button>
     </Tip>
   );

@@ -12,6 +12,10 @@ import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
  * the host knows (title, state, checks tally, diff size) lives in the row's tooltip, so a hover
  * answers what previously took opening the panel.
  *
+ * When the pull request's head is the thread's own branch, "Resolve" asks this thread's agent to
+ * merge the base in where it already works, as Claude Code steers the session that opened the
+ * pull request. Any other pull request is resolved in a new thread on its own checkout.
+ *
  * Until the detail arrives — or where pull requests are not supported at all — the row renders
  * from the linked snapshot or branch summary, or just the link when status is unavailable.
  */
@@ -27,6 +31,8 @@ import {
   TriangleAlertIcon,
 } from "lucide-react";
 import { useState, type MouseEvent as ReactMouseEvent } from "react";
+
+import type { ResolveConflictsTarget } from "~/studio/useResolveThreadConflicts";
 
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
 import { usePullRequestChecksRefresh } from "~/hooks/usePullRequestChecksRefresh";
@@ -90,6 +96,8 @@ export function ThreadDetailsPrRow({
   onOpen,
   onActed,
   onStopWatching,
+  threadBranch,
+  onResolveInThread,
 }: {
   environmentId: EnvironmentId;
   pr: ThreadPr;
@@ -105,6 +113,10 @@ export function ThreadDetailsPrRow({
   onActed?: () => void;
   /** Set while the server watches this pull request for the thread; stops the watch. */
   onStopWatching?: (() => void) | undefined;
+  /** The branch the thread works on, so its own pull request is resolved in place. */
+  threadBranch?: string | null | undefined;
+  /** Sends the thread itself the request to resolve its pull request's conflicts. */
+  onResolveInThread?: ((target: ResolveConflictsTarget) => Promise<boolean>) | undefined;
 }) {
   const serverConfigs = useServerConfigs();
   const supportsPullRequests =
@@ -164,6 +176,13 @@ export function ThreadDetailsPrRow({
   });
   const { handoff, startHandoff } = usePullRequestHandoffs({ environmentId, detail });
   const [confirmingMerge, setConfirmingMerge] = useState(false);
+  const [resolvingInThread, setResolvingInThread] = useState(false);
+  const resolvesInThread =
+    onResolveInThread !== undefined &&
+    threadBranch !== null &&
+    threadBranch !== undefined &&
+    detail !== null &&
+    detail.headBranch === threadBranch;
 
   const rowAction = resolveThreadPanelPullRequestAction(detail);
   if (confirmingMerge && rowAction !== "merge") {
@@ -179,6 +198,15 @@ export function ThreadDetailsPrRow({
 
   const startResolveConflicts = () => {
     if (detail === null) return;
+    if (resolvesInThread) {
+      setResolvingInThread(true);
+      void onResolveInThread({
+        number: detail.number,
+        url: detail.url,
+        conflict: { headBranch: detail.headBranch, baseBranch: detail.baseBranch },
+      }).finally(() => setResolvingInThread(false));
+      return;
+    }
     void startHandoff("conflicts", {
       prompt: buildResolveConflictsPrompt({
         number: detail.number,
@@ -303,15 +331,25 @@ export function ThreadDetailsPrRow({
 
   const trailingAction =
     rowAction === "resolve"
-      ? {
-          label: "Resolve",
-          pendingLabel: "Preparing...",
-          pending: handoff === "conflicts",
-          destructive: true,
-          suffix: <ArrowUpRightIcon aria-hidden className="size-3 shrink-0" />,
-          tooltip: "Check the branch out and resolve the conflicts in a new thread",
-          onClick: startResolveConflicts,
-        }
+      ? resolvesInThread
+        ? {
+            label: "Resolve",
+            pendingLabel: "Sending...",
+            pending: resolvingInThread,
+            destructive: true,
+            suffix: null,
+            tooltip: `Ask this thread to merge ${detail?.baseBranch ?? "the base branch"} in, resolve the conflicts and push`,
+            onClick: startResolveConflicts,
+          }
+        : {
+            label: "Resolve",
+            pendingLabel: "Preparing...",
+            pending: handoff === "conflicts",
+            destructive: true,
+            suffix: <ArrowUpRightIcon aria-hidden className="size-3 shrink-0" />,
+            tooltip: "Check the branch out and resolve the conflicts in a new thread",
+            onClick: startResolveConflicts,
+          }
       : rowAction === "ready"
         ? {
             label: "Ready",
@@ -430,7 +468,7 @@ export function ThreadDetailsPrRow({
                       size="sm"
                       part="action"
                       tone={trailingAction.destructive ? "destructive" : "default"}
-                      disabled={actionPending || handoff !== null}
+                      disabled={actionPending || handoff !== null || resolvingInThread}
                       onClick={trailingAction.onClick}
                     />
                   }

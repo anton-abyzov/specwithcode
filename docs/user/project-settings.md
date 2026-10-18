@@ -57,8 +57,15 @@ branch name remains.
 Open **Settings → Scheduled tasks** to create recurring tasks or manage existing
 ones across your connected environments. Use the settings filter to narrow the
 list by environment or project. Each task runs on the environment you choose,
-using its project, model, and workspace settings. Fixed-time schedules use that
+using its project and workspace settings. Fixed-time schedules use that
 environment's time zone, which may differ from your phone's.
+
+A task with no thread of its own goes to the project's coordinator, which answers
+it or starts the threads it needs in the task's workspace, so every run shows up
+in the project's coordinator chat. The coordinator runs it on its own model, and
+the threads it starts use the project's **Recommended model for threads**, moving
+to a provider with room when one runs out. Turn on **Use a specific model** to run
+every turn of the task on one model instead.
 
 You can edit, pause, resume, run immediately, or delete a task from the list.
 Webhook tasks only run when their URL is called, so they can't be run

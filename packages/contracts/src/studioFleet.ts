@@ -118,6 +118,28 @@ export const StudioFleetWorkersResult = Schema.Struct({
 });
 export type StudioFleetWorkersResult = typeof StudioFleetWorkersResult.Type;
 
+/**
+ * A machine's invitation from `fleet invite` on it. The server checks that its
+ * private address answers as that machine before saving it; the browser never
+ * names a URL or token of its own.
+ */
+export const StudioFleetAddInput = exactStruct({
+  invitation: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(16384)),
+  label: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(80))),
+});
+export type StudioFleetAddInput = typeof StudioFleetAddInput.Type;
+
+export const StudioFleetAddResult = Schema.Struct({
+  id: StudioFleetMachineId,
+  label: Schema.String,
+  url: Schema.String,
+  environmentId: EnvironmentId,
+  /** updated: a configured machine got a new address or token. */
+  change: Schema.Literals(["added", "updated"]),
+  previousUrl: Schema.optionalKey(Schema.String),
+});
+export type StudioFleetAddResult = typeof StudioFleetAddResult.Type;
+
 /** Where a worker this server started on another machine stands, as last observed. */
 export const StudioFleetRemoteWorkerState = Schema.Literals([
   "launching",

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
 import { NativeConnectionsPanel } from "./NativeConnectionsPanel";
 import { ConnectionsLibrarySettings } from "../settings/ConnectionsLibrarySettings";
+import { Select } from "../ui/select";
 
 const state = vi.hoisted(() => ({
   permitted: true,
@@ -26,7 +27,8 @@ vi.mock("../../studio/projectWorkspace", () => ({
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("../../state/session", () => ({ useEnvironmentScope: () => state.permitted }));
 vi.mock("../../state/environments", () => ({
-  useEnvironment: () => ({ connection: { phase: state.connected ? "connected" : "disconnected" } }),
+  useEnvironment: () => ({ connection: { phase: state.connected ? "connected" : "available" } }),
+  useEnvironments: () => ({ environments: [] }),
 }));
 vi.mock("../../state/query", () => ({
   useEnvironmentQuery: (atom: unknown) => {
@@ -37,7 +39,18 @@ vi.mock("../../state/query", () => ({
 vi.mock("../settings/SettingsScopeContext", () => ({ useSettingsScope: () => state }));
 vi.mock("../settings/settingsLayout", () => ({
   SettingsPageContainer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  SettingsSection: ({ children }: { children: React.ReactNode }) => <section>{children}</section>,
+  SettingsSection: ({
+    children,
+    headerAction,
+  }: {
+    children: React.ReactNode;
+    headerAction?: React.ReactNode;
+  }) => (
+    <section>
+      {headerAction}
+      {children}
+    </section>
+  ),
 }));
 
 let renderer: ReactTestRenderer;
@@ -107,25 +120,21 @@ it("does not silently switch a removed machine and allows explicit recovery", as
   await act(() => {
     renderer = create(<ConnectionsLibrarySettings />);
   });
-  await act(() =>
-    renderer.root.findByType("select").props.onChange({ target: { value: "remote" } }),
-  );
+  await act(() => renderer.root.findByType(Select).props.onValueChange("remote"));
   expect(state.request).toHaveBeenLastCalledWith({ environmentId: "remote", input: {} });
   state.environments = [{ environmentId: mac, label: "Mac" }];
   state.request.mockClear();
   await act(() => renderer.update(<ConnectionsLibrarySettings />));
   expect(text()).toContain("no longer in this scope");
   expect(state.request).not.toHaveBeenCalled();
-  await act(() => renderer.root.findByType("select").props.onChange({ target: { value: mac } }));
+  await act(() => renderer.root.findByType(Select).props.onValueChange(mac));
   expect(state.request).toHaveBeenLastCalledWith({ environmentId: mac, input: {} });
 });
 it("resets selection for project scope and refuses unavailable scopes", async () => {
   await act(() => {
     renderer = create(<ConnectionsLibrarySettings />);
   });
-  await act(() =>
-    renderer.root.findByType("select").props.onChange({ target: { value: "remote" } }),
-  );
+  await act(() => renderer.root.findByType(Select).props.onValueChange("remote"));
   state.search = { project: "logical-project" };
   state.scope = {
     kind: "project",

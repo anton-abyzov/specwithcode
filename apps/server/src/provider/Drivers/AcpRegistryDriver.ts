@@ -93,13 +93,35 @@ const makeUnsupportedTextGeneration = (): TextGeneration["Service"] => {
   };
 };
 
+/**
+ * Models an agent accepts through `session/set_model` but leaves out of its
+ * catalog. Gemini CLI 0.63.0 lists no Gemini 4 Argon, yet runs it on Vertex AI
+ * and paid Gemini API keys (verified with a coding turn whose `model_usage`
+ * named gemini-4-argon). Free Google sign-ins have no Argon access; the agent
+ * then fails the turn with its own error.
+ */
+const UNLISTED_AGENT_MODELS: Readonly<
+  Record<string, ReadonlyArray<{ readonly id: string; readonly name: string }>>
+> = {
+  gemini: [{ id: "gemini-4-argon", name: "Gemini 4 Argon" }],
+};
+
 function modelsFromDiscovery(
   discovery:
     | Pick<AcpRegistryLiveConfiguration, "models" | "currentModelId" | "configOptions">
     | undefined,
   customModels: ReadonlyArray<CustomModelSetting>,
+  agentId: string,
 ): ReadonlyArray<ServerProviderModel> {
-  const discovered = discovery?.models ?? [];
+  const listed = discovery?.models ?? [];
+  const unlisted = (UNLISTED_AGENT_MODELS[agentId] ?? []).filter(
+    (model) => !listed.some((candidate) => candidate.id === model.id),
+  );
+  // Only a probed catalog proves the agent runs; before that the picker keeps "Default".
+  const discovered =
+    listed.length === 0
+      ? listed
+      : [...listed, ...unlisted.map((model) => ({ ...model, description: null }))];
   // Discovered session config options and modes ride on every model so the
   // composer's generic option controls can drive them per thread.
   const capabilities =
@@ -240,7 +262,11 @@ function baseSnapshot(
             : input.settings.agentId.length > 0),
     },
     ...(input.message ? { message: input.message } : {}),
-    models: modelsFromDiscovery(input.probe?.probe, input.settings.customModels),
+    models: modelsFromDiscovery(
+      input.probe?.probe,
+      input.settings.customModels,
+      input.settings.agentId,
+    ),
     ...(input.probe === undefined
       ? {}
       : {
@@ -270,13 +296,13 @@ export function applyAcpRegistryAvailableCommands(
 export function applyAcpRegistryLiveConfiguration(
   provider: ServerProvider,
   configuration: AcpRegistryLiveConfiguration,
-  customModels: ReadonlyArray<CustomModelSetting>,
+  settings: Pick<AcpRegistrySettings, "customModels" | "agentId">,
 ): ServerProvider {
   const { message: _staleProbeMessage, ...snapshot } = provider;
   return {
     ...snapshot,
     status: provider.enabled ? "ready" : provider.status,
-    models: modelsFromDiscovery(configuration, customModels),
+    models: modelsFromDiscovery(configuration, settings.customModels, settings.agentId),
   };
 }
 
@@ -565,7 +591,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                       applyAcpRegistryLiveConfiguration(
                         withCommands,
                         liveConfiguration,
-                        effectiveConfig.customModels,
+                        effectiveConfig,
                       ),
                   });
                   return applyAcpRegistryUrlAuthAction(withConfiguration, authAction);
@@ -692,11 +718,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                 getSnapshot.pipe(
                   Effect.flatMap((current) =>
                     publishSnapshot(
-                      applyAcpRegistryLiveConfiguration(
-                        current,
-                        configuration,
-                        effectiveConfig.customModels,
-                      ),
+                      applyAcpRegistryLiveConfiguration(current, configuration, effectiveConfig),
                     ),
                   ),
                 ),

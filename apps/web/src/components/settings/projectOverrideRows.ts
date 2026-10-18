@@ -16,6 +16,7 @@ export const PROJECT_OVERRIDE_LABELS: Readonly<
   responseStyle: { label: "Response style", page: "Agents" },
   worktreeCleanup: { label: "Worktree cleanup", page: "Storage" },
   defaultModelSelection: { label: "Model for new threads", page: "General" },
+  defaultModelProviders: { label: "Providers for the recommended model", page: "General" },
   defaultRuntimeMode: { label: "Permissions for new threads", page: "General" },
   defaultThreadEnvMode: { label: "Workspace for new threads", page: "General" },
   newWorktreesStartFromOrigin: { label: "New worktrees start from origin", page: "General" },

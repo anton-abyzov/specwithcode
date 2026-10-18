@@ -770,6 +770,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["allow disable enable open drive preview tools sessions project override"],
   },
   {
+    id: "agent-computer-access",
+    title: "Agent computer access",
+    to: "/settings/integrations",
+    scope: "environment-defaults",
+    searchTerms: [
+      "computer use desktop control mac screen click type system settings native apps mouse",
+    ],
+  },
+  {
     id: "agent-browser-profile",
     title: "Browser profile for agents",
     to: "/settings/integrations",
@@ -1049,10 +1058,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     cloudOnly: true,
   },
   {
-    id: "cloud-sessions",
-    title: "Anthropic cloud sessions",
+    id: "private-machines-add",
+    title: "Add a machine",
     to: "/settings/connections",
-    searchTerms: ["cloud session anthropic claude vm remote teleport claude.ai plan"],
+    searchTerms: [
+      "fleet invite add machine worker tailscale another computer mac linux vps network",
+    ],
   },
   {
     id: "private-machines-auto-connect",

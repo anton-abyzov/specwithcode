@@ -74,6 +74,11 @@ export const ProjectWorkspaceSettings = Schema.Struct({
   autoResume: Schema.Boolean,
   /** Absent or null: workers run on this machine. */
   workerMachine: Schema.optionalKey(Schema.NullOr(ProjectWorkerMachine)),
+  /**
+   * Server-managed: the temporary `auth session issue` session that created
+   * this project. The server deletes the project once that session ends.
+   */
+  temporarySessionId: Schema.optionalKey(Schema.String),
 });
 export type ProjectWorkspaceSettings = typeof ProjectWorkspaceSettings.Type;
 export const DEFAULT_PROJECT_WORKSPACE_SETTINGS: ProjectWorkspaceSettings = {

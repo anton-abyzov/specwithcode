@@ -1,3 +1,8 @@
+import {
+  type ConnectionCatalogEntry,
+  connectionRoutes,
+  routeHttpBaseUrl,
+} from "@specweave-studio/client-runtime/connection";
 import type { EnvironmentId } from "@specweave-studio/contracts";
 import type {
   StudioFleetMachine,
@@ -68,11 +73,56 @@ export function fleetAttemptsAwaitingRetry(
   );
 }
 
+/** The origins of each saved environment's direct routes, by environment id. */
+export function savedRouteOrigins(
+  entries: ReadonlyArray<ConnectionCatalogEntry>,
+): ReadonlyMap<string, ReadonlySet<string>> {
+  return new Map(
+    entries.map((entry) => [
+      entry.target.environmentId,
+      new Set(
+        connectionRoutes(entry).flatMap((route) => {
+          const url = routeHttpBaseUrl(route);
+          if (url === null) return [];
+          try {
+            return [new URL(url).origin];
+          } catch {
+            return [];
+          }
+        }),
+      ),
+    ]),
+  );
+}
+
+/**
+ * Whether this browser already reaches a fleet machine at the address its
+ * server lists now. A machine that moved (for example off a relay port on
+ * another machine onto its own Tailscale name) counts as unsaved, so the new
+ * address is added as another route and the old one stays as a fallback.
+ */
+export function fleetMachineSaved(
+  machine: Pick<StudioFleetMachine, "environmentId" | "url">,
+  savedEnvironmentIds: ReadonlySet<string>,
+  origins?: ReadonlyMap<string, ReadonlySet<string>>,
+): boolean {
+  if (!savedEnvironmentIds.has(machine.environmentId)) return false;
+  const saved = origins?.get(machine.environmentId);
+  if (saved === undefined) return true;
+  try {
+    return saved.has(new URL(machine.url).origin);
+  } catch {
+    return true;
+  }
+}
+
 /** Fleet machines this browser should pair with now, in the server's order. */
 export function fleetMachinesToAutoConnect(input: {
   readonly snapshot: StudioFleetSnapshot | null;
   readonly currentEnvironmentId: EnvironmentId;
   readonly savedEnvironmentIds: ReadonlySet<string>;
+  /** Without it, any saved environment counts as reached at every address. */
+  readonly savedRouteOrigins?: ReadonlyMap<string, ReadonlySet<string>>;
   readonly skippedEnvironmentIds: ReadonlySet<string>;
   readonly attemptedEnvironmentIds: ReadonlySet<string>;
 }): ReadonlyArray<StudioFleetMachine> {
@@ -81,7 +131,7 @@ export function fleetMachinesToAutoConnect(input: {
       machine.status === "reachable" &&
       machine.pairingConfigured &&
       machine.environmentId !== input.currentEnvironmentId &&
-      !input.savedEnvironmentIds.has(machine.environmentId) &&
+      !fleetMachineSaved(machine, input.savedEnvironmentIds, input.savedRouteOrigins) &&
       !input.skippedEnvironmentIds.has(machine.environmentId) &&
       !input.attemptedEnvironmentIds.has(machine.environmentId),
   );
@@ -92,6 +142,7 @@ export function fleetMachinesAwaitingReach(input: {
   readonly snapshot: StudioFleetSnapshot | null;
   readonly currentEnvironmentId: EnvironmentId;
   readonly savedEnvironmentIds: ReadonlySet<string>;
+  readonly savedRouteOrigins?: ReadonlyMap<string, ReadonlySet<string>>;
   readonly skippedEnvironmentIds: ReadonlySet<string>;
 }): ReadonlyArray<StudioFleetMachine> {
   return (input.snapshot?.machines ?? []).filter(
@@ -99,7 +150,7 @@ export function fleetMachinesAwaitingReach(input: {
       machine.status === "unreachable" &&
       machine.pairingConfigured &&
       machine.environmentId !== input.currentEnvironmentId &&
-      !input.savedEnvironmentIds.has(machine.environmentId) &&
+      !fleetMachineSaved(machine, input.savedEnvironmentIds, input.savedRouteOrigins) &&
       !input.skippedEnvironmentIds.has(machine.environmentId),
   );
 }

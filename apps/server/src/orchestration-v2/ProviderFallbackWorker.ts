@@ -12,17 +12,22 @@ import {
   type ProviderInstanceId,
   type ServerProvider,
   type ServerSettings as ServerSettingsValue,
+  ThreadId,
 } from "@specweave-studio/contracts";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import {
   canTakeTurn,
   FALLBACK_USAGE_MAX_AGE_MS,
+  isApiCreditExhaustedMessage,
   isClaudeApiKeyProvider,
+  isDirectClaudeApiKeyProvider,
   isPerTokenProvider,
   limitRestartRequest,
   limitStopWaitsForReset,
+  provenFallbackSelection,
   providerUsedPercent,
   type ProviderFallbackRule,
+  reportsNoUsage,
   resolveApiCreditSelection,
   resolveProviderFallback,
   shouldSwitchBeforeTurn,
@@ -173,6 +178,10 @@ export function providerFallbackCommand(
   providers: ReadonlyArray<ServerProvider>,
   rule: ProviderFallbackRule,
   nowMs: number,
+  /** The project coordinator's working model (see provenFallbackSelection). */
+  proven: ModelSelection | null = null,
+  /** Providers reporting no usage whose threads stopped on a limit (see `unreportedLimitStops`). */
+  limited?: ReadonlySet<string>,
 ): OrchestrationV2ServerCommand | null {
   if (rule.providerLimitAction !== "switch") return null;
   if (thread.activeRunId !== null || thread.pendingRuntimeRequest !== null) return null;
@@ -188,6 +197,8 @@ export function providerFallbackCommand(
       nowMs,
       belowPercent: rule.providerLimitSwitchAtPercent ?? 100,
       anyReady: true,
+      proven,
+      ...(limited === undefined ? {} : { limitedInstanceIds: limited }),
     });
     if (target === null) return null;
     const identity = `${thread.id}:${thread.latestRunId}`;
@@ -222,6 +233,8 @@ export function providerFallbackCommand(
     nowMs,
     belowPercent: rule.providerLimitSwitchAtPercent,
     anyReady: true,
+    proven,
+    ...(limited === undefined ? {} : { limitedInstanceIds: limited }),
   });
   if (target === null) return null;
   return {
@@ -258,6 +271,34 @@ function stoppedOnLimit(
     thread.settledOverride !== "settled" &&
     thread.latestRunId !== null
   );
+}
+
+/**
+ * Providers that report no usage (GitHub Copilot) but have a thread stopped
+ * on their limit, each held until that stop's reset, or for as long as an
+ * unknown reset counts as current. Nothing else tells the sweep they are
+ * full, so without this a thread moved off one would be moved back onto it.
+ * Folds the threads seen now into `held` and drops holds that ended.
+ */
+export function unreportedLimitStops(
+  held: ReadonlyMap<string, number>,
+  threads: ReadonlyArray<FallbackThread>,
+  providers: ReadonlyArray<ServerProvider>,
+  nowMs: number,
+): ReadonlyMap<string, number> {
+  const next = new Map(held);
+  for (const thread of threads) {
+    if (!stoppedOnLimit(thread) || !limitStopIsCurrent(thread, nowMs)) continue;
+    const provider = providers.find((entry) => entry.instanceId === thread.providerInstanceId);
+    if (provider === undefined || !reportsNoUsage(provider)) continue;
+    const resetMs = Date.parse(thread.usageLimitResetAt ?? "");
+    const until = Number.isFinite(resetMs)
+      ? resetMs
+      : epochMs(thread.latestRunCompletedAt) + LIMIT_STOP_MAX_AGE_MS;
+    next.set(provider.instanceId, Math.max(next.get(provider.instanceId) ?? 0, until));
+  }
+  for (const [instanceId, until] of next) if (until <= nowMs) next.delete(instanceId);
+  return next;
 }
 
 /** The message id prefix of a continuation the API-credit rule sent; the way back reads it. */
@@ -309,7 +350,10 @@ const POSITIVE_BALANCE = /^\d{1,24}(?:\.\d{1,24})?$/;
  *    and the thread not snoozed, other than by "Snooze limited threads". The
  *    sweep re-reads the subscription and,
  *    if it is at its limit, continues the stopped run on the API-key
- *    instance, which resumes the same session.
+ *    instance, which resumes the same session. A thread on an API-key
+ *    instance whose account ran out of credits (`rotate`) moves on to the
+ *    next API-key instance the same way; the API's refusal is the proof
+ *    there, since a key has no usage read.
  * 4. `switch`: the existing fallback, under the `switch` rule.
  *
  * Nothing happens under `wait`, nor while the stop resets within the
@@ -330,6 +374,10 @@ export function providerLimitStep(
     readonly resetAttempted: boolean;
     readonly apiCreditsAttempted?: boolean;
     readonly simulated?: boolean;
+    /** The project coordinator's working model, a fallback with no usage read needed. */
+    readonly proven?: ModelSelection | null;
+    /** Providers reporting no usage that a current stop shows are limited. */
+    readonly limited?: ReadonlySet<string>;
   },
 ):
   | {
@@ -341,6 +389,7 @@ export function providerLimitStep(
   | {
       readonly type: "api-credits";
       readonly instanceId: ProviderInstanceId;
+      readonly rotate: boolean;
       readonly command: OrchestrationV2ServerCommand;
     }
   | { readonly type: "switch"; readonly command: OrchestrationV2ServerCommand }
@@ -389,6 +438,8 @@ export function providerLimitStep(
       }),
     };
   }
+  const rotate =
+    isDirectClaudeApiKeyProvider(current) && isApiCreditExhaustedMessage(thread.lastError);
   const apiCredits =
     rule.providerLimitUseApiCredits === true &&
     !simulated &&
@@ -403,16 +454,24 @@ export function providerLimitStep(
       nowMs,
       rule.snoozeLimitedThreads === true,
     )
-      ? resolveApiCreditSelection({ providers, current: thread.modelSelection })
+      ? resolveApiCreditSelection({ providers, current: thread.modelSelection, rotate })
       : null;
   if (apiCredits !== null && current !== undefined) {
     return {
       type: "api-credits",
       instanceId: current.instanceId,
+      rotate,
       command: { ...sameProviderContinuation(thread, "api"), modelSelection: apiCredits },
     };
   }
-  const command = providerFallbackCommand(thread, providers, rule, nowMs);
+  const command = providerFallbackCommand(
+    thread,
+    providers,
+    rule,
+    nowMs,
+    options.proven ?? null,
+    options.limited,
+  );
   return command === null ? null : { type: "switch", command };
 }
 
@@ -439,6 +498,7 @@ export function apiCreditOrigin(
     >
   >,
   messagePrefix: string = API_CREDIT_MESSAGE_PREFIX,
+  depth = 0,
 ): ApiCreditOrigin | null {
   const prefix = `${messagePrefix}${thread.id}:`;
   const latestFirst = runs.toSorted((a, b) => b.ordinal - a.ordinal);
@@ -459,8 +519,23 @@ export function apiCreditOrigin(
       const earlier = stopped.userMessageId.slice(prefix.length);
       stopped = runs.find((candidate) => candidate.id === earlier);
     }
-    return stopped === undefined || stopped.providerInstanceId === thread.providerInstanceId
-      ? null
+    if (stopped === undefined || stopped.providerInstanceId === thread.providerInstanceId)
+      return null;
+    // The stopped run can itself be on an API account the rule moved the
+    // thread to before that account ran out of credits: the way back leads
+    // on to the subscription that one came from.
+    const ordinal = stopped.ordinal;
+    const earlier =
+      messagePrefix === API_CREDIT_MESSAGE_PREFIX && depth < 8
+        ? apiCreditOrigin(
+            { id: thread.id, providerInstanceId: stopped.providerInstanceId },
+            runs.filter((candidate) => candidate.ordinal <= ordinal),
+            messagePrefix,
+            depth + 1,
+          )
+        : null;
+    return earlier !== null
+      ? { ...earlier, continuedByRunId: run.id }
       : {
           stoppedRunId: stopped.id,
           continuedByRunId: run.id,
@@ -897,6 +972,7 @@ export const makeSweep = Effect.gen(function* () {
   // with another provider sitting free. Each provider at most once per read
   // lifetime, so a stop nothing can take costs one read, not one per sweep.
   const targetReads = yield* Ref.make(new Map<ProviderInstanceId, number>());
+  const unreportedStops = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
   const refreshStaleTargets = Effect.fn("ProviderFallbackWorker.refreshStaleTargets")(function* (
     thread: FallbackThread,
     candidates: ReadonlyArray<ServerProvider>,
@@ -918,6 +994,7 @@ export const makeSweep = Effect.gen(function* () {
         provider.auth.status !== "authenticated" ||
         isPerTokenProvider(provider) ||
         provider.usageLimits?.unavailable !== undefined ||
+        reportsNoUsage(provider) ||
         nowMs - (readAt.get(provider.instanceId) ?? -Infinity) < FALLBACK_USAGE_MAX_AGE_MS
       )
         return false;
@@ -958,9 +1035,32 @@ export const makeSweep = Effect.gen(function* () {
     // Simulated limits test the banner and the switch; they never redeem or spend.
     const simulated = simulatedUsageLimitInstances(env).length > 0;
     const snapshot = yield* projections.getShellSnapshot({ unsettledOnly: true });
+    const held = unreportedLimitStops(
+      yield* Ref.get(unreportedStops),
+      snapshot.threads,
+      providers,
+      now,
+    );
+    yield* Ref.set(unreportedStops, held);
+    const limited: ReadonlySet<string> = new Set(held.keys());
     const reads: Reads = new Map();
     // Many threads share a project: read each one once per sweep, not per thread.
     const projectsById = new Map<string, Effect.Success<ReturnType<typeof projects.getById>>>();
+    // A stopped worker may continue where its coordinator runs (see provenFallbackSelection).
+    const coordinators = new Map<string, OrchestrationV2ThreadShell | null>();
+    const coordinatorOf = (coordinatorThreadId: string | null | undefined) =>
+      Effect.gen(function* () {
+        if (!coordinatorThreadId) return null;
+        const cached = coordinators.get(coordinatorThreadId);
+        if (cached !== undefined) return cached;
+        const shell =
+          snapshot.threads.find((candidate) => candidate.id === coordinatorThreadId) ??
+          (yield* projections
+            .getThreadShell(ThreadId.make(coordinatorThreadId))
+            .pipe(Effect.orElseSucceed(() => null)));
+        coordinators.set(coordinatorThreadId, shell);
+        return shell;
+      });
     for (const thread of snapshot.threads) {
       let found = projectsById.get(thread.projectId);
       if (found === undefined) {
@@ -989,10 +1089,13 @@ export const makeSweep = Effect.gen(function* () {
       const resolved = resolveProjectSettings(preferences, thread.projectId).settings;
       const resetKey = `limit-reset-attempt:${thread.id}:${thread.latestRunId}`;
       const apiAttemptKey = `limit-api-attempt:${thread.id}:${thread.latestRunId}`;
+      const coordinator = yield* coordinatorOf(project.workspaceSettings?.coordinatorThreadId);
       const options = {
         resetAttempted: simulated || (yield* Ref.get(sent)).has(resetKey),
         apiCreditsAttempted: simulated || (yield* Ref.get(sent)).has(apiAttemptKey),
         simulated,
+        proven: provenFallbackSelection(thread, coordinator),
+        limited,
       };
       const stepFor = (current: FallbackThread) =>
         providerLimitStep(current, providersFor(current), resolved, now, options);
@@ -1063,7 +1166,10 @@ export const makeSweep = Effect.gen(function* () {
           });
           continue;
         }
-        const read = yield* confirmLimit(thread, step.instanceId, now, reads);
+        // An API key has no usage read: its own "credit balance too low" is the proof.
+        const read = step.rotate
+          ? ("limited" as const)
+          : yield* confirmLimit(thread, step.instanceId, now, reads);
         if (read === "unread") {
           if ((yield* unreadAgain(apiAttemptKey)) >= LIMIT_READ_ATTEMPTS)
             yield* markSent(apiAttemptKey);

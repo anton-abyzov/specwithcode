@@ -134,6 +134,7 @@ const EMPTY_DRAFT: DraftState = {
   startFromOrigin: true,
   existingWorktreePath: "",
   modelKey: "",
+  modelPinned: false,
   runtimeMode: "full-access",
   interactionMode: "default",
   baseModelSelection: null,
@@ -944,13 +945,25 @@ function ScheduledTaskEditorDialog({
     )
       return;
     const selection = activeSelection;
+    if (selection === null && !draft.modelPinned) {
+      reportFailure(
+        "No provider can run this task",
+        "Install or sign in to a provider in Settings > Providers, then save again.",
+      );
+      return;
+    }
     if (
       !draft.title.trim() ||
       !draft.prompt.trim() ||
       !projects.some((project) => project.id === selectedProjectId) ||
       selection === null
     ) {
-      reportFailure("Scheduled task is incomplete", "Add a title, prompt, project, and model.");
+      reportFailure(
+        "Scheduled task is incomplete",
+        draft.modelPinned
+          ? "Add a title, prompt, project, and model."
+          : "Add a title, prompt, and project.",
+      );
       return;
     }
     const schedule = scheduleFromDraft(draft);
@@ -1010,6 +1023,7 @@ function ScheduledTaskEditorDialog({
       threadId: draft.threadId ? (draft.threadId as ThreadId) : null,
       workspaceStrategy,
       modelSelection,
+      modelPinned: draft.modelPinned,
       runtimeMode: draft.runtimeMode,
       interactionMode: draft.interactionMode,
       creationSource: "web",
@@ -1162,12 +1176,19 @@ function ScheduledTaskEditorDialog({
                 </Select>
               </Field>
             </div>
-            {draft.editingId === null && draft.threadId ? (
+            {draft.threadId ? (
+              draft.editingId === null ? (
+                <p className="text-muted-foreground text-xs">
+                  Runs in this project&apos;s coordinator thread, so the answer shows up where you
+                  already talk to it.
+                </p>
+              ) : null
+            ) : (
               <p className="text-muted-foreground text-xs">
-                Runs in this project&apos;s coordinator thread, so the answer shows up where you
-                already talk to it.
+                Each run goes to this project&apos;s coordinator, which answers it or starts the
+                threads it needs in this workspace.
               </p>
-            ) : null}
+            )}
 
             {draft.workspaceMode === "worktree" ? (
               <Field label="Base branch" htmlFor="scheduled-task-base-ref">
@@ -1214,21 +1235,43 @@ function ScheduledTaskEditorDialog({
               />
             </Field>
 
-            <Field label="Model">
-              <ProviderModelPicker
-                disabled={saving || !connected}
-                activeInstanceId={activeInstanceId}
-                model={activeModel}
-                lockedProvider={null}
-                instanceEntries={instanceEntries}
-                modelOptionsByInstance={modelOptionsByInstance}
-                isComposerOwned={false}
-                triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                onInstanceModelChange={(instanceId, model) =>
-                  setDraft((current) => ({ ...current, modelKey: `${instanceId}:${model}` }))
-                }
-              />
-            </Field>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-4">
+                <div className="min-w-0 space-y-1">
+                  <Label htmlFor="scheduled-task-model-pinned">Use a specific model</Label>
+                  <p className="text-sm text-muted-foreground">
+                    {draft.modelPinned
+                      ? "Every run uses this model instead of the coordinator's."
+                      : "Runs use the coordinator's model, and threads use the project's recommended model, switching to a provider with room when one runs out."}
+                  </p>
+                </div>
+                <Switch
+                  id="scheduled-task-model-pinned"
+                  checked={draft.modelPinned}
+                  disabled={saving || !connected}
+                  onCheckedChange={(modelPinned) =>
+                    setDraft((current) => ({ ...current, modelPinned }))
+                  }
+                />
+              </div>
+              {draft.modelPinned ? (
+                <Field label="Model">
+                  <ProviderModelPicker
+                    disabled={saving || !connected}
+                    activeInstanceId={activeInstanceId}
+                    model={activeModel}
+                    lockedProvider={null}
+                    instanceEntries={instanceEntries}
+                    modelOptionsByInstance={modelOptionsByInstance}
+                    isComposerOwned={false}
+                    triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                    onInstanceModelChange={(instanceId, model) =>
+                      setDraft((current) => ({ ...current, modelKey: `${instanceId}:${model}` }))
+                    }
+                  />
+                </Field>
+              ) : null}
+            </div>
 
             <div className="space-y-3">
               {task?.schedule.type === "interval" &&

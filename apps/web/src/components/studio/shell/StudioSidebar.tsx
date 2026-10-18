@@ -27,12 +27,14 @@ import {
   ArchiveIcon,
   ChevronRightIcon,
   ConciergeBellIcon,
+  LaptopIcon,
   LayoutGridIcon,
   MoreHorizontalIcon,
   PlusIcon,
   SearchIcon,
   SlidersVerticalIcon,
   SquarePenIcon,
+  WifiOffIcon,
 } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 
@@ -59,7 +61,7 @@ import type {
   SidebarProjectSnapshot,
 } from "../../../sidebarProjectGrouping";
 import { useServerConfigs, useThreadShells } from "../../../state/entities";
-import { usePrimaryEnvironmentId } from "../../../state/environments";
+import { useEnvironments, usePrimaryEnvironmentId } from "../../../state/environments";
 import { projectEnvironment } from "../../../state/projects";
 import { primaryServerKeybindingsAtom } from "../../../state/server";
 import { useAtomCommand } from "../../../state/use-atom-command";
@@ -93,6 +95,8 @@ import {
   parseProjectWorkspaceSearch,
 } from "../../../studio/projectPaneThreads";
 import { projectThreadGroup } from "../../../studio/projectWorkspaceModel";
+import { checkProjectName, renameTargets, type NamedProject } from "../../../studio/projectRename";
+import { useUnreachableHosts } from "../../../studio/unreachableHosts";
 import { useProjectPaneThreadParam } from "../../../studio/useProjectPaneThreadParam";
 import {
   buildChatGroups,
@@ -140,7 +144,12 @@ import { PlanProgressChip } from "../PlanProgressChip";
 import { useSidebarThreadPlans } from "../../sidebar/SidebarPlanProgress";
 import { describeThreadPlan } from "../../../studio/threadPlanProgress";
 import { ModelBadgeMark, useProviderEntriesByEnvironment } from "./ModelBadge";
-import { displayNameOf, ProjectRow, SidebarProjectList } from "./SidebarProjectList";
+import {
+  displayNameOf,
+  ProjectRow,
+  SidebarProjectList,
+  type ProjectRename,
+} from "./SidebarProjectList";
 
 const CHAT_OPTIONS_STORAGE_KEY = "studio:sidebar-chats:v1";
 const ChatOptionsSchema = Schema.Struct({
@@ -159,6 +168,12 @@ export default function StudioSidebar() {
   const projectGroups = useSettingsProjectGroups();
   const threads = useThreadShells();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const { environments } = useEnvironments();
+  const machineLabels = useMemo(
+    () =>
+      new Map(environments.map((environment) => [environment.environmentId, environment.label])),
+    [environments],
+  );
   const savedMachines = useClientSettings((settings) => settings.projectCoordinatorMachines);
   const providerEntries = useProviderEntriesByEnvironment();
   const { isMobile, setOpenMobile } = useSidebar();
@@ -257,10 +272,15 @@ export default function StudioSidebar() {
       }),
     [openChatTarget],
   );
+  const unreachable = useUnreachableHosts();
   const waitingByProject = useMemo(() => {
     const counts = new Map<string, number>();
     for (const thread of threads) {
-      if (thread.deletedAt !== null || projectThreadGroup(thread) !== "Waiting on you") continue;
+      if (
+        thread.deletedAt !== null ||
+        projectThreadGroup(thread, unreachable.has(thread.environmentId)) !== "Waiting on you"
+      )
+        continue;
       const group = projectByMember.get(`${thread.environmentId}:${thread.projectId}`);
       const member = group?.memberProjects.find(
         (project) =>
@@ -283,7 +303,7 @@ export default function StudioSidebar() {
       counts.set(group.projectKey, (counts.get(group.projectKey) ?? 0) + 1);
     }
     return counts;
-  }, [projectByMember, threadByKey, threads]);
+  }, [projectByMember, threadByKey, threads, unreachable]);
   // The machines' "No project" folders are not projects. Archived projects are listed
   // only under Archived, even while open, and never carry a waiting count: the
   // person archived them, so nothing in them asks for attention here.
@@ -471,6 +491,52 @@ export default function StudioSidebar() {
       }
     }
   };
+  // Renames a project wherever it lives; the first machine that refuses says why.
+  const renameGroup = async (group: SidebarProjectSnapshot, name: string) => {
+    const plan = renameTargets(group.memberProjects, name);
+    if ("error" in plan) return plan.error;
+    for (const [index, member] of plan.targets.entries()) {
+      const result = await updateProject({
+        environmentId: member.environmentId,
+        input: {
+          projectId: member.id,
+          title: name,
+          // A shared name is written only by the coordinator that owned it when the edit began.
+          ...(member.workspaceSettings?.logicalProject
+            ? { workspaceSettings: { expectedRevision: member.workspaceSettings.revision } }
+            : {}),
+        },
+      });
+      if (result._tag === "Success" || isAtomCommandInterrupted(result)) continue;
+      const cause = squashAtomCommandFailure(result);
+      const reason =
+        cause instanceof Error ? cause.message : "Could not rename the project. Try again.";
+      return index > 0 && member.environmentLabel
+        ? `${member.environmentLabel}: ${reason}`
+        : reason;
+    }
+    return null;
+  };
+  // Every project the sidebar can show, archived ones too, so no two share a name.
+  const namedProjects: NamedProject[] = [
+    ...listedProjects.map((group) => ({ group, archived: false })),
+    ...archivedProjects.map((group) => ({ group, archived: true })),
+  ].map(({ group, archived }) => ({
+    projectKey: group.projectKey,
+    name: displayNameOf(group, displayedCheckouts.get(group.projectKey)),
+    archived,
+  }));
+  const renameFor = (group: SidebarProjectSnapshot): ProjectRename => {
+    const current = namedProjects.find((entry) => entry.projectKey === group.projectKey) ?? {
+      projectKey: group.projectKey,
+      name: displayNameOf(group, displayedCheckouts.get(group.projectKey)),
+      archived: false,
+    };
+    return {
+      check: (draft) => checkProjectName({ draft, current, others: namedProjects }),
+      commit: (name) => renameGroup(group, name),
+    };
+  };
   // A personal assistant is not a code project: it sits under Overview, ahead of every
   // project and outside the project paging, so it is always one click away.
   const assistants = listedProjects.filter(isPersonalGroup);
@@ -557,6 +623,7 @@ export default function StudioSidebar() {
                     current={group.projectKey === activeProjectKey}
                     onOpen={closeMobile}
                     onArchive={(archived) => void setGroupArchived(group, archived)}
+                    rename={renameFor(group)}
                   />
                 ))}
               </ul>
@@ -610,6 +677,7 @@ export default function StudioSidebar() {
                   waiting: waitingByProject.get(group.projectKey) ?? 0,
                   current: group.projectKey === activeProjectKey,
                   hint: nameHints.get(group.projectKey),
+                  rename: renameFor(group),
                 })}
                 onOpen={closeMobile}
                 onMove={moveProjectTo}
@@ -664,6 +732,7 @@ export default function StudioSidebar() {
                         current={group.projectKey === activeProjectKey}
                         onOpen={closeMobile}
                         onArchive={(archived) => void setGroupArchived(group, archived)}
+                        rename={renameFor(group)}
                       />
                     ))}
                   </ul>
@@ -735,7 +804,19 @@ export default function StudioSidebar() {
                           thread.modelSelection.instanceId,
                           thread.modelSelection.model,
                         );
-                        const tone = threadTone(thread);
+                        const hostOffline = unreachable.has(thread.environmentId);
+                        const tone = threadTone(thread, hostOffline);
+                        // A chat names its machine when it is not this one, and
+                        // says when that machine can't be reached.
+                        const machine =
+                          thread.environmentId === primaryEnvironmentId
+                            ? null
+                            : (machineLabels.get(thread.environmentId) ?? null);
+                        const machineNote = hostOffline
+                          ? `${machine ?? "Its machine"} can't be reached`
+                          : machine
+                            ? `On ${machine}`
+                            : null;
                         const title = thread.title || "Untitled chat";
                         const project = projectByMember.get(
                           `${thread.environmentId}:${thread.projectId}`,
@@ -745,7 +826,7 @@ export default function StudioSidebar() {
                           <li key={key} className="sws-chat-row" data-tone={tone}>
                             <Tip
                               side="right"
-                              label={`${title} · ${label.full}${project ? ` · ${project.displayName}` : ""} · ${compactAge(sessionStateSince(thread), now)}${plan ? ` · ${describeThreadPlan(plan)}` : ""}`}
+                              label={`${title} · ${label.full}${project ? ` · ${project.displayName}` : ""}${machineNote ? ` · ${machineNote}` : ""} · ${compactAge(sessionStateSince(thread), now)}${plan ? ` · ${describeThreadPlan(plan)}` : ""}`}
                             >
                               <button
                                 type="button"
@@ -760,8 +841,18 @@ export default function StudioSidebar() {
                                 />
                                 <span className="sws-side-row-label">{title}</span>
                                 {plan ? <PlanProgressChip plan={plan} tip={false} /> : null}
+                                {hostOffline ? (
+                                  <WifiOffIcon
+                                    className="sws-row-machine"
+                                    data-offline=""
+                                    aria-hidden
+                                  />
+                                ) : machine ? (
+                                  <LaptopIcon className="sws-row-machine" aria-hidden />
+                                ) : null}
                                 <span className="sr-only">
                                   , {label.full}, {THREAD_TONE_LABELS[tone]}
+                                  {machineNote ? `, ${machineNote}` : ""}
                                 </span>
                                 {tone === "waiting" || tone === "working" || tone === "failed" ? (
                                   <span className="sws-dot" data-tone={tone} aria-hidden />

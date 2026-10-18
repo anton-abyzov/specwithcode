@@ -14,6 +14,7 @@ import { browserCommand } from "./cli/browser.ts";
 import { connectCommand } from "./cli/connect.ts";
 import { dbCommand } from "./cli/db.ts";
 import { modsCommand } from "./cli/mods.ts";
+import { fleetCommand } from "./cli/fleet.ts";
 import { pairCommand } from "./cli/pair.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import { sharedServerCommandFlags } from "./cli/config.ts";
@@ -83,6 +84,7 @@ export const makeCli = <const Name extends StudioCliName = "specweave-studio">({
       serveCommand,
       appCommand,
       pairCommand,
+      fleetCommand,
       authCommand,
       browserCommand,
       projectCommand,

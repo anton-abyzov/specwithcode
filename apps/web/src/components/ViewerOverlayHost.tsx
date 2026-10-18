@@ -6,23 +6,27 @@ import {
   PanelRightOpenIcon,
   XIcon,
 } from "lucide-react";
+import { scopeProjectRef } from "@specweave-studio/client-runtime/environment";
 import {
   Fragment,
   lazy,
   type ReactNode,
   Suspense,
   useEffect,
-  useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
 
-import { useThreadShell } from "../state/entities";
+import { useProject, useThreadShell } from "../state/entities";
 import {
+  InViewerOverlay,
+  threadOwnerKey,
   type ViewerCrumb,
   type ViewerOverlayEntry,
   useViewerOverlayStore,
 } from "~/viewerOverlayStore";
+import { ArtifactViewer, ThreadArtifactStrip, useThreadViewables } from "./chat/ThreadArtifacts";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
 import { Button } from "./ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
@@ -35,14 +39,16 @@ const isCoordinator = (threadRef: ScopedThreadRef) =>
 
 export interface OverlayThreadOptions {
   /**
-   * The thread already has a composer on screen behind the overlay (a panel,
-   * the page, the coordinator), so this copy shows its transcript only: two
-   * composers on one thread fight over its draft.
+   * The thread's page owns its composer (the coordinator's), so this copy
+   * shows the transcript and the page's composer moves in below it.
    */
   readonly transcriptOnly: boolean;
 }
 
-/** The thread a viewer came from, as the thread panel shows it. */
+/**
+ * The thread a viewer came from, live: its transcript, approvals, questions
+ * and composer, so it can be steered while the viewer stays open.
+ */
 function OverlayThread({
   threadRef,
   transcriptOnly,
@@ -68,30 +74,26 @@ function OverlayThread({
   );
 }
 
-/** The source thread's view outside the overlay, if one is mounted. */
-function threadOnScreen(threadRef: ScopedThreadRef): boolean {
-  const id = `${threadRef.environmentId}:${threadRef.threadId}`;
-  return [...document.querySelectorAll<HTMLElement>("[data-chat-thread]")].some(
-    (element) => element.dataset.chatThread === id && !element.closest("[data-viewer-overlay]"),
+/** The same ref object while the thread is the same, so hooks keyed on it hold still. */
+function useStableThreadRef(threadRef: ScopedThreadRef | null): ScopedThreadRef | null {
+  const environmentId = threadRef?.environmentId;
+  const threadId = threadRef?.threadId;
+  return useMemo(
+    () =>
+      environmentId !== undefined && threadId !== undefined ? { environmentId, threadId } : null,
+    [environmentId, threadId],
   );
 }
 
-/**
- * Whether the source thread already has a composer behind the overlay, read
- * once as the overlay opens; null until then, so the thread never mounts
- * twice in passing.
- */
-function useThreadBehind(threadRef: ScopedThreadRef | null): boolean | null {
-  const [behind, setBehind] = useState<boolean | null>(null);
-  const environmentId = threadRef?.environmentId;
-  const threadId = threadRef?.threadId;
-  useLayoutEffect(() => {
-    if (environmentId === undefined || threadId === undefined) return;
-    const ref = { environmentId, threadId };
-    setBehind(isCoordinator(ref) || threadOnScreen(ref));
-    return () => setBehind(null);
-  }, [environmentId, threadId]);
-  return threadRef ? behind : null;
+/** Where the thread's files are: its worktree, else its project's folder. */
+function useThreadCwd(threadRef: ScopedThreadRef | null): string | undefined {
+  const shell = useThreadShell(threadRef);
+  const projectRef = useMemo(
+    () => (shell ? scopeProjectRef(shell.environmentId, shell.projectId) : null),
+    [shell],
+  );
+  const project = useProject(projectRef);
+  return shell?.worktreePath ?? project?.workspaceRoot ?? undefined;
 }
 
 /**
@@ -104,6 +106,8 @@ const OWNS_ESCAPE =
 function escapeIsTaken(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
   if (target.closest(OWNS_ESCAPE)) return true;
+  // A composer or combobox showing suggestions dismisses them first.
+  if (target.getAttribute("aria-activedescendant")) return true;
   return target.getAttribute("aria-expanded") === "true";
 }
 
@@ -118,6 +122,8 @@ function useEscapeCloses(active: ViewerOverlayEntry | null, close: (key: string)
     if (key === null) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.isComposing || event.defaultPrevented) return;
+      // A modified Escape is a shortcut, such as stopping the thread.
+      if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
       const target = event.target;
       const overlay = document.querySelector("[data-viewer-overlay]");
       // Focus elsewhere (the page behind, a menu portaled out) keeps the key,
@@ -286,17 +292,31 @@ export function ViewerOverlayHost(props: {
   const setActionsSlot = useViewerOverlayStore((state) => state.setActionsSlot);
   const collapsed = useViewerOverlayStore((state) => state.threadCollapsed);
   const setCollapsed = useViewerOverlayStore((state) => state.setThreadCollapsed);
+  const setThreadComposerSlot = useViewerOverlayStore((state) => state.setThreadComposerSlot);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const open = active !== null;
-  const threadRef = active?.threadRef ?? null;
-  const behind = useThreadBehind(threadRef);
+  const threadRef = useStableThreadRef(active?.threadRef ?? null);
+  // The coordinator's composer is its page's: the page lends it to the overlay.
+  const pageOwnsComposer = useViewerOverlayStore(
+    (state) => threadRef !== null && state.composerOwners.includes(threadOwnerKey(threadRef)),
+  );
+  const coordinator = threadRef !== null && (isCoordinator(threadRef) || pageOwnsComposer);
+  const cwd = useThreadCwd(threadRef);
+  const artifacts = useThreadViewables(threadRef, cwd);
+  // An artifact picked from the strip; it takes the viewer until closed or replaced.
+  const [picked, setPicked] = useState<string | null>(null);
+  const pickedIndex = picked === null ? -1 : artifacts.findIndex((entry) => entry.key === picked);
+  const currentKey =
+    pickedIndex >= 0
+      ? picked
+      : (artifacts.find((entry) => entry.name === active?.title)?.key ?? null);
   useEscapeCloses(active, close);
   const renderThread =
     props.renderThread ??
     ((ref: ScopedThreadRef, options: OverlayThreadOptions) => (
       <OverlayThread threadRef={ref} {...options} />
     ));
-  const hasThread = threadRef !== null && behind !== null;
+  const hasThread = threadRef !== null;
   return (
     <Dialog
       open={open}
@@ -340,10 +360,37 @@ export function ViewerOverlayHost(props: {
           />
           {hasThread && !collapsed ? (
             <aside className="viewer-overlay-thread" aria-label="Thread">
-              {renderThread(threadRef, { transcriptOnly: behind })}
+              <InViewerOverlay value>
+                <ThreadArtifactStrip
+                  threadRef={threadRef}
+                  artifacts={artifacts}
+                  currentKey={currentKey}
+                  onOpen={setPicked}
+                />
+                <div className="viewer-overlay-thread-main">
+                  {renderThread(threadRef, { transcriptOnly: coordinator })}
+                </div>
+                {coordinator ? (
+                  <div
+                    ref={setThreadComposerSlot}
+                    className="viewer-overlay-thread-composer"
+                    data-viewer-thread-composer="true"
+                  />
+                ) : null}
+              </InViewerOverlay>
             </aside>
           ) : null}
         </div>
+        {threadRef && pickedIndex >= 0 ? (
+          <ArtifactViewer
+            threadRef={threadRef}
+            cwd={cwd}
+            artifacts={artifacts}
+            index={pickedIndex}
+            onIndex={(next) => setPicked(artifacts[next]?.key ?? null)}
+            onClose={() => setPicked(null)}
+          />
+        ) : null}
       </DialogOverlayPopup>
     </Dialog>
   );

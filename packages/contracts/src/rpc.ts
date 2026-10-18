@@ -6,6 +6,7 @@ import {
 import { MACHINE_HANDOFF_RPC_METHODS, machineHandoffRpcs } from "./machineHandoffRpc.ts";
 import { BROWSER_BRIDGE_RPC_METHODS, browserBridgeRpcs } from "./browserBridge.ts";
 import { BROWSER_EXTENSION_RPC_METHODS, browserExtensionRpcs } from "./browserExtension.ts";
+import { COMPUTER_USE_RPC_METHODS, computerUseRpcs } from "./computerUse.ts";
 import {
   nativeConnectionApplyRpc,
   PROJECT_CONNECTION_RPC_METHODS,
@@ -393,6 +394,7 @@ export const WS_METHODS = {
   ...PROJECT_CONNECTION_RPC_METHODS,
   ...BROWSER_BRIDGE_RPC_METHODS,
   ...BROWSER_EXTENSION_RPC_METHODS,
+  ...COMPUTER_USE_RPC_METHODS,
   // Project registry methods
   projectsList: "projects.list",
   projectsAdd: "projects.add",
@@ -2194,9 +2196,15 @@ export const WsBrowserExtensionRpcGroup = RpcGroup.make(...browserExtensionRpcs)
   RpcScopeAuthorization,
 );
 
+/** Desktop control hosted by the desktop app; its own group for the same depth reason. */
+export const WsComputerUseRpcGroup = RpcGroup.make(...computerUseRpcs).middleware(
+  RpcScopeAuthorization,
+);
+
 export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsNativeConnectionsRpcGroup)
   .merge(WsStatusPageRpcGroup)
   .merge(WsVoiceRpcGroup)
   .merge(WsBrowserBridgeRpcGroup)
-  .merge(WsBrowserExtensionRpcGroup);
+  .merge(WsBrowserExtensionRpcGroup)
+  .merge(WsComputerUseRpcGroup);

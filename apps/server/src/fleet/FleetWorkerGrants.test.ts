@@ -116,6 +116,41 @@ describe("FleetWorkerGrants", () => {
     }).pipe(Effect.provide(makeLayer({ machine })));
   });
 
+  it.effect("mints allowed workers again at a machine's new address with the same access", () => {
+    const machine = fakeMachine({ sessionTokens: true });
+    return Effect.gen(function* () {
+      yield* setNow(NOW);
+      const grants = yield* FleetWorkerGrants.FleetWorkerGrants;
+      yield* grants.allow({ machineId: "m1", access: "auto-accept-edits" });
+      // Allowed while it was relayed through another machine; the fleet file now has its own name.
+      yield* changeStoredGrant({
+        origin: "https://m4.example.ts.net:8443",
+        resource: "https://m4.example.ts.net:8443/mcp",
+      });
+      yield* setNow(NOW + Duration.toMillis(Duration.minutes(2)));
+      const credential = yield* grants.credential("m1");
+      expect(credential.target.url).toBe(target.url);
+      expect(credential.access).toBe("auto-accept-edits");
+      expect(machine.issued()).toBe(2);
+      expect((yield* grants.status("m1")).status).toBe("allowed");
+    }).pipe(Effect.provide(makeLayer({ machine })));
+  });
+
+  it.effect("does not carry a revoked or expired grant to a new address", () => {
+    const machine = fakeMachine({ sessionTokens: true });
+    return Effect.gen(function* () {
+      yield* setNow(NOW);
+      const grants = yield* FleetWorkerGrants.FleetWorkerGrants;
+      yield* grants.allow({ machineId: "m1", access: "auto" });
+      yield* changeStoredGrant({ origin: "https://m4.example.ts.net:8443", status: "revoked" });
+      yield* setNow(NOW + Duration.toMillis(Duration.minutes(2)));
+      expect((yield* grants.credential("m1").pipe(Effect.flip)).reason).toBe("not_allowed");
+      yield* changeStoredGrant({ status: "active", expiresAt: "2026-10-12T00:00:00.000Z" });
+      expect((yield* grants.credential("m1").pipe(Effect.flip)).reason).toBe("not_allowed");
+      expect(machine.issued()).toBe(1);
+    }).pipe(Effect.provide(makeLayer({ machine })));
+  });
+
   it.effect.each([
     { renewalStatus: 409, renewalCode: "grant_revoked" },
     { renewalStatus: 409, renewalCode: "grant_missing" },

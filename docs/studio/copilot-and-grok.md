@@ -36,6 +36,22 @@ Grok models and reasoning choices are discovered from the CLI. A CLI that report
 
 Choose **Gemini CLI** in **Add provider**. SpecWithCode resolves the exact `gemini` entry from the official ACP registry on the selected machine. Confirm the installation, complete the agent's authentication flow, then refresh its models. Registry lookup, installation and an advertised model name do not prove that a particular Google account can run that model. CLIProxyAPI's Gemini quota records remain separate from this agent connection.
 
+### Gemini 4 Argon and Google Cloud credits
+
+Gemini CLI 0.63.0 does not list Gemini 4 Argon (`gemini-4-argon`) in its catalog, but runs it when asked by `session/set_model`. Once the CLI's catalog has loaded, SpecWithCode adds **Gemini 4 Argon** to the Gemini CLI model picker. Argon is not on the Gemini API free tier, so a free Google sign-in cannot run it; the agent's error is shown as is. The Antigravity provider (agent 1.3.0) does not offer Argon.
+
+To bill Argon to Google Cloud credits, such as Google for Startups Cloud Program credits, run it through Vertex AI (Gemini Enterprise Agent Platform) on a project whose billing account holds the credits:
+
+1. On the machine that runs the agent: `gcloud auth application-default login`, and enable `aiplatform.googleapis.com` on the project.
+2. In the Gemini CLI provider, set **Authentication method** to `vertex-ai` and add these environment variables: `GOOGLE_GENAI_USE_VERTEXAI=true`, `GOOGLE_CLOUD_PROJECT=<project id>`, `GOOGLE_CLOUD_LOCATION=global`. Argon is served from the `global` location.
+3. Pick **Gemini 4 Argon** in the composer.
+
+Google AI Studio API keys bill through the same Cloud billing account but follow Gemini API rules: new accounts default to Prepay, and Cloud credits only apply after a Prepay purchase, and only when Google counts them as eligible for the Gemini API (Welcome and Free Trial credits are not). Vertex AI usage is billed as an ordinary Cloud service. Check **Billing → Credits** in the Cloud console to see which billing account holds the credits and that the project is linked to it.
+
+Gemini CLI reports each turn's tokens under `_meta.quota`; SpecWithCode records them as the turn's usage. Its input count includes cached tokens, and its output count excludes thinking tokens, so it understates billed output for thinking models.
+
+Verified on October 17, 2026: a Gemini CLI 0.63.0 ACP session authenticated with `vertex-ai` and Application Default Credentials, `GOOGLE_CLOUD_LOCATION=global`, fixed a failing test fixture (1 of 4 tests passing before, 4 of 4 after, test file untouched) in 20 seconds. The response's `model_usage` named `gemini-4-argon` for 54,300 input and 670 output tokens.
+
 ## Approvals and continuation
 
 Keep approval prompts enabled while validating a new provider. SpecWithCode answers ACP permission requests through the same approval UI used by its other ACP agents. Provider-native policy can affect when those requests are sent. Copilot ACP is public preview, and GitHub has an open report about older builds executing tools without sending permission requests. Test a denied write in a disposable project with your installed version before relying on the approval boundary.
@@ -56,3 +72,6 @@ The implementation is covered by focused provider and UI tests, responsive headl
 - [Grok CLI reference](https://docs.x.ai/build/cli/reference)
 - [Grok 4.7 API](https://docs.x.ai/developers/models/grok-4.7)
 - [Official ACP registry](https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json)
+- [Gemini 4 Argon model](https://ai.google.dev/gemini-api/docs/models/gemini-4-argon)
+- [Gemini 4 Argon on Google Cloud](https://cloud.google.com/blog/products/ai-machine-learning/gemini-4-argon-available-on-google-cloud)
+- [Gemini API billing and Cloud credits](https://ai.google.dev/gemini-api/docs/billing)

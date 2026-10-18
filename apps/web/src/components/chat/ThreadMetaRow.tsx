@@ -208,7 +208,9 @@ export const ThreadMetaRow = memo(function ThreadMetaRow({
           }
           onClick={folder.onOpen ?? (() => copyToClipboard(folder.path, { path: folder.path }))}
         >
-          <span className="min-w-0 max-w-48 truncate font-mono">{folderBasename(folder.path)}</span>
+          <span className="min-w-0 max-w-28 truncate font-mono sm:max-w-48">
+            {folderBasename(folder.path)}
+          </span>
         </MetaChip>
       ) : null}
       {startedRun ? <RunDurationChip run={startedRun} /> : null}

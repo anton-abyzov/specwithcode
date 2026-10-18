@@ -20,6 +20,7 @@ import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as ProjectActionRequests from "../../../project/ProjectActionRequests.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
+import { workerLaunchWithRoom } from "../../../project/WorkerLaunchRoom.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as Repositories from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
@@ -238,10 +239,22 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         const project = yield* readProject;
         const isCoordinator =
           caller !== undefined && project?.workspaceSettings?.coordinatorThreadId === caller.id;
+        // A coordinator's thread starts on the project's worker model, moved
+        // off a provider with no room (see workerLaunchWithRoom).
+        const workerSelection =
+          isCoordinator && input.modelSelection === undefined && project?.defaultModelSelection
+            ? yield* workerLaunchWithRoom({
+                project,
+                preferred: project.defaultModelSelection,
+                coordinator: caller.modelSelection,
+                providers: yield* (yield* ProviderRegistry.ProviderRegistry).getProviders,
+                runtimePolicy: { runtimeMode, interactionMode },
+              })
+            : project?.defaultModelSelection;
         const modelSelection =
           input.modelSelection ??
           (isCoordinator
-            ? project?.defaultModelSelection
+            ? workerSelection
             : (caller?.modelSelection ?? project?.defaultModelSelection)) ??
           undefined;
         if (modelSelection === undefined)

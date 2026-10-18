@@ -5,7 +5,7 @@ import {
   readHtmlRenderContentHeight,
   readHtmlRenderLinkRequest,
 } from "@specweave-studio/shared/htmlRender";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { useHtmlRenderTheme } from "~/hooks/useHtmlRenderTheme";
 import { cn } from "~/lib/utils";
@@ -43,12 +43,7 @@ export function BrowserDocumentFrame(props: {
       className={className}
     />
   ) : props.htmlRender ? (
-    <HtmlRenderDocument
-      key={props.src}
-      src={props.src}
-      title={props.title}
-      className="min-h-0 flex-1"
-    />
+    <HtmlRenderPage key={props.src} src={props.src} title={props.title} />
   ) : (
     <iframe
       key={props.src}
@@ -57,6 +52,38 @@ export function BrowserDocumentFrame(props: {
       className={className}
       sandbox="allow-scripts allow-forms allow-popups"
     />
+  );
+}
+
+// Stops a page sized in viewport units from growing its frame without end.
+const HTML_RENDER_PAGE_MAX_HEIGHT = 50_000;
+
+/**
+ * An agent's HTML render opened on its own, on the page every report opens
+ * on: the shared measure and margins, and room below its end. The frame takes
+ * the height the page reports, so the page scrolls as one document. Until the
+ * page reports, or if it never does, the frame holds a fixed height and
+ * scrolls inside.
+ */
+function HtmlRenderPage(props: { readonly src: string; readonly title: string }) {
+  const [height, setHeight] = useState<number>();
+  const onContentHeight = useCallback(
+    (next: number) => setHeight(Math.min(HTML_RENDER_PAGE_MAX_HEIGHT, Math.ceil(next))),
+    [],
+  );
+  return (
+    <div className="report-reader-body" data-html-render-page="true">
+      <div className="report-document-page" data-measure="wide">
+        <div style={{ height: height ?? "min(70vh, 40rem)" }}>
+          <HtmlRenderDocument
+            src={props.src}
+            title={props.title}
+            className="report-html-frame h-full"
+            onContentHeight={onContentHeight}
+          />
+        </div>
+      </div>
+    </div>
   );
 }
 

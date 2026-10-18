@@ -43,6 +43,13 @@ interface BranchToolbarEnvModeSelectorProps {
   previousWorktreeLabel?: string | null;
   previousWorktreeBranch?: string | null;
   onUsePreviousWorktree?: () => void;
+  /** What the panel calls a workspace outside the project folder. */
+  workspaceKindLabel?: string;
+  /**
+   * A chat without a project: its folder is made on the first send and is not
+   * a Git checkout, so there is nothing to pick and no worktree to offer.
+   */
+  chatFolder?: boolean;
 }
 
 export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSelector({
@@ -56,11 +63,13 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   previousWorktreeLabel,
   previousWorktreeBranch = null,
   onUsePreviousWorktree,
+  workspaceKindLabel = "Worktree",
+  chatFolder = false,
 }: BranchToolbarEnvModeSelectorProps) {
   const workspacePath = displayMode === "panel" ? (activeWorktreePath ?? workspaceRoot) : null;
   const workspaceDisplayName = resolveWorkspaceDisplayName(workspacePath);
   // The panel names the workspace kind only when it is not the project folder.
-  const workspaceKind = activeWorktreePath ? "Worktree" : null;
+  const workspaceKind = activeWorktreePath ? workspaceKindLabel : null;
   const lockedWorkspaceKind = forceNewWorktree ? "Worktree" : workspaceKind;
   const selectWorkspaceKind =
     effectiveEnvMode === "worktree" && !activeWorktreePath ? "Create" : workspaceKind;
@@ -121,6 +130,39 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
       event.stopPropagation();
     }
   };
+
+  if (chatFolder) {
+    const iconClass = displayMode === "panel" ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3";
+    const chatFolderRow = (
+      <span
+        className={cn(
+          "inline-flex h-7 min-w-0 items-center gap-1 border border-transparent px-1.75 font-normal text-muted-foreground text-xs sm:h-6",
+          displayMode === "panel" && THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS,
+        )}
+        data-composer-context-control
+        data-chat-folder=""
+        onContextMenu={activeWorktreePath ? handleWorkspaceContextMenu : undefined}
+      >
+        <FolderIcon className={iconClass} />
+        <ComposerContextLabel displayMode={displayMode}>
+          {activeWorktreePath ? (workspaceDisplayName ?? "Chat folder") : "New chat folder"}
+        </ComposerContextLabel>
+        {displayMode === "panel" ? (
+          <span className="shrink-0 text-3xs font-normal text-muted-foreground">Chat folder</span>
+        ) : null}
+      </span>
+    );
+    return (
+      <Tooltip>
+        <TooltipTrigger render={chatFolderRow} />
+        <TooltipPopup side={displayMode === "panel" ? "left" : undefined}>
+          {activeWorktreePath
+            ? activeWorktreePath
+            : "This chat gets its own folder when you send the first message."}
+        </TooltipPopup>
+      </Tooltip>
+    );
+  }
 
   if (envLocked || forceNewWorktree) {
     const lockedRow = (

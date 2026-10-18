@@ -175,6 +175,74 @@ try {
         await overlay.getByRole("button", { name: "Show thread" }).click();
         await thread.waitFor();
 
+        // The thread beside the report is live: its approval and its composer,
+        // which steers it while the report stays open.
+        NodeAssert.equal(
+          await thread.getAttribute("data-overlay-thread-live"),
+          "true",
+          `${label}: the thread keeps its composer`,
+        );
+        NodeAssert.ok(
+          await thread.getByRole("group", { name: "Approval" }).isVisible(),
+          `${label}: its pending approval is beside the report`,
+        );
+        const steer = thread.getByRole("textbox", { name: "Steer this thread" });
+        await steer.fill("Also check scenario 13");
+        await steer.press("Enter");
+        NodeAssert.equal(
+          await page.evaluate(() => window.__overlaySteered),
+          "Also check scenario 13",
+          `${label}: the composer sends to the thread`,
+        );
+        NodeAssert.equal(await overlay.count(), 1, `${label}: sending keeps the report open`);
+        // Above it, the thread's other artifacts; one press puts another on the left.
+        const strip = overlay.getByRole("region", { name: "Artifacts in this thread" });
+        const tiles = strip.locator("[data-strip-artifact]");
+        NodeAssert.equal(await tiles.count(), 3, `${label}: the thread's three artifacts`);
+        NodeAssert.equal(
+          await tiles.first().getAttribute("aria-label"),
+          "Document: closing-notes.md",
+          `${label}: newest first`,
+        );
+        const stripBox = await strip.boundingBox();
+        NodeAssert.ok(
+          stripBox && pane && stripBox.y <= pane.y + 2 && stripBox.width <= pane.width + 1,
+          `${label}: the strip heads the thread pane`,
+        );
+        await steer.fill("Draft kept while the report is open");
+        await page.waitForFunction(() => {
+          const card = document.querySelector('[data-viewer-overlay="true"]');
+          return card !== null && getComputedStyle(card).opacity === "1";
+        });
+        await page.screenshot({ path: shot("viewer-live-thread") });
+        await steer.fill("");
+        await strip.getByRole("button", { name: "Image: budget-vs-actuals.png" }).click();
+        await reader.waitFor({ state: "detached" });
+        NodeAssert.match(
+          await crumbs.locator('[data-crumb="current"]').innerText(),
+          /Image\s*budget-vs-actuals\.png/,
+          `${label}: the picked artifact takes the viewer`,
+        );
+        NodeAssert.equal(
+          await strip
+            .getByRole("button", { name: "Image: budget-vs-actuals.png" })
+            .getAttribute("aria-current"),
+          "true",
+          `${label}: the strip marks what is open`,
+        );
+        NodeAssert.equal(
+          await thread.getAttribute("data-overlay-thread"),
+          "skills",
+          `${label}: the same thread stays beside it`,
+        );
+        await page.screenshot({ path: shot("viewer-strip-picked") });
+        // Escape from the composer closes the viewer too.
+        await steer.focus();
+        await page.keyboard.press("Escape");
+        await overlay.waitFor({ state: "detached" });
+        await card.getByRole("button", { name: "Open report", exact: true }).click();
+        await reader.waitFor();
+
         // Escape closes it from inside the thread, even where a code block keeps the key.
         await thread.locator('[data-overlay-thread-code="true"]').focus();
         await page.keyboard.press("Escape");
@@ -277,6 +345,40 @@ try {
       await relay.locator('[data-report-collapsed="true"]').waitFor();
       const top = await relay.evaluate((element) => element.getBoundingClientRect().top);
       NodeAssert.ok(top >= -1, `${label}: folding brings the block's top back (${top})`);
+      if (width >= 832) {
+        // Opened from the coordinator, the viewer borrows the coordinator's own
+        // composer: one composer, moved beside the document and back, draft kept.
+        await page.locator("[data-thread-artifacts]").first().click();
+        await page.locator('[data-thread-artifact-row="markdown"] button').first().click();
+        await overlay.waitFor();
+        const lent = overlay.locator('[data-viewer-thread-composer="true"] #project-prompt');
+        await lent.waitFor();
+        NodeAssert.equal(
+          await page.locator("#project-prompt").count(),
+          1,
+          `${label}: one coordinator composer`,
+        );
+        NodeAssert.equal(
+          await overlay.locator("[data-overlay-thread]").getAttribute("data-overlay-thread-live"),
+          null,
+          `${label}: the coordinator's transcript, with its page's composer below`,
+        );
+        await lent.click();
+        await page.keyboard.type("Steer from the viewer");
+        await page.waitForFunction(() => {
+          const card = document.querySelector('[data-viewer-overlay="true"]');
+          return card !== null && getComputedStyle(card).opacity === "1";
+        });
+        await page.screenshot({ path: shot("viewer-coordinator-composer") });
+        await page.keyboard.press("Escape");
+        await overlay.waitFor({ state: "detached" });
+        const home = page.locator("#project-prompt");
+        NodeAssert.match(
+          await home.evaluate((element) => element.value ?? element.textContent ?? ""),
+          /Steer from the viewer/,
+          `${label}: the composer is back on its page with the draft`,
+        );
+      }
       checks.push(label);
       await context.close();
     }

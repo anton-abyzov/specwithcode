@@ -213,22 +213,37 @@ export function nativeCapacityBinding(
   return null;
 }
 
+function freshlyAuthenticated(provider: ServerProvider | undefined, now: number): boolean {
+  return (
+    !!provider?.enabled &&
+    provider.installed &&
+    provider.status === "ready" &&
+    provider.availability !== "unavailable" &&
+    provider.auth.status === "authenticated" &&
+    freshObservation(provider.checkedAt, now)
+  );
+}
+/**
+ * A Claude CLI signed in to the Claude Console ("API Usage Billing") or given
+ * its own key bills every turn to API credits. It has no plan quota to verify:
+ * the API's own answer about credits or the key decides each turn.
+ */
+export function claudeApiBillingAuthorized(
+  provider: ServerProvider | undefined,
+  now: number,
+): boolean {
+  if (provider?.driver !== "claudeAgent" || !freshlyAuthenticated(provider, now)) return false;
+  const type = provider.auth.type?.toLowerCase().replace(/[\s_.-]+/g, "");
+  return type === "apikey" || provider.auth.apiKeyBilling === true;
+}
 export function nativeSnapshotAuthorized(
   provider: ServerProvider | undefined,
   now: number,
 ): boolean {
-  if (
-    !provider?.enabled ||
-    !provider.installed ||
-    provider.status !== "ready" ||
-    provider.availability === "unavailable" ||
-    provider.auth.status !== "authenticated" ||
-    !freshObservation(provider.checkedAt, now)
-  )
-    return false;
-  const type = provider.auth.type?.toLowerCase().replace(/[\s_.-]+/g, "");
-  if (provider.driver === "codex") return type === "chatgpt" || type === "chatgptauthtokens";
-  if (provider.driver === "claudeAgent")
+  if (!freshlyAuthenticated(provider, now)) return false;
+  const type = provider!.auth.type?.toLowerCase().replace(/[\s_.-]+/g, "");
+  if (provider!.driver === "codex") return type === "chatgpt" || type === "chatgptauthtokens";
+  if (provider!.driver === "claudeAgent")
     return (
       !!type &&
       (type === "claudeai" ||

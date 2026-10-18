@@ -411,7 +411,8 @@ describe("resolveInitialServerAuthGateState", () => {
         await expect(gateLoads[0]).resolves.toEqual(requiresAuth);
         const rejected = expect(submitServerAuthCredential(token!)).rejects.toMatchObject({
           _tag: "PrimaryEnvironmentPairingCredentialRejectedError",
-          message: "Invalid pairing token. Check the token and try again.",
+          message:
+            "This pairing link is expired, already used or unknown. A link works once and only for a few minutes: create a new one on the machine you are pairing with.",
         });
         await exchangeStarted.promise;
         await expect(resolveInitialServerAuthGateState()).resolves.toEqual(requiresAuth);
@@ -551,7 +552,8 @@ describe("resolveInitialServerAuthGateState", () => {
     expect(error).toMatchObject({
       _tag: "PrimaryEnvironmentPairingCredentialRejectedError",
       providedLength: 9,
-      message: "Invalid pairing token. Check the token and try again.",
+      message:
+        "This pairing link is expired, already used or unknown. A link works once and only for a few minutes: create a new one on the machine you are pairing with.",
     });
     expect(isPrimaryEnvironmentPairingCredentialRejectedError(error)).toBe(true);
     if (!isPrimaryEnvironmentPairingCredentialRejectedError(error)) {
@@ -741,7 +743,8 @@ describe("resolveInitialServerAuthGateState", () => {
     const rejectedState = {
       status: "requires-auth",
       auth: LOOPBACK_AUTH,
-      errorMessage: "Invalid pairing token. Check the token and try again.",
+      errorMessage:
+        "This pairing link is expired, already used or unknown. A link works once and only for a few minutes: create a new one on the machine you are pairing with.",
     } as const;
     await expect(explicitPairing).resolves.toEqual(rejectedState);
     await expect(laterCaller).resolves.toEqual(rejectedState);
@@ -783,7 +786,8 @@ describe("resolveInitialServerAuthGateState", () => {
     await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
       status: "requires-auth",
       auth: LOOPBACK_AUTH,
-      errorMessage: "Invalid pairing token. Check the token and try again.",
+      errorMessage:
+        "This pairing link is expired, already used or unknown. A link works once and only for a few minutes: create a new one on the machine you are pairing with.",
     });
     await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
       status: "requires-auth",

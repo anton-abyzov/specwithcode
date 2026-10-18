@@ -34,7 +34,13 @@ import {
   usageApproachingBannerItem,
   usageLimitRecoveryBannerItem,
 } from "./chat/UsageLimitRecoveryBanner";
-import { deviceHandoffText, pickDeviceModel } from "./chat/deviceHandoff";
+import {
+  deviceHandoffText,
+  pickContinueTarget,
+  pickDeviceModel,
+  type ContinueCandidate,
+  type ContinueTarget,
+} from "./chat/deviceHandoff";
 import {
   formatOutgoingPrompt,
   resolveBackgroundDraftWorkspaceOptions,
@@ -96,6 +102,7 @@ import {
   AuthSourceControlWriteScope,
   AuthPreviewOperateScope,
   AuthTerminalReadScope,
+  AuthProvidersManageScope,
   AuthTerminalOperateScope,
   type AssistantCitation,
   type ChatFileAttachment,
@@ -190,14 +197,18 @@ import {
 } from "@specweave-studio/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import {
+  isApiCreditExhaustedMessage,
   limitRestartRequest,
   limitStopWaitsForReset,
+  provenFallbackSelection,
   providerUsedPercent,
+  resolveApiCreditSelections,
   resolveProviderFallback,
   usageAtThreshold,
   usageResetAt,
 } from "@specweave-studio/shared/providerFallback";
 import { resolveProviderInstanceDisplayName } from "@specweave-studio/client-runtime/state/provider-instance-display";
+import { isApiCreditAccountDriver } from "./settings/apiCreditAccount";
 import { sourceControlRepositorySelector } from "@specweave-studio/shared/sourceControl";
 import { truncate } from "@specweave-studio/shared/String";
 import { resolveThreadReferenceCopyTarget } from "@specweave-studio/shared/threadReference";
@@ -211,6 +222,7 @@ import {
   type SetStateAction,
   Suspense,
   useCallback,
+  useContext,
   useEffect,
   useEffectEvent,
   useInsertionEffect,
@@ -220,6 +232,7 @@ import {
   useState,
 } from "react";
 import { createPortal, flushSync } from "react-dom";
+import { InViewerOverlay, useViewerOverlayStore } from "~/viewerOverlayStore";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { assistantCitationFromLocation } from "../lib/assistantCitationNavigation";
 import { isMacPlatform } from "../lib/utils";
@@ -364,6 +377,7 @@ import {
   ChevronDownIcon,
   DownloadIcon,
   GitBranchIcon,
+  LaptopIcon,
   TargetIcon,
   WifiOffIcon,
 } from "lucide-react";
@@ -459,6 +473,14 @@ import {
 } from "../lib/composerContextRecords";
 import { type ReviewCommentContext } from "../reviewCommentContext";
 import { environmentCatalog } from "../connection/catalog";
+import { machineLastSeenAt, useMachineLastSeenVersion } from "../lib/machineLastSeen";
+import {
+  chatContinuation,
+  dismissContinuedFrom,
+  recordChatContinuation,
+  useChatContinuationsVersion,
+} from "../lib/chatContinuations";
+import { lastSeenLabel, machineStatus, machineUnavailableTitle } from "../lib/machineStatus";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useEnvironmentDisconnectDelay } from "../hooks/useEnvironmentDisconnectDelay";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
@@ -661,7 +683,7 @@ import { deriveThreadPlanView, displayFolder } from "../studio/threadPlanProgres
 import { useThreadIncrementProgress } from "../studio/useThreadIncrementProgress";
 import { ThreadPlanCard } from "./chat/ThreadPlanCard";
 import { ThreadBlockerNote } from "./chat/ThreadBlockerNote";
-import { ThreadProgressDock } from "./chat/ThreadProgressDock";
+import { ThreadHeaderLine, ThreadProgressDock } from "./chat/ThreadProgressDock";
 import {
   LinkIncrementDialogHost,
   openLinkIncrementDialog,
@@ -1735,7 +1757,12 @@ function useChatViewState(props: ChatViewProps) {
     embeddedHeaderToolsTarget = null,
     forceExpandedMobileComposer = false,
   } = props;
-  const suspendChatInput = reviewOnly || transcriptOnly || suspendShortcuts;
+  // While the viewer overlay is in front, a thread behind it leaves keys and
+  // pastes alone; the overlay's own copy of the thread takes them.
+  const inViewerOverlay = useContext(InViewerOverlay);
+  const viewerOverlayOpen = useViewerOverlayStore((state) => state.active !== null);
+  const behindViewerOverlay = viewerOverlayOpen && !inViewerOverlay;
+  const suspendChatInput = reviewOnly || transcriptOnly || suspendShortcuts || behindViewerOverlay;
   const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const hasTerminalWriteAccess = useCallback(
@@ -2652,6 +2679,7 @@ function useChatViewState(props: ChatViewProps) {
       state.threadPanelVisibilityByThreadKey,
       activeThreadTarget,
       threadPanelPresentation,
+      draftId !== null,
     ),
   );
 
@@ -2739,6 +2767,29 @@ function useChatViewState(props: ChatViewProps) {
     [activeThread?.environmentId, activeThread?.projectId, activeThread],
   );
   const activeProject = useProject(activeProjectTarget);
+  // A worker that runs out of room may continue where its coordinator runs.
+  const activeCoordinatorThreadId = activeProject?.workspaceSettings?.coordinatorThreadId ?? null;
+  const activeCoordinatorTarget = useMemo(
+    () =>
+      activeThread && activeCoordinatorThreadId && activeCoordinatorThreadId !== activeThread.id
+        ? scopeThreadRef(activeThread.environmentId, activeCoordinatorThreadId)
+        : null,
+    [activeCoordinatorThreadId, activeThread],
+  );
+  const coordinatorThreadShell = useThreadShell(activeCoordinatorTarget);
+  const activeCoordinatorShell = useMemo(
+    () =>
+      coordinatorThreadShell === null
+        ? null
+        : {
+            id: coordinatorThreadShell.id,
+            providerInstanceId: coordinatorThreadShell.providerInstanceId,
+            modelSelection: coordinatorThreadShell.modelSelection,
+            status: coordinatorThreadShell.runtime?.status ?? "idle",
+            lastErrorClass: coordinatorThreadShell.runtime?.lastErrorClass ?? null,
+          },
+    [coordinatorThreadShell],
+  );
   // Environment settings with the active project's overrides applied.
   const activeProjectSettings = useMemo(
     () => resolveProjectSettings(settings, activeProject?.id ?? null, activeProject ?? undefined),
@@ -3279,6 +3330,88 @@ function useChatViewState(props: ChatViewProps) {
   const serverUpdateState = useAtomValue(
     serverEnvironment.updateStateAtom(serverUpdateEnvironmentId),
   );
+  useMachineLastSeenVersion();
+  const activeMachineLastSeenAt = activeEnvironmentUnavailableState
+    ? machineLastSeenAt(activeEnvironmentUnavailableState.environmentId)
+    : null;
+  // A sent thread whose machine can't be reached can carry on elsewhere: the
+  // same project on another machine, or that machine's own chat folder for a
+  // chat without a project.
+  const continueElsewhereTarget = useMemo<ContinueTarget | null>(() => {
+    if (!isServerThread || !activeThread || !activeEnvironmentUnavailableState) return null;
+    const machineCandidate = (
+      id: EnvironmentId,
+      projectId: ProjectId | null,
+      label: string,
+    ): ContinueCandidate => {
+      const environment = environmentById.get(id);
+      return {
+        environmentId: id,
+        projectId,
+        label,
+        connected: environment?.connection.phase === "connected",
+        canOperate: readEnvironmentScope(id, AuthOrchestrationOperateScope),
+        providers: environment?.serverConfig?.providers ?? [],
+      };
+    };
+    const candidates: ContinueCandidate[] = activeProjectIsScratch
+      ? environments
+          .filter((environment) => scratchWorkspaceRootFor(environment.environmentId) !== null)
+          .toSorted((a, b) =>
+            a.environmentId === primaryEnvironmentId
+              ? -1
+              : b.environmentId === primaryEnvironmentId
+                ? 1
+                : a.label.localeCompare(b.label),
+          )
+          .map((environment) =>
+            machineCandidate(
+              environment.environmentId,
+              allProjects.find(
+                (project) =>
+                  project.environmentId === environment.environmentId &&
+                  isScratchProject(project, scratchWorkspaceRootFor(environment.environmentId)),
+              )?.id ?? null,
+              environment.label,
+            ),
+          )
+      : logicalProjectEnvironments.map((option) =>
+          machineCandidate(option.environmentId, option.projectId, option.label),
+        );
+    const current = activeThreadShell?.modelSelection ?? activeThread.modelSelection;
+    return pickContinueTarget({
+      sourceEnvironmentId: activeThread.environmentId,
+      candidates,
+      chatFolder: activeProjectIsScratch,
+      current,
+      currentDriver:
+        providerStatuses.find((provider) => provider.instanceId === current.instanceId)?.driver ??
+        null,
+      nowMs: renderNowMs,
+    });
+  }, [
+    activeEnvironmentUnavailableState,
+    activeProjectIsScratch,
+    activeThread,
+    activeThreadShell?.modelSelection,
+    allProjects,
+    environmentById,
+    environments,
+    isServerThread,
+    logicalProjectEnvironments,
+    primaryEnvironmentId,
+    providerStatuses,
+    renderNowMs,
+    scratchWorkspaceRootFor,
+  ]);
+  // Filled by ChatView, which owns starting threads; read only on click.
+  const continueElsewhereRef = useRef<((target: ContinueTarget) => Promise<void>) | null>(null);
+  const [continuingElsewhere, setContinuingElsewhere] = useState(false);
+  // Re-renders when a link is written; the link object is stable until then.
+  useChatContinuationsVersion();
+  const activeContinuation = activeThread
+    ? chatContinuation(activeThread.environmentId, activeThread.id)
+    : null;
   const systemComposerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     const items: ComposerBannerStackItem[] = [];
     const updateRunning = serverUpdateState.status === "running";
@@ -3297,6 +3430,14 @@ function useChatViewState(props: ChatViewProps) {
           Disconnect server
         </Button>
       ) : undefined;
+    const unavailableStatus = unavailableConnection ? machineStatus(unavailableConnection) : null;
+    // Why it is unreachable and when it was last connected, so the banner says
+    // more than "offline".
+    const unavailableDetail = activeEnvironmentUnavailableState
+      ? [unavailableStatus?.reason ?? null, lastSeenLabel(activeMachineLastSeenAt, Date.now())]
+          .filter(Boolean)
+          .join(" · ")
+      : "";
     const environmentReconnecting =
       unavailableConnection !== null &&
       (unavailableConnection.phase === "connecting" ||
@@ -3311,10 +3452,67 @@ function useChatViewState(props: ChatViewProps) {
         id: `environment-unavailable:${activeEnvironmentUnavailableState.environmentId}`,
         variant: unavailableConnection.phase === "error" ? "error" : "warning",
         icon: <WifiOffIcon />,
-        title: `${activeEnvironmentUnavailableState.label} is ${environmentReconnecting ? "reconnecting" : "offline"}`,
+        title: machineUnavailableTitle(
+          activeEnvironmentUnavailableState.label,
+          unavailableConnection,
+        ),
+        description:
+          [
+            unavailableDetail,
+            activeContinuation?.continuedIn
+              ? `Continued on ${activeContinuation.continuedIn.label}`
+              : continueElsewhereTarget && activeProjectIsScratch
+                ? `Files in this chat's folder stay on ${activeEnvironmentUnavailableState.label}`
+                : "",
+          ]
+            .filter(Boolean)
+            .join(". ") || undefined,
+        actionsLayout: "wrap-below",
         actions: (
           <>
-            {!environmentReconnecting ? (
+            {activeContinuation?.continuedIn ? (
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={() => {
+                  const link = activeContinuation.continuedIn!;
+                  void openThreadRoute(
+                    scopeThreadRef(link.environmentId as EnvironmentId, link.threadId as ThreadId),
+                  );
+                }}
+              >
+                Open on {activeContinuation.continuedIn.label}
+              </Button>
+            ) : continueElsewhereTarget ? (
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={continuingElsewhere}
+                title={`Start a new chat on ${continueElsewhereTarget.label} (${continueElsewhereTarget.model}) from a summary of this one`}
+                onClick={() => {
+                  const run = continueElsewhereRef.current;
+                  if (!run) return;
+                  setContinuingElsewhere(true);
+                  void run(continueElsewhereTarget)
+                    .catch((error: unknown) => {
+                      toastManager.add(
+                        stackedThreadToast({
+                          type: "error",
+                          title: `Could not continue on ${continueElsewhereTarget.label}`,
+                          description:
+                            error instanceof Error ? error.message : "This chat is unchanged.",
+                        }),
+                      );
+                    })
+                    .finally(() => setContinuingElsewhere(false));
+                }}
+              >
+                {continuingElsewhere
+                  ? `Continuing on ${continueElsewhereTarget.label}...`
+                  : `Continue on ${continueElsewhereTarget.label}`}
+              </Button>
+            ) : null}
+            {unavailableStatus?.retryable ? (
               <Button
                 size="xs"
                 variant="ghost"
@@ -3324,7 +3522,7 @@ function useChatViewState(props: ChatViewProps) {
                   )
                 }
               >
-                Reconnect
+                Retry
               </Button>
             ) : null}
             {disconnectAction}
@@ -3332,10 +3530,45 @@ function useChatViewState(props: ChatViewProps) {
         ),
       });
     }
+    // The new chat names the one it continues, until the notice is closed.
+    const continues = activeContinuation?.dismissed ? undefined : activeContinuation?.continues;
+    if (continues && activeThread) {
+      items.push({
+        id: `continued-from:${continues.environmentId}:${continues.threadId}`,
+        variant: "info",
+        icon: <LaptopIcon />,
+        title: `Continued from ${continues.label}`,
+        description: `"${continues.title}" stopped when ${continues.label} could not be reached. Its files stay on ${continues.label}.`,
+        actions: (
+          <Button
+            size="xs"
+            variant="ghost"
+            onClick={() =>
+              void openThreadRoute(
+                scopeThreadRef(
+                  continues.environmentId as EnvironmentId,
+                  continues.threadId as ThreadId,
+                ),
+              )
+            }
+          >
+            Open original
+          </Button>
+        ),
+        dismissLabel: "Close",
+        onDismiss: () => dismissContinuedFrom(activeThread.environmentId, activeThread.id),
+      });
+    }
     // Server updates show once, in the sidebar footer (SidebarServerUpdate),
     // not above every thread's composer.
     return items;
   }, [
+    activeContinuation,
+    activeProjectIsScratch,
+    activeThread,
+    continueElsewhereTarget,
+    continuingElsewhere,
+    openThreadRoute,
     automaticEnvironment,
     activeEnvironmentUnavailableState,
     handleReconnectActiveEnvironment,
@@ -3344,6 +3577,7 @@ function useChatViewState(props: ChatViewProps) {
     handleDisconnectActiveEnvironment,
     reconnectWarningGraceElapsed,
     serverUpdateState,
+    activeMachineLastSeenAt,
   ]);
   const providerInstanceEntries = useMemo(
     () =>
@@ -4555,6 +4789,7 @@ function useChatViewState(props: ChatViewProps) {
     activeComposerTaskSteps,
     activeComposerTasksProgress,
     activeContextWindow,
+    activeCoordinatorShell,
     activeDraftLogicalProjectKey,
     activeEnvironmentServerBrowser,
     activeEnvironmentUnavailable,
@@ -4577,6 +4812,8 @@ function useChatViewState(props: ChatViewProps) {
     activeProjectCwd,
     activeProjectDefaultModelSelection,
     activeProjectIsScratch,
+    continueElsewhereRef,
+    continueElsewhereTarget,
     activeProjectKey,
     activeProjectScripts,
     activeProjectSettings,
@@ -4959,6 +5196,7 @@ function useChatViewActions(
   const {
     activeActivityRun,
     activeContextWindow,
+    activeCoordinatorShell,
     activeEnvironmentServerBrowser,
     activeEnvironmentUnavailable,
     activeKnownTerminalIds,
@@ -6782,8 +7020,10 @@ function useChatViewActions(
   }, [activeThreadTarget, closePreviewPanel, rightPanelOpen]);
   const toggleThreadPanel = useCallback(() => {
     if (!activeThreadTarget) return;
-    useRightPanelStore.getState().toggleThreadPanel(activeThreadTarget, threadPanelPresentation);
-  }, [activeThreadTarget, threadPanelPresentation]);
+    useRightPanelStore
+      .getState()
+      .toggleThreadPanel(activeThreadTarget, threadPanelPresentation, draftId !== null);
+  }, [activeThreadTarget, threadPanelPresentation, draftId]);
   const toggleRightPanelMaximized = useCallback(() => {
     if (!canMaximizeRightPanel) return;
     setMaximizedRightPanelThreadKey((threadKey) =>
@@ -8598,6 +8838,7 @@ function useChatViewActions(
           nowMs: renderNowMs,
           belowPercent: 100,
           anyReady: true,
+          proven: provenFallbackSelection(activeThreadShell, activeCoordinatorShell),
         })
       : null;
   const limitFallbackProvider =
@@ -8818,10 +9059,15 @@ export default function ChatView(props: ChatViewProps) {
   const renderNowMs = useRenderTime();
   const chatViewState = useChatViewState(props);
   const {
+    activeProjectIsScratch,
+    continueElsewhereRef,
+    continueElsewhereTarget,
+    openScratchProject,
     activeActivityRun,
     activeComposerTaskSteps,
     activeComposerTasksProgress,
     activeContextWindow,
+    activeCoordinatorShell,
     activeDraftLogicalProjectKey,
     activeEnvironmentServerBrowser,
     activeEnvironmentUnavailable,
@@ -9292,22 +9538,45 @@ export default function ChatView(props: ChatViewProps) {
     visiblePullRequests,
     wokeThreadBannerItem,
   } = useChatViewActions(props, chatViewState);
-  const continueOnDevice = async (target: NonNullable<typeof limitDeviceTarget>) => {
+  // Starts the thread over on another machine from a written handoff: when
+  // this one's provider hit its limit, or this machine can't be reached. A
+  // chat without a project gets a new chat folder there, never a worktree.
+  const continueOnDevice = async (
+    target: ContinueTarget,
+    reason: "usage_limit" | "unreachable" = "usage_limit",
+  ) => {
     if (!activeThread) return;
     const threadId = newThreadId();
     const createdAt = new Date().toISOString();
     const title = activeThread.title;
+    const sourceLabel = environmentById.get(environmentId)?.label ?? "another device";
+    const chatFolder = activeProjectIsScratch;
+    const projectId = chatFolder
+      ? ((await openScratchProject(target.environmentId, `Could not continue on ${target.label}`))
+          ?.id ?? null)
+      : target.projectId;
+    if (projectId === null) return;
+    const branch = chatFolder ? null : activeThreadBranch;
     const targetProject = allProjects.find(
-      (project) =>
-        project.environmentId === target.environmentId && project.id === target.projectId,
+      (project) => project.environmentId === target.environmentId && project.id === projectId,
     );
     const text = deviceHandoffText({
       title,
-      sourceLabel: environmentById.get(environmentId)?.label ?? "another device",
-      branch: activeThreadBranch,
+      sourceLabel,
+      branch,
       turnItems: serverProjection?.turnItems ?? [],
+      reason,
+      chatFolder,
     });
-    if (await coordinatorDeviceHandoff(openCoordinatorHandoff, target, text, activeThreadBranch))
+    if (
+      !chatFolder &&
+      (await coordinatorDeviceHandoff(
+        openCoordinatorHandoff,
+        { ...target, projectId },
+        text,
+        branch,
+      ))
+    )
       return;
     const result = await startThreadTurn({
       environmentId: target.environmentId,
@@ -9320,20 +9589,20 @@ export default function ChatView(props: ChatViewProps) {
         interactionMode,
         bootstrap: {
           createThread: {
-            projectId: target.projectId,
+            projectId,
             title,
             modelSelection: target.selection,
             runtimeMode,
             interactionMode,
-            branch: activeThreadBranch,
+            branch,
             worktreePath: null,
             createdAt,
           },
-          ...(activeThreadBranch && targetProject
+          ...(branch && targetProject
             ? {
                 prepareWorktree: {
                   projectCwd: targetProject.workspaceRoot,
-                  baseBranch: activeThreadBranch,
+                  baseBranch: branch,
                   requireWorktree: true,
                   startFromOrigin: true,
                 },
@@ -9345,8 +9614,21 @@ export default function ChatView(props: ChatViewProps) {
       },
     });
     if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+    if (reason === "unreachable")
+      recordChatContinuation(
+        {
+          environmentId: activeThread.environmentId,
+          threadId: activeThread.id,
+          label: sourceLabel,
+          title,
+        },
+        { environmentId: target.environmentId, threadId, label: target.label },
+      );
     await openThreadRoute(scopeThreadRef(target.environmentId, threadId));
   };
+  useEffect(() => {
+    continueElsewhereRef.current = (target) => continueOnDevice(target, "unreachable");
+  });
   const creditRecoveryContext: CreditSendContext | null =
     activeThread && activeThreadShell
       ? {
@@ -9395,6 +9677,55 @@ export default function ChatView(props: ChatViewProps) {
               context: creditRecoveryContext!,
               onContinue: (intent: ManualCodexCreditIntent) =>
                 onResume(activeThreadShell.modelSelection, limitRestart ?? undefined, intent),
+            };
+          })(),
+          creditsExhausted: isApiCreditExhaustedMessage(serverRuntime?.lastError),
+          apiCredits: (() => {
+            const current = providerStatuses.find(
+              (p) => p.instanceId === activeThreadShell.providerInstanceId,
+            );
+            if (!activeThread || current === undefined) return null;
+            const targets = resolveApiCreditSelections({
+              providers: providerStatuses,
+              current: activeThreadShell.modelSelection,
+            }).flatMap((selection) => {
+              const target = providerStatuses.find(
+                (provider) => provider.instanceId === selection.instanceId,
+              );
+              if (target === undefined) return [];
+              return [
+                {
+                  label: resolveProviderInstanceDisplayName(target),
+                  model:
+                    target.models.find((model) => model.slug === selection.model)?.name ??
+                    selection.model,
+                  onContinue: async () => {
+                    // The composer follows the thread onto the API account.
+                    if (projectRouting?.saveCoordinatorModel)
+                      await projectRouting.saveCoordinatorModel(selection);
+                    else
+                      onProviderModelSelect(selection.instanceId, selection.model, {
+                        focusComposer: false,
+                      });
+                    await onResume(selection, limitRestart ?? undefined);
+                  },
+                },
+              ];
+            });
+            const driver = current.driver;
+            const setup =
+              isApiCreditAccountDriver(driver) &&
+              readEnvironmentScope(environmentId, AuthProvidersManageScope)
+                ? { environmentId, driver }
+                : null;
+            if (targets.length === 0 && setup === null) return null;
+            return {
+              targets,
+              automatic:
+                driver === "claudeAgent" &&
+                activeProjectSettings.settings.providerLimitUseApiCredits === true &&
+                activeProjectSettings.settings.providerLimitAction !== "wait",
+              setup,
             };
           })(),
           runId: activeThreadShell.latestRun.runId,
@@ -9475,6 +9806,9 @@ export default function ChatView(props: ChatViewProps) {
           nowMs: approachingNowMs,
           belowPercent: approachingThreshold,
           anyReady: true,
+          proven: activeThreadShell
+            ? provenFallbackSelection(activeThreadShell, activeCoordinatorShell)
+            : null,
         })
       : null;
   const approachingResetMs =
@@ -10903,8 +11237,10 @@ export default function ChatView(props: ChatViewProps) {
       toastManager.add({
         ...stackedThreadToast({
           type: "warning",
-          title: "Not connected: message not sent",
-          description: "Reconnecting to the environment. Try again once it is connected.",
+          title: activeEnvironmentUnavailableLabel
+            ? `Waiting for ${activeEnvironmentUnavailableLabel}: not sent yet`
+            : "Not connected: message not sent",
+          description: `Your message stays in the composer. Send it once ${activeEnvironmentUnavailableLabel ?? "the machine"} is back${continueElsewhereTarget ? `, or continue on ${continueElsewhereTarget.label}` : ""}.`,
         }),
         id: `chat-send-environment-unavailable:${toastSlot}`,
       });
@@ -13223,6 +13559,15 @@ export default function ChatView(props: ChatViewProps) {
     ...(draftId ? { draftId } : {}),
     activeProjectName: activeProject?.title,
     activeProjectScripts: activeProject ? activeProjectScripts : undefined,
+    chatFolder:
+      activeProject &&
+      isScratchProject(
+        activeProject,
+        environmentById.get(activeProject.environmentId)?.serverConfig?.scratchWorkspaceRoot ??
+          null,
+      )
+        ? { path: activeThread.worktreePath ?? null, chatTitle: activeThread.title ?? null }
+        : undefined,
     preferredScriptId: activeProject
       ? (lastInvokedScriptByProjectId[activeProject.id] ?? null)
       : null,
@@ -13548,26 +13893,28 @@ export default function ChatView(props: ChatViewProps) {
               threadOrigin !== null ||
               timelineWorkingFolder !== null ? (
                 <ThreadProgressDock>
-                  <ThreadMetaRow
-                    key={`meta:${activeThread.id}`}
-                    origin={threadOrigin}
-                    folder={timelineWorkingFolder}
-                    run={activeThreadShell?.latestRun ?? null}
-                    pullRequests={threadPullRequests}
-                    onOpenPullRequest={(url) => void openThreadLink(url).catch(() => undefined)}
-                  />
-                  {threadPlanView !== null ? (
-                    <ThreadPlanCard
-                      key={activeThread.id}
-                      plan={threadPlanView}
-                      onOpenPath={
-                        availableEditors.length > 0 ? (path) => void openThreadPath(path) : null
-                      }
-                      onLinkIncrement={threadIncrementActions?.link ?? null}
-                      onUnlinkIncrement={threadIncrementActions?.unlink ?? null}
-                      status={threadPlanStatus}
+                  <ThreadHeaderLine>
+                    <ThreadMetaRow
+                      key={`meta:${activeThread.id}`}
+                      origin={threadOrigin}
+                      folder={timelineWorkingFolder}
+                      run={activeThreadShell?.latestRun ?? null}
+                      pullRequests={threadPullRequests}
+                      onOpenPullRequest={(url) => void openThreadLink(url).catch(() => undefined)}
                     />
-                  ) : null}
+                    {threadPlanView !== null ? (
+                      <ThreadPlanCard
+                        key={activeThread.id}
+                        plan={threadPlanView}
+                        onOpenPath={
+                          availableEditors.length > 0 ? (path) => void openThreadPath(path) : null
+                        }
+                        onLinkIncrement={threadIncrementActions?.link ?? null}
+                        onUnlinkIncrement={threadIncrementActions?.unlink ?? null}
+                        status={threadPlanStatus}
+                      />
+                    ) : null}
+                  </ThreadHeaderLine>
                   {activeThreadBlocker !== null ? (
                     <ThreadBlockerNote blocker={activeThreadBlocker} />
                   ) : null}

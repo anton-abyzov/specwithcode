@@ -60,7 +60,7 @@ import {
 import { parseScopedThreadKey, scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import { useAtomValue } from "@effect/atom-react";
 import { environmentThreadDetails } from "../../state/threads";
-import { UserMessageProvenance } from "./UserMessageProvenance";
+import { UserMessageExecutionOrigin, UserMessageProvenance } from "./UserMessageProvenance";
 import { useProviderEntries } from "../studio/shell/ModelBadge";
 import { limitContinuationNote, restartContinuationNote } from "../../studio/runIdentity";
 import { modelLabel } from "../../studio/shellModel";
@@ -2517,7 +2517,14 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           </span>
         </div>
       ) : null}
-      <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
+      <div className="flex w-full max-w-[80%] items-center justify-end gap-2 pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
+        <UserMessageExecutionOrigin
+          message={row.message}
+          runs={ctx.runs}
+          environmentId={ctx.activeThreadEnvironmentId}
+          threadRef={ctx.threadRef}
+          onOpenThread={ctx.onOpenThread}
+        />
         <div className="flex shrink-0 items-center gap-2">
           <Tooltip>
             <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
@@ -2781,7 +2788,10 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
   if (cited && !inline) setInline(true);
   // A delegated thread's long, finished report reads as an artifact: a card that opens a reader.
   const asReportCard =
-    reportMode && !inline && !row.message.streaming && shouldCollapseReport(messageText);
+    reportMode &&
+    !inline &&
+    !row.message.streaming &&
+    shouldCollapseReport(messageText, { requested: row.reportRequested === true });
   const threadRef = ctx.threadRef;
   const reportProjectId = ctx.reportProjectId;
   const reportSource = useMemo<ReportArtifactSource | null>(

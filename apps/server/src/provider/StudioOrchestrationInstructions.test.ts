@@ -37,8 +37,15 @@ describe("SpecWithCode orchestration provider instructions", () => {
     assert.notInclude(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "everyMs");
     assert.notInclude(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "workspaceStrategy");
     assert.notInclude(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "<browser_automation>");
-    // About 270 tokens; it was about 1,900.
-    assert.isAtMost(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.length, 1_200);
+    // About 300 tokens; it was about 1,900. The computer-use line routes
+    // native-app requests that tool names alone did not.
+    assert.isAtMost(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.length, 1_350);
+  });
+
+  it("routes computer use, and skills that name other computer-use tools, to computer_*", () => {
+    assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "is the `computer_*` tools");
+    assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "`mcp__computer-use__*`");
+    assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "prefer them to `defaults write`");
   });
 
   it("asks for absolute file paths and a one-path-per-line list for manual picks", () => {
