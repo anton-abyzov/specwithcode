@@ -10,6 +10,8 @@ Run: cd scripts/studio-fleet && python3 -B test-fleet-rollout.py
 import contextlib
 import copy
 import io
+import datetime
+import types
 import json
 import os
 import pathlib
@@ -107,11 +109,15 @@ class FakeHold(object):
     """M4's ServiceHold. Each drain and release is logged in the fleet's log, in order with the
     requests, as ('m4', 'hold' | 'release', version, [])."""
 
-    def __init__(self, fleet, reply=None, error=None, release_error=None):
+    def __init__(self, fleet, reply=None, error=None, release_error=None, unsupported=None):
         self.fleet = fleet
         self.reply = dict(HELD if reply is None else reply)
         self.error = error
         self.release_error = release_error
+        self.unsupported = unsupported  # The reason ServiceHold.support() gives for an old CLI.
+
+    def support(self):
+        return (False, self.unsupported) if self.unsupported else (True, None)
 
     def _log(self, kind):
         with self.fleet.lock:
@@ -571,32 +577,103 @@ class M4Hold(unittest.TestCase):
                                   hold=FakeHold(fleet), poll=15)
         self.assertEqual(kinds(fleet), ['hold', 'request', 'release'])
 
-    def test_an_unavailable_hold_falls_back_to_the_forced_request(self):
-        """An older service has no `service prepare-update`, or the service did not hold: the
-        rollout warns, asks as before, and never drains again."""
-        for hold_kind in ('unavailable', 'not-held'):
+    def test_an_unavailable_or_unheld_service_fails_fast_without_asking(self):
+        """An older CLI without `service prepare-update`, a service that did not hold, or no answer:
+        the rollout stops before the forced request instead of asking unheld, which a busy M4 can
+        only wait out and fail (M4 on 1.0.43, 2026-10-18), and names Update now as the way on."""
+        for hold_kind, words in (('unsupported', 'Unrecognized flag: --json'), ('not-held', 'it did not hold'),
+                                 ('no-answer', 'no answer within 200s')):
             with self.subTest(hold=hold_kind):
                 clock = Clock()
-                fleet = Fleet(clock, polls={'m4': 10 ** 6})
-                hold = (FakeHold(fleet, error='exit 1: Unknown subcommand prepare-update') if hold_kind == 'unavailable'
-                        else FakeHold(fleet, reply=dict(HELD, held=False)))
+                fleet = Fleet(clock, polls={'m4': 2})
+                hold = {'unsupported': FakeHold(fleet, error='the service CLI has no `service prepare-update --json` '
+                                                             '(exit 1: Unrecognized flag: --json in command specweave-studio service)'),
+                        'not-held': FakeHold(fleet, reply=dict(HELD, held=False)),
+                        'no-answer': FakeHold(fleet, error='no answer within 200s')}[hold_kind]
                 lines = []
-                with self.assertRaises(fleet_rollout.RolloutError):
-                    self.run_rollout(fleet, clock, hold, lines, only='m4', hold_minutes=15,
-                                     local_deadline=40 * 60, poll=30)
-                # One try, the requests as without a hold, and nothing to release.
-                self.assertEqual(kinds(fleet), ['hold', 'request', 'request', 'request'])
-                self.assertIn('--force', fleet.asked['m4'])
-                warnings = [line for line in lines if 'WARNING' in line]
-                self.assertEqual(len(warnings), 1)
-                self.assertIn('asking without a hold', warnings[0])
-                if hold_kind == 'unavailable':
-                    self.assertIn('Unknown subcommand prepare-update', warnings[0])
+                with self.assertRaises(fleet_rollout.RolloutError) as caught:
+                    self.run_rollout(fleet, clock, hold, lines, only='m4')
+                message = str(caught.exception)
+                self.assertIn(words, message)
+                self.assertIn('was not asked to install', message)
+                self.assertIn('Update now', message)
+                self.assertIn('--only workers', message)
+                self.assertEqual(kinds(fleet), ['hold'])  # No request, so nothing unheld; nothing to release.
+                self.assertFalse(any('asking without a hold' in line for line in lines))
+                for worker in ('m1', 'm3'):
+                    self.assertEqual(kinds(fleet, worker), [])
 
+    def test_an_old_cli_is_refused_before_the_first_request(self):
+        """Support is checked before any request, including the one asked before the agent offers
+        the version, so an old CLI never gets an unheld forced request."""
+        for offered in (True, False):
+            with self.subTest(offered=offered):
+                clock = Clock()
+                fleet = Fleet(clock, polls={'m4': 2})
+                if not offered:
+                    fleet.status['m4'], fleet.message['m4'] = 'up-to-date', None
+                    fleet.downloaded['m4'] = fleet.available['m4'] = None
+                hold = FakeHold(fleet, unsupported='M4 runs 1.0.43; `service prepare-update` first shipped in 1.0.45')
+                with self.assertRaises(fleet_rollout.RolloutError) as caught:
+                    self.run_rollout(fleet, clock, hold, only='m4')
+                self.assertIn('first shipped in 1.0.45', str(caught.exception))
+                self.assertIn('Update now', str(caught.exception))
+                self.assertEqual(kinds(fleet), [])
+
+    def test_an_old_cli_still_joins_an_install_under_way(self):
+        """M4 already moving to the version (Update now asked it) needs no hold from the rollout."""
         clock = Clock()
-        fleet = Fleet(clock, polls={'m4': 2})
-        result = self.run_rollout(fleet, clock, FakeHold(fleet, error='no answer within 200s'), only='m4')
+        fleet = Fleet(clock)
+        fleet.version['m4'] = NEW
+        real = fleet.host('m4')
+
+        def m4(argv):
+            reply = real(argv)
+            if argv[0] == 'status' and len(fleet.calls('m4', 'status')) <= 2:
+                reply.update(installFinalized=False, status='downloaded', installedVersion=OLD)
+            return reply
+
+        hosts = fleet.hosts()
+        hosts['m4'] = m4
+        result = fleet_rollout.rollout(NEW, hosts, only='m4', clock=clock, sleep=clock.sleep, say=quiet,
+                                       hold=FakeHold(fleet, unsupported='M4 runs 1.0.43'), poll=15)
         self.assertEqual(result['m4']['result'], 'installed')
+        self.assertEqual(kinds(fleet), [])
+
+    def test_an_old_cli_joins_the_forced_install_update_now_asked_for(self):
+        """Update now on an old M4 writes a held, forced request; the descriptor still names the
+        old version until the restart, and the rollout joins instead of refusing."""
+        clock = Clock()
+        fleet = Fleet(clock)
+        fleet.version['m4'] = NEW  # What M4 reports once the requested install finishes.
+        real = fleet.host('m4')
+        until = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=10)).isoformat()
+
+        def m4(argv):
+            reply = real(argv)
+            if argv[0] == 'status' and len(fleet.calls('m4', 'status')) == 1:
+                reply.update(version=OLD, installFinalized=False, status='waiting-for-quiet',
+                             installRequest={'at': '2026-10-18T09:00:00Z', 'version': NEW}, installMode='force',
+                             installRequestedAt='2026-10-18T09:00:00Z', installCancelledAt=None,
+                             installHoldUntil=until)
+            return reply
+
+        hosts = fleet.hosts()
+        hosts['m4'] = m4
+        result = fleet_rollout.rollout(NEW, hosts, only='m4', clock=clock, sleep=clock.sleep, say=quiet,
+                                       hold=FakeHold(fleet, unsupported='M4 runs 1.0.43'), poll=15)
+        self.assertEqual(result['m4']['result'], 'installed')
+        self.assertEqual(kinds(fleet), [])
+
+    def test_a_cancelled_or_expired_update_now_request_is_not_joined(self):
+        later = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=10)
+        status = {'installRequest': {'version': NEW}, 'installMode': 'force',
+                  'installRequestedAt': '2026-10-18T09:00:00Z', 'installHoldUntil': later.isoformat()}
+        self.assertTrue(fleet_rollout.requested_by_update_now(status, NEW))
+        self.assertFalse(fleet_rollout.requested_by_update_now(dict(status, installCancelledAt='2026-10-18T09:01:00Z'), NEW))
+        self.assertFalse(fleet_rollout.requested_by_update_now(dict(status, installHoldUntil='2026-10-18T09:00:01Z'), NEW))
+        self.assertFalse(fleet_rollout.requested_by_update_now(dict(status, installMode='normal'), NEW))
+        self.assertFalse(fleet_rollout.requested_by_update_now(status, OLD))
 
     def test_without_a_hold_nothing_is_drained(self):
         clock = Clock()
@@ -611,8 +688,13 @@ class M4Hold(unittest.TestCase):
             seen['hold'] = options.get('hold')
             return {}
 
-        saved = fleet_rollout.rollout, fleet_rollout.fleet
+        saved = fleet_rollout.rollout, fleet_rollout.fleet, fleet_rollout.ServiceHold
         fleet_rollout.rollout, fleet_rollout.fleet = rollout, lambda: {}
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        # A home without this Mac's installation.json: the real one must not decide the test.
+        fleet_rollout.ServiceHold = type('ServiceHold', (saved[2],), {
+            '__init__': lambda hold: saved[2].__init__(hold, home=temporary.name)})
         try:
             with contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(fleet_rollout.main(['--version', NEW, '--only', 'm4', '--no-hold']), 0)
@@ -622,7 +704,46 @@ class M4Hold(unittest.TestCase):
                 self.assertEqual(fleet_rollout.main(['--version', NEW, '--only', 'workers']), 0)
                 self.assertIsNone(seen['hold'])
         finally:
-            fleet_rollout.rollout, fleet_rollout.fleet = saved
+            fleet_rollout.rollout, fleet_rollout.fleet, fleet_rollout.ServiceHold = saved
+
+    def test_old_installed_version_is_refused_before_any_host_is_contacted(self):
+        """main() reads installation.json: below 1.0.45 the hold it hands the rollout is
+        unsupported (roll_host refuses unless Update now already asked); --dry-run reports it."""
+        seen = []
+
+        def rollout(version, hosts, *args, **options):
+            seen.append(options.get('hold'))
+            return {}
+
+        with tempfile.TemporaryDirectory() as temporary:
+            home = pathlib.Path(temporary)
+            own = home / '.specwithcode' / 'm4'
+            own.mkdir(parents=True)
+            (own / 'installation.json').write_text(json.dumps({'identity': 'm4', 'version': '1.0.43'}))
+            saved = fleet_rollout.rollout, fleet_rollout.fleet, fleet_rollout.ServiceHold
+            fleet_rollout.rollout, fleet_rollout.fleet = rollout, lambda: {}
+            fleet_rollout.ServiceHold = lambda: saved[2](home=home)
+            try:
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    self.assertEqual(fleet_rollout.main(['--version', NEW, '--only', 'm4']), 0)
+                supported, reason = seen[0].support()
+                self.assertFalse(supported)
+                for words in ('M4 runs 1.0.43', 'first shipped in 1.0.45'):
+                    self.assertIn(words, reason)
+                seen.clear()
+                for version in ('1.0.43', '1.0.44'):
+                    (own / 'installation.json').write_text(json.dumps({'identity': 'm4', 'version': version}))
+                    out = io.StringIO()
+                    with contextlib.redirect_stdout(out):
+                        self.assertEqual(fleet_rollout.main(['--version', NEW, '--dry-run']), 0)
+                    self.assertTrue(json.loads(out.getvalue())['hold'].startswith('unsupported: M4 runs ' + version))
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(fleet_rollout.main(['--version', NEW, '--only', 'm4', '--no-hold']), 0)
+                    self.assertEqual(fleet_rollout.main(['--version', NEW, '--only', 'workers']), 0)
+                self.assertEqual(seen, [None, None])
+            finally:
+                fleet_rollout.rollout, fleet_rollout.fleet, fleet_rollout.ServiceHold = saved
 
 
 class ServiceHoldCommand(unittest.TestCase):
@@ -642,7 +763,9 @@ class ServiceHoldCommand(unittest.TestCase):
         self.temporary.cleanup()
 
     def receipt(self, **fields):
-        (self.own / 'installation.json').write_text(json.dumps(dict({'identity': 'm4', 'version': OLD}, **fields)))
+        # 1.0.45 is the first release whose CLI has `service prepare-update`.
+        fields.setdefault('version', '1.0.45')
+        (self.own / 'installation.json').write_text(json.dumps(dict({'identity': 'm4'}, **fields)))
 
     def cli(self, stdout, code=0, stderr=''):
         """A stand-in CLI: records its arguments one per line, prints `stdout` and `stderr`."""
@@ -674,6 +797,26 @@ class ServiceHoldCommand(unittest.TestCase):
                 with self.assertRaises(fleet_rollout.HoldUnavailable) as caught:
                     hold.prepare()
                 self.assertIn(words, str(caught.exception))
+                self.assertIs(isinstance(caught.exception, fleet_rollout.HoldUnsupported), 'Unknown' in words)
+
+    def test_an_old_cli_is_unsupported(self):
+        """What M4's 1.0.43 CLI printed, and a receipt older than 1.0.45, which never runs the CLI."""
+        hold = fleet_rollout.ServiceHold(home=self.home)
+        self.cli('', 1, 'Unrecognized flag: --json in command specweave-studio service')
+        with self.assertRaises(fleet_rollout.HoldUnsupported) as caught:
+            hold.prepare()
+        self.assertIn('Unrecognized flag: --json', str(caught.exception))
+        self.argv.unlink()
+        for version, supported in (('1.0.43', False), ('1.0.44', False), ('1.0.45', True), ('1.1.0', True), (None, True)):
+            with self.subTest(version=version):
+                self.receipt(cliWrapper=str(self.wrapper), studioHome=str(self.own), version=version)
+                self.assertIs(hold.support()[0], supported)
+        self.receipt(cliWrapper=str(self.wrapper), studioHome=str(self.own), version='1.0.43')
+        self.assertEqual(hold.support(), (False, 'M4 runs 1.0.43; `service prepare-update` first shipped in 1.0.45'))
+        for call in (hold.prepare, hold.release):
+            with self.assertRaises(fleet_rollout.HoldUnsupported):
+                call()
+        self.assertFalse(self.argv.exists(), 'the CLI ran for a release that has no prepare-update')
 
     def test_a_receipt_without_a_runnable_cli_for_this_home_is_unavailable(self):
         hold = fleet_rollout.ServiceHold(home=self.home)

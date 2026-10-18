@@ -250,6 +250,39 @@ describe("the hold across an install's restart", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect(
+    "a gate written while the service runs holds it from the next check, not the next poll",
+    () =>
+      Effect.gen(function* () {
+        // M4, 1.0.43 -> 1.0.45: the old service ran a due schedule after the helper wrote its
+        // gate, because only its 5 s poll read the file. A poll this slow never runs here.
+        yield* TestClock.setTime(NOW);
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "update-install-gate-late-" });
+        const hold = yield* Hold.makeWithOptions({
+          agentStatePath: path.join(dir, "state.json"),
+          pollMs: 60 * 60_000,
+          isAlive: alive,
+          bootMs: null,
+        });
+        const view = yield* Hold.optional.pipe(Effect.provideService(Hold.ServiceUpdateHold, hold));
+        assert.isFalse(yield* hold.isHeld);
+        assert.deepEqual(yield* Hold.skipWhileHeld(view)(Effect.succeed(1)), Option.some(1));
+
+        const at = DateTime.formatIso(DateTime.makeUnsafe(yield* Clock.currentTimeMillis));
+        yield* fs.writeFileString(
+          path.join(dir, Gate.INSTALL_GATE_FILE),
+          JSON.stringify({ helperPid: 4242, at }),
+        );
+        // No time passes and no poll runs: the very next tick and "run now" see the gate.
+        assert.isTrue(yield* hold.installGated);
+        assert.deepEqual(yield* Hold.skipWhileHeld(view)(Effect.succeed(1)), Option.none());
+        const refused = yield* Effect.flip(view.refuse("scheduled-task.run"));
+        assert.equal(refused.message, Hold.SERVICE_UPDATE_VERIFYING_MESSAGE);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("keeps Update now's hold and the gate apart: releasing one leaves the other", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(NOW);

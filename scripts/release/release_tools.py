@@ -295,12 +295,33 @@ def timing_attempts(path, stage):
     return count + 1
 
 
-def timing_summary(path, release):
+def timing_retry(path, stage, job, first, retry, result, log, detail, sha, attempt):
+    """One retry of a failed stage-1 job or server file, apart from stages.jsonl (whose lines
+    count each stage's attempts)."""
+    entry = {'stage': stage, 'job': job, 'firstSeconds': int(first), 'retrySeconds': int(retry),
+             'result': result, 'log': log, 'detail': detail or '', 'sha': sha, 'attempt': int(attempt)}
+    with open(str(path), 'a') as handle:
+        handle.write(json.dumps(entry, sort_keys=True) + '\n')
+
+
+def read_lines(path):
+    """The JSON objects of a .jsonl file, or none when it does not exist."""
     entries = []
-    if pathlib.Path(path).exists():
+    if path and pathlib.Path(path).exists():
         for line in pathlib.Path(path).read_text().splitlines():
             if line.strip():
                 entries.append(json.loads(line))
+    return entries
+
+
+def timing_retries(path, stage=None, sha=None, result=None):
+    return [entry for entry in read_lines(path)
+            if (stage is None or entry.get('stage') == stage) and (sha is None or entry.get('sha') == sha)
+            and (result is None or entry.get('result') == result)]
+
+
+def timing_summary(path, release, retries=None):
+    entries = read_lines(path)
     stages, order = {}, []
     for entry in entries:
         name = entry['stage']
@@ -314,7 +335,18 @@ def timing_summary(path, release):
         if entry['status'] == 'ok':
             record['seconds'] = entry['seconds']
     wall = (max(e['end'] for e in entries) - min(e['start'] for e in entries)) if entries else 0
-    return {'schemaVersion': 1, 'version': release, 'wallSeconds': wall, 'stages': [stages[name] for name in order]}
+    tried = read_lines(retries)
+    for entry in tried:  # A retry inside a stage still running has no stages.jsonl line yet.
+        if entry['stage'] not in stages:
+            order.append(entry['stage'])
+            stages[entry['stage']] = {'stage': entry['stage'], 'seconds': None, 'status': None, 'attempts': 0,
+                                      'totalSeconds': 0}
+    for record in stages.values():
+        mine = [entry for entry in tried if entry['stage'] == record['stage']]
+        record['flakes'] = sum(1 for entry in mine if entry['result'] == 'passed')
+        record['retriesFailed'] = len(mine) - record['flakes']
+    return {'schemaVersion': 1, 'version': release, 'wallSeconds': wall, 'stages': [stages[name] for name in order],
+            'retries': tried}
 
 
 def timing_compare(current, previous, threshold=25.0, minimum=10):
@@ -340,11 +372,108 @@ def timing_compare(current, previous, threshold=25.0, minimum=10):
             notes.append(stage.get('status') or 'not run')
         if stage.get('attempts', 1) > 1:
             notes.append('%d attempts, %ds in all' % (stage['attempts'], stage['totalSeconds']))
+        flaky = [entry['job'] for entry in current.get('retries', [])
+                 if entry['stage'] == stage['stage'] and entry['result'] == 'passed']
+        if flaky:
+            notes.append('%d flake%s: %s' % (len(flaky), '' if len(flaky) == 1 else 's', ', '.join(flaky)))
         lines.append((row % (stage['stage'], '-' if now is None else now, '-' if then is None else then, change,
                              ', '.join(notes))).rstrip())
     lines.append((row % ('wall clock', current.get('wallSeconds', 0),
                          previous.get('wallSeconds', '-') if previous else '-', '', '')).rstrip())
+    lines.extend(retry_lines(current, previous))
     return lines, slower
+
+
+def retry_lines(current, previous):
+    """FLAKY (passed only on retry), failed-again and REPEAT FLAKE lines under the stage table.
+    A stages.json from before retries existed has no 'retries' key."""
+    lines = []
+    earlier = set((entry['stage'], entry['job']) for entry in (previous or {}).get('retries', [])
+                  if entry.get('result') == 'passed')
+    for entry in current.get('retries', []):
+        what = '%s/%s %ss then %ss, first try %s' % (
+            entry['stage'], entry['job'], entry.get('firstSeconds'), entry.get('retrySeconds'), entry.get('log'))
+        if entry.get('detail'):
+            what += ' (%s)' % entry['detail']
+        if entry.get('result') == 'passed':
+            lines.append('FLAKY (passed only on retry): ' + what)
+            if (entry['stage'], entry['job']) in earlier:
+                lines.append('REPEAT FLAKE: %s/%s also flaked in %s; fix the test' % (
+                    entry['stage'], entry['job'], previous.get('version')))
+        else:
+            lines.append('Failed again on retry: ' + what)
+    return lines
+
+
+# ---------------------------------------------------------------- retries and ordering
+
+def shard_failures(summary, maximum):
+    """[(file, seconds)] of a failed test-sharded.mjs run worth one retry, or [] when it is not:
+    a shard that crashed, timed out or failed with no file named leaves nothing to blame, and
+    more than `maximum` failed files are a break, not a flake. Seconds come from the shard's
+    vitest JSON report (0 when it has none)."""
+    data = json.loads(pathlib.Path(summary).read_text())
+    files = []
+    for shard in data.get('shards', []):
+        failed = shard.get('exitCode') != 0 or shard.get('timedOut')
+        if shard.get('timedOut') or shard.get('signal') or (failed and not shard.get('failedFiles')):
+            return []
+        times = {}
+        report = shard.get('report')
+        if report and pathlib.Path(report).is_file():
+            try:
+                for result in json.loads(pathlib.Path(report).read_text()).get('testResults', []):
+                    times[result.get('name')] = (result.get('endTime', 0) - result.get('startTime', 0)) / 1000.0
+            except ValueError:
+                times = {}
+        for name in shard.get('failedFiles', []):
+            seconds = next((value for key, value in times.items() if key and key.endswith('/' + name)), 0)
+            files.append((name, int(round(seconds))))
+    if not files or len(files) > maximum:
+        return []
+    return files
+
+
+def stage1_history(roots):
+    """{job: seconds} from the newest JOB.secs directly in ROOT/<attempt>/ under any ROOT."""
+    best = {}
+    for root in roots:
+        root = pathlib.Path(root)
+        if not root.is_dir():
+            continue
+        for attempt in root.iterdir():
+            if not attempt.is_dir():
+                continue
+            for secs in attempt.glob('*.secs'):
+                try:
+                    value, mtime = int(secs.read_text().strip()), secs.stat().st_mtime
+                except (OSError, ValueError):
+                    continue
+                name = secs.name[:-len('.secs')]
+                if name not in best or mtime > best[name][0]:
+                    best[name] = (mtime, value)
+    return dict((name, value) for name, (_mtime, value) in best.items())
+
+
+def stage1_order(names, history, default=30):
+    """Longest first by the last known time; a job with none counts as `default` seconds. Ties
+    keep the given order."""
+    return sorted(names, key=lambda name: -history.get(name, default))
+
+
+def stage1_fleet_dirs(roots, limit=3):
+    """The newest fleet result folders (ROOT/<attempt>/fleet with a summary.txt), newest first."""
+    found = []
+    for root in roots:
+        root = pathlib.Path(root)
+        if not root.is_dir():
+            continue
+        for summary in root.glob('*/fleet/summary.txt'):
+            try:
+                found.append((summary.stat().st_mtime, str(summary.parent)))
+            except OSError:
+                continue
+    return [path for _mtime, path in sorted(found, reverse=True)[:limit]]
 
 
 # ---------------------------------------------------------------- command line
@@ -381,8 +510,17 @@ def main(argv=None):
     command.add_argument('--in', dest='source', required=True)
     command.add_argument('--out', required=True)
     command.add_argument('--rules')
+    command = commands.add_parser('shard-failures')
+    command.add_argument('--summary', required=True)
+    command.add_argument('--max', type=int, default=5)
+    command.add_argument('--names', action='store_true', help='file names only')
+    command = commands.add_parser('stage1-order')
+    command.add_argument('--history', action='append', default=[])
+    command.add_argument('names', nargs='*')
+    command = commands.add_parser('stage1-fleet-dirs')
+    command.add_argument('--history', action='append', default=[])
     command = commands.add_parser('timing')
-    command.add_argument('action', choices=('record', 'attempts', 'summary', 'compare'))
+    command.add_argument('action', choices=('record', 'attempts', 'summary', 'compare', 'retry', 'retries'))
     command.add_argument('--file')
     command.add_argument('--out')
     command.add_argument('--stage')
@@ -396,6 +534,13 @@ def main(argv=None):
     command.add_argument('--previous')
     command.add_argument('--threshold', type=float, default=25.0)
     command.add_argument('--min-seconds', type=int, default=10)
+    command.add_argument('--retries')
+    command.add_argument('--job')
+    command.add_argument('--first', type=int, default=0)
+    command.add_argument('--retry', type=int, default=0)
+    command.add_argument('--result')
+    command.add_argument('--log', default='')
+    command.add_argument('--detail', default='')
     command = commands.add_parser('json-get')
     command.add_argument('file')
     command.add_argument('key')
@@ -444,8 +589,14 @@ def main(argv=None):
                 timing_record(args.file, args.stage, args.start, args.end, args.status, args.sha, args.attempt)
             elif args.action == 'attempts':
                 print(timing_attempts(args.file, args.stage))
+            elif args.action == 'retry':
+                timing_retry(args.file, args.stage, args.job, args.first, args.retry, args.result, args.log,
+                             args.detail, args.sha, args.attempt)
+            elif args.action == 'retries':
+                for entry in timing_retries(args.file, args.stage, args.sha or None, args.result):
+                    print(entry['job'])
             elif args.action == 'summary':
-                summary = timing_summary(args.file, args.version)
+                summary = timing_summary(args.file, args.version, args.retries)
                 write_atomic(args.out, (json.dumps(summary, indent=2) + '\n').encode(), 0o644)
             else:
                 current = json.loads(pathlib.Path(args.current).read_text())
@@ -455,6 +606,15 @@ def main(argv=None):
                 print('\n'.join(lines))
                 if slower:
                     print('Slower than the previous release by more than %d%%: %s' % (args.threshold, ', '.join(slower)))
+        elif args.command == 'shard-failures':
+            for name, seconds in shard_failures(args.summary, args.max):
+                print(name if args.names else '%s\t%d' % (name, seconds))
+        elif args.command == 'stage1-order':
+            for name in stage1_order(args.names, stage1_history(args.history)):
+                print(name)
+        elif args.command == 'stage1-fleet-dirs':
+            for path in stage1_fleet_dirs(args.history):
+                print(path)
         elif args.command == 'json-get':
             value = json.loads(pathlib.Path(args.file).read_text()).get(args.key)
             if value is None:

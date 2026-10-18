@@ -3,16 +3,20 @@
 #
 #   bash scripts/release/release.sh <version> [--resume] [--dry-run] [--stop-after STAGE]
 #                                   [--previous X.Y.Z] [--no-project-migrations] [--jobs N] [--ci]
+#                                   [--no-retry]
 #   bash scripts/release/release.sh <version> --status
 #   bash scripts/release/release.sh --self-test
 #
 # Stages, in order (docs/studio/releasing.md has the runbook):
 #   preflight trees prev bump candidate stage1 [server starts here, in the background]
 #   build bundle sign helpers plan drafts server-wait
-#   quit-desktop publish-private publish-public fleet-m4 fleet-workers desktop merge
+#   quit-desktop publish-private publish-public fleet-m4 desktop fleet-workers merge
 #
 # publish-public comes before the fleet stages: the hosts' update agents read the public feed
 # (update_agent.DEFAULT_REPOSITORY), so a release only on the private one is invisible to them.
+# The desktop app is swapped right after M4 installs: a new app opened against an older M4
+# service writes its own normal-mode install request over fleet-m4's forced one, and M1 or M3
+# failing must not leave the Mac without its app.
 # Stage names never change, so a staging folder from an earlier order resumes at the first stage
 # it has no marker for.
 #
@@ -23,10 +27,17 @@
 # build tree; on --resume it becomes the new candidate: stage 1 and the signed build run again in
 # full, the server suite only for files changed since its last green commit (vitest --changed).
 #
+# A flaky test does not stop the run: in stage 1, when one or two jobs fail, each runs once more,
+# alone, on the same candidate (first tries kept in try-1/); in the server suite, up to five
+# failed files run once more as one shard (retry-1/). A second failure fails the stage. Every
+# retry is in timings/retries.jsonl and the timing table (FLAKY, and REPEAT FLAKE when the
+# previous release had the same one). Nothing else is retried.
+#
 # --dry-run     print every stage and command; run nothing and write nothing
 # --resume      continue the release whose state is in the staging folder
 # --stop-after  stop once that stage is done (for example drafts, before anything is published)
 # --status      print the stage markers and timings; changes no release state
+# --no-retry    fail a stage on its first failure (to reproduce a flaky test)
 # --self-test   exercise this script with stubbed commands in a temporary folder
 # --no-project-migrations  write the update plan without update.py's --allow-project-migrations,
 #               for its stricter whole-database check; only when no host upgrades across a
@@ -39,7 +50,8 @@
 # Environment: RELEASE_ENV (default ~/.config/skill-studio-release/release.env, see
 # release.env.example), RELEASE_STAGING_ROOT, RELEASE_TREES (persistent trees, default
 # ~/Projects/github/release.noindex), RELEASE_PRIVATE_REPO, RELEASE_PUBLIC_REPO, RELEASE_JOBS,
-# RELEASE_NODE_BIN (the Node $NODE_VERSION bin folder, default nvm's).
+# RELEASE_NODE_BIN (the Node $NODE_VERSION bin folder, default nvm's), RELEASE_SERVER_SHARDS
+# (default 4), RELEASE_RETRY_MAX_JOBS (2), RELEASE_RETRY_MAX_FILES (5).
 # RELEASE_STUB=1 (with RELEASE_STAGING_ROOT and RELEASE_TREES) records commands instead of
 # running them; only the self-test uses it.
 set -euo pipefail
@@ -56,16 +68,18 @@ RELEASE_ENV="${RELEASE_ENV:-$HOME/.config/skill-studio-release/release.env}"
 STAGING_ROOT="${RELEASE_STAGING_ROOT:-$HOME/.specwithcode/release-staging}"
 TREES="${RELEASE_TREES:-$HOME/Projects/github/release.noindex}"
 APP="${RELEASE_DESKTOP_APP:-/Applications/SpecWithCode.app}"
-STAGE_NAMES="preflight trees prev bump candidate stage1 build bundle sign helpers plan drafts server-wait quit-desktop publish-private publish-public fleet-m4 fleet-workers desktop merge"
+STAGE_NAMES="preflight trees prev bump candidate stage1 build bundle sign helpers plan drafts server-wait quit-desktop publish-private publish-public fleet-m4 desktop fleet-workers merge"
 VERSION_RE='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
 POLICY_RE='^1\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
 STUB_SHA_DEFAULT=1111111111111111111111111111111111111111
-# Run on their own first in stage 1: a contrast offender fails in seconds, not after the web suite.
+# Run first in stage 1: a contrast offender fails in seconds, not after the web suite.
 CONTRAST_TESTS="src/themeContrastClasses.test.ts src/appearanceContrast.test.ts"
 
 VERSION="" MODE=real RESUME=0 SELF_TEST=0 STATUS=0 INTERNAL_SERVER=0 PREV_OVERRIDE="" MIGRATIONS=1 CI_MODE=0
 STOP_AFTER="" JOBS="${RELEASE_JOBS:-4}" SHA="" SHA12="" PREV="" CURRENT_STAGE=main LOCKED=0 STATE_READY=0
-POLL=10
+RETRY=1 RETRY_MAX_JOBS="${RELEASE_RETRY_MAX_JOBS:-2}" RETRY_MAX_FILES="${RELEASE_RETRY_MAX_FILES:-5}"
+SERVER_SHARDS="${RELEASE_SERVER_SHARDS:-4}" STAGE_ATTEMPT=1
+POLL=1
 
 say() { printf '%s\n' "$*"; }
 die() {
@@ -281,6 +295,14 @@ attempt_of() {
   python3 -B "$TOOLS" timing attempts --file "$TIMINGS/stages.jsonl" --stage "$1"
 }
 
+# record_retry STAGE JOB FIRST_SECS RETRY_SECS passed|failed LOG [DETAIL]: one line in
+# retries.jsonl, apart from stages.jsonl, whose lines count a stage's attempts.
+record_retry() {
+  if [ "$MODE" = dry ]; then return 0; fi
+  python3 -B "$TOOLS" timing retry --file "$TIMINGS/retries.jsonl" --stage "$1" --job "$2" --first "${3:-0}" \
+    --retry "${4:-0}" --result "$5" --log "$6" --detail "${7:-}" --sha "${SHA12:-}" --attempt "$STAGE_ATTEMPT"
+}
+
 stop_check() {
   if [ -n "$STOP_AFTER" ] && [ "$1" = "$STOP_AFTER" ]; then
     say "Stopped after $1 as asked; continue with: bash scripts/release/release.sh $VERSION --resume"
@@ -311,6 +333,7 @@ run_stage() {
   fi
   log="$LOG_DIR/$name.log"
   attempt="$(attempt_of "$name")"
+  STAGE_ATTEMPT="$attempt"
   printf '\n===== %s %s attempt %s %s =====\n' "$(date -u +%FT%TZ)" "$name" "$attempt" "$SHA12" >> "$log"
   started=$(date +%s)
   set +e
@@ -334,7 +357,8 @@ run_stage() {
 
 print_timings() {
   if [ "$MODE" = dry ] || [ ! -f "$TIMINGS/stages.jsonl" ]; then return 0; fi
-  python3 -B "$TOOLS" timing summary --file "$TIMINGS/stages.jsonl" --out "$TIMINGS/stages.json" --version "$VERSION"
+  python3 -B "$TOOLS" timing summary --file "$TIMINGS/stages.jsonl" --out "$TIMINGS/stages.json" --version "$VERSION" \
+    --retries "$TIMINGS/retries.jsonl"
   python3 -B "$TOOLS" timing compare --current "$TIMINGS/stages.json" \
     --previous "$STAGING_ROOT/${PREV:-none}/timings/stages.json"
 }
@@ -707,6 +731,10 @@ electron_runtime() {
 
 # ---------------------------------------------------------------- stage 1: everything but the server
 
+# retry_jobs, run_group and retry_server_files.
+# shellcheck source=release-retry.sh
+. "$HERE/release-retry.sh"
+
 run_job() {  # run_job OUT NAME|DIR|KIND: one stage-1 job, leaving OUT/NAME.exit and .secs
   local out="$1" name dir kind started code
   IFS='|' read -r name dir kind << EOF
@@ -715,8 +743,8 @@ EOF
   if [ "$MODE" = dry ]; then
     case "$kind" in
       pkg) x "test:$dir" -C "$TEST/$dir" -- env CI=1 node --run test ;;
-      typecheck) x typecheck-gate -C "$TEST" -- bash scripts/studio-verify/typecheck-gate.sh --out "$out/typecheck" ;;
-      fleet) x fleet-tests -C "$TEST" -- bash scripts/studio-fleet/run-tests.sh --out "$out/fleet" ;;
+      typecheck) x typecheck-gate -C "$TEST" -- bash scripts/studio-verify/typecheck-gate.sh --jobs 3 --out "$out/typecheck" ;;
+      fleet) x fleet-tests -C "$TEST" -- bash scripts/studio-fleet/run-tests.sh --out "$out/fleet" --history "<the last fleet results>" ;;
       contrast) x contrast -C "$TEST/apps/web" -- env CI=1 node --run test -- $CONTRAST_TESTS ;;
     esac
     return 0
@@ -725,8 +753,8 @@ EOF
   set +e
   case "$kind" in
     pkg) x "test:$dir" -C "$TEST/$dir" -- env CI=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 node --run test > "$out/$name.log" 2>&1 ;;
-    typecheck) x typecheck-gate -C "$TEST" -- env CI=1 bash scripts/studio-verify/typecheck-gate.sh --out "$out/typecheck" > "$out/$name.log" 2>&1 ;;
-    fleet) x fleet-tests -C "$TEST" -- bash scripts/studio-fleet/run-tests.sh --out "$out/fleet" > "$out/$name.log" 2>&1 ;;
+    typecheck) x typecheck-gate -C "$TEST" -- env CI=1 bash scripts/studio-verify/typecheck-gate.sh --jobs 3 --out "$out/typecheck" > "$out/$name.log" 2>&1 ;;
+    fleet) x fleet-tests -C "$TEST" -- bash scripts/studio-fleet/run-tests.sh --out "$out/fleet" ${FLEET_HISTORY[@]+"${FLEET_HISTORY[@]}"} > "$out/$name.log" 2>&1 ;;
     contrast) x contrast -C "$TEST/apps/web" -- env CI=1 node --run test -- $CONTRAST_TESTS > "$out/$name.log" 2>&1 ;;
   esac
   code=$?
@@ -759,8 +787,9 @@ pool() {  # pool OUT SPEC...: at most $JOBS jobs at once
 }
 
 stage_stage1() {
-  local out="$STAGE/stage1/$SHA12" failed_file="$STAGE/stage1/failed.txt" line dir name spec listing=""
-  local specs=("contrast|apps/web|contrast") first=() rest=() failed=()
+  local out="$STAGE/stage1/$SHA12-$(date +%s)" failed_file="$STAGE/stage1/failed.txt" line dir name spec listing=""
+  local specs=() ordered=() first=() rest=() failed=() secs retried=0
+  FLEET_HISTORY=()
   need_file "$TEST/scripts/studio-verify/typecheck-gate.sh" "the typecheck gate from the release-gates branch"
   need_file "$TEST/scripts/studio-fleet/run-tests.sh" "the fleet test runner from the release-gates branch"
   if [ "$MODE" = dry ]; then
@@ -777,26 +806,46 @@ $listing
 EOF
   specs+=("typecheck|.|typecheck" "fleet|.|fleet")
   if [ "$MODE" = dry ]; then
-    say "    $JOBS jobs at a time, each with its own log and exit code; last attempt's failures first:"
+    say "    $JOBS jobs at a time, contrast first, then the longest by the last run's times; last attempt's failures first:"
+    run_job "$out" "contrast|apps/web|contrast"
     for spec in "${specs[@]}"; do run_job "$out" "$spec"; done
     say "    (every package with a test script except the root and apps/server, which is the server stage)"
+    say "    a failed job (at most $RETRY_MAX_JOBS) runs once more, alone; a second failure fails the stage"
     return 0
   fi
-  remove_owned "$out"
   mkdir -p "$out"
+  # Contrast first (a contrast offender fails in seconds), then the longest jobs by this release's
+  # or the previous release's last times, so the long ones do not start last.
+  while read -r name; do
+    for spec in "${specs[@]}"; do
+      if [ "${spec%%|*}" = "$name" ]; then ordered+=("$spec"); fi
+    done
+  done << EOF
+$(python3 -B "$TOOLS" stage1-order --history "$STAGE/stage1" --history "$STAGING_ROOT/$PREV/stage1" -- "${specs[@]%%|*}")
+EOF
+  [ ${#ordered[@]} -eq ${#specs[@]} ] || die "stage1: release_tools.py stage1-order lost jobs (${#ordered[@]} of ${#specs[@]})"
+  specs=("contrast|apps/web|contrast" "${ordered[@]}")
+  # The fleet runner also starts its longest tests first, by the newest fleet results here.
+  if grep -q -- '--history' "$TEST/scripts/studio-fleet/run-tests.sh"; then
+    while read -r dir; do
+      if [ -n "$dir" ]; then FLEET_HISTORY+=(--history "$dir"); fi
+    done << EOF
+$(python3 -B "$TOOLS" stage1-fleet-dirs --history "$STAGE/stage1" --history "$STAGING_ROOT/$PREV/stage1")
+EOF
+  fi
   # Jobs that failed last time run first, so a fix is checked within seconds.
   for spec in "${specs[@]}"; do
     if [ -f "$failed_file" ] && grep -qxF "${spec%%|*}" "$failed_file"; then first+=("$spec"); else rest+=("$spec"); fi
   done
   if [ ${#first[@]} -gt 0 ]; then
     say "stage1: rerunning last attempt's failures first: $(cut -d'|' -f1 <<< "$(printf '%s\n' "${first[@]}")" | tr '\n' ' ')"
-    pool "$out" "${first[@]}"
+    run_group "$out" "${first[@]}"
     for spec in "${first[@]}"; do
       if [ "$(cat "$out/${spec%%|*}.exit")" != 0 ]; then failed+=("${spec%%|*}"); fi
     done
   fi
   if [ ${#failed[@]} -eq 0 ] && [ ${#rest[@]} -gt 0 ]; then
-    pool "$out" "${rest[@]}"
+    run_group "$out" "${rest[@]}"
   fi
   printf '%-34s %-6s %6s\n' JOB RESULT SECS
   failed=()
@@ -807,20 +856,33 @@ EOF
       continue
     fi
     line=pass
+    secs="$(cat "$out/$name.secs")"
+    if [ -f "$out/try-1/$name.secs" ]; then
+      secs="$(cat "$out/try-1/$name.secs")+$secs"
+      retried=1
+      line=FLAKE
+    fi
     if [ "$(cat "$out/$name.exit")" != 0 ]; then
       line=FAIL
       failed+=("$name")
     fi
-    printf '%-34s %-6s %6s\n' "$name" "$line" "$(cat "$out/$name.secs")"
+    printf '%-34s %-6s %6s\n' "$name" "$line" "$secs"
   done
   if [ ${#failed[@]} -gt 0 ]; then
     printf '%s\n' "${failed[@]}" > "$failed_file"
     for name in "${failed[@]}"; do
-      say "--- $name: last 25 lines of $out/$name.log"
+      if [ -f "$out/try-1/$name.log" ]; then say "--- $name: first try in $out/try-1/$name.log"; fi
+      say "--- $name: failing tests in $out/$name.log"
+      grep -E '^not ok|^ *(FAIL|×) ' "$out/$name.log" | head -n 20 || true
+      say "--- $name: last 25 lines"
       tail -n 25 "$out/$name.log"
     done
+    if [ -d "$out/try-1" ] && [ -f "$out/try-1/${failed[0]}.exit" ]; then
+      die "stage 1 failed: ${failed[*]} (failed again on retry); the signed build does not start"
+    fi
     die "stage 1 failed: ${failed[*]}; the signed build does not start"
   fi
+  if [ "$retried" -eq 1 ]; then say "stage1: passed; each FLAKE row passed only on its second run"; fi
   rm -f "$failed_file"
 }
 
@@ -857,7 +919,9 @@ start_server() {
   fi
   rm -f "$STAGE/server.exit"
   set -m
-  bash "$SELF" --internal-server "$VERSION" "$SHA" >> "$LOG_DIR/server.log" 2>&1 < /dev/null &
+  local flags=()
+  if [ "$RETRY" -eq 0 ]; then flags=(--no-retry); fi
+  bash "$SELF" --internal-server "$VERSION" "$SHA" ${flags[@]+"${flags[@]}"} >> "$LOG_DIR/server.log" 2>&1 < /dev/null &
   pid=$!
   set +m
   printf '%s %s\n' "$pid" "$SHA" > "$STAGE/server.pid"
@@ -865,7 +929,7 @@ start_server() {
 }
 
 stage_server() {
-  local green="" out
+  local green="" out rc=0
   local extra=()
   need_file "$TEST/scripts/release/test-sharded.mjs" "the sharded server runner from the release-gates branch"
   if [ -s "$STAGE/green-server.sha" ]; then green="$(cat "$STAGE/green-server.sha")"; fi
@@ -882,10 +946,18 @@ stage_server() {
   # The suite never needs the release's GitHub token, and gh-backed tests read it before their fakes.
   x server-shards -C "$TEST" -- env -u GH_TOKEN -u GITHUB_TOKEN -u GH_ENTERPRISE_TOKEN -u GITHUB_ENTERPRISE_TOKEN \
     CI=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
-    node scripts/release/test-sharded.mjs --shards 3 --out "$out" ${extra[@]+"${extra[@]}"}
+    node scripts/release/test-sharded.mjs --shards "$SERVER_SHARDS" --out "$out" ${extra[@]+"${extra[@]}"} || rc=$?
+  if [ "$MODE" = dry ]; then
+    say "    server-retry: (in $TEST) when at most $RETRY_MAX_FILES files failed and no shard crashed or timed out, only those, once, as one shard: test-sharded.mjs --shards 1 --out $out/retry-1 -- FILE..."
+  fi
+  if [ "$rc" -ne 0 ]; then
+    rc=0
+    retry_server_files "$out" || rc=$?
+    if [ "$rc" -ne 0 ]; then return "$rc"; fi
+  fi
   if [ ${#extra[@]} -eq 0 ] && [ "$MODE" != dry ]; then
     # A full run's per-shard JSON reports can refresh the recorded shard weights in a follow-up PR.
-    say "server: full run; refresh shard weights with: node scripts/update-test-shard-weights.ts $out/server-*.json"
+    say "server: full run; refresh shard weights with: node scripts/update-test-shard-weights.ts --root $TEST/apps/server $out/server-*.json"
   fi
 }
 
@@ -895,6 +967,7 @@ internal_server() {
   SHA12="$(printf '%s' "$SHA" | cut -c1-12)"
   attempt="$(attempt_of server)"
   printf '\n===== %s server attempt %s %s =====\n' "$(date -u +%FT%TZ)" "$attempt" "$SHA12"
+  STAGE_ATTEMPT="$attempt"
   started=$(date +%s)
   set +e
   (
@@ -937,12 +1010,14 @@ stop_if_server_failed() {
 }
 
 stage_server_wait() {
-  local pid="" sha="" rc="" waited=0
+  local pid="" sha="" rc="" started noted flakes
   if [ "$MODE" = dry ]; then
     say "    wait for the background server suite; fail here if it failed"
     return 0
   fi
   if [ "$MODE" = stub ]; then POLL=0.2; fi
+  started=$(date +%s)
+  noted=$started
   while :; do
     rc="$(server_result)"
     if [ -n "$rc" ]; then break; fi
@@ -955,15 +1030,22 @@ stage_server_wait() {
       die "the server suite for $SHA12 stopped without a result; see $LOG_DIR/server.log, then --resume"
     fi
     sleep "$POLL"
-    waited=$((waited + 10))
-    if [ $((waited % 120)) -eq 0 ]; then say "server-wait: still running after about ${waited}s"; fi
+    if [ $(($(date +%s) - noted)) -ge 120 ]; then
+      noted=$(date +%s)
+      say "server-wait: still running after about $((noted - started))s"
+    fi
   done
   if [ "$rc" != 0 ]; then
     tail -n 40 "$LOG_DIR/server.log"
     drop_drafts
     die "the server suite failed for $SHA12 (exit $rc); fix, commit in $BUILD and --resume (reruns only changed files)"
   fi
-  say "server: green for $SHA12"
+  flakes="$(python3 -B "$TOOLS" timing retries --file "$TIMINGS/retries.jsonl" --stage server --sha "$SHA12" --result passed)"
+  if [ -n "$flakes" ]; then
+    say "server: green for $SHA12, after a retry of: ${flakes//$'\n'/ } (FLAKY)"
+  else
+    say "server: green for $SHA12"
+  fi
 }
 
 # ---------------------------------------------------------------- build, bundle, sign
@@ -1156,7 +1238,12 @@ drop_drafts() {
 
 upload_assets() {  # upload_assets REPO LABEL
   local files=() name
-  while read -r name; do files+=("$ASSETS/$name"); done << EOF
+  while read -r name; do
+    # The version-free DMG is only for the public releases/latest/download link; SHA256SUMS
+    # still lists it, and nothing downloads it from the private repo.
+    if [ "$2" = private ] && [ "$name" = SpecWithCode-arm64.dmg ]; then continue; fi
+    files+=("$ASSETS/$name")
+  done << EOF
 $(release_assets)
 EOF
   x "upload-$2" -- gh release upload "v$VERSION" -R "$1" --clobber "${files[@]}"
@@ -1263,16 +1350,39 @@ stage_publish_public() {
   publish "$PUBLIC_REPO" "$STAGE/notes-public.md" public
 }
 
+# An old app that saw the public release swaps it in when it quits (macSwapInstall.ts): its
+# swap.sh moves the old bundle to $APP.studio-update-old, the new one in, then removes the old.
+desktop_swap_settled() {
+  local waited=0
+  if [ "$MODE" != real ]; then return 0; fi
+  while [ -e "$APP.studio-update-old" ]; do
+    [ $waited -lt 60 ] ||
+      die "$APP.studio-update-old is still there after 60s: the app's own update swap did not finish; check $APP, move the leftover aside and --resume"
+    sleep 1
+    waited=$((waited + 1))
+  done
+}
+
 stage_desktop() {
-  local zip="$ASSETS/SpecWithCode-$VERSION-arm64.zip" version
+  local zip="$ASSETS/SpecWithCode-$VERSION-arm64.zip" version current=""
   stage_quit_desktop
   need_output "$zip" "the signed desktop zip from the sign stage"
-  if [ "$MODE" != real ] || [ -d "$APP" ]; then
-    x desktop-backup -C "$BUILD" -- python3 -B scripts/studio-fleet/desktop_backup.py snapshot "$APP"
-    x desktop-prune -C "$BUILD" -- python3 -B scripts/studio-fleet/desktop_backup.py prune --keep 1
-    x desktop-trash -- osascript -e "tell application \"Finder\" to delete POSIX file \"$APP\""
+  desktop_swap_settled
+  if [ "$MODE" != dry ]; then
+    current="$(q app-version-before --may-fail -- /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"
   fi
-  x desktop-install -- ditto -x -k "$zip" "$(dirname "$APP")"
+  if [ "$current" = "$VERSION" ]; then
+    # Its own updater already installed this release: a snapshot now would zip the new version and
+    # prune the previous version's rollback zip.
+    say "desktop: $APP is already $VERSION (the app's own updater swapped it in); keeping it"
+  else
+    if [ "$MODE" != real ] || [ -d "$APP" ]; then
+      x desktop-backup -C "$BUILD" -- python3 -B scripts/studio-fleet/desktop_backup.py snapshot "$APP"
+      x desktop-prune -C "$BUILD" -- python3 -B scripts/studio-fleet/desktop_backup.py prune --keep 1
+      x desktop-trash -- osascript -e "tell application \"Finder\" to delete POSIX file \"$APP\""
+    fi
+    x desktop-install -- ditto -x -k "$zip" "$(dirname "$APP")"
+  fi
   x desktop-codesign -- codesign --verify --deep --strict "$APP"
   version="$(q app-version -- /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"
   [ "$version" = "$VERSION" ] || die "$APP reports $version after the swap, not $VERSION"
@@ -1342,6 +1452,7 @@ parse_args() {
       --self-test) SELF_TEST=1 ;;
       --status) STATUS=1 ;;
       --allow-project-migrations) MIGRATIONS=1 ;;
+      --no-retry) RETRY=0 ;;
       --no-project-migrations) MIGRATIONS=0 ;;
       --ci) CI_MODE=1 ;;
       --previous | --stop-after | --jobs)
@@ -1380,6 +1491,8 @@ parse_args() {
   [[ $VERSION =~ $VERSION_RE ]] || usage_error "version must be X.Y.Z, not $VERSION"
   if [ -n "$PREV_OVERRIDE" ] && ! [[ $PREV_OVERRIDE =~ $VERSION_RE ]]; then usage_error "--previous must be X.Y.Z"; fi
   case "$JOBS" in 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8) ;; *) usage_error "--jobs must be 1 to 8" ;; esac
+  case "$SERVER_SHARDS" in 1 | 2 | 3 | 4 | 5 | 6) ;; *) usage_error "RELEASE_SERVER_SHARDS must be 1 to 6" ;; esac
+  case "$RETRY_MAX_JOBS$RETRY_MAX_FILES" in *[!0-9]* | "") usage_error "RELEASE_RETRY_MAX_JOBS and RELEASE_RETRY_MAX_FILES must be numbers" ;; esac
   if [ -n "$STOP_AFTER" ] && ! printf ' %s ' "$STAGE_NAMES" | grep -q " $STOP_AFTER "; then
     usage_error "--stop-after takes one of: $STAGE_NAMES"
   fi
@@ -1429,10 +1542,12 @@ main() {
   run_stage publish-public once
   if [ "$CI_MODE" -eq 0 ]; then
     run_stage fleet-m4 once
-    run_stage fleet-workers once
+    # Right after M4: the app attaches to the M4 service, which now runs this version, so it writes
+    # no install request of its own; M1 or M3 failing next no longer leaves the Mac without its app.
     run_stage desktop once
+    run_stage fleet-workers once
   else
-    say "= fleet-m4, fleet-workers, desktop: skipped (--ci); the hosts install v$VERSION on their next update check"
+    say "= fleet-m4, desktop, fleet-workers: skipped (--ci); the hosts install v$VERSION on their next update check"
   fi
   run_stage merge once
   if [ "$MODE" = dry ]; then

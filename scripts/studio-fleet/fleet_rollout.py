@@ -10,10 +10,14 @@ version with a 15-minute hold. Its agent retries the snapshot every 10 seconds i
 waiting for a quiet period, and because the request was made during the service's hold, it may
 stop processes the drain left behind (update.py --reap). When the agent has not found the
 release at the first request, the rollout holds and asks again as soon as it has. A service
-that cannot be held (an older release without the command, or one that is not running) gets the
-forced request alone, with a printed warning: that request never stops running work, so a busy
-service keeps M4 waiting, and its status message says what still runs. `--no-hold` skips the
-hold. The script polls the installed version and finalized guarded receipt, never 'downloaded',
+that cannot be held is never asked unheld: an installed release older than 1.0.45 has no
+`service prepare-update` (PREPARE_UPDATE_SINCE), so the rollout refuses before it asks M4
+anything, and a service that does not answer, refuses or does not hold stops the rollout before
+that request. An unheld forced request never stops running work and leaves update.py --reap
+nothing it may stop, so a busy M4 waits for quiet and its guarded checks fail as new work starts.
+The message names the safe path (UNSUPPORTED_PATH): Update now in the app on M4 holds the same
+way, then `--only workers`. `--no-hold` is the explicit opt-in to an unheld forced request.
+The script polls the installed version and finalized guarded receipt, never 'downloaded',
 and asks again (holding again first) only after the hold has ended, because each new request
 restarts the agent's escalation. An install already under way for the version is joined, not
 asked again or held. A rollout that gives up on M4 releases the hold it took, unless the agent
@@ -84,7 +88,23 @@ class RolloutError(Exception):
 
 
 class HoldUnavailable(Exception):
-    """The service could not be drained and held; the rollout goes on without a hold."""
+    """The service could not be drained and held; the rollout stops instead of asking unheld."""
+
+
+class HoldUnsupported(HoldUnavailable):
+    """The installed service CLI predates `service prepare-update` (PREPARE_UPDATE_SINCE)."""
+
+
+# The first release whose CLI has `service prepare-update ... --json` (servicePrepareUpdate.ts).
+# Older services serve the same prepareServiceUpdate call to their own Update now, not to a CLI.
+PREPARE_UPDATE_SINCE = (1, 0, 45)
+# What an older CLI prints for the command or its flags.
+CLI_PARSE_ERRORS = ('Unrecognized flag', 'Unknown subcommand', 'Invalid subcommand', 'Unknown command')
+UNSUPPORTED_PATH = (
+    "Hold M4 with Update now in the SpecWithCode app on M4 instead (it drains and holds the service through "
+    "the same prepareServiceUpdate call and asks for a forced install), wait until `fleet_rollout.py --version "
+    "%(version)s --only m4` reports it installed, then run `fleet_rollout.py --version %(version)s --only workers`. "
+    "--no-hold asks without a hold, but running work then keeps M4 waiting and its guarded checks fail")
 
 
 def _tuple(version):
@@ -159,12 +179,30 @@ class ServiceHold(object):
         self.home = pathlib.Path(home or pathlib.Path.home())
         self.run = run
 
-    def command(self, flags):
+    def receipt(self):
         own = studio_paths.identity_home(self.home, self.identity)
         try:
             receipt = json.loads((own / 'installation.json').read_text())
         except (OSError, ValueError) as error:
             raise HoldUnavailable('no readable installation.json in %s (%s)' % (own, type(error).__name__)) from None
+        return own, receipt
+
+    def support(self):
+        """(True, None) when the installed CLI has `service prepare-update`, else (False, reason).
+        An unreadable or unversioned receipt is left to the call itself."""
+        try:
+            _own, receipt = self.receipt()
+        except HoldUnavailable:
+            return True, None
+        version = receipt.get('version') if isinstance(receipt, dict) else None
+        installed = _tuple(version)
+        if installed is not None and installed < PREPARE_UPDATE_SINCE:
+            return False, '%s runs %s; `service prepare-update` first shipped in %s' % (
+                self.identity.upper(), version, '.'.join(map(str, PREPARE_UPDATE_SINCE)))
+        return True, None
+
+    def command(self, flags):
+        own, receipt = self.receipt()
         wrapper = receipt.get('cliWrapper') if isinstance(receipt, dict) else None
         studio_home = receipt.get('studioHome') if isinstance(receipt, dict) else None
         if not isinstance(wrapper, str) or not os.path.isabs(wrapper) or not os.path.isfile(wrapper) \
@@ -194,14 +232,23 @@ class ServiceHold(object):
         else:  # An older CLI prints its usage for the unknown command.
             other = [line.strip() for line in (result.stderr or '').splitlines() if line.strip()]
             reason = 'exit %d%s' % (result.returncode, ': ' + other[-1][:200] if other else '')
+            if any(phrase in (result.stderr or '') + (result.stdout or '') for phrase in CLI_PARSE_ERRORS):
+                raise HoldUnsupported('the service CLI has no `service prepare-update --json` (%s)' % reason)
         raise HoldUnavailable(reason)
 
     def prepare(self):
-        """Stops the service's work and holds it for an install; returns its answer."""
+        """Stops the service's work and holds it for an install; returns its answer. Raises
+        HoldUnsupported, without running anything, for a release older than the command."""
+        supported, reason = self.support()
+        if not supported:
+            raise HoldUnsupported(reason)
         return self._call(['--stop-work', '--hold', '--reason', 'install'], HOLD_TIMEOUT)
 
     def release(self):
         """Releases the hold, as Cancel update does, so work can start again."""
+        supported, reason = self.support()
+        if not supported:
+            raise HoldUnsupported(reason)
         return self._call(['--release-hold'], RELEASE_TIMEOUT)
 
 
@@ -269,6 +316,20 @@ def left_running(status, version, since):
     return at is not None and at >= since and 'left to finish' in (status.get('message') or '')
 
 
+def requested_by_update_now(status, version, now=None):
+    """True while a forced, held request for `version` stands on the host, as Update now (or an
+    earlier rollout) writes it: not cancelled since, and its hold not yet run out."""
+    request = status.get('installRequest') or {}
+    if request.get('version') != version or status.get('installMode') != 'force':
+        return False
+    asked = update_request._time(status.get('installRequestedAt'))
+    cancelled = update_request._time(status.get('installCancelledAt'))
+    until = update_request._time(status.get('installHoldUntil'))
+    if asked is None or until is None or (cancelled is not None and cancelled >= asked):
+        return False
+    return until > (now or datetime.datetime.now(datetime.timezone.utc))
+
+
 def roll_host(identity, call, version, force, hold_minutes, deadline, poll, clock, sleep, say, hold=None):
     """Asks one host for `version` and waits until it reports it installed. With `hold` (M4's
     ServiceHold), each forced request is preceded by Update now's drain and hold once the agent
@@ -282,25 +343,31 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
     if _tuple(current) is not None and _tuple(current) > _tuple(version):
         raise RolloutError('%s already runs %s, newer than %s' % (identity, current, version))
     window = hold_minutes * 60 if force else REQUEST_WINDOW
-    holder = [hold if force else None]  # None once the service cannot be held.
+    holder = [hold if force else None]
     took = [False]  # This rollout holds (or held) the service.
+    sent = [0]  # Requests this rollout wrote.
+
+    def unheld(reason):
+        """A wanted hold that cannot be taken stops the rollout before any further forced request."""
+        if sent[0]:
+            outcome = ('its earlier forced request for %s is still pending and waits for quiet; '
+                       'choose Cancel update on M4 if it should not install' % version)
+        else:
+            outcome = 'it was not asked to install'
+        return RolloutError('%s: could not hold the service for %s (%s), so %s. %s' % (
+            identity, version, reason, outcome, UNSUPPORTED_PATH % {'version': version}))
 
     def drain(status):
-        """Update now's drain and hold, right before a request; True when the service holds."""
+        """Update now's drain and hold, right before a request; True when the service holds.
+        Raises RolloutError when the service cannot be held."""
         if holder[0] is None or status.get('status') == 'installing' or not offers(status, version):
             return False
         try:
             reply = holder[0].prepare()
         except HoldUnavailable as error:
-            say('%s: WARNING: could not hold the service (%s); asking without a hold, so running work '
-                'keeps it waiting' % (identity, error))
-            holder[0] = None
-            return False
+            raise unheld(error) from None
         if reply.get('held') is not True:
-            say('%s: WARNING: the service did not hold for %s (%s); asking without a hold' % (
-                identity, version, describe_hold(reply)))
-            holder[0] = None
-            return False
+            raise unheld('it did not hold: %s' % describe_hold(reply))
         took[0] = True
         say('%s: held the service for %s: %s' % (identity, version, describe_hold(reply)))
         return True
@@ -310,6 +377,7 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
         if force:
             argv += ['--force', '--hold-minutes', str(hold_minutes)]
         reply = call(argv)
+        sent[0] += 1
         mode = 'forced, held %d min' % hold_minutes if force else 'version-bound'
         say('%s: asked to install %s (%s) on %s' % (identity, version, mode, current or 'an unknown version'))
         if reply.get('kicked') is False:
@@ -336,12 +404,18 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
 
     # Joining an in-progress target install must not restart it. Its request supplies the
     # host-clock boundary for detecting a later rollback, even if the descriptor is target.
-    first = [update_request._time(status.get('installRequestedAt')) if current == version else None]
-    joined, initial_last = current == version, status.get('lastInstall')
+    under_way = requested_by_update_now(status, version)
+    if under_way:
+        say('%s: joins the forced install of %s already asked for on M4' % (identity, version))
+    first = [update_request._time(status.get('installRequestedAt')) if current == version or under_way else None]
+    joined, initial_last = current == version or under_way, status.get('lastInstall')
     try:
         if joined:
             held_request, asked, requests = False, clock(), 0
         else:
+            supported, reason = holder[0].support() if holder[0] is not None else (True, None)
+            if not supported:  # Before the first request, even one asked before the agent offers it.
+                raise unheld(reason)
             held_request = drain(status)
             if holder[0] is not None and not held_request and not offers(status, version):
                 say('%s: the agent does not offer %s yet; the service is held once it does' % (identity, version))
@@ -471,6 +545,7 @@ def main(argv=None):
         print('fleet_rollout: %s' % error, file=sys.stderr)
         return 1
     hold = None if args.no_hold or args.only == 'workers' else ServiceHold()
+    supported, reason = hold.support() if hold else (True, None)
     if args.dry_run:
         order = ([LOCAL] if args.only in ('all', LOCAL) else []) + (
             ['+'.join(WORKERS)] if args.only in ('all', 'workers') else [])
@@ -478,9 +553,13 @@ def main(argv=None):
             planned = hold.command(['--stop-work', '--hold', '--reason', 'install']) if hold else None
         except HoldUnavailable as error:
             planned = 'unavailable: %s' % error
+        if not supported:
+            planned = 'unsupported: %s' % reason
         print(json.dumps({'version': args.version, 'order': order, 'hold': planned,
                           'commands': {name: host.command for name, host in hosts.items()}}))
         return 0
+    # An old M4 is refused in roll_host, after its status shows whether Update now already
+    # asked for this version (then the rollout joins that install instead).
     try:
         results = rollout(args.version, hosts, args.only, args.hold_minutes, args.m4_deadline_minutes * 60,
                           args.worker_deadline_minutes * 60, args.worker_force, args.poll_seconds, hold=hold)

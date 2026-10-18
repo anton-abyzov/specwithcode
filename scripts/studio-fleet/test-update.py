@@ -5,6 +5,7 @@ from unittest.mock import patch
 import auth_heartbeat
 import os,time
 import release_retention
+import studio_paths
 from launcher import legacy_runtime_path, runtime_path
 spec=importlib.util.spec_from_file_location("owned_update",pathlib.Path(__file__).with_name("update.py"))
 update=importlib.util.module_from_spec(spec);spec.loader.exec_module(update)
@@ -775,7 +776,8 @@ class ApplyRecovery(unittest.TestCase):
    if self.restarted:raise subprocess.TimeoutExpired(['/bin/ps'],30)
    return copy.deepcopy(self.before)
   self.snapshot_since=slow_reading;self.snapshot=snapshot
-  with self.assertRaisesRegex(AssertionError,'did not become ready within 80 s'):self.execute()
+  # The install gate's settle wait before the restart is time spent too.
+  with self.assertRaisesRegex(AssertionError,'did not become ready within %d s'%(80-update.INSTALL_GATE_SETTLE_SECONDS)):self.execute()
   self.assertLessEqual(clock[0]-1000,update.READY_BY_SECONDS_FROM_START+30)
   self.assertEqual(json.loads(self.output.read_text())['readyBySecondsFromStart'],update.READY_BY_SECONDS_FROM_START)
  def test_preparation_too_slow_to_leave_time_for_the_restart_changes_nothing(self):
@@ -913,10 +915,77 @@ class ApplyRecovery(unittest.TestCase):
   self.assertEqual(result['rollback'],'restored-runtime-pointers-and-state');self.assertNotIn('rollbackError',result)
   self.assertEqual(self.stops,[101]);self.assertTrue(all(self.gate_readings))
   self.assertFalse((self.own/'updates'/update.INSTALL_GATE_FILE).exists())
- def test_the_install_gate_is_written_only_once_the_restart_is_next(self):
+ def test_a_refusal_before_the_restart_clears_the_install_gate(self):
   self.scenario='pre-restart-child'
   with self.assertRaises(AssertionError):self.execute()
   self.assertEqual(self.restart_calls,[]);self.assertFalse((self.own/'updates'/update.INSTALL_GATE_FILE).exists())
+ def record_pre_restart_steps(self):
+  # Which pre-restart step ran when (fake monotonic time), in order.
+  steps=[];real_gate=update.write_install_gate;real_rows=self.rows_since;real_backup=self.backup_state;real_run=self.transport
+  def gate(own,home):steps.append(('gate',self.clock[0]));real_gate(own,home)
+  def rows(state,expected_rows):steps.append(('rows',self.clock[0]));return real_rows(state,expected_rows)
+  def backup(own,commit):steps.append(('backup',self.clock[0]));return real_backup(own,commit)
+  def transport(command,**kwargs):
+   if command[:2]==['/bin/launchctl','kickstart']:steps.append(('kickstart',self.clock[0]))
+   return real_run(command,**kwargs)
+  self.rows_since=rows;self.backup_state=backup;self.transport=transport
+  return steps,patch.object(update,'write_install_gate',side_effect=gate)
+ def test_the_gate_settles_before_the_rows_are_compared_and_again_after_the_backup(self):
+  # The old service notices a new gate only on its 5 s poll: a scheduler tick due just after
+  # the gate was written still ran (M4, 1.0.43 -> 1.0.45). Two polls pass before the rows
+  # are compared, and they are compared again after the backup, right before the restart.
+  steps,gate=self.record_pre_restart_steps()
+  with gate:self.execute()
+  self.assertEqual(json.loads(self.output.read_text())['phase'],'verified')
+  self.assertEqual([name for name,_ in steps],['gate','rows','backup','rows','kickstart'])
+  self.assertGreaterEqual(steps[1][1]-steps[0][1],2*5)
+  self.assertGreaterEqual(update.INSTALL_GATE_SETTLE_SECONDS,2*5)
+ def test_a_scheduled_run_during_the_backup_stops_the_update_before_the_restart(self):
+  # The M4 rollback: the old service ran a due schedule while its state was copied. The
+  # write now stops the update with the old release running, rather than after the restart.
+  folder=studio_paths.backups_root(self.home)/'pre-oldsource-20261018T085053Z-fixture'
+  def backup_while_a_schedule_runs(own,commit):
+   self.backups.append(commit);folder.mkdir(parents=True)
+   (folder/'settings.json').write_bytes(b'{}');path=folder/'statev2.sqlite';path.write_bytes(b'pre-update-state')
+   self.rows=copy.deepcopy(self.rows);self.rows['hashes']['scheduled_tasks']='old-service-ran-a-due-task'
+   return path
+  self.backup_state=backup_while_a_schedule_runs
+  with self.assertRaisesRegex(AssertionError,'Native work changed before restart'):self.execute()
+  self.assertEqual(self.restart_calls,[]);self.assertEqual(self.backups,['old-source'])
+  self.assertTrue(all(path.read_bytes()==value for path,value in self.original.items()))
+  self.assertFalse((self.own/'updates'/update.INSTALL_GATE_FILE).exists())
+  result=json.loads(self.output.read_text())
+  self.assertEqual(result['phase'],'pointers-written');self.assertEqual(result['pointers'],'previous-release')
+  self.assertEqual(result['rollback'],'restored-exact-owned-runtime-pointers')
+  # A refusal the update agent retries (update_agent.refused_before_restart).
+  self.assertIn('Native work changed before restart',result['error'])
+  for key in ('restartStartedAt','stateBackup','rollbackError'):self.assertNotIn(key,result)
+  # The unused copy is removed, so retries do not pile up database copies.
+  self.assertFalse(folder.exists());self.assertTrue(folder.parent.is_dir())
+ def test_a_run_the_old_service_started_as_the_gate_was_written_stops_the_update_before_the_backup(self):
+  real=update.write_install_gate
+  def gate_with_a_run_in_flight(own,home):
+   real(own,home);self.rows=copy.deepcopy(self.rows);self.rows['hashes']['scheduled_tasks']='run-started-before-the-poll'
+  with patch.object(update,'write_install_gate',side_effect=gate_with_a_run_in_flight):
+   with self.assertRaisesRegex(AssertionError,'Native work changed before restart'):self.execute()
+  self.assertEqual(self.restart_calls,[]);self.assertEqual(self.backups,[])
+  self.assertTrue(all(path.read_bytes()==value for path,value in self.original.items()))
+  self.assertFalse((self.own/'updates'/update.INSTALL_GATE_FILE).exists())
+  result=json.loads(self.output.read_text())
+  self.assertEqual(result['phase'],'pointers-written');self.assertNotIn('restartStartedAt',result)
+ def test_a_service_launchd_restarted_during_the_backup_stops_the_update_before_the_restart(self):
+  # Restarted on its own after the pointers moved, the service is already the new release.
+  folder=studio_paths.backups_root(self.home)/'pre-oldsource-20261018T085053Z-relaunch'
+  def backup_while_launchd_restarts(own,commit):
+   self.backups.append(commit);folder.mkdir(parents=True)
+   (folder/'settings.json').write_bytes(b'{}');path=folder/'statev2.sqlite';path.write_bytes(b'pre-update-state')
+   self.restarted=True
+   return path
+  self.backup_state=backup_while_launchd_restarts
+  with self.assertRaisesRegex(AssertionError,'restarted on its own'):self.execute()
+  self.assertEqual(self.restart_calls,[]);self.assertFalse(folder.exists())
+  result=json.loads(self.output.read_text())
+  for key in ('restartStartedAt','stateBackup'):self.assertNotIn(key,result)
  def test_the_install_gate_names_this_helper_and_when_it_was_written(self):
   seen=[]
   def at_restart():seen.append(json.loads((self.own/'updates'/update.INSTALL_GATE_FILE).read_text()))

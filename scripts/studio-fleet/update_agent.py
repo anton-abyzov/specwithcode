@@ -66,6 +66,8 @@ REQUEST_WINDOW = datetime.timedelta(minutes=2)
 FORCE_APPLY_RETRIES = 2
 RETRYABLE_REFUSALS = ('Guarded prestate changed', 'Native work changed before restart', 'Native work is not idle',
                       'Complete database prestate changed', 'Complete database changed before restart')
+# Retried only from the apply's preflight while the service holds, so a reap can stop the process.
+HELD_RETRYABLE_REFUSALS = ('Owned service has unexpected descendants',)
 GH_TIMEOUT = 10
 # launchd runs the agent as a Background process; on a loaded Mac its children ran about
 # 25x slower, so `gh auth token` and the snapshot timed out. Children leave darwin background.
@@ -1118,8 +1120,9 @@ class Agent(object):
         except AgentError:
             return False
         error = value.get('error') if isinstance(value, dict) else None
-        return (isinstance(error, str) and any(phrase in error for phrase in RETRYABLE_REFUSALS)
-                and value.get('pointers') in ('unchanged', 'previous-release') and inst['version'] != version
+        retryable = isinstance(error, str) and (any(phrase in error for phrase in RETRYABLE_REFUSALS) or (
+            value.get('phase') == 'preflight' and any(p in error for p in HELD_RETRYABLE_REFUSALS) and reaper.held(self)))
+        return (retryable and value.get('pointers') in ('unchanged', 'previous-release') and inst['version'] != version
                 and not any(key in value for key in ('restartStartedAt', 'rollbackError', 'stateBackup')))
 
     def complete_install(self, version, receipt, outcome, expected_source=None, previous_source=None):

@@ -9,7 +9,7 @@ identities are in [naming](./naming.md).
 ```sh
 bash scripts/release/release.sh 1.0.37 --dry-run              # every stage and command; runs and writes nothing
 bash scripts/release/release.sh 1.0.37 --stop-after drafts     # everything up to the drafts; nothing published
-bash scripts/release/release.sh 1.0.37 --resume                # continue: publish, fleet, desktop, merge
+bash scripts/release/release.sh 1.0.37 --resume                # continue: publish, M4, desktop, M1/M3, merge
 bash scripts/release/release.sh 1.0.37 --status                # stage markers and timings
 ```
 
@@ -61,8 +61,8 @@ make, and refuses to start a second run of a version without `--resume`.
 | prev            | downloads the previous release's plan, helpers manifest and `SHA256SUMS`; checks them (sums or GitHub's digest)        | once                    |
 | bump            | `release/<version>` from `main`, the version bump commit                                                               | once                    |
 | candidate       | pushes HEAD to `release/<version>`, checks it out in the test tree, cleans and installs both, checks Electron          | per candidate           |
-| stage1          | contrast tests, every other package's tests, the typecheck gate and fleet tests, four at a time                        | per candidate           |
-| server          | `test-sharded.mjs --shards 3` in the background, alongside build to drafts                                             | per candidate           |
+| stage1          | contrast tests first, then each package's tests, the typecheck gate and fleet tests, longest first, four at a time     | per candidate           |
+| server          | `test-sharded.mjs --shards 4` in the background, alongside build to drafts                                             | per candidate           |
 | build           | the Electron check, the Google pair only, then `APP_VERSION=<version> vp run build:desktop`                            | per candidate           |
 | bundle          | `bundle.mjs`, `verify-bundle.mjs` on the archive, the Google sign-in check, all before signing                         | per candidate           |
 | sign            | `build-desktop-artifact.ts --signed --skip-build` on the verified build, `mac-signature.mjs`                           | per candidate           |
@@ -74,8 +74,8 @@ make, and refuses to start a second run of a version without `--resume`.
 | publish-private | checks the draft's `SHA256SUMS`, publishes the private release, checks the tag is the candidate                        | once                    |
 | publish-public  | `publish.mjs --tag --push`, checks the draft's `SHA256SUMS`, then the public release                                   | once                    |
 | fleet-m4        | `fleet_rollout.py --only m4`: drains and holds M4 as Update now does, then a forced 15-minute request                  | once                    |
-| fleet-workers   | `fleet_rollout.py --only workers`: M1 and M3 together, polled the same way                                             | once                    |
 | desktop         | rollback zip, swap the app in `/Applications`, check its signature and version, open it                                | once                    |
+| fleet-workers   | `fleet_rollout.py --only workers`: M1 and M3 together, polled the same way                                             | once                    |
 | merge           | the `release/<version>` pull request into `main`                                                                       | once                    |
 
 Preflight checks each file and value exists without printing any. The candidate stage fails when
@@ -86,6 +86,22 @@ The fleet stages come after publish-public, and refuse to start while the public
 published: the hosts' update agents read the public feed (`update_agent.DEFAULT_REPOSITORY`), so
 they cannot see a release that is only private. Releases up to 1.0.39 ran the fleet first and
 published public by hand; a staging folder from that order resumes at its first unmarked stage.
+
+The desktop app is swapped right after M4 installs, before M1 and M3 (up to 1.0.41 it came last).
+From 1.0.41 the app manages the M4 service: opened against an older M4 it writes its own
+normal-mode install request, which can replace fleet-m4's forced one, so it never opens before M4
+runs the release. And M1 or M3 failing no longer leaves the Mac without its app (1.0.39 and 1.0.41
+ended that way). When the old app's own updater already swapped the release in as it quit, the
+stage keeps that app and makes no rollback zip of it, which would hold the new version and prune
+the previous one; it first waits for that swap to finish (`SpecWithCode.app.studio-update-old`
+gone).
+
+Stage 1 starts the contrast tests first, then the longest jobs by this release's or the previous
+release's last times, and the fleet runner starts its longest tests first by the newest fleet
+results (`run-tests.sh --history`). The server suite's shards are split by the recorded file
+times in `apps/server/src/testUtils/shardWeights.json`; refresh them from a full run's reports
+(the server stage prints the command) when the shards drift apart. `RELEASE_SERVER_SHARDS` (1 to 6)
+overrides the four shards.
 
 Before a draft is published, its own `SHA256SUMS` is downloaded, compared with the one built and
 checked to list `studio-update.json` and the helpers manifest. 1.0.38 shipped sums without the
@@ -108,6 +124,18 @@ fails and rolls back on every host, also on one that skipped the migrating relea
 only when no host upgrades across a migration, on the run that reaches the plan stage.
 
 ### When a stage fails
+
+A flaky test does not stop the run. In stage 1, when one or two jobs fail, each runs once more,
+alone, on the same candidate; its first try is kept in `stage1/<sha>-<time>/try-1/`. In the
+server suite, when at most five files failed and no shard crashed or timed out, only those files
+run once more as one shard (`server/<sha>-<time>/retry-1/`), and the drafts stay. A job or file that
+passes on its retry is a FLAKE: the stage passes, the run goes on, and the timing table names it.
+A second failure fails the stage with the usual message; more failed jobs or files than that, or a
+crashed shard, are a break and get no retry. `--no-retry` turns retries off, to reproduce a flaky
+test. `RELEASE_RETRY_MAX_JOBS` and `RELEASE_RETRY_MAX_FILES` change the two limits. No other stage is
+retried: publishing, the fleet, the desktop and the merge have side effects, and the rest are
+deterministic. Releases 1.0.39 and 1.0.40 lost about 40 minutes to four such flakes, most of it
+waiting for someone to run `--resume`.
 
 Fix the cause in the build tree and commit there; the commit is the new candidate. Then run
 `--resume`. The candidate stages run again for it: stage 1 runs the jobs that failed last time
@@ -155,14 +183,25 @@ take it as it is then, and the public copy is checked against the mirror's deny 
 
 Each run appends per-stage start, end, result and attempt to `timings/stages.jsonl`, writes
 `timings/stages.json` and prints it beside the previous release's, marking a stage `SLOWER` when it
-took more than 25% and at least 10 seconds longer. A full green server run prints the command that
-refreshes the recorded shard weights from its reports.
+took more than 25% and at least 10 seconds longer. Retries go to `timings/retries.jsonl` and into
+`stages.json` (`retries`, and `flakes` per stage); the table notes each stage's flakes and lists
+every `FLAKY (passed only on retry)` and `Failed again on retry` with its first try's log, and
+`REPEAT FLAKE` when the previous release had the same one. A full green server run prints the
+command that refreshes the recorded shard weights from its reports.
 
 ### By hand
 
 `fleet_rollout.py --version <v> --dry-run` prints the rollout order and commands, with the
-`service prepare-update` command that drains and holds M4 first (`--no-hold` skips it; a service
-too old for it is asked without a hold, with a warning, so its running work keeps it waiting);
+`service prepare-update` command that drains and holds M4 first (`--no-hold` skips it). A rollout
+never asks M4 for a forced install it could not hold: an unheld request stops no running work and
+leaves `update.py --reap` nothing it may stop, so a busy M4 waits for quiet and fails its guarded
+checks as new work starts. When M4's installed release predates the command (it first shipped in
+1.0.45), the rollout and its dry run say so before contacting any host, and a service that does not
+answer, refuses or does not hold stops the rollout before the request. Then choose **Update now** in
+the SpecWithCode app on M4, which drains and holds through the same `prepareServiceUpdate` call and
+writes the forced request, wait until `fleet_rollout.py --version <v> --only m4` reports M4
+installed (it joins an install of that version already under way), and run `--only workers`;
+`--no-hold` is the explicit opt-in to an unheld request;
 `update_request.py status --identity <id>` reads one host's updater state. For a host whose agent
 cannot install a release on its own, copy the assets to `<studio root>/release-staging/<version>/`
 on that host and run `/usr/bin/python3 -B scripts/studio-fleet/remote_update.py --identity <id>
@@ -216,8 +255,10 @@ publishing, install the tarball with `npm i -g --prefix "$(mktemp -d)" <tarball>
 
 The sign stage writes `SpecWithCode-<version>-arm64.dmg`, the `.zip` and their blockmaps,
 `latest-mac.yml`, and `SpecWithCode-arm64.dmg`, the same installer under a name without the
-version. All of them are uploaded. Updaters download the zip that `latest-mac.yml` names and never
-read the version-free DMG.
+version. All of them are uploaded to the public release; the private one gets all but the
+version-free DMG, which only serves the public `releases/latest/download` link (`SHA256SUMS` still
+lists it). Updaters download the zip that `latest-mac.yml` names and never read the version-free
+DMG.
 
 Release DMGs are built with `--signed`: Developer ID Application, team `NMCB2JZ7QG`, hardened
 runtime, notarized and stapled. The environment is in

@@ -896,6 +896,20 @@ def backup_state(own, commit):
         _write_private(target_dir / 'settings.json', settings.read_bytes())
     return target
 
+def discard_unused_backup(backup):
+    """Removes a backup_state copy that no restart used (a copy of a 2.5 GB database each
+    retry would otherwise pile up). Only the files backup_state writes, in its own folder."""
+    home = pathlib.Path.home().resolve()
+    folder = backup.parent
+    if (backup.name != 'statev2.sqlite' or not folder.name.startswith('pre-')
+            or folder.parent != safe_path(studio_paths.backups_root(home), home)):
+        return
+    for name in ('statev2.sqlite', 'settings.json'):
+        with contextlib.suppress(FileNotFoundError):
+            (folder / name).unlink()
+    with contextlib.suppress(OSError):
+        folder.rmdir()
+
 def restore_state(backup, own):
     """Puts the pre-update database, and the settings.json saved with it, back while the
     service is stopped: a new release may rewrite settings.json once when it starts."""
@@ -994,13 +1008,22 @@ def atomic(path, content, mode):
     finally:
         if temporary.exists(): temporary.unlink()
 
-# The install gate (apps/server/src/serviceUpdate/UpdateInstallGate.ts). Written just before
-# the restart and removed once the release is verified or rolled back: while it is live the
-# service starts nothing on its own and refuses new messages, so the readiness and rollback
-# snapshots find it idle. The service ignores it once this helper exits, and in any case
-# INSTALL_GATE_MAX_SECONDS after it was written: the longest APPLY_BUDGET_SECONDS allows.
+# The install gate (apps/server/src/serviceUpdate/UpdateInstallGate.ts). Written once the
+# pointers name the new release, before the last checks of the old service, and removed once
+# the release is verified or rolled back: while it is live the service (the old one before the
+# restart, the new one after it) starts nothing on its own and refuses new messages, so the
+# pre-restart checks, the state backup and the readiness and rollback snapshots find it idle.
+# The service ignores it once this helper exits, and in any case INSTALL_GATE_MAX_SECONDS
+# after it was written: the longest APPLY_BUDGET_SECONDS allows.
 INSTALL_GATE_FILE = 'install-gate.json'
 INSTALL_GATE_MAX_SECONDS = 3600
+# Releases up to 1.0.46 notice a new gate only on their 5 s poll (ServiceUpdateHold
+# AGENT_POLL_MS), so a scheduler tick may still start a run just after the gate is written
+# (M4, 1.0.43 -> 1.0.45: a 5-minute task ran 6 s after the last row check and the update
+# rolled back). Two polls plus a margin pass before the rows are compared again; a run that
+# started meanwhile shows there and stops the update before the restart, which the agent
+# retries.
+INSTALL_GATE_SETTLE_SECONDS = 2 * 5 + 2
 
 def install_gate_path(own, home):
     return safe_path(own / 'updates' / INSTALL_GATE_FILE, home)
@@ -1084,9 +1107,9 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
     validate_identity(identity)
     web_session_policy(identity, expected.get('webSessionPolicy'))
     started = time.monotonic()
-    def budget_left():
+    def budget_left(reserve=0):
         left = READY_BY_SECONDS_FROM_START - MIN_READINESS_SECONDS - (time.monotonic() - started)
-        assert left > 0, TOO_SLOW_TO_RESTART
+        assert left > reserve, TOO_SLOW_TO_RESTART
         return left
     capture_auth = allow_existing_browser_heartbeat or allow_project_migrations
     # Measure appended rows and private auth in the same transaction as the proof.
@@ -1156,7 +1179,7 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
     budget_left()
     current, _, current_carried = snapshot_since(identity, expected['rows'])
     assert_prestate(expected, current, current_carried)
-    budget_left()
+    budget_left(INSTALL_GATE_SETTLE_SECONDS)
     new_launcher = replaced(old_bytes['launch.sh'])
     cli_prefix[-1] = str(new_release / 'bin.mjs')
     new_bytes = {'launch.sh': new_launcher, 'wrapper': render_cli(cli_prefix).encode(),
@@ -1207,20 +1230,34 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         atomic(own / 'installation.json', new_bytes['installation.json'], 0o600)
         progress['phase'] = 'pointers-written'
         output.write_text(json.dumps(progress, indent=2) + '\n')
-        if 'databaseCapture' in before:
-            current_rows, current_carried, current_database = rows_since_with_database(own / 'userdata', before['rows'])
-        else:
-            current_rows, current_carried = rows_since(own / 'userdata', before['rows'])
-        assert same_guarded_rows(before['rows'], current_rows, current_carried), 'Native work changed before restart'
-        if 'databaseCapture' in before:
-            assert_capture_carried(before['databaseCapture'], current_database, before['rows'], current_rows,
-                                   current_carried, message='Complete database changed before restart')
-        live = run(['/bin/launchctl', 'print', domain + '/' + before['serviceLabel']], text=True)
-        assert re.search(r'^\s*pid = ' + str(before['servicePid']) + r'\s*$', live, re.M)
-        progress['phase'] = 'restart-requested'
+        # The old service starts nothing more on its own from here (scheduler, webhooks, run
+        # now), so the rows compared below stay as they are through the backup and restart.
+        # Kept until the finally below: the new release (or the old one a rollback starts
+        # again) stays idle for the readiness and rollback snapshots.
+        write_install_gate(own, home)
+        time.sleep(INSTALL_GATE_SETTLE_SECONDS)
+        def assert_unchanged_before_restart():
+            if 'databaseCapture' in before:
+                current_rows, current_carried, current_database = rows_since_with_database(own / 'userdata', before['rows'])
+            else:
+                current_rows, current_carried = rows_since(own / 'userdata', before['rows'])
+            assert same_guarded_rows(before['rows'], current_rows, current_carried), 'Native work changed before restart'
+            if 'databaseCapture' in before:
+                assert_capture_carried(before['databaseCapture'], current_database, before['rows'], current_rows,
+                                       current_carried, message='Complete database changed before restart')
+        assert_unchanged_before_restart()
+        def assert_same_service_pid():
+            # A service launchd restarted on its own after the pointers moved would be the
+            # new release, migrating before any backup exists.
+            live = run(['/bin/launchctl', 'print', domain + '/' + before['serviceLabel']], text=True)
+            assert re.search(r'^\s*pid = ' + str(before['servicePid']) + r'\s*$', live, re.M), \
+                'The service restarted on its own before the update restarted it'
+        assert_same_service_pid()
+        # Taken here, before the browser stop and the backup, so a browser reconnecting to
+        # the old service meanwhile still falls inside the heartbeat window. Recorded in the
+        # receipt only once the restart is next (below), so a refusal before it stays one the
+        # update agent retries.
         restart_started_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        progress['restartStartedAt'] = restart_started_at
-        output.write_text(json.dumps(progress, indent=2) + '\n')
         plist = home / 'Library/LaunchAgents' / (before['serviceLabel'] + '.plist')
         assert digest(plist.read_bytes()) == before['fileHashes']['plist'], 'Verified LaunchAgent changed before restart'
         # Studio's own server browser is the one process stopped here (gracefully, verified).
@@ -1235,11 +1272,21 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
             progress['serverBrowserStop'] = stopped
         # The new release migrates the database on start; a rollback must restore both.
         state_backup = backup_state(own, before['artifactSourceCommit'])
+        # Nothing may change between the backup and the restart: the rollback restores this
+        # copy, and the after-snapshot is compared with `before`. Checked again here, last,
+        # so a write the old service made meanwhile stops the update with the old release
+        # still running instead of rolling the new one back.
+        try:
+            assert_same_service_pid()
+            assert_unchanged_before_restart()
+        except BaseException:
+            with contextlib.suppress(OSError, AssertionError):
+                discard_unused_backup(state_backup)
+            raise
+        progress['phase'] = 'restart-requested'
+        progress['restartStartedAt'] = restart_started_at
         progress['stateBackup'] = str(state_backup)
         output.write_text(json.dumps(progress, indent=2) + '\n')
-        # Kept until the finally below: the new release (or the old one a rollback starts
-        # again) stays idle for the readiness and rollback snapshots.
-        write_install_gate(own, home)
         restart_requested = True
         run(['/bin/launchctl', 'kickstart', '-k', domain + '/' + before['serviceLabel']])
         # One reading can take a minute when the process inventory times out and retries, so

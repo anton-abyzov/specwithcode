@@ -79,6 +79,7 @@ if control.get('applySleep'):
 if applies <= control.get('applyRefusals', 0) or control.get('applyFailAfterRestart'):
     receipt = {'phase': 'prepared', 'result': 'update-failed', 'pointers': 'previous-release',
                'error': 'AssertionError: Guarded prestate changed: rows'}
+    receipt.update(control.get('applyRefusal', {}))
     if control.get('applyFailAfterRestart'):
         receipt.update(phase='restart-requested', restartStartedAt='2026-10-12T20:00:00+00:00', pointers='new-release')
     pathlib.Path(args.output).write_text(json.dumps(receipt))

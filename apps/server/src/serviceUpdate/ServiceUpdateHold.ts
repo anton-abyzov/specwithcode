@@ -389,8 +389,20 @@ export const makeWithOptions = (options: ServiceUpdateHoldOptions) =>
         );
       }
     });
+    // A gate written while the service runs counts from the next check, not the next poll: the
+    // helper writes it before its last row checks, and a scheduler tick, a webhook or a "run
+    // now" let through meanwhile would change those rows. While the cached reading says open,
+    // a gate file that is present is read on the spot; an absent one costs one stat. The poll
+    // still notices the gate opening, so a live gate is not re-read here.
+    const gateFilePresent = fileSystem
+      .exists(installGatePath)
+      .pipe(Effect.orElseSucceed(() => false));
     const installGated = Effect.gen(function* () {
-      const until = yield* Ref.get(gateUntil);
+      let until = yield* Ref.get(gateUntil);
+      if (until === null && (yield* gateFilePresent)) {
+        yield* refreshGate;
+        until = yield* Ref.get(gateUntil);
+      }
       return until !== null && (yield* Clock.currentTimeMillis) < until;
     });
     const state = yield* Ref.make<
