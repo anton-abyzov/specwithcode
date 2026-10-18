@@ -70,14 +70,26 @@ export function parseArgs(argv) {
 
 /** Test files and failed files from one shard's vitest JSON report, relative to apps/server. */
 export function readShardReport(file, serverRoot = server) {
-  if (!NodeFS.existsSync(file)) return { files: 0, failedFiles: [], tests: 0, failedTests: 0 };
+  if (!NodeFS.existsSync(file))
+    return { files: 0, failedFiles: [], failures: [], tests: 0, failedTests: 0 };
   const report = JSON.parse(NodeFS.readFileSync(file, "utf8"));
   const results = report.testResults ?? [];
+  const relative = (name) => NodePath.relative(serverRoot, name).replaceAll("\\", "/");
+  const failed = results.filter((result) => result.status === "failed");
   return {
     files: results.length,
-    failedFiles: results
-      .filter((result) => result.status === "failed")
-      .map((result) => NodePath.relative(serverRoot, result.name).replaceAll("\\", "/")),
+    failedFiles: failed.map((result) => relative(result.name)),
+    // Each failed test with the first line of its error, so a run whose logs stay on the
+    // machine (a hosted release runner) still says what broke.
+    failures: failed.flatMap((result) =>
+      (result.assertionResults ?? [])
+        .filter((test) => test.status === "failed")
+        .map((test) => ({
+          file: relative(result.name),
+          test: test.fullName ?? test.title ?? "",
+          message: (test.failureMessages?.[0] ?? result.message ?? "").split("\n")[0].slice(0, 300),
+        })),
+    ),
     tests: report.numTotalTests ?? 0,
     failedTests: report.numFailedTests ?? 0,
   };
@@ -276,6 +288,8 @@ async function main() {
       ].join("  "),
     );
   for (const file of summary.failedFiles) console.log(`failed: ${file}`);
+  for (const failure of shards.flatMap((shard) => shard.failures))
+    console.log(`  ${failure.file} > ${failure.test}: ${failure.message}`);
   for (const shard of shards.filter((item) => item.exitCode !== 0 && item.files === 0))
     console.log(`shard ${shard.index} failed before any test file ran; see ${shard.log}`);
   console.log(`Server shards: ${result.reason} in ${summary.wallSeconds}s`);

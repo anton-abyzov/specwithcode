@@ -3,6 +3,7 @@ import { useAtomValue } from "@effect/atom-react";
 import type {
   AgentSessionProjectCandidate,
   EnvironmentId,
+  OnboardingMachineRole,
   ProjectId,
   ProviderInstanceId,
   ScopedProjectRef,
@@ -15,6 +16,7 @@ import {
   squashAtomCommandFailure,
 } from "@specweave-studio/client-runtime/state/runtime";
 import {
+  AuthAccessWriteScope,
   AuthTerminalOperateScope,
   CommandId,
   defaultInstanceIdForDriver,
@@ -39,6 +41,7 @@ import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { useStudioConnectAuthPrompt } from "../clerk/useStudioConnectAuthPrompt";
 import { useCompleteOnboarding } from "../../onboarding/firstRun";
+import { JoinedMachineStep, JoinMachineStep, MachineRoleStep } from "./JoinMachineSteps";
 import {
   groupOnboardingProjects,
   partitionOnboardingProjects,
@@ -101,9 +104,22 @@ import { formatRelativeTime } from "../../timestampFormat";
  * managed Codex setup or an inline CLI terminal → project import → main screen.
  * Every step past the connection gate is skippable; the whole wizard is
  * re-runnable by clearing the flag.
+ *
+ * On a first run with a server here it first asks what this machine is for.
+ * "Join my existing machines" makes the invitation line for a main machine
+ * elsewhere and then opens to that status, skipping agents and projects; the
+ * main-machine choice continues with the steps above, unchanged.
  */
 
-type WizardStep = "connection" | "agents" | "import";
+type WizardStep = "role" | "join" | "joined" | "connection" | "agents" | "import";
+const FULL_SETUP_STEPS: ReadonlySet<WizardStep> = new Set(["connection", "agents", "import"]);
+
+export interface WelcomeMachineRole {
+  /** Offer the choice: a first run (not finished before) with a server here. */
+  readonly offer: boolean;
+  readonly role: OnboardingMachineRole | null;
+  readonly onChange: (role: OnboardingMachineRole) => Promise<void>;
+}
 const NO_ENVIRONMENTS: readonly EnvironmentId[] = [];
 
 const AGENT_ONBOARDING_THREAD_ID = ThreadId.make("onboarding-agent-setup");
@@ -114,14 +130,26 @@ export function WelcomeWizard({
   localAvailable,
   onDone,
   resumeEnvironmentId,
+  machineRole,
 }: {
   /** Whether this client is authenticated to the server serving the app. */
   readonly localAvailable: boolean;
   readonly resumeEnvironmentId?: EnvironmentId | undefined;
   readonly onDone: (projectRef?: ScopedProjectRef) => void | Promise<void>;
+  /** Absent: no machine choice, the setup starts at Connect. */
+  readonly machineRole?: WelcomeMachineRole | undefined;
 }) {
   const completeOnboarding = useCompleteOnboarding();
-  const [step, setStep] = useState<WizardStep>(resumeEnvironmentId ? "agents" : "connection");
+  // Until the person moves, the step follows saved settings, which can
+  // finish loading after the first render.
+  const [chosenStep, setStep] = useState<WizardStep | null>(resumeEnvironmentId ? "agents" : null);
+  const step: WizardStep =
+    chosenStep ??
+    (machineRole?.role === "joined"
+      ? "joined"
+      : machineRole?.offer && machineRole.role === null
+        ? "role"
+        : "connection");
   const { environments } = useEnvironments();
   const [selection, setSelection] = useState<ReadonlySet<EnvironmentId> | null>(null);
   const autoSelectedComputers = useRef(new Set<EnvironmentId>());
@@ -132,6 +160,19 @@ export function WelcomeWizard({
   const finishingPromiseRef = useRef<Promise<boolean> | null>(null);
   const completionErrorToastIdRef = useRef<ReturnType<typeof toastManager.add> | null>(null);
   const primaryEnvironment = usePrimaryEnvironment();
+  const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
+  const canInvite = useEnvironmentScope(primaryEnvironmentId, AuthAccessWriteScope);
+  const machineNoun =
+    primaryEnvironment?.serverConfig?.environment.platform.os === "darwin" ? "Mac" : "machine";
+  const chooseRole = (role: OnboardingMachineRole) => {
+    void machineRole?.onChange(role).catch(() =>
+      toastManager.add({
+        type: "error",
+        title: "Could not save your choice",
+        description: "Your settings could not be saved. Try again.",
+      }),
+    );
+  };
   useEffect(() => {
     const newComputers = environments.filter(
       (environment) => !autoSelectedComputers.current.has(environment.environmentId),
@@ -234,19 +275,49 @@ export function WelcomeWizard({
             </div>
           }
         >
-          <WizardSteps
-            steps={ONBOARDING_STAGES}
-            currentStep={stageIndex}
-            isStepDisabled={(index) => isImporting || index >= stageIndex}
-            onStepChange={(index) => {
-              if (isImporting || index > stageIndex) return;
-              setStep(index === 0 ? "connection" : "agents");
-            }}
-          />
+          {FULL_SETUP_STEPS.has(step) ? (
+            <WizardSteps
+              steps={ONBOARDING_STAGES}
+              currentStep={stageIndex}
+              isStepDisabled={(index) => isImporting || index >= stageIndex}
+              onStepChange={(index) => {
+                if (isImporting || index > stageIndex) return;
+                setStep(index === 0 ? "connection" : "agents");
+              }}
+            />
+          ) : null}
         </WizardHeader>
 
         <WizardPanel holdHeight={isLoadingProjects}>
-          {step === "connection" ? (
+          {step === "role" ? (
+            <MachineRoleStep
+              machineNoun={machineNoun}
+              onJoin={() => setStep("join")}
+              onMain={() => {
+                chooseRole("main");
+                setStep("connection");
+              }}
+            />
+          ) : step === "join" ? (
+            <JoinMachineStep
+              environmentId={primaryEnvironmentId}
+              canManage={canInvite}
+              defaultName={primaryEnvironment?.label ?? null}
+              machineNoun={machineNoun}
+              onBack={() => setStep(machineRole?.role === "joined" ? "joined" : "role")}
+              onJoined={() => chooseRole("joined")}
+              onDone={() => setStep("joined")}
+            />
+          ) : step === "joined" ? (
+            <JoinedMachineStep
+              machineNoun={machineNoun}
+              onNewLine={() => setStep("join")}
+              onFullSetup={() => {
+                chooseRole("main");
+                setStep("connection");
+              }}
+            />
+          ) : step === "connection" ? (
             <ConnectionStep
               expandPairingInitially={!localAvailable && !hasCloudPublicConfig()}
               selectedIds={selectedIds}

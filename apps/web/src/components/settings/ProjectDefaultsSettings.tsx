@@ -30,6 +30,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { useBrowserDefaults } from "../../browser/browserDefaults";
 import { toastManager } from "../ui/toast";
 import { Switch } from "../ui/switch";
+import { ComputerUsePermissionSetup } from "../computerUse/ComputerUsePermissions";
 import type { ProjectSettingsCategory } from "./ProjectSettingsPanel";
 import { searchableSetting } from "./settingsSearch";
 import { useSettingsScope } from "./SettingsScopeContext";
@@ -663,7 +664,7 @@ export function ProjectDefaultsSettings({
               mixed={mixedComputer}
               id={searchableSetting("agent-computer-access").id}
               title="Agent computer access"
-              description="Let agents on this machine, in every project and with every provider, see and control its desktop through the SpecWithCode app, for System Settings and other native apps. macOS asks for Screen Recording and Accessibility the first time. Applies when an agent session next starts."
+              description="Let agents on this machine, in every project and with every provider, see and control its desktop through the SpecWithCode app, for System Settings and other native apps. macOS needs Screen Recording and Accessibility for SpecWithCode; allow them below. Applies when an agent session next starts."
               resetAction={
                 settings.enableAgentComputerAccess !==
                 DEFAULT_SERVER_SETTINGS.enableAgentComputerAccess ? (
@@ -688,7 +689,11 @@ export function ProjectDefaultsSettings({
                   }
                 />
               }
-            />
+            >
+              {settings.enableAgentComputerAccess && !mixedComputer ? (
+                <ComputerUsePermissionSetup environmentId={target?.environmentId ?? null} />
+              ) : null}
+            </SettingsRow>
           )}
           {browserProfileSupported ? (
             <SettingsRow

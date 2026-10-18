@@ -39,7 +39,9 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { MachineLimitBlocks } from "../studio/shell/HostLimits";
 import { UsageLimitsPooled } from "./UsageLimitsPooled";
 import { environmentsNeedingChatSetup } from "./usageChatSetup";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
@@ -363,10 +365,22 @@ export function ResetCredits({
   );
 }
 
+type LimitsView = "machines" | "accounts";
+const LIMITS_VIEW_KEY = "specwithcode:usage-limits-view";
+
+function readLimitsView(): LimitsView {
+  try {
+    return localStorage.getItem(LIMITS_VIEW_KEY) === "accounts" ? "accounts" : "machines";
+  } catch {
+    return "machines";
+  }
+}
+
 /**
  * Subscription quota across every connected environment's providers and hubs,
- * pooled per provider. The page advances `now` on explicit refresh rather than
- * ticking: a live clock would repaint the page for no decision-changing gain.
+ * by machine (what each one is signed in to) or by account (each quota once,
+ * pooled per provider). The page advances `now` on explicit refresh rather
+ * than ticking: a live clock would repaint the page for no decision-changing gain.
  */
 export function UsageLimitsSection({
   selectedEnvironmentIds,
@@ -383,10 +397,42 @@ export function UsageLimitsSection({
       ? presentations
       : new Map([...presentations].filter(([id]) => selectedEnvironmentIds.has(id)));
   const needingSetup = environmentsNeedingChatSetup(selected);
+  const [view, setView] = useState(readLimitsView);
   return (
     <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <ToggleGroup
+          aria-label="Group limits"
+          value={[view]}
+          onValueChange={(next) => {
+            const value = next[0];
+            if (value !== "machines" && value !== "accounts") return;
+            setView(value);
+            try {
+              localStorage.setItem(LIMITS_VIEW_KEY, value);
+            } catch {
+              // A private window keeps the choice for this visit only.
+            }
+          }}
+        >
+          <Toggle value="machines">By machine</Toggle>
+          <Toggle value="accounts">By account</Toggle>
+        </ToggleGroup>
+        <p className="text-xs text-muted-foreground" data-limits-view-caption="">
+          {view === "machines"
+            ? "Each machine runs its own sign-ins: what is signed in where, and what is left."
+            : "Each account counted once, added up across every machine signed in to it."}
+        </p>
+      </div>
       <UsageChatSetupNotice environments={needingSetup} />
-      <UsageLimitsPooled presentations={selected} now={now} cursorPrompt={cursorPrompt} />
+      {view === "machines" ? (
+        <>
+          <MachineLimitBlocks only={selectedEnvironmentIds} now={now} />
+          {cursorPrompt}
+        </>
+      ) : (
+        <UsageLimitsPooled presentations={selected} now={now} cursorPrompt={cursorPrompt} />
+      )}
     </div>
   );
 }

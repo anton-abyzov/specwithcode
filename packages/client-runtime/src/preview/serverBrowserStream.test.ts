@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { createPreviewStreamClient, type PreviewStreamControl } from "./serverBrowserStream.ts";
+import {
+  createPreviewStreamClient,
+  previewStreamControlAction,
+  previewStreamControlLabel,
+  type PreviewStreamControl,
+} from "./serverBrowserStream.ts";
 
 class FakeSocket extends EventTarget {
   static readonly OPEN = 1;
@@ -139,6 +144,27 @@ describe("preview stream control", () => {
     expect(client.send({ type: "text", text: "late input" })).toBe(false);
     expect(client.send({ type: "dialog", accept: false })).toBe(false);
     client.stop();
+  });
+});
+
+describe("preview stream control copy", () => {
+  const control = (controller: PreviewStreamControl["controller"], canOperate = true) =>
+    ({ canOperate, controller, generation: 1, dialog: null }) satisfies PreviewStreamControl;
+
+  it("says who is driving the tab", () => {
+    expect(previewStreamControlLabel(null)).toBe("Connecting...");
+    expect(previewStreamControlLabel(control("agent", false))).toBe("View only");
+    expect(previewStreamControlLabel(control("you"))).toBe("You're driving. The agent waits.");
+    expect(previewStreamControlLabel(control("agent"))).toBe("The agent is driving");
+    expect(previewStreamControlLabel(control("another-viewer"))).toBe("Someone else is driving");
+    expect(previewStreamControlLabel(control("unclaimed"))).toBe("Nobody is driving");
+  });
+
+  it("offers take over, or hand back while you drive", () => {
+    expect(previewStreamControlAction(control("you")).label).toBe("Hand back");
+    expect(previewStreamControlAction(control("agent")).label).toBe("Take over");
+    expect(previewStreamControlAction(control("agent")).hint).toMatch(/Pause the agent/);
+    expect(previewStreamControlAction(control("unclaimed")).label).toBe("Take over");
   });
 });
 

@@ -8,6 +8,7 @@ import type { PreparedConnection } from "@specweave-studio/client-runtime/connec
 import type { ProjectId } from "@specweave-studio/contracts";
 import type {
   StudioFleetAddInput,
+  StudioFleetInviteInput,
   StudioFleetWorkersAllowInput,
 } from "@specweave-studio/contracts/studioFleet";
 import * as Effect from "effect/Effect";
@@ -58,6 +59,60 @@ export function requestFleetAdd(prepared: PreparedConnection, input: StudioFleet
       url: (base) => environmentEndpointUrl(base, "/api/studio/fleet/machines"),
       timeoutMs: 15000,
       request: ({ client, headers }) => client.addFleetMachine({ headers, payload: input }),
+    });
+  });
+}
+/**
+ * Publishes this server on its Tailscale name and makes an invitation for
+ * another machine. Publishing can wait for Tailscale certificates.
+ */
+export function requestFleetInvite(prepared: PreparedConnection, input: StudioFleetInviteInput) {
+  return Effect.gen(function* () {
+    const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
+    const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+    return yield* executeAuthenticatedEnvironmentHttpRequest({
+      prepared,
+      signer,
+      remoteAuthorization,
+      group: "studioFleet",
+      method: "POST",
+      url: (base) => environmentEndpointUrl(base, "/api/studio/fleet/invite"),
+      timeoutMs: 45000,
+      request: ({ client, headers }) => client.inviteFleetMachine({ headers, payload: input }),
+    });
+  });
+}
+/** Whether Tailscale on this server's machine is installed, signed in and running. */
+export function requestFleetTailscale(prepared: PreparedConnection) {
+  return Effect.gen(function* () {
+    const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
+    const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+    return yield* executeAuthenticatedEnvironmentHttpRequest({
+      prepared,
+      signer,
+      remoteAuthorization,
+      group: "studioFleet",
+      method: "GET",
+      url: (base) => environmentEndpointUrl(base, "/api/studio/fleet/tailscale"),
+      timeoutMs: 10000,
+      request: ({ client, headers }) => client.fleetTailscale({ headers }),
+    });
+  });
+}
+/** Starts the Tailscale app and `tailscale up` there; answers with the sign-in page. */
+export function requestFleetTailscaleSignIn(prepared: PreparedConnection) {
+  return Effect.gen(function* () {
+    const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
+    const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+    return yield* executeAuthenticatedEnvironmentHttpRequest({
+      prepared,
+      signer,
+      remoteAuthorization,
+      group: "studioFleet",
+      method: "POST",
+      url: (base) => environmentEndpointUrl(base, "/api/studio/fleet/tailscale/sign-in"),
+      timeoutMs: 45000,
+      request: ({ client, headers }) => client.signInFleetTailscale({ headers, payload: {} }),
     });
   });
 }

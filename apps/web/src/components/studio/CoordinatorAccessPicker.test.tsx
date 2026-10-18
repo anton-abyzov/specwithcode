@@ -55,6 +55,29 @@ it("retries the attempted choice after a failed save, even when settings stayed 
   expect(mocks.save).toHaveBeenCalledTimes(2);
   expect(mocks.save.mock.calls[1]).toEqual(mocks.save.mock.calls[0]);
 });
+it("shows the mode the coordinator runs in, not only the saved default", async () => {
+  await act(async () =>
+    root.render(
+      <CoordinatorAccessPicker
+        environmentId={"host" as never}
+        projectId={"project" as never}
+        coordinatorRuntimeMode="full-access"
+      />,
+    ),
+  );
+  expect(DEFAULT_SERVER_SETTINGS.defaultRuntimeMode).toBe("approval-required");
+  expect(container.querySelector("select")!.value).toBe("full-access");
+  await act(async () =>
+    root.render(
+      <CoordinatorAccessPicker
+        environmentId={"host" as never}
+        projectId={"project" as never}
+        coordinatorRuntimeMode="approval-required"
+      />,
+    ),
+  );
+  expect(container.querySelector("select")!.value).toBe("approval-required");
+});
 it("requires settings write scope", async () => {
   mocks.allowed = false;
   await mount();

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { CheckIcon, LaptopIcon, RefreshCwIcon } from "lucide-react";
 import {
   AuthAccessWriteScope,
@@ -29,7 +29,7 @@ import {
 } from "../../studio/fleetAutoConnect";
 import { useEnvironments } from "../../state/environments";
 import { machineLastSeenAt, useMachineLastSeenVersion } from "../../lib/machineLastSeen";
-import { lastSeenLabel, machineStatus } from "../../lib/machineStatus";
+import { lastSeenLabel, machineDetail, machineStatus } from "../../lib/machineStatus";
 import {
   useClientSettings,
   useEnvironmentSettings,
@@ -39,6 +39,7 @@ import { Switch } from "../ui/switch";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { connectPairing } from "../../connection/onboarding";
+import { FleetInviteArea } from "./FleetInvite";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { Button } from "../ui/button";
@@ -206,6 +207,7 @@ export function StudioFleetConnections({ environmentId, savedEnvironmentIds }: P
   };
   const [workerDrafts, setWorkerDrafts] = useState<Readonly<Record<string, WorkerDraft>>>({});
   const [invitation, setInvitation] = useState("");
+  const [inviteOpen, setInviteOpen] = useState(false);
   const { environments } = useEnvironments();
   // A machine saved here only at an address it has left reads as not saved,
   // so Connect machine adds its new address.
@@ -221,8 +223,10 @@ export function StudioFleetConnections({ environmentId, savedEnvironmentIds }: P
       connected,
       detail: connected
         ? null
-        : (status.reason ??
-          lastSeenLabel(machineLastSeenAt(environment.environmentId), Date.now())),
+        : machineDetail(
+            lastSeenLabel(machineLastSeenAt(environment.environmentId), Date.now()),
+            status.reason,
+          ) || null,
     };
   }
   const saved = new Set<string>(savedEnvironmentIds);
@@ -333,6 +337,19 @@ export function StudioFleetConnections({ environmentId, savedEnvironmentIds }: P
       invitation={invitation}
       onInvitationChange={setInvitation}
       onAddMachine={() => void addMachine()}
+      onInvite={() => setInviteOpen(true)}
+      inviteDialog={
+        <FleetInviteArea
+          environmentId={environmentId}
+          defaultName={
+            environments.find((environment) => environment.environmentId === environmentId)
+              ?.label ?? null
+          }
+          canManage={canManageWorkers}
+          open={inviteOpen}
+          onOpenChange={setInviteOpen}
+        />
+      }
       machineStatuses={machineStatuses}
     />
   );
@@ -380,6 +397,8 @@ export function StudioFleetRoster({
   invitation = "",
   onInvitationChange,
   onAddMachine,
+  onInvite,
+  inviteDialog = null,
   machineStatuses = NO_MACHINE_STATUSES,
 }: {
   snapshot: StudioFleetSnapshot | null;
@@ -408,6 +427,10 @@ export function StudioFleetRoster({
   invitation?: string;
   onInvitationChange?: (invitation: string) => void;
   onAddMachine?: () => void;
+  /** Opens the in-app `fleet invite` for this machine. */
+  onInvite?: () => void;
+  /** The invitation dialog `onInvite` opens. */
+  inviteDialog?: ReactNode;
   /** This browser's own connection to each saved machine, keyed by environment id. */
   machineStatuses?: Readonly<Record<string, FleetMachineConnection>>;
 }) {
@@ -552,14 +575,14 @@ export function StudioFleetRoster({
             onAddMachine();
           }}
         >
-          <span className="min-w-0 sm:shrink-0">
+          <span className="min-w-0 sm:flex-1">
             <span className="block text-sm">Add a machine</span>
             <span className="block text-xs text-muted-foreground">
-              Run <code className="font-mono">specwithcode fleet invite</code> there and paste the
-              line.
+              On that machine, choose Invite this machine under Settings &gt; Connections (or run{" "}
+              <code className="font-mono">specwithcode fleet invite</code>) and paste the line.
             </span>
           </span>
-          <div className="flex min-w-0 flex-1 gap-2">
+          <div className="flex min-w-0 gap-2 sm:w-96 sm:shrink-0">
             <input
               aria-label="Invitation from the other machine"
               className="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-2 font-mono text-xs dark:bg-input/32"
@@ -584,6 +607,31 @@ export function StudioFleetRoster({
             </Button>
           </div>
         </form>
+      ) : null}
+      {onInvite ? (
+        <div
+          id={searchableSetting("private-machines-invite").id}
+          className="flex min-w-0 flex-col gap-2 border-t border-border/60 px-3 py-2.5 sm:px-4"
+        >
+          <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+            <span className="min-w-0">
+              <span className="block text-sm">Add this machine to another one</span>
+              <span className="block text-xs text-muted-foreground">
+                Make a line to paste on your main machine. Both need Tailscale.
+              </span>
+            </span>
+            <Button
+              className="shrink-0 self-start sm:self-auto"
+              size="xs"
+              variant="outline"
+              disabled={pending !== null || !canManageWorkers}
+              onClick={onInvite}
+            >
+              {canManageWorkers ? "Invite this machine" : "Manage access required"}
+            </Button>
+          </div>
+          {inviteDialog}
+        </div>
       ) : null}
       {!canPair &&
       snapshot?.machines.some(

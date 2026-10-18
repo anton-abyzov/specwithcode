@@ -9,8 +9,16 @@ shared provider settings.
 Use a separate Claude config directory for each account. This also works for named
 presets that need different Claude settings or a router connection.
 
-Keep your existing account in the default directory. On the environment's machine,
-create the second login:
+The quickest way: **Settings > Providers > Add provider**, choose Claude, then
+**Add Claude account**. Name the account (for example "Marketing"); the app adds a
+Claude instance with its own directory (`~/.claude-marketing`) and shows the one
+command to run in Terminal on that machine. Sign in with the other account in the
+browser it opens, then come back to the app: the dialog notices the sign-in, and
+the account's limits appear under **Usage > Limits**. Claude Code keeps a separate
+Keychain item for each config directory, so the existing login is not replaced.
+
+To set it up by hand instead, keep your existing account in the default directory.
+On the environment's machine, create the second login:
 
 ```bash
 mkdir -p ~/.claude_personal

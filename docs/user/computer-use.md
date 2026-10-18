@@ -23,18 +23,31 @@ access** while that machine is selected. A change applies when an agent
 session next starts. A thread acts on the desktop of the machine it runs on.
 
 The actions run inside the SpecWithCode desktop app, so the app must be open
-on that Mac. The first time an agent takes a screenshot or clicks, macOS asks
-for two permissions for SpecWithCode, and System Settings opens at the right
-page:
+on that Mac, and macOS must allow two permissions for SpecWithCode:
 
 - **Screen Recording**, so agents can see the screen.
 - **Accessibility**, so agents can click and type.
 
-Click **Allow** or turn on SpecWithCode in the list. The agent's action waits
-up to two minutes for you, then carries on by itself, so you do not need to
-ask again. macOS lets only you grant these permissions; no app can grant them
-to itself. If macOS asks you to quit and reopen the app, do that, then ask
-the agent to try again.
+The grant belongs to the SpecWithCode app, not to the background service or
+to `node`: the service only passes each request to the app, which takes the
+screenshot and posts the clicks. Check both under **Settings → Integrations →
+Agent computer access**: each shows its live status and an **Allow** button,
+which brings up the macOS prompt or opens the right Privacy & Security page
+with a SpecWithCode icon you can drag into the list.
+
+When an agent needs a permission you have not allowed yet, the thread shows a
+card above the composer with the same **Allow** button. The agent's action
+waits up to two minutes and goes through by itself once you allow it. If it
+gave up, the card stays under the failed step; once the permission is
+allowed, **Ask the agent to try again** sends that for you. macOS lets only
+you grant these permissions; no app can grant them to itself. If macOS asks
+you to quit and reopen the app, choose **Quit & Reopen**; the card offers the
+same button.
+
+Settings → Connections may list a `computer-use` row with Codex showing
+**Disabled** and Claude Code **Not found**. Those are the providers' own
+computer-use helpers, not what agents in SpecWithCode use, so nothing there
+needs turning on.
 
 ## What agents do and do not do
 

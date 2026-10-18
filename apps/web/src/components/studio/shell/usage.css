@@ -69,6 +69,16 @@
   gap: 12px;
   font-size: 12px;
 }
+.sws-usage-popover-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sws-usage-popover-head > p {
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
 .sws-usage-provider {
   display: flex;
   flex-direction: column;

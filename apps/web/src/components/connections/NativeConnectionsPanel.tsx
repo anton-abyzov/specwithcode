@@ -16,6 +16,7 @@ import { useEnvironment } from "../../state/environments";
 import { machineStatus } from "../../lib/machineStatus";
 import { Button } from "../ui/button";
 import { ConnectionMatrix } from "./ConnectionMatrix";
+import { ComputerUseConnectionNote } from "../computerUse/ComputerUsePermissions";
 
 export function NativeConnectionsPanel({
   environmentId,
@@ -96,6 +97,7 @@ export function NativeConnectionsPanel({
             project={Boolean(projectId)}
             pendingId={pendingId}
             {...(canEdit ? { onApply: (input) => void applyChange(input) } : {})}
+            computerUseNote={<ComputerUseConnectionNote environmentId={environmentId} />}
           />
         </>
       ) : (

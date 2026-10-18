@@ -55,6 +55,8 @@ import { AcpRegistrySearchStep } from "./AcpRegistrySearchStep";
 import { ProviderWizardAuthenticationStep } from "./ProviderWizardAuthenticationStep";
 import { resolveOfficialAcpRegistryIconUrl } from "./AcpRegistryIcon";
 import { AddManagedCodexAccountDialog } from "./CodexSetupSection";
+import { AddClaudeAccountDialog } from "./AddClaudeAccountDialog";
+import { ClaudeAI } from "../Icons";
 import { ProviderEnvironmentSection } from "./ProviderInstanceCard";
 
 /**
@@ -119,6 +121,7 @@ export function AddProviderInstanceDialog({
 
   const [wizardStep, setWizardStep] = useState(0);
   const [addingChatGptAccount, setAddingChatGptAccount] = useState(false);
+  const [addingClaudeAccount, setAddingClaudeAccount] = useState(false);
   const [driver, setDriver] = useState<ProviderDriverKind>(DEFAULT_DRIVER_KIND);
   const [identityByDriver, setIdentityByDriver] = useState<Record<string, ProviderIdentityDraft>>(
     {},
@@ -366,6 +369,16 @@ export function AddProviderInstanceDialog({
     });
     onOpenChange(false);
   };
+
+  if (addingClaudeAccount) {
+    return (
+      <AddClaudeAccountDialog
+        environmentId={environmentId}
+        environmentLabel={environmentLabel}
+        onClose={() => onOpenChange(false)}
+      />
+    );
+  }
 
   if (addingChatGptAccount) {
     return (
@@ -695,6 +708,16 @@ export function AddProviderInstanceDialog({
                     size="sm"
                     onClick={() => setAddingChatGptAccount(true)}
                   />
+                </>
+              ) : wizardStep === 0 && driver === "claudeAgent" ? (
+                <>
+                  <Button variant="outline" size="sm" onClick={() => navigateToStep(1)}>
+                    Configure manually
+                  </Button>
+                  <Button size="sm" onClick={() => setAddingClaudeAccount(true)}>
+                    <ClaudeAI className="size-4 shrink-0" aria-hidden="true" />
+                    Add Claude account
+                  </Button>
                 </>
               ) : wizardStep < (isAcpRegistry ? 1 : 2) ? (
                 <Button

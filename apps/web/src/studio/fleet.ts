@@ -17,13 +17,20 @@ import { environmentPresentations } from "../state/presentation";
 import { environmentSession, readEnvironmentScope, readPreparedConnection } from "../state/session";
 import type {
   StudioFleetAddResult,
+  StudioFleetInviteProblem,
+  StudioFleetInviteResult,
   StudioFleetSnapshot,
+  StudioFleetTailscaleStatus,
   StudioFleetWorkerAccess,
   StudioFleetWorkersResult,
 } from "@specweave-studio/contracts/studioFleet";
+import { revokeServerClientSession } from "../environments/primary";
 import {
   requestFleet,
   requestFleetAdd,
+  requestFleetInvite,
+  requestFleetTailscale,
+  requestFleetTailscaleSignIn,
   requestFleetPairing,
   requestFleetWorkersAllow,
   requestFleetWorkersStop,
@@ -228,4 +235,151 @@ export async function addStudioFleetMachine(
     );
   }
   return result.value;
+}
+
+/** Why an invitation could not be made, so the app can say what to do. */
+export class FleetInviteFailure extends Error {
+  constructor(
+    readonly reason: StudioFleetInviteProblem | "permission" | "unknown",
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+/**
+ * Publishes this machine on its own Tailscale name and makes the line another
+ * machine's Add a machine accepts, as `specwithcode fleet invite` does. The
+ * line holds a management credential: callers show it once and keep no copy.
+ */
+export async function inviteStudioFleetMachine(
+  environmentId: EnvironmentId,
+  input: { readonly label?: string; readonly days?: number } = {},
+): Promise<StudioFleetInviteResult> {
+  const prepared = readPreparedConnection(environmentId);
+  if (
+    !prepared ||
+    !readEnvironmentScope(environmentId, AuthAccessWriteScope) ||
+    appAtomRegistry.get(environmentPresentations.presentationAtom(environmentId))?.connection
+      .phase !== "connected"
+  )
+    throw new FleetInviteFailure(
+      "permission",
+      "Inviting this machine needs Manage access on this server.",
+    );
+  const label = input.label?.trim();
+  const action = connectionAtomRuntime.atom(
+    requestFleetInvite(prepared, {
+      ...(label ? { label } : {}),
+      ...(input.days !== undefined ? { days: input.days } : {}),
+    }),
+  );
+  const result = await executeAtomQuery(appAtomRegistry, action, {
+    reportFailure: false,
+    reportDefect: false,
+  });
+  if (result._tag === "Failure") {
+    // The server words what to do about Tailscale; anything else is generic.
+    const failure = Cause.squash(result.cause) as {
+      readonly _tag?: unknown;
+      readonly reason?: unknown;
+      readonly message?: unknown;
+    } | null;
+    if (
+      typeof failure === "object" &&
+      failure !== null &&
+      failure._tag === "StudioFleetInviteError" &&
+      typeof failure.reason === "string" &&
+      typeof failure.message === "string"
+    )
+      throw new FleetInviteFailure(failure.reason as StudioFleetInviteProblem, failure.message);
+    if (
+      typeof failure === "object" &&
+      failure !== null &&
+      failure._tag === "EnvironmentHttpForbiddenError"
+    )
+      throw new FleetInviteFailure(
+        "permission",
+        "This connection cannot invite this machine. Open the app on this machine itself with Manage access, then try again.",
+      );
+    throw new FleetInviteFailure(
+      "unknown",
+      "Could not make an invitation on this machine. Check that the app is running here, then try again.",
+    );
+  }
+  return result.value;
+}
+
+/** Revokes an invitation's management credential on this machine. */
+export async function revokeStudioFleetInvitation(
+  sessionId: StudioFleetInviteResult["sessionId"],
+): Promise<void> {
+  await revokeServerClientSession(sessionId);
+}
+
+function preparedForInvite(environmentId: EnvironmentId) {
+  const prepared = readPreparedConnection(environmentId);
+  if (
+    !prepared ||
+    !readEnvironmentScope(environmentId, AuthAccessWriteScope) ||
+    appAtomRegistry.get(environmentPresentations.presentationAtom(environmentId))?.connection
+      .phase !== "connected"
+  )
+    throw new FleetInviteFailure(
+      "permission",
+      "Inviting this machine needs Manage access on this server.",
+    );
+  return prepared;
+}
+
+/** Whether Tailscale here is installed, signed in and running. Read fresh each time. */
+export async function readStudioFleetTailscale(
+  environmentId: EnvironmentId,
+): Promise<StudioFleetTailscaleStatus> {
+  const action = connectionAtomRuntime.atom(
+    requestFleetTailscale(preparedForInvite(environmentId)),
+  );
+  const result = await executeAtomQuery(appAtomRegistry, action, {
+    reportFailure: false,
+    reportDefect: false,
+  });
+  if (result._tag === "Failure")
+    throw new FleetInviteFailure("unknown", "Could not check Tailscale on this machine.");
+  return result.value;
+}
+
+/**
+ * Starts the Tailscale app and its sign-in on this machine and returns the
+ * sign-in page to open, or null when it was already signed in.
+ */
+export async function signInStudioFleetTailscale(
+  environmentId: EnvironmentId,
+): Promise<string | null> {
+  const action = connectionAtomRuntime.atom(
+    requestFleetTailscaleSignIn(preparedForInvite(environmentId)),
+  );
+  const result = await executeAtomQuery(appAtomRegistry, action, {
+    reportFailure: false,
+    reportDefect: false,
+  });
+  if (result._tag === "Failure") {
+    const failure = Cause.squash(result.cause) as {
+      readonly _tag?: unknown;
+      readonly reason?: unknown;
+      readonly message?: unknown;
+    } | null;
+    if (
+      typeof failure === "object" &&
+      failure !== null &&
+      failure._tag === "StudioFleetInviteError" &&
+      typeof failure.reason === "string" &&
+      typeof failure.message === "string"
+    )
+      throw new FleetInviteFailure(failure.reason as StudioFleetInviteProblem, failure.message);
+    throw new FleetInviteFailure(
+      "tailscale_sign_in_failed",
+      "Could not start signing in to Tailscale. Open the Tailscale app, sign in there, then come back.",
+    );
+  }
+  return result.value.loginUrl;
 }

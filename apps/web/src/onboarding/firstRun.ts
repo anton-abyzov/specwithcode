@@ -1,4 +1,5 @@
 import { useCallback } from "react";
+import type { OnboardingMachineRole } from "@specweave-studio/contracts";
 
 import { ensureClientSettingsHydrated, persistClientSettingsUpdate } from "../hooks/useSettings";
 
@@ -12,5 +13,16 @@ export function useCompleteOnboarding(): () => Promise<void> {
     await ensureClientSettingsHydrated();
     const onboardingCompletedAt = new Date().toISOString();
     await persistClientSettingsUpdate((current) => ({ ...current, onboardingCompletedAt }));
+  }, []);
+}
+
+/**
+ * Saves what the person chose this machine to be on first run: "joined" opens
+ * to its status for the main machine, "main" to the full setup.
+ */
+export function useSetOnboardingMachineRole(): (role: OnboardingMachineRole) => Promise<void> {
+  return useCallback(async (onboardingMachineRole) => {
+    await ensureClientSettingsHydrated();
+    await persistClientSettingsUpdate((current) => ({ ...current, onboardingMachineRole }));
   }, []);
 }

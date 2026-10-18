@@ -30,7 +30,7 @@ import { useEnvironments } from "~/state/environments";
 import { readEnvironmentScope, useEnvironmentsWithScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { machineLastSeenAt, useMachineLastSeenVersion } from "~/lib/machineLastSeen";
-import { lastSeenLabel, machineStatus } from "~/lib/machineStatus";
+import { lastSeenLabel, machineDetail, machineStatus } from "~/lib/machineStatus";
 import {
   Menu,
   MenuGroup,
@@ -364,14 +364,12 @@ export function DraftMachinePicker(props: Props) {
                   permitted.has(environment.environmentId),
                 );
                 const isRetrying = retrying.has(environment.environmentId);
-                const detail = [
-                  status.reason,
+                const detail = machineDetail(
                   reason
                     ? lastSeenLabel(machineLastSeenAt(environment.environmentId), Date.now())
                     : null,
-                ]
-                  .filter(Boolean)
-                  .join(" · ");
+                  status.reason,
+                );
                 // An unreachable machine can't take the draft, but its row
                 // retries the connection instead of sitting disabled.
                 const retryRow = Boolean(reason) && status.retryable;

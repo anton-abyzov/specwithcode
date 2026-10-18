@@ -61,6 +61,10 @@ export const DiffLayout = Schema.Literals(["stacked", "split"]);
 export type DiffLayout = typeof DiffLayout.Type;
 const DEFAULT_DIFF_LAYOUT: DiffLayout = "stacked";
 
+/** First-run choice: this machine is the main one, or it only serves a main machine elsewhere. */
+export const OnboardingMachineRole = Schema.Literals(["main", "joined"]);
+export type OnboardingMachineRole = typeof OnboardingMachineRole.Type;
+
 export const SidebarProjectSortOrder = Schema.Literals(["updated_at", "created_at", "manual"]);
 export type SidebarProjectSortOrder = typeof SidebarProjectSortOrder.Type;
 export const DEFAULT_SIDEBAR_PROJECT_SORT_ORDER: SidebarProjectSortOrder = "updated_at";
@@ -479,6 +483,13 @@ export const ClientSettingsSchema = Schema.Struct({
   // that predates this field decodes to `null` — so the gate also requires an
   // empty workspace before it treats the client as a fresh install.
   onboardingCompletedAt: Schema.NullOr(Schema.String).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  // What the person chose this machine to be on first run. "joined" only
+  // serves a main machine elsewhere and opens to its status instead of the
+  // workspace; "main" is the full setup. `null` (every install from before the
+  // choice) never forces the choice on anyone who already finished first run.
+  onboardingMachineRole: Schema.NullOr(OnboardingMachineRole).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   persistComposerContextStrip: Schema.Boolean.pipe(
@@ -2166,6 +2177,7 @@ export const ClientSettingsPatch = Schema.Struct({
   environmentIdentificationMode: Schema.optionalKey(EnvironmentIdentificationMode),
   glassOpacity: Schema.optionalKey(GlassOpacity),
   onboardingCompletedAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  onboardingMachineRole: Schema.optionalKey(Schema.NullOr(OnboardingMachineRole)),
   fontSizeInterface: Schema.optionalKey(InterfaceFontSize),
   fontSizePrompt: Schema.optionalKey(PromptFontSize),
   fontSizeCode: Schema.optionalKey(CodeFontSize),

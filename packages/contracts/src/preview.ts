@@ -429,7 +429,7 @@ export class PreviewControlRequiredError extends Schema.TaggedError<PreviewContr
   { tabId: Schema.String },
 ) {
   override get message() {
-    return "Take control of the server browser and use its viewer controls.";
+    return "Take over the server browser tab to use its controls.";
   }
 }
 

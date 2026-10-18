@@ -7,6 +7,8 @@ import * as Option from "effect/Option";
 import { NoProjectsHero } from "../components/NoProjectsHero";
 import { WelcomeWizard } from "../components/onboarding/WelcomeWizard";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
+import { useClientSettings, useClientSettingsHydrationStatus } from "../hooks/useSettings";
+import { useSetOnboardingMachineRole } from "../onboarding/firstRun";
 
 const decodeEnvironmentId = Schema.decodeOption(EnvironmentId);
 
@@ -38,6 +40,12 @@ function WelcomeRouteView() {
   // no matter what hostname the browser used. Only hosted-static has no
   // local server to offer.
   const localAvailable = authGateState.status === "authenticated";
+  const hydrated = useClientSettingsHydrationStatus() === "ready";
+  const machineRole = useClientSettings((settings) => settings.onboardingMachineRole);
+  const onboardingCompleted = useClientSettings(
+    (settings) => settings.onboardingCompletedAt !== null,
+  );
+  const setMachineRole = useSetOnboardingMachineRole();
   return (
     <>
       <NoProjectsHero />
@@ -45,6 +53,13 @@ function WelcomeRouteView() {
         <WelcomeWizard
           localAvailable={localAvailable}
           resumeEnvironmentId={resumeEnvironmentId}
+          machineRole={{
+            // Only a first run with a server here offers the choice; anyone who
+            // already finished first run reopens setup as before.
+            offer: localAvailable && hydrated && !onboardingCompleted,
+            role: hydrated ? machineRole : null,
+            onChange: setMachineRole,
+          }}
           onDone={async (projectRef) => {
             setDismissed(true);
             if (projectRef !== undefined) {

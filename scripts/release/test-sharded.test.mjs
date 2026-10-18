@@ -83,19 +83,38 @@ describe("test-sharded reports", () => {
           numFailedTests: 1,
           testResults: [
             { name: "/repo/apps/server/src/a.test.ts", status: "passed" },
-            { name: "/repo/apps/server/src/b/c.test.ts", status: "failed" },
+            {
+              name: "/repo/apps/server/src/b/c.test.ts",
+              status: "failed",
+              assertionResults: [
+                { fullName: "c keeps", status: "passed", failureMessages: [] },
+                {
+                  fullName: "c breaks",
+                  status: "failed",
+                  failureMessages: ["AssertionError: expected 1 to be 2\n    at c.test.ts:9"],
+                },
+              ],
+            },
           ],
         }),
       );
       expect(readShardReport(file, "/repo/apps/server")).toEqual({
         files: 2,
         failedFiles: ["src/b/c.test.ts"],
+        failures: [
+          {
+            file: "src/b/c.test.ts",
+            test: "c breaks",
+            message: "AssertionError: expected 1 to be 2",
+          },
+        ],
         tests: 5,
         failedTests: 1,
       });
       expect(readShardReport(NodePath.join(dir, "missing.json"))).toEqual({
         files: 0,
         failedFiles: [],
+        failures: [],
         tests: 0,
         failedTests: 0,
       });

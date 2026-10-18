@@ -6,7 +6,14 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
@@ -133,6 +140,57 @@ async function openBrowser(credential) {
   return { server, browser, context };
 }
 
+/**
+ * A headless browser on a kept profile, started by this script so its PID can
+ * be killed like a crashing app while IndexedDB survives on disk.
+ */
+async function openProfileBrowser(profileDir, credential, cookies = []) {
+  const child = spawn(
+    executablePath,
+    [
+      "--headless",
+      `--user-data-dir=${profileDir}`,
+      "--remote-debugging-port=0",
+      "--no-first-run",
+      "about:blank",
+    ],
+    { stdio: ["ignore", "ignore", "pipe"] },
+  );
+  const endpoint = await new Promise((done, reject) => {
+    let output = "";
+    const timer = setTimeout(() => reject(new Error("Headless browser did not start")), 20000);
+    child.stderr.on("data", (chunk) => {
+      output += chunk.toString();
+      const match = output.match(/DevTools listening on (ws:\/\/\S+)/);
+      if (match) {
+        clearTimeout(timer);
+        done(match[1]);
+      }
+    });
+  });
+  const browser = await chromium.connectOverCDP(endpoint);
+  const context = browser.contexts()[0];
+  if (cookies.length > 0) await context.addCookies(cookies);
+  const auth = await context.request.post(`${origin}/api/auth/browser-session`, {
+    data: { credential },
+    headers: { Origin: origin },
+  });
+  // A pairing token works once; a session already in the profile or handed over stays valid.
+  if (auth.status() !== 200) {
+    const session = await context.request.post(`${origin}/api/auth/websocket-ticket`, {
+      headers: { Origin: origin },
+    });
+    assert.equal(session.status(), 200, "the kept profile must still be signed in");
+  }
+  await context.addInitScript(() =>
+    localStorage.setItem(
+      "studio:client-settings:v1",
+      JSON.stringify({ onboardingCompletedAt: "2026-10-12T00:00:00Z" }),
+    ),
+  );
+  return { child, browser, context };
+}
+
 async function rpc(context, tag, payload = {}) {
   const ticketResponse = await context.request.post(`${origin}/api/auth/websocket-ticket`, {
     headers: { Origin: origin },
@@ -165,6 +223,7 @@ async function rpc(context, tag, payload = {}) {
   });
 }
 
+const TYPED_DURING_UPDATE = " + typed while the update stopped the host: ✓ 🙂";
 const COORDINATOR_TEXT =
   "Coordinator draft before kill -9: émoji 🙂, «quotes», tabs\tand\nnew lines";
 const THREAD_TEXT = "Thread draft before kill -9 — symbols ✓ ≠ ∑ 日本語";
@@ -172,6 +231,7 @@ const receipt = { headless: true, origin, privateState: state, checks: [], scree
 let candidate = startCandidate();
 let first;
 let second;
+let third;
 try {
   first = await openBrowser(await candidate.credential);
   const projectId = "durable-drafts-proof";
@@ -260,10 +320,66 @@ try {
     .waitFor({ timeout: 20000 });
   receipt.checks.push({ threadTextRestored: true, threadImageRestored: true });
   await restored.screenshot({ path: join(out, "4-thread-after-restart.png") });
+
+  // An update stops the host before the window closes: whatever is typed
+  // then never reaches the host, and the app is killed right after.
+  const signedIn = await second.context.cookies();
+  await second.browser.close();
+  await second.server.close();
+  second = undefined;
+  const profileDir = mkdtempSync(join(state, "profile-"));
+  third = await openProfileBrowser(profileDir, await candidate.credential, signedIn);
+  const updating = await third.context.newPage();
+  await updating.goto(projectUrl, { waitUntil: "networkidle" });
+  await updating.waitForFunction(
+    (text) => document.querySelector("#project-prompt")?.value === text,
+    COORDINATOR_TEXT,
+    { timeout: 20000 },
+  );
+  await killNine(candidate.child, "server (update stops the host)");
+  await updating.locator("#project-prompt").focus();
+  await updating.keyboard.press("End");
+  await updating.keyboard.insertText(TYPED_DURING_UPDATE);
+  // No blur, no flush: the app is killed within a moment of the last keystroke.
+  await updating.waitForTimeout(150);
+  await updating.screenshot({ path: join(out, "5-typed-while-host-down.png") });
+  await killNine(third.child, "browser (update relaunch)");
+  third = undefined;
+
+  candidate = startCandidate();
+  third = await openProfileBrowser(profileDir, await candidate.credential);
+  const relaunched = await third.context.newPage();
+  await relaunched.goto(projectUrl, { waitUntil: "networkidle" });
+  await relaunched.waitForFunction(
+    (text) => document.querySelector("#project-prompt")?.value === text,
+    COORDINATOR_TEXT + TYPED_DURING_UPDATE,
+    { timeout: 20000 },
+  );
+  receipt.checks.push({ typedWhileHostDownRestored: true });
+  // The host gets the text it missed once it is back.
+  const hostDeadline = Date.now() + 20000;
+  let hostHasIt = false;
+  while (!hostHasIt && Date.now() < hostDeadline) {
+    const folders = readdirSync(join(state, "userdata/composer-drafts"));
+    hostHasIt = folders.some((folder) => {
+      try {
+        const draft = JSON.parse(
+          readFileSync(join(state, "userdata/composer-drafts", folder, "draft.json"), "utf8"),
+        );
+        return draft.prompt === COORDINATOR_TEXT + TYPED_DURING_UPDATE;
+      } catch {
+        return false;
+      }
+    });
+    if (!hostHasIt) await relaunched.waitForTimeout(500);
+  }
+  assert.ok(hostHasIt, "the host received the text typed while it was down");
+  receipt.checks.push({ hostCaughtUp: true });
+  await relaunched.screenshot({ path: join(out, "6-after-update-relaunch.png") });
   receipt.ok = true;
 } catch (error) {
   receipt.failure = error.message;
-  for (const session of [first, second])
+  for (const session of [first, second, third])
     for (const context of session?.browser.contexts() ?? [])
       for (const page of context.pages())
         await page.screenshot({ path: join(out, "failure.png"), fullPage: true }).catch(() => {});
@@ -272,6 +388,10 @@ try {
   await second?.browser.close().catch(() => {});
   await second?.server.close().catch(() => {});
   await first?.server.close().catch(() => {});
+  await third?.browser.close().catch(() => {});
+  if (third && third.child.exitCode === null && third.child.signalCode === null) {
+    third.child.kill("SIGTERM");
+  }
   if (candidate.child.exitCode === null && candidate.child.signalCode === null) {
     candidate.child.kill("SIGTERM");
   }
