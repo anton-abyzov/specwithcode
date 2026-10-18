@@ -25,6 +25,10 @@ import { parseArgs } from "node:util";
 
 export const NPM_PACKAGE_NAME = "specwithcode";
 export const NPM_BINS = ["specwithcode", "specweave-studio"];
+// The server's own range (apps/server/package.json), which its node:sqlite check enforces.
+// The runtime archive carries the workspace's pinned build version instead, which is
+// stricter than what users need: Node 22.19 printed EBADENGINE on install.
+export const NPM_NODE_ENGINES = "^22.16 || ^23.11 || >=24.10";
 const EXCLUDED_FILE = /\.map$/;
 
 /** Every package reachable from `roots`, read from pnpm's store beside each package. */
@@ -91,7 +95,7 @@ function copyTree(source, target) {
 function readme(version) {
   return `# SpecWithCode
 
-The SpecWithCode server and CLI (version ${version}). It needs Node.js 22.20 or newer on macOS or Linux.
+The SpecWithCode server and CLI (version ${version}). It needs Node.js 22.16 or newer (23.11+, or 24.10+) on macOS or Linux.
 
 \`\`\`sh
 npm i -g specwithcode
@@ -153,7 +157,7 @@ export function build({ archive, sha256, outputDir }) {
     homepage: "https://github.com/anton-abyzov/specwithcode",
     repository: { type: "git", url: "git+https://github.com/anton-abyzov/specwithcode.git" },
     bin: Object.fromEntries(NPM_BINS.map((bin) => [bin, "bin.mjs"])),
-    engines: { node: ">=22.20.0" },
+    engines: { node: NPM_NODE_ENGINES },
     os: ["darwin", "linux"],
     cpu: ["x64", "arm64"],
   };
@@ -162,9 +166,14 @@ export function build({ archive, sha256, outputDir }) {
   fs.rmSync(work, { recursive: true, force: true });
 
   const tarball = path.join(outputDir, `${NPM_PACKAGE_NAME}-${release.version}.tgz`);
-  execFileSync("tar", ["-czf", tarball, "--uid", "0", "--gid", "0", "-C", outputDir, "package"], {
-    env: { ...process.env, COPYFILE_DISABLE: "1" },
-  });
+  // --owner/--group, unlike bsdtar's --uid/--gid, are also understood by GNU tar on Linux.
+  execFileSync(
+    "tar",
+    ["-czf", tarball, "--owner", "0", "--group", "0", "-C", outputDir, "package"],
+    {
+      env: { ...process.env, COPYFILE_DISABLE: "1" },
+    },
+  );
   return { tarball, packageDir: pkg, version: release.version, packages: layout.length };
 }
 

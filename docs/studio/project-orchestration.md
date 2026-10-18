@@ -171,11 +171,9 @@ The coordinator can answer ordinary questions without launching workers. For act
 
 **Observe cheaply and wake intentionally.** Use persisted runtime events and bounded shell projections, not repeated full transcript hydration. Persist event cursors and deduplicate coordinator wakeups. A finished worker or a meaningful blocker may trigger one coordinator turn. Unchanged idle state should not consume repeated model turns. Schedules are opt-in actions and must retain their destination and notification policy.
 
-## Optional cloud networking is a separate execution choice
+## Provider cloud tasks are out of scope
 
-Current [OpenAI cloud-environment documentation](https://learn.chatgpt.com/docs/environments/cloud-environments) explicitly supports Tailscale MagicDNS, split DNS and private IPv4 routes for private HTTP/HTTPS services. Use fully qualified names resolving to IPv4, permit destinations in both policies, and test through the environment’s configured proxy; `curl --noproxy` bypasses that required path. Its current limitations still exclude computer/browser use. The [October 6 Tailscale article](https://tailscale.com/blog/codex-cloud-tailscale) says MagicDNS and split DNS do not work; use the newer official guidance for that point.
-
-For SpecWithCode, this is a proposed optional destination, not an installed fleet capability. A cloud task has its own workspace and network identity. Reaching a private service does not transfer a local native chat, its provider authentication, a Mac worktree or an existing browser grant. No cloud VPN was configured or tested in this review. A coordinator must display which execution environment actually owns the work and must verify destination permissions there.
+SpecWithCode does not dispatch work to provider cloud sessions or cloud tasks. Off-machine work runs on a Linux VPS you rent, joined to your tailnet as one of your private machines; see [Linux worker](../user/linux-worker.md). A coordinator still displays which machine owns the work and verifies destination permissions there.
 
 ## Delivery sequence and proof
 

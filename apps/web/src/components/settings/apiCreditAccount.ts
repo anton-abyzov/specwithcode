@@ -23,6 +23,13 @@ export const API_CREDIT_ACCOUNT_DRIVERS = {
 } as const;
 export type ApiCreditAccountDriver = keyof typeof API_CREDIT_ACCOUNT_DRIVERS;
 
+/**
+ * A Claude Console workspace ID. A key that is not scoped to a workspace
+ * (Console user keys, `sk-ant-usr…`) is refused unless every request names
+ * one in the `anthropic-workspace-id` header.
+ */
+export const CLAUDE_WORKSPACE_ID_PATTERN = /^wrkspc_[A-Za-z0-9]+$/;
+
 export function isApiCreditAccountDriver(driver: string): driver is ApiCreditAccountDriver {
   return Object.hasOwn(API_CREDIT_ACCOUNT_DRIVERS, driver);
 }
@@ -37,6 +44,8 @@ export function apiCreditAccountInstance(input: {
   readonly driver: ApiCreditAccountDriver;
   readonly label: string;
   readonly apiKey: string;
+  /** Claude only: the workspace an unscoped key bills, sent as a request header. */
+  readonly workspaceId?: string;
   readonly existingIds: ReadonlySet<string>;
 }): { readonly instanceId: ProviderInstanceId; readonly instance: ProviderInstanceConfig } {
   const meta = API_CREDIT_ACCOUNT_DRIVERS[input.driver];
@@ -51,13 +60,26 @@ export function apiCreditAccountInstance(input: {
     slug,
     input.existingIds,
   );
+  const workspaceId = input.driver === "claudeAgent" ? input.workspaceId?.trim() : undefined;
   return {
     instanceId: ProviderInstanceId.make(instanceId),
     instance: {
       driver: ProviderDriverKind.make(input.driver),
       enabled: true,
       displayName: label,
-      environment: [{ name: meta.variable, value: input.apiKey.trim(), sensitive: true }],
+      environment: [
+        { name: meta.variable, value: input.apiKey.trim(), sensitive: true },
+        // Claude Code adds ANTHROPIC_CUSTOM_HEADERS to every API request.
+        ...(workspaceId
+          ? [
+              {
+                name: "ANTHROPIC_CUSTOM_HEADERS",
+                value: `anthropic-workspace-id: ${workspaceId}`,
+                sensitive: false,
+              },
+            ]
+          : []),
+      ],
     },
   };
 }

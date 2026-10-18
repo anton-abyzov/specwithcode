@@ -321,6 +321,8 @@ interface TerminalSessionState {
   /** Normalized child command name when `hasRunningSubprocess`; cleared when idle. */
   childCommandLabel: string | null;
   runtimeEnv: Record<string, string> | null;
+  /** One command run through the shell's `-c`; null for an interactive shell. */
+  command: string | null;
 }
 
 interface PersistHistoryRequest {
@@ -566,6 +568,21 @@ function shellCandidateFromCommand(
 }
 
 const LOGIN_SHELL_NAMES = new Set(["zsh", "bash", "fish", "ksh", "sh", "dash"]);
+
+/** Arguments that make a shell candidate run one command and exit with its code. */
+export function shellCandidateArgs(
+  candidate: ShellCandidate,
+  command: string | null,
+  platform: NodeJS.Platform,
+): string[] | undefined {
+  if (command === null) return candidate.args;
+  const shellName = basenameForPlatform(candidate.shell, platform).toLowerCase();
+  if (platform === "win32") {
+    if (shellName === "cmd.exe" || shellName === "cmd") return ["/d", "/s", "/c", command];
+    return ["-NoLogo", "-Command", command];
+  }
+  return [...(candidate.args ?? []), "-c", command];
+}
 
 function windowsSystemRoot(env: NodeJS.ProcessEnv): string {
   return env.SystemRoot?.trim() || env.windir?.trim() || "C:\\Windows";
@@ -2226,10 +2243,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       );
     }
 
+    const args = shellCandidateArgs(candidate, session.command, platform);
     const attempt = yield* Effect.result(
       options.ptyAdapter.spawn({
         shell: candidate.shell,
-        ...(candidate.args ? { args: candidate.args } : {}),
+        ...(args ? { args } : {}),
         cwd: session.cwd,
         cols: session.cols,
         rows: session.rows,
@@ -2681,6 +2699,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         hasRunningSubprocess: false,
         childCommandLabel: null,
         runtimeEnv: normalizedRuntimeEnv(input.env),
+        command: input.command ?? null,
       };
 
       const createdSession = session;
@@ -2715,14 +2734,17 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     const runtimeEnvChanged = !Equal.equals(currentRuntimeEnv, nextRuntimeEnv);
     const nextWorktreePath =
       input.worktreePath !== undefined ? (input.worktreePath ?? null) : liveSession.worktreePath;
+    const nextCommand = input.command ?? null;
     const launchContextChanged =
       liveSession.cwd !== input.cwd ||
       runtimeEnvChanged ||
-      liveSession.worktreePath !== nextWorktreePath;
+      liveSession.worktreePath !== nextWorktreePath ||
+      liveSession.command !== nextCommand;
 
     if (launchContextChanged) {
       yield* stopProcess(liveSession);
       liveSession.cwd = input.cwd;
+      liveSession.command = nextCommand;
       liveSession.worktreePath = nextWorktreePath;
       liveSession.runtimeEnv = nextRuntimeEnv;
       liveSession.history.clear();
@@ -3131,6 +3153,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           hasRunningSubprocess: false,
           childCommandLabel: null,
           runtimeEnv: normalizedRuntimeEnv(input.env),
+          command: null,
         };
         const createdSession = session;
         yield* modifyManagerState((state) => {

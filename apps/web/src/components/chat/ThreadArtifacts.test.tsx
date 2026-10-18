@@ -20,6 +20,8 @@ vi.mock("~/viewerOverlayStore", () => ({
     overlay.last = options;
     return options.open ? { content: {} as HTMLElement, actions: {} as HTMLElement } : null;
   },
+  useViewerContentKeys: () => {},
+  useKeepViewerFocus: () => () => {},
 }));
 vi.mock("react-dom", async (importOriginal) => ({
   ...(await importOriginal<typeof import("react-dom")>()),
@@ -104,6 +106,11 @@ vi.mock("../files/AttachmentFilePreview", () => ({
 vi.mock("../files/BrowserDocumentFrame", () => ({
   BrowserDocumentFrame: (props: { src: string; htmlRender?: boolean }) => (
     <iframe title="frame" src={props.src} data-html-render={String(Boolean(props.htmlRender))} />
+  ),
+}));
+vi.mock("./ViewerImageStage", () => ({
+  ViewerImageStage: (props: { src: string; name: string }) => (
+    <img src={props.src} alt={props.name} data-viewer-image-stage="true" />
   ),
 }));
 vi.mock("../files/AudioPreview", () => ({

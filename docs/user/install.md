@@ -16,6 +16,10 @@ silicon Macs with macOS 13 or later. Releases are signed with an Apple Developer
 so the app opens without a security override. The desktop app starts the local service for you.
 Windows, Linux and Intel Mac builds are not published yet.
 
+To use this Mac as a worker for a main machine you already have, see
+[Add a machine](./add-a-machine.md). From 1.0.44 the first screen offers **Join my existing
+machines**; on 1.0.43, [one Terminal command](./add-a-machine.md#desktop-app-1043) makes the line.
+
 ## Command line
 
 On an Apple silicon Mac, or on Linux (x64 or arm64, with glibc and systemd), install SpecWithCode
@@ -33,11 +37,13 @@ in `~/.local/bin` and tells you if that folder is not on your `PATH`. Your proje
 settings are not touched, and it leaves a Mac alone that already runs the desktop app or a managed
 service. Run the same line again to move to a newer release. Add `-s -- --dry-run` after `bash`
 to see what it would do, or `-s -- --no-service` to skip the service. Releases up to 1.0.43 do not
-carry `install.sh` yet. There is no Windows or Intel Mac build.
+carry `install.sh` yet, so this line works once the next release is out; until then use
+[npm](#npm) or the desktop app. There is no Windows or Intel Mac build.
 
 ### Join your existing machines from the terminal
 
-To add this machine to the ones you already use, run the installer with `--join`:
+To add this machine to the ones you already use, run the installer with `--join` (like the line
+above, it works once a release carries `install.sh`):
 
 ```bash
 curl -fsSL https://github.com/anton-abyzov/specwithcode/releases/latest/download/install.sh | bash -s -- --join
@@ -54,10 +60,26 @@ curl -fsSL https://github.com/anton-abyzov/specwithcode/releases/latest/download
 3. On your main machine, run the `specwithcode fleet add <line>` it shows, or paste the line into
    **Settings > Connections > Add a machine**.
 
-Later you can print a new line with `specwithcode fleet invite` on its own.
+Later you can print a new line with `specwithcode fleet invite` on its own. Every other way to
+join, the Tailscale settings both machines need and troubleshooting are in
+[Add a machine](./add-a-machine.md).
 
-Once `specwithcode` is on your `PATH` (from the installer, or built from source; the desktop app
-does not add it), these commands cover the basics.
+### npm
+
+With Node.js 22.16 or later (23.11+ or 24.10+) on macOS or Linux, install the server and its command from npm:
+
+```bash
+npm i -g specwithcode
+```
+
+Then start it with `specwithcode serve`, or make a line for your main machine with
+`specwithcode fleet invite` ([Add a machine](./add-a-machine.md#with-npm)). On a Mac that already
+runs the desktop app, do not start a second server: run only `specwithcode fleet invite`, which
+uses the server the app is running. Running an npm install as a background service
+(`specwithcode service install`) is coming in a later release.
+
+Once `specwithcode` is on your `PATH` (from the installer, npm, or built from source; the desktop
+app does not add it), these commands cover the basics.
 The same tool is also installed under its original name, `specweave-studio`, so older scripts keep working.
 
 | Task                                             | Command                                                             |
@@ -72,12 +94,13 @@ Run `specwithcode help` or `specwithcode --help` for the full reference. To star
 directory, use an explicit path such as `specwithcode ./my-project`. A bare directory name
 is accepted only if it already exists.
 
-If `specwithcode` or `specwithcode start` reports an already running server, connect to that server
-instead. Stop it before starting a replacement, or use a different `--base-dir`
-for an independent server.
+If SpecWithCode already runs on this machine (the desktop app, the service or another terminal),
+`specwithcode` and `specwithcode start` open that server in your browser rather than starting a
+second one; with `--no-browser` they print where it runs. Version 1.0.43 instead stops with "A
+SpecWithCode server is already running for …": open the app or run `specwithcode pair`. Use a
+different `--base-dir` for an independent server.
 
-The `specweave-studio` npm package is not published yet, so `npx specweave-studio@latest` is not
-available either.
+The npm package is `specwithcode`; there is no `specweave-studio` package on npm.
 
 ### Build from source
 
@@ -191,6 +214,7 @@ For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 - [Working with threads](./thread-sidebar.md): start tasks and organize parallel work.
 - [Permission modes](./permission-modes.md): choose when agents ask before acting.
 - [Remote access](./remote-access.md): connect from another device.
+- [Add a machine](./add-a-machine.md): let your main machine start work on your other computers.
 - [Linux worker](./linux-worker.md): run workers on a Linux machine or VPS.
 - [Running in the background](./background-service.md): keep a Linux or macOS host available.
 - [Updating SpecWithCode](./updating.md): update the app and connected servers.

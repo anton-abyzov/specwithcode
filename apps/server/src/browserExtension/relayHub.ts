@@ -3,9 +3,10 @@
  * The SpecWithCode side of the SpecWithCode Browser extension: every paired
  * Chrome profile keeps one WebSocket open to this hub, proves itself with the
  * machine's pairing token, and then answers allow-listed chrome.* calls (see
- * apps/chrome-extension/src/relayConnection.js). The hub holds one lease per
- * profile so two threads never drive the same profile at once, and keeps a
- * short audit of what agents did.
+ * apps/chrome-extension/src/relayConnection.js). Threads share a profile:
+ * each tab belongs to the thread that opened or last drove it, so many threads
+ * work side by side in their own tabs and never in each other's. The hub keeps
+ * a short audit of what agents did.
  *
  * Plain TypeScript with no Effect services, so tests can drive it with a fake
  * extension and the route, the RPCs and the MCP tools share one instance.
@@ -20,15 +21,15 @@ export const CLOSE_BAD_HELLO = 4400;
 
 const HELLO_TIMEOUT_MS = 10_000;
 const DEFAULT_CALL_TIMEOUT_MS = 30_000;
-/** A thread keeps a profile while it acts at least this often. */
-export const LEASE_IDLE_MS = 120_000;
+/** A thread keeps a tab while it acts in it at least this often. */
+export const TAB_IDLE_MS = 120_000;
 const MAX_AUDIT = 50;
 
 export type BrowserRelayErrorCode =
   | "not_connected"
   | "choose_profile"
   | "profile_not_found"
-  | "profile_in_use"
+  | "tab_in_use"
   | "tab_not_found"
   | "element_not_found"
   | "page_error"
@@ -70,6 +71,19 @@ export interface RelayDialog {
   readonly message: string;
 }
 
+export interface TabOwner {
+  readonly threadId: string;
+  readonly since: number;
+  lastActionAt: number;
+}
+
+export interface RelayThreadUse {
+  readonly threadId: string;
+  readonly tabs: number;
+  readonly since: number;
+  readonly lastActionAt: number;
+}
+
 export interface RelayProfile {
   readonly id: string;
   readonly label: string;
@@ -83,7 +97,8 @@ export interface RelayProfile {
   readonly lastTabByThread: Map<string, number>;
   /** Dialogs Chrome showed and the hub answered, reported with the next result. */
   readonly dialogs: Map<number, RelayDialog>;
-  lease: { threadId: string; since: number; lastActionAt: number } | null;
+  /** Which thread drives each tab; a thread never acts in another thread's live tab. */
+  readonly tabOwners: Map<number, TabOwner>;
 }
 
 interface Connection {
@@ -218,7 +233,7 @@ export class BrowserRelayHub {
         agentTabs: new Set(),
         lastTabByThread: new Map(),
         dialogs: new Map(),
-        lease: null,
+        tabOwners: new Map(),
       };
       this.send(connection, {
         method: "welcome",
@@ -273,6 +288,7 @@ export class BrowserRelayHub {
         if (tabId === undefined) return;
         profile.attachedTabs.delete(tabId);
         profile.agentTabs.delete(tabId);
+        profile.tabOwners.delete(tabId);
         for (const [thread, tab] of profile.lastTabByThread)
           if (tab === tabId) profile.lastTabByThread.delete(thread);
         this.changed();
@@ -345,22 +361,28 @@ export class BrowserRelayHub {
 
   profileSummaries(): BrowserExtensionProfile[] {
     const iso = (ms: number) => new Date(ms).toISOString();
-    return this.profiles().map((profile) => ({
-      id: profile.id,
-      label: profile.label,
-      extensionVersion: profile.extensionVersion,
-      browser: profile.browser,
-      connectedAt: iso(profile.connectedAt),
-      attachedTabs: profile.attachedTabs.size,
-      lease:
-        profile.lease && this.leaseLive(profile)
-          ? {
-              threadId: profile.lease.threadId,
-              since: iso(profile.lease.since),
-              lastActionAt: iso(profile.lease.lastActionAt),
-            }
+    return this.profiles().map((profile) => {
+      const threads = this.threadsUsing(profile).map((use) => ({
+        threadId: use.threadId,
+        tabs: use.tabs,
+        since: iso(use.since),
+        lastActionAt: iso(use.lastActionAt),
+      }));
+      const latest = threads[0];
+      return {
+        id: profile.id,
+        label: profile.label,
+        extensionVersion: profile.extensionVersion,
+        browser: profile.browser,
+        connectedAt: iso(profile.connectedAt),
+        attachedTabs: profile.attachedTabs.size,
+        // Older apps show one thread; give them the most recent.
+        lease: latest
+          ? { threadId: latest.threadId, since: latest.since, lastActionAt: latest.lastActionAt }
           : null,
-    }));
+        threads,
+      };
+    });
   }
 
   recentActions(): ReadonlyArray<BrowserExtensionAction> {
@@ -423,21 +445,57 @@ export class BrowserRelayHub {
     );
   }
 
-  private leaseLive(profile: RelayProfile) {
-    return profile.lease !== null && this.now() - profile.lease.lastActionAt < LEASE_IDLE_MS;
+  private ownerLive(owner: TabOwner | undefined): owner is TabOwner {
+    return owner !== undefined && this.now() - owner.lastActionAt < TAB_IDLE_MS;
   }
 
-  /** Hold a profile for a thread; refuses while another thread used it in the last two minutes. */
-  acquire(profile: RelayProfile, threadId: string) {
+  /** The thread driving a tab right now, if any. */
+  tabOwner(profile: RelayProfile, tabId: number): string | null {
+    const owner = profile.tabOwners.get(tabId);
+    return this.ownerLive(owner) ? owner.threadId : null;
+  }
+
+  /**
+   * Give a tab to a thread, or refresh its hold. Refuses while another thread
+   * acted in that tab in the last two minutes; other tabs stay free.
+   */
+  claimTab(profile: RelayProfile, threadId: string, tabId: number) {
     const now = this.now();
-    if (profile.lease && profile.lease.threadId !== threadId && this.leaseLive(profile))
+    const owner = profile.tabOwners.get(tabId);
+    if (owner && owner.threadId !== threadId && this.ownerLive(owner))
       throw new BrowserRelayError(
-        "profile_in_use",
-        `Another SpecWithCode thread is using the Chrome profile "${profile.label}". Try again in a couple of minutes, use another profile, or ask the user to press Stop in Settings › Chrome.`,
+        "tab_in_use",
+        `Tab ${tabId} in the Chrome profile "${profile.label}" belongs to another SpecWithCode thread. Open your own tab with chrome_open; threads share the profile, each in its own tabs.`,
       );
-    if (!profile.lease || profile.lease.threadId !== threadId || !this.leaseLive(profile))
-      profile.lease = { threadId, since: now, lastActionAt: now };
-    else profile.lease.lastActionAt = now;
+    if (owner && owner.threadId === threadId) owner.lastActionAt = now;
+    else profile.tabOwners.set(tabId, { threadId, since: now, lastActionAt: now });
+  }
+
+  releaseTab(profile: RelayProfile, tabId: number) {
+    profile.tabOwners.delete(tabId);
+  }
+
+  /** Threads acting in a profile now, most recent first. */
+  threadsUsing(profile: RelayProfile): RelayThreadUse[] {
+    const byThread = new Map<string, { tabs: number; since: number; lastActionAt: number }>();
+    for (const owner of profile.tabOwners.values()) {
+      if (!this.ownerLive(owner)) continue;
+      const use = byThread.get(owner.threadId);
+      if (!use)
+        byThread.set(owner.threadId, {
+          tabs: 1,
+          since: owner.since,
+          lastActionAt: owner.lastActionAt,
+        });
+      else {
+        use.tabs += 1;
+        use.since = Math.min(use.since, owner.since);
+        use.lastActionAt = Math.max(use.lastActionAt, owner.lastActionAt);
+      }
+    }
+    return [...byThread]
+      .map(([threadId, use]) => ({ threadId, ...use }))
+      .sort((a, b) => b.lastActionAt - a.lastActionAt);
   }
 
   record(profile: RelayProfile, threadId: string, tool: string, url?: string) {
@@ -451,18 +509,32 @@ export class BrowserRelayHub {
     if (this.audit.length > MAX_AUDIT) this.audit.splice(0, this.audit.length - MAX_AUDIT);
   }
 
-  /** Settings › Chrome › Stop: end the hold and let go of every tab. */
-  async stop(profileId: string) {
+  /**
+   * Settings › Chrome › Stop: let go of the tabs one thread drives, or with no
+   * thread, of every tab in the profile. The tabs stay open for the user.
+   */
+  async stop(profileId: string, threadId?: string) {
     const profile = this.profiles().find((p) => p.id === profileId);
     if (!profile) return;
-    profile.lease = null;
-    profile.lastTabByThread.clear();
+    const tabs =
+      threadId === undefined
+        ? [...profile.attachedTabs]
+        : [...profile.tabOwners].flatMap(([tabId, owner]) =>
+            owner.threadId === threadId ? [tabId] : [],
+          );
+    if (threadId === undefined) {
+      profile.tabOwners.clear();
+      profile.lastTabByThread.clear();
+    } else {
+      for (const tabId of tabs) profile.tabOwners.delete(tabId);
+      profile.lastTabByThread.delete(threadId);
+    }
     await Promise.allSettled(
-      [...profile.attachedTabs].map((tabId) =>
-        this.call(profileId, "chrome.debugger.detach", [{ tabId }], 5_000),
-      ),
+      tabs
+        .filter((tabId) => profile.attachedTabs.has(tabId))
+        .map((tabId) => this.call(profileId, "chrome.debugger.detach", [{ tabId }], 5_000)),
     );
-    profile.attachedTabs.clear();
+    for (const tabId of tabs) profile.attachedTabs.delete(tabId);
     this.changed();
   }
 

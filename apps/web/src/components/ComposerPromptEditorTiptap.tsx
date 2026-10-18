@@ -1101,7 +1101,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
   );
 
   useEffect(() => {
-    editor?.setEditable(!disabled);
+    if (editor && !editor.isDestroyed) editor.setEditable(!disabled);
   }, [disabled, editor]);
 
   useEffect(() => {
@@ -1115,7 +1115,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
   // through `className`, so the attributes are pushed to the view here for
   // those measurements to see the layout they are about to reserve for.
   useLayoutEffect(() => {
-    if (!editor?.isInitialized) return;
+    if (!editor?.isInitialized || editor.isDestroyed) return;
     editor.view.setProps({ attributes: editorAttributes });
   }, [editor, editorAttributes]);
 
@@ -1141,8 +1141,11 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
   }, [editor]);
 
   // Controlled value/cursor from the store (history recall, chip insertion…).
+  // An editor whose first commit came too late is destroyed by Tiptap before
+  // this runs (the overlay's copy of a thread can be slow to commit); its
+  // replacement arrives on the next render and gets the value then.
   useLayoutEffect(() => {
-    if (!editor) return;
+    if (!editor || editor.isDestroyed) return;
     const initialSelection = !hasAppliedControlledSelectionRef.current;
     hasAppliedControlledSelectionRef.current = true;
     const normalizedCursor = clampCollapsedComposerCursor(value, cursor);
@@ -1209,7 +1212,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
 
   const focusAt = useCallback(
     (nextCursor: number) => {
-      if (!editor) return;
+      if (!editor || editor.isDestroyed) return;
       editor.view.dom.focus({ preventScroll: true });
       // A newer prompt is waiting to be applied (a chip was just inserted
       // through the store). Reporting the editor's stale text now would
@@ -1293,7 +1296,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
         if (edge === "start" ? beforeCaret.includes("\n") : afterCaret.includes("\n")) {
           return false;
         }
-        const rootElement = editor?.view.dom;
+        const rootElement = editor && !editor.isDestroyed ? editor.view.dom : null;
         const selection = window.getSelection();
         if (
           !rootElement ||

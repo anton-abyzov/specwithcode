@@ -9,6 +9,16 @@ import { ProviderInstanceId } from "./providerInstance.ts";
  */
 export const DEFAULT_TERMINAL_ID = "term-1";
 
+/**
+ * Terminals that run one command from a chat code block use ids with this
+ * prefix. Their output shows under the block, so terminal tabs skip them.
+ */
+export const INLINE_RUN_TERMINAL_ID_PREFIX = "run-";
+
+export function isInlineRunTerminalId(terminalId: string): boolean {
+  return terminalId.startsWith(INLINE_RUN_TERMINAL_ID_PREFIX);
+}
+
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const TerminalColsSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).check(
   Schema.isLessThanOrEqualTo(1000),
@@ -47,6 +57,9 @@ export const TerminalOpenInput = Schema.Struct({
   rows: Schema.optional(TerminalRowsSchema),
   env: Schema.optional(TerminalEnvSchema),
   providerInstanceId: Schema.optional(ProviderInstanceId),
+  /** Runs this command with the login shell's `-c` instead of an interactive
+      shell; the session exits with the command's exit code. */
+  command: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(16_384))),
 });
 export type TerminalOpenInput = typeof TerminalOpenInput.Type;
 

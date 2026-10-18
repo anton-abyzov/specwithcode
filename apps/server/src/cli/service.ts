@@ -12,6 +12,7 @@ import { compareExactServiceVersions } from "../cloud/serviceProtocol.ts";
 import type * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import { servicePrepareUpdateCommand } from "./servicePrepareUpdate.ts";
 
 export const layer = (config: ServerConfig.ServerConfig["Service"]) =>
   BootService.layer({
@@ -296,6 +297,7 @@ export const serviceCommand = Command.make("service").pipe(
     serviceRestartCommand,
     serviceUninstallCommand,
     serviceStatusCommand,
+    servicePrepareUpdateCommand,
     serviceUpdateCommand,
   ]),
 );

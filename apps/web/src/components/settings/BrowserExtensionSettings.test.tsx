@@ -40,6 +40,11 @@ vi.mock("../../state/session", () => ({
   useEnvironmentScope: (_id: unknown, scope: { _tag?: string } | string) =>
     String(scope).includes("terminal") ? state.operate : state.permitted,
 }));
+vi.mock("../../state/entities", () => ({
+  useThreadShell: ({ threadId }: { threadId: string }) =>
+    ({ "thread-7": { title: "Publish the launch post" }, aide: { title: "Aide" } })[threadId] ??
+    null,
+}));
 vi.mock("../../state/environments", () => ({
   useEnvironment: () => ({ connection: { phase: state.connected ? "connected" : "disconnected" } }),
 }));
@@ -77,6 +82,20 @@ const status: BrowserExtensionStatus = {
         since: "2026-10-16T09:01:00Z",
         lastActionAt: "2026-10-16T09:02:00Z",
       },
+      threads: [
+        {
+          threadId: "thread-7",
+          tabs: 1,
+          since: "2026-10-16T09:01:00Z",
+          lastActionAt: "2026-10-16T09:02:00Z",
+        },
+        {
+          threadId: "aide",
+          tabs: 1,
+          since: "2026-10-16T09:00:30Z",
+          lastActionAt: "2026-10-16T09:01:30Z",
+        },
+      ],
     },
     {
       id: "p2",
@@ -139,9 +158,17 @@ describe("BrowserExtensionCard", () => {
     await render();
     expect(state.request).toHaveBeenCalledWith({ environmentId: m4, input: {} });
     expect(text()).toContain("Chrome Web Store review");
-    expect(text()).toContain("Recommended");
+    expect(text()).toContain("Every chat, project thread and Aide");
+    expect(text()).toContain("Ready · 2 Chrome profiles paired");
     expect(text()).toContain("Marketing");
-    expect(text()).toContain("thread-7");
+    // Threads by title, never by id.
+    expect(text()).toContain("Publish the launch post");
+    expect(text()).toContain("Aide");
+    expect(text()).toContain("in use by 2 threads");
+    expect(text()).not.toContain("Thread thread-7");
+    // One Test button; Reconnect waits for a failed check.
+    expect(text()).toContain("Test connection");
+    expect(text()).not.toContain("Reconnect");
     expect(text()).toContain("chrome_open");
     expect(
       renderer.root.findAll(
@@ -157,13 +184,33 @@ describe("BrowserExtensionCard", () => {
           [node.props.children].flat(2).includes("Stop") &&
           typeof node.type !== "string",
       ),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
     state.command.mockResolvedValue({ _tag: "Success", value: status });
+    // Stop on a thread's row lets go of that thread's tabs only.
     await act(() => button("Stop").props.onClick());
+    expect(state.command).toHaveBeenCalledWith("stop", {
+      environmentId: m4,
+      input: { profileId: "p1", threadId: "thread-7" },
+    });
+    await act(() => button("Stop all").props.onClick());
     expect(state.command).toHaveBeenCalledWith("stop", {
       environmentId: m4,
       input: { profileId: "p1" },
     });
+  });
+
+  it("shows one thread from an older service that reports only a lease", async () => {
+    const [first, second] = status.profiles;
+    const { threads: _threads, ...older } = first!;
+    state.query.data = { ...status, profiles: [older, second!] };
+    await render();
+    expect(
+      renderer.root.findAll(
+        (node) =>
+          typeof node.type === "string" && node.props["data-testid"] === "browser-extension-thread",
+      ),
+    ).toHaveLength(1);
+    expect(text()).toContain("Publish the launch post");
   });
 
   it("links the store listing when it is public", async () => {
@@ -176,7 +223,25 @@ describe("BrowserExtensionCard", () => {
   it("shows an empty state with no profiles", async () => {
     state.query.data = { ...status, profiles: [], recentActions: [] };
     await render();
-    expect(text()).toContain("No Chrome profile is paired yet");
+    // Nothing paired: the setup is the page, with no test to run yet.
+    expect(text()).toContain("Not set up");
+    expect(text()).toContain("browser-extension-setup");
+    expect(text()).not.toContain("Pair another Chrome profile");
+    expect(text()).not.toContain("Test connection");
+  });
+
+  it("offers Reconnect only after a check finds a profile not answering", async () => {
+    await render();
+    state.command.mockResolvedValue({
+      _tag: "Success",
+      value: {
+        state: "error",
+        profiles: [{ id: "p1", label: "Marketing", ok: false, message: "No answer" }],
+        checkedAt: "2026-10-16T09:03:00Z",
+      },
+    });
+    await act(() => button("Test connection").props.onClick());
+    expect(text()).toContain("Reconnect");
   });
 
   it("hides the pairing code until revealed, and resets only after confirm", async () => {
@@ -257,10 +322,13 @@ describe("BrowserExtensionCard", () => {
     };
     state.command.mockResolvedValue({ _tag: "Success", value: check });
     await render();
-    await act(() => button("Reconnect").props.onClick());
-    expect(state.command).toHaveBeenCalledWith("reconnect", { environmentId: m4, input: {} });
+    await act(() => button("Test connection").props.onClick());
+    expect(state.command).toHaveBeenCalledWith("test", { environmentId: m4, input: {} });
     expect(text()).toContain("42 ms");
     expect(text()).toContain("Chrome is closed");
+    // A profile did not answer, so Reconnect appears.
+    await act(() => button("Reconnect").props.onClick());
+    expect(state.command).toHaveBeenCalledWith("reconnect", { environmentId: m4, input: {} });
     expect(state.query.refresh).toHaveBeenCalled();
   });
 

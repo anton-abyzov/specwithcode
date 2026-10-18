@@ -15,7 +15,7 @@
 # the fleet stages refusing a release the public feed does not show, the Electron runtime repair
 # and its failure, the plan checked into SHA256SUMS before drafts and on the draft before
 # publishing, the previous release's digests file, the public clone's noreply identity and a --ci
-# rerun removing the bump-only release branch a failed run left.
+# rerun removing the bump-only release branch a failed run left, and every stubbed command existing.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -67,6 +67,8 @@ run() {
   env "${STUB_ENV[@]}" bash "$RELEASE" "$@" > "$LAST_OUT" 2>&1
   rc=$?
   set -e
+  # Kept for the command check at the end: later tests remove their staging folders.
+  if [ -f "${STUB_LOG:-}" ]; then cat "$STUB_LOG" >> "$WORK/stub-commands.log"; fi
   if [ "$rc" -ne "$expected" ]; then
     printf '     (release.sh %s exited %s, expected %s)\n' "$*" "$rc" "$expected" >> "$LAST_OUT"
     return 1
@@ -142,7 +144,7 @@ use_machine() {  # use_machine ROOT VERSION
   STUB_ENV=(HOME="$root/home" RELEASE_STUB=1 RELEASE_STAGING_ROOT="$STAGING" RELEASE_TREES="$root/trees.noindex"
     RELEASE_ENV="$root/secrets/release.env" NVM_DIR="$root/nvm" STUDIO_FLEET_HOSTS="$root/fleet/hosts.json"
     STUDIO_PUBLIC_RULES="$root/public-rules/rules.json" RELEASE_DESKTOP_APP="$root/Applications/SpecWithCode.app"
-    RELEASE_STUB_PREVIOUS=1.1.0 RELEASE_STUB_SHA="$SHA_A" RELEASE_STUB_FAIL= RELEASE_STUB_STATUS= RELEASE_STUB_OUTPUT=
+    RELEASE_STUB_PREVIOUS=1.1.0 RELEASE_STUB_SHA="$SHA_A" RELEASE_STUB_FAIL= RELEASE_STUB_FAIL_ONCE= RELEASE_STUB_STATUS= RELEASE_STUB_OUTPUT=
     RELEASE_JOBS=2)
   mkdir -p "$root/home"
 }
@@ -603,6 +605,63 @@ ci_stale_tagged() { run 1 1.6.0 --ci --stop-after bump && has 'v1.6.0 is already
 check 'a --ci rerun refuses a version that is already tagged' ci_stale_tagged
 stub_set RELEASE_STUB_OUTPUT=
 
+# ---------------------------------------------------------------- malformed command calls, sign retry
+
+# `x sums --python3 ...` once ran "--python3" as the command and failed 1.0.44 after signing.
+command_word_refused() {
+  bash -c "$(sed -n '/^die() {/,/^}/p;/^command_word() {/,/^}/p' "$RELEASE"); command_word x sums --python3 -B tools.py" \
+    > "$LAST_OUT" 2>&1 && return 1
+  has 'x sums: "--python3" is not a command' || return 1
+  bash -c "$(sed -n '/^die() {/,/^}/p;/^command_word() {/,/^}/p' "$RELEASE"); command_word q key" > "$LAST_OUT" 2>&1 &&
+    return 1
+  bash -c "$(sed -n '/^die() {/,/^}/p;/^command_word() {/,/^}/p' "$RELEASE"); command_word x sums python3 -B" > "$LAST_OUT" 2>&1
+}
+check 'a call whose command is missing or starts with - is refused' command_word_refused
+# Every x/q/t call in release.sh names its command after --, so the dry run checks each one.
+calls_ok() {
+  # Every x, q or t call, wherever it sits on the line (after if !, then, && or || or inside
+  # $(...)): after the label and its own options (-C DIR, --may-fail) comes -- or the command,
+  # never an option glued to a word such as --python3.
+  python3 -B - "$RELEASE" > "$LAST_OUT" << 'PY'
+import re, sys
+call = re.compile(r"(?:^|[\s;&|(])[xqt] (\S+)((?: -C \S+| --may-fail)*) (\S+)")
+bad = []
+for number, line in enumerate(open(sys.argv[1]), 1):
+    if line.lstrip().startswith("#"):
+        continue
+    for match in call.finditer(line):
+        if re.match(r"--[A-Za-z]", match.group(3)):
+            bad.append(f"{number}: {line.strip()}")
+print("\n".join(bad))
+sys.exit(1 if bad else 0)
+PY
+}
+check 'no x, q or t call in release.sh glues an option to its command' calls_ok
+
+G="$WORK/g"
+make_machine "$G"
+use_machine "$G" 1.7.0
+stub_set RELEASE_STUB_FAIL_ONCE=sign:mac-signature
+sign_retry_ok() {
+  run 0 1.7.0 --stop-after sign || return 1
+  has 'signing once more' && [ "$(labels_of sign)" = "sign mac-signature mac-signature sign mac-signature-retry " ]
+}
+check 'a refused signature check signs once more and continues' sign_retry_ok
+rm -rf "$STAGE"
+stub_set RELEASE_STUB_FAIL_ONCE=sign:mac-signature RELEASE_STUB_FAIL=sign:mac-signature-retry
+sign_retry_stops() { run 1 1.7.0 --stop-after sign && has 'stage sign failed' && [ ! -f "$STAGE/markers/sign" ]; }
+check 'a second refused signature check stops the release' sign_retry_stops
+stub_set RELEASE_STUB_FAIL_ONCE= RELEASE_STUB_FAIL=
+
+use_machine "$G" 1.7.1
+stub_set RELEASE_STUB_OUTPUT=pr-required-buckets=fail
+merge_check_refused() {
+  run 1 1.7.1 --ci || return 1
+  has 'merge: a required check failed on release/1.7.1' && ! logged pr-merge && [ ! -f "$STAGE/markers/merge" ]
+}
+check 'a failed required check on the release PR stops the merge' merge_check_refused
+stub_set RELEASE_STUB_OUTPUT=
+
 # ---------------------------------------------------------------- timing comparison
 
 T="$WORK/timing"
@@ -628,6 +687,27 @@ check 'timing compare flags a stage over 25% and 10s slower, not a small one' ti
 
 tools_ok() { python3 -B "$HERE/test-release-tools.py" > "$LAST_OUT" 2>&1; }
 check 'release_tools.py unit tests' tools_ok
+
+# Stub runs record commands without running them, so a misspelled command name (pyhton3) passes
+# every check above and first fails a real release with exit 127. Every recorded command must
+# exist: on PATH here, one of the macOS-only tools the real release runs on its Mac, or pnpm,
+# which release-macos.yml installs in its own step (the self-test's runner has none).
+stub_commands_ok() {
+  local log cmd seen=0
+  : > "$LAST_OUT"
+  while IFS= read -r log; do
+    [ -f "$log" ] || continue
+    while IFS=$'\t' read -r _ _ cmd; do
+      case "$cmd" in 'FAILED (stub)' | '') continue ;; esac
+      cmd="${cmd%% *}"
+      seen=1
+      case "$cmd" in osascript | ditto | codesign | open | xcrun | pnpm) continue ;; esac
+      command -v "$cmd" > /dev/null || printf '%s: %s\n' "$log" "$cmd" >> "$LAST_OUT"
+    done < "$log"
+  done < <(find "$WORK" -name stub.log -type f; printf '%s\n' "$WORK/stub-commands.log")
+  [ "$seen" -eq 1 ] && [ ! -s "$LAST_OUT" ]
+}
+check 'every command the stub runs recorded exists' stub_commands_ok
 
 check 'the repository is unchanged' test "$(repo_state)" = "$REPO_STATE_BEFORE"
 

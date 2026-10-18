@@ -1,7 +1,7 @@
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { logicalCoordinator, projectExecutionScopes } from "../../studio/projectDomain";
 import { ProjectHandoffRecovery } from "./ProjectHandoffRecovery";
-import { useEffect, useState } from "react";
+import { Activity, type ReactElement, useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { type ThreadId } from "@specweave-studio/contracts";
 import { useSettingsProjectGroups } from "../settings/useSettingsProjectGroups";
@@ -25,6 +25,10 @@ import { SidebarInset } from "../ui/sidebar";
 import { isElectron } from "../../env";
 
 import { ProjectWorkspaceSurface } from "./ProjectWorkspaceSurface";
+
+/** Recently visited project pages stay mounted, hidden, so switching back only shows them. */
+export const KEPT_PROJECT_PAGES = 3;
+type KeptPage = { key: string; page: ReactElement };
 export function findProjectGroup<
   G extends {
     projectKey: string;
@@ -135,6 +139,7 @@ export function ProjectWorkspace({
   // panel closes, and until the URL catches up the new checkout does not see it,
   // or it would send the person to that machine's full page.
   const [leftThread, setLeftThread] = useState<ThreadId | null>(null);
+  const [kept, setKept] = useState<readonly KeptPage[]>([]);
   if (leftThread !== null && selected !== leftThread) setLeftThread(null);
   const paneSelected = selected === leftThread ? null : selected;
   const currentMachine = member ? coordinatorMachineKey(member) : null;
@@ -222,9 +227,10 @@ export function ProjectWorkspace({
         </div>
       </SidebarInset>
     );
-  return (
+  const pageKey = `${project.environmentId}:${project.id}`;
+  const page = (
     <ProjectWorkspaceSurface
-      key={`${project.environmentId}:${project.id}`}
+      key={pageKey}
       project={project}
       projectKey={projectKey}
       iconCheckouts={members}
@@ -243,4 +249,26 @@ export function ProjectWorkspace({
       setSelected={setSelected}
     />
   );
+  // A page left for another project stays mounted under a hidden Activity: its
+  // effects and subscriptions stop, its DOM and state stay, so coming back shows
+  // it without rendering its conversation again.
+  if (kept[0]?.key !== pageKey)
+    setKept(
+      [{ key: pageKey, page }, ...kept.filter((entry) => entry.key !== pageKey)].slice(
+        0,
+        KEPT_PROJECT_PAGES,
+      ),
+    );
+  const hidden = kept.filter(
+    (entry) =>
+      entry.key !== pageKey && projects.some((p) => `${p.environmentId}:${p.id}` === entry.key),
+  );
+  // One keyed list, so a page keeps its instance as it moves between shown and
+  // hidden. The shown page comes first, so lookups by ID such as the composer's
+  // `#project-prompt` find it before a hidden page's copy.
+  return [{ key: pageKey, page }, ...hidden].map((entry) => (
+    <Activity key={entry.key} mode={entry.key === pageKey ? "visible" : "hidden"}>
+      {entry.page}
+    </Activity>
+  ));
 }
