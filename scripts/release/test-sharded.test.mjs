@@ -65,7 +65,7 @@ describe("test-sharded verdict", () => {
     expect(
       verdict([shard(1, 0, 0), shard(2, 0, 0)], {
         changed: "abc123",
-        changedTestFiles: ["apps/server/src/cloudSessions/CloudSessions.test.ts"],
+        changedTestFiles: ["apps/server/src/fleet/FleetWorkerGrants.test.ts"],
       }),
     ).toEqual({ ok: false, reason: "no shard ran a changed server test file" });
   });

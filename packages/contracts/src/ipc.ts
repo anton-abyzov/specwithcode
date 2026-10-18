@@ -22,6 +22,7 @@ import * as Schema from "effect/Schema";
 import { SnapShotSource } from "./chatAttachment.ts";
 import { EnvironmentId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { BrowserProfileId } from "./browserProfile.ts";
+import type { ComputerUseAction, ComputerUseActionResult } from "./computerUse.ts";
 import type {
   BrowserImportResult,
   BrowserImportSource,
@@ -1251,6 +1252,12 @@ export interface DesktopBridge {
   startFileDrag?: (path: string) => Promise<boolean>;
   /** Holds off idle system sleep while `active`; absent on desktop builds predating it. */
   setKeepAwake?: (state: { active: boolean }) => Promise<void>;
+  /**
+   * Performs one computer-use action on this machine's desktop for an agent.
+   * Rejects with a message written for the agent. Absent on desktop builds
+   * predating computer use and on platforms without it.
+   */
+  runComputerUseAction?: (action: ComputerUseAction) => Promise<ComputerUseActionResult>;
   /** Voice calls; all absent on desktop builds predating them. */
   getVoiceStatus?: () => Promise<DesktopVoiceStatus>;
   /** Shows the macOS microphone prompt when the user has not answered it yet. */

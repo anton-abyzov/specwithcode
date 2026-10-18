@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Native fixture writes independently exercise the fleet HTTP reader.
 import { writeFile } from "node:fs/promises";
 import { join } from "./nodePath.ts";
+import { encodeFleetJoinCode } from "./studioFleetJoin.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   AuthSessionId,
@@ -83,7 +84,11 @@ async function api(
     Layer.provide(FleetHttp.layer),
     Layer.provide(
       FleetWorkerGrants.layer.pipe(
-        Layer.provide(FleetTargets.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, globalThis.fetch)))),
+        Layer.provide(
+          FleetTargets.layer.pipe(
+            Layer.provide(Layer.succeed(FetchHttpClient.Fetch, globalThis.fetch)),
+          ),
+        ),
         Layer.provide(ServerSecretStore.layer),
         Layer.provide(
           Layer.mock(ServerEnvironment.ServerEnvironment)({
@@ -145,9 +150,84 @@ async function api(
         ...(body ? { body: JSON.stringify(body) } : {}),
       }),
     );
-  return { request, workers, dispose };
+  const add = (
+    body: object,
+    headers: Record<string, string> = {
+      authorization: "Bearer synthetic-session",
+      origin: "http://localhost:8319",
+    },
+  ) =>
+    handler(
+      new Request("http://localhost:8319/api/studio/fleet/machines", {
+        method: "POST",
+        headers: { "content-type": "application/json", host: "localhost:8319", ...headers },
+        body: JSON.stringify(body),
+      }),
+    );
+  return { request, workers, add, dispose };
 }
 afterEach(() => vi.unstubAllGlobals());
+describe("adding a machine over HTTP", () => {
+  const invitation = encodeFleetJoinCode({
+    url: "https://m1.tailnet.ts.net",
+    environmentId: "env-m1",
+    label: "Mac M1",
+    managementToken: "synthetic-new-secret",
+  });
+  it("needs access management and this app's own origin before any outbound call", async () => {
+    const outbound = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", outbound);
+    const operator = await api([AuthOrchestrationReadScope, AuthOrchestrationOperateScope]);
+    const owner = await api();
+    try {
+      expect((await operator.add({ invitation })).status).toBe(403);
+      expect(
+        (
+          await owner.add(
+            { invitation },
+            { authorization: "Bearer synthetic-session", origin: "https://evil.invalid" },
+          )
+        ).status,
+      ).toBe(403);
+      expect((await owner.add({ invitation: "https://evil.ts.net" })).status).toBe(400);
+      expect((await owner.add({ invitation, url: "https://evil.ts.net" })).status).toBe(400);
+      expect(outbound).not.toHaveBeenCalled();
+    } finally {
+      await operator.dispose();
+      await owner.dispose();
+    }
+  });
+  it("moves a relayed machine to the address its invitation names once it answers there", async () => {
+    const outbound = vi.fn<typeof fetch>(async (url) =>
+      new URL(String(url)).origin === "https://m1.tailnet.ts.net"
+        ? Response.json(descriptor("env-m1"))
+        : Promise.reject(new TypeError("unreachable")),
+    );
+    vi.stubGlobal("fetch", outbound);
+    const owner = await api();
+    try {
+      const response = await owner.add({ invitation });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      const body = await response.text();
+      expect(body).not.toContain("synthetic-new-secret");
+      expect(JSON.parse(body)).toEqual({
+        id: "m1",
+        label: "Mac M1",
+        url: "https://m1.tailnet.ts.net",
+        environmentId: "env-m1",
+        change: "updated",
+        previousUrl: "https://fixture.tailnet.ts.net:8443",
+      });
+      const fleet = (await (await owner.request()).json()) as { machines: unknown[] };
+      expect(fleet.machines).toMatchObject([
+        { id: "m1", url: "https://m1.tailnet.ts.net", status: "reachable" },
+      ]);
+    } finally {
+      await owner.dispose();
+    }
+  });
+});
 describe("fleet authenticated HTTP", () => {
   it("denies unauthenticated reads, read-only pairing, CSRF and extra destinations before outbound calls", async () => {
     const outbound = vi.fn<typeof fetch>();

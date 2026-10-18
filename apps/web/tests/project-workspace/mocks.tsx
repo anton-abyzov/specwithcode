@@ -228,11 +228,29 @@ const REPORT_TEXT = [
   "",
   "Close 0973 once the deferred label fix has its own task.",
 ].join("\n");
+/** `?report&answer`: the worker answers a plain question directly instead, which stays in the chat. */
+const answerFixture = new URLSearchParams(window.location.search).has("answer");
+const ANSWER_TEXT = [
+  "Both machines are back and the UI no longer freezes. The cause was one expired relay token, not two separate faults.",
+  "",
+  "At midnight the relay rotated its signing key. M1 and M3 kept their old token, so every heartbeat after that was rejected and the host marked both machines offline. The Threads pane asks each machine for its list when it opens, and it waited on those two dead sockets with no timeout. That wait ran on the same task that draws the pane, which is why clicking anywhere in the window did nothing for about forty seconds before the error finally came back and the pane redrew with both machines missing.",
+  "",
+  "What I changed:",
+  "",
+  "- Reconnected M1 and M3 with fresh tokens. Both answer heartbeats again and show as online.",
+  "- Gave the per-machine thread list a five second timeout, so a machine that stops answering is shown as unreachable instead of holding up the pane.",
+  "- Moved that request off the drawing task, so a slow machine can no longer freeze the window.",
+  "- Made the relay accept the previous key for ten minutes after a rotation, so machines that are mid-heartbeat during a rotation are not dropped.",
+  "",
+  "I checked it by rotating the key by hand with all three machines connected. None of them dropped, and the Threads pane stayed responsive the whole time. I also unplugged M3 from the network while the pane was open: it turned grey within five seconds and the rest of the list kept working, and plugging it back in brought it back without a restart.",
+  "",
+  "Nothing needs you right now. If a machine still shows as offline after the next rotation tonight, restarting its SpecWithCode service will pick up a fresh token, and I would like to hear about it because it would mean the grace window is too short for that machine's heartbeat interval. The fix ships in the next build; until you update, the old behavior can come back after a rotation, and reconnecting the machine from Settings clears it the same way it did today.",
+].join("\n");
 const RELAY_TEXT = [
   "The review worker finished cycle 2 of 0973. Here is what it found:",
   "",
   ...Array.from(
-    { length: 30 },
+    { length: 90 },
     (_, i) => `- Point ${i + 1} from the review, restated for the decision`,
   ),
   "",
@@ -281,8 +299,21 @@ const reportProjection = {
       role: "user",
       createdBy: "agent",
       senderThreadId: "skills",
-      text: REPORT_TEXT,
+      text: answerFixture ? ANSWER_TEXT : REPORT_TEXT,
       createdAt: reportAgo(2),
+      attachments: [],
+    },
+    {
+      id: "r6",
+      role: "assistant",
+      text: [
+        "The review's evidence:",
+        "",
+        "- [Variance walkthrough](/scratch/atlas/evidence/variance-walkthrough.mp4)",
+        "- [Budget chart](/scratch/atlas/evidence/budget-vs-actuals.png)",
+        "- [Closing notes](/scratch/atlas/evidence/closing-notes.md)",
+      ].join("\n"),
+      createdAt: reportAgo(1.5),
       attachments: [],
     },
     {
@@ -543,6 +574,12 @@ export const useSettingsProjectGroups = () => [
   },
 ];
 export const useProjects = () => memberProjects;
+export const useProject = (ref) =>
+  ref === null
+    ? null
+    : (memberProjects.find(
+        (project) => project.environmentId === ref.environmentId && project.id === ref.projectId,
+      ) ?? null);
 export const useThreadShells = () => useSyncExternalStore(subscribeShells, () => shells);
 export const readThreadShells = () => shells;
 // The project page reads its own project's shells, and a host's threads for its links.
@@ -1187,8 +1224,13 @@ export const projectEnvironment = withFallback({
   folderCheck: "folderCheck",
   changeFolder: "changeFolder",
 });
+// Voice settings and file menus read the host's config; the fixture's host has none loaded.
+const noServerConfig = Atom.make(null);
+export const primaryServerConfigAtom = noServerConfig;
 export const serverEnvironment = withFallback({
   scheduledTasksLive: () => ({ kind: "routines" }),
+  configValueAtom: () => noServerConfig,
+  updateSettings: "updateSettings",
   setScheduledTaskEnabled: "routineToggle",
   runScheduledTaskNow: "routineRun",
 });
@@ -1535,6 +1577,9 @@ export const readEnvironmentScope = () => true;
 export const readPreparedConnection = () => (recovery ? { httpBaseUrl: location.origin } : null);
 export const usePreparedConnection = () => Option.none();
 export const useAllEnvironmentShellsBootstrapped = () => true;
+// Every fixture host is reachable.
+const NO_UNREACHABLE_ENVIRONMENTS: ReadonlySet<string> = new Set();
+export const useUnreachableEnvironmentIds = () => NO_UNREACHABLE_ENVIRONMENTS;
 export const useEnvironments = () => ({
   isReady: true,
   environments: [],

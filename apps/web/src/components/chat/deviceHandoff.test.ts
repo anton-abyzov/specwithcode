@@ -1,4 +1,6 @@
 import {
+  EnvironmentId,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   type OrchestrationV2TurnItem,
@@ -6,7 +8,7 @@ import {
 } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { deviceHandoffText, pickDeviceModel } from "./deviceHandoff";
+import { deviceHandoffText, pickContinueTarget, pickDeviceModel } from "./deviceHandoff";
 
 const now = Date.parse("2026-10-10T12:00:00.000Z");
 const later = "2026-10-10T15:00:00.000Z";
@@ -151,5 +153,77 @@ describe("deviceHandoffText", () => {
     expect(text).toContain("step 29");
     expect(text).not.toContain("step 0 ");
     expect(text.length).toBeLessThanOrEqual(12_500);
+  });
+});
+
+describe("deviceHandoffText when the machine can't be reached", () => {
+  it("says why it moved and keeps a chat's files on the old machine", () => {
+    const text = deviceHandoffText({
+      title: "Plan the trip",
+      sourceLabel: "M1",
+      branch: null,
+      turnItems: [],
+      reason: "unreachable",
+      chatFolder: true,
+    });
+    expect(text).toContain("started on M1, which can't be reached right now");
+    expect(text).not.toContain("usage limit");
+    expect(text).toContain("a new chat folder on this device");
+    expect(text).toContain("Files in the chat folder on M1 stay there");
+    expect(text).not.toContain("worktree");
+  });
+});
+
+describe("pickContinueTarget", () => {
+  const m1 = EnvironmentId.make("m1");
+  const m3 = EnvironmentId.make("m3");
+  const m4 = EnvironmentId.make("m4");
+  const project = ProjectId.make("project");
+  const candidate = (
+    environmentId: EnvironmentId,
+    over: Partial<Parameters<typeof pickContinueTarget>[0]["candidates"][number]> = {},
+  ) => ({
+    environmentId,
+    projectId: project,
+    label: environmentId.toUpperCase(),
+    connected: true,
+    canOperate: true,
+    providers: [provider("claudeAgent", "claudeAgent", 10)],
+    ...over,
+  });
+  const pick = (
+    candidates: Parameters<typeof pickContinueTarget>[0]["candidates"],
+    chatFolder = false,
+  ) =>
+    pickContinueTarget({
+      sourceEnvironmentId: m1,
+      candidates,
+      chatFolder,
+      current,
+      currentDriver: "claudeAgent",
+      nowMs: now,
+    });
+
+  it("skips the unreachable source, machines that are down and ones this client can't use", () => {
+    const target = pick([
+      candidate(m1),
+      candidate(m3, { connected: false }),
+      candidate(EnvironmentId.make("viewer"), { canOperate: false }),
+      candidate(m4),
+    ]);
+    expect(target).toMatchObject({ environmentId: m4, label: "M4", model: "Opus" });
+    expect(target?.selection).toEqual(current);
+  });
+
+  it("needs the project on that machine, except for a chat without a project", () => {
+    expect(pick([candidate(m4, { projectId: null })])).toBeNull();
+    expect(pick([candidate(m4, { projectId: null })], true)).toMatchObject({
+      environmentId: m4,
+      projectId: null,
+    });
+  });
+
+  it("skips a machine with no ready provider", () => {
+    expect(pick([candidate(m4, { providers: [] })])).toBeNull();
   });
 });

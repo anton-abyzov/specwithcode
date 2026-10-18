@@ -1123,6 +1123,117 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
   );
 
+  it.effect("starts a coordinator's worker on its own model when the worker model is spent", () =>
+    Effect.gen(function* () {
+      const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
+      const spent: ServerProvider = {
+        ...providerSnapshot({
+          instanceId: antigravityInstanceId,
+          driver: ProviderDriverKind.make("antigravity"),
+          model: "ant-model",
+        }),
+        usageLimits: {
+          checkedAt: "2026-09-13T00:00:00.000Z",
+          ordinaryUsageAllowed: false,
+          windows: [
+            {
+              id: "weekly",
+              kind: "weekly",
+              label: "Weekly",
+              usedPercent: 100,
+              resetsAt: "2099-01-01T00:00:00.000Z",
+            },
+          ],
+        },
+      };
+      const task = {
+        id: taskId,
+        threadId: parentThreadId,
+        runId: parentRunId,
+        parentNodeId,
+        origin: "app_owned",
+        createdBy: "agent",
+        driver: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        providerThreadId: null,
+        childThreadId,
+        nativeTaskRef: null,
+        prompt: "Summarize the diff.",
+        title: null,
+        model: "gpt-5.4",
+        status: "running",
+        result: null,
+        startedAt: null,
+        completedAt: null,
+      };
+      let delegated = false;
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: (threadId) =>
+            Effect.succeed(
+              threadId === parentThreadId
+                ? parentProjection(delegated ? [task] : [])
+                : childProjection,
+            ),
+          dispatch: (command) =>
+            Ref.update(dispatched, (commands) => [...commands, command]).pipe(
+              Effect.andThen(Effect.sync(() => (delegated = true))),
+              Effect.as({
+                sequence: 1,
+                storedEvents: [
+                  {
+                    sequence: 1,
+                    commandId: null,
+                    event: { type: "subagent.updated", payload: task },
+                  },
+                ],
+              } as never),
+            ),
+        }),
+        providerRegistryLayer([
+          providerSnapshot({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.4",
+          }),
+          spent,
+        ]),
+        adapterRegistryLayer([codexInstanceId, antigravityInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: (id) =>
+            Effect.sync(() =>
+              Option.some(
+                projectFixture(id, {
+                  defaultModelSelection: { instanceId: antigravityInstanceId, model: "ant-model" },
+                  workspaceSettings: {
+                    ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+                    coordinatorThreadId: parentThreadId,
+                  },
+                }),
+              ),
+            ),
+        }),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        yield* service.delegateTask(scope, {
+          task: "Summarize the diff.",
+          mode: "async",
+          clientRequestId: "delegate-spent-default",
+        });
+        const [request] = (yield* Ref.get(dispatched)) as ReadonlyArray<{
+          modelSelection: { instanceId: string; model: string };
+        }>;
+        assert.equal(request?.modelSelection.instanceId, codexInstanceId);
+        assert.equal(request?.modelSelection.model, "gpt-5.4");
+      }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(layerDependencies))));
+    }),
+  );
+
   it.effect("resolves a driverKind target to a capable Antigravity instance", () =>
     Effect.gen(function* () {
       const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);

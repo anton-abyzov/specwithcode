@@ -6,7 +6,28 @@ import {
   presentQuestionOption,
   questionOptionIndexForKey,
   questionOptionLetter,
+  splitQuestionText,
 } from "./questionCard.logic";
+
+describe("splitQuestionText", () => {
+  it("keeps the first paragraph as the headline and the rest as details", () => {
+    expect(
+      splitQuestionText(
+        'Delete the project "140 provider verification grok" and its 1 thread?\n\nThis cannot be undone.\n\nReason: Leftover test project.',
+      ),
+    ).toEqual({
+      headline: 'Delete the project "140 provider verification grok" and its 1 thread?',
+      details: "This cannot be undone.\n\nReason: Leftover test project.",
+    });
+  });
+
+  it("has no details for a one-paragraph question", () => {
+    expect(splitQuestionText("Which approach?\n")).toEqual({
+      headline: "Which approach?",
+      details: null,
+    });
+  });
+});
 
 describe("question card options", () => {
   it("letters options and maps letter or number keys back to them", () => {

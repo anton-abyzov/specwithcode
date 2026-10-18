@@ -159,14 +159,16 @@ export function parseFleetConfig(raw: unknown): FleetConfig {
   };
 }
 
-/** Never follow a symlink or read group/world-readable management credentials. */
-export async function readFleetConfig(baseDir: string): Promise<FleetConfig | null> {
+export const FLEET_CONFIG_FILE = "studio-fleet.json";
+
+/**
+ * The file as written, parsed but not normalized, or null when there is none.
+ * Never follows a symlink or reads group/world-readable management credentials.
+ */
+export async function readFleetConfigSource(baseDir: string): Promise<unknown> {
   let file;
   try {
-    file = await open(
-      join(baseDir, "studio-fleet.json"),
-      constants.O_RDONLY | constants.O_NOFOLLOW,
-    );
+    file = await open(join(baseDir, FLEET_CONFIG_FILE), constants.O_RDONLY | constants.O_NOFOLLOW);
     const stat = await file.stat();
     if (
       !stat.isFile() ||
@@ -175,13 +177,18 @@ export async function readFleetConfig(baseDir: string): Promise<FleetConfig | nu
       (process.getuid && stat.uid !== process.getuid())
     )
       throw new FleetError("config");
-    return parseFleetConfig(JSON.parse(await file.readFile("utf8")));
+    return JSON.parse(await file.readFile("utf8"));
   } catch (error) {
     if (record(error) && error.code === "ENOENT") return null;
     throw new FleetError("config");
   } finally {
     await file?.close();
   }
+}
+
+export async function readFleetConfig(baseDir: string): Promise<FleetConfig | null> {
+  const source = await readFleetConfigSource(baseDir);
+  return source === null ? null : parseFleetConfig(source);
 }
 
 export type FleetFetch = typeof globalThis.fetch;

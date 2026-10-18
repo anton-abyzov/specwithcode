@@ -39,6 +39,7 @@ PROOF_LIMIT = 20000
 # packages/contracts/src/settings.ts PROJECT_SCOPED_SERVER_SETTING_KEYS.
 PROJECT_SCOPED_KEYS = frozenset((
     'agentInstructions', 'claudeWorkflowMode', 'responseStyle', 'worktreeCleanup', 'defaultModelSelection',
+    'defaultModelProviders',
     'defaultRuntimeMode', 'defaultThreadEnvMode', 'newWorktreesStartFromOrigin', 'worktreeSubmodules',
     'defaultAutoPull', 'defaultProjectScripts', 'enableAgentBrowserAccess', 'agentBrowserProfileId',
     'enableAgentDeviceAccess', 'textGenerationModelSelection', 'sourceControlWriterModelSelection',

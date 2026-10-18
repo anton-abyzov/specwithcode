@@ -39,6 +39,44 @@ function renderPanel(pendingUserInput: PendingUserInput = prompt) {
 }
 
 describe("ComposerPendingUserInputPanel", () => {
+  it("shows an approval's consequences and reason below its question, and how many wait", () => {
+    const approval = (id: string): PendingUserInput => ({
+      ...prompt,
+      requestId: RuntimeRequestId.make(id),
+      dismissible: false,
+      questions: [
+        {
+          id: "approval",
+          header: "Approval",
+          question:
+            'Delete the project "140 provider verification grok" and its 1 thread?\n\nThis cannot be undone.\n\nReason: Leftover test project.',
+          options: [{ label: "Approve", description: "SpecWithCode makes the change." }],
+          multiSelect: false,
+          allowCustomAnswer: false,
+        },
+      ],
+    });
+    const markup = renderToStaticMarkup(
+      <ComposerPendingUserInputPanel
+        pendingUserInputs={[approval("a"), approval("b"), approval("c")]}
+        respondingRequestIds={[]}
+        answers={{}}
+        questionIndex={0}
+        onToggleOption={() => {}}
+        onAdvance={() => {}}
+        onDismiss={() => {}}
+      />,
+    );
+    expect(markup).toContain('data-pending-user-input-waiting="2"');
+    expect(markup).toContain("2 more requests are waiting");
+    const details = markup.match(/<div[^>]*data-question-details[^>]*>([\s\S]*?)<\/div>/)?.[1];
+    expect(details).toContain("This cannot be undone.");
+    expect(details).toContain("Reason: Leftover test project.");
+    expect(markup).toContain(
+      'aria-label="Delete the project &quot;140 provider verification grok&quot; and its 1 thread?"',
+    );
+  });
+
   it("renders the header as a disclosure control for the question body", () => {
     const markup = renderPanel();
 

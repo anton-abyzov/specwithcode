@@ -2,7 +2,6 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
-import { CloudSessionAvailabilityStatus } from "./cloudSessions.ts";
 import {
   ContextTransferId,
   EnvironmentId,
@@ -755,18 +754,6 @@ export const OrchestratorMcpMachineListResult = Schema.Struct({
   machines: Schema.Array(OrchestratorMcpMachine),
   /** The machine this project's coordinator starts workers on, or null for this one. */
   projectWorkerMachine: Schema.NullOr(Schema.String),
-  /**
-   * Anthropic cloud sessions as a further place to run work: whether this
-   * machine can start them and the tool that does. Absent on servers older
-   * than cloud sessions.
-   */
-  cloud: Schema.optional(
-    Schema.Struct({
-      status: CloudSessionAvailabilityStatus,
-      reason: Schema.String,
-      tool: Schema.Literal("studio_cloud_session_create"),
-    }),
-  ),
 });
 export type OrchestratorMcpMachineListResult = typeof OrchestratorMcpMachineListResult.Type;
 

@@ -78,6 +78,8 @@ export type LimitPresentations = ReadonlyMap<
   EnvironmentId,
   {
     readonly entry: { readonly target: { readonly label: string } };
+    /** Absent means connected: callers without connection state keep every read as current. */
+    readonly connection?: { readonly phase: string } | undefined;
     readonly serverConfig: {
       readonly providers?: readonly ServerProvider[] | undefined;
       readonly usageLimitSources?: UsageLimitSourceSnapshots | undefined;
@@ -154,6 +156,11 @@ export interface LimitAccount {
   }>;
   /** The hub that reported it, when no environment has it natively. */
   readonly sourceLabel: string | null;
+  /**
+   * Every machine that reported it is out of reach, so `limits` is the last
+   * read the app kept, as of `limits.checkedAt`, not a live one.
+   */
+  readonly offline: boolean;
   /** Where the displayed reset credit can be redeemed. */
   readonly redeem: {
     readonly environmentId: EnvironmentId;
@@ -217,6 +224,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       plan: previous.plan ?? next.plan,
       accentColor: previous.accentColor ?? next.accentColor,
       environments,
+      offline: previous.offline && next.offline,
       // A hub only names the account when no environment has it natively.
       sourceLabel: environments.length > 0 ? null : (previous.sourceLabel ?? next.sourceLabel),
       redeem:
@@ -232,6 +240,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
   };
   for (const [environmentId, presentation] of presentations) {
     const label = presentation.entry.target.label;
+    const offline = !isConnected(presentation);
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
       if (!provider.usageLimits || limitsNotice(provider.usageLimits) !== null) continue;
       merge(
@@ -246,6 +255,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
           accentColor: provider.accentColor,
           environments: [{ environmentId, label }],
           sourceLabel: null,
+          offline,
           redeem: { environmentId, input: { instanceId: provider.instanceId } },
           limits: provider.usageLimits,
         },
@@ -275,6 +285,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
             accentColor: undefined,
             environments: [],
             sourceLabel,
+            offline: !isConnected(presentation),
             redeem: account.usageLimits.resetCredits?.nextCreditId
               ? {
                   environmentId,
@@ -292,6 +303,12 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     }
   }
   return [...accounts.values()];
+}
+
+function isConnected(presentation: {
+  readonly connection?: { readonly phase: string } | undefined;
+}) {
+  return presentation.connection === undefined || presentation.connection.phase === "connected";
 }
 
 /**
@@ -353,6 +370,21 @@ export function collectLimitNotices(presentations: LimitPresentations): readonly
       const name = provider.displayName?.trim() || String(provider.driver);
       if (notice) notices.push(`${label(environmentLabel, name)}: ${notice}`);
     }
+    // A subscription agent that never got as far as reading limits would
+    // otherwise drop off the page without a word, as if it did not exist.
+    for (const provider of presentation.serverConfig?.providers ?? []) {
+      if (!SUBSCRIPTION_DRIVERS.has(provider.driver) || provider.usageLimits !== undefined)
+        continue;
+      if (!provider.enabled || !provider.installed || !isProviderAvailable(provider)) continue;
+      const name = provider.displayName?.trim() || String(provider.driver);
+      notices.push(
+        `${label(environmentLabel, name)}: ${
+          provider.auth.status === "unauthenticated"
+            ? "Not signed in, so no limits to show."
+            : "Could not check the sign-in, so no limits to show."
+        }`,
+      );
+    }
     for (const source of presentation.serverConfig?.usageLimitSources ?? []) {
       if (source.error) {
         notices.push(`${label(environmentLabel, source.label)}: ${source.error}`);
@@ -364,9 +396,18 @@ export function collectLimitNotices(presentations: LimitPresentations): readonly
   return notices;
 }
 
+/** Drivers whose signed-in instances always report subscription windows. */
+const SUBSCRIPTION_DRIVERS: ReadonlySet<string> = new Set(["claudeAgent", "codex"]);
+
 export interface LimitPoolMember {
   readonly account: LimitAccount;
   readonly window: ServerProviderUsageWindow;
+  /**
+   * The read predates the window's reset, so the window counts as fresh and
+   * nothing is known about spend since. Only an offline machine's kept read
+   * lingers past its reset; a connected one is read again.
+   */
+  readonly resetSinceRead?: true;
 }
 
 /**
@@ -383,6 +424,7 @@ export interface LimitPoolWindow {
   readonly columns: ReadonlyArray<{
     readonly account: LimitAccount;
     readonly window: ServerProviderUsageWindow | null;
+    readonly resetSinceRead?: true;
   }>;
   readonly remainingPercent: number;
   readonly usedPercent: number;
@@ -469,11 +511,12 @@ function accountSortName(account: LimitAccount): string {
 function poolWindows(accounts: readonly LimitAccount[], now: number): readonly LimitPoolWindow[] {
   const byKey = new Map<string, LimitPoolMember[]>();
   for (const account of accounts) {
-    for (const window of account.limits.windows) {
-      const key = `${window.kind}:${window.id}`;
+    for (const read of account.limits.windows) {
+      const key = `${read.kind}:${read.id}`;
+      const member = poolMember(account, read, now);
       const list = byKey.get(key);
-      if (list) list.push({ account, window });
-      else byKey.set(key, [{ account, window }]);
+      if (list) list.push(member);
+      else byKey.set(key, [member]);
     }
   }
   const pools = [...byKey.values()].map((members): LimitPoolWindow => {
@@ -519,6 +562,22 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
     };
   });
   return pools.sort((left, right) => WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind]);
+}
+
+/**
+ * A window whose reset has passed since it was read is open again: counting
+ * the old spend would understate the pool and promise a refill that already
+ * happened.
+ */
+function poolMember(
+  account: LimitAccount,
+  window: ServerProviderUsageWindow,
+  now: number,
+): LimitPoolMember {
+  const at = resetMillis(window);
+  if (at === null || at > now) return { account, window };
+  const { resetsAt: _passed, ...rest } = window;
+  return { account, window: { ...rest, usedPercent: 0 }, resetSinceRead: true };
 }
 
 /** The one-line status under a provider heading when there are no bars to draw. */

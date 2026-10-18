@@ -81,6 +81,14 @@ export default defineConfig({
       NodeURL.fileURLToPath(
         new URL("./packages/shared/src/testing/longTempDir.ts", import.meta.url),
       ),
+      NodeURL.fileURLToPath(
+        new URL("./packages/shared/src/testing/isolatedTempDir.ts", import.meta.url),
+      ),
+    ],
+    globalSetup: [
+      NodeURL.fileURLToPath(
+        new URL("./packages/shared/src/testing/vitestTempDirCleanup.ts", import.meta.url),
+      ),
     ],
   },
   staged: {
@@ -272,7 +280,11 @@ export default defineConfig({
       {
         // Third-party marks (brand logos, the macOS permission panes, Codex's Computer Use
         // mark) must keep their exact colors, so the files that hold them are exempt.
-        files: ["apps/web/src/components/Icons.tsx", "apps/web/src/components/JetBrainsIcons.tsx"],
+        files: [
+          "apps/web/src/components/Icons.tsx",
+          "apps/web/src/components/JetBrainsIcons.tsx",
+          "apps/web/src/components/ProviderLogoMarks.tsx",
+        ],
         rules: { "shadcn/no-raw-colors": "off" },
       },
       {

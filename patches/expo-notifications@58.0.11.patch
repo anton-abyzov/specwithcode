@@ -1,0 +1,61 @@
+diff --git a/ios/ExpoNotifications/Notifications/NotificationCenterManager.swift b/ios/ExpoNotifications/Notifications/NotificationCenterManager.swift
+--- a/ios/ExpoNotifications/Notifications/NotificationCenterManager.swift
++++ b/ios/ExpoNotifications/Notifications/NotificationCenterManager.swift
+@@ -82,12 +82,23 @@
+     state.withLock { $0.delegates.removeAll { $0 === delegate } }
+   }
+ 
+-  func appendPendingResponse(_ response: UNNotificationResponse) {
+-    state.withLock { $0.pendingResponses.append(response) }
++  /**
++   Keeps the response pending, and returns the delegates to offer it to. A delegate that registers
++   while they are offered it gets the response from `add`, so no delegate can miss it.
++   */
++  func deliver(_ response: UNNotificationResponse) -> [NotificationDelegate] {
++    state.withLock { state in
++      state.pendingResponses.append(response)
++      return state.delegates
++    }
+   }
+ 
+-  func removeAllPendingResponses() {
+-    state.withLock { $0.pendingResponses.removeAll() }
++  /**
++   Removes the given responses, and keeps the ones that arrived while they were being offered.
++   */
++  func removePendingResponses(_ responses: [UNNotificationResponse]) {
++    let handled = Set(responses.map(ObjectIdentifier.init))
++    state.withLock { $0.pendingResponses.removeAll { handled.contains(ObjectIdentifier($0)) } }
+   }
+ }
+ 
+@@ -163,11 +174,12 @@
+ 
+   public func addDelegate(_ delegate: NotificationDelegate) {
+     var handled = false
+-    for pendingResponse in registry.add(delegate) {
++    let responses = registry.add(delegate)
++    for pendingResponse in responses {
+       handled = delegate.didReceive(pendingResponse, completionHandler: {}) || handled
+     }
+     if handled {
+-      registry.removeAllPendingResponses()
++      registry.removePendingResponses(responses)
+     }
+   }
+ 
+@@ -228,11 +240,11 @@
+     withCompletionHandler completionHandler: @escaping () -> Void
+   ) {
+     var handled = false
+-    for delegate in delegates {
++    for delegate in registry.deliver(response) {
+       handled = delegate.didReceive(response, completionHandler: completionHandler) || handled
+     }
+-    if !handled {
+-      registry.appendPendingResponse(response)
++    if handled {
++      registry.removePendingResponses([response])
+     }
+     chainedDelegate?.userNotificationCenter?(center, didReceive: response, withCompletionHandler: completionHandler)
+     completionHandler()

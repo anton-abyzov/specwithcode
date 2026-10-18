@@ -123,7 +123,7 @@ export function ProjectRoutines({
               <h3>{task.title}</h3>
               <p className="project-muted">
                 {task.enabled ? "Enabled" : "Paused"} ·{" "}
-                {task.threadId ? "Continues its thread" : "Starts a new thread"}
+                {task.threadId ? "Continues its thread" : "Goes to the coordinator"}
               </p>
               <p className="project-muted">
                 Next run:{" "}

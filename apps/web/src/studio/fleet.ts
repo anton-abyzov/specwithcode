@@ -7,6 +7,7 @@ import {
   type ProjectId,
   sessionGrantsScope,
 } from "@specweave-studio/contracts";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -15,12 +16,14 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentPresentations } from "../state/presentation";
 import { environmentSession, readEnvironmentScope, readPreparedConnection } from "../state/session";
 import type {
+  StudioFleetAddResult,
   StudioFleetSnapshot,
   StudioFleetWorkerAccess,
   StudioFleetWorkersResult,
 } from "@specweave-studio/contracts/studioFleet";
 import {
   requestFleet,
+  requestFleetAdd,
   requestFleetPairing,
   requestFleetWorkersAllow,
   requestFleetWorkersStop,
@@ -184,5 +187,45 @@ export async function stopStudioFleetWorkers(
   appAtomRegistry.refresh(fleetAtom(environmentId));
   if (result._tag === "Failure")
     throw new Error("Could not stop workers on this machine. Refresh, then retry.");
+  return result.value;
+}
+
+/**
+ * Adds the machine a `fleet invite` line names to this server's private
+ * machines, or moves a configured one to its new address. The server checks
+ * the address answers as that machine before saving anything.
+ */
+export async function addStudioFleetMachine(
+  environmentId: EnvironmentId,
+  invitation: string,
+): Promise<StudioFleetAddResult> {
+  const prepared = readPreparedConnection(environmentId);
+  if (
+    !prepared ||
+    !readEnvironmentScope(environmentId, AuthAccessWriteScope) ||
+    appAtomRegistry.get(environmentPresentations.presentationAtom(environmentId))?.connection
+      .phase !== "connected"
+  )
+    throw new Error("Adding a machine needs Manage access on this server.");
+  const action = connectionAtomRuntime.atom(requestFleetAdd(prepared, { invitation }));
+  const result = await executeAtomQuery(appAtomRegistry, action, {
+    reportFailure: false,
+    reportDefect: false,
+  });
+  appAtomRegistry.refresh(fleetAtom(environmentId));
+  if (result._tag === "Failure") {
+    // The server words what the user can fix: a bad line, an offline machine.
+    const failure = Cause.squash(result.cause);
+    throw new Error(
+      typeof failure === "object" &&
+        failure !== null &&
+        "_tag" in failure &&
+        failure._tag === "EnvironmentHttpBadRequestError" &&
+        "message" in failure &&
+        typeof failure.message === "string"
+        ? failure.message
+        : "Could not add this machine. Refresh, then retry.",
+    );
+  }
   return result.value;
 }

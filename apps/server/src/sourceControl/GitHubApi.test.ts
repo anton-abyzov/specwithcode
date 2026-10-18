@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@effect/vitest";
+import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -16,6 +16,28 @@ import * as GitHubGraphQlBudget from "./githubGraphQlBudget.ts";
 import * as SourceControlRateLimit from "./SourceControlRateLimit.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as ServerSettings from "../serverSettings.ts";
+
+// gh reads these before any stored login, so a token in the host's environment
+// (a release runner's GH_TOKEN, a developer's shell) would replace the fake gh.
+const TOKEN_VARIABLES = [
+  "GH_TOKEN",
+  "GITHUB_TOKEN",
+  "GH_ENTERPRISE_TOKEN",
+  "GITHUB_ENTERPRISE_TOKEN",
+];
+const savedTokens = new Map<string, string | undefined>();
+beforeEach(() => {
+  for (const name of TOKEN_VARIABLES) {
+    savedTokens.set(name, process.env[name]);
+    delete process.env[name];
+  }
+});
+afterEach(() => {
+  for (const [name, value] of savedTokens) {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
+});
 
 const NOW = Date.parse("2026-10-05T12:00:00.000Z");
 

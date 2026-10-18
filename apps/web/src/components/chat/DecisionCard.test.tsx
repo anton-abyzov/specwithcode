@@ -47,24 +47,58 @@ function item(answer: Partial<AnsweredQuestionItem["questionAnswer"]>): Answered
 }
 
 describe("DecisionCard", () => {
-  it("shows the question, the lettered choice and who chose", () => {
+  it("rests as one line: a check, the choice and that the agent has it", () => {
     const markup = renderToStaticMarkup(<DecisionCard item={item({})} />);
     expect(markup).toContain("Decision");
+    expect(markup).toMatch(/data-decision-summary[^>]*>Clear caches</);
+    expect(markup).toContain("Sent to the agent");
+    expect(markup).toContain('dateTime="2026-10-10T18:35:00.000Z"');
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).not.toContain("Clear regenerable caches on the M4 to free disk space?");
+  });
+
+  it("counts several answered questions and lists every choice", () => {
+    const two = item({ answers: { q1: "Clear caches", q2: "Weekly" } });
+    const markup = renderToStaticMarkup(
+      <DecisionCard
+        item={{
+          ...two,
+          questions: [
+            ...two.questions,
+            {
+              id: "q2",
+              header: "Schedule",
+              question: "How often?",
+              options: [
+                { label: "Daily", description: "" },
+                { label: "Weekly", description: "" },
+              ],
+            },
+          ],
+        }}
+      />,
+    );
+    expect(markup).toContain(" · 2 answered");
+    expect(markup).toMatch(/data-decision-summary[^>]*>Clear caches, Weekly</);
+  });
+
+  it("shows the question, the lettered choice and who chose when expanded", () => {
+    const markup = renderToStaticMarkup(<DecisionCard item={item({})} defaultExpanded />);
     expect(markup).toContain("Clear regenerable caches on the M4 to free disk space?");
-    expect(markup).toContain("Clear caches");
     expect(markup).toMatch(/>A<\/span>/);
     expect(markup).toContain("You chose");
-    expect(markup).toContain('dateTime="2026-10-10T18:35:00.000Z"');
   });
 
   it("names an agent answer and a typed reply", () => {
     const markup = renderToStaticMarkup(
       <DecisionCard
         item={item({ answers: { q1: "Only Xcode caches" }, answeredByThreadId: "thread-2" })}
+        defaultExpanded
       />,
     );
     expect(markup).toContain("Only Xcode caches");
     expect(markup).toContain("An agent replied");
+    expect(markup).toContain("Answered by an agent");
   });
 });
 

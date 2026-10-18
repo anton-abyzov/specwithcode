@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
+import {
+  isShareablePairingUrl,
+  resolveDesktopPairingUrl,
+  resolveHostedPairingUrl,
+} from "./pairingUrls";
 
 describe("settings pairing URL helpers", () => {
   afterEach(() => {
@@ -20,5 +24,14 @@ describe("settings pairing URL helpers", () => {
     expect(resolveHostedPairingUrl("https://host.tailnet.example.ts.net:8319", "PAIRCODE")).toBe(
       "https://preview.studio.invalid/pair?host=https%3A%2F%2Fhost.tailnet.example.ts.net%3A8319#token=PAIRCODE",
     );
+  });
+
+  it("shares only links another machine can open", () => {
+    expect(isShareablePairingUrl("studio://app/pair#token=PAIRCODE")).toBe(false);
+    expect(isShareablePairingUrl("http://127.0.0.1:8319/pair#token=PAIRCODE")).toBe(false);
+    expect(isShareablePairingUrl("http://localhost:8319/pair#token=PAIRCODE")).toBe(false);
+    expect(isShareablePairingUrl("not a url")).toBe(false);
+    expect(isShareablePairingUrl("https://air.tailnet.ts.net/pair#token=PAIRCODE")).toBe(true);
+    expect(isShareablePairingUrl("http://192.168.1.44:8319/pair#token=PAIRCODE")).toBe(true);
   });
 });

@@ -90,6 +90,7 @@ export function ProjectDefaultsSettings({
   const mixedWorkspace = useScopedSettingsMixed(["defaultThreadEnvMode"]);
   const mixedSubmodules = useScopedSettingsMixed(["worktreeSubmodules"]);
   const mixedBrowser = useScopedSettingsMixed(["enableAgentBrowserAccess"]);
+  const mixedComputer = useScopedSettingsMixed(["enableAgentComputerAccess"]);
   const mixedBrowserProfile = useScopedSettingsMixed(["agentBrowserProfileId"]);
   const browserProfileSource = useScopedSettingSource(["agentBrowserProfileId"]);
   const browserProfiles = useBrowserDefaults().profiles.filter(
@@ -654,6 +655,41 @@ export function ProjectDefaultsSettings({
               />
             }
           />
+          {/* Computer use belongs to the machine: no project overrides it. */}
+          {isProjectScope ? null : (
+            <SettingsRow
+              serverScoped
+              settingKeys={["enableAgentComputerAccess"]}
+              mixed={mixedComputer}
+              id={searchableSetting("agent-computer-access").id}
+              title="Agent computer access"
+              description="Let agents on this machine, in every project and with every provider, see and control its desktop through the SpecWithCode app, for System Settings and other native apps. macOS asks for Screen Recording and Accessibility the first time. Applies when an agent session next starts."
+              resetAction={
+                settings.enableAgentComputerAccess !==
+                DEFAULT_SERVER_SETTINGS.enableAgentComputerAccess ? (
+                  <SettingResetButton
+                    label="default computer access"
+                    onClick={() =>
+                      updateSettings({
+                        enableAgentComputerAccess:
+                          DEFAULT_SERVER_SETTINGS.enableAgentComputerAccess,
+                      })
+                    }
+                  />
+                ) : null
+              }
+              control={
+                <Switch
+                  aria-label="Agent computer access"
+                  mixed={mixedComputer}
+                  checked={mixedComputer ? false : settings.enableAgentComputerAccess}
+                  onCheckedChange={(enabled) =>
+                    updateSettings({ enableAgentComputerAccess: enabled })
+                  }
+                />
+              }
+            />
+          )}
           {browserProfileSupported ? (
             <SettingsRow
               serverScoped

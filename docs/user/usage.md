@@ -145,11 +145,28 @@ set the rule for that project; the same rows under **Settings → General** set 
 
 **Fallback model** picks the provider and model to continue on. Without one, SpecWithCode picks another
 signed-in provider that is not full. A thread already running on the fallback goes back to the
-project's default model. A Claude instance billed per token (its own API key, a token for another
+project's recommended model. A Claude instance billed per token (its own API key, a token for another
 endpoint, or Amazon Bedrock) is never picked as "another signed-in provider", because its turns
 cost money: it
-takes a thread only as the **Fallback model** you chose, as the project's default model, or through
+takes a thread only as the **Fallback model** you chose, as the project's recommended model, or through
 **Use API credits first**.
+
+In a project, a thread the coordinator starts runs on the project's **Recommended model for
+threads** while that provider has room. When it has none (it is past **Switch before the limit** or
+refuses new usage), the thread starts on the same model from another provider that serves it, in
+the order set under **Also served by**: Claude Opus 5.5 on a Claude subscription, then Claude Opus
+5.5 on GitHub Copilot, for example. Without another provider for the model, it starts on the model
+the coordinator itself runs on, since the coordinator is using it right now, and failing that on
+another signed-in provider with room. **Wait for the reset**, or a reset within **Wait when the
+reset is close**, keeps the recommended model. A thread or the coordinator that stops on the limit
+moves the same way, first to the same model elsewhere. Threads run on the coordinator's machine
+unless the project's **Worker machine** names another one; a limit never moves them to another
+machine by itself.
+
+A provider that reports no usage (Copilot and the other agents set up under
+[ACP providers](providers-acp.md)) counts as having room while it is signed in and ready, until a
+turn on it stops on a limit; SpecWithCode then leaves it alone until that limit resets, or for five
+hours when the stop named no reset time.
 
 **Switch before the limit** (default 95%) is the share of the provider's fullest usage window at
 which the thread moves on. With **Switch automatically**, an idle thread moves to the fallback
@@ -226,7 +243,30 @@ alike (never under **Wait for the reset**), and all are off until you turn them 
   (`ANTHROPIC_BASE_URL`) or other token. Leave its config home empty to share sessions with your
   subscription instance. SpecWithCode keeps the value in its server secret store, not in the settings
   file. An instance that reaches Claude through a router or proxy token is never used by this
-  row.
+  row. **Add an API key** on the row (or in the limit banner) does all of that in one step: paste
+  the key, optionally name the account, and SpecWithCode adds the instance.
+
+  With several API accounts (for example hackathon credits on more than one organization), add
+  one instance per key. When an account runs out of credits, Claude answers "Credit balance too
+  low"; SpecWithCode stops that turn like a usage limit (the banner reads **API credits used up**)
+  and, with this row on, continues it on the next API-key instance that lists the thread's model,
+  without a usage read, since an API key has none. The way back still leads to the subscription
+  the first move came from.
+
+### Continue on API credits by hand
+
+The limit banner offers your API accounts without any rule: when a turn stops on the limit and
+another instance of the same provider bills an API account and lists the thread's model, the
+banner shows **Continue on API credits** (one account) or **Continue on** each account by name.
+One click moves the thread there and continues the stopped turn on the same model; nothing is
+bought, and that account's credits pay per token. This works for Claude (an instance with its own
+`ANTHROPIC_API_KEY`), Grok (an instance with `XAI_API_KEY`, billed to the xAI team's credits
+instead of a SuperGrok plan) and Codex signed in with an OpenAI API key (billed to the OpenAI
+platform's credits; ChatGPT plan credits keep **Continue using credits**). A thread already on an
+API account that ran out of credits is offered the other accounts. When no API account exists yet,
+the banner offers **Add an API key** for Claude and Grok. A thread you move this way stays on the
+API account until you pick another model; only threads the **Use API credits first** rule moved go
+back by themselves.
 
 The composer's model picker follows an automatic switch, so the next message goes to the provider
 the thread now runs on. The thread keeps its permission mode: in **Supervised**, Codex runs in its

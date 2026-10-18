@@ -1,13 +1,12 @@
 import { useEffect, useId, useState } from "react";
 import {
-  isGitHubCopilotIcon,
   resolveOfficialAcpRegistryIconUrl,
   officialAcpRegistryIconUrlForAgentId,
 } from "@specweave-studio/contracts";
 
 import { cn } from "../../lib/utils";
-import { GitHubCopilotIcon } from "../GitHubCopilotIcon";
 import { ACPRegistryIcon } from "../Icons";
+import { ProviderLogo, providerBrandFor } from "../ProviderLogo";
 
 const ACP_REGISTRY_ICON_CACHE = "studio-acp-registry-icons-v1";
 const MAX_ICON_BYTES = 512 * 1_024;
@@ -78,9 +77,13 @@ export function AcpRegistryAgentIcon(props: {
   readonly className?: string;
   readonly fallbackClassName?: string;
 }) {
-  if (isGitHubCopilotIcon(props.agentId, props.icon)) {
-    return <GitHubCopilotIcon className={cn("size-8 shrink-0", props.className)} />;
-  }
+  // Known vendors get their bundled full-colour mark; the registry CDN glyphs are monochrome.
+  const brand = providerBrandFor({
+    driverKind: "acpRegistry",
+    acpRegistryAgentId: props.agentId,
+    acpRegistryIconUrl: props.icon,
+  });
+  if (brand) return <ProviderLogo brand={brand} className={cn("size-8", props.className)} />;
   return <RemoteAcpRegistryAgentIcon {...props} />;
 }
 

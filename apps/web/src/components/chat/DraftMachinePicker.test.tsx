@@ -17,7 +17,10 @@ const runtime = vi.hoisted(() => ({
   projects: [] as any[],
   permitted: new Set<string>(),
   scratch: vi.fn(),
+  retry: vi.fn(),
 }));
+vi.mock("~/connection/catalog", () => ({ environmentCatalog: { retryNow: "retryNow" } }));
+vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => runtime.retry }));
 vi.mock("~/state/environments", () => ({
   useEnvironments: () => ({ environments: runtime.environments }),
 }));
@@ -103,6 +106,7 @@ beforeEach(() => {
   runtime.projects = [{ id: projectId, environmentId: m4, title: "m4", workspaceRoot: "/m4/data" }];
   runtime.permitted = new Set([m4, m1, m3]);
   runtime.scratch.mockReset();
+  runtime.retry.mockReset().mockResolvedValue({ _tag: "Success" });
   onPendingChange.mockClear();
   sendInFlightRef.current = false;
 });
@@ -261,7 +265,7 @@ it("rechecks current machine-bound content before Auto despite a stale open menu
 });
 
 it("marks disconnected and permission-limited machines truthfully", async () => {
-  runtime.environments[1].connection.phase = "offline";
+  runtime.environments[1].connection.phase = "available";
   runtime.permitted.delete(m3);
   await render();
   await open();
@@ -435,5 +439,43 @@ it("opens the coordinator for a modern named project and preserves the independe
   expect(useComposerDraftStore.getState().getDraftSession(draftId)).toBe(before);
   expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.prompt).toBe(
     "Do not lose this draft",
+  );
+});
+
+it("says why a machine is unreachable and retries it instead of selecting it", async () => {
+  runtime.environments[1] = {
+    environmentId: m1,
+    label: "M1",
+    connection: { phase: "reconnecting", error: "M1 could not establish a WebSocket connection." },
+  };
+  runtime.environments[2] = {
+    environmentId: m3,
+    label: "M3",
+    connection: { phase: "connecting", error: null },
+  };
+  await render();
+  await open();
+  const m1Row = button("M1Can't reach");
+  expect(m1Row.textContent).toContain("M1 could not establish a WebSocket connection.");
+  expect(m1Row.textContent).toContain("Retry");
+  expect(m1Row.hasAttribute("data-disabled")).toBe(false);
+  expect(button("M3Connecting…").hasAttribute("data-disabled")).toBe(true);
+  await click("M1Can't reach");
+  expect(runtime.retry).toHaveBeenCalledExactlyOnceWith(m1);
+  expect(useComposerDraftStore.getState().getDraftSession(draftId)?.environmentId).toBe(m4);
+  expect(runtime.scratch).not.toHaveBeenCalled();
+});
+
+it("shows on the closed picker when the chosen machine can't be reached", async () => {
+  runtime.environments[0] = {
+    environmentId: m4,
+    label: "M4",
+    connection: { phase: "error", error: "Sign in again." },
+  };
+  await render();
+  const control = document.querySelector('button[data-composer-shortcut="composer.host"]')!;
+  expect(control.getAttribute("aria-label")).toBe("Machine: M4, Connection failed");
+  expect(control.querySelector("[data-draft-machine-unreachable]")?.textContent).toBe(
+    "Can't reach",
   );
 });

@@ -12,7 +12,8 @@ export function draftMachineUnavailableReason(
   phase: EnvironmentConnectionPhase,
   canOperate: boolean,
 ): string | null {
-  if (phase === "connecting" || phase === "reconnecting") return "Connecting…";
+  if (phase === "connecting") return "Connecting…";
+  if (phase === "reconnecting") return "Can't reach this machine right now";
   if (phase !== "connected") return "Not connected";
   return canOperate ? null : "Permission to operate threads required";
 }

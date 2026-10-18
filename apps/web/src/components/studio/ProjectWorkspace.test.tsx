@@ -575,7 +575,7 @@ describe("project coordinator surface", () => {
     expect(state.routing!.routedMessages).toEqual([]);
   });
   it("shows a worker's long report as a card and folds the coordinator's relay of it", async () => {
-    const long = Array.from({ length: 20 }, (_, i) => `- Finding ${i + 1}`).join("\n");
+    const long = Array.from({ length: 100 }, (_, i) => `- Finding ${i + 1}`).join("\n");
     const message = (id: string, role: string, createdBy: string, extra: object = {}) => ({
       id,
       role,
@@ -642,6 +642,39 @@ describe("project coordinator surface", () => {
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
     await act(async () => toggle.click());
     expect(relay.querySelector('[data-report-collapsed="true"]')).not.toBeNull();
+  });
+  it("shows a worker's direct answer whole in the chat", async () => {
+    const sentence =
+      "The relay token expired, so both machines dropped and the list waited on them.";
+    const answer = [
+      "Both machines are back and the UI no longer freezes.",
+      "",
+      Array.from({ length: 12 }, () => sentence).join(" "),
+      "",
+      "- Reconnected M1 and M3.",
+      "- Gave the thread list a timeout.",
+      "",
+      Array.from({ length: 10 }, () => sentence).join(" "),
+      "",
+      "Nothing needs you right now.",
+    ].join("\n");
+    state.messages = [
+      {
+        id: "worker-answer",
+        role: "user",
+        createdBy: "agent",
+        senderThreadId: "worker",
+        text: answer,
+        streaming: false,
+        attachments: [],
+      },
+    ];
+    await render();
+    const conversation = container.querySelector('[aria-label="Coordinator conversation"]')!;
+    expect(conversation.querySelector("[data-report-artifact]")).toBeNull();
+    expect(conversation.textContent).not.toContain("Open report");
+    expect(conversation.textContent).not.toContain("Show full message");
+    expect(conversation.textContent).toContain("Nothing needs you right now.");
   });
   it("announces a thread started this turn with a card and links one that existed", async () => {
     state.shells.push(

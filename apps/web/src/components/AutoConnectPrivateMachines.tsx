@@ -13,6 +13,7 @@ import {
   fleetMachinesAwaitingReach,
   fleetMachinesToAutoConnect,
   readSkippedFleetEnvironments,
+  savedRouteOrigins,
 } from "../studio/fleetAutoConnect";
 
 /** How often to look again while a configured machine is still offline, e.g. booting. */
@@ -49,6 +50,10 @@ function AutoConnectFleet({ environmentId }: { readonly environmentId: Environme
     () => new Set<string>(environments.map((environment) => environment.environmentId)),
     [environments],
   );
+  const routeOrigins = useMemo(
+    () => savedRouteOrigins(environments.map((environment) => environment.entry)),
+    [environments],
+  );
 
   useEffect(() => {
     if (!isReady || !canPair || running.current) return;
@@ -56,6 +61,7 @@ function AutoConnectFleet({ environmentId }: { readonly environmentId: Environme
       snapshot,
       currentEnvironmentId: environmentId,
       savedEnvironmentIds,
+      savedRouteOrigins: routeOrigins,
       skippedEnvironmentIds: readSkippedFleetEnvironments(),
       attemptedEnvironmentIds: fleetAttemptsAwaitingRetry(attempted.current, Date.now()),
     });
@@ -86,12 +92,13 @@ function AutoConnectFleet({ environmentId }: { readonly environmentId: Environme
         if (failed) setFailedAt(Date.now());
       }
     })();
-  }, [canPair, connect, environmentId, isReady, savedEnvironmentIds, snapshot]);
+  }, [canPair, connect, environmentId, isReady, routeOrigins, savedEnvironmentIds, snapshot]);
 
   const unsaved = {
     snapshot,
     currentEnvironmentId: environmentId,
     savedEnvironmentIds,
+    savedRouteOrigins: routeOrigins,
     skippedEnvironmentIds: readSkippedFleetEnvironments(),
   };
   const awaiting =

@@ -60,10 +60,17 @@ export const PROJECT_SETTINGS_SEARCH_ROWS: readonly ProjectSettingsSearchRow[] =
   },
   {
     id: "project-worker-model",
-    title: "Default worker model and effort",
+    title: "Recommended model for threads",
     tab: "general",
-    anchors: ["Default worker model and effort"],
-    searchTerms: ["subagent provider reasoning"],
+    anchors: ["Recommended model for threads"],
+    searchTerms: ["default worker subagent provider reasoning"],
+  },
+  {
+    id: "project-recommended-model-providers",
+    title: "Also served by",
+    tab: "general",
+    anchors: ["Also served by"],
+    searchTerms: ["provider order copilot same model fallback"],
   },
   {
     id: "project-worker-machine",

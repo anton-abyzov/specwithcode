@@ -13,6 +13,10 @@ import {
 } from "./UsageLimitRecoveryBanner";
 vi.mock("../ui/button", () => ({ Button: "button" }));
 vi.mock("../ui/checkbox", () => ({ Checkbox: "checkbox" }));
+vi.mock("../settings/AddApiCreditAccountDialog", () => ({
+  AddApiCreditAccountDialog: ({ open, driver }: { open: boolean; driver: string }) =>
+    open ? <dialog data-driver={driver} /> : null,
+}));
 let renderer: ReactTestRenderer | undefined;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -317,4 +321,69 @@ it("exposes credit recovery independently of reset and fallback availability", a
   expect(button("Continue using credits").props.disabled).toBe(true);
   expect(JSON.stringify(renderer!.toJSON())).toContain("39,034.07 credits reported available");
   expect(JSON.stringify(renderer!.toJSON())).toContain("Refresh Providers");
+});
+
+it("continues on an API account in one click, one button per account", async () => {
+  const first = vi.fn().mockResolvedValue(undefined);
+  const second = vi.fn().mockResolvedValue(undefined);
+  const item = usageLimitRecoveryBannerItem({
+    ...props,
+    onChange: vi.fn(),
+    apiCredits: {
+      targets: [
+        { label: "Hackathon 1", model: "Opus", onContinue: first },
+        { label: "Hackathon 2", model: "Opus", onContinue: second },
+      ],
+      automatic: false,
+      setup: null,
+    },
+  });
+  await act(() => {
+    renderer = create(<>{item.actions}</>);
+  });
+  expect(rendered()).toContain("billed per token to that API account");
+  await act(async () => button("Continue on Hackathon 2").props.onClick());
+  expect(second).toHaveBeenCalledOnce();
+  expect(first).not.toHaveBeenCalled();
+});
+
+it("names a single API account plainly and offers to add another", async () => {
+  const onContinue = vi.fn().mockResolvedValue(undefined);
+  const item = usageLimitRecoveryBannerItem({
+    ...props,
+    onChange: vi.fn(),
+    apiCredits: {
+      targets: [{ label: "Claude API", model: "Opus", onContinue }],
+      automatic: false,
+      setup: { environmentId: "mac" as never, driver: "claudeAgent" },
+    },
+  });
+  await act(() => {
+    renderer = create(<>{item.actions}</>);
+  });
+  await act(async () => button("Continue on API credits").props.onClick());
+  expect(onContinue).toHaveBeenCalledOnce();
+  expect(renderer!.root.findAllByType("dialog" as never)).toHaveLength(0);
+  await act(async () => button("Add another API key").props.onClick());
+  expect(renderer!.root.findByType("dialog" as never).props["data-driver"]).toBe("claudeAgent");
+});
+
+it("offers to add an API key when there is none, and says when credits ran out", async () => {
+  const item = usageLimitRecoveryBannerItem({
+    ...props,
+    onChange: vi.fn(),
+    creditsExhausted: true,
+    apiCredits: {
+      targets: [],
+      automatic: false,
+      setup: { environmentId: "mac" as never, driver: "grok" },
+    },
+  });
+  expect(item.title).toBe("API credits used up");
+  await act(() => {
+    renderer = create(<>{item.actions}</>);
+  });
+  expect(rendered()).toContain("Have API credits?");
+  await act(async () => button("Add an API key").props.onClick());
+  expect(renderer!.root.findByType("dialog" as never).props["data-driver"]).toBe("grok");
 });

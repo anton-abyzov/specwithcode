@@ -2,7 +2,7 @@
 # One-command SpecWithCode release: bump, test, build, sign, publish and roll out, in resumable stages.
 #
 #   bash scripts/release/release.sh <version> [--resume] [--dry-run] [--stop-after STAGE]
-#                                   [--previous X.Y.Z] [--no-project-migrations] [--jobs N]
+#                                   [--previous X.Y.Z] [--no-project-migrations] [--jobs N] [--ci]
 #   bash scripts/release/release.sh <version> --status
 #   bash scripts/release/release.sh --self-test
 #
@@ -31,10 +31,15 @@
 # --no-project-migrations  write the update plan without update.py's --allow-project-migrations,
 #               for its stricter whole-database check; only when no host upgrades across a
 #               migration. Give it on the run that reaches the plan stage.
+# --ci          a release on a CI Mac (.github/workflows/release-macos.yml): no fleet SSH files are
+#               needed and quit-desktop, fleet-m4, fleet-workers and desktop are skipped. Each host's
+#               update agent installs the release from the public feed on its next hourly check;
+#               `fleet_rollout.py --version X.Y.Z` on the M4 asks them at once.
 #
 # Environment: RELEASE_ENV (default ~/.config/skill-studio-release/release.env, see
 # release.env.example), RELEASE_STAGING_ROOT, RELEASE_TREES (persistent trees, default
-# ~/Projects/github/release.noindex), RELEASE_PRIVATE_REPO, RELEASE_PUBLIC_REPO, RELEASE_JOBS.
+# ~/Projects/github/release.noindex), RELEASE_PRIVATE_REPO, RELEASE_PUBLIC_REPO, RELEASE_JOBS,
+# RELEASE_NODE_BIN (the Node $NODE_VERSION bin folder, default nvm's).
 # RELEASE_STUB=1 (with RELEASE_STAGING_ROOT and RELEASE_TREES) records commands instead of
 # running them; only the self-test uses it.
 set -euo pipefail
@@ -58,7 +63,7 @@ STUB_SHA_DEFAULT=1111111111111111111111111111111111111111
 # Run on their own first in stage 1: a contrast offender fails in seconds, not after the web suite.
 CONTRAST_TESTS="src/themeContrastClasses.test.ts src/appearanceContrast.test.ts"
 
-VERSION="" MODE=real RESUME=0 SELF_TEST=0 STATUS=0 INTERNAL_SERVER=0 PREV_OVERRIDE="" MIGRATIONS=1
+VERSION="" MODE=real RESUME=0 SELF_TEST=0 STATUS=0 INTERNAL_SERVER=0 PREV_OVERRIDE="" MIGRATIONS=1 CI_MODE=0
 STOP_AFTER="" JOBS="${RELEASE_JOBS:-4}" SHA="" SHA12="" PREV="" CURRENT_STAGE=main LOCKED=0 STATE_READY=0
 POLL=10
 
@@ -353,7 +358,7 @@ load_env() {
   done
   IFS="$old_ifs"
   set +f
-  NODE_BIN="${NVM_DIR:-$HOME/.nvm}/versions/node/v$NODE_VERSION/bin"
+  NODE_BIN="${RELEASE_NODE_BIN:-${NVM_DIR:-$HOME/.nvm}/versions/node/v$NODE_VERSION/bin}"
   PATH="$NODE_BIN:$clean"
   export PATH
   if [ -n "${SDKROOT:-}" ]; then export SDKROOT; fi
@@ -488,9 +493,12 @@ stage_preflight() {
     t "cmd-$var" -- command -v "$var" > /dev/null || check_fail "$var is not on PATH"
   done
   t gh-auth -- gh auth status > /dev/null 2>&1 || check_fail "gh is not signed in (gh auth login)"
-  for var in "$FLEET_HOSTS" "$(dirname "$FLEET_HOSTS")/id_ed25519" "$(dirname "$FLEET_HOSTS")/known_hosts" "$PUBLIC_RULES"; do
-    [ -e "$var" ] || check_fail "missing $var"
-  done
+  [ -e "$PUBLIC_RULES" ] || check_fail "missing $PUBLIC_RULES"
+  if [ "$CI_MODE" -eq 0 ]; then
+    for var in "$FLEET_HOSTS" "$(dirname "$FLEET_HOSTS")/id_ed25519" "$(dirname "$FLEET_HOSTS")/known_hosts"; do
+      [ -e "$var" ] || check_fail "missing $var"
+    done
+  fi
   load="$(q loadavg -- sysctl -n vm.loadavg | awk '{print $3}')"
   ncpu="$(q ncpu -- sysctl -n hw.ncpu)"
   if awk -v load="$load" -v n="$ncpu" 'BEGIN { exit !(load > 2 * n) }'; then
@@ -564,9 +572,33 @@ stage_prev() {
     studio-update.json deployment-helpers-manifest.json
 }
 
+# A hosted --ci run starts from an empty staging folder and cannot resume, so a failed one leaves
+# release/<version> holding only the bump; remove it so the rerun bumps the current main. Any other
+# commit on it, or a v<version> tag, still stops the release.
+discard_failed_ci_branch() {
+  [ -z "$(q remote-tag -- git ls-remote "$PRIVATE_URL" "refs/tags/v$VERSION")" ] ||
+    die "v$VERSION is already tagged on $PRIVATE_REPO; release the change as a new version"
+  x fetch-stale -C "$BUILD" -- git fetch -q "$PRIVATE_URL" "+refs/heads/main:refs/release-ci/main" \
+    "+refs/heads/release/$VERSION:refs/release-ci/stale"
+  local subjects subject
+  subjects="$(q stale-commits -C "$BUILD" -- git log --format=%s refs/release-ci/main..refs/release-ci/stale --)"
+  while IFS= read -r subject; do
+    case "$subject" in
+      "" | "Prepare SpecWithCode $VERSION release") ;;
+      *) die "release/$VERSION on $PRIVATE_REPO has commits other than the bump; merge or remove them first" ;;
+    esac
+  done << EOF
+$subjects
+EOF
+  x delete-stale -C "$BUILD" -- git push -q "$PRIVATE_URL" ":refs/heads/release/$VERSION"
+  say "Removed release/$VERSION left by an earlier failed --ci run (it held only the bump)"
+}
+
 stage_bump() {
-  [ -z "$(q remote-branch -- git ls-remote "$PRIVATE_URL" "refs/heads/release/$VERSION")" ] ||
-    die "release/$VERSION already exists on $PRIVATE_REPO; resume that release or remove the branch"
+  if [ -n "$(q remote-branch -- git ls-remote "$PRIVATE_URL" "refs/heads/release/$VERSION")" ]; then
+    [ "$CI_MODE" -eq 1 ] || die "release/$VERSION already exists on $PRIVATE_REPO; resume that release or remove the branch"
+    discard_failed_ci_branch
+  fi
   x fetch-main -C "$BUILD" -- git fetch -q "$PRIVATE_URL" main
   # -B resets a local release/<version>; refuse when it holds work other than this script's bump.
   local extra subject
@@ -799,7 +831,9 @@ stage_server() {
   fi
   out="$STAGE/server/$SHA12-$(date +%s)"
   ensure_dir "$STAGE/server"
-  x server-shards -C "$TEST" -- env CI=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+  # The suite never needs the release's GitHub token, and gh-backed tests read it before their fakes.
+  x server-shards -C "$TEST" -- env -u GH_TOKEN -u GITHUB_TOKEN -u GH_ENTERPRISE_TOKEN -u GITHUB_ENTERPRISE_TOKEN \
+    CI=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
     node scripts/release/test-sharded.mjs --shards 3 --out "$out" ${extra[@]+"${extra[@]}"}
   if [ ${#extra[@]} -eq 0 ] && [ "$MODE" != dry ]; then
     # A full run's per-shard JSON reports can refresh the recorded shard weights in a follow-up PR.
@@ -1211,6 +1245,7 @@ parse_args() {
       --status) STATUS=1 ;;
       --allow-project-migrations) MIGRATIONS=1 ;;
       --no-project-migrations) MIGRATIONS=0 ;;
+      --ci) CI_MODE=1 ;;
       --previous | --stop-after | --jobs)
         [ $# -ge 2 ] || usage_error "$1 needs a value"
         case "$1" in
@@ -1291,12 +1326,16 @@ main() {
   run_stage plan sha
   run_stage drafts sha
   run_stage server-wait sha
-  if ! is_done desktop once; then run_stage quit-desktop always; fi
+  if [ "$CI_MODE" -eq 0 ] && ! is_done desktop once; then run_stage quit-desktop always; fi
   run_stage publish-private once
   run_stage publish-public once
-  run_stage fleet-m4 once
-  run_stage fleet-workers once
-  run_stage desktop once
+  if [ "$CI_MODE" -eq 0 ]; then
+    run_stage fleet-m4 once
+    run_stage fleet-workers once
+    run_stage desktop once
+  else
+    say "= fleet-m4, fleet-workers, desktop: skipped (--ci); the hosts install v$VERSION on their next update check"
+  fi
   run_stage merge once
   if [ "$MODE" = dry ]; then
     say "Dry-run done: nothing was run or written."

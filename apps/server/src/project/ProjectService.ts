@@ -3,6 +3,9 @@ import { randomUuidV4 } from "../orchestration-v2/RandomUuid.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import {
   ThreadId as CoordinatorThreadId,
+  logicalProjectTitle,
+  projectNameKey,
+  repositoryGroupingKeyOf,
   type LogicalProject,
   type ProjectCoordinatorBinding,
 } from "@specweave-studio/contracts";
@@ -44,7 +47,9 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import {
   decodeProjectCommandRejection,
   encodeProjectCommandRejection,
+  findProjectNameOwner,
   planProjectCommand,
+  renamesProject,
   type ProjectCommand,
 } from "../orchestration-v2/ProjectCommands.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
@@ -61,6 +66,8 @@ export interface ProjectCreateInput extends ProjectCreatePayload {
   readonly initialCoordinatorBinding?: ProjectCoordinatorBinding;
   /** Internal handoff seed, committed atomically with creation; null disables auto-seeding. */
   readonly initialWorkerModelSelection?: ModelSelection | null;
+  /** Internal: set by the server for temporary agent sessions, never by a client payload. */
+  readonly temporarySessionId?: string;
   readonly commandId: CommandId;
   readonly projectId: ProjectId;
 }
@@ -165,6 +172,7 @@ export class ProjectRequestDeniedError extends Schema.TaggedError<ProjectRequest
       "confirmation_required",
       "active_work",
       "environment_active",
+      "name_taken",
     ]),
   },
 ) {
@@ -178,6 +186,8 @@ export class ProjectRequestDeniedError extends Schema.TaggedError<ProjectRequest
         return "Stop active project work before changing folder access.";
       case "active_work":
         return "Finish or stop active project work before deleting the project.";
+      case "name_taken":
+        return "Another project already has this name. Choose a different one.";
     }
   }
 }
@@ -333,6 +343,38 @@ export const make = Effect.gen(function* () {
       );
 
   /**
+   * The other project already named `title` on this machine. Checkouts of one
+   * repository show as one project in the sidebar, so they may share a name.
+   */
+  const findNameOwner = Effect.fn("ProjectService.findNameOwner")(function* (
+    projectId: ProjectId,
+    title: string,
+  ) {
+    const rows = yield* projects.list();
+    const key = projectNameKey(title);
+    const named = rows.filter(
+      (row) => row.projectId !== projectId && projectNameKey(logicalProjectTitle(row)) === key,
+    );
+    const target = rows.find((row) => row.projectId === projectId);
+    if (named.length === 0 || target === undefined) return undefined;
+    const repositoryKeys = new Map<ProjectId, string>();
+    for (const row of [target, ...named]) {
+      // Resolved now if needed: a checkout added a moment ago has no cached identity yet.
+      const identity = yield* projectEnrichment.repositoryIdentityNow(row.workspaceRoot);
+      if (identity) repositoryKeys.set(row.projectId, repositoryGroupingKeyOf(identity));
+    }
+    return findProjectNameOwner({
+      rows,
+      projectId,
+      title,
+      sameRepository: (a, b) => {
+        const repository = repositoryKeys.get(a.projectId);
+        return repository !== undefined && repository === repositoryKeys.get(b.projectId);
+      },
+    });
+  });
+
+  /**
    * Plan one command against rows read under its locks, then commit its event or
    * its rejection. A reused command id resolves to the receipt it already has.
    */
@@ -351,13 +393,16 @@ export const make = Effect.gen(function* () {
                 .findActiveByWorkspaceRoot(workspaceRoot)
                 .pipe(Effect.mapError(dispatchError)),
             );
+      const nameOwner = renamesProject(command)
+        ? yield* findNameOwner(projectId, command.title).pipe(Effect.mapError(dispatchError))
+        : undefined;
       const now = yield* DateTime.now;
       const eventId = yield* idAllocator.allocate
         .event({ commandId: command.commandId })
         .pipe(Effect.mapError(dispatchError));
       const planned = planProjectCommand({
         command,
-        state: { project, workspaceOwner },
+        state: { project, workspaceOwner, nameOwner },
         eventId,
         now,
       });
@@ -406,6 +451,8 @@ export const make = Effect.gen(function* () {
       case "ProjectSettingsRevisionConflictError":
       case "ProjectDefaultModelConflictError":
         return yield* new ProjectRequestDeniedError({ projectId, reason: "settings_conflict" });
+      case "ProjectNameTakenError":
+        return yield* new ProjectRequestDeniedError({ projectId, reason: "name_taken" });
       case "ProjectCommandMissingProjectError":
         return yield* new ProjectNotFoundError({ projectId });
       default:
@@ -513,6 +560,9 @@ export const make = Effect.gen(function* () {
         ...(input.initialWorkerModelSelection === undefined
           ? {}
           : { initialWorkerModelSelection: input.initialWorkerModelSelection }),
+        ...(input.temporarySessionId === undefined
+          ? {}
+          : { temporarySessionId: input.temporarySessionId }),
       });
       yield* projectEnrichment.invalidate([workspaceRoot]);
       yield* seedNewProjectFinishAction(input.projectId);

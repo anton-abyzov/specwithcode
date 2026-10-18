@@ -53,6 +53,7 @@ import {
   type StudioMcpToolPresentation,
 } from "@specweave-studio/shared/studioMcpToolPresentation";
 import { compactDynamicToolOutput } from "@specweave-studio/shared/toolOutput";
+import { asksForReport } from "@specweave-studio/shared/threadReport";
 import {
   htmlRenderReferencesEqual,
   type HtmlRenderReference,
@@ -609,6 +610,8 @@ type MessagesTimelineRowContent =
       assistantCopyStreaming: boolean;
       assistantTurnDiffSummary?: TurnDiffSummary | undefined;
       revertTurnCount?: number | undefined;
+      /** An assistant reply to a message that asked for a report or a document. */
+      reportRequested?: true;
     }
   | {
       kind: "assistant-meta";
@@ -1547,6 +1550,8 @@ export function deriveMessagesTimelineRows(input: {
     );
   };
 
+  // Replies to a message that asked for a report may show as a report card.
+  let reportRequested = false;
   for (let index = 0; index < timelineEntries.length; index += 1) {
     const timelineEntry = timelineEntries[index];
     if (!timelineEntry) {
@@ -1852,6 +1857,9 @@ export function deriveMessagesTimelineRows(input: {
       terminalAssistantMessageIds.has(timelineEntry.message.id) &&
       !assistantResponseStillInProgress;
 
+    if (timelineEntry.message.role === "user") {
+      reportRequested = asksForReport(timelineEntry.message.text);
+    }
     nextRows.push({
       kind: "message",
       id: timelineEntry.id,
@@ -1872,6 +1880,9 @@ export function deriveMessagesTimelineRows(input: {
         timelineEntry.message.role === "user"
           ? revertTurnCountByUserMessageId.get(timelineEntry.message.id)
           : undefined,
+      ...(reportRequested && timelineEntry.message.role === "assistant"
+        ? { reportRequested: true as const }
+        : {}),
     });
   }
 

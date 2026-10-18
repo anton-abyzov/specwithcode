@@ -62,6 +62,7 @@ import { compactThreadPlan } from "../../../studio/threadPlanProgress";
 import { useProjectThreadIncrementProgress } from "../../../studio/useThreadIncrementProgress";
 import { ProjectPaneBar, type ProjectPaneBarProps } from "./ProjectPaneBar";
 import { Tip } from "./Tip";
+import { useUnreachableHosts } from "../../../studio/unreachableHosts";
 
 const SORT_STORAGE_KEY = "studio:project-threads-sort:v1";
 const SortSchema = Schema.Literals(THREAD_SORTS);
@@ -152,9 +153,10 @@ export function ThreadsPane({
     (props.machineLabels?.size ?? 0) > 1 ||
     Boolean(props.remoteWorkerCount) ||
     allThreads.some((thread) => thread.environmentId !== props.environmentId);
+  const unreachable = useUnreachableHosts();
   const groups = useMemo(
-    () => buildThreadPaneGroups(allThreads, sortBy, query, props.runningSubagents),
-    [allThreads, query, sortBy, props.runningSubagents],
+    () => buildThreadPaneGroups(allThreads, sortBy, query, props.runningSubagents, unreachable),
+    [allThreads, query, sortBy, props.runningSubagents, unreachable],
   );
   const matches = groups.reduce((sum, group) => sum + group.threads.length, 0);
   const searching = query.trim() !== "";
@@ -280,7 +282,7 @@ export function ThreadsPane({
           <p role="status">
             {offerStarters
               ? "No threads yet. Pick a first task, or ask the coordinator for one."
-              : threadsSummary(allThreads, props.remoteWorkerCount)}
+              : threadsSummary(allThreads, props.remoteWorkerCount, unreachable)}
           </p>
         </header>
         {props.notice}
@@ -361,7 +363,8 @@ export function ThreadsPane({
                   {rows.map((thread) => {
                     const subagentsWorking =
                       props.runningSubagents?.get(`${thread.environmentId}:${thread.id}`) ?? 0;
-                    const ownTone = threadTone(thread);
+                    const hostOffline = unreachable.has(thread.environmentId);
+                    const ownTone = threadTone(thread, hostOffline);
                     const tone = subagentsWorking > 0 && ownTone === "idle" ? "working" : ownTone;
                     const entry =
                       entriesByEnvironment
@@ -378,7 +381,7 @@ export function ThreadsPane({
                     // The group heading already says "Working" or "Waiting on you"; a row
                     // names only a more specific state, such as "Answer needed".
                     const statusWord = withRunningSubagents(
-                      threadStatusWord(thread),
+                      threadStatusWord(thread, hostOffline),
                       subagentsWorking,
                     );
                     const rowStatus = statusWord === group ? null : statusWord;

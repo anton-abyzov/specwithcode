@@ -115,6 +115,17 @@ const fakeGoogle = NodeHttp.createServer((request, response) => {
 });
 await new Promise((done) => fakeGoogle.listen(googlePort, "127.0.0.1", done));
 
+// A stand-in `claude` that only answers --version, so the task editor has a model on any
+// machine, including a runner with no provider installed. The task is saved disabled and
+// nothing ever starts a turn.
+const fakeBin = NodePath.join(state, "bin");
+NodeFS.mkdirSync(fakeBin);
+NodeFS.writeFileSync(
+  NodePath.join(fakeBin, "claude"),
+  '#!/bin/sh\nif [ "$1" = --version ]; then echo "2.1.302 (Claude Code)"; exit 0; fi\nexit 1\n',
+  { mode: 0o755 },
+);
+
 const port = await freePort();
 const origin = `http://127.0.0.1:${port}`;
 const child = NodeChildProcess.spawn(
@@ -133,7 +144,7 @@ const child = NodeChildProcess.spawn(
   {
     cwd: state,
     env: {
-      PATH: `${NodePath.dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,
+      PATH: `${fakeBin}:${NodePath.dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,
       HOME: state,
       CODEX_HOME: NodePath.join(state, "codex"),
       CLAUDE_CONFIG_DIR: NodePath.join(state, "claude"),
@@ -460,7 +471,9 @@ try {
   await page.goto(googleHref);
   await page.getByRole("link", { name: "Morning briefing" }).click();
   await titleInput.waitFor();
-  const enabledSwitch = page.getByRole("dialog").getByRole("switch");
+  const enabledSwitch = page
+    .getByRole("dialog")
+    .getByRole("switch", { name: "Enabled", exact: true });
   await enabledSwitch.click();
   NodeAssert.equal(await enabledSwitch.getAttribute("aria-checked"), "false");
   await page.getByRole("button", { name: "Create task", exact: true }).click();
@@ -609,13 +622,17 @@ try {
       await activePage.locator("body").innerText(),
     );
   }
-  NodeFS.writeFileSync(
-    NodePath.join(out, "failure-server-log.txt"),
-    serverLog
-      .slice(-20000)
-      .replace(/(Token: )[^\s]+/g, "$1[redacted]")
-      .replace(/(\/pair#token=)[^\s]+/g, "$1[redacted]"),
-  );
+  const redactedLog = serverLog
+    .slice(-20000)
+    .replace(/(Token: )[^\s]+/g, "$1[redacted]")
+    .replace(/(\/pair#token=)[^\s]+/g, "$1[redacted]");
+  NodeFS.writeFileSync(NodePath.join(out, "failure-server-log.txt"), redactedLog);
+  // CI keeps only the console, so print what the page and server showed at the failure.
+  const failurePage = NodePath.join(out, "failure-page.txt");
+  if (NodeFS.existsSync(failurePage)) {
+    console.error(`--- page text at the failure\n${NodeFS.readFileSync(failurePage, "utf8")}`);
+  }
+  console.error(`--- server log tail\n${redactedLog.split("\n").slice(-80).join("\n")}`);
   throw error;
 } finally {
   await browser?.close();

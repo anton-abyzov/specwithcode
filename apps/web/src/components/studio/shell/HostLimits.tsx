@@ -32,6 +32,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../ui/select";
+import { Tip } from "./Tip";
 import "./host-limits.css";
 
 const driverLabel = (driver: HostProviderRow["driver"]) =>
@@ -252,9 +253,53 @@ export function HostLimits({
 /** Rows with bars; the settings page explains the providers that report none. */
 const limited = (block: HostLimitBlock) => block.providers.filter((row) => row.notice === null);
 
+/** When the fullest window resets: shown once a provider runs low, when it matters. */
+function peakResetsAt(row: HostProviderRow): number | null {
+  const peak = row.windows.find((window) => !window.stale && window.usedPercent === row.peak);
+  return peak?.blockedBy?.resetsAt ?? peak?.resetsAt ?? null;
+}
+
+function compactStatus(block: HostLimitBlock, now: number): string {
+  if (block.status === "online") return "Online";
+  if (block.status === "connecting") return "Connecting";
+  return block.readAt === null ? "Offline" : `Offline · ${formatAgo(block.readAt, now)}`;
+}
+
+function CompactProviderRow({ row, now }: { row: HostProviderRow; now: number }) {
+  const tone = usageToneOf(row.peak);
+  const resetsAt = tone === "ok" ? null : peakResetsAt(row);
+  const shared = row.sharedWith.length > 0 ? `Same account on ${row.sharedWith.join(", ")}` : null;
+  return (
+    <li className="sws-hl-compact-row" data-tone={tone}>
+      <ProviderIcon row={row} size="sm" />
+      <Tip label={[row.label, row.identity].filter(Boolean).join(" · ")} side="left">
+        <span className="sws-hl-compact-provider">{row.label}</span>
+      </Tip>
+      <span className="sws-hl-bar" data-tone={tone} aria-hidden>
+        <span style={{ width: `${row.peak === null ? 0 : leftPercent(row.peak)}%` }} />
+      </span>
+      <span className="sws-hl-compact-value">
+        {row.peak === null ? "–" : usageLeftLabel(row.peak)}
+      </span>
+      <span className="sws-hl-compact-aside">
+        {resetsAt !== null && resetsAt > now ? `in ${formatDuration(resetsAt - now)}` : null}
+        {shared !== null ? (
+          <Tip label={shared} side="left">
+            <span role="img" aria-label={shared}>
+              <LinkIcon aria-hidden />
+            </span>
+          </Tip>
+        ) : null}
+      </span>
+    </li>
+  );
+}
+
 /**
- * All hosts at a glance for the usage chip's popover: a row per host, a
- * cell per provider with what is left in its fullest window.
+ * All hosts at a glance for the usage chip's popover. One grid shared by
+ * every host (subgrid), so icons, bars, values and the reset or shared-account
+ * column line up across machines: a header per host, then a row per provider
+ * with what is left in its fullest window.
  */
 export function HostLimitsCompact({
   projectEnvironmentId,
@@ -264,53 +309,57 @@ export function HostLimitsCompact({
   now: number;
 }) {
   const blocks = useHostLimitBlocks(projectEnvironmentId, now);
+  return <HostLimitsCompactView blocks={blocks} now={now} />;
+}
+
+export function HostLimitsCompactView({
+  blocks,
+  now,
+}: {
+  blocks: readonly HostLimitBlock[];
+  now: number;
+}) {
   if (blocks.length === 0) return null;
   return (
     <section className="sws-hl-compact" aria-label="Limits by machine">
       <h3>By machine</h3>
-      <ul>
-        {blocks.map((block) => (
-          <li key={block.environmentId} data-status={block.status}>
-            <span className="sws-hl-compact-name">
-              <span className="sws-hl-dot" aria-hidden />
-              {block.label}
-              {block.isProjectHost ? <span className="sws-hl-badge">Project</span> : null}
-            </span>
-            <span className="sws-hl-compact-cells">
-              {limited(block).length === 0 ? (
-                <span className="sws-hl-compact-muted">
+      <ul className="sws-hl-compact-grid">
+        {blocks.map((block) => {
+          const rows = limited(block);
+          return (
+            <li
+              key={block.environmentId}
+              className="sws-hl-compact-host"
+              data-status={block.status}
+            >
+              <div className="sws-hl-compact-head">
+                <span className="sws-hl-dot" aria-hidden />
+                <span className="sws-hl-compact-title">
+                  <Tip label={block.label} side="top">
+                    <strong>{block.label}</strong>
+                  </Tip>
+                  {block.isProjectHost ? <span className="sws-hl-badge">Project</span> : null}
+                  <span className="sws-hl-compact-status">{compactStatus(block, now)}</span>
+                </span>
+              </div>
+              {rows.length === 0 ? (
+                <p className="sws-hl-compact-empty">
                   {block.providers.length > 0
                     ? "No limits reported"
                     : block.status === "online"
-                      ? "No providers"
+                      ? "No providers signed in"
                       : "No saved reading"}
-                </span>
+                </p>
               ) : (
-                limited(block).map((row) => (
-                  <span
-                    key={row.key}
-                    className="sws-hl-compact-cell"
-                    data-tone={usageToneOf(row.peak)}
-                    title={`${row.label}${row.identity ? ` · ${row.identity}` : ""}${
-                      row.sharedWith.length > 0
-                        ? ` · same account on ${row.sharedWith.join(", ")}`
-                        : ""
-                    }`}
-                  >
-                    <ProviderIcon row={row} size="sm" />
-                    {row.peak === null ? "–" : usageLeftLabel(row.peak)}
-                    {row.sharedWith.length > 0 ? <LinkIcon aria-hidden /> : null}
-                  </span>
-                ))
+                <ul>
+                  {rows.map((row) => (
+                    <CompactProviderRow key={row.key} row={row} now={now} />
+                  ))}
+                </ul>
               )}
-            </span>
-            <span className="sws-hl-compact-muted">
-              {block.status !== "online" && block.readAt !== null
-                ? formatAgo(block.readAt, now)
-                : ""}
-            </span>
-          </li>
-        ))}
+            </li>
+          );
+        })}
       </ul>
     </section>
   );

@@ -27,11 +27,13 @@ import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import * as PreviewBrowser from "../../../preview/PreviewBrowser.ts";
 import * as BrowserExtension from "../../../browserExtension/BrowserExtension.ts";
+import * as ComputerUseBroker from "../../../computerUse/ComputerUseBroker.ts";
 
 const layerStubServices = Layer.mergeAll(
   Layer.mock(Orchestrator.OrchestratorV2)({}),
   Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
   Layer.mock(DeviceService.DeviceService)({}),
+  Layer.mock(ComputerUseBroker.ComputerUseBroker)({}),
   Layer.mock(ThreadManagementService.ThreadManagementService)({}),
   Layer.mock(ProviderRegistry.ProviderRegistry)({}),
   Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
@@ -134,6 +136,10 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       // than replacing them.
       expect(toolNames).toContain("preview_status");
       expect(toolNames).toContain("delegate_task");
+      // Computer use is listed for every thread; the capability gates calls.
+      expect(toolNames).toContain("computer_screenshot");
+      expect(toolNames).toContain("computer_click");
+      expect(toolNames).toContain("computer_open");
 
       // The handoff tool mutates thread state, reaches the network (origin
       // fetch), and runs project setup scripts, so its MCP hints must not

@@ -5,24 +5,42 @@
  * are pure so the browser and the server agree on titles, keys and paths.
  */
 
-/** More non-blank lines than this reads as a wall, not a summary. */
-export const MAX_REPORT_LINES = 10;
-/** Roughly two dense paragraphs. */
-export const MAX_REPORT_LENGTH = 1_200;
-/** A report with this many headings is a document, not an answer. */
+/** Past this many words a reply reads as a document rather than an answer. */
+export const MAX_REPORT_WORDS = 600;
+/** A reply with this many headed sections is a document, not an answer. */
 export const MAX_REPORT_HEADINGS = 3;
+/** Non-blank lines well past one screen, for long code or lists with few words. */
+export const MAX_REPORT_LINES = 80;
+/** A report the person asked for still needs some substance to be worth a card. */
+export const MIN_REQUESTED_REPORT_WORDS = 150;
 /** The largest report Studio saves, well above any real agent report. */
 export const MAX_SAVED_REPORT_BYTES = 512 * 1024;
 
 const FENCE = /^\s*(```|~~~)/;
 const HEADING = /^\s{0,3}#{1,6}\s+\S/;
 const TABLE_DIVIDER = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/;
+const REPORT_REQUEST = /\b(?:reports?|write[- ]?ups?|documents?|audits?|memos?|white ?papers?)\b/i;
 
-/** Whether a message is long enough to read as a document rather than an answer. */
-export function shouldCollapseReport(text: string): boolean {
+/** Whether the person's message asks for a report or a document. */
+export function asksForReport(request: string | null | undefined): boolean {
+  return request ? REPORT_REQUEST.test(request) : false;
+}
+
+/**
+ * Whether a reply reads as a document, shown as a report card, rather than an
+ * answer, shown inline. Short and direct answers stay in the chat; a reply
+ * becomes a report when it has several headed sections, runs past about 600
+ * words or well past a screen, or answers a request for a report.
+ */
+export function shouldCollapseReport(
+  text: string,
+  options: { readonly requested?: boolean } = {},
+): boolean {
   const trimmed = text.trim();
   if (trimmed.length === 0) return false;
-  if (trimmed.length > MAX_REPORT_LENGTH) return true;
+  const words = reportWordCount(trimmed);
+  if (words > MAX_REPORT_WORDS) return true;
+  if (options.requested === true && words >= MIN_REQUESTED_REPORT_WORDS) return true;
 
   let lines = 0;
   let headings = 0;
@@ -35,8 +53,6 @@ export function shouldCollapseReport(text: string): boolean {
       continue;
     }
     if (inFence) continue;
-    // Any table renders as a tall block of cells.
-    if (TABLE_DIVIDER.test(line)) return true;
     if (HEADING.test(line)) headings += 1;
   }
   return lines > MAX_REPORT_LINES || headings >= MAX_REPORT_HEADINGS;

@@ -63,6 +63,7 @@
 }
 /* The popover: every window of every provider. */
 .sws-usage-popover {
+  container: sws-usage / inline-size;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -104,9 +105,9 @@
 }
 .sws-usage-window {
   display: grid;
-  grid-template-columns: minmax(0, 7.5rem) minmax(3rem, 1fr) 5.5rem 7rem;
+  grid-template-columns: minmax(0, 6rem) minmax(2.5rem, 1fr) 4.75rem 7rem;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 .sws-usage-window-label,
 .sws-usage-window-reset {
@@ -192,13 +193,16 @@
   width: 12px;
   height: 12px;
 }
-@media (max-width: 520px) {
+/* A narrow panel or phone: drop the bars before anything wraps. */
+@container sws-usage (max-width: 340px) {
   .sws-usage-window {
-    grid-template-columns: minmax(0, 6rem) minmax(2rem, 1fr) 4.5rem;
+    grid-template-columns: minmax(0, 1fr) 4.75rem 7rem;
   }
-  .sws-usage-window-reset {
-    grid-column: 1 / -1;
-    text-align: left;
+  .sws-usage-bar {
+    display: none;
+  }
+  .sws-usage-window-blocked {
+    grid-column: 2 / -1;
   }
 }
 .sws-usage-summary > .sws-usage-provider:first-child {

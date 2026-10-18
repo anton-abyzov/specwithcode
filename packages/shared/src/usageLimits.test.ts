@@ -639,6 +639,7 @@ describe("pools", () => {
           accentColor: undefined,
           environments: [],
           sourceLabel: null,
+          offline: false,
           redeem: null,
           limits: {
             checkedAt,
@@ -666,6 +667,89 @@ describe("pools", () => {
     expect(session?.members.map((member) => member.account.key)).toEqual(["hub:a", "hub:b"]);
     expect(pools[0]?.accounts.map((account) => account.key)).toEqual(["hub:a", "hub:b"]);
   });
+
+  it("marks an account offline only when every machine that reports it is out of reach", () => {
+    const account = (email: string) =>
+      provider({
+        driver: claude,
+        instanceId: ProviderInstanceId.make("claude"),
+        auth: { status: "authenticated", email },
+        usageLimits: { checkedAt, windows: [window] },
+      });
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          connection: { phase: "connected" },
+          serverConfig: { providers: [account("shared@example.com")] },
+        },
+      ],
+      [
+        EnvironmentId.make("env-b"),
+        {
+          entry: { target: { label: "Desktop" } },
+          connection: { phase: "reconnecting" },
+          serverConfig: {
+            providers: [account("shared@example.com"), account("away@example.com")],
+          },
+        },
+      ],
+    ]);
+    const offline = new Map(
+      collectLimitAccounts(input).map((entry) => [entry.email, entry.offline]),
+    );
+    expect(offline).toEqual(
+      new Map([
+        ["shared@example.com", false],
+        ["away@example.com", true],
+      ]),
+    );
+  });
+
+  it("counts a window whose reset passed since the read as open again", () => {
+    const accounts = collectLimitAccounts(
+      new Map([
+        [
+          EnvironmentId.make("env-a"),
+          {
+            ...laptop,
+            serverConfig: {
+              usageLimitSources: [
+                {
+                  ...source,
+                  accounts: [
+                    {
+                      id: "live",
+                      driver: claude,
+                      usageLimits: { checkedAt, windows: [{ ...weekly, usedPercent: 20 }] },
+                    },
+                    {
+                      id: "stale",
+                      driver: claude,
+                      usageLimits: {
+                        checkedAt,
+                        windows: [
+                          { ...weekly, usedPercent: 100, resetsAt: "2026-09-03T11:30:00.000Z" },
+                        ],
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+      ]),
+    );
+    const [week] = collectLimitPools(accounts, now)[0]!.windows;
+    expect(week?.remainingPercent).toBe(90);
+    expect(week?.resets.map((reset) => reset.member.account.key)).toEqual(["hub:live"]);
+    const stale = week?.columns.find((column) => column.account.key === "hub:stale");
+    expect(stale?.resetSinceRead).toBe(true);
+    expect(stale?.window).toMatchObject({ usedPercent: 0 });
+    expect(stale?.window?.resetsAt).toBeUndefined();
+  });
 });
 
 describe("pooled account columns", () => {
@@ -685,6 +769,7 @@ describe("pooled account columns", () => {
     accentColor: undefined,
     environments: [],
     sourceLabel: "Hub",
+    offline: false,
     redeem: null,
     limits: { checkedAt: "2026-09-03T11:00:00.000Z", windows },
   });
@@ -769,6 +854,7 @@ describe("Cursor limit presentation", () => {
     accentColor: undefined,
     environments: [],
     sourceLabel: "Cursor",
+    offline: false,
     redeem: null,
     limits: {
       checkedAt: "2026-09-03T11:00:00.000Z",
@@ -858,6 +944,38 @@ describe("collectLimitNotices", () => {
       serverConfig: { providers: [], usageLimitSources: [] },
     });
     expect(collectLimitNotices(one)[0]).toBe("Laptop · Claude Max: Could not read limits.");
+  });
+
+  it("names a subscription agent that never read limits instead of dropping it", () => {
+    const signedOut = provider({
+      instanceId: ProviderInstanceId.make("claude"),
+      driver: claude,
+      displayName: "Claude Work",
+      auth: { status: "unauthenticated" },
+    });
+    const unchecked = provider({ auth: { status: "unknown" } });
+    const cursor = provider({
+      instanceId: ProviderInstanceId.make("cursor"),
+      driver: ProviderDriverKind.make("cursor"),
+    });
+    const off = provider({
+      instanceId: ProviderInstanceId.make("off"),
+      driver: claude,
+      enabled: false,
+    });
+    expect(
+      collectLimitNotices(
+        new Map([
+          [
+            EnvironmentId.make("env-a"),
+            { ...laptop, serverConfig: { providers: [signedOut, unchecked, cursor, off] } },
+          ],
+        ]),
+      ),
+    ).toEqual([
+      "Claude Work: Not signed in, so no limits to show.",
+      "codex: Could not check the sign-in, so no limits to show.",
+    ]);
   });
 });
 

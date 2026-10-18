@@ -48,6 +48,7 @@ import { useProjectIconEditor } from "./ProjectIconEditor";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { CharacterCount } from "../ui/character-count";
 import { ProviderLimitSettings } from "../settings/ProviderLimitSettings";
+import { RecommendedModelProviders } from "../settings/RecommendedModelProviders";
 import { SettingsScopeProvider } from "../settings/SettingsScopeContext";
 import { SettingsSection } from "../settings/settingsLayout";
 import { ProjectOverrides } from "../settings/ProjectOverrides";
@@ -435,15 +436,22 @@ export function ProjectWorkspaceSettings({
                   <p className="project-muted">
                     {coordinator
                       ? "The coordinator runs on this model."
-                      : "No override saved: an existing coordinator keeps its thread model, and a new one starts on the default worker model, then the Settings > Defaults model or, without either, this host's default (Opus 5.5 on a Claude subscription when it is signed in). Pick a model to pin it."}
+                      : "No override saved: an existing coordinator keeps its thread model, and a new one starts on the recommended model for threads, then the Settings > Defaults model or, without either, this host's default (Opus 5.5 on a Claude subscription when it is signed in). Pick a model to pin it."}
                   </p>
                   <ProjectModels
                     environmentId={project.environmentId}
-                    label="Default worker model and effort"
+                    label="Recommended model for threads"
                     value={worker}
                     onChange={(v) => change(setWorker, v)}
                     disabled={disabled}
                   />
+                  <p className="project-muted">
+                    Threads the coordinator starts, including the ones a routine needs, run on this
+                    model, on whichever provider serving it has room.
+                  </p>
+                  <SettingsScopeProvider search={limitScope} onChange={keepProjectScope}>
+                    <RecommendedModelProviders model={worker} />
+                  </SettingsScopeProvider>
                   {machineChoices.length > 1 || workerMachine ? (
                     <label>
                       Worker machine

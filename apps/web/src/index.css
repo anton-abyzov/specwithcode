@@ -702,6 +702,19 @@ code {
   --report-serif: "New York", ui-serif, "Iowan Old Style", Charter, Georgia, serif;
 }
 
+/* The one page every report and document opens on, Markdown or HTML, in
+   every project: the same measure, margins and room at the end. The prose
+   measure holds about 75 characters of the serif; HTML reports get about the
+   reply column they were laid out for (728px). The end room lets the last line scroll up
+   clear of the window edge and of a composer beside it. */
+:root {
+  --report-measure: 36rem;
+  --report-measure-wide: 48rem;
+  --report-page-top: 2.5rem;
+  --report-page-inline: 2rem;
+  --report-page-end: max(6rem, 30vh);
+}
+
 /* The viewer overlay: one card over nearly the whole window, below the title
    bar, over a backdrop that dims everything behind it. The viewer is on the
    left; the thread it came from is on the right and folds to a rail. */
@@ -878,11 +891,92 @@ code {
   overflow: hidden;
 }
 
+.viewer-overlay-thread-main,
 .viewer-overlay-thread-chat {
   display: flex;
   min-height: 0;
   flex: 1;
   flex-direction: column;
+}
+
+/* The page's own composer (the coordinator's), moved beside the viewer. */
+.viewer-overlay-thread-composer {
+  flex-shrink: 0;
+  padding: 0 0.75rem 0.75rem;
+}
+
+.viewer-overlay-thread-composer:empty {
+  display: none;
+}
+
+/* The thread's artifacts above it, as a row of tiles that scrolls sideways. */
+.viewer-thread-artifacts {
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  padding: 0.625rem 0.75rem 0.75rem;
+}
+
+.viewer-thread-artifacts-title {
+  display: flex;
+  gap: 0.375rem;
+  margin: 0 0 0.5rem;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.viewer-thread-artifacts-list {
+  display: flex;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0 0 0.125rem;
+  overflow-x: auto;
+  list-style: none;
+  scrollbar-width: thin;
+}
+
+.viewer-thread-artifact {
+  display: flex;
+  width: 8.5rem;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--card);
+  text-align: left;
+  transition: border-color 120ms ease;
+}
+
+.viewer-thread-artifact:hover {
+  border-color: color-mix(in oklab, var(--foreground) 25%, var(--border));
+}
+
+.viewer-thread-artifact:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.viewer-thread-artifact[aria-current="true"] {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1px var(--primary);
+}
+
+.viewer-thread-artifact .artifact-card-thumb {
+  aspect-ratio: 16 / 9;
+}
+
+.viewer-thread-artifact .artifact-card-icon svg {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.viewer-thread-artifact-name {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.375rem 0.5rem;
+  font-size: 0.75rem;
 }
 
 @media (max-width: 52rem) {
@@ -939,6 +1033,11 @@ code {
   flex: 1;
   flex-direction: column;
   background: color-mix(in oklab, var(--muted) 45%, var(--background));
+}
+
+/* A document on the stage reads on the page ground, like the report reader. */
+.artifact-viewer-stage > .report-reader-body {
+  background: var(--background);
 }
 
 .artifact-viewer-media {
@@ -1019,11 +1118,34 @@ video.artifact-viewer-media {
   font-size: 0.8125rem;
 }
 
+/* Its scroller is a flex row (outline, page), so the page must not stretch to
+   the scroller's height: a stretched page overflows itself and its bottom
+   padding never reaches the scroll area. */
 .report-document-page {
+  box-sizing: border-box;
+  align-self: flex-start;
   width: 100%;
-  max-width: 44rem;
+  max-width: calc(var(--report-measure) + 2 * var(--report-page-inline));
   margin-inline: auto;
-  padding: 2.25rem 2rem 5rem;
+  padding: var(--report-page-top) var(--report-page-inline) var(--report-page-end);
+}
+
+.report-document-page[data-measure="wide"] {
+  max-width: calc(var(--report-measure-wide) + 2 * var(--report-page-inline));
+}
+
+@media (max-width: 40rem) {
+  .report-document-page {
+    --report-page-top: 1.5rem;
+    --report-page-inline: 1.25rem;
+  }
+}
+
+/* An HTML report on the page: the frame takes the page's own height, so the
+   reader scrolls the page, not a box inside it. */
+.report-html-frame {
+  display: block;
+  width: 100%;
 }
 
 /* Outline: a dash per heading at the left edge, sticky while reading;
@@ -1187,8 +1309,11 @@ video.artifact-viewer-media {
   margin: 0;
 }
 
+/* Headings sit closer to what follows than to what came before: 2rem above
+   a section, 1.5rem above a subheading, 0.5rem below either. Sections and
+   headings inside the Markdown share these, so every report has one rhythm. */
 .report-document-section {
-  margin-top: 2.25rem;
+  margin-top: 2rem;
 }
 
 .report-document-heading,
@@ -1196,7 +1321,7 @@ video.artifact-viewer-media {
 .report-document .chat-markdown h2,
 .report-document .chat-markdown h3,
 .report-document .chat-markdown h4 {
-  margin: 1.75rem 0 0.625rem;
+  margin: 2rem 0 0.5rem;
   font-family: var(--report-serif);
   font-weight: 500;
   line-height: 1.25;
@@ -1212,7 +1337,25 @@ video.artifact-viewer-media {
 
 .report-document .chat-markdown h3,
 .report-document .chat-markdown h4 {
+  margin-top: 1.5rem;
   font-size: 1.125rem;
+}
+
+.report-document-prose .chat-markdown > :is(h1, h2, h3, h4) + * {
+  margin-top: 0.5rem;
+}
+
+.report-document-prose .chat-markdown > :first-child {
+  margin-top: 0;
+}
+
+/* A plain Markdown document's opening h1 is its title, set like one. */
+.report-document-prose .chat-markdown > h1:first-child {
+  margin-bottom: 0.75rem;
+  font-size: 1.875rem;
+  line-height: 1.15;
+  letter-spacing: -0.012em;
+  text-wrap: balance;
 }
 
 .report-document-section > .report-document-heading {

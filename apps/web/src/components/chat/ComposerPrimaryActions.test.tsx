@@ -81,6 +81,21 @@ afterEach(() => {
 });
 
 describe("ComposerPrimaryActions", () => {
+  it("says the typed message waits for an unreachable machine", () => {
+    const markup = renderSendButton(null, { isEnvironmentUnavailable: true, waitingFor: "M1" });
+    expect(markup).toContain('aria-label="Waiting for M1"');
+    expect(markup).toContain("data-composer-waiting-for");
+    expect(markup).toContain(">Waiting for M1</span>");
+    expect(markup).toContain("disabled");
+    // Nothing typed: no note beside the button.
+    const empty = renderSendButton(null, {
+      isEnvironmentUnavailable: true,
+      waitingFor: "M1",
+      hasSendableContent: false,
+    });
+    expect(empty).not.toContain("data-composer-waiting-for");
+  });
+
   it("renders a visible credit action with space for the text at compact width", () => {
     const markup = renderSendButton(null, { sendWithCredits: true });
     expect(markup).toContain('aria-label="Send with credits"');

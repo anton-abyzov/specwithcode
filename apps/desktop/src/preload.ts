@@ -132,6 +132,18 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   setNotificationBadge: (badge) =>
     ipcRenderer.invoke(IpcChannels.SET_NOTIFICATION_BADGE_CHANNEL, badge),
   setKeepAwake: (state) => ipcRenderer.invoke(IpcChannels.SET_KEEP_AWAKE_CHANNEL, state),
+  ...(clientPlatform === "darwin"
+    ? {
+        runComputerUseAction: async (action) => {
+          const result = await ipcRenderer.invoke(
+            IpcChannels.RUN_COMPUTER_USE_ACTION_CHANNEL,
+            action,
+          );
+          if (!result.ok) throw new Error(result.error);
+          return result.result;
+        },
+      }
+    : {}),
   listLocalVoices: () => ipcRenderer.invoke(IpcChannels.VOICE_LIST_LOCAL_CHANNEL),
   readLegacyVoicePreferences: () => ipcRenderer.invoke(IpcChannels.VOICE_READ_LEGACY_CHANNEL),
   forgetLegacyVoicePreferences: () => ipcRenderer.invoke(IpcChannels.VOICE_FORGET_LEGACY_CHANNEL),

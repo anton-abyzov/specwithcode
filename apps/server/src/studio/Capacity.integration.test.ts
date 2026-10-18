@@ -324,15 +324,19 @@ describe("capacity service with a real local companion transport", () => {
       ]);
     }));
 
+  // The expired reading is full, so a refresh that cannot re-verify it has no
+  // roomy last reading to fall back on.
   it.each([
-    ["busy", { status: 409, json: {} }, /refresh is already running/],
+    ["busy", { status: 409, json: {} }, /blocked, busy, exhausted or unverified/],
     ["invalid", { json: {} }, /Fresh subscription capacity could not be verified/],
     ["exhausted", null, /no remaining permitted usage/],
   ] as const)(
-    "does not admit expired capacity when its one refresh is %s",
+    "does not admit expired capacity when its refresh is %s",
     async (kind, reply, message) =>
       withCompanion(async (h) => {
-        h.state.raw = rawSnapshot(h.now - 16 * 60_000);
+        const full = rawSnapshot(h.now - 16 * 60_000);
+        full.accounts[0]!.quota.weekly.usedPercent = 100;
+        h.state.raw = full;
         const exhausted = rawSnapshot(h.now);
         exhausted.accounts[0]!.status = "exhausted";
         h.state.respond = (request) =>
@@ -349,9 +353,13 @@ describe("capacity service with a real local companion transport", () => {
           ).toBeUndefined();
           expect((error as { detail: string }).detail).not.toContain("Next observed reset");
         }
-        expect(h.requests).toEqual([wire("GET", "/api/state"), wire("POST", "/api/refresh", "{}")]);
-        // An exhausted verdict re-reads native status once before refusing (a new
-        // sign-in or an early reset shows only there); the companion is not asked twice.
+        expect(h.requests).toEqual([
+          wire("GET", "/api/state"),
+          wire("POST", "/api/refresh", "{}"),
+          // A busy refresh is waited out and its result read, never refreshed again.
+          ...(kind === "busy" ? [wire("GET", "/api/state")] : []),
+        ]);
+        // An exhausted verdict re-reads native status once before refusing.
         expect(h.refreshIds).toEqual(kind === "exhausted" ? ["codex"] : []);
       }),
   );

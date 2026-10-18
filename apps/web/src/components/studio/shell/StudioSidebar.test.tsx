@@ -21,6 +21,7 @@ const state = vi.hoisted(() => ({
   shells: [] as EnvironmentThreadShell[],
   keybindings: [] as unknown[],
   primaryEnvironmentId: "host" as string | null,
+  environments: [] as Array<{ environmentId: string; label: string }>,
   savedMachines: {} as Record<string, string>,
   scratchRoots: new Map<string, { scratchWorkspaceRoot: string }>(),
   updateProject: vi.fn(async (_input: unknown) => ({ _tag: "Success", value: undefined })),
@@ -96,6 +97,7 @@ vi.mock("../../../state/use-atom-command", () => ({
 }));
 vi.mock("../../../state/environments", () => ({
   usePrimaryEnvironmentId: () => state.primaryEnvironmentId,
+  useEnvironments: () => ({ environments: state.environments }),
 }));
 vi.mock("../../../hooks/useSettings", () => ({
   useClientSettings: <T,>(
@@ -158,6 +160,7 @@ vi.mock("./ModelBadge", () => ({
   useProviderEntriesByEnvironment: () => new Map(),
 }));
 import { DEFAULT_CHAT_LIST_OPTIONS } from "../../../studio/shellModel";
+import { UnreachableHostsContext } from "../../../studio/unreachableHosts";
 import StudioSidebar from "./StudioSidebar";
 
 let root: Root, container: HTMLDivElement;
@@ -205,6 +208,7 @@ beforeEach(() => {
   state.search = {};
   state.keybindings = [];
   state.primaryEnvironmentId = "host";
+  state.environments = [];
   state.savedMachines = {};
   state.scratchRoots = new Map();
   state.updateProject.mockClear();
@@ -261,6 +265,40 @@ describe("projects and chats sidebar", () => {
     expect(headings()).toEqual(["Today, 2 chats", "Older, 1 chat"]);
     expect(chats().sort()).toEqual(["Chat ask", "Chat old", "Chat today"]);
     expect(container.querySelectorAll("[data-mark='Codex']")).toHaveLength(3);
+  });
+  it("names another machine's chat and marks it when that machine can't be reached", async () => {
+    state.environments = [
+      { environmentId: "host", label: "M4" },
+      { environmentId: "m1", label: "M1" },
+      { environmentId: "m3", label: "M3" },
+    ];
+    state.shells = [
+      shell("here", { title: "Here" }),
+      shell("away", {
+        title: "Away",
+        environmentId: "m1" as EnvironmentThreadShell["environmentId"],
+      }),
+      shell("gone", {
+        title: "Gone",
+        environmentId: "m3" as EnvironmentThreadShell["environmentId"],
+      }),
+    ];
+    await act(async () =>
+      root.render(
+        <UnreachableHostsContext.Provider value={new Set(["m3"])}>
+          <StudioSidebar />
+        </UnreachableHostsContext.Provider>,
+      ),
+    );
+    const row = (title: string) =>
+      [...container.querySelectorAll<HTMLElement>(".sws-chat-row")].find((item) =>
+        item.textContent?.includes(title),
+      )!;
+    expect(row("Here").querySelector(".sws-row-machine")).toBeNull();
+    expect(row("Away").querySelector(".sws-row-machine[data-offline]")).toBeNull();
+    expect(row("Away").textContent).toContain("On M1");
+    expect(row("Gone").querySelector(".sws-row-machine[data-offline]")).not.toBeNull();
+    expect(row("Gone").textContent).toContain("M3 can't be reached");
   });
   it("collapses a date heading without losing the others", async () => {
     await render();
@@ -964,19 +1002,34 @@ describe("cleaning up the projects list", () => {
     });
   });
 
-  it("asks a double-clicked project to open its settings, keeping the single click", async () => {
+  it("renames a double-clicked project in place, keeping the single click", async () => {
     await render();
     const row = [...container.querySelectorAll<HTMLAnchorElement>('a[href^="/projects/"]')].find(
       (link) => link.textContent?.includes("Borealis"),
     )!;
     expect(row.getAttribute("href")).toBe("/projects/host:/b");
     await act(async () => row.click());
-    expect(takeProjectSettingsRequest("host:/b")).toBe(false);
     await act(async () => {
       row.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
     });
-    expect(takeProjectSettingsRequest("host:/a")).toBe(false);
-    expect(takeProjectSettingsRequest("host:/b")).toBe(true);
+    expect(takeProjectSettingsRequest("host:/b")).toBe(false);
+    const field = container.querySelector<HTMLInputElement>('input[aria-label="Project name"]')!;
+    expect(field.value).toBe("Borealis");
+    // Another listed project's name is refused whatever its case.
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+        field,
+        "ATLAS",
+      );
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(container.querySelector(".sws-project-rename-error")?.textContent).toBe(
+      "Another project is already named “Atlas”.",
+    );
+    await act(async () => {
+      field.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(container.querySelector('input[aria-label="Project name"]')).toBeNull();
     expect(projectNames()).toEqual(["Atlas", "Borealis"]);
   });
 

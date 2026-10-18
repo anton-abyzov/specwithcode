@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { CheckIcon, LaptopIcon, LockKeyholeIcon, RefreshCwIcon } from "lucide-react";
+import { CheckIcon, LaptopIcon, RefreshCwIcon } from "lucide-react";
 import {
   AuthAccessWriteScope,
   type EnvironmentId,
@@ -11,6 +11,7 @@ import type {
   StudioFleetWorkerAccess,
 } from "@specweave-studio/contracts/studioFleet";
 import {
+  addStudioFleetMachine,
   allowStudioFleetWorkers,
   pairStudioFleet,
   stopStudioFleetWorkers,
@@ -21,7 +22,14 @@ import {
   FLEET_WORKER_ACCESS_CHOICES,
   fleetWorkersView,
 } from "../../studio/fleetWorkers";
-import { setFleetEnvironmentSkipped } from "../../studio/fleetAutoConnect";
+import {
+  fleetMachineSaved,
+  savedRouteOrigins,
+  setFleetEnvironmentSkipped,
+} from "../../studio/fleetAutoConnect";
+import { useEnvironments } from "../../state/environments";
+import { machineLastSeenAt, useMachineLastSeenVersion } from "../../lib/machineLastSeen";
+import { lastSeenLabel, machineStatus } from "../../lib/machineStatus";
 import {
   useClientSettings,
   useEnvironmentSettings,
@@ -34,6 +42,15 @@ import { connectPairing } from "../../connection/onboarding";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { Button } from "../ui/button";
+import {
+  Select,
+  SelectGroup,
+  SelectGroupLabel,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "../ui/select";
 
 /** A listener's bind address does not describe Tailscale Serve or an SSH tunnel. */
 export function StudioListenerRow({
@@ -58,6 +75,14 @@ export function StudioListenerRow({
     />
   );
 }
+/** How this browser's own connection to a saved machine reads, as everywhere else in the app. */
+export interface FleetMachineConnection {
+  readonly text: string;
+  readonly connected: boolean;
+  /** Why it failed or when it was last seen, when not connected. */
+  readonly detail: string | null;
+}
+const NO_MACHINE_STATUSES: Readonly<Record<string, FleetMachineConnection>> = {};
 export interface WorkerDraft {
   readonly access: StudioFleetWorkerAccess;
   /** A one-time code made on that machine, for when this server cannot make one. */
@@ -88,37 +113,45 @@ export function FleetWorkersRow({
   const view = fleetWorkersView(workers);
   const busy = disabled || !canManage;
   return (
-    <div
-      className="min-w-0 space-y-2 border-t border-border/60 pt-3"
-      aria-label={`Workers on ${machine.label}`}
-    >
-      <p className="text-xs font-medium">Workers</p>
-      <p className="text-xs text-muted-foreground">{view.summary}</p>
+    <div className="min-w-0 space-y-1.5 pl-7" aria-label={`Workers on ${machine.label}`}>
+      <p className="text-xs text-muted-foreground">
+        <span className="text-foreground/80">Workers</span> · {view.summary}
+      </p>
       {view.problem ? <p className="text-xs text-warning-foreground">{view.problem}</p> : null}
       {view.action === "allow" ? (
-        <div className="flex min-w-0 flex-col gap-2">
-          <label className="flex items-center justify-between gap-2 text-xs">
-            Most access a worker gets
-            <select
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <Select
+            value={draft.access}
+            disabled={busy}
+            onValueChange={(value) => {
+              if (value) onDraftChange({ ...draft, access: value as StudioFleetWorkerAccess });
+            }}
+          >
+            <SelectTrigger
+              size="xs"
+              className="w-auto min-w-0"
               aria-label={`Most access for workers on ${machine.label}`}
-              className="rounded-md border border-border bg-background px-1.5 py-0.5 text-xs"
-              value={draft.access}
-              disabled={busy}
-              onChange={(e) =>
-                onDraftChange({ ...draft, access: e.target.value as StudioFleetWorkerAccess })
-              }
             >
-              {FLEET_WORKER_ACCESS_CHOICES.map((choice) => (
-                <option key={choice.value} value={choice.value}>
-                  {choice.label}
-                </option>
-              ))}
-            </select>
-          </label>
+              <SelectValue>
+                {FLEET_WORKER_ACCESS_CHOICES.find((choice) => choice.value === draft.access)
+                  ?.label ?? draft.access}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="start" alignItemWithTrigger={false}>
+              <SelectGroup>
+                <SelectGroupLabel>Most access a worker gets</SelectGroupLabel>
+                {FLEET_WORKER_ACCESS_CHOICES.map((choice) => (
+                  <SelectItem key={choice.value} value={choice.value}>
+                    {choice.label}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectPopup>
+          </Select>
           {view.codeNeeded ? (
             <input
               aria-label={`Pairing code made on ${machine.label}`}
-              className="rounded-md border border-border bg-background px-2 py-1 font-mono text-xs"
+              className="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-2 font-mono text-xs dark:bg-input/32"
               placeholder={`Pairing code from ${machine.label} (Operate threads)`}
               autoComplete="off"
               spellCheck={false}
@@ -128,7 +161,7 @@ export function FleetWorkersRow({
             />
           ) : null}
           <Button
-            size="sm"
+            size="xs"
             variant="outline"
             disabled={busy || (view.codeNeeded && !draft.pairingCode.trim())}
             onClick={() => onAction("allow")}
@@ -137,7 +170,7 @@ export function FleetWorkersRow({
           </Button>
         </div>
       ) : (
-        <Button size="sm" variant="ghost-muted" disabled={busy} onClick={() => onAction("stop")}>
+        <Button size="xs" variant="ghost-muted" disabled={busy} onClick={() => onAction("stop")}>
           Stop workers
         </Button>
       )}
@@ -162,6 +195,7 @@ export function StudioFleetConnections({ environmentId, savedEnvironmentIds }: P
   const [error, setError] = useState<string | null>(null);
   const canManageWorkers = useEnvironmentScope(environmentId, AuthAccessWriteScope);
   const [notice, setNotice] = useState<string | null>(null);
+  const [added, setAdded] = useState<string | null>(null);
   const defaultRuntimeMode = useEnvironmentSettings(
     environmentId,
     (settings) => settings.defaultRuntimeMode,
@@ -171,6 +205,54 @@ export function StudioFleetConnections({ environmentId, savedEnvironmentIds }: P
     pairingCode: "",
   };
   const [workerDrafts, setWorkerDrafts] = useState<Readonly<Record<string, WorkerDraft>>>({});
+  const [invitation, setInvitation] = useState("");
+  const { environments } = useEnvironments();
+  // A machine saved here only at an address it has left reads as not saved,
+  // so Connect machine adds its new address.
+  const origins = savedRouteOrigins(environments.map((environment) => environment.entry));
+  useMachineLastSeenVersion();
+  const machineStatuses: Record<string, FleetMachineConnection> = {};
+  for (const environment of environments) {
+    if (!environment.connection) continue;
+    const status = machineStatus(environment.connection);
+    const connected = environment.connection.phase === "connected";
+    machineStatuses[environment.environmentId] = {
+      text: status.text,
+      connected,
+      detail: connected
+        ? null
+        : (status.reason ??
+          lastSeenLabel(machineLastSeenAt(environment.environmentId), Date.now())),
+    };
+  }
+  const saved = new Set<string>(savedEnvironmentIds);
+  const savedHere = savedEnvironmentIds.filter((id) => {
+    const machine = snapshot?.machines.find((candidate) => candidate.environmentId === id);
+    return machine === undefined || fleetMachineSaved(machine, saved, origins);
+  });
+  async function addMachine() {
+    if (pending || !canManageWorkers || !invitation.trim()) return;
+    setPending("add-machine");
+    setError(null);
+    setNotice(null);
+    setAdded(null);
+    try {
+      const result = await addStudioFleetMachine(environmentId, invitation.trim());
+      // The line holds a management token: never keep it once sent.
+      setInvitation("");
+      setAdded(
+        result.change === "added"
+          ? `Added ${result.label}. ${autoConnect ? "This browser connects to it on its own." : "Choose Connect machine to use it here."} Choose Allow workers on it to let coordinators start work there.`
+          : result.previousUrl
+            ? `${result.label} now answers at its new address. Workers allowed there carry over.`
+            : `Renewed ${result.label}.`,
+      );
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "Could not add this machine.");
+    } finally {
+      setPending(null);
+    }
+  }
   async function changeWorkers(machine: StudioFleetMachine, action: "allow" | "stop") {
     if (pending || !canManageWorkers) return;
     const draft = workerDrafts[machine.id] ?? emptyWorkerDraft;
@@ -230,7 +312,7 @@ export function StudioFleetConnections({ environmentId, savedEnvironmentIds }: P
       failed={failed}
       canPair={canPair}
       environmentId={environmentId}
-      savedEnvironmentIds={savedEnvironmentIds}
+      savedEnvironmentIds={savedHere}
       pending={pending}
       error={error}
       autoConnect={autoConnect}
@@ -243,10 +325,15 @@ export function StudioFleetConnections({ environmentId, savedEnvironmentIds }: P
       workerDrafts={workerDrafts}
       defaultWorkerDraft={emptyWorkerDraft}
       notice={notice}
+      added={added}
       onWorkerDraftChange={(id, draft) =>
         setWorkerDrafts((current) => ({ ...current, [id]: draft }))
       }
       onWorkers={(machine, action) => void changeWorkers(machine, action)}
+      invitation={invitation}
+      onInvitationChange={setInvitation}
+      onAddMachine={() => void addMachine()}
+      machineStatuses={machineStatuses}
     />
   );
 }
@@ -287,8 +374,13 @@ export function StudioFleetRoster({
   workerDrafts = {},
   defaultWorkerDraft = { access: "auto", pairingCode: "" },
   notice = null,
+  added = null,
   onWorkerDraftChange,
   onWorkers,
+  invitation = "",
+  onInvitationChange,
+  onAddMachine,
+  machineStatuses = NO_MACHINE_STATUSES,
 }: {
   snapshot: StudioFleetSnapshot | null;
   loading: boolean;
@@ -308,8 +400,16 @@ export function StudioFleetRoster({
   defaultWorkerDraft?: WorkerDraft;
   /** What the last change did that the user should know, such as a session left there. */
   notice?: string | null;
+  /** What adding a machine just did. */
+  added?: string | null;
   onWorkerDraftChange?: (id: string, draft: WorkerDraft) => void;
   onWorkers?: (machine: StudioFleetMachine, action: "allow" | "stop") => void;
+  /** The pasted `fleet invite` line, cleared once sent. */
+  invitation?: string;
+  onInvitationChange?: (invitation: string) => void;
+  onAddMachine?: () => void;
+  /** This browser's own connection to each saved machine, keyed by environment id. */
+  machineStatuses?: Readonly<Record<string, FleetMachineConnection>>;
 }) {
   return (
     <SettingsSection
@@ -327,116 +427,85 @@ export function StudioFleetRoster({
         </Button>
       }
     >
-      <div className="px-4 pb-3 text-xs leading-relaxed text-muted-foreground">
-        <LockKeyholeIcon className="mr-1.5 inline size-3" />
-        {autoConnect
-          ? "This browser connects to reachable machines on its own, then you choose a machine when starting work. Connections are saved on this device."
-          : "Connect once in this browser, then choose a machine when starting work. Connections are saved on this device."}
-      </div>
-      {snapshot?.machines.length && onAutoConnectChange ? (
-        <label
-          id={searchableSetting("private-machines-auto-connect").id}
-          className="mx-4 mb-3 flex items-center justify-between gap-4 rounded-lg border border-border/60 px-3 py-2"
-        >
-          <span className="min-w-0">
-            <span className="block text-sm">Connect automatically</span>
-            <span className="block text-xs text-muted-foreground">
-              Pair with reachable machines when SpecWithCode opens, including after a restart. A
-              machine you remove stays removed until you connect it again.
-            </span>
-          </span>
-          <Switch
-            checked={autoConnect}
-            onCheckedChange={onAutoConnectChange}
-            aria-label="Connect private machines automatically"
-          />
-        </label>
-      ) : null}
       {failed ? (
-        <p role="status" className="px-4 pb-4 text-sm text-muted-foreground">
+        <p role="status" className="px-3 py-2.5 text-sm text-muted-foreground sm:px-4">
           Private machines could not be checked. Refresh to retry.
         </p>
       ) : snapshot?.machines.length ? (
-        <div className="grid gap-3 px-4 pb-4 sm:grid-cols-2 xl:grid-cols-3">
+        <ul className="divide-y divide-border/60">
           {snapshot.machines.map((machine) => {
             const current = machine.environmentId === environmentId;
             const saved = savedEnvironmentIds.includes(machine.environmentId);
             const reachable = machine.status === "reachable";
-            const status = failed
-              ? "Connection unverified"
+            // A machine this browser already uses reads the same as in the
+            // machine picker and sidebar; others say whether their route answers.
+            const own = current || saved ? machineStatuses[machine.environmentId] : undefined;
+            const status = own
+              ? own.text
               : machine.status === "identity-mismatch"
                 ? "Address needs attention"
                 : reachable
-                  ? "Private HTTPS reachable"
-                  : "Private route unavailable";
+                  ? "Reachable"
+                  : "Unreachable";
+            const ok = own ? own.connected : reachable;
+            const meta = [
+              current ? "This machine" : saved ? "Saved here" : null,
+              own?.detail ?? null,
+              fleetMachineAddress(machine, snapshot.machines),
+            ].filter(Boolean);
             return (
-              <article
+              <li
                 key={machine.id}
-                className="flex min-w-0 flex-col gap-4 rounded-xl border border-border/70 bg-card p-4"
+                className="flex min-w-0 flex-col gap-2 px-3 py-2.5 sm:px-4"
                 aria-label={machine.label}
               >
-                <div className="flex items-start gap-3">
-                  <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted/50">
-                    <LaptopIcon aria-hidden className="size-5 shrink-0 text-foreground/75" />
-                  </span>
-                  <div className="min-w-0">
-                    <h3 className="truncate text-sm font-semibold">{machine.label}</h3>
-                    {machine.machineName && machine.machineName !== machine.label ? (
-                      <p className="truncate text-xs text-muted-foreground">
-                        {machine.machineName}
-                      </p>
-                    ) : null}
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                      {current
-                        ? "This machine"
-                        : saved
-                          ? "Saved in this browser"
-                          : "Available to connect"}
+                <div className="flex min-w-0 items-center gap-3">
+                  <LaptopIcon aria-hidden className="size-4 shrink-0 text-foreground/70" />
+                  <div className="min-w-0 flex-1">
+                    <h3 className="truncate text-sm">
+                      {machine.label}
+                      {machine.machineName && machine.machineName !== machine.label ? (
+                        <span className="text-muted-foreground"> · {machine.machineName}</span>
+                      ) : null}
+                    </h3>
+                    <p className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                      <span
+                        aria-hidden
+                        className={`size-1.5 shrink-0 rounded-full ${ok ? "bg-success" : "bg-warning"}`}
+                      />
+                      <span className="shrink-0 text-foreground/80">{status}</span>
+                      <span className="truncate">{meta.map((part) => ` · ${part}`).join("")}</span>
                     </p>
                   </div>
-                </div>
-                <div className="min-w-0 space-y-1">
-                  <p className="flex items-center gap-1.5 text-xs">
-                    <span
-                      className={`size-1.5 shrink-0 rounded-full ${reachable ? "bg-emerald-500" : "bg-amber-500"}`}
+                  {current || saved ? (
+                    <CheckIcon
+                      aria-label={current ? "Current environment" : "Saved for the machine picker"}
+                      className="size-3.5 shrink-0 text-muted-foreground"
                     />
-                    {status}
-                  </p>
-                  <p
-                    className="truncate font-mono text-[10px] text-muted-foreground"
-                    title={machine.url}
-                  >
-                    {fleetMachineAddress(machine, snapshot.machines)}
-                  </p>
+                  ) : (
+                    <Button
+                      className="shrink-0"
+                      size="xs"
+                      variant="outline"
+                      disabled={
+                        pending !== null ||
+                        !reachable ||
+                        !machine.pairingConfigured ||
+                        !canPair ||
+                        failed
+                      }
+                      onClick={() => onPair(machine)}
+                    >
+                      {pending === machine.id
+                        ? "Connecting…"
+                        : !machine.pairingConfigured
+                          ? "Pairing needs setup"
+                          : !canPair
+                            ? "Pairing permission required"
+                            : "Connect machine"}
+                    </Button>
+                  )}
                 </div>
-                {current || saved ? (
-                  <div className="mt-auto flex min-h-7 items-center gap-1.5 text-xs text-muted-foreground">
-                    <CheckIcon className="size-3.5" />
-                    {current ? "Current environment" : "Saved for the machine picker"}
-                  </div>
-                ) : (
-                  <Button
-                    className="mt-auto w-full"
-                    size="sm"
-                    variant="outline"
-                    disabled={
-                      pending !== null ||
-                      !reachable ||
-                      !machine.pairingConfigured ||
-                      !canPair ||
-                      failed
-                    }
-                    onClick={() => onPair(machine)}
-                  >
-                    {pending === machine.id
-                      ? "Connecting…"
-                      : !machine.pairingConfigured
-                        ? "Pairing needs setup"
-                        : !canPair
-                          ? "Pairing permission required"
-                          : "Connect machine"}
-                  </Button>
-                )}
                 {!current && onWorkers && onWorkerDraftChange ? (
                   <FleetWorkersRow
                     machine={machine}
@@ -447,24 +516,74 @@ export function StudioFleetRoster({
                     onAction={(action) => onWorkers(machine, action)}
                   />
                 ) : null}
-              </article>
+              </li>
             );
           })}
-        </div>
+        </ul>
       ) : (
-        <p className="px-4 pb-4 text-sm text-muted-foreground">
-          {loading
-            ? "Checking your private machines…"
-            : "No private machines are configured on this server. You can still add an environment with a pairing link below."}
+        <p className="px-3 py-2.5 text-sm text-muted-foreground sm:px-4">
+          {loading ? "Checking your private machines…" : "No private machines yet. Add one below."}
         </p>
       )}
-      {snapshot?.machines.length ? (
-        <p className="px-4 pb-4 text-[11px] leading-relaxed text-muted-foreground">
-          Private routes checked from this server.{" "}
-          {snapshot.listener === "loopback"
-            ? "Its listener stays on loopback while private HTTPS remains independent."
-            : "Its listener accepts network connections."}
-        </p>
+      {snapshot?.machines.length && onAutoConnectChange ? (
+        <label
+          id={searchableSetting("private-machines-auto-connect").id}
+          className="flex items-center justify-between gap-4 border-t border-border/60 px-3 py-2.5 sm:px-4"
+        >
+          <span className="min-w-0">
+            <span className="block text-sm">Connect automatically</span>
+            <span className="block text-xs text-muted-foreground">
+              Pair with reachable machines when SpecWithCode opens. Saved on this device.
+            </span>
+          </span>
+          <Switch
+            checked={autoConnect}
+            onCheckedChange={onAutoConnectChange}
+            aria-label="Connect private machines automatically"
+          />
+        </label>
+      ) : null}
+      {onAddMachine && onInvitationChange ? (
+        <form
+          id={searchableSetting("private-machines-add").id}
+          className="flex min-w-0 flex-col gap-2 border-t border-border/60 px-3 py-2.5 sm:flex-row sm:items-center sm:gap-4 sm:px-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onAddMachine();
+          }}
+        >
+          <span className="min-w-0 sm:shrink-0">
+            <span className="block text-sm">Add a machine</span>
+            <span className="block text-xs text-muted-foreground">
+              Run <code className="font-mono">specwithcode fleet invite</code> there and paste the
+              line.
+            </span>
+          </span>
+          <div className="flex min-w-0 flex-1 gap-2">
+            <input
+              aria-label="Invitation from the other machine"
+              className="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-2 font-mono text-xs dark:bg-input/32"
+              placeholder="swc-machine-…"
+              autoComplete="off"
+              spellCheck={false}
+              value={invitation}
+              disabled={pending !== null || !canManageWorkers}
+              onChange={(event) => onInvitationChange(event.target.value)}
+            />
+            <Button
+              type="submit"
+              size="xs"
+              variant="outline"
+              disabled={pending !== null || !canManageWorkers || !invitation.trim()}
+            >
+              {pending === "add-machine"
+                ? "Adding…"
+                : canManageWorkers
+                  ? "Add machine"
+                  : "Manage access required"}
+            </Button>
+          </div>
+        </form>
       ) : null}
       {!canPair &&
       snapshot?.machines.some(
@@ -472,24 +591,32 @@ export function StudioFleetRoster({
           machine.environmentId !== environmentId &&
           !savedEnvironmentIds.includes(machine.environmentId),
       ) ? (
-        <p className="px-4 pb-4 text-xs leading-relaxed text-muted-foreground">
-          To connect a private machine, ask this server’s owner for a pairing link with{" "}
+        <p className="border-t border-border/60 px-3 py-2 text-xs text-muted-foreground sm:px-4">
+          To connect one, open a pairing link from this server’s owner with{" "}
           {snapshot?.connectPermission === "orchestration:operate"
             ? "Operate threads"
-            : "Manage access"}{" "}
-          and open it in this browser. You can also use Add environment below with that machine’s
-          own pairing link.
+            : "Manage access"}
+          , or use Add environment with that machine’s own link.
         </p>
       ) : null}
-      {notice ? (
-        <p role="status" className="px-4 pb-4 text-xs text-warning-foreground">
-          {notice}
-        </p>
-      ) : null}
-      {error ? (
-        <p role="alert" className="px-4 pb-4 text-xs text-destructive-foreground">
-          {error}
-        </p>
+      {added || notice || error ? (
+        <div className="space-y-1 border-t border-border/60 px-3 py-2 text-xs sm:px-4">
+          {added ? (
+            <p role="status" className="text-muted-foreground">
+              {added}
+            </p>
+          ) : null}
+          {notice ? (
+            <p role="status" className="text-warning-foreground">
+              {notice}
+            </p>
+          ) : null}
+          {error ? (
+            <p role="alert" className="text-destructive-foreground">
+              {error}
+            </p>
+          ) : null}
+        </div>
       ) : null}
     </SettingsSection>
   );

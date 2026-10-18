@@ -32,6 +32,7 @@ import {
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { AddApiCreditAccountDialog } from "./AddApiCreditAccountDialog";
 import { useSettingsScope } from "./SettingsScopeContext";
 import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
@@ -98,7 +99,8 @@ export function ProviderLimitSettings() {
   const apiKeyInstances = providers.filter(
     (provider) => provider.enabled && isDirectClaudeApiKeyProvider(provider),
   );
-  const apiKeyInstance = apiKeyInstances.find(canTakeTurn);
+  const readyApiKeyInstances = apiKeyInstances.filter(canTakeTurn);
+  const apiKeyInstance = readyApiKeyInstances[0];
   const instanceName = (provider: (typeof providers)[number]) =>
     provider.displayName ?? provider.instanceId;
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
@@ -107,6 +109,7 @@ export function ProviderLimitSettings() {
   const [confirmingRedeem, setConfirmingRedeem] = useState(false);
   const [confirmingSpend, setConfirmingSpend] = useState(false);
   const [confirmingApiCredits, setConfirmingApiCredits] = useState(false);
+  const [addingApiAccount, setAddingApiAccount] = useState(false);
 
   return (
     <>
@@ -351,15 +354,17 @@ export function ProviderLimitSettings() {
         mixed={mixedApiCredits}
         id="provider-limit-use-api-credits"
         title="Use API credits first"
-        description="When a Claude subscription turn stops on the limit and a new usage read confirms it, continue that turn on the same model on a Claude instance with its own Anthropic API key, before any fallback. The thread goes back to the subscription when the limit resets, or as soon as this is turned off. Never while limits are simulated."
+        description="When a Claude subscription turn stops on the limit and a new usage read confirms it, continue that turn on the same model on a Claude instance with its own Anthropic API key, before any fallback. With several API accounts, a turn that one refuses for lack of credits moves on to the next. The thread goes back to the subscription when the limit resets, or as soon as this is turned off. Never while limits are simulated. Without this, the limit banner still offers each account as a button."
         status={
           mixedApiCredits
             ? undefined
             : apiKeyInstance
-              ? `Continues on ${instanceName(apiKeyInstance)} when it lists the thread's model`
+              ? readyApiKeyInstances.length > 1
+                ? `Continues on ${instanceName(apiKeyInstance)}, then the next of ${readyApiKeyInstances.length} API accounts`
+                : `Continues on ${instanceName(apiKeyInstance)} when it lists the thread's model`
               : apiKeyInstances[0]
                 ? `${instanceName(apiKeyInstances[0])} is not ready, so nothing moves`
-                : "Needs a Claude instance with a sensitive ANTHROPIC_API_KEY variable and no custom endpoint (Settings, Providers)"
+                : "Needs a Claude API account: add one with its key"
         }
         resetAction={
           settings.providerLimitUseApiCredits ? (
@@ -371,17 +376,32 @@ export function ProviderLimitSettings() {
           ) : null
         }
         control={
-          <Switch
-            aria-label="Use API credits first"
-            mixed={mixedApiCredits}
-            checked={mixedApiCredits ? false : settings.providerLimitUseApiCredits}
-            onCheckedChange={(enabled) => {
-              if (enabled) setConfirmingApiCredits(true);
-              else updateSettings({ providerLimitUseApiCredits: false });
-            }}
-          />
+          <div className="flex items-center gap-2">
+            {target ? (
+              <Button size="xs" variant="ghost" onClick={() => setAddingApiAccount(true)}>
+                {apiKeyInstances.length === 0 ? "Add an API key" : "Add another"}
+              </Button>
+            ) : null}
+            <Switch
+              aria-label="Use API credits first"
+              mixed={mixedApiCredits}
+              checked={mixedApiCredits ? false : settings.providerLimitUseApiCredits}
+              onCheckedChange={(enabled) => {
+                if (enabled) setConfirmingApiCredits(true);
+                else updateSettings({ providerLimitUseApiCredits: false });
+              }}
+            />
+          </div>
         }
       />
+      {target ? (
+        <AddApiCreditAccountDialog
+          open={addingApiAccount}
+          onOpenChange={setAddingApiAccount}
+          environmentId={target.environmentId}
+          driver="claudeAgent"
+        />
+      ) : null}
       <AlertDialog open={confirmingRedeem} onOpenChange={setConfirmingRedeem}>
         <AlertDialogPopup>
           <AlertDialogHeader>
@@ -434,8 +454,8 @@ export function ProviderLimitSettings() {
             <AlertDialogTitle>Use Claude API credits automatically?</AlertDialogTitle>
             <AlertDialogDescription>
               {isProjectScope
-                ? "Turns in this project that stop on a confirmed Claude subscription limit will continue on your Claude API-key instance without asking, and the thread stays there until the limit resets. Every turn it runs there, and any thread it starts from there, is billed to the key's API organization at API rates. SpecWithCode cannot read or cap that balance; set a spend limit in the Claude Console."
-                : "Turns that stop on a confirmed Claude subscription limit will continue on your Claude API-key instance without asking, in every project that does not override this, and the thread stays there until the limit resets. Every turn it runs there, and any thread it starts from there, is billed to the key's API organization at API rates. SpecWithCode cannot read or cap that balance; set a spend limit in the Claude Console."}
+                ? "Turns in this project that stop on a confirmed Claude subscription limit will continue on your Claude API-key instance without asking, moving on to your next API account if one runs out of credits, and the thread stays there until the limit resets. Every turn it runs there, and any thread it starts from there, is billed to the key's API organization at API rates. SpecWithCode cannot read or cap that balance; set a spend limit in the Claude Console."
+                : "Turns that stop on a confirmed Claude subscription limit will continue on your Claude API-key instance without asking, moving on to your next API account if one runs out of credits, in every project that does not override this, and the thread stays there until the limit resets. Every turn it runs there, and any thread it starts from there, is billed to the key's API organization at API rates. SpecWithCode cannot read or cap that balance; set a spend limit in the Claude Console."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

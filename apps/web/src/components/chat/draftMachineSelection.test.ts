@@ -216,7 +216,10 @@ describe("draft machine selection", () => {
   it("keeps connection and permission status distinct", () => {
     expect(draftMachineUnavailableReason("connected", true)).toBeNull();
     expect(draftMachineUnavailableReason("connected", false)).toMatch(/Permission/);
-    expect(draftMachineUnavailableReason("reconnecting", true)).toBe("Connecting…");
+    expect(draftMachineUnavailableReason("connecting", true)).toBe("Connecting…");
+    expect(draftMachineUnavailableReason("reconnecting", true)).toBe(
+      "Can't reach this machine right now",
+    );
     for (const phase of ["offline", "available", "error", "unsupported"] as const)
       expect(draftMachineUnavailableReason(phase, true)).toBe("Not connected");
   });

@@ -16,6 +16,7 @@ import {
   type ServerProvider,
   type ThreadId,
 } from "@specweave-studio/contracts";
+import { describeModel, sameModelOn } from "./modelIdentity.ts";
 import { effectiveUsedPercent, isLiveWindow, windowAppliesToModel } from "./usageWindows.ts";
 
 export interface ProviderFallbackRule {
@@ -35,6 +36,12 @@ export interface ProviderFallbackRule {
   readonly providerLimitUseApiCredits?: boolean;
   /** The project's default model: the way back when the thread already runs on the fallback. */
   readonly defaultModelSelection: ModelSelection | null;
+  /**
+   * Other providers serving the default model, in the order to try them
+   * before any other model (see `resolveSameModelElsewhere`). Absent or empty
+   * tries every provider that lists it.
+   */
+  readonly defaultModelProviders?: ReadonlyArray<ProviderInstanceId> | undefined;
 }
 
 /**
@@ -152,6 +159,101 @@ export function hasUsableFallbackCapacity(
   return used !== null && Number.isFinite(used) && used >= 0 && used < 100;
 }
 
+/**
+ * A provider that reports no usage at all: GitHub Copilot and the other
+ * agents behind ACP. Its room can only be learned by trying it, so it counts
+ * as having room while it can take a turn and nothing marks it limited.
+ */
+export function reportsNoUsage(provider: ServerProvider): boolean {
+  return provider.usageLimits === undefined;
+}
+
+/**
+ * Whether a thread may start or continue on `provider` with `model`:
+ * verified room below `belowPercent`, or a provider that reports no usage
+ * and can take a turn. Null when it has neither, is in `limited`, or is
+ * billed per token (never picked by itself).
+ */
+function roomOn(
+  provider: ServerProvider,
+  model: string,
+  input: {
+    readonly nowMs: number;
+    readonly belowPercent?: number | null | undefined;
+    readonly limited?: ReadonlySet<string> | undefined;
+  },
+): "verified" | "unreported" | null {
+  if (input.limited?.has(provider.instanceId) || isPerTokenProvider(provider)) return null;
+  if (reportsNoUsage(provider)) return canTakeTurn(provider) ? "unreported" : null;
+  if (!hasUsableFallbackCapacity(provider, input.nowMs, model)) return null;
+  const used = providerUsedPercent(provider, input.nowMs, model);
+  return used !== null && (input.belowPercent == null || used < input.belowPercent)
+    ? "verified"
+    : null;
+}
+
+/**
+ * The same model on another provider with room: Opus 5.5 on GitHub Copilot
+ * when the Claude subscription is spent. Providers named in `order` come
+ * first, in that order; then another account of the same driver; then
+ * verified room before a provider that reports none; then list order.
+ * Effort and other options carry over only within one driver, since each
+ * driver spells its own. Null when no other provider lists the model or has
+ * room for it.
+ */
+export function resolveSameModelElsewhere(input: {
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly current: ModelSelection;
+  readonly order?: ReadonlyArray<ProviderInstanceId> | undefined;
+  readonly nowMs: number;
+  readonly belowPercent?: number | null | undefined;
+  readonly limitedInstanceIds?: ReadonlySet<string> | undefined;
+}): ModelSelection | null {
+  const currentProvider = input.providers.find(
+    (provider) => provider.instanceId === input.current.instanceId,
+  );
+  const model = describeModel(currentProvider, input.current.model);
+  const order = input.order ?? [];
+  const listed = (provider: ServerProvider) => {
+    const index = order.indexOf(provider.instanceId);
+    return index === -1 ? order.length : index;
+  };
+  const candidates = input.providers.flatMap((provider, position) => {
+    if (provider.instanceId === input.current.instanceId) return [];
+    const slug = sameModelOn(provider, model);
+    if (slug === undefined) return [];
+    const room = roomOn(provider, slug, {
+      nowMs: input.nowMs,
+      belowPercent: input.belowPercent,
+      limited: input.limitedInstanceIds,
+    });
+    if (room === null) return [];
+    const rank = [
+      listed(provider),
+      provider.driver === currentProvider?.driver ? 0 : 1,
+      room === "verified" ? 0 : 1,
+      position,
+    ];
+    return [{ provider, slug, rank }];
+  });
+  candidates.sort((a, b) => {
+    for (let i = 0; i < a.rank.length; i++) {
+      const diff = a.rank.at(i)! - b.rank.at(i)!;
+      if (diff !== 0) return diff;
+    }
+    return 0;
+  });
+  const best = candidates[0];
+  if (best === undefined) return null;
+  return {
+    instanceId: best.provider.instanceId,
+    model: best.slug,
+    ...(best.provider.driver === currentProvider?.driver && input.current.options !== undefined
+      ? { options: input.current.options }
+      : {}),
+  };
+}
+
 function defaultModel(provider: ServerProvider): string | undefined {
   return (
     provider.models.find((model) => model.isDefault && !model.isCustom)?.slug ??
@@ -161,36 +263,94 @@ function defaultModel(provider: ServerProvider): string | undefined {
 }
 
 /**
- * Where a limited Claude subscription thread continues on API credits: the
- * first other Claude instance with its own Anthropic API key that can take a
- * turn and lists the thread's model. The model never changes, so the price
- * of the continuation is the one the thread was already running at. Null
- * when the thread is not on a Claude subscription or no such instance is
- * ready.
+ * The API refused a turn because the key's account has no credits left:
+ * Anthropic's "Your credit balance is too low to access the Anthropic API"
+ * and Claude Code's "Credit balance too low · Add funds". Another API
+ * account can take the turn; this one cannot until someone adds funds.
+ */
+export function isApiCreditExhaustedMessage(text: string | null | undefined): boolean {
+  return typeof text === "string" && /credit balance (?:is )?too low/i.test(text);
+}
+
+/**
+ * An instance that bills an API account's own credits for the driver's
+ * models, so a person can move a limited subscription thread there: a Claude
+ * instance with its own Anthropic key (`isDirectClaudeApiKeyProvider`), a
+ * Grok instance on an xAI API key, or Codex signed in with an OpenAI API
+ * key. Proxies, routers and Bedrock are billed elsewhere and do not count.
+ */
+export function isApiCreditProvider(provider: ServerProvider | undefined): boolean {
+  if (provider === undefined) return false;
+  if (provider.driver === "claudeAgent") return isDirectClaudeApiKeyProvider(provider);
+  if (provider.driver === "grok") return provider.auth.type === "api_key";
+  if (provider.driver === "codex") return provider.auth.type === "apiKey";
+  return false;
+}
+
+/**
+ * Every instance a limited thread can continue on with API credits, in
+ * list order: another instance of its driver that bills an API account
+ * (`isApiCreditProvider`), can take a turn and lists the thread's model.
+ * The model never changes, so the continuation costs what the thread was
+ * already running at. From an API-key instance this is the other API
+ * accounts, for when one runs out of credits. Empty for a driver without
+ * API accounts.
+ */
+export function resolveApiCreditSelections(input: {
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly current: ModelSelection;
+}): ReadonlyArray<ModelSelection> {
+  const current = input.providers.find(
+    (provider) => provider.instanceId === input.current.instanceId,
+  );
+  if (current === undefined) return [];
+  // A proxy or Bedrock thread is already billed per token somewhere else.
+  if (isPerTokenProvider(current) && !isApiCreditProvider(current)) return [];
+  const selections: ModelSelection[] = [];
+  for (const provider of input.providers) {
+    if (provider.instanceId === current.instanceId || provider.driver !== current.driver) continue;
+    if (!isApiCreditProvider(provider) || !canTakeTurn(provider)) continue;
+    if (provider.models.some((model) => model.slug === input.current.model))
+      selections.push({ ...input.current, instanceId: provider.instanceId });
+  }
+  return selections;
+}
+
+/**
+ * Where the API-credit rule continues a limited Claude thread: the first
+ * other Claude instance with its own Anthropic API key that can take a turn
+ * and lists the thread's model. The model never changes, so the price of the
+ * continuation is the one the thread was already running at. From a Claude
+ * subscription by default; with `rotate`, from an API-key instance whose
+ * account ran out of credits to the next account. Null when there is no
+ * such instance, or the thread is on neither.
  */
 export function resolveApiCreditSelection(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly current: ModelSelection;
+  readonly rotate?: boolean;
 }): ModelSelection | null {
   const current = input.providers.find(
     (provider) => provider.instanceId === input.current.instanceId,
   );
-  if (current?.driver !== "claudeAgent" || isClaudeApiKeyProvider(current)) return null;
-  for (const provider of input.providers) {
-    if (provider.instanceId === current.instanceId) continue;
-    if (!isDirectClaudeApiKeyProvider(provider) || !canTakeTurn(provider)) continue;
-    if (provider.models.some((model) => model.slug === input.current.model))
-      return { ...input.current, instanceId: provider.instanceId };
-  }
-  return null;
+  if (current?.driver !== "claudeAgent") return null;
+  if (
+    input.rotate === true ? !isDirectClaudeApiKeyProvider(current) : isClaudeApiKeyProvider(current)
+  )
+    return null;
+  return resolveApiCreditSelections(input)[0] ?? null;
 }
 
 /**
- * The model to continue on instead of `currentInstanceId`: the project's
- * fallback, else its default model (so a thread already on the fallback can
- * go back), else, with `anyReady`, the cheapest other provider that can take
- * a turn. A candidate at or past `belowPercent` is skipped so two full
- * providers never trade a thread back and forth.
+ * The model to continue on instead of `currentInstanceId`: the same model on
+ * another provider with room (`resolveSameModelElsewhere`), else the
+ * project's fallback, else its default model (so a thread already on the
+ * fallback can go back), else, with `anyReady`, the cheapest other provider
+ * that can take a turn. A candidate at or past `belowPercent` is skipped so
+ * two full providers never trade a thread back and forth. A provider that
+ * reports no usage (GitHub Copilot) counts as having room unless
+ * `limitedInstanceIds` names it, and comes after providers with verified
+ * room.
  *
  * `anyReady` prefers, in order: another instance of the same driver that
  * lists `currentModel` (another account on the same model, where a Claude
@@ -207,27 +367,44 @@ export function resolveProviderFallback(input: {
   readonly currentModel?: string | undefined;
   readonly rule: Pick<
     ProviderFallbackRule,
-    "providerLimitFallbackModelSelection" | "defaultModelSelection"
+    "providerLimitFallbackModelSelection" | "defaultModelSelection" | "defaultModelProviders"
   >;
   readonly nowMs: number;
   readonly belowPercent?: number | null;
   readonly anyReady?: boolean;
   /** Instances known to be limited whatever their usage read says (a current limit stop). */
   readonly limitedInstanceIds?: ReadonlySet<string>;
+  /**
+   * A model working right now without a usage read behind it: the project
+   * coordinator's own (see `provenFallbackSelection`). Tried after the rule's
+   * fallback and the project default, before any other ready provider.
+   */
+  readonly proven?: ModelSelection | null;
 }): ModelSelection | null {
   const usable = (
     provider: ServerProvider | undefined,
     model: string | undefined,
   ): provider is ServerProvider => {
     if (provider === undefined || provider.instanceId === input.currentInstanceId) return false;
-    if (
-      input.limitedInstanceIds?.has(provider.instanceId) ||
-      !hasUsableFallbackCapacity(provider, input.nowMs, model)
-    )
-      return false;
+    if (input.limitedInstanceIds?.has(provider.instanceId)) return false;
+    // An API key reports no usage either, but spends money: it needs the
+    // API-credit rule, never a guess.
+    if (reportsNoUsage(provider)) return canTakeTurn(provider) && !isPerTokenProvider(provider);
+    if (!hasUsableFallbackCapacity(provider, input.nowMs, model)) return false;
     const used = providerUsedPercent(provider, input.nowMs, model);
     return used !== null && (input.belowPercent == null || used < input.belowPercent);
   };
+  if (input.currentModel !== undefined) {
+    const same = resolveSameModelElsewhere({
+      providers: input.providers,
+      current: { instanceId: input.currentInstanceId, model: input.currentModel },
+      order: input.rule.defaultModelProviders,
+      nowMs: input.nowMs,
+      belowPercent: input.belowPercent,
+      limitedInstanceIds: input.limitedInstanceIds,
+    });
+    if (same !== null) return same;
+  }
   for (const selection of [
     input.rule.providerLimitFallbackModelSelection,
     input.rule.defaultModelSelection,
@@ -239,6 +416,20 @@ export function resolveProviderFallback(input: {
       provider.models.some((model) => model.slug === selection.model && !model.isCustom)
     )
       return selection;
+  }
+  const proven = input.proven ?? null;
+  if (proven !== null && proven.instanceId !== input.currentInstanceId) {
+    const provider = input.providers.find((entry) => entry.instanceId === proven.instanceId);
+    const used =
+      provider === undefined ? null : providerUsedPercent(provider, input.nowMs, proven.model);
+    if (
+      provider !== undefined &&
+      !input.limitedInstanceIds?.has(provider.instanceId) &&
+      canTakeTurn(provider) &&
+      !isPerTokenProvider(provider) &&
+      (used === null || used < (input.belowPercent ?? 100))
+    )
+      return { instanceId: proven.instanceId, model: proven.model };
   }
   if (!input.anyReady) return null;
   const driver = input.providers.find(
@@ -266,6 +457,131 @@ export function resolveProviderFallback(input: {
     if (model !== undefined) return { instanceId: provider.instanceId, model };
   }
   return null;
+}
+
+/**
+ * The project coordinator's model as a fallback for one of its threads, or
+ * null. The coordinator ran on it moments ago, which is better evidence of
+ * room than a usage read some providers never give (Copilot and the other
+ * agents that report no usage would otherwise never count as a fallback).
+ * Null when the coordinator is the thread itself, already runs where the
+ * thread does, or its own latest turn stopped on the limit.
+ */
+export function provenFallbackSelection(
+  thread: { readonly id: ThreadId; readonly providerInstanceId: ProviderInstanceId },
+  coordinator:
+    | {
+        readonly id: ThreadId;
+        readonly providerInstanceId: ProviderInstanceId;
+        readonly modelSelection: ModelSelection;
+        readonly status: string;
+        readonly lastErrorClass?: string | null | undefined;
+      }
+    | null
+    | undefined,
+): ModelSelection | null {
+  if (!coordinator || coordinator.id === thread.id) return null;
+  if (coordinator.providerInstanceId === thread.providerInstanceId) return null;
+  if (coordinator.status === "failed" && coordinator.lastErrorClass === "usage_limit") return null;
+  return coordinator.modelSelection;
+}
+
+export type WorkerLaunchSelectionReason =
+  | "preferred"
+  | "preferred-resets-soon"
+  | "waits-for-reset"
+  | "same-model"
+  | "coordinator"
+  | "fallback"
+  | "no-room";
+
+/**
+ * The model a project worker starts on when the coordinator names none. The
+ * project's recommended model (or the host default) wins while its provider
+ * has room. A new thread has nothing to hand over, so starting it on a
+ * provider that is out of room only produces a stop: then it starts on the
+ * same model from another provider (the project's `defaultModelProviders`
+ * order first), else on the model the coordinator itself runs on, which is
+ * working right now, else on the cheapest other provider with room. The `wait` rule and a reset
+ * within the project's wait keep the preferred model, as they do for a
+ * stopped turn. A provider billed per token is never picked here.
+ */
+export function resolveWorkerLaunchSelection(input: {
+  readonly preferred: ModelSelection;
+  /** The coordinator's current model; it is calling, so a turn on it is running now. */
+  readonly coordinator: ModelSelection | null;
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly rule: ProviderFallbackRule;
+  readonly nowMs: number;
+  readonly limitedInstanceIds?: ReadonlySet<string>;
+}): { readonly selection: ModelSelection; readonly reason: WorkerLaunchSelectionReason } {
+  const threshold = input.rule.providerLimitSwitchAtPercent ?? 100;
+  const limited = input.limitedInstanceIds ?? new Set<string>();
+  const preferred = input.preferred;
+  const preferredProvider = input.providers.find(
+    (provider) => provider.instanceId === preferred.instanceId,
+  );
+  const full = (provider: ServerProvider | undefined, model: string): boolean => {
+    if (provider === undefined) return false;
+    if (limited.has(provider.instanceId) || usageDeniesTurn(provider)) return true;
+    const used = providerUsedPercent(provider, input.nowMs, model);
+    return used !== null && used >= threshold;
+  };
+  if (!full(preferredProvider, preferred.model))
+    return { selection: preferred, reason: "preferred" };
+  if (input.rule.providerLimitAction === "wait")
+    return { selection: preferred, reason: "waits-for-reset" };
+  if (
+    !limited.has(preferred.instanceId) &&
+    usageResetsSoon({
+      provider: preferredProvider,
+      threshold,
+      waitUnderMinutes: input.rule.providerLimitWaitUnderMinutes,
+      nowMs: input.nowMs,
+      model: preferred.model,
+    })
+  )
+    return { selection: preferred, reason: "preferred-resets-soon" };
+  const same = resolveSameModelElsewhere({
+    providers: input.providers,
+    current: preferred,
+    order: input.rule.defaultModelProviders,
+    nowMs: input.nowMs,
+    belowPercent: threshold,
+    limitedInstanceIds: limited,
+  });
+  if (same !== null) return { selection: same, reason: "same-model" };
+  const coordinator = input.coordinator;
+  if (coordinator !== null && coordinator.instanceId !== preferred.instanceId) {
+    const provider = input.providers.find((entry) => entry.instanceId === coordinator.instanceId);
+    if (
+      provider !== undefined &&
+      canTakeTurn(provider) &&
+      !isPerTokenProvider(provider) &&
+      !full(provider, coordinator.model)
+    )
+      return {
+        selection: { instanceId: coordinator.instanceId, model: coordinator.model },
+        reason: "coordinator",
+      };
+  }
+  const target = resolveProviderFallback({
+    providers: input.providers,
+    currentInstanceId: preferred.instanceId,
+    currentModel: preferred.model,
+    rule: {
+      providerLimitFallbackModelSelection: input.rule.providerLimitFallbackModelSelection,
+      defaultModelSelection: null,
+      defaultModelProviders: input.rule.defaultModelProviders,
+    },
+    nowMs: input.nowMs,
+    belowPercent: threshold,
+    anyReady: true,
+    limitedInstanceIds: limited,
+  });
+  return target === null
+    ? { selection: preferred, reason: "no-room" }
+    : { selection: target, reason: "fallback" };
 }
 
 /** How long past a waited-for reset the thread may still be stopped before the rule acts after all. */

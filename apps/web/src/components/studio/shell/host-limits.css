@@ -238,13 +238,16 @@
   }
 }
 
-/* The chip popover: a row per host. */
+/*
+ * The chip popover: one grid for every host, so columns line up across
+ * machines. Hosts, their provider lists and rows are subgrids of it:
+ * icon · provider · bar · value · reset or shared account.
+ */
 .sws-hl-compact {
+  container: sws-hl-compact / inline-size;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--border);
+  gap: 8px;
 }
 .sws-hl-compact h3 {
   margin: 0;
@@ -256,47 +259,120 @@
   margin: 0;
   padding: 0;
   list-style: none;
+}
+.sws-hl-compact-grid {
   display: grid;
-  grid-template-columns: max-content minmax(0, 1fr) auto;
+  grid-template-columns: 16px minmax(0, 1fr) minmax(2.5rem, 4.5rem) max-content max-content;
+  column-gap: 8px;
+}
+.sws-hl-compact-host,
+.sws-hl-compact-host > ul,
+.sws-hl-compact-head,
+.sws-hl-compact-row {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
   align-items: center;
-  gap: 4px 12px;
 }
-/* Each host is a grid row: name, provider cells, last reading. */
-.sws-hl-compact li {
-  display: contents;
+.sws-hl-compact-host {
+  row-gap: 5px;
 }
-.sws-hl-compact li[data-status="offline"] .sws-hl-compact-cells {
-  opacity: var(--disabled-opacity);
+.sws-hl-compact-host + .sws-hl-compact-host {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
 }
-.sws-hl-compact-name {
-  display: inline-flex;
+.sws-hl-compact-host > ul {
+  row-gap: 4px;
+}
+.sws-hl-compact-head .sws-hl-dot {
+  justify-self: center;
+}
+.sws-hl-compact-title {
+  grid-column: 2 / -1;
+  display: flex;
   align-items: center;
   gap: 6px;
-  font-weight: 500;
+  min-width: 0;
+}
+.sws-hl-compact-title strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
 }
-.sws-hl-compact-cells {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 4px 10px;
+.sws-hl-compact-title .sws-hl-badge {
+  flex: none;
 }
-.sws-hl-compact-cell {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
+.sws-hl-compact-status {
+  flex: none;
+  margin-left: auto;
+  padding-left: 4px;
+  white-space: nowrap;
+  color: var(--muted-foreground);
   font-variant-numeric: tabular-nums;
 }
-.sws-hl-compact-cell svg.lucide {
-  width: 10px;
-  height: 10px;
+.sws-hl-compact-host[data-status="offline"] .sws-hl-compact-row {
+  opacity: var(--disabled-opacity);
+}
+.sws-hl-compact-row {
+  min-height: 20px;
+}
+.sws-hl-compact-row > :first-child {
+  justify-self: center;
+}
+.sws-hl-compact-provider {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--muted-foreground);
 }
-.sws-hl-compact-cell[data-tone="warn"] {
+.sws-hl-compact-value {
+  justify-self: end;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.sws-hl-compact-row[data-tone="warn"] .sws-hl-compact-value {
   color: var(--warning-foreground);
 }
-.sws-hl-compact-cell[data-tone="full"] {
+.sws-hl-compact-row[data-tone="full"] .sws-hl-compact-value {
   color: var(--destructive-foreground);
 }
-.sws-hl-compact-muted {
+.sws-hl-compact-aside {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  min-width: 12px;
+  white-space: nowrap;
   color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.sws-hl-compact-aside > span {
+  display: inline-flex;
+}
+.sws-hl-compact-aside svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+}
+.sws-hl-compact-empty {
+  grid-column: 2 / -1;
+  margin: 0;
+  color: var(--muted-foreground);
+}
+/* A spent provider's empty bar still reads as spent. */
+.sws-hl-compact-row .sws-hl-bar[data-tone="full"] {
+  background: color-mix(in srgb, var(--destructive) 22%, transparent);
+}
+/* A narrow panel or phone: drop the bars before anything wraps. */
+@container sws-hl-compact (max-width: 280px) {
+  .sws-hl-compact-grid {
+    grid-template-columns: 16px minmax(0, 1fr) max-content max-content;
+  }
+  .sws-hl-compact-row > .sws-hl-bar {
+    display: none;
+  }
 }

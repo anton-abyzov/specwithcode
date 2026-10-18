@@ -42,6 +42,9 @@ type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
  */
 export const RPC_REQUIRED_SCOPES = {
   ...CLIENT_GUARDED_RPC_SCOPES,
+  // Hosting computer use answers agents' desktop actions on this machine.
+  [WS_METHODS.computerUseHost]: AuthTerminalOperateScope,
+  [WS_METHODS.computerUseRespond]: AuthTerminalOperateScope,
   [WS_METHODS.managedUpdatesStatus]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: AuthOrchestrationReadScope,

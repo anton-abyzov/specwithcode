@@ -3,16 +3,7 @@ import { type CSSProperties, memo } from "react";
 import { providerInstanceInitials } from "@specweave-studio/client-runtime/state/provider-instance-display";
 
 import { ProviderDriverKind } from "@specweave-studio/contracts";
-import {
-  AntigravityIcon,
-  ClaudeAI,
-  CursorIcon,
-  GrokIcon,
-  Icon,
-  OpenAI,
-  OpenCodeIcon,
-  PiAgentIcon,
-} from "../Icons";
+import { ProviderLogo, providerBrandFor } from "../ProviderLogo";
 
 import { cn } from "~/lib/utils";
 import {
@@ -20,16 +11,6 @@ import {
   officialAcpRegistryIconUrlForAgentId,
   resolveOfficialAcpRegistryIconUrl,
 } from "../settings/AcpRegistryIcon";
-
-const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>> = {
-  [ProviderDriverKind.make("codex")]: OpenAI,
-  [ProviderDriverKind.make("claudeAgent")]: ClaudeAI,
-  [ProviderDriverKind.make("opencode")]: OpenCodeIcon,
-  [ProviderDriverKind.make("cursor")]: CursorIcon,
-  [ProviderDriverKind.make("grok")]: GrokIcon,
-  [ProviderDriverKind.make("antigravity")]: AntigravityIcon,
-  [ProviderDriverKind.make("pi")]: PiAgentIcon,
-};
 
 const PROVIDER_TEXT_COLOR_BY_PROVIDER: Partial<Record<ProviderDriverKind, string>> = {
   [ProviderDriverKind.make("codex")]: "text-black dark:text-white",
@@ -71,7 +52,11 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   statusDotClassName?: string;
   indicatorBackground?: string;
 }) {
-  const Icon = PROVIDER_ICON_BY_PROVIDER[props.driverKind] ?? null;
+  const brand = providerBrandFor({
+    driverKind: props.driverKind,
+    acpRegistryAgentId: props.acpRegistryAgentId,
+    acpRegistryIconUrl: props.acpRegistryIconUrl,
+  });
   const indicatorBackground = props.indicatorBackground ?? "var(--card)";
   const accentStyle = props.accentColor
     ? ({ "--provider-accent": props.accentColor } as CSSProperties)
@@ -93,7 +78,9 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
       style={accentStyle}
       data-provider-accent-color={props.accentColor}
     >
-      {isAcpRegistry ? (
+      {brand ? (
+        <ProviderLogo brand={brand} className={cn("size-5", props.iconClassName)} />
+      ) : isAcpRegistry ? (
         <AcpRegistryAgentIcon
           {...(props.acpRegistryAgentId ? { agentId: props.acpRegistryAgentId } : {})}
           // The search-tile radius would crop most of the glyph at these
@@ -102,8 +89,6 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
           fallbackClassName="size-full"
           icon={acpRegistryIconUrl}
         />
-      ) : Icon ? (
-        <Icon className={cn("size-5 shrink-0", props.iconClassName)} aria-hidden />
       ) : (
         <span className={cn("text-3xs font-semibold leading-none", props.iconClassName)}>
           {providerInstanceInitials(props.displayName)}

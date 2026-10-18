@@ -30,7 +30,8 @@ import {
   type ShelfEntry,
   type ShelfPullRequest,
 } from "~/artifactShelf";
-import { useThreadProjection, useThreadShell } from "~/state/entities";
+// Relative, so the headless fixture (tests/project-workspace) can stand in for it.
+import { useThreadProjection, useThreadShell } from "../../state/entities";
 import { formatViewerDate, viewerIso } from "~/viewerDate";
 import { useViewerOverlay } from "~/viewerOverlayStore";
 import {
@@ -138,6 +139,15 @@ export function useThreadArtifacts(
     return [...renders.reverse(), ...fromText];
   }, [cwd, messages, turnItems]);
   return useSettledArtifacts(authored, threadRef, cwd);
+}
+
+/** The thread's artifacts the viewer opens, oldest first, as stepping through them goes. */
+export function useThreadViewables(
+  threadRef: ScopedThreadRef | null,
+  cwd: string | undefined,
+): ReadonlyArray<ViewableArtifact> {
+  const artifacts = useThreadArtifacts(threadRef, cwd);
+  return useMemo(() => artifacts.filter(isViewableArtifact).toReversed(), [artifacts]);
 }
 
 /** The artifacts with their paths settled on the host; files it lacks drop out. */
@@ -742,5 +752,49 @@ export function MessageFileViewer(props: {
           : undefined
       }
     />
+  );
+}
+
+/**
+ * The thread's artifacts as a strip of tiles, newest first, above the thread
+ * beside the viewer: one press puts another of them on the left.
+ */
+export function ThreadArtifactStrip(props: {
+  readonly threadRef: ScopedThreadRef;
+  /** Oldest first, as `useThreadViewables` gives them. */
+  readonly artifacts: ReadonlyArray<ViewableArtifact>;
+  /** The one the viewer shows, if it is one of them. */
+  readonly currentKey: string | null;
+  readonly onOpen: (key: string) => void;
+}) {
+  if (props.artifacts.length === 0) return null;
+  return (
+    <section className="viewer-thread-artifacts" aria-label="Artifacts in this thread">
+      <h3 className="viewer-thread-artifacts-title">
+        Artifacts <span className="tabular-nums">{props.artifacts.length}</span>
+      </h3>
+      <ul className="viewer-thread-artifacts-list">
+        {props.artifacts.toReversed().map((artifact) => (
+          <li key={artifact.key}>
+            <button
+              type="button"
+              className="viewer-thread-artifact"
+              data-strip-artifact={artifact.kind}
+              aria-current={artifact.key === props.currentKey ? "true" : undefined}
+              aria-label={`${KIND_LABEL[artifact.kind]}: ${artifact.name}`}
+              onClick={() => props.onOpen(artifact.key)}
+            >
+              <ArtifactThumbnail threadRef={props.threadRef} artifact={artifact} />
+              <span className="viewer-thread-artifact-name">
+                <span className="report-reader-badge" aria-hidden>
+                  {extensionBadge(artifact.name)}
+                </span>
+                <span className="truncate">{artifact.name}</span>
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

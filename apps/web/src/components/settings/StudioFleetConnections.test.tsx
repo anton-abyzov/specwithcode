@@ -11,6 +11,8 @@ const runtime = vi.hoisted(() => ({
   updateSettings: vi.fn(),
   allowWorkers: vi.fn(),
   stopWorkers: vi.fn(),
+  addMachine: vi.fn(),
+  environments: [] as Array<{ readonly entry: unknown }>,
   defaultRuntimeMode: "approval-required",
 }));
 vi.mock("react", async (importOriginal) => {
@@ -22,6 +24,7 @@ vi.mock("react/compiler-runtime", async () => ({
   c: (await import("../../test/reactHookHarness")).reactHookHarness.useMemoCache,
 }));
 vi.mock("../../studio/fleet", () => ({
+  addStudioFleetMachine: runtime.addMachine,
   pairStudioFleet: runtime.pair,
   allowStudioFleetWorkers: runtime.allowWorkers,
   stopStudioFleetWorkers: runtime.stopWorkers,
@@ -33,6 +36,9 @@ vi.mock("../../studio/fleet", () => ({
   }),
 }));
 vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
+vi.mock("../../state/environments", () => ({
+  useEnvironments: () => ({ environments: runtime.environments }),
+}));
 vi.mock("../../hooks/useSettings", () => ({
   useClientSettings: (select: (settings: { autoConnectPrivateMachines: boolean }) => unknown) =>
     select({ autoConnectPrivateMachines: runtime.autoConnect }),
@@ -41,6 +47,10 @@ vi.mock("../../hooks/useSettings", () => ({
     _environmentId: string,
     select: (settings: { defaultRuntimeMode: string }) => unknown,
   ) => select({ defaultRuntimeMode: runtime.defaultRuntimeMode }),
+}));
+vi.mock("../../lib/machineLastSeen", () => ({
+  machineLastSeenAt: () => null,
+  useMachineLastSeenVersion: () => 0,
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => runtime.connect }));
 vi.mock("../../connection/onboarding", () => ({ connectPairing: {} }));
@@ -121,6 +131,8 @@ describe("private machine roster", () => {
     runtime.pair.mockReset();
     runtime.connect.mockReset();
     runtime.updateSettings.mockReset();
+    runtime.addMachine.mockReset();
+    runtime.environments = [];
     runtime.autoConnect = true;
   });
   it("shows Connect again after pairing and removal from the authoritative browser catalog without remounting", async () => {
@@ -166,6 +178,36 @@ describe("private machine roster", () => {
     }
     expect(connectButton(render({ pending: "m1" }))).toBeNull();
   });
+  it("shows a saved machine's status as this browser sees it, like the picker and sidebar", () => {
+    const tree = render({
+      savedEnvironmentIds: [m1],
+      machineStatuses: {
+        [m1]: {
+          text: "Can't reach. Retrying automatically",
+          connected: false,
+          detail: "last seen 2h ago",
+        },
+      },
+    });
+    expect(
+      visitElements(
+        tree,
+        (element) => element.props.children === "Can't reach. Retrying automatically",
+      ),
+    ).not.toBeNull();
+    expect(
+      visitElements(
+        tree,
+        (element) =>
+          typeof element.props.children === "string" &&
+          element.props.children.includes("last seen 2h ago"),
+      ),
+    ).not.toBeNull();
+    // A machine this browser has not saved still says whether its route answers.
+    expect(
+      visitElements(render(), (element) => element.props.children === "Reachable"),
+    ).not.toBeNull();
+  });
   it("offers automatic connection on by default and saves the switch as a device setting", () => {
     hooks.beginRender();
     const wrapper = StudioFleetConnections({ environmentId: m4, savedEnvironmentIds: [] });
@@ -195,6 +237,77 @@ describe("private machine roster", () => {
       "Private HTTPS and SSH tunnels can still provide remote access",
     );
     expect(row.props.control).toBeUndefined();
+  });
+});
+
+describe("adding a machine", () => {
+  beforeEach(() => {
+    hooks.reset();
+    runtime.snapshot = snapshot;
+    runtime.addMachine.mockReset();
+    runtime.environments = [];
+  });
+  const addForm = (tree: unknown) =>
+    visitElements(tree, (element) => element.type === "form") as {
+      props: { onSubmit: (event: { preventDefault: () => void }) => void };
+    } | null;
+  it("sends the pasted line, then forgets it and says what happens next", async () => {
+    runtime.addMachine.mockResolvedValue({
+      id: "m1",
+      label: "Mac M1",
+      url: "https://m1.tailnet.ts.net",
+      environmentId: m1,
+      change: "updated",
+      previousUrl: "https://fixture.tailnet.ts.net:8443",
+    });
+    hooks.beginRender();
+    const first = StudioFleetConnections({ environmentId: m4, savedEnvironmentIds: [] });
+    first.props.onInvitationChange("  swc-machine-synthetic  ");
+    hooks.beginRender();
+    const typed = StudioFleetConnections({ environmentId: m4, savedEnvironmentIds: [] });
+    expect(typed.props.invitation).toBe("  swc-machine-synthetic  ");
+    addForm(StudioFleetRoster(typed.props))!.props.onSubmit({ preventDefault: vi.fn() });
+    await vi.waitFor(() =>
+      expect(runtime.addMachine).toHaveBeenCalledExactlyOnceWith(m4, "swc-machine-synthetic"),
+    );
+    await vi.waitFor(() => {
+      hooks.beginRender();
+      const after = StudioFleetConnections({ environmentId: m4, savedEnvironmentIds: [] });
+      expect(after.props.invitation).toBe("");
+      expect(after.props.added).toContain("new address");
+    });
+  });
+  it("offers Connect machine again for a machine saved here only at an address it left", () => {
+    runtime.snapshot = {
+      ...snapshot,
+      machines: [
+        snapshot.machines[0]!,
+        { ...snapshot.machines[1]!, url: "https://m1.tailnet.ts.net" },
+      ],
+    };
+    runtime.environments = [
+      {
+        entry: {
+          target: {
+            _tag: "BearerConnectionTarget",
+            environmentId: m1,
+            connectionId: "c1",
+            label: "M1",
+          },
+          profile: {
+            _tag: "Some",
+            value: {
+              _tag: "BearerConnectionProfile",
+              httpBaseUrl: "https://fixture.tailnet.ts.net:8443/",
+            },
+          },
+        },
+      },
+    ];
+    hooks.beginRender();
+    const wrapper = StudioFleetConnections({ environmentId: m4, savedEnvironmentIds: [m1] });
+    expect(wrapper.props.savedEnvironmentIds).toEqual([]);
+    expect(connectButton(StudioFleetRoster(wrapper.props))?.props.disabled).toBe(false);
   });
 });
 
