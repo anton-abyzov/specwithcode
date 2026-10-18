@@ -8,6 +8,7 @@ import {
   type DesktopUpdateCheckResult,
   type DesktopUpdateState,
 } from "@specweave-studio/contracts";
+import * as Electron from "electron";
 // @effect-diagnostics nodeBuiltinImport:off -- Update feed names are compared by SHA-256 digest.
 import * as NodeCrypto from "node:crypto";
 import * as Cause from "effect/Cause";
@@ -65,10 +66,78 @@ const DOWNLOAD_STALL_LIMIT = Duration.minutes(30);
 // A new release shows in the sidebar within this long. Ten minutes keeps a
 // machine at six feed requests an hour, far below GitHub's limits, and also
 // bounds re-checks on wake, unlock and window focus.
-const STALE_CHECK_MIN_AGE_MS = 10 * 60 * 1000;
+export const STALE_CHECK_MIN_AGE_MS = 10 * 60 * 1000;
 // While checks keep failing (offline, feed errors), those re-checks still wait
 // this long after the last attempt instead of firing on every focus.
 const STALE_RETRY_MIN_AGE_MS = 5 * 60 * 1000;
+// Opening Settings > General, where the version row is, checks when the last
+// check is older than this, so the row never shows an old "Up to date".
+export const SETTINGS_CHECK_MIN_AGE_MS = 60 * 1000;
+
+export interface DesktopUpdateStaleCheckOptions {
+  /** Check when the last successful check is older than this. */
+  readonly minAgeMs?: number;
+  /** After a failed check, wait this long after the attempt before trying again. */
+  readonly retryMinAgeMs?: number;
+}
+
+/** A system notification about a release of the app. */
+export interface DesktopUpdateNotice {
+  readonly kind: "available" | "downloaded";
+  readonly version: string;
+  readonly title: string;
+  readonly body: string;
+}
+
+/** Posts `notice`; `onClick` runs when the person clicks it. */
+export type DesktopUpdateNoticePoster = (notice: DesktopUpdateNotice, onClick: () => void) => void;
+
+// A notification Electron garbage-collects no longer reports its click, so
+// each one stays referenced until it is clicked or closed.
+const shownUpdateNotifications = new Set<Electron.Notification>();
+
+const postNativeUpdateNotice: DesktopUpdateNoticePoster = (notice, onClick) => {
+  if (typeof Electron.Notification?.isSupported !== "function") return;
+  if (!Electron.Notification.isSupported()) return;
+  const notification = new Electron.Notification({ title: notice.title, body: notice.body });
+  shownUpdateNotifications.add(notification);
+  notification.on("click", () => {
+    shownUpdateNotifications.delete(notification);
+    onClick();
+  });
+  notification.on("close", () => shownUpdateNotifications.delete(notification));
+  notification.on("failed", () => shownUpdateNotifications.delete(notification));
+  notification.show();
+};
+
+/** How update notices reach the system; tests replace it. */
+export const DesktopUpdateNotifier = Context.Reference<DesktopUpdateNoticePoster>(
+  "@specweave-studio/desktop/updates/DesktopUpdateNotifier",
+  { defaultValue: () => postNativeUpdateNotice },
+);
+
+export function describeUpdateNotice(
+  kind: DesktopUpdateNotice["kind"],
+  version: string,
+  downloadsAutomatically: boolean,
+): DesktopUpdateNotice {
+  if (kind === "downloaded") {
+    return {
+      kind,
+      version,
+      title: `SpecWithCode ${version} is ready to install`,
+      body: "Restart the app to update. Click to open Settings.",
+    };
+  }
+  return {
+    kind,
+    version,
+    title: `SpecWithCode ${version} is available`,
+    body: downloadsAutomatically
+      ? "It is downloading in the background. Click to open Settings."
+      : "Click to open Settings and download it.",
+  };
+}
 
 type UpdateAction = "check" | "download" | "install" | "install-recovery" | "channel";
 
@@ -93,6 +162,9 @@ const DownloadProgressInfo = Schema.Struct({
 const decodeAppUpdateYmlConfig = Schema.decodeUnknownEffect(AppUpdateYmlConfig);
 const decodeUpdateInfo = Schema.decodeUnknownEffect(UpdateInfo);
 const decodeDownloadProgressInfo = Schema.decodeUnknownEffect(DownloadProgressInfo);
+const AnnouncedNotices = Schema.fromJsonString(Schema.Array(Schema.String));
+const decodeAnnouncedNotices = Schema.decodeEffect(AnnouncedNotices);
+const encodeAnnouncedNotices = Schema.encodeEffect(AnnouncedNotices);
 
 const currentIsoTimestamp = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
@@ -203,10 +275,13 @@ export class DesktopUpdates extends Context.Service<
     readonly check: (reason: string) => Effect.Effect<DesktopUpdateCheckResult>;
     /**
      * Checks (and downloads in the background) when automatic checks are on
-     * and the last successful check is older than 30 minutes. For wake,
-     * unlock and window-focus triggers.
+     * and the last successful check is older than 2 minutes (or
+     * `options.minAgeMs`). For wake, unlock, window-focus and Settings triggers.
      */
-    readonly checkIfStale: (reason: string) => Effect.Effect<void>;
+    readonly checkIfStale: (
+      reason: string,
+      options?: DesktopUpdateStaleCheckOptions,
+    ) => Effect.Effect<void>;
     readonly download: Effect.Effect<DesktopUpdateActionResult>;
     readonly install: Effect.Effect<DesktopUpdateActionResult>;
     readonly installPrepared: (
@@ -365,6 +440,30 @@ export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
+  const postUpdateNotice = yield* DesktopUpdateNotifier;
+  // One notification per version and kind, kept across launches so a restart
+  // does not announce the same version again.
+  const announcedNoticesPath = environment.path.join(environment.stateDir, "update-notices.json");
+  let announcedNotices: Set<string> | null = null;
+  const loadAnnouncedNotices = Effect.gen(function* () {
+    if (announcedNotices !== null) return announcedNotices;
+    const keys = yield* fileSystem.readFileString(announcedNoticesPath, "utf-8").pipe(
+      Effect.flatMap(decodeAnnouncedNotices),
+      Effect.orElseSucceed((): ReadonlyArray<string> => []),
+    );
+    announcedNotices = new Set(keys);
+    return announcedNotices;
+  });
+  const rememberAnnouncedNotice = (notices: Set<string>, key: string) =>
+    Effect.gen(function* () {
+      notices.add(key);
+      const recent = [...notices].slice(-20);
+      yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+      yield* fileSystem.writeFileString(
+        announcedNoticesPath,
+        yield* encodeAnnouncedNotices(recent),
+      );
+    }).pipe(Effect.catch(() => logUpdaterWarning("Could not record a shown update notification.")));
 
   const appUpdateYmlConfigRef = yield* Ref.make<Option.Option<AppUpdateYmlConfig>>(Option.none());
   const activeUpdateActionRef = yield* Ref.make<Option.Option<UpdateAction>>(Option.none());
@@ -689,14 +788,24 @@ export const make = Effect.gen(function* () {
   );
 
   const checkIfStale = Effect.fn("desktop.updates.checkIfStale")(
-    function* (reason: string) {
+    function* (reason: string, options?: DesktopUpdateStaleCheckOptions) {
       if (!(yield* Ref.get(updaterConfiguredRef))) return;
       if (!(yield* automaticChecksEnabled)) return;
+      // An update being fetched needs no new check; a downloaded one still
+      // does, so a newer release replaces it.
+      if ((yield* Ref.get(updateStateRef)).status === "downloading") return;
       const last = yield* Ref.get(lastSuccessfulCheckAtRef);
       const now = DateTime.toEpochMillis(yield* DateTime.now);
-      if (last !== null && now - last < STALE_CHECK_MIN_AGE_MS) return;
+      if (last !== null && now - last < (options?.minAgeMs ?? STALE_CHECK_MIN_AGE_MS)) return;
       const lastAttempt = yield* Ref.get(lastCheckAttemptAtRef);
-      if (lastAttempt !== null && now - lastAttempt < STALE_RETRY_MIN_AGE_MS) return;
+      // Only an attempt newer than the last success failed (or is running).
+      if (
+        lastAttempt !== null &&
+        (last === null || lastAttempt > last) &&
+        now - lastAttempt < (options?.retryMinAgeMs ?? STALE_RETRY_MIN_AGE_MS)
+      ) {
+        return;
+      }
       yield* checkThenDownload(reason);
     },
     Effect.catchCause((cause) => {
@@ -937,6 +1046,49 @@ export const make = Effect.gen(function* () {
     );
   }).pipe(Effect.withSpan("desktop.updates.startPollers"));
 
+  // Brings an app window forward on Settings > General, where the version
+  // row shows the update.
+  const openUpdateSettings = Effect.gen(function* () {
+    const window = yield* electronWindow.focusedMainOrFirst;
+    if (Option.isNone(window) || window.value.isDestroyed()) return;
+    yield* electronWindow.reveal(window.value);
+    window.value.webContents.send(IpcChannels.MENU_ACTION_CHANNEL, "open-settings");
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Cause.hasInterruptsOnly(cause)
+        ? Effect.void
+        : logUpdaterWarning("Could not open Settings from an update notification."),
+    ),
+  );
+
+  const announceUpdate = Effect.fn("desktop.updates.announceUpdate")(function* (
+    kind: DesktopUpdateNotice["kind"],
+    version: string,
+  ) {
+    const key = `${kind}:${version}`;
+    const notices = yield* loadAnnouncedNotices;
+    if (notices.has(key)) return;
+    const settings = yield* desktopSettings.get;
+    // Notices follow "Check for updates automatically": with it off the
+    // person looks for releases from Settings.
+    if (!settings.updatePreferences.checkAutomatically) return;
+    yield* rememberAnnouncedNotice(notices, key);
+    const notice = describeUpdateNotice(
+      kind,
+      version,
+      settings.updatePreferences.downloadAutomatically,
+    );
+    const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
+    yield* Effect.try(() =>
+      postUpdateNotice(notice, () => {
+        void runPromise(openUpdateSettings);
+      }),
+    ).pipe(
+      Effect.catch(() => logUpdaterWarning("Could not show an update notification.", { kind })),
+    );
+    yield* logUpdaterInfo("update notice posted", { kind, version });
+  });
+
   const handleUpdateAvailable = Effect.fn("desktop.updates.handleUpdateAvailable")(function* (
     raw: unknown,
   ) {
@@ -977,6 +1129,7 @@ export const make = Effect.gen(function* () {
             releaseNoteGroups: releaseNotes.length,
             omittedReleaseCount,
           });
+          yield* announceUpdate("available", info.version);
         }),
       ),
       Effect.catchCause((cause) => {
@@ -1081,6 +1234,7 @@ export const make = Effect.gen(function* () {
           const state = yield* Ref.get(updateStateRef);
           yield* setState(reduceDesktopUpdateStateOnDownloadComplete(state, info.version));
           yield* logUpdaterInfo("update downloaded", { version: info.version });
+          yield* announceUpdate("downloaded", info.version);
           // Downloaded is done, even when the updater's download promise never
           // settles: release the updater so a restart can install it.
           yield* finishUpdateAction("download");

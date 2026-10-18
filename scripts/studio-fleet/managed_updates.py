@@ -234,7 +234,8 @@ def status(destination, controller):
               'installationId': destination.descriptor.identity if destination.descriptor else None,
               'support': destination.support, 'localAutomation': 'unavailable',
               'remoteConsent': 'not-enrolled', 'revision': 0, 'operation': 'idle',
-              'currentVersion': None, 'availableVersion': None, 'checkedAt': None}
+              'currentVersion': None, 'availableVersion': None, 'checkedAt': None,
+              'agentLoaded': None, 'agentDisabled': None, 'stale': False}
     if destination.support != 'supported':
         return result
     saved = destination.consent()
@@ -242,7 +243,10 @@ def status(destination, controller):
         result.update(revision=saved['revision'], remoteConsent=('revoked' if saved['state'] == 'revoked'
                       else 'enrolled' if saved['controller'] == controller else 'other-controller'))
     config = agent.load_config(destination.updates, destination.home)
-    _, _, plist = installation.updater_removal(destination.home, destination.descriptor.identity)
+    domain, label, plist = installation.updater_removal(destination.home, destination.descriptor.identity)
+    # What launchd runs now, not only what state.json last said: a disabled or unloaded job
+    # leaves that file frozen. Read-only launchctl print and print-disabled.
+    result.update(agent.update_request.agent_health(domain, label))
     script = installation.owned_path(studio_paths.updater_root(destination.home) / 'update_agent.py', destination.home)
     if plist.is_file() and script.is_file():
         result['localAutomation'] = 'enabled' if config['checkAutomatically'] else 'disabled'
@@ -254,6 +258,7 @@ def status(destination, controller):
                       checkedAt=saved_state['checkedAt'])
     elif not config['checkAutomatically']:
         result['operation'] = 'disabled'
+    result['stale'] = agent.update_request.stale(result['checkedAt'], config['checkAutomatically'])
     check_path = destination.updates / 'managed-check.json'
     if check_path.exists():
         checked = document(check_path, destination.home, private=True)

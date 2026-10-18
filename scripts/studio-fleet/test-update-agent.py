@@ -1283,7 +1283,7 @@ class LaunchAgent(AgentCase):
         calls = []
         loaded = {'value': False}
 
-        def fake_launchctl(args):
+        def fake_launchctl(args, output=None):
             calls.append(list(args))
             if args[0] == 'print':
                 return 0 if loaded['value'] else 113
@@ -1319,8 +1319,80 @@ class LaunchAgent(AgentCase):
             self.assertFalse(plist_path.exists())
             self.assertIn(['bootout', 'gui/501/' + label], calls)
 
+    def launchd(self, calls, disabled=False, loaded=False, fail=None):
+        """A launchd stub: `fail` maps a verb to (exit status, stderr)."""
+        job = {'loaded': loaded, 'disabled': disabled}
+        label = 'com.specweave.studio.m4.updater'
+
+        def launchctl(args, output=None):
+            calls.append(list(args))
+            stdout, stderr, code = '', '', 0
+            if args[0] in (fail or {}):
+                code, stderr = fail[args[0]]
+            elif args[0] == 'print':
+                code = 0 if job['loaded'] else 113
+            elif args[0] == 'print-disabled':
+                stdout = '{\n\t"%s" => %s\n}\n' % (label, 'disabled' if job['disabled'] else 'enabled')
+            elif args[0] == 'enable':
+                job['disabled'] = False
+            elif args[0] == 'bootstrap':
+                code, stderr = (5, 'Bootstrap failed: 5: Input/output error') if job['disabled'] else (0, '')
+                job['loaded'] = code == 0
+            elif args[0] == 'bootout':
+                job['loaded'] = False
+            if output is not None:
+                output.extend((stdout, stderr))
+            return code
+        return mock.patch.object(update_agent, 'launchctl', launchctl), job
+
+    def test_a_disabled_label_is_never_booted_out_and_reports_disabled(self):
+        # Another tool ran `launchctl disable`: booting the job out would lose it for good.
+        calls = []
+        patch, job = self.launchd(calls, disabled=True, loaded=False)
+        plist = self.home / 'Library/LaunchAgents/com.specweave.studio.m4.updater.plist'
+        with patch, mock.patch.object(update_agent, 'current_uid', return_value=501):
+            self.assertEqual(self.run_agent('--install-launch-agent'), 3)
+        self.assertEqual(json.loads(self.log.strip().splitlines()[-1]),
+                         {'result': 'disabled', 'label': 'com.specweave.studio.m4.updater',
+                          'message': 'Update agent is turned off in launchd'})
+        self.assertEqual([call[0] for call in calls], ['print-disabled'])  # No bootout, no bootstrap.
+        self.assertTrue(job['disabled'])  # Never re-enabled on its own.
+        self.assertTrue(plist.is_file())  # Current, for a later Repair to load.
+
+    def test_a_failed_bootstrap_reports_launchctl_reason(self):
+        calls = []
+        patch, _ = self.launchd(calls, fail={'bootstrap': (5, 'Bootstrap failed: 5: Input/output error')})
+        with patch, mock.patch.object(update_agent, 'current_uid', return_value=501):
+            self.assertEqual(self.run_agent('--install-launch-agent'), 1)
+        self.assertIn('launchctl could not load the update agent: Bootstrap failed: 5: Input/output error (exit 5)',
+                      self.log)
+
+    def test_repair_turns_the_label_on_loads_the_job_and_starts_a_pass(self):
+        calls = []
+        patch, job = self.launchd(calls, disabled=True, loaded=False)
+        target = 'gui/501/com.specweave.studio.m4.updater'
+        with patch, mock.patch.object(update_agent, 'current_uid', return_value=501):
+            self.assertEqual(self.run_agent('--repair-launch-agent'), 0)
+        self.assertEqual([call[0] for call in calls],
+                         ['enable', 'print-disabled', 'bootout', 'bootstrap', 'kickstart'])
+        self.assertEqual((calls[0], calls[-1]), (['enable', target], ['kickstart', target]))
+        self.assertEqual(job, {'loaded': True, 'disabled': False})
+        self.assertEqual(json.loads(self.log.strip().splitlines()[-1]),
+                         {'result': 'repaired', 'label': 'com.specweave.studio.m4.updater'})
+
+    def test_repair_fails_with_launchctl_reason(self):
+        for verb, words in (('enable', 'could not turn the update agent back on'),
+                            ('kickstart', 'could not start the update agent')):
+            calls, self.log = [], ''
+            patch, _ = self.launchd(calls, fail={verb: (1, 'Operation not permitted')})
+            with patch, mock.patch.object(update_agent, 'current_uid', return_value=501):
+                self.assertEqual(self.run_agent('--repair-launch-agent'), 1)
+            self.assertIn('launchctl %s: Operation not permitted (exit 1)' % words, self.log)
+            if verb == 'enable':
+                self.assertEqual(calls, [['enable', 'gui/501/com.specweave.studio.m4.updater']])
+
     def fake_launchctl(self, calls):
-        def launchctl(args):
+        def launchctl(args, output=None):
             calls.append(list(args))
             return 0
         return mock.patch.object(update_agent, 'launchctl', launchctl)

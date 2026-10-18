@@ -153,15 +153,18 @@ with `brew install node@22`.
 
    It prints the same `swc-machine-…` line as above.
 
-`specwithcode service install`, which keeps an npm-installed server running
-after you close Terminal or restart, is coming in a later release. Until then,
-start `specwithcode serve` again after a restart.
+To keep it running after you close Terminal or restart, run
+`specwithcode service install` (1.0.45 and later). The service pins a copy of
+the installed package under `~/.specwithcode/runtime/versions/<version>` and runs
+it with the Node.js that ran the install. After `npm i -g specwithcode@<version>`,
+run `specwithcode service install` again to move the service to it. On 1.0.44 and
+earlier, start `specwithcode serve` again after a restart.
 
 **If the desktop app is already on this Mac**, you do not need a second server.
 Run only `specwithcode fleet invite --label "…"`, which talks to the server the
-app is running. (From the release after 1.0.43, a bare `specwithcode` opens the
-running server in your browser instead of stopping with "A SpecWithCode server
-is already running for …".) Install the npm package at the same
+app is running. (From 1.0.45, a bare `specwithcode` opens the running server in
+your browser instead of stopping with "A SpecWithCode server is already running
+for …".) Install the npm package at the same
 version as the app (`npm i -g specwithcode@1.0.43` for app 1.0.43), or use the
 app's [built-in command](#desktop-app-1043) instead.
 
@@ -174,8 +177,7 @@ one go:
 curl -fsSL https://github.com/anton-abyzov/specwithcode/releases/latest/download/install.sh | bash -s -- --join
 ```
 
-This address works once the latest release carries `install.sh`. Releases up to
-1.0.43 do not, so until the next release is out, use the
+Releases from 1.0.44 carry `install.sh`. On 1.0.43, use the
 [app's built-in command](#desktop-app-1043) or [npm](#with-npm) instead.
 
 What it does:
@@ -252,22 +254,22 @@ again, make a new line on the worker and add it on the main machine.
 
 Messages may be worded slightly differently in older releases.
 
-| You see                                                                                         | What to do                                                                                                                                                                                                                                            |
-| ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| "Tailscale is not installed on this machine."                                                   | Install Tailscale, open it and sign in ([above](#before-you-start-tailscale-on-both-machines)), then try again.                                                                                                                                       |
-| "Tailscale is not signed in on this machine."                                                   | Open Tailscale and sign in with the account your main machine uses.                                                                                                                                                                                   |
-| "Could not reach Tailscale on this machine."                                                    | Open the Tailscale app and check that it is connected.                                                                                                                                                                                                |
-| "This machine has no Tailscale name yet."                                                       | Sign in to Tailscale and turn on MagicDNS in the admin console under **DNS**.                                                                                                                                                                         |
-| "Tailscale could not publish this machine on HTTPS port 443."                                   | Enable **DNS → HTTPS Certificates** in the Tailscale admin console, then try again.                                                                                                                                                                   |
-| "HTTPS port 443 on this machine's Tailscale name is already used by another app"                | Something else already uses that port, and the app will not replace it. Choose another port under **Tailscale HTTPS** in **Settings → Connections**, or run `fleet invite --tailscale-serve-port 8443`.                                               |
-| "HTTPS port 443 on this machine's Tailscale name already shows a different SpecWithCode server" | Another SpecWithCode server on this machine already uses that port. Turn off Tailscale HTTPS for it, or pick another port as above.                                                                                                                   |
-| "Tailscale needs an administrator to sign in on this machine."                                  | Sign in from the Tailscale app, or run `sudo tailscale up` in a terminal yourself.                                                                                                                                                                    |
-| "A SpecWithCode server is already running for …"                                                | SpecWithCode is already running on this machine (often the desktop app); 1.0.43 prints this for a bare `specwithcode`. Use the running one: run `specwithcode fleet invite` to join, or open the app. Later releases open it in your browser instead. |
-| "No running SpecWithCode server found."                                                         | `fleet invite` needs a running server. Open the desktop app, or start `specwithcode serve` in another Terminal window, then run it again.                                                                                                             |
-| "This is not a machine invitation."                                                             | Part of the line is missing. Make a new line on the worker and copy the whole thing, from `swc-machine-` to the end.                                                                                                                                  |
-| "Pairing is unavailable. Ask the server owner to renew this machine's connection permission."   | The line was revoked or has expired. Make a new line on the worker and add it on the main machine again; that updates the same machine.                                                                                                               |
-| "This machine is unavailable. Check its private connection and retry."                          | The worker is off, asleep, signed out of Tailscale or not running SpecWithCode. Check each, and that its key has not expired in the Tailscale admin console.                                                                                          |
-| "Manage access required"                                                                        | This session cannot manage the machine. Use the app on that machine itself.                                                                                                                                                                           |
+| You see                                                                                         | What to do                                                                                                                                                                                                                                                    |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| "Tailscale is not installed on this machine."                                                   | Install Tailscale, open it and sign in ([above](#before-you-start-tailscale-on-both-machines)), then try again.                                                                                                                                               |
+| "Tailscale is not signed in on this machine."                                                   | Open Tailscale and sign in with the account your main machine uses.                                                                                                                                                                                           |
+| "Could not reach Tailscale on this machine."                                                    | Open the Tailscale app and check that it is connected.                                                                                                                                                                                                        |
+| "This machine has no Tailscale name yet."                                                       | Sign in to Tailscale and turn on MagicDNS in the admin console under **DNS**.                                                                                                                                                                                 |
+| "Tailscale could not publish this machine on HTTPS port 443."                                   | Enable **DNS → HTTPS Certificates** in the Tailscale admin console, then try again.                                                                                                                                                                           |
+| "HTTPS port 443 on this machine's Tailscale name is already used by another app"                | Something else already uses that port, and the app will not replace it. Choose another port under **Tailscale HTTPS** in **Settings → Connections**, or run `fleet invite --tailscale-serve-port 8443`.                                                       |
+| "HTTPS port 443 on this machine's Tailscale name already shows a different SpecWithCode server" | Another SpecWithCode server on this machine already uses that port. Turn off Tailscale HTTPS for it, or pick another port as above.                                                                                                                           |
+| "Tailscale needs an administrator to sign in on this machine."                                  | Sign in from the Tailscale app, or run `sudo tailscale up` in a terminal yourself.                                                                                                                                                                            |
+| "A SpecWithCode server is already running for …"                                                | SpecWithCode is already running on this machine (often the desktop app); 1.0.43 and 1.0.44 print this for a bare `specwithcode`. Use the running one: run `specwithcode fleet invite` to join, or open the app. From 1.0.45 it opens in your browser instead. |
+| "No running SpecWithCode server found."                                                         | `fleet invite` needs a running server. Open the desktop app, or start `specwithcode serve` in another Terminal window, then run it again.                                                                                                                     |
+| "This is not a machine invitation."                                                             | Part of the line is missing. Make a new line on the worker and copy the whole thing, from `swc-machine-` to the end.                                                                                                                                          |
+| "Pairing is unavailable. Ask the server owner to renew this machine's connection permission."   | The line was revoked or has expired. Make a new line on the worker and add it on the main machine again; that updates the same machine.                                                                                                                       |
+| "This machine is unavailable. Check its private connection and retry."                          | The worker is off, asleep, signed out of Tailscale or not running SpecWithCode. Check each, and that its key has not expired in the Tailscale admin console.                                                                                                  |
+| "Manage access required"                                                                        | This session cannot manage the machine. Use the app on that machine itself.                                                                                                                                                                                   |
 
 ## Keep your provider accounts safe
 

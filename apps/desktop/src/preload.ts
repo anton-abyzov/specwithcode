@@ -398,6 +398,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   setUpdateChannel: (channel) =>
     ipcRenderer.invoke(IpcChannels.UPDATE_SET_CHANNEL_CHANNEL, channel),
   checkForUpdate: () => ipcRenderer.invoke(IpcChannels.UPDATE_CHECK_CHANNEL),
+  checkForUpdateIfStale: () => ipcRenderer.invoke(IpcChannels.UPDATE_CHECK_IF_STALE_CHANNEL),
   downloadUpdate: () => ipcRenderer.invoke(IpcChannels.UPDATE_DOWNLOAD_CHANNEL),
   installUpdate: (options) => ipcRenderer.invoke(IpcChannels.UPDATE_INSTALL_CHANNEL, options),
   onUpdateState: (listener) => {
@@ -419,6 +420,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   installServiceUpdate: (options) =>
     ipcRenderer.invoke(IpcChannels.SERVICE_UPDATE_INSTALL_CHANNEL, options),
   cancelServiceUpdate: () => ipcRenderer.invoke(IpcChannels.SERVICE_UPDATE_CANCEL_CHANNEL),
+  repairServiceUpdateAgent: () => ipcRenderer.invoke(IpcChannels.SERVICE_UPDATE_REPAIR_CHANNEL),
   requestManagedUpdateConsent: (input) =>
     ipcRenderer.invoke(IpcChannels.MANAGED_UPDATE_CONSENT_CHANNEL, input),
   onServiceUpdateState: (listener) => {

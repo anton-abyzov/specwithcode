@@ -27,7 +27,10 @@ import {
   NO_AUTOMATIC_UPDATES,
   parseServiceInstallOptions,
   refreshThenRunAgent,
+  repairServiceAgent,
   selectAgentScriptPath,
+  ServiceAgentError,
+  serviceAgentFailureMessage,
   type ServiceAgentConfigChange,
   serviceInstallRequestRecord,
   type ServiceUpdateController,
@@ -52,9 +55,26 @@ export function isStaleService(serviceVersion: string | undefined, appVersion: s
 
 const { logInfo, logWarning } = DesktopObservability.makeComponentLogger("service-updates");
 
+/**
+ * The agent run the app starts once it has settled, if any. Every one reports
+ * a failure: a job launchd turned off, or one that cannot load, otherwise
+ * leaves Settings showing a frozen "up to date" for hours.
+ */
+export function appStartAgentRun(input: {
+  readonly checkAutomatically: boolean;
+  readonly automaticUpdatesAllowed: boolean;
+  readonly pendingForcedInstall: boolean;
+}): { readonly reason: string; readonly reportFailure: true } | null {
+  if (input.checkAutomatically && input.automaticUpdatesAllowed) {
+    return { reason: "app start", reportFailure: true };
+  }
+  // "Update now" was asked just before the app restarted; its agent run may have been cut short.
+  if (input.pendingForcedInstall) return { reason: "pending forced install", reportFailure: true };
+  return null;
+}
+
 const AGENT_START_DELAY = Duration.seconds(20);
 const STATE_POLL_INTERVAL = Duration.seconds(20);
-const AGENT_START_FAILED = "The update agent did not start. Try again in a moment.";
 const REQUEST_NOT_WRITTEN = "The update request could not be saved. Try again in a moment.";
 
 /** The cancel was not saved, so the agent still holds the install request. */
@@ -168,27 +188,43 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
     return state;
   });
 
+  // Records a failed agent step where the renderer reads it, with launchctl's
+  // or the helper's own reason.
+  const reportAgentFailure = (reason: string, error: unknown) =>
+    Effect.gen(function* () {
+      agentFailure = {
+        at: DateTime.formatIso(yield* DateTime.now),
+        message: serviceAgentFailureMessage(error),
+      };
+      yield* logWarning("service update agent failure shown", {
+        reason,
+        error: agentFailure.message,
+      });
+      yield* publish;
+    });
+
   const runAgent = (reason: string, options: { readonly reportFailure?: boolean } = {}) =>
     Effect.gen(function* () {
-      const controller = yield* controllerFor(environment);
-      // A failed refresh leaves the installed job in place, which can still run.
-      yield* Effect.tryPromise(() => controller.ensureAgent()).pipe(
-        Effect.catch((error) =>
-          logWarning("service update agent was not refreshed", { reason, error: String(error) }),
-        ),
+      // A failed refresh leaves the installed job in place, which can still run;
+      // a label launchd has turned off cannot, so that fails unkicked. The
+      // refresh is awaited in full here: nothing waits on this background run.
+      const outcome = yield* refreshThenRunAgent(
+        yield* controllerFor(environment),
+        Duration.infinity,
       );
-      yield* Effect.tryPromise(() => controller.runAgentNow());
+      if (outcome !== "refreshed") {
+        yield* logWarning("service update agent kicked without a refresh", { reason, outcome });
+      }
       yield* logInfo("service update agent asked to run", { reason });
     }).pipe(
       Effect.catch((error) =>
         Effect.gen(function* () {
-          yield* logWarning("service update agent did not run", { reason, error: String(error) });
+          yield* logWarning("service update agent did not run", {
+            reason,
+            error: serviceAgentFailureMessage(error),
+          });
           if (!options.reportFailure) return;
-          agentFailure = {
-            at: DateTime.formatIso(yield* DateTime.now),
-            message: AGENT_START_FAILED,
-          };
-          yield* publish;
+          yield* reportAgentFailure(reason, error);
         }),
       ),
       // A span puts the outcome, including a failed refresh, in desktop.trace.ndjson.
@@ -314,15 +350,18 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
         if (kind === "install") {
           // The bundled agent first: the kicked pass takes the agent lock, and a
           // refresh after it would leave the older agent to handle the request.
-          // A failed kick is reported by the background run below.
-          yield* refreshThenRunAgent(yield* controllerFor(environment)).pipe(
+          // A failure is shown at once, in the state this reply carries.
+          const kicked = yield* refreshThenRunAgent(yield* controllerFor(environment)).pipe(
             Effect.tap((outcome) =>
               outcome === "refreshed"
                 ? Effect.void
                 : logWarning("service update agent kicked without a refresh", { reason, outcome }),
             ),
-            Effect.ignore,
+            Effect.as(true),
+            Effect.catch((error) => reportAgentFailure(reason, error).pipe(Effect.as(false))),
           );
+          // Nothing would handle the request: running the agent again only repeats the failure.
+          if (!kicked) return yield* publish;
         }
         yield* startAgent(reason, kind === "install").pipe(Effect.forkDetach);
       }
@@ -338,6 +377,24 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
     }),
   );
 
+  // Settings' Repair, only on a person's click: launchctl enable, bootstrap and
+  // kickstart of the agent's job. Nothing else ever turns a disabled label back
+  // on: its owner may have turned it off on purpose.
+  const repair = Effect.gen(function* () {
+    const controller = yield* controllerFor(environment);
+    const failure = yield* repairServiceAgent(controller);
+    if (failure === null) {
+      agentFailure = null;
+      yield* logInfo("service update agent repaired", {});
+    } else {
+      yield* reportAgentFailure(
+        "repair requested",
+        new ServiceAgentError({ step: "repair", message: failure }),
+      );
+    }
+    return yield* publish;
+  });
+
   yield* ipc.handle(
     DesktopIpc.makeIpcMethod({
       channel: IpcChannels.SERVICE_UPDATE_INSTALL_CHANNEL,
@@ -345,6 +402,15 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
       payload: Schema.Unknown,
       result: StudioServiceUpdateStateSchema,
       handler: (options) => request("install", options),
+    }),
+  );
+
+  yield* ipc.handle(
+    DesktopIpc.makeIpcMethod({
+      channel: IpcChannels.SERVICE_UPDATE_REPAIR_CHANNEL,
+      payload: Schema.Void,
+      result: StudioServiceUpdateStateSchema,
+      handler: () => repair,
     }),
   );
 
@@ -399,12 +465,14 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
       return;
     }
     const settings = yield* desktopSettings.get;
-    if (settings.updatePreferences.checkAutomatically && (yield* automaticUpdatesAllowed)) {
-      yield* startAgent("app start", false);
-    } else if (controller.pendingForcedInstall(DateTime.toEpochMillis(yield* DateTime.now))) {
-      // "Update now" was asked just before the app restarted; its agent run may have been cut short.
-      yield* startAgent("pending forced install", true);
-    }
+    const start = appStartAgentRun({
+      checkAutomatically: settings.updatePreferences.checkAutomatically,
+      automaticUpdatesAllowed: yield* automaticUpdatesAllowed,
+      pendingForcedInstall: controller.pendingForcedInstall(
+        DateTime.toEpochMillis(yield* DateTime.now),
+      ),
+    });
+    if (start !== null) yield* startAgent(start.reason, start.reportFailure);
   }).pipe(Effect.forkScoped);
 
   yield* publish.pipe(

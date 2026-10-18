@@ -4,6 +4,7 @@ import {
   isProviderAvailable,
   type ManualCodexCreditIntent,
   MessageId,
+  projectExecutionIsFenced,
   type ModelSelection,
   type OrchestrationV2Run,
   type OrchestrationV2ServerCommand,
@@ -38,6 +39,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as ProviderInstances from "../provider/ProviderInstanceRegistry.ts";
@@ -46,6 +48,7 @@ import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { projectCompatibleProviders } from "../project/ProjectProviderCompatibility.ts";
 import * as Projects from "../project/ProjectService.ts";
+import * as ProjectAdmission from "../project/ProjectAdmission.ts";
 import { SIMULATED_USAGE_LIMIT_MESSAGE, simulatedUsageLimitInstances } from "./ProviderFailure.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
@@ -702,6 +705,7 @@ export const makeSweep = Effect.gen(function* () {
   const registry = yield* ProviderRegistry.ProviderRegistry;
   const instances = yield* ProviderInstances.ProviderInstanceRegistry;
   const projects = yield* Projects.ProjectService;
+  const admission = yield* ProjectAdmission.ProjectAdmission;
   const env = yield* ProviderFallbackEnv;
   const lastRunAt = yield* Ref.make(0);
   // A user who switches back keeps their choice: each command is sent once.
@@ -777,25 +781,26 @@ export const makeSweep = Effect.gen(function* () {
     const instance = yield* instances.getInstance(instanceId);
     if (instance?.consumeResetCredit === undefined || !instance.enabled)
       return yield* skipReset(thread, instanceId, "no-reset-support");
-    yield* markSent(windowKey);
-    // Whatever the claim does, this sweep's read no longer describes the account.
-    reads.delete(instanceId);
-    const outcome = yield* instance.consumeResetCredit().pipe(
-      Effect.catchCause((cause) =>
-        Effect.logWarning("orchestration-v2.provider-fallback.reset-failed", {
-          threadId: thread.id,
-          instanceId,
-          cause,
-        }).pipe(Effect.as("failed" as const)),
-      ),
-    );
-    yield* Effect.logInfo("orchestration-v2.provider-fallback.reset-redeemed", {
-      threadId: thread.id,
-      instanceId,
-      window,
-      outcome,
+    const consume = instance.consumeResetCredit;
+    const redeem = Effect.gen(function* () {
+      const outcome = yield* consume().pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("orchestration-v2.provider-fallback.reset-failed", {
+            threadId: thread.id,
+            instanceId,
+            cause,
+          }).pipe(Effect.as("failed" as const)),
+        ),
+      );
+      yield* Effect.logInfo("orchestration-v2.provider-fallback.reset-redeemed", {
+        threadId: thread.id,
+        instanceId,
+        window,
+        outcome,
+      });
+      return outcome === "reset" || outcome === "nothingToReset";
     });
-    return outcome === "reset" || outcome === "nothingToReset";
+    return { windowKey, redeem };
   });
   // API credits cost money per turn, so the move is made only against a fresh
   // usage read that shows the subscription at its limit, like a reset.
@@ -825,32 +830,49 @@ export const makeSweep = Effect.gen(function* () {
     Ref.updateAndGet(readAttempts, (current) =>
       new Map(current).set(key, (current.get(key) ?? 0) + 1),
     ).pipe(Effect.map((attempts) => attempts.get(key) ?? 0));
-  // The sweep works from one snapshot and a usage read takes seconds, so a
-  // step that costs something is checked against the thread as it is now:
-  // snoozed, settled, moved or resumed since, and it no longer applies.
-  const stillApplies = Effect.fn("ProviderFallbackWorker.stillApplies")(function* (
-    thread: FallbackThread,
-    step: NonNullable<ReturnType<typeof providerLimitStep>>,
-    again: (current: FallbackThread) => ReturnType<typeof providerLimitStep>,
-  ) {
-    const current = yield* projections
-      .getThreadShell(thread.id)
-      .pipe(Effect.orElseSucceed(() => null));
-    const next = current === null ? null : again(current);
-    const command = (of: NonNullable<typeof next>) =>
-      of.type === "redeem-reset" ? of.continuation : of.command;
-    if (
-      next !== null &&
-      next.type === step.type &&
-      stringifyJson(command(next)) === stringifyJson(command(step))
-    )
-      return true;
-    yield* Effect.logInfo("orchestration-v2.provider-fallback.step-outdated", {
-      threadId: thread.id,
-      step: step.type,
-    });
-    return false;
-  });
+  // Admission precedes the settings lock, matching project writes and message
+  // dispatch. Native probes happen before this bounded decision/commit section.
+  const withCurrentPolicy = <A, E, R>(
+    thread: OrchestrationV2ThreadShell,
+    use: (
+      current: OrchestrationV2ThreadShell,
+      rule: ServerSettingsValue,
+      project: Option.Option.Value<Effect.Success<ReturnType<typeof projects.getById>>>,
+    ) => Effect.Effect<A, E, R>,
+  ) =>
+    admission.withLock(
+      thread.projectId,
+      settings.withSettingsSnapshot((preferences) =>
+        Effect.gen(function* () {
+          const project = yield* projects
+            .getById(thread.projectId)
+            .pipe(Effect.catchCause(() => Effect.succeedNone));
+          if (
+            Option.isNone(project) ||
+            project.value.deletedAt != null ||
+            project.value.workspaceSettings?.paused ||
+            project.value.workspaceSettings?.archived ||
+            projectExecutionIsFenced(project.value.workspaceSettings, thread.projectId, thread.id)
+          )
+            return;
+          const current = yield* projections
+            .getThreadShell(thread.id)
+            .pipe(Effect.orElseSucceed(() => null));
+          if (
+            current === null ||
+            current.projectId !== thread.projectId ||
+            current.archivedAt != null ||
+            current.deletedAt != null
+          )
+            return;
+          return yield* use(
+            current,
+            resolveProjectSettings(preferences, current.projectId).settings,
+            project.value,
+          );
+        }),
+      ),
+    );
   // Runs are read once per thread, latest run and instance; the rest repeats each sweep.
   const origins = yield* Ref.make(new Map<string, ApiCreditOrigin | null>());
   const returnTries = yield* Ref.make(
@@ -1072,11 +1094,11 @@ export const makeSweep = Effect.gen(function* () {
       // Unknown project grants cannot authorize an automatic provider switch.
       if (Option.isNone(found)) continue;
       const project = found.value;
-      const providersFor = (current: FallbackThread) =>
+      const providersFor = (current: FallbackThread, currentProject = project) =>
         projectCompatibleProviders({
-          project,
+          project: currentProject,
           providers,
-          cwd: current.worktreePath ?? project?.workspaceRoot,
+          cwd: current.worktreePath ?? currentProject.workspaceRoot,
           ...(current.runtimeMode === undefined || current.interactionMode === undefined
             ? {}
             : {
@@ -1099,6 +1121,41 @@ export const makeSweep = Effect.gen(function* () {
       };
       const stepFor = (current: FallbackThread) =>
         providerLimitStep(current, providersFor(current), resolved, now, options);
+      const admitStep = <A, E, R>(
+        expected: NonNullable<ReturnType<typeof providerLimitStep>>,
+        commit: Effect.Effect<A, E, R>,
+      ) =>
+        withCurrentPolicy(thread, (current, rule, currentProject) =>
+          Effect.gen(function* () {
+            const next = providerLimitStep(
+              current,
+              providersFor(current, currentProject),
+              rule,
+              DateTime.toEpochMillis(yield* DateTime.now),
+              options,
+            );
+            const commandOf = (step: NonNullable<typeof next>) => {
+              const command = step.type === "redeem-reset" ? step.continuation : step.command;
+              // Wall-clock movement alone does not change a credit authorization.
+              return command.type === "message.dispatch" && command.manualCodexCreditIntent
+                ? {
+                    ...command,
+                    manualCodexCreditIntent: {
+                      ...command.manualCodexCreditIntent,
+                      observedAt: "current",
+                    },
+                  }
+                : command;
+            };
+            if (
+              next === null ||
+              next.type !== expected.type ||
+              stringifyJson(commandOf(next)) !== stringifyJson(commandOf(expected))
+            )
+              return;
+            return yield* commit;
+          }),
+        );
       let step = stepFor(thread);
       if (
         step === null &&
@@ -1111,45 +1168,61 @@ export const makeSweep = Effect.gen(function* () {
         // Nothing to continue: a thread the rule moved to API credits goes back
         // to its subscription. Sent once: after that, where the thread runs is
         // the person's choice again.
-        const back = yield* apiCreditReturn(
-          thread,
-          providersFor(thread),
-          now,
-          resolved.providerLimitUseApiCredits === true,
-        );
-        if (back === null) continue;
-        yield* threads.dispatch(back.command).pipe(
-          Effect.tap(() => markSent(`limit-api-returned:${back.attemptKey}`)),
-          Effect.tap(() =>
-            Effect.logInfo("orchestration-v2.provider-fallback.api-credits-returned", {
-              threadId: thread.id,
-              from: thread.providerInstanceId,
-              to: back.command.modelSelection.instanceId,
-            }),
-          ),
-          Effect.catchCause((cause) =>
-            returnFailed(back.attemptKey, back.tries, cause, now).pipe(
-              Effect.andThen(
-                Effect.logWarning("orchestration-v2.provider-fallback.dispatch-failed", {
+        yield* withCurrentPolicy(thread, (current, rule, currentProject) =>
+          Effect.gen(function* () {
+            const back = yield* apiCreditReturn(
+              current,
+              providersFor(current, currentProject),
+              now,
+              rule.providerLimitUseApiCredits === true,
+            );
+            if (back === null) return;
+            yield* threads.dispatch(back.command).pipe(
+              Effect.tap(() => markSent(`limit-api-returned:${back.attemptKey}`)),
+              Effect.tap(() =>
+                Effect.logInfo("orchestration-v2.provider-fallback.api-credits-returned", {
                   threadId: thread.id,
-                  cause,
+                  from: thread.providerInstanceId,
+                  to: back.command.modelSelection.instanceId,
                 }),
               ),
-            ),
-          ),
+              Effect.catchCause((cause) =>
+                returnFailed(back.attemptKey, back.tries, cause, now).pipe(
+                  Effect.andThen(
+                    Effect.logWarning("orchestration-v2.provider-fallback.dispatch-failed", {
+                      threadId: thread.id,
+                      cause,
+                    }),
+                  ),
+                ),
+              ),
+            );
+          }),
         );
         continue;
       }
       if (step.type === "redeem-reset") {
-        if (!(yield* stillApplies(thread, step, stepFor))) continue;
-        const redeemed = yield* redeemReset(thread, step.instanceId, now, reads);
-        // A usage read that failed is tried again next sweep, a few times,
-        // before the stop moves on to a step that costs more.
+        const prepared = yield* redeemReset(thread, step.instanceId, now, reads);
+        let redeemed: boolean | "unread" = false;
+        if (typeof prepared === "object") {
+          const redemption = yield* admitStep(
+            step,
+            Effect.gen(function* () {
+              if ((yield* Ref.get(sent)).has(prepared.windowKey)) return;
+              yield* markSent(prepared.windowKey);
+              reads.delete(step.instanceId);
+              // The current-policy claim is the authorization boundary. Start the
+              // structured child now, release the locks, then await network work.
+              return yield* Effect.forkChild(prepared.redeem, { startImmediately: true });
+            }),
+          );
+          if (redemption === undefined) continue;
+          redeemed = yield* Fiber.join(redemption);
+        } else redeemed = prepared;
         if (redeemed !== "unread" || (yield* unreadAgain(resetKey)) >= LIMIT_READ_ATTEMPTS)
           yield* markSent(resetKey);
         if (redeemed !== true) continue;
       }
-      if (step.type === "spend-credits" && !(yield* stillApplies(thread, step, stepFor))) continue;
       if (step.type === "api-credits") {
         // The stop must be the subscription's own: a thread moved here after
         // it stopped somewhere else proves nothing about this account.
@@ -1175,8 +1248,10 @@ export const makeSweep = Effect.gen(function* () {
             yield* markSent(apiAttemptKey);
           continue;
         }
-        yield* markSent(apiAttemptKey);
-        if (read !== "limited" || !(yield* stillApplies(thread, step, stepFor))) continue;
+        if (read !== "limited") {
+          yield* markSent(apiAttemptKey);
+          continue;
+        }
       }
       let command = step.type === "redeem-reset" ? step.continuation : step.command;
       if ((yield* Ref.get(sent)).has(command.commandId)) continue;
@@ -1201,23 +1276,30 @@ export const makeSweep = Effect.gen(function* () {
         if (restart !== null)
           command = { ...command, text: restart.text, attachments: restart.attachments };
       }
-      yield* markSent(command.commandId);
-      yield* threads.dispatch(command).pipe(
-        Effect.tap(() =>
-          Effect.logInfo("orchestration-v2.provider-fallback.dispatched", {
-            threadId: thread.id,
-            step: step.type,
-            command: command.type,
-            from: thread.providerInstanceId,
-            to: "modelSelection" in command ? command.modelSelection?.instanceId : undefined,
-          }),
-        ),
-        Effect.catchCause((cause) =>
-          Effect.logWarning("orchestration-v2.provider-fallback.dispatch-failed", {
-            threadId: thread.id,
-            cause,
-          }),
-        ),
+      yield* admitStep(
+        step,
+        Effect.gen(function* () {
+          if ((yield* Ref.get(sent)).has(command.commandId)) return;
+          if (step.type === "api-credits") yield* markSent(apiAttemptKey);
+          yield* markSent(command.commandId);
+          yield* threads.dispatch(command).pipe(
+            Effect.tap(() =>
+              Effect.logInfo("orchestration-v2.provider-fallback.dispatched", {
+                threadId: thread.id,
+                step: step.type,
+                command: command.type,
+                from: thread.providerInstanceId,
+                to: "modelSelection" in command ? command.modelSelection?.instanceId : undefined,
+              }),
+            ),
+            Effect.catchCause((cause) =>
+              Effect.logWarning("orchestration-v2.provider-fallback.dispatch-failed", {
+                threadId: thread.id,
+                cause,
+              }),
+            ),
+          );
+        }),
       );
     }
   });
@@ -1229,4 +1311,4 @@ export const layer = Layer.effectDiscard(
     const scheduler = yield* Scheduler.Scheduler;
     yield* scheduler.register("provider-fallback", sweep());
   }),
-);
+).pipe(Layer.provide(ProjectAdmission.layer));

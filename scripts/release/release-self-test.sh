@@ -605,6 +605,26 @@ ci_stale_tagged() { run 1 1.6.0 --ci --stop-after bump && has 'v1.6.0 is already
 check 'a --ci rerun refuses a version that is already tagged' ci_stale_tagged
 stub_set RELEASE_STUB_OUTPUT=
 
+# The pull request that made main's head merged past a failed or unfinished required check.
+rm -rf "$STAGE"
+stub_set "RELEASE_STUB_OUTPUT=main-pr=348:fix/settings main-pr-buckets=fail"
+main_gate_failed() { run 1 1.6.0 --ci --stop-after bump && has 'main gate: #348 made main' && ! grep -q '	bump	' "$STUB_LOG"; }
+check 'a failed required check on the pull request that made main stops before the bump' main_gate_failed
+rm -rf "$STAGE"
+stub_set "RELEASE_STUB_OUTPUT=main-pr=348:fix/settings main-pr-buckets=pending"
+main_gate_pending() { run 1 1.6.0 --ci --stop-after bump && has 'merged before its required checks finished'; }
+check '... and so does one still running' main_gate_pending
+rm -rf "$STAGE"
+stub_set "RELEASE_STUB_OUTPUT=main-pr=336:release/1.0.43 main-pr-buckets=fail"
+main_gate_release_pr() { run 0 1.6.0 --ci --stop-after bump && grep -q '	bump	' "$STUB_LOG"; }
+check 'an earlier release pull request on main skips the gate check' main_gate_release_pr
+rm -rf "$STAGE"
+stub_set "RELEASE_STUB_OUTPUT=main-pr=352:fix/mock main-pr-buckets=pass"
+main_gate_green_ok() { run 0 1.6.0 --ci --stop-after bump && grep -q '	bump	' "$STUB_LOG"; }
+check 'a passed gate on the pull request that made main continues' main_gate_green_ok
+rm -rf "$STAGE"
+stub_set RELEASE_STUB_OUTPUT=
+
 # ---------------------------------------------------------------- malformed command calls, sign retry
 
 # `x sums --python3 ...` once ran "--python3" as the command and failed 1.0.44 after signing.

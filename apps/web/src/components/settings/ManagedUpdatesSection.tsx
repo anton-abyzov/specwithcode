@@ -9,6 +9,7 @@ import { requestConfirmDialog } from "../../confirmDialog";
 import { ServerUpdateProgress } from "../ServerUpdateAction";
 import { Button } from "../ui/button";
 import type { EnvironmentPresentation } from "../../state/environments";
+import { formatRelativeTimeLabel } from "../../timestampFormat";
 
 const consentLabels = {
   "not-enrolled": "This connection has no update permission.",
@@ -16,6 +17,19 @@ const consentLabels = {
   "other-controller": "Update permission belongs to another connection.",
   revoked: "Update permission was revoked.",
 };
+/**
+ * Why the update agent's saved state may be frozen, from what launchd reports
+ * now; null when it is running (or an older service did not say).
+ */
+export function updateAgentProblem(status: ManagedUpdateStatus): string | null {
+  if (status.agentDisabled === true) return "Update agent is turned off in launchd.";
+  if (status.agentLoaded === false || status.stale === true) {
+    const checked = status.checkedAt ? formatRelativeTimeLabel(status.checkedAt) : "";
+    return `Update agent not running · last check ${checked || "never"}.`;
+  }
+  return null;
+}
+
 export function ManagedUpdatesView(props: {
   label: string;
   reachable: boolean;
@@ -24,13 +38,21 @@ export function ManagedUpdatesView(props: {
   canManage: boolean;
   canCheck: boolean;
   pending: boolean;
+  /** This Mac's own service: its updater manages it, no connection permission needed. */
+  local?: boolean;
   onAllow: () => void;
   onRevoke: () => void;
   onCheck: () => void;
   onRefresh: () => void;
+  /** Present only where this Mac's desktop can repair its update agent. */
+  onRepair?: () => void;
 }) {
   const { status } = props;
   const valid = props.reachable && !props.error && status?.support === "supported";
+  // A local service is managed by this Mac's updater; asking this connection for
+  // permission over it is only noise. An existing enrollment can still be revoked.
+  const managedHere = valid && props.local === true && status.remoteConsent !== "enrolled";
+  const problem = valid ? updateAgentProblem(status) : null;
   return (
     <section
       aria-label={`Updates for ${props.label}`}
@@ -54,7 +76,9 @@ export function ManagedUpdatesView(props: {
         </p>
       ) : (
         <>
-          <p>{consentLabels[status.remoteConsent]}</p>
+          <p>
+            {managedHere ? "Managed by this Mac's updater." : consentLabels[status.remoteConsent]}
+          </p>
           <p>
             Automatic updates:{" "}
             {status.localAutomation === "unavailable"
@@ -69,6 +93,11 @@ export function ManagedUpdatesView(props: {
             {status.availableVersion ? ` · ${status.availableVersion} available` : ""}. Last check:{" "}
             {status.checkedAt ? new Date(status.checkedAt).toLocaleString() : "never"}.
           </p>
+          {problem && (
+            <p role="status" className="text-destructive-foreground">
+              {problem}
+            </p>
+          )}
         </>
       )}
       <div className="flex flex-wrap gap-2">
@@ -80,7 +109,12 @@ export function ManagedUpdatesView(props: {
         >
           Refresh status
         </Button>
-        {valid && (
+        {problem && props.onRepair && (
+          <Button size="sm" variant="outline" disabled={props.pending} onClick={props.onRepair}>
+            Repair
+          </Button>
+        )}
+        {valid && !managedHere && (
           <>
             <Button
               size="sm"
@@ -101,13 +135,15 @@ export function ManagedUpdatesView(props: {
           </>
         )}
       </div>
-      {valid && !props.canManage && (
+      {valid && !managedHere && !props.canManage && (
         <p>
           A machine administrator must approve update permission. On this Mac, use the installed app
           to approve it.
         </p>
       )}
-      {valid && <p>Check only finds releases; it does not download or install them.</p>}
+      {valid && !managedHere && (
+        <p>Check only finds releases; it does not download or install them.</p>
+      )}
     </section>
   );
 }
@@ -133,6 +169,7 @@ export function ManagedUpdatesSection({
   const check = useAtomCommand(managedUpdates.check, { reportFailure: false });
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [repairFailure, setRepairFailure] = useState<string | null>(null);
   const bridge = typeof window !== "undefined" ? window.desktopBridge : undefined;
   const unsupported =
     query.failure &&
@@ -154,6 +191,25 @@ export function ManagedUpdatesSection({
       } as const)
     : query.data;
   const native = local && typeof bridge?.requestManagedUpdateConsent === "function";
+  const repairServiceUpdateAgent = local ? bridge?.repairServiceUpdateAgent : undefined;
+  // Repair runs launchctl enable, bootstrap and kickstart on this Mac, and only
+  // on this click: whoever turned the agent off may have meant it.
+  const repair = async () => {
+    if (pending || typeof repairServiceUpdateAgent !== "function") return;
+    setPending(true);
+    setRepairFailure(null);
+    try {
+      const state = await repairServiceUpdateAgent();
+      if (state.status === "error") {
+        setRepairFailure(state.message ?? "The update agent could not be repaired.");
+      }
+    } catch {
+      setRepairFailure("The update agent could not be repaired.");
+    } finally {
+      setPending(false);
+      query.refresh();
+    }
+  };
   const run = async (action: "enroll" | "revoke" | "check") => {
     const status = query.data;
     if (
@@ -212,14 +268,24 @@ export function ManagedUpdatesSection({
         canManage={canMaintain && (canAdmin || native)}
         canCheck={canMaintain}
         pending={pending}
+        local={local}
         onAllow={() => void run("enroll")}
         onRevoke={() => void run("revoke")}
         onCheck={() => void run("check")}
         onRefresh={() => {
           setFailed(false);
+          setRepairFailure(null);
           query.refresh();
         }}
+        {...(typeof repairServiceUpdateAgent === "function"
+          ? { onRepair: () => void repair() }
+          : {})}
       />
+      {repairFailure && (
+        <p role="alert" className="mt-1 text-xs text-destructive-foreground">
+          {repairFailure}
+        </p>
+      )}
       {failed && (
         <p role="alert" className="mt-1 text-xs text-destructive-foreground">
           Update request was refused or failed. Refresh status and try again; changed permissions

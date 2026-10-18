@@ -55,6 +55,10 @@ export function createProjectWorkspaceAtoms<R, E>(
       label: "browser-extension:stop",
       tag: WS_METHODS.browserExtensionStop,
     }),
+    browserExtensionPeer: createEnvironmentRpcCommand(runtime, {
+      label: "browser-extension:peer",
+      tag: WS_METHODS.browserExtensionPeer,
+    }),
     browserExtensionInstallFolder: createEnvironmentRpcCommand(runtime, {
       label: "browser-extension:install-folder",
       tag: WS_METHODS.browserExtensionInstallFolder,

@@ -37,13 +37,12 @@ in `~/.local/bin` and tells you if that folder is not on your `PATH`. Your proje
 settings are not touched, and it leaves a Mac alone that already runs the desktop app or a managed
 service. Run the same line again to move to a newer release. Add `-s -- --dry-run` after `bash`
 to see what it would do, or `-s -- --no-service` to skip the service. Releases up to 1.0.43 do not
-carry `install.sh` yet, so this line works once the next release is out; until then use
-[npm](#npm) or the desktop app. There is no Windows or Intel Mac build.
+carry `install.sh`; for those use [npm](#npm) or the desktop app. There is no Windows or Intel Mac build.
 
 ### Join your existing machines from the terminal
 
-To add this machine to the ones you already use, run the installer with `--join` (like the line
-above, it works once a release carries `install.sh`):
+To add this machine to the ones you already use, run the installer with `--join` (1.0.44 and
+later):
 
 ```bash
 curl -fsSL https://github.com/anton-abyzov/specwithcode/releases/latest/download/install.sh | bash -s -- --join
@@ -75,8 +74,10 @@ npm i -g specwithcode
 Then start it with `specwithcode serve`, or make a line for your main machine with
 `specwithcode fleet invite` ([Add a machine](./add-a-machine.md#with-npm)). On a Mac that already
 runs the desktop app, do not start a second server: run only `specwithcode fleet invite`, which
-uses the server the app is running. Running an npm install as a background service
-(`specwithcode service install`) is coming in a later release.
+uses the server the app is running. To keep an npm install running after you close
+Terminal or restart, run `specwithcode service install` (1.0.45 and later): the service pins a
+copy of the installed package under `~/.specwithcode/runtime/versions/<version>` and runs it with
+the Node.js that ran the install.
 
 Once `specwithcode` is on your `PATH` (from the installer, npm, or built from source; the desktop
 app does not add it), these commands cover the basics.
@@ -96,8 +97,8 @@ is accepted only if it already exists.
 
 If SpecWithCode already runs on this machine (the desktop app, the service or another terminal),
 `specwithcode` and `specwithcode start` open that server in your browser rather than starting a
-second one; with `--no-browser` they print where it runs. Version 1.0.43 instead stops with "A
-SpecWithCode server is already running for …": open the app or run `specwithcode pair`. Use a
+second one; with `--no-browser` they print where it runs. Versions 1.0.43 and 1.0.44 instead stop
+with "A SpecWithCode server is already running for …": open the app or run `specwithcode pair`. Use a
 different `--base-dir` for an independent server.
 
 The npm package is `specwithcode`; there is no `specweave-studio` package on npm.

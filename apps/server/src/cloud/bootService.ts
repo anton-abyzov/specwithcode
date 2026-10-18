@@ -18,12 +18,18 @@ import * as Schema from "effect/Schema";
 
 import { CLI_RELEASE_BASE_URL_ENV } from "@specweave-studio/shared/cliRelease";
 
+import {
+  findNpmPackageRuntime,
+  type NpmPackageRuntime,
+} from "../environment/ServerReleaseManifest.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import {
   ensurePinnedRuntimeInstalled,
   pinnedRuntimeCommand,
   pinnedRuntimePaths,
+  pinnedRuntimeVersionsDir,
   PinnedRuntimeInstallError,
+  resolvesWithin,
 } from "./pinnedRuntime.ts";
 import {
   SERVICE_LAUNCHER_PROTOCOL,
@@ -557,6 +563,12 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   readonly logsDir: string;
   readonly cliVersion: string;
   readonly host?: BootServiceHost;
+  /**
+   * The installed npm package this CLI runs from; detected when omitted, null
+   * for none. A package of `cliVersion` is pinned by copying it rather than
+   * downloading a release archive.
+   */
+  readonly npmPackage?: NpmPackageRuntime | null;
 }) {
   const hostExecPath = yield* HostProcessExecutablePath;
   const platform = yield* HostProcessPlatform;
@@ -572,6 +584,22 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const path = yield* Path.Path;
   const runner = yield* ProcessRunner.ProcessRunner;
   const host = input.host ?? { execPath: hostExecPath };
+  const npmPackage =
+    input.npmPackage === undefined ? yield* findNpmPackageRuntime() : input.npmPackage;
+  // A CLI started from a pinned copy finds that copy as its npm package; it is
+  // the install target, not a source to pin from.
+  const npmPackageIsPinnedCopy =
+    npmPackage != null &&
+    (yield* resolvesWithin(
+      fs,
+      path,
+      npmPackage.dir,
+      pinnedRuntimeVersionsDir(path, input.baseDir),
+    ));
+  const localBundleDir =
+    npmPackage?.version === input.cliVersion && !npmPackageIsPinnedCopy
+      ? npmPackage.dir
+      : undefined;
   const xmlSafeInstallerDirectories = installerPath.split(":").filter(
     (directory) =>
       directory.length > 0 &&
@@ -771,6 +799,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       platform,
       arch,
       releaseBaseUrl,
+      localBundleDir,
       validate: (runtime) =>
         runner
           .run({

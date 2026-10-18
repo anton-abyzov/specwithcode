@@ -4,6 +4,7 @@ import type {
   StudioServiceUpdateState,
   StudioServiceUpdateStatus,
 } from "@specweave-studio/contracts";
+import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -490,6 +491,70 @@ export function serviceAgentLabel(identity: string): string {
   return `com.specweave.studio.${identity}.updater`;
 }
 
+/** `update_agent.py --install-launch-agent` exit status: launchd has the label turned off. */
+export const SERVICE_AGENT_DISABLED_EXIT = 3;
+export const SERVICE_AGENT_DISABLED_MESSAGE =
+  "Update agent is turned off in launchd. Choose Repair in Settings to turn it back on.";
+
+export type ServiceAgentStep = "disabled" | "refresh" | "kickstart" | "repair";
+
+/**
+ * Why the update agent could not be installed, started or repaired, in words
+ * Settings shows as they are. `disabled` means launchd has the agent's label
+ * turned off (`launchctl disable`): nothing is booted out or kicked then, and
+ * only Repair, on a click, turns it back on.
+ */
+export class ServiceAgentError extends Data.TaggedError("ServiceAgentError")<{
+  readonly step: ServiceAgentStep;
+  readonly message: string;
+}> {}
+
+const LAUNCHD_REASON_LIMIT = 400;
+
+/**
+ * One line of what a failed helper or launchctl said: the helper's JSON
+ * `message`, else stderr or stdout with the exit status, else the exit status.
+ */
+export function launchdFailureReason(failure: {
+  readonly code?: unknown;
+  readonly stdout?: unknown;
+  readonly stderr?: unknown;
+  readonly message?: unknown;
+}): string {
+  const stdout = typeof failure.stdout === "string" ? failure.stdout.trim() : "";
+  for (const line of stdout.split("\n").reverse()) {
+    try {
+      const reply = JSON.parse(line) as { message?: unknown } | null;
+      if (typeof reply?.message === "string" && reply.message.length > 0) return reply.message;
+    } catch {
+      // Not a JSON line: launchctl or python wrote plain text.
+    }
+  }
+  const stderr = typeof failure.stderr === "string" ? failure.stderr.trim() : "";
+  const text = (stderr || stdout).replace(/\s+/g, " ").slice(0, LAUNCHD_REASON_LIMIT);
+  const code =
+    typeof failure.code === "number" || typeof failure.code === "string"
+      ? `exit ${failure.code}`
+      : null;
+  if (text.length > 0) return code === null ? text : `${text} (${code})`;
+  return code ?? (typeof failure.message === "string" ? failure.message : "unknown failure");
+}
+
+/** What Settings shows for a failed agent step. */
+export function serviceAgentFailureMessage(error: unknown): string {
+  if (error instanceof ServiceAgentError) return error.message;
+  return `The update agent did not start: ${launchdFailureReason(
+    typeof error === "object" && error !== null ? error : { message: String(error) },
+  )}`;
+}
+
+interface RunFailure {
+  readonly code: number | string | null;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly message: string;
+}
+
 function run(command: string, args: ReadonlyArray<string>, timeout: number): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(
@@ -500,9 +565,20 @@ function run(command: string, args: ReadonlyArray<string>, timeout: number): Pro
         maxBuffer: 1024 * 1024,
         env: { HOME: process.env.HOME ?? "", PATH: "/usr/bin:/bin" },
       },
-      (error, stdout) => {
-        if (error) reject(error);
-        else resolve(String(stdout));
+      (error, stdout, stderr) => {
+        if (!error) {
+          resolve(String(stdout));
+          return;
+        }
+        // Keep what launchctl or the helper said: a bare "Command failed" hides why.
+        const failure: RunFailure = {
+          code:
+            typeof error.code === "number" || typeof error.code === "string" ? error.code : null,
+          stdout: String(stdout ?? ""),
+          stderr: String(stderr ?? ""),
+          message: error.message,
+        };
+        reject(failure);
       },
     );
   });
@@ -532,10 +608,20 @@ export interface ServiceUpdateController {
       readonly channel: DesktopUpdateChannel;
     } & ServiceAgentConfigChange,
   ) => void;
-  /** Installs or refreshes the agent's launchd job; a no-op when unchanged. */
+  /**
+   * Installs or refreshes the agent's launchd job; a no-op when unchanged.
+   * Rejects with a `ServiceAgentError`: `disabled` when launchd has the label
+   * turned off (nothing was booted out), `refresh` with the helper's reason.
+   */
   readonly ensureAgent: () => Promise<void>;
-  /** Asks launchd to run one agent pass now. */
+  /** Asks launchd to run one agent pass now; rejects with launchctl's reason. */
   readonly runAgentNow: () => Promise<void>;
+  /**
+   * Settings' Repair, only on a person's click: `launchctl enable` the label,
+   * load the job and start one pass. Never run on its own: the owner may have
+   * turned the agent off on purpose.
+   */
+  readonly repairAgent: () => Promise<void>;
   /** See `hasPendingForcedInstall`. */
   readonly pendingForcedInstall: (nowMs: number) => boolean;
 }
@@ -549,32 +635,70 @@ export const INSTALL_AGENT_REFRESH_WAIT = Duration.seconds(10);
 
 export type AgentRefreshOutcome = "refreshed" | "failed" | "timed out";
 
+const asAgentError =
+  (step: ServiceAgentStep) =>
+  (cause: unknown): ServiceAgentError =>
+    cause instanceof ServiceAgentError
+      ? cause
+      : new ServiceAgentError({ step, message: serviceAgentFailureMessage(cause) });
+
 /**
  * Installs the bundled agent, then asks launchd to run it. The kicked pass
  * takes the agent lock, so refreshing after the kick would find it busy and
  * leave the older agent to handle the request. A refresh that fails or outlives
  * `wait` still kicks (the refresh process keeps running, never cut off
- * mid-reload): the job already installed can still run. Fails only when the
- * kick does.
+ * mid-reload): the job already installed can still run. A label launchd has
+ * turned off fails at once, unkicked: no kick could start it. Otherwise fails
+ * when the kick does, with launchctl's reason and the refresh's, if it failed.
  */
 export const refreshThenRunAgent = (
   controller: Pick<ServiceUpdateController, "ensureAgent" | "runAgentNow">,
   wait: Duration.Input = INSTALL_AGENT_REFRESH_WAIT,
 ) =>
   Effect.gen(function* () {
-    const outcome = yield* Effect.tryPromise(() => controller.ensureAgent()).pipe(
+    const refresh = yield* Effect.tryPromise({
+      try: () => controller.ensureAgent(),
+      catch: asAgentError("refresh"),
+    }).pipe(
       Effect.timeoutOption(wait),
       Effect.map(
         Option.match({
-          onNone: (): AgentRefreshOutcome => "timed out",
-          onSome: (): AgentRefreshOutcome => "refreshed",
+          onNone: () => ({ outcome: "timed out" as AgentRefreshOutcome, error: null }),
+          onSome: () => ({ outcome: "refreshed" as AgentRefreshOutcome, error: null }),
         }),
       ),
-      Effect.orElseSucceed((): AgentRefreshOutcome => "failed"),
+      Effect.catchIf(
+        (error) => error.step !== "disabled",
+        (error) => Effect.succeed({ outcome: "failed" as AgentRefreshOutcome, error }),
+      ),
     );
-    yield* Effect.tryPromise(() => controller.runAgentNow());
-    return outcome;
+    yield* Effect.tryPromise({
+      try: () => controller.runAgentNow(),
+      catch: (cause) => {
+        const kick = asAgentError("kickstart")(cause);
+        return refresh.error === null
+          ? kick
+          : new ServiceAgentError({
+              step: "kickstart",
+              message: `${kick.message} (refreshing it failed too: ${refresh.error.message})`,
+            });
+      },
+    });
+    return refresh.outcome;
   });
+
+/**
+ * Runs Repair and says how it went: null on success, else the failure Settings
+ * shows. Only called for a person's click.
+ */
+export const repairServiceAgent = (controller: Pick<ServiceUpdateController, "repairAgent">) =>
+  Effect.tryPromise({
+    try: () => controller.repairAgent(),
+    catch: asAgentError("repair"),
+  }).pipe(
+    Effect.as(null as string | null),
+    Effect.catch((error: ServiceAgentError) => Effect.succeed(error.message as string | null)),
+  );
 
 export function makeServiceUpdateController(input: {
   readonly homeDirectory: string;
@@ -631,7 +755,14 @@ export function makeServiceUpdateController(input: {
         "/usr/bin/python3",
         [script, "--identity", target.identity, "--install-launch-agent"],
         60_000,
-      );
+      ).catch((failure: RunFailure) => {
+        throw failure.code === SERVICE_AGENT_DISABLED_EXIT
+          ? new ServiceAgentError({ step: "disabled", message: SERVICE_AGENT_DISABLED_MESSAGE })
+          : new ServiceAgentError({
+              step: "refresh",
+              message: `The update agent could not be installed: ${launchdFailureReason(failure)}`,
+            });
+      });
     },
     runAgentNow: async () => {
       const target = installation();
@@ -640,7 +771,32 @@ export function makeServiceUpdateController(input: {
         "/bin/launchctl",
         ["kickstart", `gui/${uid()}/${serviceAgentLabel(target.identity)}`],
         15_000,
-      );
+      ).catch((failure: RunFailure) => {
+        throw new ServiceAgentError({
+          step: "kickstart",
+          message: `launchctl could not start the update agent: ${launchdFailureReason(failure)}`,
+        });
+      });
+    },
+    repairAgent: async () => {
+      const target = installation();
+      const script = input.agentScriptPath();
+      if (target === null || script === null) {
+        throw new ServiceAgentError({
+          step: "repair",
+          message: "No update agent is installed for this Mac's service.",
+        });
+      }
+      await run(
+        "/usr/bin/python3",
+        [script, "--identity", target.identity, "--repair-launch-agent"],
+        60_000,
+      ).catch((failure: RunFailure) => {
+        throw new ServiceAgentError({
+          step: "repair",
+          message: `The update agent could not be repaired: ${launchdFailureReason(failure)}`,
+        });
+      });
     },
     pendingForcedInstall: (nowMs) => {
       const target = installation();

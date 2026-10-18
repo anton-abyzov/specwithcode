@@ -9,6 +9,8 @@ import { nodePath as NodePath } from "../nodePath.ts";
 import { pathToFileURL } from "node:url";
 
 import {
+  findNpmPackageRuntime,
+  parseNpmReleaseVersion,
   parseReleaseSourceCommit,
   readServerReleaseSourceCommit,
   SERVER_RELEASE_MANIFEST,
@@ -54,5 +56,53 @@ it.effect("reads the commit from the manifest beside the release entry", () =>
     expect(fromEntry).toBe(COMMIT);
     expect(fromModule).toBe(COMMIT);
     expect(absent).toBeNull();
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it("recognises only the manifest the npm package build writes", () => {
+  const npm = {
+    schemaVersion: 1,
+    product: "SpecWeave Studio",
+    version: "1.0.43",
+    sourceCommit: COMMIT,
+  };
+  expect(parseNpmReleaseVersion(JSON.stringify({ ...npm, distribution: "npm" }))).toBe("1.0.43");
+  expect(parseNpmReleaseVersion(JSON.stringify(npm))).toBeNull();
+  expect(
+    parseNpmReleaseVersion(JSON.stringify({ ...npm, product: "Other", distribution: "npm" })),
+  ).toBeNull();
+  expect(parseNpmReleaseVersion("not json")).toBeNull();
+});
+
+it.effect("finds the npm package through the global bin symlink", () =>
+  Effect.gen(function* () {
+    const prefix = NodeFS.realpathSync(
+      NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-npm-prefix-")),
+    );
+    const pkg = NodePath.join(prefix, "lib", "node_modules", "specwithcode");
+    NodeFS.mkdirSync(pkg, { recursive: true });
+    NodeFS.mkdirSync(NodePath.join(prefix, "bin"));
+    NodeFS.writeFileSync(NodePath.join(pkg, "bin.mjs"), "");
+    NodeFS.writeFileSync(
+      NodePath.join(pkg, SERVER_RELEASE_MANIFEST),
+      JSON.stringify({ product: "SpecWeave Studio", version: "1.0.43", distribution: "npm" }),
+    );
+    const bin = NodePath.join(prefix, "bin", "specwithcode");
+    NodeFS.symlinkSync("../lib/node_modules/specwithcode/bin.mjs", bin);
+    const elsewhere = pathToFileURL(NodePath.join(prefix, "chunk.mjs")).href;
+
+    const found = yield* findNpmPackageRuntime(elsewhere).pipe(
+      Effect.provideService(HostProcessArguments, ["node", bin]),
+    );
+    NodeFS.writeFileSync(
+      NodePath.join(pkg, SERVER_RELEASE_MANIFEST),
+      JSON.stringify({ product: "SpecWeave Studio", version: "1.0.43", sourceCommit: COMMIT }),
+    );
+    const archive = yield* findNpmPackageRuntime(elsewhere).pipe(
+      Effect.provideService(HostProcessArguments, ["node", bin]),
+    );
+
+    expect(found).toEqual({ dir: pkg, version: "1.0.43" });
+    expect(archive).toBeNull();
   }).pipe(Effect.provide(NodeServices.layer)),
 );

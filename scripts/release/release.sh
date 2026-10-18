@@ -623,6 +623,7 @@ stage_bump() {
     discard_failed_ci_branch
   fi
   x fetch-main -C "$BUILD" -- git fetch -q "$PRIVATE_URL" main
+  main_gate_green
   # -B resets a local release/<version>; refuse when it holds work other than this script's bump.
   local extra subject
   extra="$(q local-release-branch -C "$BUILD" --may-fail -- git log --format=%s "FETCH_HEAD..refs/heads/release/$VERSION" --)"
@@ -641,6 +642,30 @@ EOF
   if ! t bump-unchanged -C "$BUILD" -- git diff --quiet; then
     x commit -C "$BUILD" -- git commit -qam "Prepare SpecWithCode $VERSION release"
   fi
+}
+
+# main requires the PR gate checks, but an admin can merge past them (enforce_admins is off), and
+# 1.0.44 failed three times in stage 1 on tests that a red or unfinished gate had let onto main.
+# Stop before the bump when the pull request that made main's head merged with a failed or still
+# running required check. The release/ pull request of an earlier release skips the gates, and a
+# head with no merged pull request (a direct push) is left to stage 1.
+main_gate_green() {
+  local head pr number buckets
+  head="$(q main-sha -C "$BUILD" -- git rev-parse FETCH_HEAD)"
+  pr="$(q main-pr --may-fail -- gh api "repos/$PRIVATE_REPO/commits/$head/pulls" \
+    -q '[.[] | select(.merged_at != null)][0] | "\(.number):\(.head.ref)"')"
+  number="${pr%%:*}"
+  case "$pr" in
+    "" | null*) say "main gate: no merged pull request made ${head:0:12}; stage 1 decides" && return 0 ;;
+    *:release/*) return 0 ;;
+  esac
+  buckets="$(q main-pr-buckets --may-fail -- gh pr checks "$number" -R "$PRIVATE_REPO" --required \
+    --json bucket -q '[.[].bucket] | unique | join(" ")')"
+  case " $buckets " in
+    *" fail "* | *" cancel "*)
+      die "main gate: #$number made main's head with a failed required check; fix main first (gh pr checks $number -R $PRIVATE_REPO)" ;;
+    *" pending "*) die "main gate: #$number merged before its required checks finished; wait for them, then rerun" ;;
+  esac
 }
 
 stage_candidate() {

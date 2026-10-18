@@ -21,7 +21,7 @@ import * as BootService from "../cloud/bootService.ts";
 import { pinnedRuntimeVersionsDir } from "../cloud/pinnedRuntime.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import * as CliService from "./service.ts";
-import { findWindowsShim, launcherOwnsVersionsDir, resolveLauncherPath } from "./update.ts";
+import { findWindowsShim, launcherOwnsVersionsDir, resolveLaunchedAs } from "./update.ts";
 
 export class CliUninstallError extends Schema.TaggedError<CliUninstallError>()(
   "CliUninstallError",
@@ -87,7 +87,7 @@ const planUninstall = Effect.fn("cli.uninstall.plan")(function* (input: {
     path.resolve(status.installedBaseDir) === path.resolve(input.baseDir);
   const versionsDir = pinnedRuntimeVersionsDir(path, input.baseDir);
   const runtimeDir = path.dirname(versionsDir);
-  const launchedAs = (yield* HostProcessIsExecutable) ? yield* resolveLauncherPath : undefined;
+  const launchedAs = yield* resolveLaunchedAs;
   const plan: UninstallPlan = {
     service: status.supported && status.installed && servesThisHome,
     launcher: yield* findOwnedLauncher({ launchedAs, versionsDir }),
@@ -134,7 +134,9 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
   const plan = yield* planUninstall({ baseDir: input.baseDir });
 
   if (!plan.service && plan.launcher === undefined && plan.runtimeDir === undefined) {
-    yield* Console.log(`Nothing to remove: specweave-studio is not installed for ${input.baseDir}.`);
+    yield* Console.log(
+      `Nothing to remove: specweave-studio is not installed for ${input.baseDir}.`,
+    );
     if (!(yield* HostProcessIsExecutable)) {
       yield* Console.log(
         "  This specweave-studio runs from a Node script, so it was installed by npm or built from source. Remove it the same way (`npm uninstall -g specweave-studio`, or delete the checkout).",

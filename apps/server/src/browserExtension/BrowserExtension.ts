@@ -8,6 +8,7 @@ import * as NodeHttpServerRequest from "@effect/platform-node/NodeHttpServerRequ
 import {
   type BrowserExtensionCheck,
   type BrowserExtensionPairing,
+  type BrowserExtensionPeer,
   type BrowserExtensionStatus,
   WS_METHODS,
   WsBrowserExtensionRpcGroup,
@@ -98,6 +99,74 @@ function filePairingStore(dir: string): PairingStore {
   };
 }
 
+interface PeerRecord {
+  readonly machine: string;
+  readonly label: string;
+  /** Its threads are known here as `peer:<environmentId>:<threadId>`. */
+  readonly environmentId: string;
+  readonly state: BrowserExtensionPeer["state"];
+  readonly requestedAt: string;
+}
+
+const MAX_PEERS = 50;
+
+/**
+ * Other machines' worker grants and the owner's answer to each, by session
+ * id. A grant's name is the caller's own choice, so its use of this Chrome
+ * waits for the owner to allow that one grant here.
+ */
+function filePeerStore(dir: string, onEvicted: (record: PeerRecord) => void) {
+  const file = NodePath.join(dir, "peers.json");
+  let peers: Map<string, PeerRecord> | null = null;
+  const load = () => {
+    if (peers) return peers;
+    peers = new Map();
+    try {
+      const saved = JSON.parse(NodeFS.readFileSync(file, "utf8"))?.peers;
+      if (saved && typeof saved === "object")
+        for (const [id, record] of Object.entries(saved as Record<string, PeerRecord>))
+          if (record && (record.state === "allowed" || record.state === "declined"))
+            peers.set(id, record);
+    } catch {
+      // No answers yet.
+    }
+    return peers;
+  };
+  const save = () => {
+    // Only answers outlive a restart; a request asks again.
+    const answered = Object.fromEntries(
+      [...load()].filter(([, record]) => record.state !== "pending"),
+    );
+    NodeFS.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    NodeFS.writeFileSync(file, JSON.stringify({ peers: answered }), { mode: 0o600 });
+  };
+  return {
+    list: () => [...load()],
+    get: (id: string) => load().get(id),
+    set: (id: string, record: PeerRecord) => {
+      const all = load();
+      all.delete(id);
+      all.set(id, record);
+      // Forget unanswered requests first, then declines, then the oldest allowed.
+      let evicted = false;
+      for (const state of ["pending", "declined", "allowed"] as const)
+        for (const [key, value] of all) {
+          if (all.size <= MAX_PEERS) break;
+          if (key !== id && value.state === state) {
+            all.delete(key);
+            evicted = true;
+            onEvicted(value);
+          }
+        }
+      if (record.state !== "pending" || evicted) save();
+    },
+    remove: (id: string) => {
+      load().delete(id);
+      save();
+    },
+  };
+}
+
 export interface BrowserExtensionShape {
   readonly hub: BrowserRelayHub;
   readonly relayUrl: string;
@@ -105,6 +174,20 @@ export interface BrowserExtensionShape {
   readonly installFolder: () => { readonly path: string; readonly version: string };
   readonly status: () => BrowserExtensionStatus;
   readonly check: () => Promise<BrowserExtensionCheck>;
+  /**
+   * Whether another machine's grant may use this Chrome. The first request
+   * is recorded as pending for the owner to answer in Settings › Chrome.
+   */
+  readonly peerAccess: (input: {
+    readonly id: string;
+    readonly machine: string;
+    readonly label: string;
+    readonly environmentId: string;
+  }) => BrowserExtensionPeer["state"];
+  /** The owner's answer so far, without recording a request. */
+  readonly peerState: (id: string) => BrowserExtensionPeer["state"] | undefined;
+  /** The owner's answer; taking access back also lets go of that machine's tabs. */
+  readonly answerPeer: (id: string, allow: boolean) => Promise<void>;
 }
 
 export class BrowserExtension extends Context.Service<BrowserExtension, BrowserExtensionShape>()(
@@ -118,6 +201,15 @@ export function makeBrowserExtension(options: {
 }): BrowserExtensionShape {
   const dir = NodePath.join(options.stateDir, "browser-extension");
   const store = filePairingStore(dir);
+  // A forgotten machine loses access like a declined one: let go of its tabs.
+  const peerStore = filePeerStore(dir, (record) => {
+    const stillAllowed = peerStore
+      .list()
+      .some(
+        ([, other]) => other.environmentId === record.environmentId && other.state === "allowed",
+      );
+    if (!stillAllowed) void hub.stopThreadsWithPrefix(`peer:${record.environmentId}:`);
+  });
   const machine = options.machineName ?? NodeOS.hostname().replace(/\.local$/, "");
   const relayUrl = `ws://127.0.0.1:${options.port}${BROWSER_RELAY_PATH}`;
   const hub = new BrowserRelayHub({
@@ -192,8 +284,36 @@ export function makeBrowserExtension(options: {
       storeUrl: CHROME_WEB_STORE_URL,
       profiles: hub.profileSummaries(),
       recentActions: [...hub.recentActions()],
+      peers: peerStore.list().map(([id, record]) => ({
+        id,
+        machine: record.machine,
+        label: record.label,
+        state: record.state,
+        requestedAt: record.requestedAt,
+      })),
     }),
     check,
+    peerState: (id) => peerStore.get(id)?.state,
+    peerAccess: (input) => {
+      const known = peerStore.get(input.id);
+      if (known) return known.state;
+      peerStore.set(input.id, {
+        machine: input.machine,
+        label: input.label,
+        environmentId: input.environmentId,
+        state: "pending",
+        requestedAt: new Date().toISOString(),
+      });
+      hub.changed();
+      return "pending";
+    },
+    answerPeer: async (id, allow) => {
+      const known = peerStore.get(id);
+      if (!known) return;
+      peerStore.set(id, { ...known, state: allow ? "allowed" : "declined" });
+      if (!allow) await hub.stopThreadsWithPrefix(`peer:${known.environmentId}:`);
+      hub.changed();
+    },
   };
 }
 
@@ -309,6 +429,11 @@ export const layerRpcHandlers = WsBrowserExtensionRpcGroup.middleware(RpcInstrum
         }),
       [WS_METHODS.browserExtensionInstallFolder]: () =>
         Effect.sync(() => extension.installFolder()),
+      [WS_METHODS.browserExtensionPeer]: (payload) =>
+        Effect.promise(async () => {
+          await extension.answerPeer(payload.id, payload.allow);
+          return extension.status();
+        }),
     };
   }),
 );

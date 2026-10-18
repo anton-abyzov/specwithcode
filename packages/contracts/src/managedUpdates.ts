@@ -50,6 +50,18 @@ export const ManagedUpdateStatus = Schema.Struct({
   currentVersion: Schema.NullOr(Schema.String),
   availableVersion: Schema.NullOr(Schema.String),
   checkedAt: Schema.NullOr(Schema.String),
+  /**
+   * Whether launchd has the update agent's job loaded now; null when it could
+   * not be read (not macOS). Absent from older services.
+   */
+  agentLoaded: Schema.optionalKey(Schema.NullOr(Schema.Boolean)),
+  /** The agent's label is turned off with `launchctl disable`. Absent from older services. */
+  agentDisabled: Schema.optionalKey(Schema.NullOr(Schema.Boolean)),
+  /**
+   * Automatic checks are on but the agent's last check is older than twice
+   * its check interval, so `operation` and `checkedAt` are frozen.
+   */
+  stale: Schema.optionalKey(Schema.Boolean),
 });
 export type ManagedUpdateStatus = typeof ManagedUpdateStatus.Type;
 export class ManagedUpdateError extends Schema.TaggedError<ManagedUpdateError>()(

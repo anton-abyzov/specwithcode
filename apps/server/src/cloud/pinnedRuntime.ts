@@ -25,10 +25,10 @@ import * as ProcessRunner from "../processRunner.ts";
  * <baseDir>/runtime/versions/<version>: the self-contained executable, the
  * web client, and the native packages beside it. The boot service points its
  * unit or launch agent at the executable, and server self-update installs the
- * target version here before switching over. The runtime never depends on a
- * Node or npm on the machine; the only npm involvement in SpecWithCode is the `specweave-studio`
- * package for people who prefer `npx specweave-studio` or `npm install -g specweave-studio`, and even a
- * CLI installed that way pins an archive when it sets up the service.
+ * target version here before switching over. A single-executable runtime
+ * needs no Node on the machine; a Node bundle runs on the Node that installed
+ * it. A CLI installed from the `specwithcode` npm package pins a copy of that
+ * package as a Node bundle and downloads nothing.
  */
 const PINNED_RUNTIME_DIR = "runtime";
 const PINNED_RUNTIME_INSTALL_TIMEOUT = Duration.minutes(10);
@@ -55,6 +55,23 @@ export function pinnedRuntimeCommand(paths: PinnedRuntimePaths): {
 export function pinnedRuntimeVersionsDir(path: Path.Path, baseDir: string): string {
   return path.join(baseDir, PINNED_RUNTIME_DIR, "versions");
 }
+
+/**
+ * Whether `candidate` is `parent` or lies inside it, comparing real paths
+ * where they exist (a symlinked base or temp dir resolves the same way).
+ */
+export const resolvesWithin = Effect.fn("cloud.pinned_runtime.resolves_within")(function* (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  candidate: string,
+  parent: string,
+) {
+  const real = (target: string) =>
+    fs.realPath(target).pipe(Effect.orElseSucceed(() => path.resolve(target)));
+  const [realCandidate, realParent] = yield* Effect.all([real(candidate), real(parent)]);
+  const relative = path.relative(realParent, realCandidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+});
 
 export function pinnedRuntimePaths(
   path: Path.Path,
@@ -153,6 +170,13 @@ interface PinnedRuntimeInstallInput {
   readonly arch: string;
   readonly httpClient: HttpClient.HttpClient;
   readonly releaseBaseUrl?: string | undefined;
+  /**
+   * An installed Node bundle of exactly `version` on this machine, such as
+   * the `specwithcode` npm package the CLI runs from. When set, the runtime is
+   * pinned by copying it instead of downloading a release archive, which may
+   * not exist for this platform (no darwin archive is published).
+   */
+  readonly localBundleDir?: string | undefined;
   readonly onProgress?: (progress: PinnedRuntimeProgress) => void;
 }
 
@@ -263,17 +287,15 @@ const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(fun
   }
 
   const archivePath = path.join(stagingDir, PINNED_RUNTIME_ARCHIVE_FILE);
-  yield* fs
-    .writeFile(archivePath, archive)
-    .pipe(
-      Effect.mapError(
-        (cause) =>
-          new PinnedRuntimeInstallError({
-            step: "writing the specweave-studio release archive",
-            cause,
-          }),
-      ),
-    );
+  yield* fs.writeFile(archivePath, archive).pipe(
+    Effect.mapError(
+      (cause) =>
+        new PinnedRuntimeInstallError({
+          step: "writing the specweave-studio release archive",
+          cause,
+        }),
+    ),
+  );
   input.onProgress?.({ stage: "extract" });
   const extractStep = "extracting the specweave-studio release archive";
   // A single-executable archive wraps everything in one directory named after
@@ -306,13 +328,50 @@ const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(fun
     );
   yield* fs.remove(archivePath, { force: true }).pipe(Effect.ignore);
   if (layout === "node-bundle") {
-    const launcherStep = "writing the specweave-studio launcher";
-    const entryPath = path.join(stagingDir, "specweave-studio");
-    yield* fs.writeFileString(entryPath, nodeBundleLauncherScript(process.execPath)).pipe(
-      Effect.andThen(fs.chmod(entryPath, 0o755)),
-      Effect.mapError((cause) => new PinnedRuntimeInstallError({ step: launcherStep, cause })),
-    );
+    yield* writeNodeBundleLauncher(input, stagingDir);
   }
+});
+
+const writeNodeBundleLauncher = (input: PinnedRuntimeInstallInput, stagingDir: string) => {
+  const entryPath = input.path.join(stagingDir, "specweave-studio");
+  return input.fs.writeFileString(entryPath, nodeBundleLauncherScript(process.execPath)).pipe(
+    Effect.andThen(input.fs.chmod(entryPath, 0o755)),
+    Effect.mapError(
+      (cause) =>
+        new PinnedRuntimeInstallError({ step: "writing the specweave-studio launcher", cause }),
+    ),
+  );
+};
+
+/**
+ * Pins an installed Node bundle by copying it, so the service keeps running
+ * these exact bytes after `npm i -g` replaces or removes the package. Nothing
+ * is downloaded.
+ */
+const installFromLocalBundle = Effect.fn("cloud.pinned_runtime.install_local_bundle")(function* (
+  input: PinnedRuntimeInstallInput,
+  sourceDir: string,
+  stagingDir: string,
+) {
+  const { fs, path } = input;
+  const step = "copying the installed specweave-studio package";
+  input.onProgress?.({ stage: "extract" });
+  const entries = yield* fs
+    .readDirectory(sourceDir)
+    .pipe(Effect.mapError((cause) => new PinnedRuntimeInstallError({ step, cause })));
+  if (!entries.includes("bin.mjs")) {
+    return yield* new PinnedRuntimeInstallError({ step: `${step} (no bin.mjs in ${sourceDir})` });
+  }
+  yield* Effect.forEach(
+    // A launcher left in the source would be overwritten below anyway.
+    entries.filter((entry) => entry !== "specweave-studio"),
+    (entry) =>
+      fs
+        .copy(path.join(sourceDir, entry), path.join(stagingDir, entry))
+        .pipe(Effect.mapError((cause) => new PinnedRuntimeInstallError({ step, cause }))),
+    { discard: true },
+  );
+  yield* writeNodeBundleLauncher(input, stagingDir);
 });
 
 const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(function* (
@@ -335,6 +394,17 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
     input.onProgress?.({ stage: "cached" });
     yield* input.validate(paths);
     return paths;
+  }
+  // A CLI running from this very pin (a copy of the npm package) would offer
+  // the incomplete version directory as its own source; removing it first
+  // would leave nothing to copy.
+  if (
+    input.localBundleDir !== undefined &&
+    (yield* resolvesWithin(fs, input.path, input.localBundleDir, paths.versionDir))
+  ) {
+    return yield* new PinnedRuntimeInstallError({
+      step: `copying the installed specweave-studio package (the source ${input.localBundleDir} is the incomplete pinned runtime itself)`,
+    });
   }
   if (versionDirExists) {
     yield* fs.remove(paths.versionDir, { recursive: true, force: true }).pipe(
@@ -379,7 +449,11 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
   };
 
   return yield* Effect.gen(function* () {
-    yield* installFromArchive(input, stagingDir);
+    if (input.localBundleDir !== undefined) {
+      yield* installFromLocalBundle(input, input.localBundleDir, stagingDir);
+    } else {
+      yield* installFromArchive(input, stagingDir);
+    }
 
     input.onProgress?.({ stage: "validate" });
     yield* input.validate(stagingPaths);

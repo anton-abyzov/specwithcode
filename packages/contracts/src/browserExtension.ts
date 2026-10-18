@@ -15,6 +15,7 @@ export const BROWSER_EXTENSION_RPC_METHODS = {
   browserExtensionReconnect: "browserExtension.reconnect",
   browserExtensionStop: "browserExtension.stop",
   browserExtensionInstallFolder: "browserExtension.installFolder",
+  browserExtensionPeer: "browserExtension.peer",
 } as const;
 
 /** Where agents' Chrome tools send people when no profile answers. */
@@ -34,6 +35,10 @@ export const BrowserExtensionThreadUse = Schema.Struct({
   tabs: Schema.Number,
   since: Schema.String,
   lastActionAt: Schema.String,
+  /** A thread on another machine, named as that machine sent it. */
+  title: Schema.optionalKey(Schema.String),
+  /** The machine such a thread runs on. */
+  machine: Schema.optionalKey(Schema.String),
 });
 export type BrowserExtensionThreadUse = typeof BrowserExtensionThreadUse.Type;
 
@@ -60,8 +65,27 @@ export const BrowserExtensionAction = Schema.Struct({
   threadId: Schema.String,
   tool: Schema.String,
   url: Schema.optionalKey(Schema.String),
+  /** Set when the thread runs on another machine. */
+  title: Schema.optionalKey(Schema.String),
+  machine: Schema.optionalKey(Schema.String),
 });
 export type BrowserExtensionAction = typeof BrowserExtensionAction.Type;
+
+/**
+ * Another machine in the owner's fleet asking to use this machine's Chrome
+ * for its threads. Nothing runs until the owner allows it here.
+ */
+export const BrowserExtensionPeer = Schema.Struct({
+  /** The worker grant's session on this machine. */
+  id: Schema.String,
+  /** The name that machine sent. */
+  machine: Schema.String,
+  /** The name its grant signed in with. */
+  label: Schema.String,
+  state: Schema.Literals(["pending", "allowed", "declined"]),
+  requestedAt: Schema.String,
+});
+export type BrowserExtensionPeer = typeof BrowserExtensionPeer.Type;
 
 export const BrowserExtensionStatus = Schema.Struct({
   /** The loopback address the extension connects to. */
@@ -72,6 +96,8 @@ export const BrowserExtensionStatus = Schema.Struct({
   storeUrl: Schema.NullOr(Schema.String),
   profiles: Schema.Array(BrowserExtensionProfile),
   recentActions: Schema.Array(BrowserExtensionAction),
+  /** Other machines that asked to use this Chrome. */
+  peers: Schema.optionalKey(Schema.Array(BrowserExtensionPeer)),
 });
 export type BrowserExtensionStatus = typeof BrowserExtensionStatus.Type;
 
@@ -137,6 +163,12 @@ export const browserExtensionRpcs = [
     success: BrowserExtensionStatus,
     error: EnvironmentAuthorizationError,
   }),
+  /** Allows or declines another machine's use of this Chrome, or removes its access. */
+  Rpc.make(BROWSER_EXTENSION_RPC_METHODS.browserExtensionPeer, {
+    payload: Schema.Struct({ id: Schema.String, allow: Schema.Boolean }),
+    success: BrowserExtensionStatus,
+    error: EnvironmentAuthorizationError,
+  }),
   /** Writes the bundled extension to a folder Chrome can Load unpacked. */
   Rpc.make(BROWSER_EXTENSION_RPC_METHODS.browserExtensionInstallFolder, {
     payload: Schema.Struct({}),
@@ -156,6 +188,7 @@ export class BrowserExtensionToolError extends Schema.TaggedError<BrowserExtensi
       "profile_not_found",
       "profile_in_use",
       "tab_in_use",
+      "needs_approval",
       "tab_not_found",
       "element_not_found",
       "page_error",
@@ -176,6 +209,12 @@ const ProfileParam = Schema.optional(
       "Chrome profile name from chrome_profiles. Omit when only one profile is connected.",
   }),
 );
+const MachineParam = Schema.optional(
+  Schema.String.check(Schema.isMaxLength(80)).annotate({
+    description:
+      "Machine whose Chrome to use: a fleet id or label from chrome_profiles, or 'local'. Omit to use this machine's Chrome, or the connected machine that has one when none is paired here.",
+  }),
+);
 const TabParam = Schema.optional(
   Schema.Int.annotate({
     description:
@@ -193,6 +232,7 @@ export const ChromeProfilesInput = Schema.Struct({
   verbose: Schema.optional(
     Schema.Boolean.annotate({ description: "Unused; present so the input is an object." }),
   ),
+  machine: MachineParam,
 });
 export const ChromeProfilesResult = Schema.Struct({
   profiles: Schema.Array(
@@ -201,12 +241,14 @@ export const ChromeProfilesResult = Schema.Struct({
       browser: Schema.String,
       agentTabs: Schema.Number,
       inUseByAnotherThread: Schema.Boolean,
+      /** Set for a profile on another machine: pass it as machine to the other tools. */
+      machine: Schema.optional(Schema.String),
     }),
   ),
   hint: Schema.String,
 });
 
-export const ChromeTabsInput = Schema.Struct({ profile: ProfileParam });
+export const ChromeTabsInput = Schema.Struct({ profile: ProfileParam, machine: MachineParam });
 export const ChromeTabSummary = Schema.Struct({
   tabId: Schema.Int,
   title: Schema.String,
@@ -227,6 +269,7 @@ export const ChromeTabsResult = Schema.Struct({
 export const ChromeOpenInput = Schema.Struct({
   url: Schema.String.annotate({ description: "Absolute http(s) URL to open in a new tab." }),
   profile: ProfileParam,
+  machine: MachineParam,
 });
 export const ChromePageResult = Schema.Struct({
   profile: Schema.String,
@@ -245,11 +288,13 @@ export const ChromeNavigateInput = Schema.Struct({
   ),
   tabId: TabParam,
   profile: ProfileParam,
+  machine: MachineParam,
 });
 
 export const ChromeSnapshotInput = Schema.Struct({
   tabId: TabParam,
   profile: ProfileParam,
+  machine: MachineParam,
   maxTextChars: Schema.optional(
     Schema.Int.annotate({ description: "Visible text budget, 1000-60000. Defaults to 12000." }),
   ),
@@ -279,6 +324,7 @@ export const ChromeClickInput = Schema.Struct({
   selector: SelectorParam,
   tabId: TabParam,
   profile: ProfileParam,
+  machine: MachineParam,
 });
 
 export const ChromeTypeInput = Schema.Struct({
@@ -293,6 +339,7 @@ export const ChromeTypeInput = Schema.Struct({
   ),
   tabId: TabParam,
   profile: ProfileParam,
+  machine: MachineParam,
 });
 
 export const ChromePressInput = Schema.Struct({
@@ -302,11 +349,13 @@ export const ChromePressInput = Schema.Struct({
   }),
   tabId: TabParam,
   profile: ProfileParam,
+  machine: MachineParam,
 });
 
 export const ChromeScreenshotInput = Schema.Struct({
   tabId: TabParam,
   profile: ProfileParam,
+  machine: MachineParam,
   fullPage: Schema.optional(
     Schema.Boolean.annotate({ description: "Capture the whole page, not just the viewport." }),
   ),
@@ -330,6 +379,7 @@ export const ChromeEvaluateInput = Schema.Struct({
   }),
   tabId: TabParam,
   profile: ProfileParam,
+  machine: MachineParam,
 });
 export const ChromeEvaluateResult = Schema.Struct({
   profile: Schema.String,
@@ -337,5 +387,44 @@ export const ChromeEvaluateResult = Schema.Struct({
   value: Schema.Unknown,
 });
 
-export const ChromeCloseInput = Schema.Struct({ tabId: TabParam, profile: ProfileParam });
+export const ChromeCloseInput = Schema.Struct({
+  tabId: TabParam,
+  profile: ProfileParam,
+  machine: MachineParam,
+});
 export const ChromeCloseResult = Schema.Struct({ profile: Schema.String, closed: Schema.Int });
+
+// ── Chrome from another machine ─────────────────────────────────────────────
+
+export const CHROME_TOOL_NAMES = [
+  "chrome_profiles",
+  "chrome_tabs",
+  "chrome_open",
+  "chrome_navigate",
+  "chrome_snapshot",
+  "chrome_click",
+  "chrome_type",
+  "chrome_press",
+  "chrome_screenshot",
+  "chrome_evaluate",
+  "chrome_close",
+] as const;
+export type ChromeToolName = (typeof CHROME_TOOL_NAMES)[number];
+
+/**
+ * One chrome_* call another machine in the owner's fleet sends on behalf of
+ * a thread there. Only that machine's worker grant may call it; the caller
+ * names the thread so this machine keeps its tabs apart and shows its title.
+ */
+export const ChromePeerInput = Schema.Struct({
+  action: Schema.Literals(CHROME_TOOL_NAMES),
+  input: Schema.Record(Schema.String, Schema.Unknown),
+  caller: Schema.Struct({
+    environmentId: Schema.String.check(Schema.isMaxLength(200)),
+    machine: Schema.String.check(Schema.isMaxLength(100)),
+    threadId: Schema.String.check(Schema.isMaxLength(200)),
+    title: Schema.String.check(Schema.isMaxLength(200)),
+  }),
+});
+export type ChromePeerInput = typeof ChromePeerInput.Type;
+export const ChromePeerResult = Schema.Record(Schema.String, Schema.Unknown);

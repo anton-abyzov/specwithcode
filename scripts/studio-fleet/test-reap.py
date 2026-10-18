@@ -702,7 +702,7 @@ class InstalledAgent(agent_tests.AgentCase):
     def install(self):
         calls = []
 
-        def launchctl(args):
+        def launchctl(args, output=None):
             calls.append(list(args))
             return 0
         with mock.patch.object(update_agent, 'launchctl', launchctl), \

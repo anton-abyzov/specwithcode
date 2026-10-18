@@ -134,7 +134,11 @@ are there so each one fails a pull request instead:
   failing test on main, and stage 1 then refused the release. `gh pr merge` now waits until both
   checks pass, so don't merge with `--admin`. A PR that changes only Markdown, `docs/` or issue
   templates skips both checks, which counts as passing. The release's own merge stage waits for
-  the checks, which skip `release/` branches.
+  the checks, which skip `release/` branches. An admin can still merge past them, so the bump
+  stage stops first when the pull request that made main's head has a failed or still running
+  required check.
+- **Every stubbed command exists.** The self-test fails when a command a stub run recorded is not
+  on PATH (a misspelled `pyhton3`), apart from the macOS tools and pnpm the release Mac provides.
 - **Malformed calls are refused.** `x`, `q` and `t` stop when the command is missing or starts
   with `-`. That is how the typo `x sums --python3` reached a release: dry and stub runs only
   record commands, so they never ran it. **PR Gate (release)** runs `release.sh --self-test` on a

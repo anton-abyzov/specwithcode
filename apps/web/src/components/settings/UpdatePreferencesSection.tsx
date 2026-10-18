@@ -141,7 +141,7 @@ export function UpdatePreferencesSection() {
         description={
           locked
             ? "Automatic updates are off in this build, for this app and the SpecWithCode service on this computer. Check now still works."
-            : "Look for new SpecWithCode releases every hour, for this app and the SpecWithCode service on this computer."
+            : "Look for new SpecWithCode releases in the background, for this app (every 10 minutes, with a notification when one is found or downloaded) and the SpecWithCode service on this computer."
         }
         control={
           <Switch

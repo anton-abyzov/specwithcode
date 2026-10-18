@@ -91,12 +91,28 @@ it.effect.each(["on time", "after restart"])(
       const receipts = yield* Queue.unbounded<"task" | "retry">();
       const layerDependencies = Layer.mergeAll(
         NodeCrypto.layer,
-        Layer.mock(ProjectStore.ProjectStoreV2)({ get: (projectId) => Effect.succeed(Option.some({
-          projectId, title: "Fixture", workspaceRoot: "/tmp/fixture", defaultModelSelection: null,
-          defaultThreadEnvMode: null, autoPull: false, faviconPath: null, projectIcon: null, scripts: [],
-          createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", deletedAt: null,
-        })) }),
-        Layer.mock(UsageLimitAvailability.UsageLimitAvailability)({ check: () => Effect.succeed({ codex: false, observation: null }) }),
+        Layer.mock(ProjectStore.ProjectStoreV2)({
+          get: (projectId) =>
+            Effect.succeed(
+              Option.some({
+                projectId,
+                title: "Fixture",
+                workspaceRoot: "/tmp/fixture",
+                defaultModelSelection: null,
+                defaultThreadEnvMode: null,
+                autoPull: false,
+                faviconPath: null,
+                projectIcon: null,
+                scripts: [],
+                createdAt: "2026-01-01T00:00:00.000Z",
+                updatedAt: "2026-01-01T00:00:00.000Z",
+                deletedAt: null,
+              }),
+            ),
+        }),
+        Layer.mock(UsageLimitAvailability.UsageLimitAvailability)({
+          check: () => Effect.succeed({ codex: false, observation: null }),
+        }),
         Layer.mock(ThreadLaunchService.ThreadLaunchService)({
           launch: () =>
             Queue.offer(receipts, "task").pipe(
@@ -122,6 +138,7 @@ it.effect.each(["on time", "after restart"])(
         }),
         Layer.mock(ServerSettings.ServerSettingsService)({
           getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+          withSettingsSnapshot: (use) => use(DEFAULT_SERVER_SETTINGS),
         }),
         Layer.mock(SecretRequests.SecretRequests)({}),
       );

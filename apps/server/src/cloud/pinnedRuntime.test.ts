@@ -424,6 +424,40 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
     }),
   );
 
+  it.effect("never removes an incomplete pinned runtime that is its own local bundle source", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "studio-pinned-runtime-self-source-",
+      });
+      const finalPaths = pinnedRuntimePaths(path, baseDir, version, "darwin");
+      // A CLI running from the pin: the npm package copy, but no .install-complete.
+      yield* fs.makeDirectory(finalPaths.versionDir, { recursive: true });
+      yield* fs.writeFileString(path.join(finalPaths.versionDir, "bin.mjs"), "// cli\n");
+      const requests: string[] = [];
+
+      const error = yield* ensurePinnedRuntimeInstalled({
+        baseDir,
+        version,
+        fs,
+        path,
+        platform: "darwin",
+        arch: "arm64",
+        httpClient: releaseHttpClient(yield* validChecksums, requests),
+        runner: extractingRunner(fs, path),
+        validate: () => Effect.void,
+        localBundleDir: finalPaths.versionDir,
+      }).pipe(Effect.flip);
+
+      assert.instanceOf(error, PinnedRuntimeInstallError);
+      assert.include(error.message, "is the incomplete pinned runtime itself");
+      assert.deepStrictEqual(requests, []);
+      assert.isTrue(yield* fs.exists(path.join(finalPaths.versionDir, "bin.mjs")));
+      assert.isFalse(yield* fs.exists(finalPaths.sentinelPath));
+    }),
+  );
+
   it.effect("preserves a completed runtime when validation fails", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
