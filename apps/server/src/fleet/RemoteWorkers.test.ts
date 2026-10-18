@@ -18,6 +18,7 @@ import * as RemoteWorkerStore from "./RemoteWorkerStore.ts";
 import {
   allow,
   allowLater,
+  capabilities,
   eventually,
   launchAnswer,
   launchInput,
@@ -295,6 +296,9 @@ describe("RemoteWorkers", () => {
         machine: M1,
         threadRef: "studio://thread/env-m1/b-thread-1",
         reportsBack: true,
+        // The coordinator learns its worker runs below its own mode, and why.
+        runtimeMode: "auto",
+        runtimeModeLoweredFrom: "full-access",
       });
       const launch = remote.toolCalls.find((call) => call.name === "studio_thread_launch");
       // Full access here, but the user allowed only auto on M1; the model moved to M1's codex.
@@ -325,6 +329,65 @@ describe("RemoteWorkers", () => {
           createdBy: "agent",
           summary: "[Fix the flaky test](studio://thread/env-m1/b-thread-1) on M1 reported back.",
         },
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("starts Codex and Claude workers on Full access for a Full access coordinator", () => {
+    const { remote, layer } = setup({
+      orchestrator_capabilities: () => ({
+        result: {
+          ...capabilities,
+          runtimeMode: "full-access",
+          providers: [
+            ...capabilities.providers,
+            {
+              providerInstanceId: "claude",
+              driverKind: "claudeAgent",
+              displayName: null,
+              models: [{ id: "opus", label: null }],
+              canRunChildTask: true,
+              canRunCrossProviderChildTask: true,
+              constraints: [],
+            },
+          ],
+        },
+      }),
+      studio_thread_launch: (args) => ({
+        result: {
+          ...launchAnswer,
+          threadId: `b-thread-${String((args.modelSelection as ModelSelection).instanceId)}`,
+          modelSelection: args.modelSelection,
+        },
+      }),
+    });
+    return Effect.gen(function* () {
+      yield* allow("full-access");
+      const workers = yield* RemoteWorkers.RemoteWorkers;
+      for (const modelSelection of [
+        { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.5" },
+        { instanceId: ProviderInstanceId.make("claude"), model: "opus" },
+      ] as ReadonlyArray<ModelSelection>) {
+        const result = yield* workers.launch(
+          launchInput({
+            commandId: `command-${modelSelection.instanceId}`,
+            explicitModelSelection: modelSelection,
+            runtimeMode: "full-access",
+          }),
+        );
+        expect(result.runtimeMode).toBe("full-access");
+        expect(result.runtimeModeLoweredFrom).toBeUndefined();
+        expect(result.modelSelection).toEqual(modelSelection);
+      }
+      const launches = remote.toolCalls.filter((call) => call.name === "studio_thread_launch");
+      expect(
+        launches.map((call) => [
+          (call.args.modelSelection as ModelSelection).instanceId,
+          call.args.runtimeMode,
+        ]),
+      ).toEqual([
+        ["codex", "full-access"],
+        ["claude", "full-access"],
       ]);
     }).pipe(Effect.provide(layer));
   });

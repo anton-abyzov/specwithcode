@@ -1,5 +1,6 @@
 import { LogicalProject, ProjectCoordinatorBinding } from "./logicalProject.ts";
 import { ModelSelection } from "./modelSelection.ts";
+import { RuntimeMode } from "./providerPolicy.ts";
 import * as Schema from "effect/Schema";
 import { EnvironmentId, ProjectId, ThreadId } from "./baseSchemas.ts";
 
@@ -44,6 +45,12 @@ export const MachineHandoffAcknowledgment = Schema.Struct({
 export const MachineHandoffContext = Schema.Struct({
   goal: bounded(8_000),
   instructions: bounded(16_000),
+  /**
+   * The access the source coordinator ran with. The destination saves it as the
+   * project's mode and starts its coordinator on it; older bundles omit it and
+   * keep the destination's own default.
+   */
+  runtimeMode: Schema.optional(RuntimeMode),
   notes: Schema.Array(Schema.Struct({ name: bounded(128), content: bounded(262_144) })).check(
     Schema.isMaxLength(4096),
   ),

@@ -101,6 +101,46 @@ describe("ThreadMetaRow", () => {
     expect(html).toContain("Running 3m");
   });
 
+  it("reads a turn blocked on the person as waiting on you, in the waiting tone", () => {
+    const render = (awaitingPerson: "approval" | "answer" | "sign-in" | null) =>
+      renderToStaticMarkup(
+        <ThreadMetaRow
+          origin={null}
+          folder={null}
+          run={{ startedAt: "2026-10-14T20:50:00.000Z", completedAt: null }}
+          awaitingPerson={awaitingPerson}
+          pullRequests={[]}
+          onOpenPullRequest={vi.fn()}
+        />,
+      );
+    const approval = render("approval");
+    expect(approval).toContain("Waiting on you 15h 10m");
+    expect(approval).not.toContain("Running");
+    expect(approval).toContain('data-run-state="waiting"');
+    expect(approval).toContain("text-warning-foreground");
+    expect(render("answer")).toContain("Waiting on you 15h 10m");
+    expect(render("sign-in")).toContain("Waiting on you 15h 10m");
+    // With nothing asked of the person the same turn is still running.
+    const running = render(null);
+    expect(running).toContain("Running 15h 10m");
+    expect(running).not.toContain("text-warning-foreground");
+  });
+
+  it("keeps a finished turn's length, whatever it last waited on", () => {
+    const html = renderToStaticMarkup(
+      <ThreadMetaRow
+        origin={null}
+        folder={null}
+        run={{ startedAt: "2026-10-15T10:00:00.000Z", completedAt: "2026-10-15T10:31:18.000Z" }}
+        awaitingPerson="approval"
+        pullRequests={[]}
+        onOpenPullRequest={vi.fn()}
+      />,
+    );
+    expect(html).toContain("Ran 31m");
+    expect(html).not.toContain("Waiting on you");
+  });
+
   it("renders nothing without anything to show", () => {
     const html = renderToStaticMarkup(
       <ThreadMetaRow

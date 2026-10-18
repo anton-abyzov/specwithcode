@@ -33,6 +33,7 @@ import * as ProjectCoordinatorService from "../project/ProjectCoordinatorService
 import { projectDelegationTarget } from "../project/ProjectDelegation.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
+import * as ProjectRuntimeAccess from "../project/ProjectRuntimeAccess.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectWorkspaceService from "../project/ProjectWorkspaceService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
@@ -209,6 +210,16 @@ const projectLayer = Layer.mergeAll(
     ),
   ),
 );
+// No chats exist here, so a project access save is the settings write itself.
+const runtimeAccess = Layer.effect(
+  ProjectRuntimeAccess.ProjectRuntimeAccess,
+  Effect.gen(function* () {
+    const settings = yield* ServerSettings.ServerSettingsService;
+    return ProjectRuntimeAccess.ProjectRuntimeAccess.of({
+      updateSettings: (patch) => settings.updateSettings(patch),
+    });
+  }),
+);
 const fixtureLayer = Layer.mergeAll(
   projectLayer,
   MachineHandoffStore.layer,
@@ -319,7 +330,7 @@ const fixture = Effect.gen(function* () {
     let run = Effect.gen(function* () {
       return yield* (yield* MachineHandoff.MachineHandoff).receive(input);
     }).pipe(
-      Effect.provide(Layer.fresh(MachineHandoff.layer)),
+      Effect.provide(Layer.fresh(MachineHandoff.layer).pipe(Layer.provide(runtimeAccess))),
       Effect.provideService(ProjectCoordinatorService.ProjectCoordinatorService, coordinator),
       Effect.provideService(HandoffGit.HandoffGit, git),
     );

@@ -8,6 +8,7 @@
  */
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import { threadRuntimeIsActive } from "@specweave-studio/client-runtime/state/shell";
+import { threadAwaitingPerson } from "@specweave-studio/client-runtime/state/models";
 import type {
   OrchestrationV2PendingBackgroundTask,
   OrchestrationV2Subagent,
@@ -113,6 +114,16 @@ export interface SubagentEntry {
   readonly depth: number;
   /** A workflow is one script fanning out to many agents; its agents list as subagents. */
   readonly kind?: "subagent" | "workflow";
+  /** Set while its run is blocked on the person; the row then reads waiting, not working. */
+  readonly awaitingPerson?: SubagentAwaitingPerson;
+}
+
+export type SubagentAwaitingPerson = NonNullable<ReturnType<typeof threadAwaitingPerson>>["kind"];
+
+/** What a backing thread's open request asks of the person, while its run is still open. */
+function awaitingPersonOf(thread: EnvironmentThreadShell): SubagentAwaitingPerson | null {
+  if (!threadRuntimeIsActive(thread.runtime)) return null;
+  return threadAwaitingPerson(thread)?.kind ?? null;
 }
 
 type ProjectedSubagent = Pick<
@@ -165,11 +176,15 @@ export function threadSubagentEntries(input: {
   for (const { thread, depth } of subagentDescendants(input.shells, input.parent, coordinatorIds)) {
     const agent = byChild.get(thread.id);
     listed.add(thread.id);
+    const status = agent?.status ?? shellStatus(thread);
+    // A run blocked on an approval or a question waits on the person, not on its work.
+    const awaitingPerson = isOrchestrationV2WorkActive(status) ? awaitingPersonOf(thread) : null;
     entries.push({
       key: thread.id,
       childThreadId: thread.id,
       title: agent?.title?.trim() || thread.title || "Subagent",
-      status: agent?.status ?? shellStatus(thread),
+      status: awaitingPerson === null ? status : "waiting",
+      ...(awaitingPerson === null ? {} : { awaitingPerson }),
       origin: agent?.origin ?? null,
       providerInstanceId: agent?.providerInstanceId ?? thread.modelSelection.instanceId,
       model: agent?.model ?? thread.modelSelection.model,
@@ -215,8 +230,8 @@ export function runningSubagentCount(
   parent: Pick<EnvironmentThreadShell, "id" | "environmentId">,
   coordinatorIds: ReadonlySet<string> = EMPTY_IDS,
 ): number {
-  return subagentDescendants(shells, parent, coordinatorIds).filter(({ thread }) =>
-    threadRuntimeIsActive(thread.runtime),
+  return subagentDescendants(shells, parent, coordinatorIds).filter(
+    ({ thread }) => threadRuntimeIsActive(thread.runtime) && awaitingPersonOf(thread) === null,
   ).length;
 }
 
@@ -248,6 +263,19 @@ export const SUBAGENT_STATUS_LABELS: Record<SubagentEntryStatus, string> = {
   cancelled: "Stopped",
   interrupted: "Interrupted",
 };
+
+const AWAITING_PERSON_LABELS: Record<SubagentAwaitingPerson, string> = {
+  approval: "Approval requested",
+  answer: "Answer needed",
+  "sign-in": "Sign-in needed",
+};
+
+/** A row's status words: what it waits on from the person, or its status. */
+export function subagentEntryLabel(entry: Pick<SubagentEntry, "status" | "awaitingPerson">): string {
+  return entry.awaitingPerson === undefined
+    ? SUBAGENT_STATUS_LABELS[entry.status]
+    : AWAITING_PERSON_LABELS[entry.awaitingPerson];
+}
 
 export function subagentStatusTone(
   status: SubagentEntryStatus,

@@ -5,7 +5,9 @@ import { logicalProjectThreads, requestExecutionLabel } from "./projectDomain";
 import {
   isNestedSubagentThread,
   runningSubagentCount,
+  subagentEntryLabel,
   subagentHostThread,
+  subagentStatusTone,
   threadSubagentEntries,
   withRunningSubagents,
 } from "./threadSubagents";
@@ -119,6 +121,41 @@ describe("thread subagents", () => {
     expect(withRunningSubagents(null, 2)).toBe("Working · 2 subagents");
     expect(withRunningSubagents("Blocked", 1)).toBe("Blocked · 1 subagent");
     expect(withRunningSubagents("Blocked", 0)).toBe("Blocked");
+  });
+
+  it("shows a delegated task held on an approval as waiting on you, not working", () => {
+    const running = { status: "running" } as EnvironmentThreadShell["runtime"];
+    const held = shell("held", "native", { runtime: running, hasPendingApprovals: true });
+    const asking = shell("asking", "native", { runtime: running, hasPendingUserInput: true });
+    const shells = [...all, held, asking];
+    const entries = threadSubagentEntries({
+      parent: worker,
+      shells,
+      // The parent's own record still says the task runs.
+      projected: [
+        {
+          id: "node:held",
+          childThreadId: "held",
+          title: "Install deps",
+          prompt: null,
+          status: "running",
+          origin: "app_owned",
+          providerInstanceId: "codex",
+          model: "gpt-5.5",
+          result: null,
+          startedAt: null,
+          completedAt: null,
+        },
+      ] as never,
+    });
+    const row = (id: string) => entries.find((entry) => entry.childThreadId === id)!;
+    expect(row("held")).toMatchObject({ status: "waiting", awaitingPerson: "approval" });
+    expect(subagentEntryLabel(row("held"))).toBe("Approval requested");
+    expect(subagentStatusTone(row("held").status)).toBe("waiting");
+    expect(subagentEntryLabel(row("asking"))).toBe("Answer needed");
+    // The task still at work counts; the two waiting on the person do not.
+    expect(subagentEntryLabel(row("nested"))).toBe("Working");
+    expect(runningSubagentCount(shells, worker)).toBe(1);
   });
 
   it("names the thread's model for a task that ran outside any run", () => {

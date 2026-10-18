@@ -13,7 +13,7 @@ import { useThreadProjection } from "../../../state/entities";
 import {
   firstLine,
   isSubagentEntryActive,
-  SUBAGENT_STATUS_LABELS,
+  subagentEntryLabel,
   subagentStatusTone,
   threadSubagentEntries,
   threadWorkflowEntries,
@@ -81,7 +81,10 @@ export function SubagentsChip(props: {
   const entriesByEnvironment = useProviderEntriesByEnvironment();
   const providerEntries = entriesByEnvironment.get(props.environmentId);
   const total = props.entries.length;
-  const running = props.entries.filter(isSubagentEntryActive).length;
+  // A subagent blocked on the person is waiting, not working.
+  const running = props.entries.filter(
+    (entry) => isSubagentEntryActive(entry) && entry.awaitingPerson === undefined,
+  ).length;
   if (total === 0) return null;
   const workflows = props.entries.filter((entry) => entry.kind === "workflow").length;
   const agents = total - workflows;
@@ -127,7 +130,7 @@ export function SubagentsChip(props: {
                           <WorkflowIcon aria-hidden className="size-3" /> Workflow
                         </span>
                       ) : null}
-                      <span data-tone={tone}>{SUBAGENT_STATUS_LABELS[entry.status]}</span>
+                      <span data-tone={tone}>{subagentEntryLabel(entry)}</span>
                       {entry.providerInstanceId && entry.model ? (
                         <ModelBadge
                           entry={providerEntry}
