@@ -40,6 +40,16 @@ describe("remote worker cards", () => {
     );
   });
 
+  it("shows a worker held on a question over there as waiting on you", () => {
+    const held = { ...worker, lastStatus: "waiting_on_you" };
+    expect(remoteWorkerCardStatus(held)).toEqual({
+      tone: "waiting",
+      label: "Waiting on you on M1",
+    });
+    // Out of touch, its last word is stale: it says the machine is unreachable instead.
+    expect(remoteWorkerCardStatus({ ...held, reachable: false }).label).toContain("unreachable");
+  });
+
   it("drops closed rows and keeps the server order", () => {
     const later = { ...worker, id: "rwt:2", updatedAt: "2026-10-11T00:00:00.000Z" };
     expect(

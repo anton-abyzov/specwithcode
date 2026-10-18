@@ -10,6 +10,7 @@ import {
   MachineHandoffPrepareResult,
   MachineHandoffPreviewMetadata,
   MachineHandoffReceiveResult,
+  type Project,
   ProjectId,
   MessageId,
   ThreadId,
@@ -40,6 +41,7 @@ import * as ProjectAdmission from "../project/ProjectAdmission.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectWorkspaceService from "../project/ProjectWorkspaceService.ts";
 import * as ProjectCoordinatorService from "../project/ProjectCoordinatorService.ts";
+import * as ProjectRuntimeAccess from "../project/ProjectRuntimeAccess.ts";
 import * as HandoffGit from "./handoffGit.ts";
 import { HandoffGitError, validManifest } from "./handoffGitTypes.ts";
 import * as MachineHandoffStore from "./MachineHandoffStore.ts";
@@ -109,6 +111,15 @@ function canonical(value: unknown): string {
 export function machineHandoffDigest(value: Omit<MachineHandoffBundle, "digest">): string {
   return sha256([canonical(value)], "hex");
 }
+/** A preview saved before bundles carried the mode still matches the same source. */
+function comparableContext(
+  retained: MachineHandoffContext,
+  saved: MachineHandoffContext,
+): MachineHandoffContext {
+  if (saved.runtimeMode !== undefined) return retained;
+  const { runtimeMode: _runtimeMode, ...rest } = retained;
+  return rest;
+}
 function checkBundle(bundle: MachineHandoffBundle): void {
   if (!Schema.is(MachineHandoffBundle)(bundle)) throw new MachineHandoffError({ code: "invalid" });
   const { digest, ...content } = bundle;
@@ -133,6 +144,7 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const admission = yield* ProjectAdmission.ProjectAdmission;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const runtimeAccess = yield* ProjectRuntimeAccess.ProjectRuntimeAccess;
   const workspace = yield* ProjectWorkspaceService.ProjectWorkspaceService;
   const coordinator = yield* ProjectCoordinatorService.ProjectCoordinatorService;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -220,7 +232,7 @@ const make = Effect.gen(function* () {
       }),
       "storage_failed",
     );
-  const context = (id: ProjectId, selected: ThreadId) =>
+  const context = (id: ProjectId, selected: ThreadId, current: Project) =>
     guarded(
       Effect.gen(function* () {
         const source = yield* projections.getThreadShell(selected);
@@ -295,9 +307,16 @@ const make = Effect.gen(function* () {
           );
         for (const thread of threads)
           segments.set(stringifyJson([thread.environmentId, thread.threadId]), thread);
+        // The destination continues with the access the coordinator ran with here;
+        // the project's saved mode stands in before the coordinator exists.
+        const runtimeMode =
+          candidates.find((t) => t.id === coordinatorId)?.runtimeMode ??
+          resolveProjectSettings(yield* serverSettings.getSettings, id, current).settings
+            .defaultRuntimeMode;
         const result = {
           goal: metadata.settings.goal,
           instructions: metadata.settings.instructions,
+          runtimeMode,
           notes,
           threads: [...segments.values()],
         };
@@ -409,7 +428,7 @@ const make = Effect.gen(function* () {
           const retained =
             binding?.state === "transferring" && saved
               ? saved.bundle.context
-              : yield* context(input.projectId, selected);
+              : yield* context(input.projectId, selected, current);
           const worktreePaths = [
             ...new Set(
               retained.threads.flatMap((thread) =>
@@ -437,7 +456,8 @@ const make = Effect.gen(function* () {
           if (
             saved &&
             (canonical(manifest) !== canonical(saved.bundle.manifest) ||
-              canonical(retained) !== canonical(saved.bundle.context))
+              canonical(comparableContext(retained, saved.bundle.context)) !==
+                canonical(saved.bundle.context))
           )
             return yield* new MachineHandoffError({ code: "source_changed" });
           if (!saved) {
@@ -899,22 +919,29 @@ const make = Effect.gen(function* () {
           if (!saved?.configured) {
             const settings = yield* guarded(serverSettings.getSettings, "storage_failed");
             const resolved = resolveProjectSettings(settings, input.projectId, current).settings;
-            yield* guarded(
-              serverSettings.updateSettings({
-                projectSettingsOverrides: {
-                  [projectId]: {
-                    defaultModelSelection: resolved.defaultModelSelection,
-                    defaultRuntimeMode: resolved.defaultRuntimeMode,
-                    providerLimitAction: "ask",
-                    providerLimitFallbackModelSelection: null,
-                    providerLimitSwitchAtPercent: resolved.providerLimitSwitchAtPercent,
-                    providerLimitWaitUnderMinutes: resolved.providerLimitWaitUnderMinutes,
-                    providerLimitRedeemResets: false,
-                    providerLimitSpendCredits: false,
-                    providerLimitUseApiCredits: false,
-                  },
+            const carriedMode = input.bundle.context.runtimeMode;
+            const patch = {
+              projectSettingsOverrides: {
+                [projectId]: {
+                  defaultModelSelection: resolved.defaultModelSelection,
+                  defaultRuntimeMode: carriedMode ?? resolved.defaultRuntimeMode,
+                  providerLimitAction: "ask" as const,
+                  providerLimitFallbackModelSelection: null,
+                  providerLimitSwitchAtPercent: resolved.providerLimitSwitchAtPercent,
+                  providerLimitWaitUnderMinutes: resolved.providerLimitWaitUnderMinutes,
+                  providerLimitRedeemResets: false,
+                  providerLimitSpendCredits: false,
+                  providerLimitUseApiCredits: false,
                 },
-              }),
+              },
+            };
+            // A carried mode is a project access save: an already configured project's
+            // coordinator and chats move to it together, as when a person saves it.
+            // Older bundles carry none and keep the plain settings write.
+            yield* guarded(
+              carriedMode === undefined
+                ? serverSettings.updateSettings(patch)
+                : runtimeAccess.updateSettings(patch),
               "storage_failed",
             );
             const settingsNow = Option.isSome(isolated) ? isolated.value.workspaceSettings : null;

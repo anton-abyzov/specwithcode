@@ -5,7 +5,10 @@ import {
   type OrchestrationV2Notification,
   ThreadId,
 } from "@specweave-studio/contracts";
-import { formatStudioThreadHref } from "@specweave-studio/shared/studioThreadLinks";
+import {
+  formatStudioThreadHref,
+  studioThreadLinkLabel,
+} from "@specweave-studio/shared/studioThreadLinks";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -69,6 +72,33 @@ export interface ReconciledLaunch {
 }
 
 type WakeOutcome = "sent" | "pending" | "disposed";
+
+/**
+ * The status a followed worker shows while its run is blocked on the person
+ * on its own machine (a question, a sign-in or an approval there), instead of
+ * reading as working for as long as nobody answers it.
+ */
+export const REMOTE_WORKER_WAITING_ON_YOU = "waiting_on_you";
+
+/**
+ * Tells the caller, once per run, that its worker waits on the person. The
+ * words are fixed; nothing from the remote agent is quoted.
+ */
+export function remoteWorkerWaitingOnYou(input: {
+  readonly title: string;
+  readonly threadRef: string;
+  readonly machineLabel: string;
+}): { readonly text: string; readonly notification: OrchestrationV2Notification } {
+  const link = `[${studioThreadLinkLabel(input.title.slice(0, 200), "worker")}](${input.threadRef})`;
+  return {
+    text: `Remote worker ${link} on ${input.machineLabel} is waiting on the user: its run asked for an answer, a sign-in or an approval there. Tell the user; they answer it in that thread. You are woken again when its run finishes.`,
+    notification: {
+      source: { kind: "background_task" },
+      outcome: "unknown",
+      summary: `${link} on ${input.machineLabel} is waiting on you.`,
+    },
+  };
+}
 
 export class RemoteWorkerFollower extends Context.Service<
   RemoteWorkerFollower,
@@ -217,6 +247,73 @@ const make = Effect.gen(function* () {
 
   const wakeId = (row: RemoteWorkerStore.RemoteWorkerRecord, key: string) =>
     `remote-worker-wake:${row.id}:${key}`;
+
+  /** Rows whose last poll saw a pending request. */
+  const pendingSeen = new Set<string>();
+  /**
+   * Whether the worker's thread has a request open to the person: true only
+   * once one is seen on two polls in a row. Undefined when the other machine
+   * could not say or the request is new; the last answer then stands.
+   */
+  const waitsOnPerson = (row: RemoteWorkerStore.RemoteWorkerRecord) =>
+    Effect.gen(function* () {
+      if (row.remoteThreadId === null) return undefined;
+      const semaphore = yield* permitFor(row.machineId);
+      const read = yield* semaphore
+        .withPermits(1)(
+          client.call({
+            machineId: row.machineId,
+            tool: "studio_thread_read",
+            arguments: { threadId: row.remoteThreadId, limit: 1, runLimit: 1 },
+          }),
+        )
+        .pipe(Effect.result);
+      if (read._tag === "Failure") return undefined;
+      const thread = isRecord(read.success) ? read.success.thread : undefined;
+      const count = isRecord(thread) ? thread.pendingRequestCount : undefined;
+      if (typeof count !== "number") return undefined;
+      if (count === 0) {
+        pendingSeen.delete(row.id);
+        return false;
+      }
+      // A Full access machine answers its own approvals within moments; only a
+      // request still open on the next poll is waiting on the person.
+      if (pendingSeen.has(row.id)) return true;
+      pendingSeen.add(row.id);
+      return undefined;
+    });
+
+  /** Notes a run blocked on the person and tells the caller once for that run. */
+  const noteWaitingOnYou = (
+    row: RemoteWorkerStore.RemoteWorkerRecord,
+    runId: string | null,
+    status: string,
+  ) =>
+    Effect.gen(function* () {
+      const waiting = yield* waitsOnPerson(row);
+      const shown =
+        waiting === true || (waiting === undefined && row.lastStatus === REMOTE_WORKER_WAITING_ON_YOU)
+          ? REMOTE_WORKER_WAITING_ON_YOU
+          : status;
+      if (row.lastStatus !== shown) yield* update(row.id, () => ({ lastStatus: shown }));
+      if (
+        shown !== REMOTE_WORKER_WAITING_ON_YOU ||
+        row.lastStatus === REMOTE_WORKER_WAITING_ON_YOU ||
+        !row.reportBack ||
+        row.remoteThreadId === null
+      )
+        return;
+      // One notice per run: the orchestrator ignores a command id it already took.
+      yield* wake(
+        row,
+        `remote-worker-waiting:${row.id}:${runId ?? "no-run"}`,
+        remoteWorkerWaitingOnYou({
+          title: row.title,
+          threadRef: formatStudioThreadHref(row.remoteThreadId, row.environmentId),
+          machineLabel: yield* machineLabel(row.machineId),
+        }),
+      );
+    });
 
   const wakeMessage = (row: RemoteWorkerStore.RemoteWorkerRecord, status: string) =>
     Effect.map(machineLabel(row.machineId), (label) =>
@@ -378,7 +475,8 @@ const make = Effect.gen(function* () {
           const status = typeof answer.status === "string" ? answer.status : "idle";
           const runId = typeof answer.runId === "string" ? answer.runId : row.followedRunId;
           if (answer.timedOut === true || !isTerminalThreadStatus(status)) {
-            if (row.lastStatus !== status) yield* update(rowId, () => ({ lastStatus: status }));
+            // A run still open may be held on a question to the person over there.
+            yield* noteWaitingOnYou(row, runId, status);
             if (answer.timedOut !== true)
               yield* Effect.sleep(Duration.millis(timings.backoffStartMs));
             continue;
