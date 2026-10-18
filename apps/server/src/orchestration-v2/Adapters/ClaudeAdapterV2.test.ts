@@ -4108,6 +4108,47 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("stops on the exact billing frame Claude Code 2.1.302 sends for an empty account", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-credit-balance-is-too-low"),
+            text: "Complete the task.",
+            attachments: [],
+          }),
+        );
+        // Captured from a real key with no credits (2026-10-18).
+        const cliText = "Credit balance is too low";
+        yield* Queue.offerAll(harness.sdkMessages, [
+          makeAssistantErrorFrame({
+            uuid: "00000000-0000-4000-8000-000000000217",
+            error: "billing_error",
+            text: cliText,
+          }),
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000216",
+            result: cliText,
+            terminalReason: "api_error",
+            isError: true,
+            apiErrorStatus: 400,
+          }),
+        ]);
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, "failed");
+        if (terminal.status !== "failed") return;
+        assert.equal(terminal.failure.class, "usage_limit");
+        assert.equal(terminal.failure.code, "credit_balance_too_low");
+        assert.equal(terminal.failure.message, cliText);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
   const providerThreadRosterEvents = (events: ReadonlyArray<ProviderAdapterV2Event>) =>
     events.filter(
       (event): event is Extract<ProviderAdapterV2Event, { type: "provider_thread.updated" }> =>

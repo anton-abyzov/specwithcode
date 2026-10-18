@@ -26,6 +26,20 @@ import * as ServerConfig from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 
+/**
+ * `specwithcode` (or `start`) found a live server already serving this state
+ * directory, for example the desktop app. The start command opens that server
+ * instead of failing; see cli/server.ts.
+ */
+export class ServerAlreadyRunningError extends Schema.TaggedError<ServerAlreadyRunningError>()(
+  "ServerAlreadyRunningError",
+  { baseDir: Schema.String, pid: Schema.Number, origin: Schema.String },
+) {
+  override get message(): string {
+    return `A SpecWithCode server is already running for ${this.baseDir} (pid ${String(this.pid)}, ${this.origin}). Connect to that server, stop it before starting another, or use a different --base-dir.`;
+  }
+}
+
 const modeFlag = Flag.Literals("mode", ServerConfig.RuntimeMode.literals).pipe(
   Flag.withDescription("Runtime mode. `desktop` keeps loopback defaults unless overridden."),
   Flag.optional,
@@ -343,9 +357,13 @@ export const resolveServerConfig = (
         runtime.value.pid !== process.pid &&
         isProcessAlive(runtime.value.pid)
       ) {
-        return yield* new CliError.UserError({
-          cause: `A SpecWithCode server is already running for ${baseDir} (pid ${runtime.value.pid}, ${runtime.value.origin}). Connect to that server, stop it before starting another, or use a different --base-dir.`,
+        const running = new ServerAlreadyRunningError({
+          baseDir,
+          pid: runtime.value.pid,
+          origin: runtime.value.origin,
         });
+        // The desktop backend reports it as before; the CLI opens the running server.
+        return yield* mode === "web" ? running : new CliError.UserError({ cause: running.message });
       }
     }
     yield* fs.makeDirectory(cwd, { recursive: true });

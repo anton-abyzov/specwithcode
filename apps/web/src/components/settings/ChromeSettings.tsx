@@ -14,7 +14,6 @@ import {
   CircleCheckIcon,
   CopyIcon,
   ExternalLinkIcon,
-  PlayCircleIcon,
   PlugZapIcon,
   RefreshCwIcon,
 } from "lucide-react";
@@ -35,8 +34,6 @@ import { SettingsPageContainer, SettingsSection, useRelativeTimeTick } from "./s
 export const CHROME_EXTENSION_URL = "https://claude.ai/chrome";
 /** The Chrome profile agents should use; holds the accounts SpecWithCode publishes from. */
 export const AGENT_CHROME_PROFILE = "SpecWithCode";
-/** Walkthrough video; null until it is published. */
-export const CHROME_SETUP_VIDEO_URL: string | null = null;
 /** An MCP entry that lets another provider share Claude Code's browser server. */
 export const SHARED_BRIDGE_JSON = `{
   "mcpServers": {
@@ -189,10 +186,8 @@ export function ChromeSettings() {
         <div className="space-y-4 px-4 py-4">
           <p className="max-w-prose text-sm text-muted-foreground">
             Agents publish, read dashboards and fill forms in your real Chrome, signed in as you.
-            The SpecWithCode Browser extension is the recommended way: install it once per Chrome
-            profile and agents of every provider can use that profile. Claude in Chrome remains as
-            an alternative below. Pick the computer whose Chrome you are setting up: Chrome pairs
-            only with SpecWithCode on its own computer.
+            Pick the computer whose Chrome you are setting up: Chrome pairs only with SpecWithCode
+            on its own computer.
           </p>
           {environments.length === 0 ? (
             <p role="status" className="text-sm text-muted-foreground">
@@ -236,27 +231,63 @@ export function ChromeSettings() {
           }
         />
       )}
-      <p className="px-1 pt-2 text-sm font-medium text-muted-foreground">
-        Alternative: Claude in Chrome
-      </p>
       {selected && (
-        <MachineChromeCard
-          key={selected.environmentId}
+        <ClaudeInChromeSection
+          key={`claude-${selected.environmentId}`}
           environmentId={selected.environmentId}
           machine={selected.label}
         />
       )}
-      <ChromeSetupGuide />
     </SettingsPageContainer>
+  );
+}
+
+/**
+ * Claude Code's own browser route, kept for people who already use it. Folded
+ * away so the page shows one status and one setup flow: the extension's.
+ */
+function ClaudeInChromeSection({
+  environmentId,
+  machine,
+}: {
+  environmentId: EnvironmentId;
+  machine: string;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <SettingsSection
+      title="Claude in Chrome (optional)"
+      icon={<ChromeIcon className="size-4" />}
+      data-testid="claude-in-chrome-section"
+    >
+      <details
+        className="px-4 py-4 text-sm"
+        onToggle={(event) => setOpen((event.currentTarget as HTMLDetailsElement).open)}
+      >
+        <summary className="cursor-pointer text-muted-foreground">
+          Not needed with the extension above. Open only if you also use Anthropic's Claude in
+          Chrome extension on {machine}.
+        </summary>
+        {open && (
+          <div className="mt-4 space-y-5">
+            <MachineChromeCard environmentId={environmentId} machine={machine} bare />
+            <ClaudeInChromeSteps />
+          </div>
+        )}
+      </details>
+    </SettingsSection>
   );
 }
 
 export function MachineChromeCard({
   environmentId,
   machine,
+  bare = false,
 }: {
   environmentId: EnvironmentId;
   machine: string;
+  /** Inside another section: no card of its own. */
+  bare?: boolean;
 }) {
   const permitted = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
   const canOperate = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
@@ -296,11 +327,17 @@ export function MachineChromeCard({
   const header = (
     <span className="flex items-center gap-2">
       <ChromeIcon className="size-4" />
-      Chrome on {machine}
+      Claude in Chrome on {machine}
     </span>
   );
   if (!connected || !permitted)
-    return (
+    return bare ? (
+      <p role="status" className="text-sm text-muted-foreground">
+        {!connected
+          ? `${machine} is offline. Connect it to check its Chrome.`
+          : "This device cannot read that machine's settings."}
+      </p>
+    ) : (
       <SettingsSection title={`Chrome on ${machine}`} icon={<ChromeIcon className="size-4" />}>
         <p role="status" className="px-4 py-4 text-sm text-muted-foreground">
           {!connected
@@ -317,115 +354,118 @@ export function MachineChromeCard({
   const diagnosis = status ? diagnoseChrome(status, check, machine) : null;
   const sharable = status?.providers.filter((p) => p.route === "not_set_up") ?? [];
 
-  return (
-    <SettingsSection
-      title={`Chrome on ${machine}`}
-      hideTitle
-      aria-label={`Chrome on ${machine}`}
-      data-testid="machine-chrome-card"
-    >
-      <div className="space-y-5 px-4 py-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0 space-y-1">
-            <h3 className="text-base font-medium">{header}</h3>
-            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <Badge variant={pill.tone} data-testid="chrome-check-state">
-                {pill.tone === "success" ? (
-                  <CircleCheckIcon className="size-3" />
-                ) : (
-                  <CircleAlertIcon className="size-3" />
-                )}
-                {pill.label}
-              </Badge>
-              {check && (
-                <span>
-                  Checked {formatRelativeTimeLabel(check.checkedAt)}
-                  {check.tabCount !== undefined &&
-                    ` · ${check.tabCount} agent tab${check.tabCount === 1 ? "" : "s"}`}
-                </span>
+  const body = (
+    <div className={bare ? "space-y-5" : "space-y-5 px-4 py-4"} data-testid="machine-chrome-card">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 space-y-1">
+          <h3 className="text-base font-medium">{header}</h3>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <Badge variant={pill.tone} data-testid="chrome-check-state">
+              {pill.tone === "success" ? (
+                <CircleCheckIcon className="size-3" />
+              ) : (
+                <CircleAlertIcon className="size-3" />
               )}
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              variant={diagnosis?.action === "reconnect" ? "outline" : "default"}
-              disabled={!canOperate || busy !== null}
-              onClick={() => void run("test")}
-            >
-              {busy === "test" ? <Spinner /> : <PlugZapIcon />}
-              Test connection
-            </Button>
-            <Button
-              size="sm"
-              variant={diagnosis?.action === "reconnect" ? "default" : "outline"}
-              disabled={!canOperate || busy !== null}
-              onClick={() => void run("reconnect")}
-            >
-              {busy === "reconnect" ? <Spinner /> : <RefreshCwIcon />}
-              Reconnect
-            </Button>
+              {pill.label}
+            </Badge>
+            {check && (
+              <span>
+                Checked {formatRelativeTimeLabel(check.checkedAt)}
+                {check.tabCount !== undefined &&
+                  ` · ${check.tabCount} agent tab${check.tabCount === 1 ? "" : "s"}`}
+              </span>
+            )}
           </div>
         </div>
-
-        {busy === "reconnect" && (
-          <p role="status" className="rounded-md bg-info/8 px-3 py-2 text-sm text-info-foreground">
-            Chrome on {machine} now shows Connect in the extension. Press it in the{" "}
-            {AGENT_CHROME_PROFILE} profile. Waiting up to 2 minutes.
-          </p>
-        )}
-        {!canOperate && (
-          <p className="text-xs text-muted-foreground">
-            This device can view {machine}'s Chrome but not test it.
-          </p>
-        )}
-        {(runError || query.error) && (
-          <p role="alert" className="text-sm text-destructive-foreground">
-            {runError ?? query.error}
-          </p>
-        )}
-        {diagnosis && busy === null && (
-          <div
-            role="alert"
-            data-testid="chrome-diagnosis"
-            className={
-              diagnosis.tone === "error"
-                ? "rounded-md bg-destructive/8 px-3 py-2"
-                : "rounded-md bg-warning/8 px-3 py-2"
-            }
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            variant={diagnosis?.action === "reconnect" ? "outline" : "default"}
+            disabled={!canOperate || busy !== null}
+            onClick={() => void run("test")}
           >
-            <p className="text-sm font-medium">{diagnosis.title}</p>
-            <p className="text-sm text-muted-foreground">{diagnosis.detail}</p>
-          </div>
-        )}
-
-        {query.isPending && !status ? (
-          <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Spinner /> Reading Chrome on {machine}…
-          </p>
-        ) : status ? (
-          <>
-            <ChromeFacts status={status} />
-            {check && check.browsers.length > 0 && (
-              <div className="space-y-1.5">
-                <p className="text-xs font-medium text-muted-foreground">Connected browsers</p>
-                <ul className="flex flex-wrap gap-2">
-                  {check.browsers.map((browser) => (
-                    <li key={browser.deviceId ?? browser.name}>
-                      <Badge variant={browser.inUse ? "success" : "outline"} size="lg">
-                        {browser.name}
-                        {browser.inUse && " · in use"}
-                      </Badge>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            <ProviderRoutes providers={status.providers} />
-            {sharable.length > 0 && <SharedBridgeSnippet providers={sharable} />}
-          </>
-        ) : null}
+            {busy === "test" ? <Spinner /> : <PlugZapIcon />}
+            Test connection
+          </Button>
+          <Button
+            size="sm"
+            variant={diagnosis?.action === "reconnect" ? "default" : "outline"}
+            disabled={!canOperate || busy !== null}
+            onClick={() => void run("reconnect")}
+          >
+            {busy === "reconnect" ? <Spinner /> : <RefreshCwIcon />}
+            Reconnect
+          </Button>
+        </div>
       </div>
+
+      {busy === "reconnect" && (
+        <p role="status" className="rounded-md bg-info/8 px-3 py-2 text-sm text-info-foreground">
+          Chrome on {machine} now shows Connect in the extension. Press it in the{" "}
+          {AGENT_CHROME_PROFILE} profile. Waiting up to 2 minutes.
+        </p>
+      )}
+      {!canOperate && (
+        <p className="text-xs text-muted-foreground">
+          This device can view {machine}'s Chrome but not test it.
+        </p>
+      )}
+      {(runError || query.error) && (
+        <p role="alert" className="text-sm text-destructive-foreground">
+          {runError ?? query.error}
+        </p>
+      )}
+      {diagnosis && busy === null && (
+        <div
+          role="alert"
+          data-testid="chrome-diagnosis"
+          className={
+            diagnosis.tone === "error"
+              ? "rounded-md bg-destructive/8 px-3 py-2"
+              : "rounded-md bg-warning/8 px-3 py-2"
+          }
+        >
+          <p className="text-sm font-medium">{diagnosis.title}</p>
+          <p className="text-sm text-muted-foreground">{diagnosis.detail}</p>
+        </div>
+      )}
+
+      {query.isPending && !status ? (
+        <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Spinner /> Reading Chrome on {machine}…
+        </p>
+      ) : status ? (
+        <>
+          <ChromeFacts status={status} />
+          {check && check.browsers.length > 0 && (
+            <div className="space-y-1.5">
+              <p className="text-xs font-medium text-muted-foreground">Connected browsers</p>
+              <ul className="flex flex-wrap gap-2">
+                {check.browsers.map((browser) => (
+                  <li key={browser.deviceId ?? browser.name}>
+                    <Badge variant={browser.inUse ? "success" : "outline"} size="lg">
+                      {browser.name}
+                      {browser.inUse && " · in use"}
+                    </Badge>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <ProviderRoutes providers={status.providers} />
+          {sharable.length > 0 && <SharedBridgeSnippet providers={sharable} />}
+        </>
+      ) : null}
+    </div>
+  );
+  if (bare) return body;
+  return (
+    <SettingsSection
+      title={`Claude in Chrome on ${machine}`}
+      hideTitle
+      aria-label={`Claude in Chrome on ${machine}`}
+    >
+      {body}
     </SettingsSection>
   );
 }
@@ -571,39 +611,23 @@ const SETUP_STEPS: ReadonlyArray<{ title: string; body: React.ReactNode }> = [
   },
 ];
 
-function ChromeSetupGuide() {
+function ClaudeInChromeSteps() {
   return (
-    <SettingsSection title="Set up Claude in Chrome" icon={<PlayCircleIcon className="size-4" />}>
-      <div className="grid gap-5 px-4 py-4 md:grid-cols-[1fr_16rem]">
-        <ol className="space-y-3">
-          {SETUP_STEPS.map((step, index) => (
-            <li key={step.title} className="flex gap-3">
-              <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-medium text-primary-foreground">
-                {index + 1}
-              </span>
-              <div className="min-w-0 text-sm">
-                <p className="font-medium">{step.title}</p>
-                <p className="text-muted-foreground">{step.body}</p>
-              </div>
-            </li>
-          ))}
-        </ol>
-        <div className="flex aspect-video flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border/70 bg-muted/40 p-4 text-center text-sm text-muted-foreground">
-          <PlayCircleIcon className="size-8" />
-          {CHROME_SETUP_VIDEO_URL ? (
-            <a
-              className="underline underline-offset-2"
-              href={CHROME_SETUP_VIDEO_URL}
-              target="_blank"
-              rel="noreferrer"
-            >
-              Watch the 2-minute setup
-            </a>
-          ) : (
-            <span>Video walkthrough coming soon</span>
-          )}
-        </div>
-      </div>
-    </SettingsSection>
+    <div className="space-y-2">
+      <p className="text-sm font-medium">Set up Claude in Chrome</p>
+      <ol className="space-y-3">
+        {SETUP_STEPS.map((step, index) => (
+          <li key={step.title} className="flex gap-3">
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium">
+              {index + 1}
+            </span>
+            <div className="min-w-0 text-sm">
+              <p className="font-medium">{step.title}</p>
+              <p className="text-muted-foreground">{step.body}</p>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </div>
   );
 }

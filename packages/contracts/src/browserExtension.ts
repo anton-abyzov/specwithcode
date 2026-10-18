@@ -28,6 +28,15 @@ export const BrowserExtensionLease = Schema.Struct({
 });
 export type BrowserExtensionLease = typeof BrowserExtensionLease.Type;
 
+/** One thread acting in a profile: threads share it, each in its own tabs. */
+export const BrowserExtensionThreadUse = Schema.Struct({
+  threadId: Schema.String,
+  tabs: Schema.Number,
+  since: Schema.String,
+  lastActionAt: Schema.String,
+});
+export type BrowserExtensionThreadUse = typeof BrowserExtensionThreadUse.Type;
+
 export const BrowserExtensionProfile = Schema.Struct({
   id: Schema.String,
   /** The name the user gave this Chrome profile when pairing. */
@@ -38,7 +47,10 @@ export const BrowserExtensionProfile = Schema.Struct({
   connectedAt: Schema.String,
   /** Tabs an agent is controlling right now. */
   attachedTabs: Schema.Number,
+  /** The most recently active thread; kept for apps that predate `threads`. */
   lease: Schema.NullOr(BrowserExtensionLease),
+  /** Every thread acting in this profile now, most recent first. */
+  threads: Schema.optionalKey(Schema.Array(BrowserExtensionThreadUse)),
 });
 export type BrowserExtensionProfile = typeof BrowserExtensionProfile.Type;
 
@@ -116,9 +128,12 @@ export const browserExtensionRpcs = [
     success: BrowserExtensionCheck,
     error: EnvironmentAuthorizationError,
   }),
-  /** Ends an agent's hold on a profile and detaches from all of its tabs. */
+  /** Lets go of one thread's tabs in a profile, or with no threadId of all of them. */
   Rpc.make(BROWSER_EXTENSION_RPC_METHODS.browserExtensionStop, {
-    payload: Schema.Struct({ profileId: Schema.String }),
+    payload: Schema.Struct({
+      profileId: Schema.String,
+      threadId: Schema.optionalKey(Schema.String),
+    }),
     success: BrowserExtensionStatus,
     error: EnvironmentAuthorizationError,
   }),
@@ -140,6 +155,7 @@ export class BrowserExtensionToolError extends Schema.TaggedError<BrowserExtensi
       "choose_profile",
       "profile_not_found",
       "profile_in_use",
+      "tab_in_use",
       "tab_not_found",
       "element_not_found",
       "page_error",
@@ -198,6 +214,10 @@ export const ChromeTabSummary = Schema.Struct({
   active: Schema.Boolean,
   /** Opened or used by an agent; sits in the SpecWithCode tab group. */
   agentTab: Schema.Boolean,
+  /** This thread drives the tab. */
+  thisThread: Schema.optional(Schema.Boolean),
+  /** Another thread drives the tab; leave it alone and use chrome_open. */
+  anotherThread: Schema.optional(Schema.Boolean),
 });
 export const ChromeTabsResult = Schema.Struct({
   profile: Schema.String,

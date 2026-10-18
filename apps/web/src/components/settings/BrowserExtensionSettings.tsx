@@ -7,7 +7,9 @@ import {
   type BrowserExtensionCheck,
   type BrowserExtensionInstallFolder,
   type BrowserExtensionProfile,
+  type BrowserExtensionThreadUse,
   type EnvironmentId,
+  ThreadId,
 } from "@specweave-studio/contracts";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import {
@@ -25,6 +27,7 @@ import {
 } from "lucide-react";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { ensureLocalApi } from "../../localApi";
+import { useThreadShell } from "../../state/entities";
 import { useEnvironment } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
@@ -40,7 +43,6 @@ import { SettingsSection, useRelativeTimeTick } from "./settingsLayout";
 /** Anchor for settings search. */
 export const BROWSER_EXTENSION_SECTION_ID = "chrome-browser-extension";
 export const BROWSER_EXTENSION_POLL_MS = 3_000;
-export const EXTENSION_PROVIDERS = "Claude, Codex, Grok, Gemini, Copilot and Meta Muse";
 
 const CHECK_LABELS: Record<
   BrowserExtensionCheck["state"],
@@ -188,10 +190,14 @@ export function BrowserExtensionCard({
         refresh();
       },
     );
-  const stopProfile = (profileId: string) =>
+  const stopProfile = (profileId: string, threadId?: string) =>
     run(
-      `stop:${profileId}`,
-      () => stop({ environmentId, input: { profileId } }),
+      threadId === undefined ? `stop:${profileId}` : `stop:${profileId}:${threadId}`,
+      () =>
+        stop({
+          environmentId,
+          input: threadId === undefined ? { profileId } : { profileId, threadId },
+        }),
       () => refresh(),
     );
   const prepareFolder = () =>
@@ -201,7 +207,7 @@ export function BrowserExtensionCard({
       (value) => setFolder(value),
     );
 
-  const title = `SpecWithCode Browser extension on ${machine}`;
+  const title = `Chrome on ${machine}`;
   if (!connected || !permitted)
     return (
       <SettingsSection
@@ -211,7 +217,7 @@ export function BrowserExtensionCard({
       >
         <p role="status" className="px-4 py-4 text-sm text-muted-foreground">
           {!connected
-            ? `${machine} is offline. Connect it to set up the extension.`
+            ? `${machine} is offline. Connect it to set up Chrome on it.`
             : "This device cannot read that machine's settings."}
         </p>
       </SettingsSection>
@@ -222,10 +228,132 @@ export function BrowserExtensionCard({
   const pill =
     profiles.length > 0
       ? {
-          label: `${profiles.length} profile${profiles.length === 1 ? "" : "s"} connected`,
+          label: `Ready · ${profiles.length} Chrome profile${profiles.length === 1 ? "" : "s"} paired`,
           tone: "success" as const,
         }
-      : { label: "No profile connected", tone: "warning" as const };
+      : { label: "Not set up", tone: "warning" as const };
+  // Reconnect only helps once a check found a paired profile that does not answer.
+  const offerReconnect =
+    check !== null &&
+    profiles.length > 0 &&
+    (check.state !== "connected" || check.profiles.some((profile) => !profile.ok));
+
+  const setup = status && (
+    <div className="space-y-4" data-testid="browser-extension-setup">
+      <div className="space-y-2">
+        <p className="text-sm font-medium">1. Install the SpecWithCode Browser extension</p>
+        <div className="flex flex-wrap items-center gap-2">
+          {status.storeUrl ? (
+            <Button
+              size="sm"
+              render={<a href={status.storeUrl} target="_blank" rel="noreferrer" />}
+            >
+              <ExternalLinkIcon />
+              Add to Chrome
+            </Button>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              The extension is in Chrome Web Store review. Until it is listed, load it unpacked.
+            </p>
+          )}
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!canWrite || busy !== null}
+            onClick={() => void prepareFolder()}
+          >
+            {busy === "folder" ? <Spinner /> : <FolderOpenIcon />}
+            Load unpacked
+          </Button>
+        </div>
+        {folder && (
+          <div className="space-y-2 rounded-md border border-border/60 px-3 py-2">
+            <div className="flex items-center gap-2">
+              <Input
+                nativeInput
+                readOnly
+                font="mono"
+                size="compact"
+                aria-label="Extension folder"
+                value={folder.path}
+              />
+              <CopyButton value={folder.path} label="extension folder" />
+            </div>
+            <p className="text-xs text-muted-foreground">Version {folder.version}</p>
+            <Steps
+              items={[
+                <>
+                  Open <code className="text-xs">chrome://extensions</code> in the Chrome profile
+                  agents should use.
+                </>,
+                "Turn on Developer mode (top right).",
+                "Click Load unpacked.",
+                "Pick the folder above.",
+              ]}
+            />
+          </div>
+        )}
+      </div>
+
+      <div className="space-y-2">
+        <p className="text-sm font-medium">2. Pair it with {machine}</p>
+        {otherComputer && (
+          <p className="flex items-start gap-1.5 text-xs text-warning-foreground">
+            <CircleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
+            This code works only in Chrome on {machine}, not in Chrome on {thisComputer}.
+          </p>
+        )}
+        {code === null ? (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!canOperate || busy !== null}
+            onClick={() => void showCode()}
+          >
+            {busy === "pairing" ? <Spinner /> : <KeyRoundIcon />}
+            Show pairing code
+          </Button>
+        ) : (
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              nativeInput
+              readOnly
+              font="mono"
+              size="compact"
+              className="max-w-xs"
+              aria-label="Pairing code"
+              value={code}
+            />
+            <CopyButton value={code} label="pairing code" />
+            <Button size="sm" variant="ghost" onClick={() => setCode(null)}>
+              <EyeOffIcon />
+              Hide
+            </Button>
+            <Button
+              size="sm"
+              variant="destructive-outline"
+              disabled={!canOperate || busy !== null}
+              onClick={() => void resetCode()}
+            >
+              {busy === "reset" ? <Spinner /> : <RefreshCwIcon />}
+              Reset code
+            </Button>
+          </div>
+        )}
+        <Steps
+          items={[
+            "Click the SpecWithCode icon in Chrome's toolbar.",
+            "Paste the pairing code.",
+            "Name the profile, for example Work or Marketing.",
+            "Click Pair.",
+          ]}
+        />
+        <p className="text-xs text-muted-foreground">
+          The code lets a Chrome profile act for agents on {machine}. Keep it private.
+        </p>
+      </div>
+    </div>
+  );
 
   return (
     <SettingsSection
@@ -256,15 +384,7 @@ export function BrowserExtensionCard({
           </div>
         )}
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0 max-w-prose space-y-1">
-            <p className="text-sm">
-              <Badge variant="success" className="me-2">
-                Recommended
-              </Badge>
-              One extension, installed once per Chrome profile. Agents of every provider (
-              {EXTENSION_PROVIDERS}) use that profile, with its logins, through the{" "}
-              <code className="text-xs">chrome_*</code> tools.
-            </p>
+          <div className="min-w-0 max-w-prose space-y-1.5">
             {status && (
               <Badge variant={pill.tone} data-testid="browser-extension-state">
                 {pill.tone === "success" ? (
@@ -275,31 +395,40 @@ export function BrowserExtensionCard({
                 {pill.label}
               </Badge>
             )}
+            <p className="text-sm text-muted-foreground">
+              Every chat, project thread and Aide on {machine}, with any provider, uses the paired
+              Chrome profile at the same time. Each works in its own tabs, in the blue SpecWithCode
+              tab group.
+            </p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              disabled={!canOperate || busy !== null}
-              onClick={() => void runCheck("test")}
-            >
-              {busy === "test" ? <Spinner /> : <PlugZapIcon />}
-              Test connection
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!canOperate || busy !== null}
-              onClick={() => void runCheck("reconnect")}
-            >
-              {busy === "reconnect" ? <Spinner /> : <RefreshCwIcon />}
-              Reconnect
-            </Button>
-          </div>
+          {profiles.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                variant={offerReconnect ? "outline" : "default"}
+                disabled={!canOperate || busy !== null}
+                onClick={() => void runCheck("test")}
+              >
+                {busy === "test" ? <Spinner /> : <PlugZapIcon />}
+                Test connection
+              </Button>
+              {offerReconnect && (
+                <Button
+                  size="sm"
+                  disabled={!canOperate || busy !== null}
+                  onClick={() => void runCheck("reconnect")}
+                >
+                  {busy === "reconnect" ? <Spinner /> : <RefreshCwIcon />}
+                  Reconnect
+                </Button>
+              )}
+            </div>
+          )}
         </div>
 
         {!canOperate && (
           <p className="text-xs text-muted-foreground">
-            This device can view {machine}'s extension but not pair or test it.
+            This device can view {machine}'s Chrome but not pair or test it.
           </p>
         )}
         {(error || query.error) && (
@@ -311,132 +440,27 @@ export function BrowserExtensionCard({
 
         {query.isPending && !status ? (
           <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Spinner /> Reading the extension on {machine}…
+            <Spinner /> Reading Chrome on {machine}…
           </p>
         ) : status ? (
-          <>
-            <div className="space-y-2">
-              <p className="text-sm font-medium">1. Install</p>
-              <div className="flex flex-wrap items-center gap-2">
-                {status.storeUrl ? (
-                  <Button
-                    size="sm"
-                    render={<a href={status.storeUrl} target="_blank" rel="noreferrer" />}
-                  >
-                    <ExternalLinkIcon />
-                    Add to Chrome
-                  </Button>
-                ) : (
-                  <p className="text-sm text-muted-foreground">
-                    The extension is in Chrome Web Store review. Until it is listed, load it
-                    unpacked.
-                  </p>
-                )}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={!canWrite || busy !== null}
-                  onClick={() => void prepareFolder()}
-                >
-                  {busy === "folder" ? <Spinner /> : <FolderOpenIcon />}
-                  Load unpacked
-                </Button>
-              </div>
-              {folder && (
-                <div className="space-y-2 rounded-md border border-border/60 px-3 py-2">
-                  <div className="flex items-center gap-2">
-                    <Input
-                      nativeInput
-                      readOnly
-                      font="mono"
-                      size="compact"
-                      aria-label="Extension folder"
-                      value={folder.path}
-                    />
-                    <CopyButton value={folder.path} label="extension folder" />
-                  </div>
-                  <p className="text-xs text-muted-foreground">Version {folder.version}</p>
-                  <Steps
-                    items={[
-                      <>
-                        Open <code className="text-xs">chrome://extensions</code> in the Chrome
-                        profile agents should use.
-                      </>,
-                      "Turn on Developer mode (top right).",
-                      "Click Load unpacked.",
-                      "Pick the folder above.",
-                    ]}
-                  />
-                </div>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <p className="text-sm font-medium">2. Pair</p>
-              {otherComputer && (
-                <p className="flex items-start gap-1.5 text-xs text-warning-foreground">
-                  <CircleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
-                  This code works only in Chrome on {machine}, not in Chrome on {thisComputer}.
-                </p>
-              )}
-              {code === null ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={!canOperate || busy !== null}
-                  onClick={() => void showCode()}
-                >
-                  {busy === "pairing" ? <Spinner /> : <KeyRoundIcon />}
-                  Show pairing code
-                </Button>
-              ) : (
-                <div className="flex flex-wrap items-center gap-2">
-                  <Input
-                    nativeInput
-                    readOnly
-                    font="mono"
-                    size="compact"
-                    className="max-w-xs"
-                    aria-label="Pairing code"
-                    value={code}
-                  />
-                  <CopyButton value={code} label="pairing code" />
-                  <Button size="sm" variant="ghost" onClick={() => setCode(null)}>
-                    <EyeOffIcon />
-                    Hide
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="destructive-outline"
-                    disabled={!canOperate || busy !== null}
-                    onClick={() => void resetCode()}
-                  >
-                    {busy === "reset" ? <Spinner /> : <RefreshCwIcon />}
-                    Reset code
-                  </Button>
-                </div>
-              )}
-              <Steps
-                items={[
-                  "Click the SpecWithCode icon in Chrome's toolbar.",
-                  "Paste the pairing code.",
-                  "Name the profile, for example Work or Marketing.",
-                  "Click Pair.",
-                ]}
+          profiles.length === 0 ? (
+            setup
+          ) : (
+            <>
+              <ConnectedProfiles
+                environmentId={environmentId}
+                profiles={profiles}
+                canOperate={canOperate}
+                busy={busy}
+                onStop={(id, threadId) => void stopProfile(id, threadId)}
               />
-              <p className="text-xs text-muted-foreground">
-                The code lets a Chrome profile act for agents on {machine}. Keep it private.
-              </p>
-            </div>
-
-            <ConnectedProfiles
-              profiles={profiles}
-              canOperate={canOperate}
-              busy={busy}
-              onStop={(id) => void stopProfile(id)}
-            />
-            <RecentActions actions={status.recentActions} />
-          </>
+              <details className="rounded-md border border-border/60 px-3 py-2 text-sm">
+                <summary className="cursor-pointer">Pair another Chrome profile</summary>
+                <div className="mt-3">{setup}</div>
+              </details>
+              <RecentActions environmentId={environmentId} actions={status.recentActions} />
+            </>
+          )
         ) : null}
       </div>
     </SettingsSection>
@@ -487,69 +511,121 @@ function CheckResult({ check }: { check: BrowserExtensionCheck }) {
   );
 }
 
+/** Threads acting in a profile; servers before per-tab ownership report one lease. */
+function threadsOf(profile: BrowserExtensionProfile): ReadonlyArray<BrowserExtensionThreadUse> {
+  if (profile.threads) return profile.threads;
+  return profile.lease ? [{ ...profile.lease, tabs: profile.attachedTabs }] : [];
+}
+
+/** A thread by its title, as the sidebar shows it; ids mean nothing to people. */
+export function ThreadName({
+  environmentId,
+  threadId,
+}: {
+  environmentId: EnvironmentId;
+  threadId: string;
+}) {
+  const shell = useThreadShell({ environmentId, threadId: ThreadId.make(threadId) });
+  const title = shell?.title?.trim();
+  return (
+    <span className="font-medium text-foreground">{title || "A thread no longer listed"}</span>
+  );
+}
+
 function ConnectedProfiles({
+  environmentId,
   profiles,
   canOperate,
   busy,
   onStop,
 }: {
+  environmentId: EnvironmentId;
   profiles: ReadonlyArray<BrowserExtensionProfile>;
   canOperate: boolean;
   busy: string | null;
-  onStop: (profileId: string) => void;
+  onStop: (profileId: string, threadId?: string) => void;
 }) {
+  const stopButton = (key: string, label: string, onClick: () => void) => (
+    <Button
+      size="sm"
+      variant="destructive-outline"
+      disabled={!canOperate || busy !== null}
+      onClick={onClick}
+    >
+      {busy === key ? <Spinner /> : <SquareIcon />}
+      {label}
+    </Button>
+  );
   return (
     <div className="space-y-2">
-      <p className="text-sm font-medium">Connected profiles</p>
-      {profiles.length === 0 ? (
-        <p role="status" className="text-sm text-muted-foreground">
-          No Chrome profile is paired yet. Install the extension and pair it above.
-        </p>
-      ) : (
-        <ul className="divide-y divide-border/50 rounded-md border border-border/60">
-          {profiles.map((profile) => {
-            const active = profile.lease !== null || profile.attachedTabs > 0;
-            return (
-              <li
-                key={profile.id}
-                data-testid="browser-extension-profile"
-                className="flex flex-wrap items-center justify-between gap-3 px-3 py-2 text-sm"
-              >
+      <p className="text-sm font-medium">Paired Chrome profiles</p>
+      <ul className="divide-y divide-border/50 rounded-md border border-border/60">
+        {profiles.map((profile) => {
+          const threads = threadsOf(profile);
+          const active = threads.length > 0 || profile.attachedTabs > 0;
+          return (
+            <li
+              key={profile.id}
+              data-testid="browser-extension-profile"
+              className="space-y-2 px-3 py-2 text-sm"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="min-w-0 space-y-0.5">
                   <p className="font-medium">{profile.label}</p>
                   <p className="text-xs text-muted-foreground">
                     {profile.browser} · extension {profile.extensionVersion} · connected{" "}
-                    {formatRelativeTimeLabel(profile.connectedAt)} · {profile.attachedTabs} agent
-                    tab{profile.attachedTabs === 1 ? "" : "s"}
-                    {profile.lease && ` · in use by thread ${profile.lease.threadId}`}
+                    {formatRelativeTimeLabel(profile.connectedAt)} ·{" "}
+                    {threads.length === 0
+                      ? "idle"
+                      : `in use by ${threads.length} thread${threads.length === 1 ? "" : "s"}`}
                   </p>
                 </div>
-                {active && (
-                  <Button
-                    size="sm"
-                    variant="destructive-outline"
-                    disabled={!canOperate || busy !== null}
-                    onClick={() => onStop(profile.id)}
-                  >
-                    {busy === `stop:${profile.id}` ? <Spinner /> : <SquareIcon />}
-                    Stop
-                  </Button>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      )}
+                {active &&
+                  threads.length !== 1 &&
+                  stopButton(`stop:${profile.id}`, threads.length > 1 ? "Stop all" : "Stop", () =>
+                    onStop(profile.id),
+                  )}
+              </div>
+              {threads.length > 0 && (
+                <ul className="space-y-1">
+                  {threads.map((use) => (
+                    <li
+                      key={use.threadId}
+                      data-testid="browser-extension-thread"
+                      className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"
+                    >
+                      <span className="min-w-0 truncate">
+                        <ThreadName environmentId={environmentId} threadId={use.threadId} /> ·{" "}
+                        {use.tabs} tab{use.tabs === 1 ? "" : "s"} · last action{" "}
+                        {formatRelativeTimeLabel(use.lastActionAt)}
+                      </span>
+                      {stopButton(`stop:${profile.id}:${use.threadId}`, "Stop", () =>
+                        onStop(profile.id, use.threadId),
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }
 
-function RecentActions({ actions }: { actions: ReadonlyArray<BrowserExtensionAction> }) {
+function RecentActions({
+  environmentId,
+  actions,
+}: {
+  environmentId: EnvironmentId;
+  actions: ReadonlyArray<BrowserExtensionAction>;
+}) {
   if (actions.length === 0) return null;
   return (
-    <div className="space-y-1.5">
-      <p className="text-xs font-medium text-muted-foreground">Recent agent actions</p>
-      <ul className="space-y-0.5 text-xs">
+    <details className="rounded-md border border-border/60 px-3 py-2 text-sm">
+      <summary className="cursor-pointer">Recent agent actions</summary>
+      <ul className="mt-2 space-y-0.5 text-xs">
         {actions.map((action, index) => (
           <li
             key={`${action.at}-${index}`}
@@ -557,12 +633,14 @@ function RecentActions({ actions }: { actions: ReadonlyArray<BrowserExtensionAct
             data-testid="browser-extension-action"
           >
             <span className="shrink-0 tabular-nums">{formatRelativeTimeLabel(action.at)}</span>
-            <span className="shrink-0">{action.profile}</span>
+            <span className="shrink-0">
+              <ThreadName environmentId={environmentId} threadId={action.threadId} />
+            </span>
             <code className="shrink-0 text-foreground">{action.tool}</code>
             {action.url && <span className="min-w-0 truncate">{action.url}</span>}
           </li>
         ))}
       </ul>
-    </div>
+    </details>
   );
 }

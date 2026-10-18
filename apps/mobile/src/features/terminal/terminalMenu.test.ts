@@ -61,6 +61,7 @@ function makeKnownSession(input: {
       output: EMPTY_TERMINAL_BUFFER_STATE.output,
       status: input.status,
       error: null,
+      exitCode: null,
       hasRunningSubprocess: false,
       updatedAt: input.updatedAt ?? "2026-04-15T20:00:00.000Z",
       version: 1,
@@ -70,6 +71,15 @@ function makeKnownSession(input: {
 }
 
 describe("buildTerminalMenuSessions", () => {
+  it("leaves out a chat code block's inline run terminal", () => {
+    expect(
+      buildTerminalMenuSessions({
+        knownSessions: [makeKnownSession({ terminalId: "run-abc-12", status: "running" })],
+        workspaceRoot: "/workspace",
+      }),
+    ).toEqual([]);
+  });
+
   it("only lists server-known sessions that are running or starting (plus current)", () => {
     expect(
       buildTerminalMenuSessions({

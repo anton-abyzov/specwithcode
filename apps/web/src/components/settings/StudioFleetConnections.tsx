@@ -545,7 +545,9 @@ export function StudioFleetRoster({
         </ul>
       ) : (
         <p className="px-3 py-2.5 text-sm text-muted-foreground sm:px-4">
-          {loading ? "Checking your private machines…" : "No private machines yet. Add one below."}
+          {loading
+            ? "Checking your private machines…"
+            : "No private machines yet. Add a second Mac or your own Linux VPS below."}
         </p>
       )}
       {snapshot?.machines.length && onAutoConnectChange ? (
@@ -580,6 +582,19 @@ export function StudioFleetRoster({
             <span className="block text-xs text-muted-foreground">
               On that machine, choose Invite this machine under Settings &gt; Connections (or run{" "}
               <code className="font-mono">specwithcode fleet invite</code>) and paste the line.
+            </span>
+            <span className="block text-xs text-muted-foreground">
+              For a Linux server you rent (a VPS), set it up with the{" "}
+              <a
+                className="underline underline-offset-2"
+                href="https://github.com/anton-abyzov/specwithcode/blob/main/docs/user/linux-worker.md"
+                target="_blank"
+                rel="noreferrer noopener"
+              >
+                Linux worker guide
+              </a>
+              , then run <code className="font-mono">specwithcode fleet invite</code> there and
+              paste the line here.
             </span>
           </span>
           <div className="flex min-w-0 gap-2 sm:w-96 sm:shrink-0">

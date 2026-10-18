@@ -18,7 +18,7 @@ import {
   PanelRightOpenIcon,
   ShapesIcon,
 } from "lucide-react";
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, type Ref, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { useAssetUrlState } from "~/assets/assetUrls";
@@ -33,7 +33,7 @@ import {
 // Relative, so the headless fixture (tests/project-workspace) can stand in for it.
 import { useThreadProjection, useThreadShell } from "../../state/entities";
 import { formatViewerDate, viewerIso } from "~/viewerDate";
-import { useViewerOverlay } from "~/viewerOverlayStore";
+import { useKeepViewerFocus, useViewerContentKeys, useViewerOverlay } from "~/viewerOverlayStore";
 import {
   collectThreadArtifacts,
   isViewableArtifact,
@@ -55,6 +55,8 @@ import { ArtifactShelfList } from "./ArtifactShelfList";
 import { useArtifactShelfState } from "./useArtifactShelfState";
 import { useMissingArtifactFiles } from "./useMissingArtifactFiles";
 import { ViewerFileActions } from "./ViewerFileActions";
+import { ViewerImageStage } from "./ViewerImageStage";
+import type { ZoomableImageHandle } from "./ZoomableImage";
 import { useExistingFileLinks } from "./useExistingFileLinks";
 
 type ViewableArtifact = ThreadFileArtifact | ThreadRenderArtifact;
@@ -369,7 +371,7 @@ export function ArtifactViewer(props: {
 }) {
   const artifact = props.artifacts[props.index]!;
   const count = props.artifacts.length;
-  const step = (by: 1 | -1) => props.onIndex((props.index + by + count) % count);
+  const imageRef = useRef<ZoomableImageHandle>(null);
   const resource = useMemo(
     () => artifactResource(props.threadRef, artifact),
     [artifact, props.threadRef],
@@ -388,6 +390,22 @@ export function ArtifactViewer(props: {
     threadRef: props.threadRef,
     onClose: props.onClose,
   });
+  const keepFocus = useKeepViewerFocus(slots?.content ?? null);
+  const step = (by: 1 | -1) => {
+    keepFocus();
+    props.onIndex((props.index + by + count) % count);
+  };
+  const onKeys = (event: KeyboardEvent) => {
+    if (event.defaultPrevented) return;
+    // A zoomed image pans with the arrows, as it does when it holds focus.
+    if (imageRef.current?.pan(event.key)) {
+      event.preventDefault();
+      return;
+    }
+    if (event.key === "ArrowLeft" && count > 1) step(-1);
+    if (event.key === "ArrowRight" && count > 1) step(1);
+  };
+  useViewerContentKeys(slots?.content ?? null, onKeys);
   if (slots === null) return null;
   const actions = (
     <>
@@ -462,9 +480,11 @@ export function ArtifactViewer(props: {
       className="viewer-overlay-frame"
       data-artifact-viewer={artifact.kind}
       onKeyDown={(event) => {
+        // Keys from a lightbox a document opened bubble here through its
+        // portal; they are that lightbox's, not this viewer's.
+        if (!event.currentTarget.contains(event.target as Node)) return;
         if (event.target instanceof HTMLInputElement) return;
-        if (event.key === "ArrowLeft" && count > 1) step(-1);
-        if (event.key === "ArrowRight" && count > 1) step(1);
+        onKeys(event.nativeEvent);
       }}
     >
       {slots.actions ? createPortal(actions, slots.actions) : null}
@@ -478,6 +498,7 @@ export function ArtifactViewer(props: {
           url={url}
           failed={asset._tag === "Failure"}
           revealLine={props.reveal?.key === artifact.key ? props.reveal.line : undefined}
+          imageRef={imageRef}
         />
       </div>
     </div>,
@@ -531,6 +552,7 @@ function ArtifactBody(props: {
   readonly url: string | null;
   readonly failed: boolean;
   readonly revealLine?: number | undefined;
+  readonly imageRef: Ref<ZoomableImageHandle>;
 }): ReactNode {
   const { artifact, url } = props;
   const notice = (text: string) => (
@@ -540,7 +562,15 @@ function ArtifactBody(props: {
     case "markdown":
     case "code":
     case "file":
-      return <ArtifactText {...props} artifact={artifact as ThreadFileArtifact} />;
+      return (
+        <ArtifactText
+          environmentId={props.environmentId}
+          threadRef={props.threadRef}
+          cwd={props.cwd}
+          revealLine={props.revealLine}
+          artifact={artifact as ThreadFileArtifact}
+        />
+      );
     default:
       break;
   }
@@ -548,7 +578,7 @@ function ArtifactBody(props: {
   if (url === null) return notice("Loading…");
   switch (artifact.kind) {
     case "image":
-      return <img src={url} alt={artifact.name} className="artifact-viewer-media" />;
+      return <ArtifactImage key={url} src={url} name={artifact.name} imageRef={props.imageRef} />;
     case "video":
       return (
         <video
@@ -574,6 +604,30 @@ function ArtifactBody(props: {
     default:
       return notice(`${artifact.name} has no preview.`);
   }
+}
+
+/** An image artifact, zoomable on the stage, or a notice when its bytes do not load. */
+function ArtifactImage(props: {
+  readonly src: string;
+  readonly name: string;
+  readonly imageRef: Ref<ZoomableImageHandle>;
+}) {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return (
+      <p className="m-auto p-6 text-center text-muted-foreground text-sm">
+        {props.name} could not be loaded from the host.
+      </p>
+    );
+  }
+  return (
+    <ViewerImageStage
+      ref={props.imageRef}
+      src={props.src}
+      name={props.name}
+      onError={() => setFailed(true)}
+    />
+  );
 }
 
 function ArtifactText(props: {

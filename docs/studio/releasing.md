@@ -73,7 +73,7 @@ make, and refuses to start a second run of a version without `--resume`.
 | quit-desktop    | quits `/Applications/SpecWithCode.app` (TERM to its own pid)                                                           | until the desktop stage |
 | publish-private | checks the draft's `SHA256SUMS`, publishes the private release, checks the tag is the candidate                        | once                    |
 | publish-public  | `publish.mjs --tag --push`, checks the draft's `SHA256SUMS`, then the public release                                   | once                    |
-| fleet-m4        | `fleet_rollout.py --only m4`: forced, held 15 minutes, until M4 runs the release                                       | once                    |
+| fleet-m4        | `fleet_rollout.py --only m4`: drains and holds M4 as Update now does, then a forced 15-minute request                  | once                    |
 | fleet-workers   | `fleet_rollout.py --only workers`: M1 and M3 together, polled the same way                                             | once                    |
 | desktop         | rollback zip, swap the app in `/Applications`, check its signature and version, open it                                | once                    |
 | merge           | the `release/<version>` pull request into `main`                                                                       | once                    |
@@ -125,6 +125,25 @@ not go on to sign and upload, and an earlier candidate's drafts are deleted.
 receipt; that host stays on its old version. When publish-public's push failed after `publish.mjs`
 tagged, `--resume` drops the tag left in the public clone, since the remote has none.
 
+### What keeps a release from failing late
+
+Three different failures stopped 1.0.44, each after the expensive stages had run. These guards
+are there so each one fails a pull request instead:
+
+- **main requires PR Gate and PR Gate (typecheck).** A PR merged before its gate finished put a
+  failing test on main, and stage 1 then refused the release. `gh pr merge` now waits until both
+  checks pass, so don't merge with `--admin`. A PR that changes only Markdown, `docs/` or issue
+  templates skips both checks, which counts as passing. The release's own merge stage waits for
+  the checks, which skip `release/` branches.
+- **Malformed calls are refused.** `x`, `q` and `t` stop when the command is missing or starts
+  with `-`. That is how the typo `x sums --python3` reached a release: dry and stub runs only
+  record commands, so they never ran it. **PR Gate (release)** runs `release.sh --self-test` on a
+  Mac for every PR that touches the release scripts. The self-test exercises every stage and also
+  checks the source for an option written straight after a label.
+- **Signing gets a second try.** When `mac-signature.mjs` refuses the build, the sign stage signs
+  once more before failing. One run produced a DMG without the stapled notarization ticket while
+  the zip from the same run had it. A second refusal stops the release.
+
 Edit `notes.md` in the staging folder while the suites run; publish-private and publish-public
 take it as it is then, and the public copy is checked against the mirror's deny list.
 
@@ -137,7 +156,9 @@ refreshes the recorded shard weights from its reports.
 
 ### By hand
 
-`fleet_rollout.py --version <v> --dry-run` prints the rollout order and commands;
+`fleet_rollout.py --version <v> --dry-run` prints the rollout order and commands, with the
+`service prepare-update` command that drains and holds M4 first (`--no-hold` skips it; a service
+too old for it is asked without a hold, with a warning, so its running work keeps it waiting);
 `update_request.py status --identity <id>` reads one host's updater state. For a host whose agent
 cannot install a release on its own, copy the assets to `<studio root>/release-staging/<version>/`
 on that host and run `/usr/bin/python3 -B scripts/studio-fleet/remote_update.py --identity <id>
@@ -171,9 +192,9 @@ Signed builds that update through electron-updater never see pre-releases.
 ### npm
 
 `npm i -g specwithcode` installs the published runtime archive (`studio-<version>-<sha12>.tar.gz`)
-as one package with the `specwithcode` and `specweave-studio` commands. It runs on Node 22.20 or
-newer on macOS and Linux, x64 and arm64: the archive's native dependencies carry prebuilds for all
-of them. Build it from the release's own assets and publish the tarball as written:
+as one package with the `specwithcode` and `specweave-studio` commands. It runs on Node.js 22.16 or
+newer (23.11+, or 24.10+) on macOS and Linux, x64 and arm64: the archive's native dependencies carry
+prebuilds for all of them. Build it from the release's own assets and publish the tarball as written:
 
 ```sh
 sha=$(grep " studio-1.0.43-043e9db88a6e.tar.gz$" SHA256SUMS | cut -d' ' -f1)

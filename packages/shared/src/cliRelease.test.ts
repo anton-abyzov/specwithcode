@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  chooseCliArchive,
   cliArchiveFileName,
   cliArchivePlatformKey,
   cliArchiveTarCommand,
@@ -32,10 +33,8 @@ describe("cliRelease", () => {
   });
 
   it("resolves download URLs under the tagged release, honoring a mirror", () => {
-    // The built-in origin is a placeholder that never resolves; installs name
-    // their own origin through STUDIO_RELEASE_BASE_URL.
     expect(cliReleaseDownloadBaseUrl("1.2.3")).toBe(
-      "https://updates.studio.invalid/releases/download/v1.2.3",
+      "https://github.com/anton-abyzov/specwithcode/releases/download/v1.2.3",
     );
     expect(cliReleaseDownloadBaseUrl("1.2.3", "https://mirror.example/studio/")).toBe(
       "https://mirror.example/studio/v1.2.3",
@@ -89,8 +88,46 @@ describe("cliRelease", () => {
 
   it("pages through the release index at the largest page GitHub allows", () => {
     expect(cliReleaseIndexPageUrl(1)).toBe(
-      "https://updates.studio.invalid/releases?per_page=100&page=1",
+      "https://api.github.com/repos/anton-abyzov/specwithcode/releases?per_page=100&page=1",
     );
     expect(cliReleaseIndexPageUrl(3)).toContain("page=3");
+  });
+
+  it("prefers the single executable and falls back to the one commit-suffixed Node bundle", () => {
+    const sum = "a".repeat(64);
+    const of = (...names: string[]) => new Map(names.map((name) => [name, sum]));
+    expect(
+      chooseCliArchive(
+        of("studio-1.0.43-linux-x64.tar.gz", "studio-1.0.43-linux-x64-043e9db88a6e.tar.gz"),
+        "1.0.43",
+        "linux-x64",
+      ),
+    ).toEqual({ fileName: "studio-1.0.43-linux-x64.tar.gz", layout: "single-executable" });
+    expect(
+      chooseCliArchive(
+        of(
+          "studio-1.0.43-043e9db88a6e.tar.gz",
+          "studio-1.0.43-linux-arm64-043e9db88a6e.tar.gz",
+          "studio-1.0.43-linux-x64-043e9db88a6e.tar.gz",
+          "studio-1.0.43-deployment-helpers-043e9db88a6e.tar.gz",
+        ),
+        "1.0.43",
+        "linux-x64",
+      ),
+    ).toEqual({ fileName: "studio-1.0.43-linux-x64-043e9db88a6e.tar.gz", layout: "node-bundle" });
+    // Not another version's bundle, and never a guess between two.
+    expect(
+      chooseCliArchive(of("studio-1.0.4-linux-x64-043e9db88a6e.tar.gz"), "1.0.43", "linux-x64"),
+    ).toBeUndefined();
+    expect(
+      chooseCliArchive(
+        of(
+          "studio-1.0.43-linux-x64-aaaaaaaaaaaa.tar.gz",
+          "studio-1.0.43-linux-x64-bbbbbbbbbbbb.tar.gz",
+        ),
+        "1.0.43",
+        "linux-x64",
+      ),
+    ).toBeUndefined();
   });
 });

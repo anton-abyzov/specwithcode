@@ -11,6 +11,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as ProcessRunner from "../processRunner.ts";
 import {
   ensurePinnedRuntimeInstalled,
+  nodeBundleLauncherScript,
   pinnedRuntimeCommand,
   pinnedRuntimePaths,
   PinnedRuntimeInstallError,
@@ -48,7 +49,9 @@ const extractingRunner = (fs: FileSystem.FileSystem, path: Path.Path, commands: 
         if (input.command !== "tar" || stagingDir === undefined) {
           return yield* Effect.die(`unexpected command ${input.command}`);
         }
-        yield* fs.writeFileString(path.join(stagingDir, "specweave-studio"), "#!/bin/sh\n").pipe(Effect.orDie);
+        yield* fs
+          .writeFileString(path.join(stagingDir, "specweave-studio"), "#!/bin/sh\n")
+          .pipe(Effect.orDie);
         return {
           stdout: "",
           stderr: "",
@@ -95,6 +98,93 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       assert.deepEqual(commands, ["tar"]);
       assert.equal(yield* fs.readFileString(paths.sentinelPath), `${version}\n`);
       assert.isFalse(yield* fs.exists(path.join(paths.versionDir, "studio-runtime-archive")));
+    }),
+  );
+
+  it.effect("installs the release's Node bundle with a launcher that runs its bin.mjs", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "studio-pinned-bundle-" });
+      const bundleName = `studio-${version}-linux-x64-043e9db88a6e.tar.gz`;
+      const hex = yield* archiveHex(archiveBytes);
+      const requests: string[] = [];
+      const tarArgs: string[][] = [];
+      const runner = ProcessRunner.ProcessRunner.of({
+        run: (input) =>
+          Effect.gen(function* () {
+            tarArgs.push([...input.args]);
+            const stagingDir = input.args[input.args.indexOf("-C") + 1]!;
+            yield* fs
+              .writeFileString(
+                path.join(stagingDir, "bin.mjs"),
+                "console.log(`${process.env.STUDIO_CLI_NAME} v1.2.3 ${process.argv.slice(2).join(' ')}`);\n",
+              )
+              .pipe(Effect.orDie);
+            return {
+              stdout: "",
+              stderr: "",
+              code: ChildProcessSpawner.ExitCode(0),
+              timedOut: false,
+              stdoutTruncated: false,
+              stderrTruncated: false,
+              stdoutInvalidUtf8: false,
+              stderrInvalidUtf8: false,
+            };
+          }),
+      });
+      let launched = "";
+      const paths = yield* ensurePinnedRuntimeInstalled({
+        baseDir,
+        version,
+        fs,
+        path,
+        platform: "linux",
+        arch: "x64",
+        httpClient: releaseHttpClient(
+          `${hex}  studio-${version}-${"0".repeat(12)}.tar.gz\n${hex}  ${bundleName}\n`,
+          requests,
+        ),
+        releaseBaseUrl: "https://releases.example/download",
+        runner,
+        validate: (staging) =>
+          Effect.promise(async () => {
+            const { execFileSync } = await import("node:child_process");
+            launched = execFileSync(staging.entryPath, ["--version"], { encoding: "utf8" });
+          }),
+      });
+      assert.deepEqual(requests, [
+        `https://releases.example/download/v${version}/SHA256SUMS`,
+        `https://releases.example/download/v${version}/${bundleName}`,
+      ]);
+      // The bundle has its files at the archive root: nothing to strip.
+      assert.isFalse(tarArgs[0]!.includes("--strip-components=1"));
+      assert.equal(launched.trim(), "specweave-studio v1.2.3 --version");
+      assert.equal(yield* fs.readFileString(paths.sentinelPath), `${version}\n`);
+      assert.include(yield* fs.readFileString(paths.entryPath), "specwithcode-install launcher");
+    }),
+  );
+
+  it.effect("names the command a symlinked launcher was run as", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "studio-bundle-launcher-" });
+      yield* fs.writeFileString(
+        path.join(dir, "bin.mjs"),
+        "console.log(process.env.STUDIO_CLI_NAME);\n",
+      );
+      const entry = path.join(dir, "specweave-studio");
+      yield* fs.writeFileString(entry, nodeBundleLauncherScript(process.execPath, false));
+      yield* fs.chmod(entry, 0o755);
+      const link = path.join(dir, "specwithcode");
+      yield* fs.symlink(entry, link);
+      const output = yield* Effect.promise(async () => {
+        const { execFileSync } = await import("node:child_process");
+        return execFileSync(link, [], { encoding: "utf8", cwd: "/" });
+      });
+      assert.equal(output.trim(), "specwithcode");
+      assert.include(nodeBundleLauncherScript("/opt/it's/node", false), `'/opt/it'\\''s/node'`);
     }),
   );
 
@@ -169,7 +259,9 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "studio-pinned-progress-failed-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "studio-pinned-progress-failed-",
+      });
       const checksums = yield* validChecksums;
       const progress: PinnedRuntimeProgress[] = [];
       let cancelled = false;
@@ -308,7 +400,9 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "studio-pinned-runtime-repair-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "studio-pinned-runtime-repair-",
+      });
       const finalPaths = pinnedRuntimePaths(path, baseDir, version, "linux");
       yield* fs.makeDirectory(finalPaths.versionDir, { recursive: true });
       yield* fs.writeFileString(path.join(finalPaths.versionDir, "partial"), "incomplete\n");
@@ -334,7 +428,9 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "studio-pinned-runtime-repair-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "studio-pinned-runtime-repair-",
+      });
       const finalPaths = pinnedRuntimePaths(path, baseDir, version, "linux");
       yield* fs.makeDirectory(path.dirname(finalPaths.entryPath), { recursive: true });
       yield* fs.writeFileString(finalPaths.entryPath, "broken\n");
@@ -371,7 +467,9 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "studio-pinned-runtime-interrupt-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "studio-pinned-runtime-interrupt-",
+      });
       const started = yield* Deferred.make<void>();
       const runner = ProcessRunner.ProcessRunner.of({
         run: () => Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),

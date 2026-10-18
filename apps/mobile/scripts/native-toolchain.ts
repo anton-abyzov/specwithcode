@@ -46,6 +46,9 @@ const developerDirectory = () => {
  *
  * A toolchain older than the running macOS fails before any code under test runs: its linker
  * can't read the newer SDK, or its ThreadSanitizer runtime crashes while it starts.
+ *
+ * With CI set it throws instead: the PR gate (mobile native) and release.sh's stage 1 exist to run
+ * these regressions, and a silent skip there let unpatched Expo 58 modules reach a release.
  */
 export const threadSanitizerUnavailable = (compiler: keyof typeof probes): string | undefined => {
   const probe = probes[compiler];
@@ -69,11 +72,13 @@ export const threadSanitizerUnavailable = (compiler: keyof typeof probes): strin
     } catch (error) {
       // A slow host is no verdict on the toolchain, so the regression runs and decides.
       if ((error as NodeJS.ErrnoException).code === "ETIMEDOUT") return undefined;
-      return (
+      const reason =
         `${compiler} from ${developerDirectory()} can't build and run a ` +
         `ThreadSanitizer program on this Mac (${describeFailure(error)}). Select a toolchain that ` +
-        "supports this macOS release with xcode-select or DEVELOPER_DIR."
-      );
+        "supports this macOS release with xcode-select or DEVELOPER_DIR.";
+      if (process.env.CI)
+        throw new Error(`${reason} CI runs these regressions, so it can't skip them.`, { cause: error });
+      return reason;
     }
   } finally {
     NodeFS.rmSync(directory, { recursive: true, force: true });

@@ -2,8 +2,8 @@
 /**
  * What the `chrome_*` tools on studio-code do in a paired Chrome profile.
  * Plain async functions over the relay hub, so tests can drive them with a
- * fake extension. Every action holds the profile for the calling thread and
- * lands in the audit list Settings › Chrome shows.
+ * fake extension. Threads share a profile and each drives only its own tabs;
+ * every action lands in the audit list Settings › Chrome shows.
  */
 import { BrowserRelayError, type BrowserRelayHub, type RelayProfile } from "./relayHub.ts";
 import {
@@ -48,6 +48,7 @@ export function checkUrl(url: string): string {
 
 export class ChromeTools {
   private readonly hub: BrowserRelayHub;
+  private readonly captureQueue = new WeakMap<RelayProfile, Promise<void>>();
   constructor(hub: BrowserRelayHub) {
     this.hub = hub;
   }
@@ -68,6 +69,11 @@ export class ChromeTools {
     profile.attachedTabs.add(tabId);
     // Page events carry JavaScript dialogs, which the hub answers.
     await this.cdp(profile, tabId, "Page.enable").catch(() => {});
+    // Several threads keep tabs side by side, so most sit in the background:
+    // let each page behave as if it had focus.
+    await this.cdp(profile, tabId, "Emulation.setFocusEmulationEnabled", { enabled: true }).catch(
+      () => {},
+    );
   }
 
   private async evaluate<T>(profile: RelayProfile, tabId: number, expression: string): Promise<T> {
@@ -121,9 +127,18 @@ export class ChromeTools {
         "No tab chosen yet. Open one with chrome_open, or pass tabId from chrome_tabs.",
       );
     try {
+      this.hub.claimTab(profile, threadId, target);
+    } catch (error) {
+      // Another thread took this tab over after this one went quiet.
+      if (profile.lastTabByThread.get(threadId) === target)
+        profile.lastTabByThread.delete(threadId);
+      throw error;
+    }
+    try {
       await this.hub.call(profile.id, "chrome.tabs.get", [target], 5_000);
     } catch {
       profile.lastTabByThread.delete(threadId);
+      this.hub.releaseTab(profile, target);
       throw new BrowserRelayError(
         "tab_not_found",
         `Tab ${target} is closed. Call chrome_tabs for current tabs.`,
@@ -137,7 +152,6 @@ export class ChromeTools {
 
   private begin(profileName: string | undefined, threadId: string, tool: string, url?: string) {
     const profile = this.hub.resolveProfile(profileName);
-    this.hub.acquire(profile, threadId);
     this.hub.record(profile, threadId, tool, url);
     return profile;
   }
@@ -167,28 +181,26 @@ export class ChromeTools {
   }
 
   profiles(threadId: string) {
-    const now = Date.now();
     const profiles = this.hub.profiles().map((profile) => ({
       name: profile.label,
       browser: profile.browser,
       agentTabs: profile.agentTabs.size,
-      inUseByAnotherThread:
-        profile.lease !== null &&
-        profile.lease.threadId !== threadId &&
-        now - profile.lease.lastActionAt < 120_000,
+      inUseByAnotherThread: this.hub.threadsUsing(profile).some((use) => use.threadId !== threadId),
     }));
+    const shared =
+      " Other threads may use the same profile at the same time; each thread works in its own tabs.";
     return {
       profiles,
       hint:
         profiles.length === 0
           ? "No Chrome profile is connected. Ask the user to install the SpecWithCode Browser extension and pair it in Settings › Chrome."
           : profiles.length === 1
-            ? "One profile is connected; the other chrome_* tools use it when profile is omitted."
-            : "Pass profile with one of these names to the other chrome_* tools.",
+            ? `One profile is connected; the other chrome_* tools use it when profile is omitted.${shared}`
+            : `Pass profile with one of these names to the other chrome_* tools.${shared}`,
     };
   }
 
-  async tabs(profileName: string | undefined) {
+  async tabs(threadId: string, profileName: string | undefined) {
     const profile = this.hub.resolveProfile(profileName);
     const tabs = (await this.hub.call(profile.id, "chrome.tabs.query", [{}])) as ChromeTab[];
     return {
@@ -203,10 +215,20 @@ export class ChromeTools {
                 url: (tab.url || tab.pendingUrl || "").slice(0, 500),
                 active: tab.active === true,
                 agentTab: profile.agentTabs.has(tab.id) || profile.attachedTabs.has(tab.id),
+                ...this.ownership(profile, threadId, tab.id),
               },
             ],
       ),
     };
+  }
+
+  private ownership(profile: RelayProfile, threadId: string, tabId: number) {
+    const owner = this.hub.tabOwner(profile, tabId);
+    return owner === null
+      ? {}
+      : owner === threadId
+        ? { thisThread: true }
+        : { anotherThread: true };
   }
 
   async open(threadId: string, input: { url: string; profile?: string | undefined }) {
@@ -216,6 +238,7 @@ export class ChromeTools {
       { url: "about:blank", active: true },
     ])) as ChromeTab;
     if (tab?.id === undefined) throw new BrowserRelayError("page_error", "Chrome opened no tab.");
+    this.hub.claimTab(profile, threadId, tab.id);
     profile.agentTabs.add(tab.id);
     profile.lastTabByThread.set(threadId, tab.id);
     await this.attach(profile, tab.id);
@@ -394,8 +417,37 @@ export class ChromeTools {
   ) {
     const profile = this.begin(input.profile, threadId, "chrome_screenshot");
     const tabId = await this.useTab(profile, threadId, input.tabId);
+    return this.oneAtATime(profile, () => this.capture(profile, tabId, input.fullPage === true));
+  }
+
+  /**
+   * Chrome paints only the tab in front, so a capture brings its tab forward
+   * first. Captures in one profile take turns, or two threads would keep
+   * pulling their tabs in front of each other mid-capture.
+   */
+  private oneAtATime<T>(profile: RelayProfile, task: () => Promise<T>): Promise<T> {
+    const previous = this.captureQueue.get(profile) ?? Promise.resolve();
+    const next = previous.then(task, task);
+    this.captureQueue.set(
+      profile,
+      next.then(
+        () => {},
+        () => {},
+      ),
+    );
+    return next;
+  }
+
+  private async capture(profile: RelayProfile, tabId: number, fullPage: boolean) {
+    const tab = (await this.hub
+      .call(profile.id, "chrome.tabs.get", [tabId], 5_000)
+      .catch(() => null)) as ChromeTab | null;
+    if (tab && tab.active !== true) {
+      await this.cdp(profile, tabId, "Page.bringToFront").catch(() => {});
+      await sleep(SETTLE_MS);
+    }
     let params: object = { format: "png" };
-    if (input.fullPage === true) {
+    if (fullPage) {
       const metrics = (await this.cdp(profile, tabId, "Page.getLayoutMetrics")) as {
         cssContentSize?: { width: number; height: number };
       };
@@ -454,10 +506,12 @@ export class ChromeTools {
         "tab_not_found",
         "Only tabs an agent opened or used can be closed. Pass tabId from chrome_tabs.",
       );
+    this.hub.claimTab(profile, threadId, tabId);
     await this.hub.call(profile.id, "chrome.tabs.remove", [tabId]).catch(() => {});
     profile.agentTabs.delete(tabId);
     profile.attachedTabs.delete(tabId);
-    profile.lastTabByThread.delete(threadId);
+    this.hub.releaseTab(profile, tabId);
+    if (profile.lastTabByThread.get(threadId) === tabId) profile.lastTabByThread.delete(threadId);
     return { profile: profile.label, closed: tabId };
   }
 }

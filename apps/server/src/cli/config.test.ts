@@ -62,7 +62,10 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
 
   const openBootstrapFd = Effect.fn(function* (payload: DesktopBackendBootstrapValue) {
     const fs = yield* FileSystem.FileSystem;
-    const filePath = yield* fs.makeTempFileScoped({ prefix: "studio-bootstrap-", suffix: ".ndjson" });
+    const filePath = yield* fs.makeTempFileScoped({
+      prefix: "studio-bootstrap-",
+      suffix: ".ndjson",
+    });
     const encoded = yield* encodeDesktopBootstrap(payload);
     yield* fs.writeFileString(filePath, `${encoded}\n`);
     return yield* Effect.acquireRelease(
@@ -165,6 +168,47 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     }),
   );
 
+  it.effect("reports a live server to the web CLI as ServerAlreadyRunningError", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "studio-cli-web-owner-" });
+      const stateDir = path.join(baseDir, "userdata");
+      yield* fs.makeDirectory(stateDir, { recursive: true });
+      // The desktop app on a MacBook Air: bare `specwithcode` must open it, not fail.
+      yield* fs.writeFileString(
+        path.join(stateDir, "server-runtime.json"),
+        yield* encodeUnknownJson({
+          version: 1,
+          pid: process.ppid,
+          port: 8319,
+          origin: "http://127.0.0.1:8319",
+          startedAt: "2026-10-01T00:00:00.000Z",
+        }),
+      );
+      const error = yield* resolveServerConfig(
+        {
+          ...minimalWebFlags(baseDir),
+          mode: Option.some("web" as const),
+          port: Option.some(8788),
+          cwd: Option.some(path.join(baseDir, "project")),
+        },
+        Option.none(),
+        { rejectRunningServer: true },
+      ).pipe(
+        Effect.provide(
+          Layer.merge(NetService.layer, ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
+        ),
+        Effect.flip,
+      );
+      expect(error._tag).toBe("ServerAlreadyRunningError");
+      if (error._tag === "ServerAlreadyRunningError") {
+        expect(error.pid).toBe(process.ppid);
+        expect(error.origin).toBe("http://127.0.0.1:8319");
+      }
+    }),
+  );
+
   it.effect("enables a trimmed reusable auth token only for web dev mode", () =>
     Effect.gen(function* () {
       const baseDir = yield* FileSystem.FileSystem.pipe(
@@ -212,7 +256,9 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     Effect.gen(function* () {
       const secret = "short-secret";
       const baseDir = yield* FileSystem.FileSystem.pipe(
-        Effect.flatMap((fs) => fs.makeTempDirectoryScoped({ prefix: "studio-cli-dev-auth-invalid-" })),
+        Effect.flatMap((fs) =>
+          fs.makeTempDirectoryScoped({ prefix: "studio-cli-dev-auth-invalid-" }),
+        ),
       );
       const flags = {
         mode: Option.some("web" as const),
@@ -1096,33 +1142,115 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
   });
 
   for (const test of [
-    { name: "opens the overview on ordinary web startup", path: false, noBrowser: false, flag: undefined, env: undefined, presentation: "browser", expected: false },
-    { name: "opens the overview on web startup with no-browser", path: false, noBrowser: true, flag: undefined, env: undefined, presentation: "browser", expected: false },
-    { name: "preserves intentional explicit-project startup", path: true, noBrowser: true, flag: undefined, env: undefined, presentation: "browser", expected: true },
-    { name: "retains explicit bootstrap opt-in without a project argument", path: false, noBrowser: true, flag: true, env: undefined, presentation: "browser", expected: true },
-    { name: "retains environment bootstrap opt-in", path: false, noBrowser: true, flag: undefined, env: true, presentation: "browser", expected: true },
-    { name: "honors explicit false over a project and enabled environment", path: true, noBrowser: true, flag: false, env: true, presentation: "browser", expected: false },
-    { name: "honors environment false for an explicit project", path: true, noBrowser: true, flag: undefined, env: false, presentation: "browser", expected: false },
-    { name: "keeps supervised headless startup unseeded even with opt-in", path: true, noBrowser: true, flag: true, env: true, presentation: "headless", expected: false },
+    {
+      name: "opens the overview on ordinary web startup",
+      path: false,
+      noBrowser: false,
+      flag: undefined,
+      env: undefined,
+      presentation: "browser",
+      expected: false,
+    },
+    {
+      name: "opens the overview on web startup with no-browser",
+      path: false,
+      noBrowser: true,
+      flag: undefined,
+      env: undefined,
+      presentation: "browser",
+      expected: false,
+    },
+    {
+      name: "preserves intentional explicit-project startup",
+      path: true,
+      noBrowser: true,
+      flag: undefined,
+      env: undefined,
+      presentation: "browser",
+      expected: true,
+    },
+    {
+      name: "retains explicit bootstrap opt-in without a project argument",
+      path: false,
+      noBrowser: true,
+      flag: true,
+      env: undefined,
+      presentation: "browser",
+      expected: true,
+    },
+    {
+      name: "retains environment bootstrap opt-in",
+      path: false,
+      noBrowser: true,
+      flag: undefined,
+      env: true,
+      presentation: "browser",
+      expected: true,
+    },
+    {
+      name: "honors explicit false over a project and enabled environment",
+      path: true,
+      noBrowser: true,
+      flag: false,
+      env: true,
+      presentation: "browser",
+      expected: false,
+    },
+    {
+      name: "honors environment false for an explicit project",
+      path: true,
+      noBrowser: true,
+      flag: undefined,
+      env: false,
+      presentation: "browser",
+      expected: false,
+    },
+    {
+      name: "keeps supervised headless startup unseeded even with opt-in",
+      path: true,
+      noBrowser: true,
+      flag: true,
+      env: true,
+      presentation: "headless",
+      expected: false,
+    },
   ] as const) {
-    it.effect(test.name, () => Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "studio-overview-startup-" });
-      const resolved = yield* resolveServerConfig({
-        ...minimalWebFlags(baseDir),
-        cwd: test.path ? Option.some(path.join(baseDir, "explicit-project")) : Option.none(),
-        noBrowser: Option.some(test.noBrowser),
-        autoBootstrapProjectFromCwd: test.flag === undefined ? Option.none() : Option.some(test.flag),
-      }, Option.none(), { startupPresentation: test.presentation }).pipe(Effect.provide(Layer.mergeAll(
-        NetService.layer,
-        ConfigProvider.layer(ConfigProvider.fromEnv({ env: test.env === undefined ? {} : {
-          STUDIO_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: String(test.env),
-        } })),
-      )));
-      expect(resolved.autoBootstrapProjectFromCwd).toBe(test.expected);
-      expect(resolved.noBrowser).toBe(test.noBrowser);
-    }));
+    it.effect(test.name, () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "studio-overview-startup-" });
+        const resolved = yield* resolveServerConfig(
+          {
+            ...minimalWebFlags(baseDir),
+            cwd: test.path ? Option.some(path.join(baseDir, "explicit-project")) : Option.none(),
+            noBrowser: Option.some(test.noBrowser),
+            autoBootstrapProjectFromCwd:
+              test.flag === undefined ? Option.none() : Option.some(test.flag),
+          },
+          Option.none(),
+          { startupPresentation: test.presentation },
+        ).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              NetService.layer,
+              ConfigProvider.layer(
+                ConfigProvider.fromEnv({
+                  env:
+                    test.env === undefined
+                      ? {}
+                      : {
+                          STUDIO_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: String(test.env),
+                        },
+                }),
+              ),
+            ),
+          ),
+        );
+        expect(resolved.autoBootstrapProjectFromCwd).toBe(test.expected);
+        expect(resolved.noBrowser).toBe(test.noBrowser);
+      }),
+    );
   }
 
   it.effect(

@@ -54,7 +54,42 @@ export function cliArchiveFileName(version: string, platformKey: CliArchivePlatf
   return `studio-${version}-${platformKey}.${platformKey.startsWith("win32") ? "zip" : "tar.gz"}`;
 }
 
-const CLI_RELEASE_DEFAULT_BASE_URL = "https://updates.studio.invalid/releases/download";
+/**
+ * How a release archive is laid out. A `single-executable` archive wraps one
+ * directory holding the `specweave-studio` executable. A `node-bundle` is what
+ * the fleet release ships for Linux (`studio-<v>-linux-<arch>-<commit>.tar.gz`):
+ * `bin.mjs`, the web client and `node_modules` at the archive root, run by the
+ * host's Node.js.
+ */
+export type CliArchiveLayout = "single-executable" | "node-bundle";
+
+export interface CliArchiveChoice {
+  readonly fileName: string;
+  readonly layout: CliArchiveLayout;
+}
+
+/**
+ * Picks this platform's archive from a release's checksums: the
+ * single-executable name when the release has one, otherwise the one
+ * commit-suffixed Node bundle. Several bundles for one version and platform
+ * are ambiguous and pick nothing.
+ */
+export function chooseCliArchive(
+  checksums: ReadonlyMap<string, string>,
+  version: string,
+  platformKey: CliArchivePlatformKey,
+): CliArchiveChoice | undefined {
+  const executable = cliArchiveFileName(version, platformKey);
+  if (checksums.has(executable)) return { fileName: executable, layout: "single-executable" };
+  const prefix = `studio-${version}-${platformKey}-`;
+  const bundles = [...checksums.keys()].filter(
+    (name) =>
+      name.startsWith(prefix) && /^[0-9a-f]{7,40}\.tar\.gz$/.test(name.slice(prefix.length)),
+  );
+  return bundles.length === 1 ? { fileName: bundles[0]!, layout: "node-bundle" } : undefined;
+}
+
+const CLI_RELEASE_DEFAULT_BASE_URL = `https://github.com/${CLI_RELEASE_REPOSITORY}/releases/download`;
 
 /** Directory that `releases/download/<tag>/<asset>` lives under. */
 export function cliReleaseDownloadBaseUrl(
@@ -98,7 +133,7 @@ export function cliReleaseChannelOf(version: string): CliReleaseChannel {
  * preview or stable release past any single page.
  */
 export function cliReleaseIndexPageUrl(page: number): string {
-  return `https://updates.studio.invalid/releases?per_page=100&page=${page}`;
+  return `https://api.github.com/repos/${CLI_RELEASE_REPOSITORY}/releases?per_page=100&page=${page}`;
 }
 
 /**

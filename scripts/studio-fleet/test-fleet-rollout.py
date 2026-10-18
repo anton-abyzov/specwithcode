@@ -13,6 +13,7 @@ import io
 import json
 import os
 import pathlib
+import shlex
 import stat
 import subprocess
 import sys
@@ -63,6 +64,7 @@ class Fleet(object):
         self.status = {name: 'waiting-for-quiet' for name in self.version}
         self.message = {name: 'Waiting for running tasks (2 running tasks)' for name in self.version}
         self.available = {}
+        self.downloaded = {}
 
     def host(self, identity):
         def call(argv):
@@ -82,7 +84,8 @@ class Fleet(object):
                         'installFinalized': self.version[identity] == NEW,
                         'status': 'installed' if self.version[identity] == NEW else self.status[identity],
                         'message': None if self.version[identity] == NEW else self.message[identity],
-                        'downloadedVersion': NEW, 'availableVersion': self.available.get(identity, NEW)}
+                        'downloadedVersion': self.downloaded.get(identity, NEW),
+                        'availableVersion': self.available.get(identity, NEW)}
         return call
 
     def hosts(self):
@@ -94,6 +97,42 @@ class Fleet(object):
 
 def quiet(_line):
     pass
+
+
+HELD = {'idle': True, 'stoppedThreads': 1, 'interruptedRuns': 1, 'openTerminals': 0, 'blockers': [],
+        'held': True, 'holdUntil': '2026-10-16T12:15:00.000Z', 'holdReason': 'install'}
+
+
+class FakeHold(object):
+    """M4's ServiceHold. Each drain and release is logged in the fleet's log, in order with the
+    requests, as ('m4', 'hold' | 'release', version, [])."""
+
+    def __init__(self, fleet, reply=None, error=None, release_error=None):
+        self.fleet = fleet
+        self.reply = dict(HELD if reply is None else reply)
+        self.error = error
+        self.release_error = release_error
+
+    def _log(self, kind):
+        with self.fleet.lock:
+            self.fleet.log.append(('m4', kind, self.fleet.version['m4'], []))
+
+    def prepare(self):
+        self._log('hold')
+        if self.error:
+            raise fleet_rollout.HoldUnavailable(self.error)
+        return dict(self.reply)
+
+    def release(self):
+        self._log('release')
+        if self.release_error:
+            raise fleet_rollout.HoldUnavailable(self.release_error)
+        return {'idle': True, 'stoppedThreads': 0, 'blockers': [], 'held': False}
+
+
+def kinds(fleet, identity='m4'):
+    """The calls made to one host, in order, without status reads."""
+    return [entry[1] for entry in fleet.log if entry[0] == identity and entry[1] != 'status']
 
 
 class RolloutOrder(unittest.TestCase):
@@ -389,6 +428,283 @@ class RolloutOrder(unittest.TestCase):
                         run()
 
 
+class M4Hold(unittest.TestCase):
+    """M4 is drained and held through its own service, as Update now does, before each forced
+    request; M1 and M3 never are."""
+
+    def run_rollout(self, fleet, clock, hold, lines=None, **options):
+        options.setdefault('poll', 15)
+        say = lines.append if lines is not None else quiet
+        return fleet_rollout.rollout(NEW, fleet.hosts(), clock=clock, sleep=clock.sleep, say=say, hold=hold,
+                                     **options)
+
+    def test_m4_is_held_before_its_forced_request_and_workers_never_are(self):
+        clock = Clock()
+        fleet = Fleet(clock, polls={'m4': 3})
+        lines = []
+        results = self.run_rollout(fleet, clock, FakeHold(fleet), lines)
+        self.assertEqual({name: result['result'] for name, result in results.items()},
+                         {'m4': 'installed', 'm1': 'installed', 'm3': 'installed'})
+        self.assertEqual(kinds(fleet), ['hold', 'request'])
+        self.assertIn('--force', fleet.asked['m4'])
+        for worker in ('m1', 'm3'):
+            self.assertEqual(kinds(fleet, worker), ['request'])
+            self.assertNotIn('--force', fleet.asked[worker])
+        held = [line for line in lines if 'held the service' in line]
+        self.assertEqual(len(held), 1)
+        self.assertIn('stopped 1 thread (1 turn interrupted), closed 0 terminals', held[0])
+
+    def test_the_hold_waits_until_the_agent_offers_the_version(self):
+        """Before the agent found the release a drain would not hold, only stop work: M4 is asked
+        without one, then held and asked again as soon as the agent offers it."""
+        clock = Clock()
+        fleet = Fleet(clock, polls={'m4': 6})
+        fleet.status['m4'], fleet.message['m4'] = 'up-to-date', None
+        fleet.downloaded['m4'] = fleet.available['m4'] = None
+        real = fleet.host('m4')
+
+        def m4(argv):
+            reply = real(argv)
+            if argv[0] == 'status' and len(fleet.calls('m4', 'status')) == 3:  # The agent found it.
+                fleet.downloaded['m4'] = fleet.available['m4'] = NEW
+                fleet.status['m4'], fleet.message['m4'] = 'waiting-for-quiet', 'Waiting for running tasks (1 running task)'
+                reply = real(['status', '--identity', 'm4'])
+            return reply
+
+        hosts = fleet.hosts()
+        hosts['m4'] = m4
+        lines = []
+        result = fleet_rollout.rollout(NEW, hosts, only='m4', clock=clock, sleep=clock.sleep, say=lines.append,
+                                       hold=FakeHold(fleet), poll=15)
+        self.assertEqual(result['m4']['result'], 'installed')
+        self.assertEqual(result['m4']['requests'], 2)
+        self.assertEqual(kinds(fleet), ['request', 'hold', 'request'])
+        self.assertTrue(any('does not offer %s yet' % NEW in line for line in lines))
+
+    def test_each_request_again_is_held_again_and_a_give_up_releases(self):
+        clock = Clock()
+        fleet = Fleet(clock, polls={'m4': 10 ** 6})  # Never drains.
+        lines = []
+        with self.assertRaises(fleet_rollout.RolloutError) as caught:
+            self.run_rollout(fleet, clock, FakeHold(fleet), lines, only='m4', hold_minutes=15,
+                             local_deadline=40 * 60, poll=30)
+        self.assertIn('did not install', str(caught.exception))
+        self.assertEqual(kinds(fleet), ['hold', 'request'] * 3 + ['release'])
+        self.assertTrue(any('released the hold' in line for line in lines))
+
+    def test_a_joined_install_is_neither_held_nor_asked_again(self):
+        """M4 already runs the version while its checks after the restart go on: the rollout
+        waits for the final receipt and never drains the restarted service."""
+        clock = Clock()
+        fleet = Fleet(clock)
+        fleet.version['m4'] = NEW
+        real = fleet.host('m4')
+
+        def m4(argv):
+            reply = real(argv)
+            if argv[0] == 'status' and len(fleet.calls('m4', 'status')) <= 4:
+                reply.update(installFinalized=False, status='downloaded', installedVersion=OLD)
+            return reply
+
+        hosts = fleet.hosts()
+        hosts['m4'] = m4
+        result = fleet_rollout.rollout(NEW, hosts, only='m4', clock=clock, sleep=clock.sleep, say=quiet,
+                                       hold=FakeHold(fleet), poll=15)
+        self.assertEqual(result['m4'], dict(result['m4'], result='installed', requests=0))
+        self.assertEqual(kinds(fleet), [])
+
+    def test_an_installing_agent_keeps_its_hold(self):
+        """Releasing during the install would let work start before the restart."""
+        clock = Clock()
+        fleet = Fleet(clock, polls={'m4': 10 ** 6})
+        real = fleet.host('m4')
+
+        def m4(argv):
+            reply = real(argv)
+            if argv[0] == 'status' and fleet.calls('m4', 'request'):
+                reply['status'] = 'installing'
+            return reply
+
+        hosts = fleet.hosts()
+        hosts['m4'] = m4
+        lines = []
+        with self.assertRaises(fleet_rollout.RolloutError):
+            fleet_rollout.rollout(NEW, hosts, only='m4', clock=clock, sleep=clock.sleep, say=lines.append,
+                                  hold=FakeHold(fleet), local_deadline=10 * 60, poll=15)
+        self.assertEqual(kinds(fleet), ['hold', 'request'])
+        self.assertTrue(any('the agent is installing' in line for line in lines))
+
+    def test_a_failed_install_releases_and_a_failed_release_only_warns(self):
+        clock = Clock()
+        fleet = Fleet(clock, polls={'m4': 10 ** 6})
+        real = fleet.host('m4')
+
+        def m4(argv):
+            reply = real(argv)
+            if argv[0] == 'request':
+                reply['request'] = {'installRequestedAt': '2026-10-16T12:00:00.000Z'}
+            elif fleet.calls('m4', 'request'):
+                reply.update({'status': 'error', 'message': 'SpecWithCode %s did not install' % NEW,
+                              'lastInstall': {'version': NEW, 'at': '2026-10-16T12:00:05.000000+00:00',
+                                              'result': 'failed', 'receipt': '/r.json'}})
+            return reply
+
+        hosts = fleet.hosts()
+        hosts['m4'] = m4
+        lines = []
+        with self.assertRaises(fleet_rollout.RolloutError) as caught:
+            fleet_rollout.rollout(NEW, hosts, only='m4', clock=clock, sleep=clock.sleep, say=lines.append,
+                                  hold=FakeHold(fleet, release_error='exit 1'), poll=15)
+        self.assertIn('it failed', str(caught.exception))
+        self.assertEqual(kinds(fleet), ['hold', 'request', 'release'])
+        self.assertTrue(any('could not release the hold (exit 1)' in line for line in lines))
+
+    def test_an_interrupted_rollout_releases(self):
+        clock = Clock()
+        fleet = Fleet(clock, polls={'m4': 10 ** 6})
+
+        def sleep(_seconds):
+            raise KeyboardInterrupt
+
+        with self.assertRaises(KeyboardInterrupt):
+            fleet_rollout.rollout(NEW, fleet.hosts(), only='m4', clock=clock, sleep=sleep, say=quiet,
+                                  hold=FakeHold(fleet), poll=15)
+        self.assertEqual(kinds(fleet), ['hold', 'request', 'release'])
+
+    def test_an_unavailable_hold_falls_back_to_the_forced_request(self):
+        """An older service has no `service prepare-update`, or the service did not hold: the
+        rollout warns, asks as before, and never drains again."""
+        for hold_kind in ('unavailable', 'not-held'):
+            with self.subTest(hold=hold_kind):
+                clock = Clock()
+                fleet = Fleet(clock, polls={'m4': 10 ** 6})
+                hold = (FakeHold(fleet, error='exit 1: Unknown subcommand prepare-update') if hold_kind == 'unavailable'
+                        else FakeHold(fleet, reply=dict(HELD, held=False)))
+                lines = []
+                with self.assertRaises(fleet_rollout.RolloutError):
+                    self.run_rollout(fleet, clock, hold, lines, only='m4', hold_minutes=15,
+                                     local_deadline=40 * 60, poll=30)
+                # One try, the requests as without a hold, and nothing to release.
+                self.assertEqual(kinds(fleet), ['hold', 'request', 'request', 'request'])
+                self.assertIn('--force', fleet.asked['m4'])
+                warnings = [line for line in lines if 'WARNING' in line]
+                self.assertEqual(len(warnings), 1)
+                self.assertIn('asking without a hold', warnings[0])
+                if hold_kind == 'unavailable':
+                    self.assertIn('Unknown subcommand prepare-update', warnings[0])
+
+        clock = Clock()
+        fleet = Fleet(clock, polls={'m4': 2})
+        result = self.run_rollout(fleet, clock, FakeHold(fleet, error='no answer within 200s'), only='m4')
+        self.assertEqual(result['m4']['result'], 'installed')
+
+    def test_without_a_hold_nothing_is_drained(self):
+        clock = Clock()
+        fleet = Fleet(clock, polls={'m4': 2})
+        self.assertEqual(self.run_rollout(fleet, clock, None, only='m4')['m4']['result'], 'installed')
+        self.assertEqual(kinds(fleet), ['request'])
+
+    def test_no_hold_flag_and_dry_run(self):
+        seen = {}
+
+        def rollout(version, hosts, *args, **options):
+            seen['hold'] = options.get('hold')
+            return {}
+
+        saved = fleet_rollout.rollout, fleet_rollout.fleet
+        fleet_rollout.rollout, fleet_rollout.fleet = rollout, lambda: {}
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(fleet_rollout.main(['--version', NEW, '--only', 'm4', '--no-hold']), 0)
+                self.assertIsNone(seen['hold'])
+                self.assertEqual(fleet_rollout.main(['--version', NEW, '--only', 'm4']), 0)
+                self.assertIsInstance(seen['hold'], fleet_rollout.ServiceHold)
+                self.assertEqual(fleet_rollout.main(['--version', NEW, '--only', 'workers']), 0)
+                self.assertIsNone(seen['hold'])
+        finally:
+            fleet_rollout.rollout, fleet_rollout.fleet = saved
+
+
+class ServiceHoldCommand(unittest.TestCase):
+    """ServiceHold runs the service's own CLI from its installation.json, here a stand-in script
+    in a temporary home that records its arguments; no service is contacted."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.home = pathlib.Path(self.temporary.name)
+        self.own = self.home / '.specwithcode' / 'm4'
+        self.own.mkdir(parents=True)
+        self.wrapper = self.home / 'specweave-studio'
+        self.argv = self.home / 'argv.json'
+        self.receipt(cliWrapper=str(self.wrapper), studioHome=str(self.own))
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def receipt(self, **fields):
+        (self.own / 'installation.json').write_text(json.dumps(dict({'identity': 'm4', 'version': OLD}, **fields)))
+
+    def cli(self, stdout, code=0, stderr=''):
+        """A stand-in CLI: records its arguments one per line, prints `stdout` and `stderr`."""
+        self.wrapper.write_text('#!/bin/sh\nprintf "%%s\\n" "$@" > %s\nprintf %%s %s\nprintf %%s %s >&2\nexit %d\n' % (
+            shlex.quote(str(self.argv)), shlex.quote(stdout), shlex.quote(stderr), code))
+        self.wrapper.chmod(0o700)
+
+    def ran(self):
+        return self.argv.read_text().splitlines()
+
+    def test_prepare_and_release_run_the_service_cli_for_its_home(self):
+        hold = fleet_rollout.ServiceHold(home=self.home)
+        self.cli(json.dumps(HELD))
+        self.assertEqual(hold.prepare(), HELD)
+        self.assertEqual(self.ran(), ['service', 'prepare-update', '--base-dir', str(self.own), '--stop-work', '--hold',
+                                      '--reason', 'install', '--json'])
+        self.cli('warning on stdout\n' + json.dumps({'idle': True, 'stoppedThreads': 0, 'blockers': [], 'held': False}))
+        self.assertIs(hold.release()['held'], False)
+        self.assertEqual(self.ran(), ['service', 'prepare-update', '--base-dir', str(self.own), '--release-hold', '--json'])
+
+    def test_failures_are_unavailable_with_their_reason(self):
+        hold = fleet_rollout.ServiceHold(home=self.home)
+        for stdout, code, stderr, words in (
+                (json.dumps({'error': 'No running SpecWithCode service owns %s.' % self.own}), 1, '', 'No running'),
+                ('Usage: specweave-studio service <command>', 1, 'Unknown subcommand: prepare-update', 'exit 1: Unknown subcommand'),
+                ('not json', 0, '', 'exit 0')):
+            with self.subTest(words=words):
+                self.cli(stdout, code, stderr)
+                with self.assertRaises(fleet_rollout.HoldUnavailable) as caught:
+                    hold.prepare()
+                self.assertIn(words, str(caught.exception))
+
+    def test_a_receipt_without_a_runnable_cli_for_this_home_is_unavailable(self):
+        hold = fleet_rollout.ServiceHold(home=self.home)
+        for fields, words in (({'cliWrapper': str(self.wrapper), 'studioHome': str(self.home / 'other')}, 'names the home'),
+                              ({'cliWrapper': 'specweave-studio', 'studioHome': str(self.own)}, 'no runnable cliWrapper'),
+                              ({'studioHome': str(self.own)}, 'no runnable cliWrapper')):
+            with self.subTest(fields=fields):
+                self.cli(json.dumps(HELD))
+                self.receipt(**fields)
+                with self.assertRaises(fleet_rollout.HoldUnavailable) as caught:
+                    hold.prepare()
+                self.assertIn(words, str(caught.exception))
+        (self.own / 'installation.json').unlink()
+        with self.assertRaises(fleet_rollout.HoldUnavailable) as caught:
+            hold.prepare()
+        self.assertIn('no readable installation.json', str(caught.exception))
+        self.assertFalse(self.argv.exists(), 'the CLI ran for a receipt that names no runnable CLI for this home')
+
+    def test_offers_matches_the_services_own_check(self):
+        """ServiceUpdateHold.updatePendingFor, narrowed to the version the rollout installs."""
+        for status, expected in (({'status': 'waiting-for-quiet', 'downloadedVersion': NEW}, True),
+                                 ({'status': 'available', 'availableVersion': NEW}, True),
+                                 ({'status': 'error', 'downloadedVersion': NEW, 'installedVersion': OLD}, True),
+                                 ({'status': 'error', 'downloadedVersion': NEW}, False),
+                                 ({'status': 'up-to-date', 'availableVersion': None}, False),
+                                 ({'status': 'downloaded', 'downloadedVersion': OLD, 'availableVersion': NEW}, False),
+                                 ({'status': 'waiting-for-quiet', 'downloadedVersion': '1.0.42'}, False)):
+            with self.subTest(status=status):
+                self.assertIs(fleet_rollout.offers(status, NEW), expected)
+
+
 class Inventory(unittest.TestCase):
     def test_hosts_come_from_the_inventory_over_pinned_ssh(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -612,9 +928,15 @@ class RequestCommand(unittest.TestCase):
             env = dict(os.environ, STUDIO_FLEET_HOSTS=str(inventory), HOME=temporary)
             result = subprocess.run([sys.executable, '-B', str(HERE / 'fleet_rollout.py'), '--version', NEW, '--dry-run'],
                                     capture_output=True, text=True, timeout=60, env=env)
+            no_hold = subprocess.run([sys.executable, '-B', str(HERE / 'fleet_rollout.py'), '--version', NEW, '--dry-run',
+                                      '--no-hold'], capture_output=True, text=True, timeout=60, env=env)
         self.assertEqual(result.returncode, 0, result.stderr)
         plan = json.loads(result.stdout)
         self.assertEqual(plan['order'], ['m4', 'm1+m3'])
+        # No installed service in this home: the plan says so instead of failing.
+        self.assertTrue(plan['hold'].startswith('unavailable: no readable installation.json'), plan['hold'])
+        self.assertEqual(no_hold.returncode, 0, no_hold.stderr)
+        self.assertIsNone(json.loads(no_hold.stdout)['hold'])
         bad = subprocess.run([sys.executable, '-B', str(HERE / 'fleet_rollout.py'), '--version', NEW, '--hold-minutes', '20'],
                              capture_output=True, text=True, timeout=60)
         self.assertEqual(bad.returncode, 2)

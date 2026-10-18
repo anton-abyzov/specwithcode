@@ -1,6 +1,10 @@
 import { expect, it } from "vite-plus/test";
 
-import { apiCreditAccountInstance, isApiCreditAccountDriver } from "./apiCreditAccount";
+import {
+  apiCreditAccountInstance,
+  CLAUDE_WORKSPACE_ID_PATTERN,
+  isApiCreditAccountDriver,
+} from "./apiCreditAccount";
 
 it("makes one instance per API account, its key kept as a sensitive variable", () => {
   const first = apiCreditAccountInstance({
@@ -44,4 +48,47 @@ it("makes one instance per API account, its key kept as a sensitive variable", (
     false,
     false,
   ]);
+});
+
+it("sends the workspace of a key that is not scoped to one as a Claude request header", () => {
+  const scoped = apiCreditAccountInstance({
+    driver: "claudeAgent",
+    label: "Personal",
+    apiKey: "sk-ant-usr-test",
+    workspaceId: " wrkspc_01AbC ",
+    existingIds: new Set(),
+  });
+  expect(scoped.instance.environment).toEqual([
+    { name: "ANTHROPIC_API_KEY", value: "sk-ant-usr-test", sensitive: true },
+    {
+      name: "ANTHROPIC_CUSTOM_HEADERS",
+      value: "anthropic-workspace-id: wrkspc_01AbC",
+      sensitive: false,
+    },
+  ]);
+  // Blank, or a driver that has no workspaces: nothing extra.
+  expect(
+    apiCreditAccountInstance({
+      driver: "claudeAgent",
+      label: "",
+      apiKey: "sk-ant-api03-test",
+      workspaceId: "  ",
+      existingIds: new Set(),
+    }).instance.environment,
+  ).toHaveLength(1);
+  expect(
+    apiCreditAccountInstance({
+      driver: "grok",
+      label: "",
+      apiKey: "xai-test",
+      workspaceId: "wrkspc_01AbC",
+      existingIds: new Set(),
+    }).instance.environment,
+  ).toHaveLength(1);
+  // A newline would let the value add a second header line.
+  expect(
+    ["wrkspc_01AbC", "default", "wrkspc_", "wrkspc_01 x", "wrkspc_01\nx-other: 1"].map((v) =>
+      CLAUDE_WORKSPACE_ID_PATTERN.test(v),
+    ),
+  ).toEqual([true, false, false, false, false]);
 });

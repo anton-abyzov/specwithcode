@@ -80,6 +80,18 @@ usage_error() {
 
 # ---------------------------------------------------------------- running commands
 
+# command_word HELPER LABEL CMD...: refuse a call whose command is missing or looks like an option.
+# `x sums --python3 ...` (a lost space after the -- separator) ran "--python3" as the command and
+# failed the 1.0.44 release after signing; dry and stub runs record calls without running them, so
+# this check is the one that makes --dry-run and --self-test catch it.
+command_word() {
+  local helper="$1" label="$2"
+  shift 2
+  case "${1:-}" in
+    "" | -*) die "$helper $label: \"${1:-}\" is not a command; write: $helper $label [-C DIR] -- CMD..." ;;
+  esac
+}
+
 # x LABEL [-C DIR] [--] CMD...: run CMD. Stub mode records it; dry-run prints it.
 x() {
   local label="$1" dir=""
@@ -89,6 +101,7 @@ x() {
     shift 2
   fi
   if [ "${1:-}" = "--" ]; then shift; fi
+  command_word x "$label" "$@"
   case "$MODE" in
     dry)
       printf '    %s: %s%s\n' "$label" "${dir:+(in $dir) }" "$*"
@@ -96,6 +109,13 @@ x() {
       ;;
     stub)
       printf '%s\t%s\t%s\n' "$CURRENT_STAGE" "$label" "$*" >> "$STUB_LOG"
+      # RELEASE_STUB_FAIL_ONCE=STAGE:LABEL fails only that call's first run in a staging folder.
+      if [ -n "${RELEASE_STUB_FAIL_ONCE:-}" ] && [ "$RELEASE_STUB_FAIL_ONCE" = "$CURRENT_STAGE:$label" ] &&
+        [ ! -e "$STUB_LOG.failed-once" ]; then
+        : > "$STUB_LOG.failed-once"
+        printf '%s\t%s\tFAILED (stub)\n' "$CURRENT_STAGE" "$label" >> "$STUB_LOG"
+        return 1
+      fi
       if [ "${RELEASE_STUB_FAIL:-}" = "$CURRENT_STAGE" ] || [ "${RELEASE_STUB_FAIL:-}" = "$CURRENT_STAGE:$label" ]; then
         printf '%s\t%s\tFAILED (stub)\n' "$CURRENT_STAGE" "$label" >> "$STUB_LOG"
         return 1
@@ -135,6 +155,7 @@ stub_value() {
     draft-state) printf 'true\n' ;;
     tag-sha) printf '%s\n' "$SHA" ;;
     app-version) printf '%s\n' "$VERSION" ;;
+    pr-required-buckets) printf 'skipping\n' ;;
     packages) printf 'apps/web\t@specweave-studio/web\npackages/shared\t@specweave-studio/shared\n' ;;
     *) printf '' ;;
   esac
@@ -152,6 +173,7 @@ q() {
       *) break ;;
     esac
   done
+  command_word q "$key" "$@"
   if [ "$MODE" != real ]; then
     stub_value "$key"
     return 0
@@ -180,6 +202,7 @@ t() {
     shift 2
   fi
   if [ "${1:-}" = "--" ]; then shift; fi
+  command_word t "$key" "$@"
   if [ "$MODE" != real ]; then
     for item in ${RELEASE_STUB_STATUS:-}; do
       if [ "${item%%=*}" = "$key" ]; then return "${item#*=}"; fi
@@ -984,7 +1007,7 @@ stage_bundle() {
   x google-verify -C "$BUILD" -- env STUDIO_TEST_REQUIRE_BUILTIN_GOOGLE=1 node scripts/studio-google/verify.mjs "$verify"
 }
 
-stage_sign() {
+sign_artifacts() {
   local file
   for file in "${CSC_LINK_PATH:-}" "${CSC_PASSPHRASE_FILE:-}" "${APPLE_API_KEY_PATH:-}"; do
     need_file "$file" "signing input from $RELEASE_ENV"
@@ -999,8 +1022,20 @@ stage_sign() {
     x sign -C "$BUILD" -- node scripts/build-desktop-artifact.ts --platform mac --target dmg --arch arm64 \
       --signed --skip-build --build-version "$VERSION" --output-dir "$ASSETS"
   )
-  x mac-signature -C "$BUILD" -- node scripts/studio-projects/mac-signature.mjs \
-    "$ASSETS/SpecWithCode-$VERSION-arm64.dmg" "$ASSETS/SpecWithCode-$VERSION-arm64.zip"
+}
+
+stage_sign() {
+  sign_artifacts
+  # Apple's notarization ticket can reach the stapler late: the 1.0.44 DMG once came out without
+  # it while the zip from the same run had it. One fresh signing run fixes that; a second failure
+  # is a real signing problem and stops the release.
+  if ! x mac-signature -C "$BUILD" -- node scripts/studio-projects/mac-signature.mjs \
+    "$ASSETS/SpecWithCode-$VERSION-arm64.dmg" "$ASSETS/SpecWithCode-$VERSION-arm64.zip"; then
+    say "sign: the signature check refused the build; signing once more"
+    sign_artifacts
+    x mac-signature-retry -C "$BUILD" -- node scripts/studio-projects/mac-signature.mjs \
+      "$ASSETS/SpecWithCode-$VERSION-arm64.dmg" "$ASSETS/SpecWithCode-$VERSION-arm64.zip"
+  fi
 }
 
 stage_helpers() {
@@ -1232,7 +1267,32 @@ stage_merge() {
       --title "Release SpecWithCode $VERSION" \
       --body "Version bump and release fixes for SpecWithCode $VERSION, published as v$VERSION from $SHA12."
   fi
+  required_checks_settled
   x pr-merge -- gh pr merge "release/$VERSION" -R "$PRIVATE_REPO" --merge
+}
+
+# main requires the PR gate checks, which skip release/ branches in seconds. Merging before they
+# report is refused, so wait for them: up to 10 minutes, and 2 minutes with none reported (a
+# repository with no required checks has nothing to wait for). A failed check stops the merge.
+required_checks_settled() {
+  local buckets tries=0 empty=0 pause=10
+  if [ "$MODE" != real ]; then pause=0; fi
+  while :; do
+    buckets="$(q pr-required-buckets --may-fail -- gh pr checks "release/$VERSION" -R "$PRIVATE_REPO" --required \
+      --json bucket -q '[.[].bucket] | unique | join(" ")')"
+    case " $buckets " in
+      *" fail "* | *" cancel "*) die "merge: a required check failed on release/$VERSION; see gh pr checks release/$VERSION -R $PRIVATE_REPO" ;;
+      *" pending "*) ;;
+      "  ")
+        empty=$((empty + 1))
+        if [ "$empty" -ge 12 ]; then return 0; fi
+        ;;
+      *) return 0 ;;
+    esac
+    tries=$((tries + 1))
+    if [ "$tries" -ge 60 ]; then die "merge: the required checks on release/$VERSION did not finish in 10 minutes"; fi
+    sleep "$pause"
+  done
 }
 
 # ---------------------------------------------------------------- status and arguments

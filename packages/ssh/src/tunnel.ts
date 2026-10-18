@@ -511,6 +511,7 @@ if ! studio_runtime_ready; then
     *) printf 'Remote host %s has no specweave-studio release archive.\\n' "$(uname -m)" >&2; exit 1 ;;
   esac
   STUDIO_ARCHIVE="studio-$STUDIO_ARCHIVE_VERSION-$STUDIO_PLATFORM-$STUDIO_ARCH.tar.gz"
+  STUDIO_LAYOUT="single-executable"
   STUDIO_STAGING="$(mktemp -d "$STUDIO_ROOT/runtime/versions/.staging-XXXXXX")"
   trap 'rm -rf "$STUDIO_STAGING" "$STUDIO_LOCK"' EXIT
   studio_fetch() {
@@ -520,6 +521,20 @@ if ! studio_runtime_ready; then
     fi
   }
   studio_fetch "$STUDIO_RELEASE_BASE_URL/v$STUDIO_ARCHIVE_VERSION/SHA256SUMS" "$STUDIO_STAGING/SHA256SUMS" @@STUDIO_ARCHIVE_CHECKSUMS_SECONDS@@
+  # Releases without the single executable ship a commit-suffixed Node bundle
+  # (bin.mjs and node_modules at the archive root) run by the host's Node.js.
+  if ! grep -q " \\*\\{0,1\\}$STUDIO_ARCHIVE$" "$STUDIO_STAGING/SHA256SUMS"; then
+    STUDIO_BUNDLES="$(grep -o "studio-$STUDIO_ARCHIVE_VERSION-$STUDIO_PLATFORM-$STUDIO_ARCH-[0-9a-f]*\\.tar\\.gz$" "$STUDIO_STAGING/SHA256SUMS" || true)"
+    if [ -z "$STUDIO_BUNDLES" ] || [ "$(printf '%s\\n' "$STUDIO_BUNDLES" | wc -l | tr -d ' ')" != "1" ]; then
+      printf 'Release %s has no single %s-%s archive.\\n' "$STUDIO_ARCHIVE_VERSION" "$STUDIO_PLATFORM" "$STUDIO_ARCH" >&2; exit 1
+    fi
+    ensure_remote_node_path || true
+    if ! command -v node >/dev/null 2>&1 || ! remote_node_satisfies_engine; then
+      printf 'SpecWithCode %s on %s needs Node.js 22.20 or a later 22.x release on the host.\\n' "$STUDIO_ARCHIVE_VERSION" "$STUDIO_PLATFORM" >&2; exit 1
+    fi
+    STUDIO_ARCHIVE="$STUDIO_BUNDLES"
+    STUDIO_LAYOUT="node-bundle"
+  fi
   studio_fetch "$STUDIO_RELEASE_BASE_URL/v$STUDIO_ARCHIVE_VERSION/$STUDIO_ARCHIVE" "$STUDIO_STAGING/$STUDIO_ARCHIVE" @@STUDIO_ARCHIVE_DOWNLOAD_SECONDS@@
   STUDIO_EXPECTED="$(grep " \\*\\{0,1\\}$STUDIO_ARCHIVE$" "$STUDIO_STAGING/SHA256SUMS" | cut -d' ' -f1)"
   if command -v sha256sum >/dev/null 2>&1; then
@@ -530,7 +545,20 @@ if ! studio_runtime_ready; then
   if [ -z "$STUDIO_EXPECTED" ] || [ "$STUDIO_ACTUAL" != "$STUDIO_EXPECTED" ]; then
     printf 'Checksum mismatch for %s.\\n' "$STUDIO_ARCHIVE" >&2; exit 1
   fi
-  tar -xzf "$STUDIO_STAGING/$STUDIO_ARCHIVE" -C "$STUDIO_STAGING" --strip-components=1
+  if [ "$STUDIO_LAYOUT" = "node-bundle" ]; then
+    tar -xzf "$STUDIO_STAGING/$STUDIO_ARCHIVE" -C "$STUDIO_STAGING"
+    STUDIO_NODE="$(command -v node)"
+    {
+      printf '#!/bin/sh\\n'
+      printf '# specwithcode-install launcher: runs this release with the Node.js the installer chose.\\n'
+      printf 'STUDIO_CLI_NAME="\${0##*/}"\\nexport STUDIO_CLI_NAME\\n'
+      printf 'STUDIO_BUNDLE_DIR="$(dirname -- "$(readlink -f -- "$0")")"\\n'
+      printf 'exec %s "$STUDIO_BUNDLE_DIR/bin.mjs" "$@"\\n' "'$(printf '%s' "$STUDIO_NODE" | sed "s/'/'\\\\\\\\''/g")'"
+    } > "$STUDIO_STAGING/specweave-studio"
+    chmod 755 "$STUDIO_STAGING/specweave-studio"
+  else
+    tar -xzf "$STUDIO_STAGING/$STUDIO_ARCHIVE" -C "$STUDIO_STAGING" --strip-components=1
+  fi
   rm -f "$STUDIO_STAGING/$STUDIO_ARCHIVE" "$STUDIO_STAGING/SHA256SUMS"
   # Prove the binary runs here (libc, arch) before marking it ready, or every
   # later launch would exec a broken install instead of retrying.

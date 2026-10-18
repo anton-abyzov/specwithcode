@@ -246,7 +246,7 @@ export const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairi
   },
 );
 
-const mintPairingLink = Effect.fn("pair.mintPairingLink")(function* (input: {
+export const mintPairingLink = Effect.fn("pair.mintPairingLink")(function* (input: {
   readonly config: ServerConfig.ServerConfig["Service"];
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly ttl: Option.Option<Duration.Duration>;

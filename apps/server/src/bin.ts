@@ -9,6 +9,7 @@
  */
 import { isEntrypoint } from "./entrypoint.ts";
 import { installLiveDatabaseGuard } from "./persistence/liveDatabaseGuard.ts";
+import { quietSqliteExperimentalWarning } from "./quietWarnings.ts";
 import { ensureServerThreadPoolSize } from "./threadPool.ts";
 
 if (
@@ -18,6 +19,8 @@ if (
     runtimeMain: import.meta.main,
   })
 ) {
+  // Before anything imports node:sqlite, which warns that it is experimental.
+  quietSqliteExperimentalWarning();
   const command = process.argv[2];
   if (command === "managed-agents") {
     const { runManagedAgentsCli } = await import("./provider/managedAgents/cli.ts");

@@ -482,7 +482,12 @@ export function ProjectWorkspaceSettings({
                         ask.
                       </span>
                     </label>
-                  ) : null}
+                  ) : (
+                    <p className="project-muted">
+                      Workers run on this machine. To run them on a second Mac or your own Linux
+                      VPS, add it under Settings &gt; Connections &gt; Your private machines.
+                    </p>
+                  )}
                   <label className="project-checkbox">
                     <input
                       type="checkbox"

@@ -9,6 +9,7 @@ const state = vi.hoisted(() => ({
   closeToast: vi.fn(),
   announceDownload: vi.fn(),
   confirm: vi.fn(async () => true),
+  requestRestart: vi.fn(() => true),
 }));
 
 vi.mock("../../env", () => ({ isElectron: true }));
@@ -23,6 +24,9 @@ vi.mock("../ui/toast", () => ({
 }));
 vi.mock("../desktopUpdate.toast", () => ({
   showDesktopUpdateDownloadedToast: state.announceDownload,
+}));
+vi.mock("./restartToUpdateRequests", () => ({
+  requestRestartToUpdate: state.requestRestart,
 }));
 vi.mock("../ui/sidebar", () => ({
   SidebarMenuItem: ({ children }: { children: ReactNode }) => children,
@@ -164,6 +168,8 @@ describe("manual sidebar update checks", () => {
     state.closeToast.mockReset();
     state.announceDownload.mockReset();
     state.confirm.mockClear();
+    state.requestRestart.mockReset();
+    state.requestRestart.mockReturnValue(true);
     bridge.checkForUpdate.mockReset();
     bridge.downloadUpdate.mockReset();
     bridge.installUpdate.mockReset();
@@ -310,20 +316,45 @@ describe("manual sidebar update checks", () => {
     expect(state.announceDownload).not.toHaveBeenCalled();
   });
 
-  it("leaves a downloaded update to the footer Restart to update button", async () => {
+  it("shows a downloaded update and installs it through Restart to update", async () => {
     state.app = {
       ...current,
       status: "downloaded",
       availableVersion: "1.0.11",
       downloadedVersion: "1.0.11",
     };
-    bridge.checkForUpdate.mockResolvedValue({ checked: true, state: state.app });
+    render();
+    const button = renderer!.root.findByType("button");
+    expect(button.props["aria-label"]).toBe(
+      "Update 1.0.11 downloaded. Click to restart and install.",
+    );
+
+    await click();
+
+    expect(state.requestRestart).toHaveBeenCalledOnce();
+    expect(bridge.checkForUpdate).not.toHaveBeenCalled();
+    expect(bridge.installUpdate).not.toHaveBeenCalled();
+    expect(state.addToast).not.toHaveBeenCalled();
+  });
+
+  it("says how to install when no Restart to update button can take the click", async () => {
+    state.app = {
+      ...current,
+      status: "downloaded",
+      availableVersion: "1.0.11",
+      downloadedVersion: "1.0.11",
+    };
+    state.requestRestart.mockReturnValue(false);
     render();
 
     await click();
 
-    expect(state.confirm).not.toHaveBeenCalled();
-    expect(bridge.installUpdate).not.toHaveBeenCalled();
+    expect(state.addToast).toHaveBeenCalledExactlyOnceWith({
+      type: "info",
+      title: "Update downloaded",
+      description: "Quit and reopen SpecWithCode to install it.",
+    });
+    expect(bridge.checkForUpdate).not.toHaveBeenCalled();
   });
 
   it("does not report an automatic download failure as a failed release check", async () => {

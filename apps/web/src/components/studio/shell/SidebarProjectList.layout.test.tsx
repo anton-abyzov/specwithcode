@@ -9,6 +9,7 @@ vi.mock("@tanstack/react-router", () => ({
   Link: ({ children, ...rest }: React.PropsWithChildren<Record<string, unknown>>) => (
     <a {...(rest as object)}>{children}</a>
   ),
+  useRouter: () => ({ routesById: {} }),
 }));
 vi.mock("../../ProjectFavicon", () => ({ ProjectFavicon: () => null }));
 
