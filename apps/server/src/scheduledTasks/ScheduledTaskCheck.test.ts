@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { checkAllowedFor, isModelPinned } from "./ScheduledTaskCheck.ts";
+import { checkAllowedFor, isModelPinned, routineCoordinatorPrompt } from "./ScheduledTaskCheck.ts";
 
 describe("checkAllowedFor", () => {
   it("allows a check only under full access outside plan mode", () => {
@@ -25,9 +25,31 @@ describe("checkAllowedFor", () => {
 });
 
 describe("isModelPinned", () => {
-  it("pins a person's routine and follows the thread for an agent's", () => {
-    expect(isModelPinned({ creationSource: "mcp" })).toBe(false);
-    expect(isModelPinned({ creationSource: "mcp", modelPinned: true })).toBe(true);
-    expect(isModelPinned({ creationSource: "web" })).toBe(true);
+  it("pins only a routine set to use a specific model", () => {
+    expect(isModelPinned({})).toBe(false);
+    expect(isModelPinned({ modelPinned: false })).toBe(false);
+    expect(isModelPinned({ modelPinned: true })).toBe(true);
+  });
+});
+
+describe("routineCoordinatorPrompt", () => {
+  it("names the routine and where its threads should work", () => {
+    expect(
+      routineCoordinatorPrompt(
+        { title: "Disk space watch", workspaceStrategy: { type: "root" } },
+        "Check free disk space.",
+      ),
+    ).toBe(
+      'Routine "Disk space watch" fired. Answer it yourself or start the threads it needs.\n\nCheck free disk space.',
+    );
+    expect(
+      routineCoordinatorPrompt(
+        {
+          title: "Nightly review",
+          workspaceStrategy: { type: "worktree", baseRef: "main", startFromOrigin: true },
+        },
+        "Review yesterday's commits.",
+      ),
+    ).toContain("Run any thread it needs in a new worktree from main on origin.");
   });
 });

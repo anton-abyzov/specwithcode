@@ -22,6 +22,7 @@ import {
   FleetError,
   readFleetConfig,
 } from "./studioFleet.ts";
+import { addFleetMachine, FleetJoinError } from "./studioFleetJoin.ts";
 
 const noStore = HttpEffect.appendPreResponseHandler((_request, response) =>
   Effect.succeed(
@@ -96,6 +97,34 @@ export const layer = HttpApiBuilder.group(
             { concurrency: 4 },
           );
           return { ...snapshot, machines };
+        }),
+      )
+      .handle("addFleetMachine", ({ payload }) =>
+        Effect.gen(function* () {
+          yield* noStore;
+          // Adding a machine stores a credential for it, like allowing workers there.
+          yield* requireGrantManager;
+          return yield* Effect.tryPromise({
+            try: () =>
+              addFleetMachine({
+                baseDir: config.baseDir,
+                code: payload.invitation,
+                label: payload.label?.trim() || undefined,
+              }),
+            catch: (error) => {
+              const kind =
+                error instanceof FleetJoinError || error instanceof FleetError
+                  ? error.kind
+                  : "write";
+              const message =
+                error instanceof FleetJoinError || error instanceof FleetError
+                  ? error.message
+                  : new FleetJoinError("write").message;
+              return kind === "write" || kind === "config"
+                ? new EnvironmentHttpInternalServerError({ message })
+                : new EnvironmentHttpBadRequestError({ message });
+            },
+          });
         }),
       )
       .handle("allowFleetWorkers", ({ payload }) =>

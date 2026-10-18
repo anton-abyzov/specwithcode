@@ -8,6 +8,7 @@ import {
   cursorUsageWindowDetails,
   describeLimitAccount,
   displayLimitWindows,
+  formatDuration,
   formatResetsIn,
   type LimitAccount,
   type LimitPool,
@@ -114,6 +115,7 @@ function Row({ label, children }: { readonly label: string; readonly children: R
 function SegmentPopover({
   account,
   window,
+  resetSinceRead,
   reset,
   now,
   redeem,
@@ -121,6 +123,7 @@ function SegmentPopover({
 }: {
   readonly account: LimitAccount;
   readonly window: LimitPoolMember["window"];
+  readonly resetSinceRead: boolean;
   readonly reset: LimitPoolWindow["resets"][number] | undefined;
   readonly now: number;
   /** Redeem state owned by the segment, since the confirm lives outside this popover. */
@@ -131,6 +134,7 @@ function SegmentPopover({
   const remaining = remainingPercent(window);
   const resetsIn = formatResetsIn(window, now);
   const identity = describeLimitAccount(account);
+  const checkedAt = Date.parse(account.limits.checkedAt);
   const credits =
     redeem && account.limits.resetCredits?.availableCount ? account.limits.resetCredits : null;
   return (
@@ -165,7 +169,15 @@ function SegmentPopover({
         ) : null}
       </div>
       <div className="flex flex-col gap-1 border-t border-border/60 pt-2.5">
-        <Row label="Left">{remaining}%</Row>
+        <Row label="Left">
+          {remaining}%{resetSinceRead ? " · reset since the last read" : ""}
+        </Row>
+        {account.offline && Number.isFinite(checkedAt) ? (
+          <Row label="Read">
+            {formatDuration(now - checkedAt)} ago ·{" "}
+            {account.environments.length > 1 ? "machines" : "machine"} offline
+          </Row>
+        ) : null}
         {window.resetsAt ? (
           <Row label="Resets">
             {formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)}
@@ -204,6 +216,7 @@ function SegmentPopover({
 function PoolSegment({
   account,
   window,
+  resetSinceRead,
   reset,
   color,
   now,
@@ -211,6 +224,7 @@ function PoolSegment({
 }: {
   readonly account: LimitAccount;
   readonly window: LimitPoolMember["window"];
+  readonly resetSinceRead: boolean;
   readonly reset: LimitPoolWindow["resets"][number] | undefined;
   readonly color: string;
   readonly now: number;
@@ -220,7 +234,7 @@ function PoolSegment({
   const label = limitAccountLabel(account);
   const [open, setOpen] = useState(false);
   const remaining = remainingPercent(window);
-  const resetsIn = formatResetsIn(window, now);
+  const resetsIn = resetSinceRead ? "reset" : formatResetsIn(window, now);
   const credits = account.limits.resetCredits?.availableCount ?? 0;
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -290,11 +304,19 @@ function PoolSegment({
           </span>
         </div>
       </PopoverTrigger>
-      <LegendRow account={account} window={window} color={color} now={now} index={index} />
+      <LegendRow
+        account={account}
+        window={window}
+        resetSinceRead={resetSinceRead}
+        color={color}
+        now={now}
+        index={index}
+      />
       {account.redeem ? (
         <RedeemableSegmentPopup
           account={account}
           window={window}
+          resetSinceRead={resetSinceRead}
           reset={reset}
           now={now}
           redeemAt={account.redeem}
@@ -305,6 +327,7 @@ function PoolSegment({
           <SegmentPopover
             account={account}
             window={window}
+            resetSinceRead={resetSinceRead}
             reset={reset}
             now={now}
             redeem={null}
@@ -324,18 +347,20 @@ function PoolSegment({
 function LegendRow({
   account,
   window,
+  resetSinceRead,
   color,
   now,
   index,
 }: {
   readonly account: LimitAccount;
   readonly window: LimitPoolMember["window"];
+  readonly resetSinceRead: boolean;
   readonly color: string;
   readonly now: number;
   readonly index: number;
 }) {
   const remaining = remainingPercent(window);
-  const resetsIn = formatResetsIn(window, now);
+  const resetsIn = resetSinceRead ? "reset" : formatResetsIn(window, now);
   const credits = account.limits.resetCredits?.availableCount ?? 0;
   const label = limitAccountLabel(account);
   return (
@@ -391,6 +416,7 @@ function LegendRow({
 function RedeemableSegmentPopup({
   account,
   window,
+  resetSinceRead,
   reset,
   now,
   redeemAt,
@@ -398,6 +424,7 @@ function RedeemableSegmentPopup({
 }: {
   readonly account: LimitAccount;
   readonly window: LimitPoolMember["window"];
+  readonly resetSinceRead: boolean;
   readonly reset: LimitPoolWindow["resets"][number] | undefined;
   readonly now: number;
   readonly redeemAt: NonNullable<LimitAccount["redeem"]>;
@@ -410,6 +437,7 @@ function RedeemableSegmentPopup({
         <SegmentPopover
           account={account}
           window={window}
+          resetSinceRead={resetSinceRead}
           reset={reset}
           now={now}
           redeem={redeem}
@@ -467,6 +495,7 @@ function PoolBar({
               key={member.account.key}
               account={member.account}
               window={member.window}
+              resetSinceRead={member.resetSinceRead === true}
               reset={restores.get(member.account.key)}
               color={color}
               now={now}

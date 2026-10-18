@@ -134,19 +134,19 @@ export const make = Effect.gen(function* () {
     project: Project,
   ) {
     const name = `"${project.title}"`;
-    const why = `Reason given: ${input.reason}`;
+    const why = `Reason: ${input.reason}`;
     switch (input.action) {
       case "archive":
         if (project.workspaceSettings?.archived)
           return yield* failure(`The project ${name} is already archived.`);
-        return `Archive the project ${name}? Its threads, memory and folder are kept, and it stops taking new work until you restore it. ${why}`;
+        return `Archive the project ${name}?\n\nIts threads, memory and folder are kept, and it stops taking new work until you restore it.\n\n${why}`;
       case "unarchive":
         if (!project.workspaceSettings?.archived)
           return yield* failure(`The project ${name} is not archived.`);
-        return `Restore the archived project ${name}? Its threads can take new work again. ${why}`;
+        return `Restore the archived project ${name}?\n\nIts threads can take new work again.\n\n${why}`;
       case "delete": {
         const count = yield* countThreads(project.id);
-        return `Delete the project ${name} and its ${plural(count, "thread")}? This cannot be undone. Project memory, plans and routines are removed; source folders and Git branches stay. Archiving keeps everything instead. ${why}`;
+        return `Delete the project ${name} and its ${plural(count, "thread")}?\n\nThis cannot be undone. Project memory, plans and routines are removed; source folders and Git branches stay. Archiving keeps everything instead.\n\n${why}`;
       }
       case "change_folder": {
         if (input.workspaceRoot === undefined)
@@ -161,7 +161,7 @@ export const make = Effect.gen(function* () {
         const repository = check.sameRepository
           ? `Both folders are checkouts of ${check.targetRepository}.`
           : `The new folder ${check.targetRepository === null ? "has no Git remote" : `is a checkout of ${check.targetRepository}`}, and the current one ${check.currentRepository === null ? "has none" : `is ${check.currentRepository}`}. Approving confirms it is the right folder.`;
-        return `Change the folder of the project ${name} from ${check.currentRoot} to ${check.targetRoot}? ${repository} Its ${plural(check.threadCount, "thread")}, memory and history stay with the project and run in the new folder from their next turn. ${why}`;
+        return `Change the folder of the project ${name} from ${check.currentRoot} to ${check.targetRoot}?\n\n${repository} Its ${plural(check.threadCount, "thread")}, memory and history stay with the project and run in the new folder from their next turn.\n\n${why}`;
       }
     }
   });

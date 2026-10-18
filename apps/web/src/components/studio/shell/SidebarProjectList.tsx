@@ -29,11 +29,13 @@ import {
   ArrowDownIcon,
   ArrowUpIcon,
   MoreHorizontalIcon,
+  PencilIcon,
   PinIcon,
   PinOffIcon,
 } from "lucide-react";
 import {
   useCallback,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -53,6 +55,7 @@ import { coordinatorMachineKey } from "../../../studio/projectCoordinatorMachine
 import type { ArrangedProjects, ProjectDropTarget } from "../../../studio/projectOrder";
 import { Tip } from "./Tip";
 import { requestProjectSettings } from "../../../studio/projectSettingsRequests";
+import type { ProjectNameCheck } from "../../../studio/projectRename";
 
 // Environments without matchMedia (tests, some embeds) get no motion at all.
 const canAnimate = () => typeof window !== "undefined" && typeof window.matchMedia === "function";
@@ -85,6 +88,13 @@ export interface ProjectRowState {
   current: boolean;
   /** Tells this project apart from another listed under the same name. */
   hint?: string | undefined;
+  rename?: ProjectRename | undefined;
+}
+
+/** Renames a project in place: `check` validates a draft, `commit` saves it or says why not. */
+export interface ProjectRename {
+  check: (draft: string) => ProjectNameCheck;
+  commit: (name: string) => Promise<string | null>;
 }
 
 interface Insertion {
@@ -357,13 +367,25 @@ export function ProjectRow(props: {
   sortable?: boolean;
   onKeyDown?: (event: KeyboardEvent) => void;
   clickSuppressed?: () => boolean;
+  /** Absent where the name cannot change; a double click then opens settings. */
+  rename?: ProjectRename | undefined;
 }) {
   const { group, archived, pinned } = props;
   // An archived project never asks for attention from the sidebar.
   const waiting = archived ? 0 : props.waiting;
+  const [renaming, setRenaming] = useState<RenameState | null>(null);
+  const refocusRow = useRef(false);
+  // Renaming from the menu: the closing menu must not take focus back from the field.
+  const renameFromMenu = useRef(false);
+  const linkRef = useRef<HTMLAnchorElement | null>(null);
+  useLayoutEffect(() => {
+    if (renaming !== null || !refocusRow.current) return;
+    refocusRow.current = false;
+    linkRef.current?.focus();
+  }, [renaming]);
   const { attributes, listeners, setNodeRef } = useDraggable({
     id: group.projectKey,
-    disabled: !props.sortable,
+    disabled: !props.sortable || renaming !== null,
   });
   // dnd-kit's own role and keyboard handling would turn the row into a button.
   const { role: _role, tabIndex: _tabIndex, ...dragAttributes } = attributes;
@@ -375,7 +397,7 @@ export function ProjectRow(props: {
   return (
     <li
       ref={setNodeRef}
-      {...(props.sortable ? { ...dragAttributes, ...listeners } : {})}
+      {...(props.sortable && renaming === null ? { ...dragAttributes, ...listeners } : {})}
       onKeyDown={props.onKeyDown}
       onClickCapture={(event) => {
         if (props.clickSuppressed?.()) {
@@ -388,55 +410,73 @@ export function ProjectRow(props: {
       data-archived={archived || undefined}
       data-pinned={pinned || undefined}
       data-dragging={props.dragging || undefined}
+      data-renaming={renaming !== null || undefined}
     >
-      <Tip
-        side="right"
-        label={
-          personal
-            ? `${displayName} · ${PERSONAL_ASSISTANT_LABEL}: ${PERSONAL_ASSISTANT_DESCRIPTION}`
-            : `${displayName} · ${project.workspaceRoot}${archived ? " · Archived" : ""}`
-        }
-      >
-        <Link
-          to="/projects/$projectKey"
-          params={{ projectKey: group.projectKey }}
-          search={
-            props.displayedProject && !props.displayedProject.workspaceSettings?.logicalProject
-              ? { checkout: coordinatorMachineKey(props.displayedProject) }
-              : {}
+      {renaming !== null && props.rename ? (
+        <ProjectNameEditor
+          project={project}
+          rename={props.rename}
+          state={renaming}
+          onChange={setRenaming}
+          onDone={(refocus) => {
+            refocusRow.current = refocus;
+            setRenaming(null);
+          }}
+        />
+      ) : (
+        <Tip
+          side="right"
+          label={
+            personal
+              ? `${displayName} · ${PERSONAL_ASSISTANT_LABEL}: ${PERSONAL_ASSISTANT_DESCRIPTION}`
+              : `${displayName} · ${project.workspaceRoot}${archived ? " · Archived" : ""}`
           }
-          className="sws-side-row"
-          aria-current={props.current ? "page" : undefined}
-          draggable={false}
-          onClick={props.onOpen}
-          // A double click opens the project's settings with the name ready to edit.
-          onMouseDown={(event) => {
-            if (event.detail > 1) event.preventDefault();
-          }}
-          onDoubleClick={(event) => {
-            if (props.clickSuppressed?.()) return;
-            event.preventDefault();
-            requestProjectSettings(group.projectKey);
-          }}
         >
-          <ProjectFavicon project={project} className="size-[18px] shrink-0" />
-          <span className="sws-side-row-label">{displayName}</span>
-          {props.hint ? (
-            <span className="sws-side-row-hint sws-side-row-namesake">{props.hint}</span>
-          ) : null}
-          {pinned ? <PinIcon className="sws-side-row-pin" aria-label="Pinned" role="img" /> : null}
-          {/* A fixed slot, so a count never shifts the name or hint, and the row
-              menu takes its place on hover. */}
-          <span className="sws-side-row-end">
-            {waiting > 0 ? (
-              <span className="sws-count sws-count-waiting">
-                {waiting}
-                <span className="sr-only"> waiting on you</span>
-              </span>
+          <Link
+            to="/projects/$projectKey"
+            params={{ projectKey: group.projectKey }}
+            search={
+              props.displayedProject && !props.displayedProject.workspaceSettings?.logicalProject
+                ? { checkout: coordinatorMachineKey(props.displayedProject) }
+                : {}
+            }
+            ref={linkRef}
+            className="sws-side-row"
+            aria-current={props.current ? "page" : undefined}
+            draggable={false}
+            onClick={props.onOpen}
+            // A double click renames the project in place, or opens its settings where it cannot be renamed.
+            onMouseDown={(event) => {
+              if (event.detail > 1) event.preventDefault();
+            }}
+            onDoubleClick={(event) => {
+              if (props.clickSuppressed?.()) return;
+              event.preventDefault();
+              if (props.rename) setRenaming({ draft: displayName, error: null });
+              else requestProjectSettings(group.projectKey);
+            }}
+          >
+            <ProjectFavicon project={project} className="size-[18px] shrink-0" />
+            <span className="sws-side-row-label">{displayName}</span>
+            {props.hint ? (
+              <span className="sws-side-row-hint sws-side-row-namesake">{props.hint}</span>
             ) : null}
-          </span>
-        </Link>
-      </Tip>
+            {pinned ? (
+              <PinIcon className="sws-side-row-pin" aria-label="Pinned" role="img" />
+            ) : null}
+            {/* A fixed slot, so a count never shifts the name or hint, and the row
+              menu takes its place on hover. */}
+            <span className="sws-side-row-end">
+              {waiting > 0 ? (
+                <span className="sws-count sws-count-waiting">
+                  {waiting}
+                  <span className="sr-only"> waiting on you</span>
+                </span>
+              ) : null}
+            </span>
+          </Link>
+        </Tip>
+      )}
       <Menu>
         <MenuTrigger
           render={
@@ -449,7 +489,29 @@ export function ProjectRow(props: {
         >
           <MoreHorizontalIcon aria-hidden />
         </MenuTrigger>
-        <MenuPopup align="start" side="bottom">
+        <MenuPopup
+          align="start"
+          side="bottom"
+          finalFocus={() => {
+            const keep = !renameFromMenu.current;
+            renameFromMenu.current = false;
+            return keep;
+          }}
+        >
+          {props.rename ? (
+            <>
+              <MenuItem
+                onClick={() => {
+                  renameFromMenu.current = true;
+                  setRenaming({ draft: displayName, error: null });
+                }}
+              >
+                <PencilIcon aria-hidden />
+                Rename project
+              </MenuItem>
+              <MenuSeparator />
+            </>
+          ) : null}
           {props.onPin ? (
             <MenuItem onClick={props.onPin}>
               {pinned ? <PinOffIcon aria-hidden /> : <PinIcon aria-hidden />}
@@ -478,5 +540,90 @@ export function ProjectRow(props: {
         </MenuPopup>
       </Menu>
     </li>
+  );
+}
+
+interface RenameState {
+  draft: string;
+  /** Why the last save was refused; cleared as soon as the name changes. */
+  error: string | null;
+  saving?: boolean;
+}
+
+/**
+ * The project's name as a text field, in the row's place. Enter saves and Esc
+ * cancels; leaving the field saves a valid new name and drops anything else.
+ * A name another project already has, ignoring case, is refused as it is typed.
+ */
+function ProjectNameEditor(props: {
+  project: Parameters<typeof ProjectFavicon>[0]["project"];
+  rename: ProjectRename;
+  state: RenameState;
+  onChange: (state: RenameState) => void;
+  /** `refocus` returns the keyboard to the row; leaving the field by pointer does not. */
+  onDone: (refocus: boolean) => void;
+}) {
+  const { state, rename } = props;
+  const errorId = useId();
+  // Escape removes the field, and a field removed while focused may still report a blur.
+  const closed = useRef(false);
+  const done = (refocus: boolean) => {
+    closed.current = true;
+    props.onDone(refocus);
+  };
+  const check = rename.check(state.draft);
+  const error = state.error ?? (check.kind === "invalid" ? check.error : null);
+  const submit = async (leaving: boolean) => {
+    if (state.saving || closed.current) return;
+    if (check.kind !== "valid") {
+      // Enter keeps the field open on a refused name; leaving it gives up the edit.
+      if (check.kind === "unchanged" || leaving) done(!leaving);
+      return;
+    }
+    props.onChange({ ...state, saving: true });
+    const refused = await rename.commit(check.name);
+    if (refused === null) done(!leaving);
+    else props.onChange({ draft: state.draft, error: refused });
+  };
+  return (
+    <div className="sws-project-rename">
+      <div className="sws-side-row" data-invalid={error !== null || undefined}>
+        <ProjectFavicon project={props.project} className="size-[18px] shrink-0" />
+        <input
+          className="sws-project-rename-input"
+          aria-label="Project name"
+          aria-invalid={error !== null || undefined}
+          aria-describedby={error !== null ? errorId : undefined}
+          autoFocus
+          spellCheck={false}
+          autoComplete="off"
+          value={state.draft}
+          // Read-only, not disabled, while saving: a disabled field drops focus, and a
+          // refused name should stay ready to correct.
+          readOnly={state.saving}
+          aria-busy={state.saving || undefined}
+          onFocus={(event) => event.currentTarget.select()}
+          onChange={(event) => props.onChange({ draft: event.currentTarget.value, error: null })}
+          onBlur={() => void submit(true)}
+          onKeyDown={(event) => {
+            // The row's move shortcuts and the sidebar's chat keys stay out of the field.
+            event.stopPropagation();
+            if (event.nativeEvent.isComposing) return;
+            if (event.key === "Enter") {
+              event.preventDefault();
+              void submit(false);
+            } else if (event.key === "Escape") {
+              event.preventDefault();
+              done(true);
+            }
+          }}
+        />
+      </div>
+      {error !== null ? (
+        <p id={errorId} className="sws-project-rename-error" aria-live="polite">
+          {error}
+        </p>
+      ) : null}
+    </div>
   );
 }

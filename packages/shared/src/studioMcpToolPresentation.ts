@@ -346,18 +346,6 @@ const STUDIO_MCP_TOOLS: Readonly<Record<string, StudioMcpToolDefinition>> = {
   ),
   studio_project_list: tool(["List", "Listing", "Listed", "projects"], "project-list"),
   studio_machine_list: tool(["List", "Listing", "Listed", "worker machines"], "environment-read"),
-  studio_cloud_session_create: tool(
-    ["Start", "Starting", "Started", "a cloud session"],
-    "thread-create",
-  ),
-  studio_cloud_session_send: tool(
-    ["Message", "Messaging", "Messaged", "a cloud session"],
-    "thread-send",
-  ),
-  studio_cloud_session_list: tool(
-    ["List", "Listing", "Listed", "cloud sessions"],
-    "environment-read",
-  ),
   studio_project_read: tool(["Read", "Reading", "Read", "a project"], "project-read"),
   studio_project_create: tool(
     ["Register", "Registering", "Registered", "a project"],

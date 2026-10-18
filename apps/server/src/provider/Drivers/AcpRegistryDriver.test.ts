@@ -177,7 +177,7 @@ describe("acpRegistrySnapshotReadiness", () => {
       applyAcpRegistryLiveConfiguration(
         snapshot,
         { models: [], currentModelId: null, configOptions: [] },
-        [],
+        { customModels: [], agentId: "test-agent" },
       ).auth.status,
     ).toBe("unknown");
   });
@@ -224,13 +224,73 @@ describe("acpRegistrySnapshotReadiness", () => {
           currentModelId: "live-model",
           configOptions: [],
         },
-        [],
+        { customModels: [], agentId: "test-agent" },
       ),
     ).toMatchObject({
       auth: { status: "unknown", canLogout: true },
       nativeSessions: { canList: true, canLoad: true, canResume: true },
       models: [{ slug: "live-model", isDefault: true }],
     });
+  });
+
+  it("offers Gemini 4 Argon for Gemini CLI once its catalog is probed", () => {
+    const geminiCatalog = {
+      models: [
+        { id: "auto", name: "Auto", description: null },
+        { id: "gemini-3.8-flash", name: "gemini-3.8-flash", description: null },
+      ],
+      currentModelId: "auto",
+      configOptions: [],
+    };
+    const slugs = (
+      configuration: Parameters<typeof applyAcpRegistryLiveConfiguration>[1],
+      settings: Parameters<typeof applyAcpRegistryLiveConfiguration>[2],
+    ) =>
+      applyAcpRegistryLiveConfiguration(
+        buildCheckedAcpRegistrySnapshot({
+          ...identity,
+          settings: decodeSettings({ agentId: "gemini" }),
+          checkedAt: "2026-10-17T06:00:00.000Z",
+          inspection: {
+            status: "ready",
+            agentId: "gemini",
+            version: "0.63.0",
+            distribution: "npx",
+          },
+        }),
+        configuration,
+        settings,
+      ).models.map((model) => [model.slug, model.isCustom]);
+
+    expect(slugs(geminiCatalog, { customModels: [], agentId: "gemini" })).toEqual([
+      ["auto", false],
+      ["gemini-3.8-flash", false],
+      ["gemini-4-argon", false],
+    ]);
+    // A catalog that lists Argon, or a custom entry typed earlier, is not duplicated.
+    expect(
+      slugs(
+        {
+          ...geminiCatalog,
+          models: [{ id: "gemini-4-argon", name: "Gemini 4 Argon", description: null }],
+        },
+        { customModels: [], agentId: "gemini" },
+      ),
+    ).toEqual([["gemini-4-argon", false]]);
+    expect(
+      slugs(geminiCatalog, {
+        customModels: ["gemini-4-argon"],
+        agentId: "gemini",
+      }).filter(([slug]) => slug === "gemini-4-argon"),
+    ).toEqual([["gemini-4-argon", false]]);
+    // Other agents and an unprobed Gemini CLI get nothing extra.
+    expect(slugs(geminiCatalog, { customModels: [], agentId: "test-agent" })).toHaveLength(2);
+    expect(
+      slugs(
+        { models: [], currentModelId: null, configOptions: [] },
+        { customModels: [], agentId: "gemini" },
+      ),
+    ).toEqual([["default", false]]);
   });
 
   it("maps registry inspection status to provider readiness", () => {

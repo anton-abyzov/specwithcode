@@ -34,6 +34,7 @@ import {
   providerFallbackCommand,
   providerLimitStep,
   reachedLimitWindow,
+  unreportedLimitStops,
 } from "./ProviderFallbackWorker.ts";
 import { resolveUsageLimitsAfterProbe } from "../provider/providerUsageLimits.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -185,6 +186,62 @@ describe("providerFallbackCommand", () => {
       manualContinuationOfRunId: "r1",
       modelSelection: { instanceId: codexId },
     });
+  });
+});
+
+describe("unreportedLimitStops", () => {
+  const copilotId = ProviderInstanceId.make("copilot");
+  const copilot: ServerProvider = {
+    ...provider(copilotId, "acp", now),
+    models: [{ slug: "opus", name: "Opus", isCustom: false, capabilities: null }],
+    usageLimits: undefined,
+  };
+  const claudeFull = withUsage(provider(claudeId, "claudeAgent", now), 95);
+  const stopped = {
+    ...idle,
+    id: ThreadId.make("t2"),
+    providerInstanceId: copilotId,
+    modelSelection: { instanceId: copilotId, model: "opus" },
+    status: "failed" as const,
+    lastErrorClass: "usage_limit" as const,
+    usageLimitResetAt: "2026-10-09T13:00:00.000Z",
+  };
+
+  it("holds a provider that reports no usage until its stop resets", () => {
+    const held = unreportedLimitStops(new Map(), [stopped], [copilot], now);
+    expect([...held]).toEqual([[copilotId, Date.parse("2026-10-09T13:00:00.000Z")]]);
+    // The stopped thread has gone back to Claude; the hold outlives it.
+    expect(unreportedLimitStops(held, [], [copilot], now + 30 * 60_000).has(copilotId)).toBe(true);
+    expect(unreportedLimitStops(held, [], [copilot], now + 61 * 60_000).size).toBe(0);
+  });
+
+  it("ignores providers that report usage and stops that are no longer current", () => {
+    const onClaude = { ...stopped, providerInstanceId: claudeId };
+    expect(unreportedLimitStops(new Map(), [onClaude], [claudeFull], now).size).toBe(0);
+    const old = { ...stopped, usageLimitResetAt: "2026-10-09T11:00:00.000Z" };
+    expect(unreportedLimitStops(new Map(), [old], [copilot], now).size).toBe(0);
+  });
+
+  it("keeps a thread off a held provider that reports no usage", () => {
+    const onClaude = {
+      ...stopped,
+      providerInstanceId: claudeId,
+      modelSelection: idle.modelSelection,
+    };
+    const copilotRule = { ...rule, providerLimitFallbackModelSelection: null };
+    expect(
+      providerFallbackCommand(onClaude, [claudeFull, copilot], copilotRule, now),
+    ).toMatchObject({ modelSelection: { instanceId: copilotId } });
+    expect(
+      providerFallbackCommand(
+        onClaude,
+        [claudeFull, copilot],
+        copilotRule,
+        now,
+        null,
+        new Set([copilotId]),
+      ),
+    ).toBeNull();
   });
 });
 
@@ -577,6 +634,83 @@ describe("Claude API credits", () => {
         run("r4", 4, apiId, "m4"),
       ]),
     ).toBeNull();
+  });
+
+  it("moves a thread whose API account ran out of credits on to the next account", () => {
+    const second: ServerProvider = { ...api, instanceId: ProviderInstanceId.make("claudeApi2") };
+    const outOfCredits = {
+      ...limited,
+      providerInstanceId: apiId,
+      modelSelection: { instanceId: apiId, model: "opus" },
+      usageLimitResetAt: null,
+      latestRunCompletedAt: DateTime.makeUnsafe(now - 60_000),
+      lastError: "Credit balance too low · Add funds: https://platform.claude.com/settings/billing",
+    };
+    const ask = { ...allow, providerLimitAction: "ask" as const };
+    expect(
+      providerLimitStep(outOfCredits, [claudeFull, api, second], ask, now, {
+        resetAttempted: false,
+      }),
+    ).toMatchObject({
+      type: "api-credits",
+      instanceId: apiId,
+      rotate: true,
+      command: {
+        commandId: "limit-api:t1:r1",
+        modelSelection: { instanceId: second.instanceId, model: "opus" },
+      },
+    });
+    // No other account, the rule off, or another kind of stop on the key: nothing moves.
+    expect(
+      providerLimitStep(outOfCredits, [claudeFull, api], ask, now, { resetAttempted: false }),
+    ).toBeNull();
+    expect(
+      providerLimitStep(
+        outOfCredits,
+        [claudeFull, api, second],
+        { ...rule, providerLimitAction: "ask" },
+        now,
+        { resetAttempted: false },
+      ),
+    ).toBeNull();
+    expect(
+      providerLimitStep(
+        { ...outOfCredits, lastError: "Claude API rate limit reached. Try again later." },
+        [claudeFull, api, second],
+        ask,
+        now,
+        { resetAttempted: false },
+      ),
+    ).toBeNull();
+    expect(
+      providerLimitStep(outOfCredits, [claudeFull, api, second], ask, now, {
+        resetAttempted: false,
+        simulated: true,
+      }),
+    ).toBeNull();
+  });
+
+  it("leads the way back through every API account to the subscription", () => {
+    const secondId = ProviderInstanceId.make("claudeApi2");
+    const rotated = [
+      run("r1", 1, claudeId, "m1"),
+      run("r2", 2, apiId, "limit-api:t1:r1"),
+      run("r3", 3, apiId, "m3"),
+      run("r4", 4, secondId, "limit-api:t1:r3"),
+    ];
+    expect(apiCreditOrigin({ id: onApi.id, providerInstanceId: secondId }, rotated)).toEqual({
+      stoppedRunId: "r1",
+      continuedByRunId: "r4",
+      modelSelection: { instanceId: claudeId, model: "opus" },
+      resetAt: null,
+    });
+    // An account a person put the thread on is where the way back ends.
+    expect(
+      apiCreditOrigin({ id: onApi.id, providerInstanceId: secondId }, [
+        run("r1", 1, apiId, "m1"),
+        run("r2", 2, secondId, "limit-api:t1:r1"),
+      ]),
+    ).toMatchObject({ stoppedRunId: "r1", modelSelection: { instanceId: apiId } });
   });
 
   const claudeOpen = withUsage(provider(claudeId, "claudeAgent", now), 4);
@@ -1042,6 +1176,38 @@ describe("sweep API credit path", () => {
       yield* sweep();
       expect(state.refreshed).toBe(1);
       expect(state.dispatched).toHaveLength(1);
+    }),
+  );
+
+  itEffect.effect("moves an out-of-credit API thread to the next key without a usage read", () =>
+    Effect.gen(function* () {
+      yield* TestClock.adjust("1 minute");
+      const second = { ...api, instanceId: ProviderInstanceId.make("claudeApi2") };
+      const outOfCredits = {
+        ...onApi,
+        status: "failed" as const,
+        lastErrorClass: "usage_limit" as const,
+        latestRunId: RunId.make("r1"),
+        usageLimitResetAt: null,
+        latestRunCompletedAt: DateTime.makeUnsafe(0),
+        lastError:
+          "Credit balance too low · Add funds: https://platform.claude.com/settings/billing",
+      };
+      const { state, sweep } = yield* harness({
+        cached: second,
+        fresh: second,
+        thread: outOfCredits,
+        runs: [{ ...stopped, providerInstanceId: apiId }],
+      });
+      yield* sweep();
+      expect(state.refreshed).toBe(0);
+      expect(state.dispatched).toMatchObject([
+        {
+          commandId: "limit-api:t1:r1",
+          manualContinuationOfRunId: "r1",
+          modelSelection: { instanceId: second.instanceId, model: "opus" },
+        },
+      ]);
     }),
   );
 
@@ -1522,6 +1688,119 @@ describe("sweep switch path with a stale fallback read", () => {
       yield* TestClock.adjust("5 minutes");
       yield* sweep();
       expect(state.refreshed).toEqual([codexId, codexId]);
+    }),
+  );
+});
+
+describe("a stopped worker and its coordinator", () => {
+  const copilotId = ProviderInstanceId.make("copilot");
+  // Copilot and the other agents behind an ACP bridge report no usage at all.
+  const { usageLimits: _none, ...copilotBase } = provider(copilotId, "acpRegistry", now);
+  const copilot: ServerProvider = {
+    ...copilotBase,
+    models: [
+      { slug: "claude-opus-5.5", name: "Claude Opus 5.5", isCustom: true, capabilities: null },
+    ],
+  };
+  const claudeSpent = withUsage(provider(claudeId, "claudeAgent", now), 100);
+  const coordinatorId = ThreadId.make("coordinator");
+  const worker = {
+    ...idle,
+    status: "failed" as const,
+    lastErrorClass: "usage_limit" as const,
+    projectId: legacyProject.id,
+  };
+  const coordinator = {
+    ...idle,
+    id: coordinatorId,
+    providerInstanceId: copilotId,
+    modelSelection: { instanceId: copilotId, model: "claude-opus-5.5" },
+    projectId: legacyProject.id,
+  };
+  const switchRule = { ...rule, providerLimitFallbackModelSelection: null };
+
+  it("continues on the coordinator's model, which needs no usage read", () => {
+    expect(
+      providerLimitStep(worker, [claudeSpent, copilot], switchRule, now, { resetAttempted: false }),
+    ).toBeNull();
+    expect(
+      providerLimitStep(worker, [claudeSpent, copilot], switchRule, now, {
+        resetAttempted: false,
+        proven: coordinator.modelSelection,
+      }),
+    ).toMatchObject({
+      type: "switch",
+      command: {
+        type: "message.dispatch",
+        manualContinuationOfRunId: "r1",
+        modelSelection: { instanceId: copilotId, model: "claude-opus-5.5" },
+      },
+    });
+  });
+
+  function harness(coordinatorShell: Record<string, unknown> | null) {
+    const dispatched: OrchestrationV2ServerCommand[] = [];
+    const project = {
+      ...legacyProject,
+      workspaceSettings: {
+        ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+        coordinatorThreadId: coordinatorId,
+      },
+    };
+    const deps = Layer.mergeAll(
+      Layer.mock(Projects.ProjectService)({ getById: () => Effect.succeed(Option.some(project)) }),
+      Layer.mock(Settings.ServerSettingsService)({
+        getSettings: Effect.succeed({ ...DEFAULT_SERVER_SETTINGS, providerLimitAction: "switch" }),
+      }),
+      Layer.mock(Providers.ProviderRegistry)({
+        getProviders: Effect.succeed([claudeSpent, copilot]),
+      }),
+      Layer.mock(Instances.ProviderInstanceRegistry)({
+        getInstance: () => Effect.succeed(undefined),
+      }),
+      Layer.mock(ProjectionStore.ProjectionStoreV2)({
+        getShellSnapshot: () => Effect.succeed({ threads: [worker] } as never),
+        getThreadShell: (threadId) =>
+          Effect.succeed((threadId === coordinatorId ? coordinatorShell : worker) as never),
+        getThreadRecords: (threadId) =>
+          Effect.fail(new ProjectionStore.ProjectionStoreThreadNotFoundError({ threadId })),
+      }),
+      Layer.mock(ThreadManagement.ThreadManagementService)({
+        dispatch: (command) =>
+          Effect.sync(() => (dispatched.push(command), { sequence: 1, storedEvents: [] })),
+      }),
+    );
+    return Effect.gen(function* () {
+      const sweep = yield* makeSweep;
+      return { dispatched, sweep };
+    }).pipe(Effect.provide(deps), Effect.provideService(ProviderFallbackEnv, {}));
+  }
+
+  itEffect.effect("moves a worker stopped on the limit to where its coordinator runs", () =>
+    Effect.gen(function* () {
+      yield* TestClock.adjust("1 minute");
+      const { dispatched, sweep } = yield* harness(coordinator);
+      yield* sweep();
+      expect(dispatched).toHaveLength(1);
+      expect(dispatched[0]).toMatchObject({
+        type: "message.dispatch",
+        threadId: worker.id,
+        manualContinuationOfRunId: "r1",
+        modelSelection: { instanceId: copilotId, model: "claude-opus-5.5" },
+      });
+    }),
+  );
+
+  itEffect.effect("leaves the worker stopped when the coordinator stopped on the limit too", () =>
+    Effect.gen(function* () {
+      yield* TestClock.adjust("1 minute");
+      const { dispatched, sweep } = yield* harness({
+        ...coordinator,
+        status: "failed",
+        lastErrorClass: "usage_limit",
+      });
+      yield* sweep();
+      expect(dispatched).toEqual([]);
     }),
   );
 });

@@ -647,6 +647,19 @@ function runBrowserAccessScenario(input: {
   readonly deviceOverride?: boolean;
   readonly createThread?: boolean;
   readonly projectExists?: boolean;
+  readonly enableAgentComputerAccess?: boolean;
+}) {
+  return runAgentAccessScenario(input).pipe(Effect.map((result) => result.config));
+}
+
+/** Opens a session under these settings; returns its MCP config and the credential's capabilities. */
+function runAgentAccessScenario(input: {
+  readonly enableAgentBrowserAccess: boolean;
+  readonly projectOverride: boolean;
+  readonly deviceOverride?: boolean;
+  readonly createThread?: boolean;
+  readonly projectExists?: boolean;
+  readonly enableAgentComputerAccess?: boolean;
 }) {
   return Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
@@ -664,10 +677,11 @@ function runBrowserAccessScenario(input: {
         ),
     });
 
-    yield* Effect.gen(function* () {
+    const capabilities = yield* Effect.gen(function* () {
       const eventSink = yield* EventSink.EventSinkV2;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const registry = yield* McpSessionRegistry.McpSessionRegistry;
       const now = yield* DateTime.now;
       const providerSessionId = yield* idAllocator.allocate.providerSession({
         providerInstanceId: modelSelection.instanceId,
@@ -681,6 +695,12 @@ function runBrowserAccessScenario(input: {
       yield* manager
         .open({ threadId, providerSessionId, modelSelection, runtimePolicy })
         .pipe(Effect.ignore);
+      const config = (yield* Ref.get(mcpConfigs))[0];
+      if (config === undefined) return undefined;
+      const resolved = yield* registry.resolve(
+        config.authorizationHeader.replace(/^Bearer\s+/, ""),
+      );
+      return resolved?.capabilities;
     }).pipe(
       Effect.provide(
         layerTest({
@@ -690,6 +710,9 @@ function runBrowserAccessScenario(input: {
           projectServiceLayer: layerProjectService,
           serverSettingsLayer: ServerSettings.layerTest({
             enableAgentBrowserAccess: input.enableAgentBrowserAccess,
+            ...(input.enableAgentComputerAccess === undefined
+              ? {}
+              : { enableAgentComputerAccess: input.enableAgentComputerAccess }),
             projectSettingsOverrides: {
               [projectId]: {
                 enableAgentBrowserAccess: input.projectOverride,
@@ -703,7 +726,7 @@ function runBrowserAccessScenario(input: {
       ),
     );
 
-    return (yield* Ref.get(mcpConfigs))[0];
+    return { config: (yield* Ref.get(mcpConfigs))[0], capabilities };
   });
 }
 
@@ -1919,7 +1942,8 @@ it.effect(
         const resolved = yield* registry.resolve(token!);
         assert.deepEqual(
           resolved?.capabilities,
-          new Set(["orchestration", "worktree", "pull-requests"]),
+          // Computer access is on by default and independent of browser access.
+          new Set(["orchestration", "worktree", "pull-requests", "computer"]),
         );
 
         yield* manager.close(providerSessionId);
@@ -1985,6 +2009,35 @@ it.effect("ProviderSessionManagerV2 fails browser access closed for a missing th
     });
     assert.isDefined(captured);
     assert.equal(captured?.browserToolsAvailable, false);
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 gives computer use to every project on the machine", () =>
+  Effect.gen(function* () {
+    // A project that overrides other agent access still inherits the machine's computer use.
+    const overridden = yield* runAgentAccessScenario({
+      enableAgentBrowserAccess: true,
+      projectOverride: false,
+    });
+    assert.isTrue(overridden.capabilities?.has("computer"));
+    const missingProject = yield* runAgentAccessScenario({
+      enableAgentBrowserAccess: true,
+      projectOverride: true,
+      projectExists: false,
+    });
+    assert.isTrue(missingProject.capabilities?.has("computer"));
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 withholds computer use on a machine that turns it off", () =>
+  Effect.gen(function* () {
+    const { capabilities } = yield* runAgentAccessScenario({
+      enableAgentBrowserAccess: true,
+      projectOverride: true,
+      enableAgentComputerAccess: false,
+    });
+    assert.isDefined(capabilities);
+    assert.isFalse(capabilities?.has("computer"));
   }),
 );
 

@@ -1,0 +1,203 @@
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native permissions and symlinks independently exercise the fleet-file writer.
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import { join } from "./nodePath.ts";
+import { readFleetConfig } from "./studioFleet.ts";
+import {
+  addFleetMachine,
+  decodeFleetJoinCode,
+  encodeFleetJoinCode,
+  type FleetJoin,
+  fleetMachineIdFor,
+  removeFleetMachine,
+} from "./studioFleetJoin.ts";
+
+const descriptor = (environmentId: string) => ({
+  environmentId,
+  label: "Fixture Mac",
+  platform: { os: "darwin", arch: "arm64" },
+  serverVersion: "0.1.0-test",
+  orchestrationProtocolVersion: 2,
+  capabilities: { repositoryIdentity: true },
+});
+const invite = (overrides: Partial<FleetJoin> = {}): FleetJoin => ({
+  url: "https://m1.fixture.ts.net",
+  environmentId: "environment-m1",
+  label: "Mac M1",
+  managementToken: "synthetic-new-management-token",
+  ...overrides,
+});
+/** Answers every address as the environment it is mapped to. */
+const fetcher = (byOrigin: Record<string, string>) =>
+  vi.fn<typeof fetch>(async (url) => {
+    const environmentId = byOrigin[new URL(String(url)).origin];
+    return environmentId === undefined
+      ? Promise.reject(new TypeError("unreachable"))
+      : Response.json(descriptor(environmentId));
+  });
+const dirs: string[] = [];
+const home = async () => {
+  const dir = await NodeFSP.mkdtemp(join(NodeOS.tmpdir(), "studio-fleet-join-"));
+  dirs.push(dir);
+  return dir;
+};
+const relayed = {
+  version: 1,
+  machines: [
+    {
+      id: "m1",
+      label: "Mac M1",
+      environmentId: "environment-m1",
+      url: "https://m4.fixture.ts.net:8443",
+      managementToken: "synthetic-old-management-token",
+      scopes: ["orchestration:read", "orchestration:operate"],
+    },
+  ],
+};
+afterEach(async () => {
+  vi.restoreAllMocks();
+  await Promise.all(dirs.splice(0).map((dir) => NodeFSP.rm(dir, { recursive: true, force: true })));
+});
+
+describe("machine invitations", () => {
+  it("round-trips through a copy with line breaks and spaces", () => {
+    const code = encodeFleetJoinCode(invite());
+    const wrapped = `  ${code.slice(0, 30)}\n${code.slice(30)}  `;
+    expect(decodeFleetJoinCode(wrapped)).toEqual(invite());
+  });
+
+  it("rejects anything but a private Tailscale HTTPS address and the exact fields", () => {
+    for (const bad of [
+      invite({ url: "http://m1.fixture.ts.net" }),
+      invite({ url: "https://192.168.1.20:8319" }),
+      invite({ url: "https://m1.fixture.ts.net/relay" }),
+      invite({ managementToken: "has spaces" }),
+    ])
+      expect(() => decodeFleetJoinCode(encodeFleetJoinCode(bad))).toThrow(
+        "not a machine invitation",
+      );
+    const extra = `swc-machine-${Buffer.from(JSON.stringify({ v: 1, ...invite(), scopes: ["access:write"] })).toString("base64url")}`;
+    expect(() => decodeFleetJoinCode(extra)).toThrow("not a machine invitation");
+    expect(() => decodeFleetJoinCode("https://m1.fixture.ts.net")).toThrow(
+      "not a machine invitation",
+    );
+  });
+
+  it("makes short unique ids from names", () => {
+    expect(fleetMachineIdFor("Hetzner VPS", new Set())).toBe("hetzner-vps");
+    expect(fleetMachineIdFor("Mac M1", new Set(["mac-m1"]))).toBe("mac-m1-2");
+    expect(fleetMachineIdFor("???", new Set())).toBe("machine");
+  });
+});
+
+describe("adding machines to the fleet file", () => {
+  it("creates an owner-only file the server reads, after the address answers as that machine", async () => {
+    const baseDir = await home();
+    const result = await addFleetMachine({
+      baseDir,
+      code: encodeFleetJoinCode(invite()),
+      fetcher: fetcher({ "https://m1.fixture.ts.net": "environment-m1" }),
+    });
+    expect(result).toEqual({
+      id: "mac-m1",
+      label: "Mac M1",
+      url: "https://m1.fixture.ts.net",
+      environmentId: "environment-m1",
+      change: "added",
+    });
+    expect((await NodeFSP.stat(join(baseDir, "studio-fleet.json"))).mode & 0o777).toBe(0o600);
+    const config = await readFleetConfig(baseDir);
+    expect(config?.machines.map((m) => [m.id, m.url, m.managementToken])).toEqual([
+      ["mac-m1", "https://m1.fixture.ts.net", "synthetic-new-management-token"],
+    ]);
+    // No temp file is left behind.
+    expect(await NodeFSP.readdir(baseDir)).toEqual(["studio-fleet.json"]);
+  });
+
+  it("moves a relayed machine to its own address and keeps its id, label and scopes", async () => {
+    const baseDir = await home();
+    await NodeFSP.writeFile(join(baseDir, "studio-fleet.json"), JSON.stringify(relayed), {
+      mode: 0o600,
+    });
+    const result = await addFleetMachine({
+      baseDir,
+      code: encodeFleetJoinCode(invite({ label: "Anton's M1" })),
+      fetcher: fetcher({ "https://m1.fixture.ts.net": "environment-m1" }),
+    });
+    expect(result).toMatchObject({
+      id: "m1",
+      label: "Mac M1",
+      change: "updated",
+      previousUrl: "https://m4.fixture.ts.net:8443",
+    });
+    const written = JSON.parse(await NodeFSP.readFile(join(baseDir, "studio-fleet.json"), "utf8"));
+    expect(written.machines).toEqual([
+      {
+        ...relayed.machines[0],
+        url: "https://m1.fixture.ts.net",
+        managementToken: "synthetic-new-management-token",
+      },
+    ]);
+  });
+
+  it("writes nothing when the address does not answer as that machine", async () => {
+    const baseDir = await home();
+    await NodeFSP.writeFile(join(baseDir, "studio-fleet.json"), JSON.stringify(relayed), {
+      mode: 0o600,
+    });
+    const before = await NodeFSP.readFile(join(baseDir, "studio-fleet.json"), "utf8");
+    await expect(
+      addFleetMachine({
+        baseDir,
+        code: encodeFleetJoinCode(invite()),
+        fetcher: fetcher({ "https://m1.fixture.ts.net": "environment-other" }),
+      }),
+    ).rejects.toThrow("different machine");
+    await expect(
+      addFleetMachine({ baseDir, code: encodeFleetJoinCode(invite()), fetcher: fetcher({}) }),
+    ).rejects.toThrow("unavailable");
+    expect(await NodeFSP.readFile(join(baseDir, "studio-fleet.json"), "utf8")).toBe(before);
+  });
+
+  it("refuses an address another machine uses and a symlinked fleet file", async () => {
+    const baseDir = await home();
+    await NodeFSP.writeFile(join(baseDir, "studio-fleet.json"), JSON.stringify(relayed), {
+      mode: 0o600,
+    });
+    await expect(
+      addFleetMachine({
+        baseDir,
+        code: encodeFleetJoinCode(
+          invite({ url: "https://m4.fixture.ts.net:8443", environmentId: "environment-m3" }),
+        ),
+        fetcher: fetcher({ "https://m4.fixture.ts.net:8443": "environment-m3" }),
+      }),
+    ).rejects.toThrow("already uses this address");
+
+    const linked = await home();
+    await NodeFSP.symlink(join(baseDir, "studio-fleet.json"), join(linked, "studio-fleet.json"));
+    await expect(
+      addFleetMachine({
+        baseDir: linked,
+        code: encodeFleetJoinCode(invite()),
+        fetcher: fetcher({ "https://m1.fixture.ts.net": "environment-m1" }),
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("removes a machine by id or name", async () => {
+    const baseDir = await home();
+    await NodeFSP.writeFile(join(baseDir, "studio-fleet.json"), JSON.stringify(relayed), {
+      mode: 0o600,
+    });
+    expect(await removeFleetMachine({ baseDir, machine: "mac m1" })).toEqual({
+      id: "m1",
+      label: "Mac M1",
+    });
+    expect((await readFleetConfig(baseDir))?.machines).toEqual([]);
+    await expect(removeFleetMachine({ baseDir, machine: "m1" })).rejects.toThrow(
+      "No configured machine",
+    );
+  });
+});

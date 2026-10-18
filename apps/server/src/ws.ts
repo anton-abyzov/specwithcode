@@ -1,4 +1,5 @@
 import * as ProjectRuntimeAccess from "./project/ProjectRuntimeAccess.ts";
+import * as TemporaryProjects from "./project/TemporaryProjects.ts";
 import {
   makeManagedUpdatesRpc,
   makeLegacyServerUpdateRpc,
@@ -1838,6 +1839,11 @@ const layerWsRpc = (
         const result = yield* projectMutationOperation(
           { ...projectService, changeFolder: projectFolders.change },
           mutation,
+          mutation.type === "project.create"
+            ? yield* TemporaryProjects.temporarySessionIdFor(currentSessionId).pipe(
+                Effect.provideService(SqlClient.SqlClient, sql),
+              )
+            : undefined,
         );
         if (mutation.type === "project.delete")
           yield* projectCloneTracker.discard(mutation.projectId);

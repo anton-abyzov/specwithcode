@@ -58,7 +58,6 @@ import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { PreviewControlsToolkit } from "../../mcp/toolkits/previewControls/tools.ts";
 import { HtmlToolkit } from "../../mcp/toolkits/html/tools.ts";
 import { MachinesToolkit } from "../../mcp/toolkits/machines/tools.ts";
-import { CloudToolkit } from "../../mcp/toolkits/cloud/tools.ts";
 import { EnvironmentToolkit } from "../../mcp/toolkits/environment/tools.ts";
 import { ProjectToolkit } from "../../mcp/toolkits/project/tools.ts";
 import { WorktreeToolkit } from "../../mcp/toolkits/worktree/tools.ts";
@@ -862,7 +861,6 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       ...Object.values(PreviewControlsToolkit.tools),
       ...Object.values(HtmlToolkit.tools),
       ...Object.values(MachinesToolkit.tools),
-      ...Object.values(CloudToolkit.tools),
     ]
       .filter((tool) => Context.get(tool.annotations, Tool.Readonly))
       .map((tool) => `mcp__studio-code__${tool.name}`)
@@ -2261,7 +2259,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     });
   const makeAssistantErrorFrame = (input: {
     readonly uuid: string;
-    readonly error: "authentication_failed" | "rate_limit" | "server_error" | undefined;
+    readonly error:
+      | "authentication_failed"
+      | "billing_error"
+      | "rate_limit"
+      | "server_error"
+      | undefined;
     readonly parentToolUseId?: string | null;
     readonly text?: string;
   }) =>
@@ -4060,6 +4063,47 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           terminal.failure.code,
           terminalReason === "overloaded_status" ? "api_error_529" : terminalReason,
         );
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("stops like a usage limit when the API key's account has no credits left", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-credit-balance-too-low"),
+            text: "Complete the task.",
+            attachments: [],
+          }),
+        );
+        const cliText =
+          "Credit balance too low · Add funds: https://platform.claude.com/settings/billing";
+        yield* Queue.offerAll(harness.sdkMessages, [
+          makeAssistantErrorFrame({
+            uuid: "00000000-0000-4000-8000-000000000207",
+            error: "billing_error",
+            text: cliText,
+          }),
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000206",
+            result: cliText,
+            terminalReason: "api_error",
+            isError: true,
+            apiErrorStatus: 400,
+          }),
+        ]);
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, "failed");
+        if (terminal.status !== "failed") return;
+        assert.equal(terminal.failure.class, "usage_limit");
+        assert.equal(terminal.failure.code, "credit_balance_too_low");
+        assert.equal(terminal.failure.message, cliText);
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );

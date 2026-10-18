@@ -14,6 +14,7 @@ import {
   prompt,
 } from "./ProjectWorkspace.test-fixtures";
 import { ProjectWorkspace } from "./ProjectWorkspace";
+import { UnreachableHostsContext } from "../../studio/unreachableHosts";
 import { enqueueProjectCoordinatorDraft } from "../../studio/projectCoordinatorDraft";
 
 describe("thread links inside the project", () => {
@@ -200,6 +201,27 @@ describe("switching the coordinator machine", () => {
       input: { projectId: "remote-project" },
     });
     expect(state.savedMachines).toEqual({ atlas: "host:project" });
+  });
+  it("works on a reachable checkout while the saved machine is offline, keeping the choice", async () => {
+    state.otherCheckouts = [
+      { id: "remote-project", environmentId: "laptop", workspaceRoot: "/w/atlas" },
+    ];
+    state.savedMachines = { atlas: "laptop:remote-project" };
+    await act(async () =>
+      root.render(
+        <UnreachableHostsContext.Provider value={new Set(["laptop"])}>
+          <ProjectWorkspace projectKey="atlas" />
+        </UnreachableHostsContext.Provider>,
+      ),
+    );
+    expect(container.textContent).toContain("Saved machine offline");
+    await prompt("Keep working while the laptop is away");
+    await click("Send");
+    expect(state.send.mock.calls.at(-1)?.[0]).toMatchObject({
+      environmentId: "host",
+      input: { projectId: "project" },
+    });
+    expect(state.savedMachines).toEqual({ atlas: "laptop:remote-project" });
   });
   it("never substitutes a different checkout when a linked checkout is missing", async () => {
     state.savedMachines = { atlas: "host:project" };
@@ -531,6 +553,70 @@ describe("thread cards' quick actions", () => {
     expect(state.openLink).toHaveBeenCalledWith("https://github.com/acme/atlas/pull/42");
     // The pull request opens on its own; the thread does not open behind it.
     expect(container.querySelector('[data-native-thread="fresh"]')).toBeNull();
+  });
+  const conflictingPullRequest = (syncedAt = "2026-10-11T05:10:00Z") =>
+    [
+      {
+        host: "github.com",
+        repository: "acme/atlas",
+        number: 288,
+        url: "https://github.com/acme/atlas/pull/288",
+        source: "created",
+        linkedAt: "2026-10-11T05:01:00Z",
+        stack: null,
+        snapshot: {
+          state: "open",
+          isDraft: false,
+          title: "Thread provider",
+          headBranch: "skills",
+          baseBranch: "main",
+          updatedAt: "2026-10-11T05:05:00Z",
+          syncedAt,
+          mergeability: "conflicting",
+        },
+      },
+    ] as never;
+  it("offers Resolve conflicts on a conflicting pull request and sends it to that thread", async () => {
+    announce({ pullRequests: conflictingPullRequest() });
+    state.git = git({ hasWorkingTreeChanges: false });
+    await render();
+    expect(actions()).toEqual(["Resolve conflicts", "View PR"]);
+    const resolve = card().querySelector<HTMLButtonElement>('[data-action="resolve-conflicts"]')!;
+    expect(resolve.getAttribute("aria-label")).toBe(
+      "Resolve the conflicts on pull request #288 in Skills consolidation",
+    );
+    state.send.mockClear();
+    await act(async () => resolve.click());
+    expect(state.send).toHaveBeenCalledTimes(1);
+    const sent = state.send.mock.calls[0]![0] as {
+      environmentId: string;
+      input: { threadId: string; dispatchMode: string; message: { text: string } };
+    };
+    expect(sent.environmentId).toBe("host");
+    expect(sent.input.threadId).toBe("fresh");
+    // Queued: a run in progress is never interrupted to merge under it.
+    expect(sent.input.dispatchMode).toBe("queue");
+    expect(sent.input.message.text).toContain(
+      "Your pull request #288 (https://github.com/acme/atlas/pull/288) now conflicts with its base branch `main`.",
+    );
+    // The thread stays where it is: the request goes to it, nothing opens.
+    expect(container.querySelector('[data-native-thread="fresh"]')).toBeNull();
+    // Hidden until a newer host read still reports the conflict.
+    expect(actions()).toEqual(["View PR"]);
+    announce({ pullRequests: conflictingPullRequest("2026-10-11T05:40:00Z") });
+    state.shells.splice(
+      state.shells.findIndex((thread) => thread.id === "fresh"),
+      1,
+    );
+    await render();
+    expect(actions()).toEqual(["Resolve conflicts", "View PR"]);
+  });
+  it("leaves Resolve conflicts out on a read-only connection", async () => {
+    announce({ pullRequests: conflictingPullRequest("2026-10-11T06:00:00Z") });
+    state.git = git({ hasWorkingTreeChanges: false });
+    state.canOperate = false;
+    await render();
+    expect(actions()).toEqual(["View PR"]);
   });
   it("leaves Create PR out on a read-only connection", async () => {
     announce();

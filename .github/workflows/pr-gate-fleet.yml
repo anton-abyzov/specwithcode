@@ -1,0 +1,67 @@
+name: PR Gate (fleet)
+
+# The fleet tests (scripts/studio-fleet/run-tests.sh) on a Mac runner, only for pull requests
+# that change the fleet scripts or the settings sources test-settings-continuity.py mirrors.
+# The fleet runs under launchd with the system Python, so these tests need macOS; pr-gate.yml
+# leaves them out on Linux. release.sh's stage 1 runs them too.
+# Node, Python and the scripts package's own dependencies (verify-module-preloads.mjs
+# imports typescript-legacy); no full workspace install.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "scripts/studio-fleet/**"
+      - "packages/contracts/src/settings.ts"
+      - "apps/server/src/serverSettings.ts"
+      - "packages/shared/src/serverSettings.ts"
+      - ".github/workflows/pr-gate-fleet.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-gate-fleet-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fleet:
+    name: PR Gate (fleet)
+    if: github.event_name == 'workflow_dispatch' || !github.event.pull_request.draft
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.20.0
+
+      - name: Install the scripts package
+        run: |
+          npm install -g "pnpm@$(sed -n 's/.*"packageManager": *"pnpm@\([0-9.]*\)".*/\1/p' package.json)"
+          pnpm install --frozen-lockfile --filter @specweave-studio/scripts
+
+      - name: Run the fleet tests
+        env:
+          GIT_CONFIG_NOSYSTEM: "1"
+          PWDEBUG: "0"
+          PLAYWRIGHT_HTML_OPEN: never
+        run: bash scripts/studio-fleet/run-tests.sh --out "$RUNNER_TEMP/fleet" --jobs 3
+
+      - name: Upload fleet logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pr-gate-fleet-logs
+          path: ${{ runner.temp }}/fleet
+          if-no-files-found: ignore
+          retention-days: 7

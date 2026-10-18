@@ -2,6 +2,7 @@ import type {
   ChatAttachment,
   EnvironmentId,
   ResolvedKeybindingsConfig,
+  ScopedThreadRef,
 } from "@specweave-studio/contracts";
 import type { ClientSettings } from "@specweave-studio/contracts/settings";
 import { ArrowUpIcon, PlusIcon } from "lucide-react";
@@ -9,6 +10,7 @@ import { useRef, useSyncExternalStore, type ReactNode } from "react";
 
 import { composerSendButtonLabel, composerSubmissionIntentForKey } from "../../composer-logic";
 import { parseComposerAppCommand } from "../../studio/composerAppCommands";
+import { ViewerThreadComposerPortal } from "../../viewerOverlayStore";
 import type { ProjectCoordinatorComposer } from "../../studio/projectCoordinatorComposer";
 import { useCoordinatorSlashMenu, type CoordinatorSlashMenuInput } from "./CoordinatorSlashMenu";
 import {
@@ -68,10 +70,27 @@ async function submitCoordinatorDraft(input: {
 }
 
 /**
- * The coordinator's message box. It owns the draft's subscription, so a keystroke
- * renders this form and nothing else: the conversation above it stays as it was.
+ * The coordinator's message box. While the viewer overlay shows the coordinator
+ * beside a document, the same box moves there, draft and send included.
  */
-export function CoordinatorComposer(props: {
+export function CoordinatorComposer(
+  props: Parameters<typeof CoordinatorComposerForm>[0] & {
+    readonly threadRef: ScopedThreadRef | null;
+  },
+) {
+  const { threadRef, ...form } = props;
+  return (
+    <ViewerThreadComposerPortal threadRef={threadRef}>
+      <CoordinatorComposerForm {...form} />
+    </ViewerThreadComposerPortal>
+  );
+}
+
+/**
+ * It owns the draft's subscription, so a keystroke renders this form and nothing
+ * else: the conversation above it stays as it was.
+ */
+function CoordinatorComposerForm(props: {
   readonly composer: ProjectCoordinatorComposer;
   readonly environmentId: EnvironmentId;
   readonly cwd: string;

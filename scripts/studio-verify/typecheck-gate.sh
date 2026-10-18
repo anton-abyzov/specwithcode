@@ -25,8 +25,10 @@
 # --write-baseline  after the run, rewrite the baseline entries of the packages that ran
 # --from-logs DIR   compare an earlier run's logs in DIR without type checking again
 #
-# Environment: TYPECHECK_TIMEOUT (seconds per package, default 600). Ctrl-C or a TERM stops
-# every running typecheck.
+# Environment: TYPECHECK_TIMEOUT (seconds per package, default 600); TYPECHECK_TSC_ARGS, extra
+# arguments for packages whose typecheck script is tsc (CI passes `--checkers 2`: apps/server
+# peaks near 11 GB with tsc's default four checkers and about 7 GB with two, and reports the same
+# diagnostics; --singleThreaded reports more). Ctrl-C or a TERM stops every running typecheck.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -47,7 +49,12 @@ slug() {
 . "$HERE/jobs.sh"
 
 typecheck_in() {
-  cd "$ROOT/$1" && exec node --run typecheck
+  cd "$ROOT/$1" || return
+  if [ -n "${TYPECHECK_TSC_ARGS:-}" ] && grep -q '"typecheck": *"tsc ' package.json; then
+    # shellcheck disable=SC2086  # Word splitting is intended: several arguments.
+    exec node --run typecheck -- $TYPECHECK_TSC_ARGS
+  fi
+  exec node --run typecheck
 }
 
 # Internal: type check one package under the watchdog; job_run records its exit code and secs.

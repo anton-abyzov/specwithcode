@@ -13,7 +13,8 @@
 # public before the fleet, a staging folder from the earlier order (fleet before public) resuming,
 # the fleet stages refusing a release the public feed does not show, the Electron runtime repair
 # and its failure, the plan checked into SHA256SUMS before drafts and on the draft before
-# publishing, the previous release's digests file and the public clone's noreply identity.
+# publishing, the previous release's digests file, the public clone's noreply identity and a --ci
+# rerun removing the bump-only release branch a failed run left.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -213,6 +214,13 @@ dry_ok() {
 }
 check 'dry-run lists every stage in order and both plan flags unless told otherwise' dry_ok
 check 'dry-run writes nothing under HOME' test -z "$(find "$DRY_HOME" -mindepth 1 -print -quit)"
+CI_ORDER="preflight trees prev bump candidate stage1 server build bundle sign helpers plan drafts server-wait publish-private publish-public merge"
+dry_ci_ok() {
+  run 0 9.9.9 --dry-run --ci || return 1
+  [ "$(sed -n 's/^> \([a-z0-9-]*\).*/\1/p' "$LAST_OUT" | tr '\n' ' ' | sed 's/ $//')" = "$CI_ORDER" ] &&
+    has 'fleet-m4, fleet-workers, desktop: skipped (--ci)' && lacks 'fleet_rollout.py' && lacks 'osascript'
+}
+check '--ci leaves out quit-desktop, the fleet stages and the desktop swap' dry_ci_ok
 
 # ---------------------------------------------------------------- a release that fails at sign, then resumes
 
@@ -529,6 +537,41 @@ check 'a personal address in the public clone is replaced by the noreply one' id
 stub_set "RELEASE_STUB_OUTPUT=committer=Me<me@example.com>"
 identity_env_refused() { run 1 1.4.2 --resume --stop-after trees && has "the public clone's committer is not a GitHub noreply address"; }
 check 'a personal committer from the environment still stops the release' identity_env_refused
+stub_set RELEASE_STUB_OUTPUT=
+
+# ---------------------------------------------------------------- a CI Mac: no fleet files, no desktop
+
+C="$WORK/c"
+make_machine "$C"
+rm -f "$C/fleet/hosts.json" "$C/fleet/id_ed25519" "$C/fleet/known_hosts"
+use_machine "$C" 1.6.0
+ci_refused_without_flag() { run 1 1.6.0 --stop-after preflight && has "missing $C/fleet/hosts.json"; }
+check 'without --ci a machine with no fleet files stops at preflight' ci_refused_without_flag
+rm -rf "$STAGE"
+ci_release_ok() {
+  run 0 1.6.0 --ci || return 1
+  has 'SpecWithCode 1.6.0 is released.' && has 'skipped (--ci)' || return 1
+  [ "$(stages_after 0)" = "prev bump candidate stage1 build bundle sign helpers plan drafts publish-private publish-public merge " ] &&
+    [ ! -f "$STAGE/markers/fleet-m4" ] && [ ! -f "$STAGE/markers/desktop" ]
+}
+check 'a --ci release publishes both feeds and merges without fleet files' ci_release_ok
+
+rm -rf "$STAGE"
+stub_set RELEASE_STUB_OUTPUT=remote-branch=86c4653fe
+ci_stale_removed() {
+  run 0 1.6.0 --ci --stop-after bump || return 1
+  has 'Removed release/1.6.0 left by an earlier failed --ci run' &&
+    awk -F '\t' '$2 == "delete-stale"' "$STUB_LOG" | grep -q ':refs/heads/release/1.6.0$'
+}
+check 'a --ci rerun removes a release branch that holds only the bump' ci_stale_removed
+rm -rf "$STAGE"
+stub_set "RELEASE_STUB_OUTPUT=remote-branch=86c4653fe stale-commits=Hotfix"
+ci_stale_work_kept() { run 1 1.6.0 --ci --stop-after bump && has 'has commits other than the bump' && ! grep -q delete-stale "$STUB_LOG"; }
+check 'a --ci rerun keeps a release branch with other work' ci_stale_work_kept
+rm -rf "$STAGE"
+stub_set "RELEASE_STUB_OUTPUT=remote-branch=86c4653fe remote-tag=86c4653fe"
+ci_stale_tagged() { run 1 1.6.0 --ci --stop-after bump && has 'v1.6.0 is already tagged'; }
+check 'a --ci rerun refuses a version that is already tagged' ci_stale_tagged
 stub_set RELEASE_STUB_OUTPUT=
 
 # ---------------------------------------------------------------- timing comparison

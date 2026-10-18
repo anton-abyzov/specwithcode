@@ -47,6 +47,7 @@ import {
   THREAD_DETAILS_PANEL_ICON_CLASS,
 } from "./chat/threadDetailsPanelStyles";
 import { ThreadDetailsPrRows } from "./chat/ThreadDetailsPrRows";
+import { useResolveThreadConflicts } from "../studio/useResolveThreadConflicts";
 import { parsePullRequestReference } from "../pullRequestReference";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
 import { useComposerMenuProps } from "./chat/composerEventScope";
@@ -144,6 +145,7 @@ export function BranchToolbarBranchSelector({
     [environmentId, threadId],
   );
   const serverThread = useThreadShell(threadRef);
+  const resolveConflictsInThread = useResolveThreadConflicts();
   const serverSession = serverThread?.runtime ?? null;
   const draftThread = useComposerDraftStore((store) =>
     draftId ? store.getDraftSession(draftId) : store.getDraftThreadByRef(threadRef),
@@ -833,6 +835,12 @@ export function BranchToolbarBranchSelector({
             openAriaLabel={prUrl ?? "Open pull request"}
             onOpen={(event) => openPrLink(event, prUrl)}
             onActed={() => branchStatusQuery.refresh()}
+            threadBranch={serverThread?.branch ?? null}
+            onResolveInThread={
+              serverThread === null
+                ? undefined
+                : (target) => resolveConflictsInThread(serverThread, target)
+            }
           />
         ) : null}
       </div>

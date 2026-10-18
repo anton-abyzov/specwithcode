@@ -15,6 +15,16 @@ interface QuestionLike {
 }
 
 /** A, B, C … Z, then the 1-based number for anything past the alphabet. */
+/**
+ * A question's first paragraph is what is asked; any paragraphs after it are
+ * supporting detail (consequences, the reason given), shown quieter below it.
+ */
+export function splitQuestionText(text: string): { headline: string; details: string | null } {
+  const [headline = "", ...rest] = text.trim().split(/\n\s*\n/);
+  const details = rest.join("\n\n").trim();
+  return { headline: headline.trim(), details: details.length > 0 ? details : null };
+}
+
 export function questionOptionLetter(index: number): string {
   return index < 26 ? String.fromCharCode(65 + index) : String(index + 1);
 }

@@ -139,6 +139,11 @@ export interface DraftState {
   readonly startFromOrigin: boolean;
   readonly existingWorktreePath: string;
   readonly modelKey: string;
+  /**
+   * "Use a specific model": runs keep `modelKey` even when its provider is
+   * full. Off, runs follow the project's coordinator and recommended model.
+   */
+  readonly modelPinned: boolean;
   /** Not editable in the dialog, but preserved so editing an agent-created task keeps its modes. */
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
@@ -226,6 +231,7 @@ export function taskToDraft(task: ScheduledTask): DraftState {
         ? task.workspaceStrategy.worktreePath
         : "",
     modelKey: `${task.modelSelection.instanceId}:${task.modelSelection.model}`,
+    modelPinned: task.modelPinned === true,
     runtimeMode: task.runtimeMode,
     interactionMode: task.interactionMode,
     baseModelSelection: task.modelSelection,

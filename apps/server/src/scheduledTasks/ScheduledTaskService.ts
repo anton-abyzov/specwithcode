@@ -45,7 +45,12 @@ import * as Metrics from "../observability/Metrics.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { ProjectCoordinatorService } from "../project/ProjectCoordinatorService.ts";
 import * as ProcessRunner from "../processRunner.ts";
-import { checkedPrompt, isModelPinned, runScheduledTaskCheck } from "./ScheduledTaskCheck.ts";
+import {
+  checkedPrompt,
+  isModelPinned,
+  routineCoordinatorPrompt,
+  runScheduledTaskCheck,
+} from "./ScheduledTaskCheck.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
@@ -660,8 +665,47 @@ export const layer = Layer.effect(
         if (check !== null && checked?._tag === "Success" && checked.value.passed) {
           prompt = checkedPrompt(prompt, check, checked.value.output);
         }
-        // Agent routines follow their thread; a person's pinned model is used as chosen.
+        // Only a routine set to "Use a specific model" overrides the project's choice.
         const pinned = isModelPinned(active);
+
+        // Post the prompt into a thread of the routine's project, re-checking
+        // the destination under the project lock.
+        const sendTo = (threadId: ThreadId, text: string) =>
+          admission.withLock(
+            active.projectId,
+            assertTaskAdmission({ ...active, threadId }).pipe(
+              Effect.provideService(ProjectStore.ProjectStoreV2, projects),
+              Effect.provideService(SqlClient.SqlClient, sql),
+              // An unpinned run never moves its thread to another
+              // provider: the task's model is only a snapshot of what the
+              // thread ran on when the task was made. A coordinator takes
+              // the model a user message would get; any other thread
+              // keeps its own.
+              Effect.andThen(
+                pinned
+                  ? Effect.succeed(active.modelSelection)
+                  : coordinators === undefined
+                    ? Effect.succeed(undefined)
+                    : coordinators.nextTurnModel(active.projectId, threadId),
+              ),
+              Effect.flatMap((modelSelection) =>
+                threadManagement.sendToThread({
+                  projectId: active.projectId,
+                  commandId,
+                  threadId,
+                  messageId,
+                  scheduledTaskId: active.id,
+                  text,
+                  attachments: [],
+                  ...(modelSelection === undefined ? {} : { modelSelection }),
+                  // Scheduled prompts must not interrupt tools in the bound thread.
+                  mode: "queue",
+                  createdBy: active.createdBy,
+                  creationSource: active.creationSource,
+                }),
+              ),
+            ),
+          );
 
         // Effect.exit (not Effect.result) so defects and interruptions in the
         // dispatch are also captured and recorded as a failed run instead of
@@ -671,71 +715,43 @@ export const layer = Layer.effect(
             ? checked
             : checked !== null && !checked.value.passed
               ? Exit.void
-              : active.threadId === null
-                ? yield* Effect.exit(
-                    threadLaunch.launch({
-                      commandId,
-                      projectId: active.projectId,
-                      title: active.title,
-                      modelSelection: pinned
-                        ? active.modelSelection
-                        : ((yield* (
-                            coordinators?.nextTurnModel(active.projectId, null) ??
-                              Effect.succeed(undefined)
-                          )) ?? active.modelSelection),
-                      runtimeMode: active.runtimeMode,
-                      interactionMode: active.interactionMode,
-                      workspaceStrategy: active.workspaceStrategy,
-                      initialMessage: {
-                        messageId,
-                        scheduledTaskId: active.id,
-                        text: prompt,
-                        attachments: [],
-                      },
-                      createdBy: active.createdBy,
-                      creationSource: active.creationSource,
-                    }),
-                  )
-                : yield* Effect.exit(
-                    admission.withLock(
-                      active.projectId,
-                      assertTaskAdmission(active).pipe(
-                        Effect.provideService(ProjectStore.ProjectStoreV2, projects),
-                        Effect.provideService(SqlClient.SqlClient, sql),
-                        // An unpinned run never moves its thread to another
-                        // provider: the task's model is only a snapshot of what the
-                        // thread ran on when the task was made. A coordinator takes
-                        // the model a user message would get; any other thread
-                        // keeps its own.
-                        Effect.andThen(
-                          pinned
-                            ? Effect.succeed(active.modelSelection)
-                            : coordinators === undefined
-                              ? Effect.succeed(undefined)
-                              : coordinators.nextTurnModel(
-                                  active.projectId,
-                                  ThreadId.make(active.threadId),
-                                ),
+              : active.threadId !== null
+                ? yield* Effect.exit(sendTo(ThreadId.make(active.threadId), prompt))
+                : coordinators !== undefined
+                  ? // A routine with no thread of its own wakes the project's
+                    // coordinator, which answers it or starts the threads it
+                    // needs on the project's recommended model.
+                    yield* Effect.exit(
+                      coordinators
+                        .start({
+                          projectId: active.projectId,
+                          commandId: CommandId.make(`${commandId}:coordinator`),
+                        })
+                        .pipe(
+                          Effect.flatMap(({ threadId }) =>
+                            sendTo(threadId, routineCoordinatorPrompt(active, prompt)),
+                          ),
                         ),
-                        Effect.flatMap((modelSelection) =>
-                          threadManagement.sendToThread({
-                            projectId: active.projectId,
-                            commandId,
-                            threadId: ThreadId.make(active.threadId!),
-                            messageId,
-                            scheduledTaskId: active.id,
-                            text: prompt,
-                            attachments: [],
-                            ...(modelSelection === undefined ? {} : { modelSelection }),
-                            // Scheduled prompts must not interrupt tools in the bound thread.
-                            mode: "queue",
-                            createdBy: active.createdBy,
-                            creationSource: active.creationSource,
-                          }),
-                        ),
-                      ),
-                    ),
-                  );
+                    )
+                  : yield* Effect.exit(
+                      threadLaunch.launch({
+                        commandId,
+                        projectId: active.projectId,
+                        title: active.title,
+                        modelSelection: active.modelSelection,
+                        runtimeMode: active.runtimeMode,
+                        interactionMode: active.interactionMode,
+                        workspaceStrategy: active.workspaceStrategy,
+                        initialMessage: {
+                          messageId,
+                          scheduledTaskId: active.id,
+                          text: prompt,
+                          attachments: [],
+                        },
+                        createdBy: active.createdBy,
+                        creationSource: active.creationSource,
+                      }),
+                    );
 
         const completedAt = yield* localNow;
         const runSucceeded = result._tag === "Success";

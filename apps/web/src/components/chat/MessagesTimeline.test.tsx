@@ -1391,7 +1391,7 @@ describe("MessagesTimeline", () => {
   });
 
   it("shows a long assistant report in a delegated thread as a report card", () => {
-    const report = Array.from({ length: 20 }, (_, i) => `- Finding ${i + 1}`).join("\n");
+    const report = Array.from({ length: 100 }, (_, i) => `- Finding ${i + 1}`).join("\n");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -1404,10 +1404,58 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-report-artifact="true"');
     expect(markup).toContain("Review cycle 2 of 0973");
     expect(markup).toContain("Open report");
-    expect(markup).toContain("Report · 40 words");
+    expect(markup).toContain("Report · 200 words");
     // The card replaces the clamped wall of text.
     expect(markup).not.toContain("Show full report");
     expect(markup).not.toContain("- Finding 20");
+  });
+
+  it("keeps a direct answer inline in a delegated thread", () => {
+    const sentence =
+      "The relay token expired, so both machines dropped and the list waited on them.";
+    const answer = [
+      "Yes, both are back online.",
+      "",
+      Array.from({ length: 12 }, () => sentence).join(" "),
+      "",
+      "- Reconnected M1 and M3.",
+      "- Restarted the relay.",
+      "",
+      Array.from({ length: 12 }, () => sentence).join(" "),
+    ].join("\n");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        collapseLongReports
+        timelineEntries={[
+          buildUserTimelineEntry("Why did the machines disconnect?"),
+          { ...buildAssistantTimelineEntry(answer), id: "entry-2" },
+        ]}
+      />,
+    );
+
+    expect(markup).not.toContain('data-report-artifact="true"');
+    expect(markup).not.toContain("Open report");
+    expect(markup).toContain("Restarted the relay.");
+  });
+
+  it("shows a reply to a request for a report as a report card", () => {
+    const report = Array.from({ length: 40 }, (_, i) => `Finding ${i + 1} holds up well.`).join(
+      " ",
+    );
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        collapseLongReports
+        timelineEntries={[
+          buildUserTimelineEntry("Write a short report on the outage"),
+          { ...buildAssistantTimelineEntry(report), id: "entry-2" },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-report-artifact="true"');
+    expect(markup).toContain("Open report");
   });
 
   it("keeps long assistant messages whole in ordinary chats", () => {
@@ -3211,7 +3259,7 @@ describe("MessagesTimeline timeline detail", () => {
   });
 
   it("keeps long delegated reports whole in verbose", async () => {
-    const report = Array.from({ length: 20 }, (_, i) => `- Finding ${i + 1}`).join("\n");
+    const report = Array.from({ length: 100 }, (_, i) => `- Finding ${i + 1}`).join("\n");
     const reportEntries = [buildAssistantTimelineEntry(report)];
     expect(await render("normal", reportEntries, true)).toContain('"data-report-artifact":"true"');
     const verbose = await render("verbose", reportEntries, true);

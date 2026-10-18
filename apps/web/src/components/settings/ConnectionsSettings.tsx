@@ -70,7 +70,11 @@ import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { cn } from "../../lib/utils";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { formatElapsedDurationLabel, formatExpiresInLabel } from "../../timestampFormat";
-import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
+import {
+  isShareablePairingUrl,
+  resolveDesktopPairingUrl,
+  resolveHostedPairingUrl,
+} from "./pairingUrls";
 import {
   applyWslEnableSelection,
   canDisableTailscaleHttpsEndpoint,
@@ -100,7 +104,7 @@ import {
 } from "./EnvironmentRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { StudioFleetConnections, StudioListenerRow } from "./StudioFleetConnections";
-import { CloudSessionsConnections } from "./CloudSessionsConnections";
+import { ConnectionsLibrarySettings } from "./ConnectionsLibrarySettings";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
 import { GitHubRoutingSettings } from "./GitHubRoutingSettings";
 import { Input } from "../ui/input";
@@ -156,7 +160,6 @@ import {
   revokeOtherServerClientSessions,
   revokeServerClientSession,
   revokeServerPairingLink,
-  isLoopbackHostname,
   usePrimarySessionState,
   type ServerClientSessionRecord,
   type ServerPairingLinkRecord,
@@ -196,6 +199,8 @@ import {
 import { APP_VERSION } from "~/branding";
 import { requestConfirmDialog } from "~/confirmDialog";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { machineLastSeenAt, useMachineLastSeenVersion } from "../../lib/machineLastSeen";
+import { lastSeenLabel } from "../../lib/machineStatus";
 import { primaryServerKeybindingsAtom, serverEnvironment } from "~/state/server";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
 import {
@@ -729,13 +734,16 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
     }
     return options;
   }, [endpoints, credential]);
-  const shareablePairingUrl =
+  const candidatePairingUrl =
     endpointPairingUrl ??
     (credential && endpointUrl != null && endpointUrl !== ""
       ? (hostedPairingUrl ?? resolveDesktopPairingUrl(endpointUrl, credential))
-      : isLoopbackHostname(window.location.hostname)
-        ? null
-        : currentOriginPairingUrl);
+      : currentOriginPairingUrl);
+  // Only a link another machine can open is shared; otherwise the row offers the code.
+  const shareablePairingUrl =
+    candidatePairingUrl !== null && isShareablePairingUrl(candidatePairingUrl)
+      ? candidatePairingUrl
+      : null;
   // Value of the copy attempt that last failed. The clipboard-failure reveal
   // dialog must show exactly what failed to copy, not the row's default URL.
   const [failedCopyValue, setFailedCopyValue] = useState<string | null>(null);
@@ -817,9 +825,8 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
     defaultEndpointKey,
   );
   const qrPairingUrl = selectedQrOption?.url ?? shareablePairingUrl;
-  // With no endpoint list the fallback is never loopback: selectPairingEndpoint
-  // skips loopback and the current-origin fallback is guarded by
-  // isLoopbackHostname, so only an explicit loopback selection hides the QR.
+  // shareablePairingUrl is never loopback or the desktop app's own origin
+  // (isShareablePairingUrl), so only an explicit loopback selection hides the QR.
   const canRenderQrForSelection = selectedQrOption?.qrShareable ?? true;
   if (expiresAtMs <= nowMs) {
     return null;
@@ -852,7 +859,9 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
             </p>
           ) : shareablePairingUrl === null ? (
             <p className="text-2xs text-muted-foreground">
-              Copy the token and pair from another client using this backend&apos;s reachable host.
+              No address another machine can open yet. Turn on Tailscale HTTPS or Network access
+              above for a shareable link, or copy the code and enter it with this machine&apos;s
+              address.
             </p>
           ) : null}
         </div>
@@ -1568,7 +1577,7 @@ function savedBackendStatus(environment: EnvironmentPresentation): {
       return { text: "Connecting", tone: "muted" };
     case "reconnecting":
       return {
-        text: connection.error ? `Reconnecting: ${connection.error}` : "Reconnecting",
+        text: connection.error ? `Can't reach: ${connection.error}` : "Reconnecting",
         tone: "error",
       };
     // Not a failure: the machine is fine, this build just cannot talk to it.
@@ -1654,6 +1663,9 @@ function SavedBackendListRow({
   const resumingServerUpdate =
     serverUpdateState.status === "running" && serverUpdateState.stage === "resuming";
   const status = savedBackendStatus(environment);
+  useMachineLastSeenVersion();
+  const lastSeen =
+    enabled && !isConnected ? lastSeenLabel(machineLastSeenAt(environmentId), Date.now()) : null;
   const serverVersion = environment.serverConfig?.environment.serverVersion ?? null;
   // A saved Studio Connect machine this device has never reached (unsupported,
   // or not yet connected) still has a descriptor from relay discovery, so
@@ -1694,6 +1706,7 @@ function SavedBackendListRow({
       isConnected && prepared._tag === "Some" ? prepared.value.target : null,
     ),
     resumingServerUpdate ? "Restarting" : status.text,
+    lastSeen,
     enabled && versionMismatch ? serverVersion : null,
   ]
     .filter((value): value is string => value !== null)
@@ -4190,9 +4203,7 @@ export function ConnectionsSettings() {
           savedEnvironmentIds={savedEnvironments.map((environment) => environment.environmentId)}
         />
       ) : null}
-      {primaryEnvironmentId ? (
-        <CloudSessionsConnections environmentId={primaryEnvironmentId} />
-      ) : null}
+      <ConnectionsLibrarySettings />
       {primarySettings}
       <SettingsSection
         {...searchableSetting("remote-environments")}

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   threadCardActions,
+  threadCardConflict,
   threadCardPullRequest,
   threadCardStatus,
   threadHasUnshippedWork,
@@ -164,5 +165,114 @@ describe("threadCardActions", () => {
         canChange: true,
       }),
     ).toEqual(["create_pr", "view_pr"]);
+  });
+});
+
+const conflictingLink = (
+  mergeability: "mergeable" | "conflicting" | "unknown" | undefined,
+  watchConflicting?: boolean,
+  state: "open" | "merged" = "open",
+) =>
+  ({
+    host: "github.com",
+    repository: "acme/atlas",
+    number: 288,
+    url: "https://github.com/acme/atlas/pull/288",
+    source: "created",
+    linkedAt: "2026-10-17T00:00:00Z",
+    snapshot: {
+      state,
+      isDraft: false,
+      title: "Thread provider",
+      headBranch: "claude/thread-inherit",
+      baseBranch: "main",
+      updatedAt: "2026-10-17T05:00:00Z",
+      syncedAt: "2026-10-17T05:10:00Z",
+      ...(mergeability === undefined ? {} : { mergeability }),
+    },
+    stack: null,
+    ...(watchConflicting === undefined
+      ? {}
+      : { watch: { conflicting: watchConflicting } as never }),
+  }) as unknown as EnvironmentThreadShell["pullRequests"][number];
+
+describe("threadCardConflict", () => {
+  const conflict = {
+    headBranch: "claude/thread-inherit",
+    baseBranch: "main",
+    syncedAt: "2026-10-17T05:10:00Z",
+  };
+  it("follows the host's mergeability on the linked pull request", () => {
+    expect(threadCardConflict(conflictingLink("conflicting"))).toEqual(conflict);
+    expect(threadCardConflict(conflictingLink("mergeable"))).toBeNull();
+    expect(threadCardConflict(conflictingLink(undefined))).toBeNull();
+  });
+  it("keeps the watch's verdict while the host is still computing, never over a clean answer", () => {
+    expect(threadCardConflict(conflictingLink("unknown", true))).toEqual(conflict);
+    expect(threadCardConflict(conflictingLink(undefined, true))).toEqual(conflict);
+    expect(threadCardConflict(conflictingLink("unknown", false))).toBeNull();
+    expect(threadCardConflict(conflictingLink("mergeable", true))).toBeNull();
+  });
+  it("says nothing once the pull request is no longer open", () => {
+    expect(threadCardConflict(conflictingLink("conflicting", true, "merged"))).toBeNull();
+  });
+  it("rides on the card's pull request", () => {
+    expect(
+      threadCardPullRequest(thread({ pullRequests: [conflictingLink("conflicting")] }), null),
+    ).toEqual({
+      url: "https://github.com/acme/atlas/pull/288",
+      number: 288,
+      state: "open",
+      conflict,
+    });
+  });
+});
+
+describe("threadCardActions with a conflicting pull request", () => {
+  const pullRequest = threadCardPullRequest(
+    thread({ pullRequests: [conflictingLink("conflicting")] }),
+    null,
+  );
+  const kinds = (overrides: Partial<Parameters<typeof threadCardActions>[0]> = {}) =>
+    threadCardActions({
+      thread: thread(),
+      git: null,
+      pullRequest,
+      canChange: true,
+      ...overrides,
+    }).map((action) => action.kind);
+  it("leads with Resolve conflicts, beside View PR", () => {
+    expect(kinds()).toEqual(["resolve_conflicts", "view_pr"]);
+    expect(
+      threadCardActions({ thread: thread(), git: null, pullRequest, canChange: true })[0],
+    ).toMatchObject({
+      kind: "resolve_conflicts",
+      number: 288,
+      conflict: { headBranch: "claude/thread-inherit", baseBranch: "main" },
+    });
+  });
+  it("is not offered to someone who cannot change source control there", () => {
+    expect(kinds({ canChange: false })).toEqual(["view_pr"]);
+  });
+  it("waits while the thread's agent is working", () => {
+    expect(kinds({ working: true })).toEqual(["view_pr"]);
+  });
+  it("stays hidden after a request until a newer host read still reports the conflict", () => {
+    expect(kinds({ resolveRequestedFor: "2026-10-17T05:10:00Z" })).toEqual(["view_pr"]);
+    expect(kinds({ resolveRequestedFor: "2026-10-17T04:00:00Z" })).toEqual([
+      "resolve_conflicts",
+      "view_pr",
+    ]);
+  });
+  it("offers nothing to resolve on a clean pull request", () => {
+    const clean = threadCardPullRequest(
+      thread({ pullRequests: [conflictingLink("mergeable")] }),
+      null,
+    );
+    expect(
+      threadCardActions({ thread: thread(), git: null, pullRequest: clean, canChange: true }).map(
+        (action) => action.kind,
+      ),
+    ).toEqual(["view_pr"]);
   });
 });

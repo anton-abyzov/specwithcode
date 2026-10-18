@@ -75,20 +75,68 @@ function SidebarLayout(props: { children: React.ReactNode }) {
       </div>
       <div style={{ minWidth: 0, flex: 1 }}>{props.children}</div>
       <ViewerOverlayHost
-        renderThread={(threadRef) => (
-          <div className="p-4 text-sm" data-overlay-thread={threadRef.threadId}>
+        renderThread={(threadRef, { transcriptOnly }) => (
+          <div
+            className="flex min-h-0 flex-1 flex-col gap-3 p-4 text-sm"
+            data-overlay-thread={threadRef.threadId}
+            data-overlay-thread-live={transcriptOnly ? undefined : "true"}
+          >
             Thread {threadRef.threadId}
             {/* Like the real thread's code blocks and editors, this keeps Escape to itself. */}
             <pre
               tabIndex={0}
               data-overlay-thread-code="true"
-              className="mt-3 rounded bg-muted p-2 font-mono text-xs"
+              className="rounded bg-muted p-2 font-mono text-xs"
               onKeyDown={(event) => {
                 if (event.key === "Escape") event.stopPropagation();
               }}
             >
               /Users/me/Downloads/specwithcode-browser-1.0.0.zip
             </pre>
+            {transcriptOnly ? null : (
+              // Stands in for ChatView's composer: its pending approval and the input.
+              <form
+                className="mt-auto flex flex-col gap-2"
+                data-overlay-thread-composer="true"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const input = event.currentTarget.elements.namedItem("steer");
+                  if (input instanceof HTMLTextAreaElement) {
+                    window.__overlaySteered = input.value;
+                    input.value = "";
+                  }
+                }}
+              >
+                <div
+                  className="rounded-lg border p-3"
+                  role="group"
+                  aria-label="Approval"
+                  data-overlay-thread-approval="true"
+                >
+                  <p className="font-medium">Run pnpm test in apps/web?</p>
+                  <div className="mt-2 flex gap-2">
+                    <button type="button" className="rounded border px-2 py-1">
+                      Approve
+                    </button>
+                    <button type="button" className="rounded border px-2 py-1">
+                      Decline
+                    </button>
+                  </div>
+                </div>
+                <textarea
+                  name="steer"
+                  aria-label="Steer this thread"
+                  placeholder="Steer this thread..."
+                  className="min-h-16 rounded-lg border bg-background p-2"
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      event.currentTarget.form?.requestSubmit();
+                    }
+                  }}
+                />
+              </form>
+            )}
           </div>
         )}
       />

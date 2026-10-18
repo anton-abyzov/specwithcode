@@ -538,6 +538,7 @@ describe("rightPanelStore", () => {
       byThreadKey: {},
       threadPanelVisibilityByThreadKey: {
         "env-1:thread-A": { inlineOpen: false, popoverOpen: false },
+        "env-1:thread-B": { inlineOpen: true, popoverOpen: false },
       },
     });
   });
@@ -545,14 +546,15 @@ describe("rightPanelStore", () => {
   it("tracks inline and popover visibility independently", () => {
     const store = useRightPanelStore.getState();
 
+    // A started chat keeps the whole width until the user opens the card.
     expect(selectThreadPanelOpen(store.threadPanelVisibilityByThreadKey, refA, "inline")).toBe(
-      true,
+      false,
     );
     expect(selectThreadPanelOpen(store.threadPanelVisibilityByThreadKey, refA, "popover")).toBe(
       false,
     );
 
-    store.setThreadPanelOpen(refA, "inline", false);
+    store.setThreadPanelOpen(refA, "inline", true);
     store.toggleThreadPanel(refA, "popover");
 
     expect(
@@ -560,13 +562,27 @@ describe("rightPanelStore", () => {
         useRightPanelStore.getState().threadPanelVisibilityByThreadKey,
         refA,
       ),
-    ).toEqual({ inlineOpen: false, popoverOpen: true });
+    ).toEqual({ inlineOpen: true, popoverOpen: true });
     expect(
       selectThreadPanelVisibility(
         useRightPanelStore.getState().threadPanelVisibilityByThreadKey,
         refB,
       ),
-    ).toEqual({ inlineOpen: true, popoverOpen: false });
+    ).toEqual({ inlineOpen: false, popoverOpen: false });
+  });
+
+  it("opens a draft's card by default and remembers closing it", () => {
+    const store = useRightPanelStore.getState();
+    expect(
+      selectThreadPanelOpen(store.threadPanelVisibilityByThreadKey, refA, "inline", true),
+    ).toBe(true);
+
+    store.toggleThreadPanel(refA, "inline", true);
+    const visibility = useRightPanelStore.getState().threadPanelVisibilityByThreadKey;
+    expect(selectThreadPanelOpen(visibility, refA, "inline", true)).toBe(false);
+    // Reopening returns to the draft default, so nothing is kept for it.
+    store.toggleThreadPanel(refA, "inline", true);
+    expect(useRightPanelStore.getState().threadPanelVisibilityByThreadKey).toEqual({});
   });
 
   it("closes the popover atomically when the real right panel opens", () => {
@@ -578,7 +594,7 @@ describe("rightPanelStore", () => {
         useRightPanelStore.getState().threadPanelVisibilityByThreadKey,
         refA,
       ),
-    ).toEqual({ inlineOpen: true, popoverOpen: false });
+    ).toEqual({ inlineOpen: false, popoverOpen: false });
   });
 
   it("keeps an open popover visible by promoting it to inline when the real panel closes", () => {

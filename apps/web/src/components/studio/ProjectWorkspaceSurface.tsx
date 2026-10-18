@@ -157,6 +157,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { randomUUID } from "../../lib/utils";
 
 import { CoordinatorConversation, CoordinatorMachine } from "./CoordinatorConversation";
+import { useUnreachableHosts } from "../../studio/unreachableHosts";
 const OVERVIEW_OPEN_STORAGE_KEY = "studio:project-overview-open:v1";
 const PANE_TAB_STORAGE_KEY = "studio:project-pane-tab:v1";
 const PaneTabSchema = Schema.Literals(PROJECT_PANE_TABS);
@@ -957,6 +958,7 @@ export function ProjectWorkspaceSurface({
       onStart={(suggestion) => void startSuggestion(suggestion)}
     />
   );
+  const unreachableHosts = useUnreachableHosts();
   const coordinatorTone = coordinator ? threadTone(coordinator) : null;
   // Native review controls stay with the coordinator, in this project's main pane.
   const attention = coordinatorAttention(coordinator ?? null);
@@ -976,7 +978,7 @@ export function ProjectWorkspaceSurface({
     [coordinatorId],
   );
 
-  const waiting = waitingCount(workers);
+  const waiting = waitingCount(workers, unreachableHosts);
   const openLink = useOpenLink(null);
   const pullRequests = collectProjectPullRequests(
     coordinator ? [coordinator, ...workers] : workers,
@@ -1282,6 +1284,8 @@ export function ProjectWorkspaceSurface({
               ) : null}
               <CoordinatorComposer
                 composer={composer}
+                // A viewer showing the coordinator borrows this composer.
+                threadRef={coordinatorRef}
                 environmentId={project.environmentId}
                 cwd={project.workspaceRoot}
                 sendBlocked={

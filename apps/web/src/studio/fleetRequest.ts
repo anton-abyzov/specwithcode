@@ -6,7 +6,10 @@ import {
 } from "@specweave-studio/client-runtime/studio";
 import type { PreparedConnection } from "@specweave-studio/client-runtime/connection";
 import type { ProjectId } from "@specweave-studio/contracts";
-import type { StudioFleetWorkersAllowInput } from "@specweave-studio/contracts/studioFleet";
+import type {
+  StudioFleetAddInput,
+  StudioFleetWorkersAllowInput,
+} from "@specweave-studio/contracts/studioFleet";
 import * as Effect from "effect/Effect";
 
 export function requestFleet(prepared: PreparedConnection) {
@@ -38,6 +41,23 @@ export function requestFleetPairing(prepared: PreparedConnection, id: string) {
       url: (base) => environmentEndpointUrl(base, "/api/studio/fleet/connect"),
       timeoutMs: 15000,
       request: ({ client, headers }) => client.connectFleet({ headers, payload: { id } }),
+    });
+  });
+}
+/** Saves the machine an invitation names in this server's private machine list. */
+export function requestFleetAdd(prepared: PreparedConnection, input: StudioFleetAddInput) {
+  return Effect.gen(function* () {
+    const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
+    const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+    return yield* executeAuthenticatedEnvironmentHttpRequest({
+      prepared,
+      signer,
+      remoteAuthorization,
+      group: "studioFleet",
+      method: "POST",
+      url: (base) => environmentEndpointUrl(base, "/api/studio/fleet/machines"),
+      timeoutMs: 15000,
+      request: ({ client, headers }) => client.addFleetMachine({ headers, payload: input }),
     });
   });
 }

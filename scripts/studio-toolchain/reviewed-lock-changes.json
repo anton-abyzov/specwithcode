@@ -4,26 +4,20 @@
   "changes": [
     {
       "op": "add",
-      "parent": [
-        "patchedDependencies:"
-      ],
+      "parent": ["patchedDependencies:"],
       "lines": [
         "app-builder-lib@26.15.6: 4688f96749e3d76cf27bc535d874470bf264610a331db13644df7715d699acf1"
       ],
       "patchFile": "patches/app-builder-lib@26.15.6.patch",
-      "commit": "0414f75e2d682793d5c74697a9900730476ac189",
+      "commit": "209ffb29ba2112dc68ff007198a07a396c7062d3",
       "pr": 198,
       "reason": "Reviewed app-builder-lib patch: set-key-partition-list now unlocks the temporary signing keychain with the keychain password instead of the .p12 password."
     },
     {
       "op": "add",
-      "parent": [
-        "importers:"
-      ],
-      "lines": [
-        "apps/chrome-extension: {}"
-      ],
-      "commit": "c9868979863a896a1ae30e2b03bd43c0cb8f815d",
+      "parent": ["importers:"],
+      "lines": ["apps/chrome-extension: {}"],
+      "commit": "a5bc1179ab7a14ec697af126525c9a62707eff8c",
       "pr": 241,
       "reason": "Empty importer for the dependency-free apps/chrome-extension workspace added by #230."
     },
@@ -37,63 +31,37 @@
       ],
       "before": "version: file:apps/mobile/modules/studio-markdown-text(afae94297d61d3a65abc2214f9b05422)",
       "after": "version: file:apps/mobile/modules/studio-markdown-text(db966ed54b0732dc85844abd1d523a92)",
-      "commit": "f08e451aa562c04b5ef8a36074c7682155d3f67c",
+      "commit": "b9313e8c63bcc3c82f47bd76b545db262955ce58",
       "pr": 197,
       "reason": "pnpm recomputed the peer-graph hash of this workspace module after the identity map renamed two of its peers; its resolved dependencies are byte-identical."
     },
     {
       "op": "add",
-      "parent": [
-        "importers:",
-        "apps/server:",
-        "dependencies:"
-      ],
-      "lines": [
-        "'@muse-code/sdk':",
-        "  specifier: 1.4.9",
-        "  version: 1.4.9(@types/node@24.12.4)"
-      ],
-      "commit": "b22b086151ec3296d9491305a9e06a6a17d6b840",
+      "parent": ["importers:", "apps/server:", "dependencies:"],
+      "lines": ["'@muse-code/sdk':", "  specifier: 1.4.9", "  version: 1.4.9(@types/node@24.12.4)"],
+      "commit": "7f4309417f9284d483447f6168a5d7ace89d8a96",
       "pr": 235,
       "reason": "Muse Code provider SDK, exact pin; added at 1.4.7/1.4.8 by #183 (3328c7c1d, 6f441d506), bumped to 1.4.9 by #235."
     },
     {
       "op": "add",
-      "parent": [
-        "importers:",
-        "apps/server:",
-        "dependencies:"
-      ],
-      "lines": [
-        "smol-toml:",
-        "  specifier: 1.8.0",
-        "  version: 1.8.0"
-      ],
+      "parent": ["importers:", "apps/server:", "dependencies:"],
+      "lines": ["smol-toml:", "  specifier: 1.8.0", "  version: 1.8.0"],
       "commit": "f3071151947cc4e80740cd534631bfd41dcb41ff",
       "pr": 187,
       "reason": "Native MCP connection discovery parses Codex TOML configuration; smol-toml@1.8.0 is already a pinned upstream package."
     },
     {
       "op": "add",
-      "parent": [
-        "importers:",
-        "apps/server:",
-        "dependencies:"
-      ],
-      "lines": [
-        "zod:",
-        "  specifier: 4.6.5",
-        "  version: 4.6.5"
-      ],
-      "commit": "0acc6e4315776f5ed96a5724c094eec2e2fd3dbb",
+      "parent": ["importers:", "apps/server:", "dependencies:"],
+      "lines": ["zod:", "  specifier: 4.6.5", "  version: 4.6.5"],
+      "commit": "f6c38688e03c4257580057d3c0d182b936dce96b",
       "pr": 232,
       "reason": "Server imports zod directly; zod@4.6.5 is already a pinned upstream package."
     },
     {
       "op": "add",
-      "parent": [
-        "packages:"
-      ],
+      "parent": ["packages:"],
       "package": "@muse-code/sdk@1.4.9",
       "integrity": "sha512-fYWvvK0Ar11e0KHbepmp1Kobp6w9UPVVq1rL6ZY7uY1t9NlK6yrF66hELky6G7NgvpH2q/RfeFYfiyuESpHo2A==",
       "lines": [
@@ -106,32 +74,28 @@
         "    '@types/node':",
         "      optional: true"
       ],
-      "commit": "b22b086151ec3296d9491305a9e06a6a17d6b840",
+      "commit": "7f4309417f9284d483447f6168a5d7ace89d8a96",
       "pr": 235,
       "reason": "Registry record of the Muse SDK; integrity equals the npm registry dist.integrity of 1.4.9, which has no dependencies."
     },
     {
       "op": "add",
-      "parent": [
-        "snapshots:"
-      ],
+      "parent": ["snapshots:"],
       "lines": [
         "'@muse-code/sdk@1.4.9(@types/node@24.12.4)':",
         "  optionalDependencies:",
         "    '@types/node': 24.12.4"
       ],
-      "commit": "b22b086151ec3296d9491305a9e06a6a17d6b840",
+      "commit": "7f4309417f9284d483447f6168a5d7ace89d8a96",
       "pr": 235,
       "reason": "Snapshot of the Muse SDK with its optional @types/node peer."
     },
     {
       "op": "replace",
-      "parent": [
-        "snapshots:"
-      ],
+      "parent": ["snapshots:"],
       "before": "'@specweave-studio/mobile-markdown-text@file:apps/mobile/modules/studio-markdown-text(afae94297d61d3a65abc2214f9b05422)':",
       "after": "'@specweave-studio/mobile-markdown-text@file:apps/mobile/modules/studio-markdown-text(db966ed54b0732dc85844abd1d523a92)':",
-      "commit": "f08e451aa562c04b5ef8a36074c7682155d3f67c",
+      "commit": "b9313e8c63bcc3c82f47bd76b545db262955ce58",
       "pr": 197,
       "reason": "pnpm recomputed the peer-graph hash of this workspace module after the identity map renamed two of its peers; its resolved dependencies are byte-identical."
     },
@@ -144,18 +108,16 @@
       ],
       "before": "zod: 4.4.3",
       "after": "zod: 4.6.5",
-      "commit": "0acc6e4315776f5ed96a5724c094eec2e2fd3dbb",
+      "commit": "f6c38688e03c4257580057d3c0d182b936dce96b",
       "pr": 232,
       "reason": "pnpm deduplicated this build plugin's zod (declared ^4.4.3) onto the server's direct zod@4.6.5, an unchanged upstream registry record."
     },
     {
       "op": "replace",
-      "parent": [
-        "snapshots:"
-      ],
+      "parent": ["snapshots:"],
       "before": "app-builder-lib@26.15.6(dmg-builder@26.15.6)(electron-builder-squirrel-windows@26.15.6):",
       "after": "app-builder-lib@26.15.6(patch_hash=4688f96749e3d76cf27bc535d874470bf264610a331db13644df7715d699acf1)(dmg-builder@26.15.6)(electron-builder-squirrel-windows@26.15.6):",
-      "commit": "0414f75e2d682793d5c74697a9900730476ac189",
+      "commit": "209ffb29ba2112dc68ff007198a07a396c7062d3",
       "pr": 198,
       "reason": "Reviewed app-builder-lib patch: set-key-partition-list now unlocks the temporary signing keychain with the keychain password instead of the .p12 password."
     },
@@ -168,7 +130,7 @@
       ],
       "before": "app-builder-lib: 26.15.6(dmg-builder@26.15.6)(electron-builder-squirrel-windows@26.15.6)",
       "after": "app-builder-lib: 26.15.6(patch_hash=4688f96749e3d76cf27bc535d874470bf264610a331db13644df7715d699acf1)(dmg-builder@26.15.6)(electron-builder-squirrel-windows@26.15.6)",
-      "commit": "0414f75e2d682793d5c74697a9900730476ac189",
+      "commit": "209ffb29ba2112dc68ff007198a07a396c7062d3",
       "pr": 198,
       "reason": "Reviewed app-builder-lib patch: set-key-partition-list now unlocks the temporary signing keychain with the keychain password instead of the .p12 password."
     },
@@ -181,7 +143,7 @@
       ],
       "before": "app-builder-lib: 26.15.6(dmg-builder@26.15.6)(electron-builder-squirrel-windows@26.15.6)",
       "after": "app-builder-lib: 26.15.6(patch_hash=4688f96749e3d76cf27bc535d874470bf264610a331db13644df7715d699acf1)(dmg-builder@26.15.6)(electron-builder-squirrel-windows@26.15.6)",
-      "commit": "0414f75e2d682793d5c74697a9900730476ac189",
+      "commit": "209ffb29ba2112dc68ff007198a07a396c7062d3",
       "pr": 198,
       "reason": "Reviewed app-builder-lib patch: set-key-partition-list now unlocks the temporary signing keychain with the keychain password instead of the .p12 password."
     },
@@ -194,9 +156,67 @@
       ],
       "before": "app-builder-lib: 26.15.6(dmg-builder@26.15.6)(electron-builder-squirrel-windows@26.15.6)",
       "after": "app-builder-lib: 26.15.6(patch_hash=4688f96749e3d76cf27bc535d874470bf264610a331db13644df7715d699acf1)(dmg-builder@26.15.6)(electron-builder-squirrel-windows@26.15.6)",
-      "commit": "0414f75e2d682793d5c74697a9900730476ac189",
+      "commit": "209ffb29ba2112dc68ff007198a07a396c7062d3",
       "pr": 198,
       "reason": "Reviewed app-builder-lib patch: set-key-partition-list now unlocks the temporary signing keychain with the keychain password instead of the .p12 password."
+    },
+    {
+      "op": "add",
+      "parent": ["patchedDependencies:"],
+      "lines": [
+        "expo-modules-core@58.0.11: 6be7092f8c6f03a57b75c797d98b5f19ed62d2dd205bfc4c8adf4cef45655d7e"
+      ],
+      "patchFile": "patches/expo-modules-core@58.0.11.patch",
+      "commit": "a3906b9ff60f06bfb578db94a9abeee6b417ea94",
+      "pr": 306,
+      "reason": "Reviewed expo-modules-core@58.0.11 patch, ported from the Expo 57 patch that stopped applying after the Expo 58 upgrade; the native regressions in apps/mobile/scripts check it."
+    },
+    {
+      "op": "add",
+      "parent": ["patchedDependencies:"],
+      "lines": [
+        "expo-notifications@58.0.11: d50a0daf888619e6d7d1221ac8cf4d542a552003cfbf7b58be5e4a0e14cb5575"
+      ],
+      "patchFile": "patches/expo-notifications@58.0.11.patch",
+      "commit": "a3906b9ff60f06bfb578db94a9abeee6b417ea94",
+      "pr": 306,
+      "reason": "Reviewed expo-notifications@58.0.11 patch, ported from the Expo 57 patch that stopped applying after the Expo 58 upgrade; the native regressions in apps/mobile/scripts check it."
+    },
+    {
+      "op": "replace",
+      "parent": ["importers:", "apps/mobile:", "dependencies:", "expo-notifications:"],
+      "before": "version: 58.0.11(expo@58.0.2)(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)(typescript@7.0.2)",
+      "after": "version: 58.0.11(patch_hash=d50a0daf888619e6d7d1221ac8cf4d542a552003cfbf7b58be5e4a0e14cb5575)(expo@58.0.2)(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)(typescript@7.0.2)",
+      "commit": "a3906b9ff60f06bfb578db94a9abeee6b417ea94",
+      "pr": 306,
+      "reason": "pnpm records the patch hash of the reviewed Expo 58 permission and notification patches in this dependency reference."
+    },
+    {
+      "op": "replace",
+      "parent": ["snapshots:"],
+      "before": "expo-modules-core@58.0.11(react-native-worklets@0.13.0(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0))(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0):",
+      "after": "expo-modules-core@58.0.11(patch_hash=6be7092f8c6f03a57b75c797d98b5f19ed62d2dd205bfc4c8adf4cef45655d7e)(react-native-worklets@0.13.0(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0))(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0):",
+      "commit": "a3906b9ff60f06bfb578db94a9abeee6b417ea94",
+      "pr": 306,
+      "reason": "pnpm records the patch hash of the reviewed Expo 58 permission and notification patches in this dependency reference."
+    },
+    {
+      "op": "replace",
+      "parent": ["snapshots:"],
+      "before": "expo-notifications@58.0.11(expo@58.0.2)(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)(typescript@7.0.2):",
+      "after": "expo-notifications@58.0.11(patch_hash=d50a0daf888619e6d7d1221ac8cf4d542a552003cfbf7b58be5e4a0e14cb5575)(expo@58.0.2)(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)(typescript@7.0.2):",
+      "commit": "a3906b9ff60f06bfb578db94a9abeee6b417ea94",
+      "pr": 306,
+      "reason": "pnpm records the patch hash of the reviewed Expo 58 permission and notification patches in this dependency reference."
+    },
+    {
+      "op": "replace",
+      "parent": ["snapshots:", "expo@58.0.2(56fc8ddb8129740412739f0f0a6ee025):", "dependencies:"],
+      "before": "expo-modules-core: 58.0.11(react-native-worklets@0.13.0(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0))(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)",
+      "after": "expo-modules-core: 58.0.11(patch_hash=6be7092f8c6f03a57b75c797d98b5f19ed62d2dd205bfc4c8adf4cef45655d7e)(react-native-worklets@0.13.0(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0))(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)",
+      "commit": "a3906b9ff60f06bfb578db94a9abeee6b417ea94",
+      "pr": 306,
+      "reason": "pnpm records the patch hash of the reviewed Expo 58 permission and notification patches in this dependency reference."
     }
   ]
 }

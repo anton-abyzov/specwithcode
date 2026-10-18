@@ -57,6 +57,13 @@ export class ProjectEnrichmentService extends Context.Service<
   {
     /** Read resolved metadata without starting or awaiting filesystem work. */
     readonly peek: (workspaceRoot: string) => Effect.Effect<ProjectEnrichment>;
+    /**
+     * The workspace's repository identity, resolving it now when it is not cached yet.
+     * For rare, user-driven checks; a slow or failed lookup reads as no identity.
+     */
+    readonly repositoryIdentityNow: (
+      workspaceRoot: string,
+    ) => Effect.Effect<RepositoryIdentity | null>;
     /** Schedule missing metadata for bounded background resolution. */
     readonly request: (workspaceRoot: string) => Effect.Effect<void>;
     /** Read immediately available metadata and schedule anything missing. */
@@ -71,6 +78,8 @@ export class ProjectEnrichmentService extends Context.Service<
     >;
   }
 >()("specweave-studio/project/ProjectEnrichmentService") {}
+
+const RESOLVE_NOW_TIMEOUT = Duration.seconds(3);
 
 function availableValue<A, E>(cached: Option.Option<Exit.Exit<A, E>>): A | null {
   return Option.match(cached, {
@@ -271,6 +280,14 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
     };
   });
 
+  const repositoryIdentityNow: ProjectEnrichmentService["Service"]["repositoryIdentityNow"] =
+    Effect.fn("ProjectEnrichmentService.repositoryIdentityNow")(function* (workspaceRoot) {
+      const resolved = yield* Cache.get(repositoryIdentityCache, workspaceRoot).pipe(
+        Effect.timeoutOption(RESOLVE_NOW_TIMEOUT),
+      );
+      return availableValue(resolved);
+    });
+
   const request: ProjectEnrichmentService["Service"]["request"] = Effect.fn(
     "ProjectEnrichmentService.request",
   )(function* (workspaceRoot) {
@@ -316,6 +333,7 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
 
   return ProjectEnrichmentService.of({
     peek,
+    repositoryIdentityNow,
     request,
     getAvailable,
     invalidate,

@@ -47,8 +47,17 @@ export function threadAttentionNote(thread: EnvironmentThreadShell): string | nu
   return threadBlocker(thread);
 }
 
-export function projectThreadGroup(thread: EnvironmentThreadShell): ProjectThreadGroup {
+/**
+ * A thread whose host cannot be reached keeps the state it had when the host
+ * dropped, which is stale: it is neither waiting on the person (nothing can be
+ * answered there) nor known to be working, so it is listed as idle.
+ */
+export function projectThreadGroup(
+  thread: EnvironmentThreadShell,
+  hostOffline = false,
+): ProjectThreadGroup {
   if (thread.archivedAt !== null) return "Resolved";
+  if (hostOffline) return thread.settledOverride === "settled" ? "Resolved" : "Idle";
   const status = resolveSidebarThreadStatus(thread);
   if (thread.hasPendingApprovals || thread.hasPendingUserInput || thread.hasActionableProposedPlan)
     return "Waiting on you";

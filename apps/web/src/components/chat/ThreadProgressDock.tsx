@@ -15,3 +15,16 @@ export function ThreadProgressDock({ children }: { children: ReactNode }) {
     </div>
   );
 }
+
+/**
+ * The meta chips and the collapsed plan on one line, so the thread's header
+ * costs a single row; the plan takes the rest of the line, or its own line
+ * when opened.
+ */
+export function ThreadHeaderLine({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-1.5" data-thread-header-line>
+      {children}
+    </div>
+  );
+}

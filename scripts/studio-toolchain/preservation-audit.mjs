@@ -8,7 +8,7 @@ export const LOCK_UPSTREAM = "10f39eb9ac80c9a4b7f5097575dd2addc3b6f631";
 // A record edit is not an approval. This digest pins the reviewed closed set of
 // lock changes, so approving another one also takes a reviewed edit here.
 export const LOCK_REVIEW_SHA256 =
-  "006368613406c2418030beffbb093acb3b53738636bbce8ee15c1b1bfcfa020d";
+  "e4abc667218b695a26b141ffaf0c253b7639f5c1fe5186b5fb1d9d25e749b7b1";
 const LOCK_REVIEW_PATH = "scripts/studio-toolchain/reviewed-lock-changes.json";
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const LAYOUT = "Pinned lock data must keep pnpm's two-space block layout";
@@ -120,7 +120,10 @@ function validateLockChange(change) {
     assert.notEqual(section, "packages:", `${where}: registry metadata can only be added`);
     // A patch hash is pinned by its patch file, which only an added entry names.
     assert.notEqual(section, "patchedDependencies:", `${where}: patch entries can only be added`);
-    assert.ok(text.every((line) => line === line.trimStart()), `${where}: before/after`);
+    assert.ok(
+      text.every((line) => line === line.trimStart()),
+      `${where}: before/after`,
+    );
     assert.notEqual(change.before, change.after, `${where}: redundant replacement`);
   } else {
     assert.equal(

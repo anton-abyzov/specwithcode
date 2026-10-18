@@ -19,7 +19,9 @@ export function limitAccountLabel(account: LimitAccount): {
 } {
   const identity = describeLimitAccount(account);
   const primary = identity.account ?? instanceLabel(account);
-  const machine = identity.machine;
+  // A kept read from an unreachable machine must not pass for a live one.
+  const machine =
+    identity.machine && account.offline ? `${identity.machine} · offline` : identity.machine;
   return {
     primary,
     machine,

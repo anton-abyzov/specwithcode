@@ -48,6 +48,20 @@
   border-color: color-mix(in srgb, var(--shell-link) 40%, var(--border));
   color: var(--shell-link);
 }
+/* The one step that unblocks the merge: filled, in both themes. */
+.sws-thread-card-action[data-action="resolve-conflicts"] {
+  border-color: var(--foreground);
+  background: var(--foreground);
+  color: var(--background);
+}
+.sws-thread-card-action[data-action="resolve-conflicts"]:hover {
+  border-color: var(--foreground);
+  background: color-mix(in srgb, var(--foreground) 85%, var(--background));
+}
+.sws-thread-card-action:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
 /* A thread whose last turn finished: a ring in the done color, filled once resolved. */
 .sws-thread-card .sws-dot[data-tone="done"],
 .sws-thread-link .sws-dot[data-tone="done"] {

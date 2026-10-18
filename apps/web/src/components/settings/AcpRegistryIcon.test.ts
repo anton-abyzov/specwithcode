@@ -210,8 +210,9 @@ it("renders bundled Copilot immediately without fetching or cache access", () =>
   const fetchIcon = vi.fn();
   vi.stubGlobal("fetch", fetchIcon);
   const element = ProviderRegistryIcon({ agentId: "github-copilot-cli", icon: null });
-  expect(typeof element.type).toBe("function");
-  const svg = (element.type as Function)(element.props);
+  expect(element.props.brand).toBe("copilot");
+  const logo = (element.type as Function)(element.props);
+  const svg = (logo.type as Function)(logo.props);
   expect(svg.props["data-provider-icon"]).toBe("github-copilot");
   expect(svg.props.viewBox).toBe("0 0 16 16");
   expect(fetchIcon).not.toHaveBeenCalled();

@@ -222,9 +222,14 @@ export function projectSkillStatusBadge(row: ProjectSkillRow): {
 }
 
 /** One badge per provider, merging instances of the same agent that load the same file. */
-export function projectSkillProviderBadges(
-  row: ProjectSkillRow,
-): ReadonlyArray<{ key: string; label: string; enabled: boolean; title: string }> {
+export function projectSkillProviderBadges(row: ProjectSkillRow): ReadonlyArray<{
+  key: string;
+  label: string;
+  enabled: boolean;
+  title: string;
+  /** The first presence under this label, for its provider mark. */
+  presence: ProjectSkillPresence;
+}> {
   const byLabel = new Map<string, Array<ProjectSkillPresence>>();
   for (const presence of row.providers) {
     const list = byLabel.get(presence.label) ?? [];
@@ -242,6 +247,7 @@ export function projectSkillProviderBadges(
       label,
       enabled,
       title: `${label}${enabled ? "" : " (switched off)"}\n${details.join("\n")}`,
+      presence: presences[0]!,
     };
   });
 }

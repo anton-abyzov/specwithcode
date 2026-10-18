@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   connectionCatalogDisplayUrl,
   hasRelayRoute,
+  type EnvironmentConnectionPhase,
   type EnvironmentPresentation as BaseEnvironmentPresentation,
 } from "@specweave-studio/client-runtime/connection";
 import { Discovery } from "@specweave-studio/client-runtime/relay";
@@ -108,4 +109,22 @@ export function useEnvironmentMachines() {
 
 export function useConnectedEnvironmentIds() {
   return useAtomValue(environmentSummaries.connectedEnvironmentIdsAtom);
+}
+
+/**
+ * Hosts that cannot be reached now: retrying, stopped or refused. A host on its
+ * first connection attempt is not one yet, so a page load does not flash every
+ * remote host as offline.
+ */
+export function isEnvironmentUnreachable(phase: EnvironmentConnectionPhase): boolean {
+  return phase !== "connected" && phase !== "connecting";
+}
+
+export function useUnreachableEnvironmentIds(): ReadonlySet<string> {
+  const { environments } = useEnvironments();
+  const key = environments
+    .filter((environment) => isEnvironmentUnreachable(environment.connection.phase))
+    .map((environment) => environment.environmentId)
+    .join("\n");
+  return useMemo(() => new Set(key === "" ? [] : key.split("\n")), [key]);
 }

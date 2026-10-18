@@ -8,7 +8,10 @@ import type {
   AuthSessionId,
   AuthSessionState,
 } from "@specweave-studio/contracts";
-import { EnvironmentHttpCommonError, PRIMARY_LOCAL_ENVIRONMENT_ID } from "@specweave-studio/contracts";
+import {
+  EnvironmentHttpCommonError,
+  PRIMARY_LOCAL_ENVIRONMENT_ID,
+} from "@specweave-studio/contracts";
 import type { EnvironmentHttpCommonError as EnvironmentHttpCommonErrorType } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -76,7 +79,7 @@ export class PrimaryEnvironmentPairingCredentialRejectedError extends Schema.Tag
   },
 ) {
   override get message(): string {
-    return "Invalid pairing token. Check the token and try again.";
+    return "This pairing link is expired, already used or unknown. A link works once and only for a few minutes: create a new one on the machine you are pairing with.";
   }
 }
 

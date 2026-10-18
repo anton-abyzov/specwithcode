@@ -263,6 +263,9 @@ it.layer(NodeServices.layer)("native subscription status corroboration", (it) =>
     // A login also sits in the home, but the key pays.
     ["claude.ai", "ANTHROPIC_API_KEY", undefined, "apiKey", "ready"],
     ["none", "apiKeyHelper", undefined, "apiKey", "ready"],
+    // Claude Console sign-in ("API Usage Billing"): the CLI holds a managed key.
+    ["none", "/login managed key", undefined, "apiKey", "ready"],
+    [undefined, "/login managed key", undefined, "apiKey", "ready"],
     // A reported plan means the subscription pays, whatever key is around.
     ["claude.ai", "ANTHROPIC_API_KEY", "Claude Max", "Claude Max", "ready"],
     ["claude.ai", "none", "Claude Max", "Claude Max", "ready"],

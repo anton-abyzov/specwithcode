@@ -1,0 +1,36 @@
+name: Commit attribution
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  attribution:
+    name: No assistant attribution
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          sparse-checkout: scripts/check-commit-attribution.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Check commits
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          # After a force-push the previous head may be gone; check the new head alone.
+          if git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            range="$BASE..$HEAD_SHA"
+          else
+            range="$HEAD_SHA^!"
+          fi
+          bash scripts/check-commit-attribution.sh "$range"

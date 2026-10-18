@@ -1,3 +1,4 @@
+import { isLoopbackHostname } from "../../environments/primary/target";
 import { buildHostedPairingUrl } from "../../hostedPairing";
 import { setPairingTokenOnUrl } from "../../pairingUrl";
 
@@ -17,4 +18,20 @@ export function resolveHostedPairingUrl(endpointUrl: string, credential: string)
     host: endpointUrl,
     token: credential,
   });
+}
+
+/**
+ * Whether another machine can open this pairing link. The desktop app's own
+ * origin (studio://app) and loopback addresses only reach the machine that made
+ * the link, so they are never offered for sharing.
+ */
+export function isShareablePairingUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (
+      (url.protocol === "https:" || url.protocol === "http:") && !isLoopbackHostname(url.hostname)
+    );
+  } catch {
+    return false;
+  }
 }

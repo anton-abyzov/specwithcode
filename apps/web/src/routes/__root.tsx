@@ -31,6 +31,7 @@ import { SnapShotCoordinator } from "../components/desktop/SnapShotCoordinator";
 import { DesktopAppActivationCoordinator } from "../components/desktop/DesktopAppActivationCoordinator";
 import { RunningThreadKeepAlive } from "../components/desktop/RunningThreadKeepAlive";
 import { KeepAwakeWhileWorking } from "../components/desktop/KeepAwakeWhileWorking";
+import { ComputerUseHost } from "../components/desktop/ComputerUseHost";
 import { AutoConnectPrivateMachines } from "../components/AutoConnectPrivateMachines";
 import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
 import { LegacyThreadMigrationToast } from "../components/LegacyThreadMigrationToast";
@@ -186,6 +187,7 @@ function RootRouteView() {
           <ProviderAuthCallbackCoordinator />
           {/* Outside FirstRunGate: a session can run while this window is still in onboarding. */}
           {isElectron && primaryEnvironmentAuthenticated ? <KeepAwakeWhileWorking /> : null}
+          {isElectron && primaryEnvironmentAuthenticated ? <ComputerUseHost /> : null}
           <CustomSnoozeDialogHost />
           <CommandPalette>
             <AppSidebarLayout>
@@ -230,6 +232,7 @@ function RootRouteView() {
         <ProviderAuthCallbackCoordinator />
         {/* Outside FirstRunGate: a session can run while this window is still in onboarding. */}
         {isElectron && primaryEnvironmentAuthenticated ? <KeepAwakeWhileWorking /> : null}
+        {isElectron && primaryEnvironmentAuthenticated ? <ComputerUseHost /> : null}
         <ChatGptWelcomeCoordinator />
         <FirstRunGate
           enabled={primaryEnvironmentAuthenticated}

@@ -40,6 +40,8 @@ interface ComposerPrimaryActionsProps {
   sendDisabledReason: string | null;
   isConnecting: boolean;
   isEnvironmentUnavailable: boolean;
+  /** The thread's machine can't be reached: typed text waits for it, named here. */
+  waitingFor?: string | null;
   isPreparingWorktree: boolean;
   hasSendableContent: boolean;
   canResume?: boolean;
@@ -94,6 +96,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   sendDisabledReason,
   isConnecting,
   isEnvironmentUnavailable,
+  waitingFor = null,
   isPreparingWorktree,
   hasSendableContent,
   canResume = false,
@@ -274,18 +277,20 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           : showCreditLabel
             ? "Send with credits"
             : "Submit message";
-  const submitStatus = isEnvironmentUnavailable
-    ? "Environment disconnected"
-    : (sendDisabledReason ??
-      (isConnecting
-        ? "Connecting"
-        : isPreparingWorktree
-          ? "Preparing worktree"
-          : isSendBusy
-            ? isEditingQueuedMessage
-              ? "Updating queued message"
-              : "Submitting message"
-            : null));
+  const submitStatus = waitingFor
+    ? `Waiting for ${waitingFor}`
+    : isEnvironmentUnavailable
+      ? "Environment disconnected"
+      : (sendDisabledReason ??
+        (isConnecting
+          ? "Connecting"
+          : isPreparingWorktree
+            ? "Preparing worktree"
+            : isSendBusy
+              ? isEditingQueuedMessage
+                ? "Updating queued message"
+                : "Submitting message"
+              : null));
   const submitTooltip =
     submitStatus ??
     (isRunning && !isEditingQueuedMessage
@@ -341,10 +346,23 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     </button>
   );
 
+  // Typed text is kept, not sent, while the machine is away; say so beside the button.
+  const showWaiting = waitingFor !== null && hasSendableContent && !showResume;
   return (
-    <Tooltip key="submit">
-      <TooltipTrigger render={<span className="inline-flex" />}>{sendButton}</TooltipTrigger>
-      <TooltipPopup>{submitTooltip}</TooltipPopup>
-    </Tooltip>
+    <>
+      {showWaiting ? (
+        <span
+          className="truncate text-muted-foreground text-xs"
+          data-composer-waiting-for=""
+          aria-hidden="true"
+        >
+          Waiting for {waitingFor}
+        </span>
+      ) : null}
+      <Tooltip key="submit">
+        <TooltipTrigger render={<span className="inline-flex" />}>{sendButton}</TooltipTrigger>
+        <TooltipPopup>{submitTooltip}</TooltipPopup>
+      </Tooltip>
+    </>
   );
 });

@@ -1,0 +1,72 @@
+name: PR Gate (Google, Mac)
+
+# The headless Google account check (scripts/studio-google/verify.mjs) against the built server
+# on GitHub's Mac runner, the machine release.sh's bundle stage runs it on. It drives Settings >
+# Google and the scheduled-task editor, so it runs for pull requests that change the web app,
+# the server or the check itself. A failure prints the page text and the server log tail.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "apps/web/**"
+      - "apps/server/**"
+      - "packages/**"
+      - "scripts/studio-google/**"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/pr-gate-google.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-gate-google-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  google:
+    name: PR Gate (Google, Mac)
+    if: github.event_name == 'workflow_dispatch' || !github.event.pull_request.draft
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version: 22.20.0
+          cache: true
+          run-install: true
+
+      - name: Build the web app
+        working-directory: apps/web
+        run: node ../../node_modules/vite-plus/bin/vp build
+
+      - name: Build the server
+        run: node apps/server/scripts/cli.ts build
+
+      - name: Install Playwright Chromium headless shell
+        run: npx -y "playwright-core@$(node -p "require('./apps/server/package.json').dependencies['playwright-core']")" install --only-shell chromium
+
+      - name: Run the Google check
+        env:
+          PWDEBUG: "0"
+          PLAYWRIGHT_HTML_OPEN: never
+        run: node scripts/studio-google/verify.mjs "$RUNNER_TEMP/google-verify"
+
+      - name: Upload the check's screenshots
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pr-gate-google
+          path: ${{ runner.temp }}/google-verify
+          if-no-files-found: ignore
+          retention-days: 14

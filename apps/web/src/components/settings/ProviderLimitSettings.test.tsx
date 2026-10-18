@@ -23,6 +23,10 @@ vi.mock("./useScopedSettings", () => ({
   useUpdateScopedSettings: () => state.update,
 }));
 vi.mock("../chat/ProviderModelPicker", () => ({ ProviderModelPicker: () => null }));
+vi.mock("./AddApiCreditAccountDialog", () => ({
+  AddApiCreditAccountDialog: ({ open, driver }: { open: boolean; driver: string }) =>
+    open ? <div role="dialog" aria-label="Add an API account" data-driver={driver} /> : null,
+}));
 vi.mock("../ui/switch", () => ({
   Switch: ({
     checked,
@@ -171,7 +175,7 @@ it("names the API-key instance the rule will use, and ignores a proxy token", ()
     renderer!.root.find(
       (node) => node.type === "section" && node.props["aria-label"] === "Use API credits first",
     ).props["data-status"];
-  expect(status()).toContain("Needs a Claude instance");
+  expect(status()).toContain("Needs a Claude API account");
   const instance = (instanceId: string, auth: object, extra: object = {}) => ({
     instanceId,
     driver: "claudeAgent",
@@ -187,7 +191,7 @@ it("names the API-key instance the rule will use, and ignores a proxy token", ()
     instance("router", { status: "authenticated", type: "apiKey" }),
   ];
   act(() => renderer!.update(<ProviderLimitSettings />));
-  expect(status()).toContain("Needs a Claude instance");
+  expect(status()).toContain("Needs a Claude API account");
   state.providers = [
     ...state.providers,
     instance(
@@ -210,4 +214,33 @@ it("names the API-key instance the rule will use, and ignores a proxy token", ()
   state.providers = [notReady];
   act(() => renderer!.update(<ProviderLimitSettings />));
   expect(status()).toBe("Old key is not ready, so nothing moves");
+});
+it("adds API accounts from the row and counts every ready one", () => {
+  const addButton = (label: string) =>
+    renderer!.root.find((node) => node.type === "button" && node.props.children === label);
+  const dialogs = () =>
+    renderer!.root.findAll(
+      (node) => node.type === "div" && node.props["aria-label"] === "Add an API account",
+    );
+  expect(dialogs()).toHaveLength(0);
+  act(() => addButton("Add an API key").props.onClick());
+  expect(dialogs()[0]?.props["data-driver"]).toBe("claudeAgent");
+  const key = (instanceId: string, displayName: string) => ({
+    instanceId,
+    driver: "claudeAgent",
+    enabled: true,
+    installed: true,
+    status: "ready",
+    models: [],
+    auth: { status: "authenticated", type: "apiKey", apiKeyBilling: true },
+    displayName,
+  });
+  state.providers = [key("claudeApi", "Hackathon 1"), key("claudeApi2", "Hackathon 2")];
+  act(() => renderer!.update(<ProviderLimitSettings />));
+  expect(
+    renderer!.root.find(
+      (node) => node.type === "section" && node.props["aria-label"] === "Use API credits first",
+    ).props["data-status"],
+  ).toBe("Continues on Hackathon 1, then the next of 2 API accounts");
+  expect(addButton("Add another")).toBeDefined();
 });

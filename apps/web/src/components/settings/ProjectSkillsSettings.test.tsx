@@ -158,9 +158,15 @@ describe("ProjectSkillsView", () => {
       "project",
       "1.2.0",
       "VERIFIED",
-      "acme/deploy",
+      // The repository, then the skill's verified-skill.com page under it.
+      "acme/deployverified-skill.com",
       "ok",
     ]);
+    expect(
+      deploy.querySelector<HTMLAnchorElement>(
+        "a[aria-label='Open deploy on verified-skill.com: https://verified-skill.com/skills/acme/deploy/deploy']",
+      ),
+    ).not.toBeNull();
     expect(
       deploy.querySelector<HTMLAnchorElement>("a[aria-label='Open deploy on verified-skill.com']")
         ?.href,

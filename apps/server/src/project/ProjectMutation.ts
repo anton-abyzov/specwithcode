@@ -12,10 +12,13 @@ type ProjectMutations = Pick<ProjectService["Service"], "create" | "delete" | "u
 export const projectMutationOperation = Effect.fn("projectMutationOperation")(function* (
   projects: ProjectMutations,
   mutation: ProjectMutation,
+  /** The temporary agent session making the call, if any; see TemporaryProjects. */
+  temporarySessionId?: string,
 ) {
   switch (mutation.type) {
     case "project.create":
       return yield* projects.create({
+        ...(temporarySessionId === undefined ? {} : { temporarySessionId }),
         commandId: mutation.commandId,
         projectId: mutation.projectId,
         title: mutation.title,

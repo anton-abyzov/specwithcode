@@ -885,8 +885,10 @@ function timelineItem(input: {
 
 import {
   projectDelegationTarget,
+  projectWorkerDefault,
   needsExplicitWorkerTarget,
 } from "../project/ProjectDelegation.ts";
+import { workerLaunchWithRoom } from "../project/WorkerLaunchRoom.ts";
 import { defaultWorkerModelSelection } from "@specweave-studio/shared/coordinatorDefault";
 import {
   modelSelectionEffortValue,
@@ -1273,6 +1275,35 @@ const make = Effect.gen(function* () {
     });
 
   const loadProviders = providerRegistry.getProviders;
+
+  /**
+   * The worker model a project coordinator's new thread starts on, moved off
+   * a provider with no room (see workerLaunchWithRoom). Null for any other
+   * caller, or when nothing names a worker model.
+   */
+  const coordinatorWorkerLaunch = (
+    project: Effect.Success<ReturnType<typeof requireProject>>,
+    caller: Pick<
+      OrchestrationV2ThreadProjection["thread"],
+      "id" | "modelSelection" | "runtimeMode" | "interactionMode"
+    >,
+    providers: ReadonlyArray<ServerProvider>,
+    hostDefault: ModelSelection | null,
+  ) => {
+    const preferred = projectWorkerDefault(project, hostDefault);
+    return project.workspaceSettings?.coordinatorThreadId !== caller.id || preferred === null
+      ? Effect.succeed(null)
+      : workerLaunchWithRoom({
+          project,
+          preferred,
+          coordinator: caller.modelSelection,
+          providers,
+          runtimePolicy: {
+            runtimeMode: caller.runtimeMode,
+            interactionMode: caller.interactionMode,
+          },
+        });
+  };
 
   /**
    * Instance ids the adapter registry resolves — the same lookup a
@@ -2149,7 +2180,13 @@ const make = Effect.gen(function* () {
           );
         const target = yield* resolveTargetRechecking({
           parent,
-          target: projectDelegationTarget(project, parent.thread.id, input.target, hostDefault),
+          target: projectDelegationTarget(
+            project,
+            parent.thread.id,
+            input.target,
+            hostDefault,
+            yield* coordinatorWorkerLaunch(project, parent.thread, providers, hostDefault),
+          ),
           providers,
         });
         const runtimeMode = yield* resolveRuntimeMode(parent.thread.runtimeMode, input.runtimeMode);
@@ -2446,6 +2483,7 @@ const make = Effect.gen(function* () {
                   parent.thread.id,
                   request.target,
                   hostDefault,
+                  yield* coordinatorWorkerLaunch(latest, parent.thread, providers, hostDefault),
                 ),
                 providers,
               });

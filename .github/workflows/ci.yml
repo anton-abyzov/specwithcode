@@ -1,10 +1,11 @@
 name: CI
 
+# The full inherited suite, on demand only: `gh workflow run ci.yml --ref <branch>`.
+# Pull requests run pr-gate.yml, the same gate release.sh's stage 1 runs, so a
+# merge and a release check the same things. Running this on every PR and push
+# cost about 55 runner-minutes each on a private repository.
 on:
-  pull_request:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -19,8 +20,8 @@ jobs:
   # passes only when every other job does.
   lint:
     name: Lint
-    runs-on: blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 10
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -61,8 +62,8 @@ jobs:
   # fetched on top of it, which is cheaper than the full history.
   brand_audit:
     name: Brand Audit
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    timeout-minutes: 10
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       # Same hand checkout as the desktop builds, with .repos kept. checkout's
       # credential cleanup runs submodule foreach even with submodules
@@ -106,8 +107,8 @@ jobs:
 
   typecheck:
     name: Typecheck
-    runs-on: blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 10
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -128,12 +129,12 @@ jobs:
         run: vp run --filter @specweave-studio/desktop ensure:electron
 
       - name: Typecheck
-        run: vpr typecheck
+        run: vp run -r --concurrency-limit 1 typecheck
 
   build:
     name: Build
-    runs-on: blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 10
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -186,12 +187,14 @@ jobs:
   # per runner is unchanged.
   test:
     name: Test
-    runs-on: blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 10
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          # preservation-audit checks that reviewed lockfile commits are ancestors of HEAD.
+          fetch-depth: 0
           sparse-checkout: |
             /*
             !/.repos/
@@ -223,7 +226,8 @@ jobs:
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@v1
         with:
-          node-version-file: package.json
+          # release-version.test.mjs pins the exact release Node.
+          node-version: 22.20.0
           cache: true
           run-install: true
 
@@ -243,6 +247,9 @@ jobs:
           cat "$RUNNER_TEMP/apt.log"
           exit "$(cat "$RUNNER_TEMP/apt-status")"
 
+      - name: Install Playwright Chromium headless shell
+        run: node apps/server/node_modules/playwright-core/cli.js install --with-deps --only-shell chromium
+
       - name: Test
         run: vp run --parallel --concurrency-limit 4 --filter '!specweave-studio' --filter '!@specweave-studio/monorepo' --filter '!@specweave-studio/web' test
 
@@ -250,8 +257,8 @@ jobs:
   # started last and ran alone for about 40s after everything else finished.
   test_web:
     name: Test Web
-    runs-on: blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 10
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -279,8 +286,8 @@ jobs:
   # split files by recorded duration (apps/server/src/testUtils/weightedShardSequencer.ts).
   test_server:
     name: Test Server ${{ matrix.shard }}
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    timeout-minutes: 10
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -351,7 +358,7 @@ jobs:
     # On Blacksmith like every other job here: the GitHub-hosted queue is shared
     # with the PR bots and can leave this job waiting until it is abandoned,
     # which fails `Check` on an otherwise green run.
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Require transfer measurements
@@ -364,8 +371,8 @@ jobs:
   # for checks that take under 3s, on the critical path of every PR.
   rust:
     name: Rust
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    timeout-minutes: 10
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -398,7 +405,7 @@ jobs:
   # the diff cannot be resolved, the lint runs.
   mobile_native_changes:
     name: Mobile Native Changes
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -476,8 +483,8 @@ jobs:
     # Skip only on an explicit "no": a gate job that failed or errored leaves the
     # output empty, and that must run the lint rather than silently skip it.
     if: ${{ !cancelled() && needs.mobile_native_changes.outputs.changed != 'false' }}
-    runs-on: blacksmith-6vcpu-macos-26
-    timeout-minutes: 10
+    runs-on: macos-26
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -504,8 +511,10 @@ jobs:
 
   release_smoke:
     name: Release Smoke
-    runs-on: blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 10
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      NODE_OPTIONS: --max-old-space-size=5120
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -550,7 +559,7 @@ jobs:
         mobile_native_static_analysis,
         release_smoke,
       ]
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Require every job to pass

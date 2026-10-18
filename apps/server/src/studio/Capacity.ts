@@ -2,6 +2,7 @@ import * as DateTime from "effect/DateTime";
 import type { ProviderInstanceId, ServerProvider } from "@specweave-studio/contracts";
 import { ProviderSetupError } from "@specweave-studio/contracts";
 import type {
+  StudioCapacityAccount,
   StudioCapacityPolicyInput,
   StudioCapacitySelectInput,
   StudioCapacitySnapshot,
@@ -26,6 +27,7 @@ import {
 } from "./nativeCreditContinuation.ts";
 import {
   capacitySnapshot,
+  claudeApiBillingAuthorized,
   freshObservation,
   nativeCapacityBinding,
   nativeConfigForInstance,
@@ -38,6 +40,8 @@ import {
 // they took longer than 15 seconds and failed coordinator turns.
 export const NATIVE_STATUS_CHECK_TIMEOUT = "60 seconds";
 const EXHAUSTED_RECHECK_INTERVAL_MS = 60_000;
+/** How old a native quota reading may be and still admit a start the service could not re-verify. */
+const LAST_KNOWN_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 
 /** The windows that cap every model of a native account: Codex's, then Claude's. */
 const ACCOUNT_WIDE_WINDOWS: Partial<Record<string, ReadonlyArray<string>>> = {
@@ -78,6 +82,67 @@ function blockingUsageReset(
   }
   return resetAt;
 }
+
+/**
+ * Whether the last native quota reading left room, for a start whose refresh
+ * failed or came back unverified on a busy host. Only an authenticated
+ * native-app-server reading under every limit qualifies; a denial, a full
+ * window that has not reset, or a blocked, busy or signed-out profile never does.
+ */
+function lastKnownHasRoom(account: StudioCapacityAccount | undefined, now: number): boolean {
+  if (
+    !account ||
+    account.authenticated !== true ||
+    account.authError ||
+    !["ready", "stale", "unknown"].includes(account.status)
+  )
+    return false;
+  const quota = account.quota;
+  const observedAt = Date.parse(quota.observedAt ?? "");
+  if (
+    quota.source !== "native-app-server" ||
+    quota.freshness === "unknown" ||
+    !Number.isFinite(observedAt) ||
+    now - observedAt > LAST_KNOWN_MAX_AGE_MS ||
+    quota.ordinaryUsageAllowed === false ||
+    quota.spendControlReached === true ||
+    quota.rateLimitReachedType != null
+  )
+    return false;
+  const windows = [
+    quota.window,
+    quota.weekly,
+    ...(quota.windows?.filter((window) => window.appliesToSelection) ?? []),
+  ].flatMap((window) => (window ? [window] : []));
+  return (
+    windows.length > 0 &&
+    windows.every(
+      (window) =>
+        window.usedPercent < 100 || (window.resetsAt !== null && window.resetsAt * 1000 <= now),
+    )
+  );
+}
+
+const REFRESH_RETRY_DELAY = "2 seconds";
+
+type CompanionRefresh =
+  | { readonly kind: "read"; readonly raw: unknown }
+  | { readonly kind: "busy" | "failed" | "timeout" };
+
+const companionRequest = (
+  request: Effect.Effect<unknown, SwitchClient.SwitchRequestError>,
+): Effect.Effect<CompanionRefresh> =>
+  request.pipe(
+    Effect.map((raw): CompanionRefresh => ({ kind: "read", raw })),
+    Effect.timeoutOption("40 seconds"),
+    Effect.map(Option.getOrElse((): CompanionRefresh => ({ kind: "timeout" }))),
+    Effect.catchTags({
+      SwitchRequestError: (error) =>
+        Effect.succeed<CompanionRefresh>({
+          kind: error.category === "switch-busy" ? "busy" : "failed",
+        }),
+    }),
+  );
 
 export interface NativeCreditStartOptions {
   readonly allowCredits: true;
@@ -179,6 +244,21 @@ const make = Effect.gen(function* () {
     lastExhaustedRecheck.set(id, now);
     return true;
   };
+  // Refresh once, and once more after a short wait when it fails or times out.
+  // A refresh already running elsewhere is waited for, then its result is read.
+  const refreshCompanion = Effect.gen(function* () {
+    let outcome: CompanionRefresh = { kind: "failed" };
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      if (attempt > 0) yield* Effect.sleep(REFRESH_RETRY_DELAY);
+      outcome = yield* companionRequest(client.refresh);
+      if (outcome.kind === "read") return outcome;
+      if (outcome.kind === "busy") {
+        yield* Effect.sleep(REFRESH_RETRY_DELAY);
+        return yield* companionRequest(client.read);
+      }
+    }
+    return outcome;
+  });
   const assertNativeStart = (
     id: ProviderInstanceId,
     cwd: string | null,
@@ -244,6 +324,9 @@ const make = Effect.gen(function* () {
       // background snapshot expires. Recheck this exact instance once, never
       // another account; a failed probe cannot clear its previous denial.
       const recheckDenied = nativeQuotaDenied(native?.usageLimits, now);
+      // A CLI billed to API credits (Console sign-in or its own key) is not a
+      // subscription slot: no plan quota or capacity profile applies to it.
+      if (claudeApiBillingAuthorized(native, now)) return;
       if (!nativeSnapshotAuthorized(native, now) || checkCredits || recheckDenied) {
         const observed = yield* providers
           .refreshInstance(id)
@@ -258,6 +341,7 @@ const make = Effect.gen(function* () {
           (provider) => provider.instanceId === id && provider.driver === entry.driver,
         );
         now = yield* Clock.currentTimeMillis;
+        if (claudeApiBillingAuthorized(native, now)) return;
       }
       if (!nativeSnapshotAuthorized(native, now)) {
         if (native?.status === "error" && native.auth.status !== "unauthenticated")
@@ -406,41 +490,40 @@ const make = Effect.gen(function* () {
         return; // Optional companion: native auth remains authoritative for deliberate defaults.
       }
       let account = snapshot.accounts.find((account) => account.id === binding);
-      // A launch is explicit user intent. Refresh expired quota once using the
-      // supported local service, then enforce its answer; background reads stay
-      // passive, and a concurrent refresh never authorizes the expired cache.
+      // A launch, scheduled or not, refreshes expired quota through the local
+      // service and enforces a verified answer. A refresh that fails, times out
+      // or comes back unverified (a loaded host) falls back to the last native
+      // reading when it left room; a full or denied reading still refuses.
       if (
         account &&
         (account.quota.freshness === "stale" ||
           account.status === "stale" ||
           (account.quota.observedAt !== null && !freshObservation(account.quota.observedAt, now)))
       ) {
-        const refreshed = yield* client.refresh.pipe(
-          Effect.mapError((error) =>
-            deny(
-              error.category === "switch-busy"
-                ? "Capacity refresh is already running. Try the new session again after it finishes."
-                : "Fresh subscription capacity could not be verified. Refresh Hosts capacity on this machine and try again.",
-            ),
-          ),
-          Effect.timeoutOption("40 seconds"),
-        );
-        if (Option.isNone(refreshed))
-          return yield* deny(
-            "The subscription capacity check timed out. Refresh Hosts capacity on this machine and try again.",
-          );
-        companionRaw = refreshed.value;
-        companionReread = true;
-        snapshot = yield* build(refreshed.value, observedProviders);
+        const lastKnown = account;
+        const refreshed = yield* refreshCompanion;
         now = yield* Clock.currentTimeMillis;
         if (!nativeSnapshotAuthorized(native, now))
           return yield* deny(
             "Native provider status expired while checking capacity. Refresh Providers on this machine and try again.",
           );
-        if (!snapshot.available)
+        if (refreshed.kind !== "read") {
+          if (lastKnownHasRoom(lastKnown, now)) return;
+          return yield* deny(
+            refreshed.kind === "timeout"
+              ? "The subscription capacity check timed out. Refresh Hosts capacity on this machine and try again."
+              : "Fresh subscription capacity could not be verified. Refresh Hosts capacity on this machine and try again.",
+          );
+        }
+        companionRaw = refreshed.raw;
+        companionReread = true;
+        snapshot = yield* build(companionRaw, observedProviders);
+        if (!snapshot.available) {
+          if (lastKnownHasRoom(lastKnown, now)) return;
           return yield* deny(
             "Fresh subscription capacity could not be verified. Refresh Hosts capacity on this machine and try again.",
           );
+        }
         account = snapshot.accounts.find((account) => account.id === binding);
       }
       // An exhausted verdict is a cached read. A native sign-in to another
@@ -525,6 +608,15 @@ const make = Effect.gen(function* () {
           nextReset ? { resetAt: DateTime.formatIso(DateTime.makeUnsafe(nextReset)) } : {},
         );
       }
+      // Same fallback when the refresh answered but could not re-verify quota.
+      if (
+        account &&
+        (account.status === "stale" ||
+          account.status === "unknown" ||
+          account.quota.freshness !== "fresh") &&
+        lastKnownHasRoom(account, now)
+      )
+        return;
       if (
         !account ||
         account.authenticated !== true ||
