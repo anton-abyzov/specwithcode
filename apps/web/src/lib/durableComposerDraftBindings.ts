@@ -35,6 +35,7 @@ import { environmentCatalog } from "../connection/catalog";
 import { environmentSession, readEnvironmentScope } from "../state/session";
 import type { ProjectCoordinatorComposer } from "../studio/projectCoordinatorComposer";
 import { releaseDraftAttachment, startAttachmentUpload } from "./attachmentUploadQueue";
+import { createIndexedDbDraftJournal } from "./durableComposerDraftJournal";
 import {
   createDurableDraftSync,
   type DurableDraftAttachment,
@@ -121,6 +122,7 @@ export const durableComposerDrafts = createDurableDraftSync({
       }
     },
   },
+  journal: createIndexedDbDraftJournal(),
   onError: (error) => console.warn("Could not save the draft to the host.", error),
 });
 
@@ -128,7 +130,10 @@ export const durableComposerDrafts = createDurableDraftSync({
  * Resolves once this window is connected to the host with read access, so a
  * restore right after launch does not run before the session exists.
  */
-function whenHostReady(environmentId: string, signal: { cancelled: boolean }): Promise<boolean> {
+export function whenHostReady(
+  environmentId: string,
+  signal: { cancelled: boolean },
+): Promise<boolean> {
   const id = environmentId as EnvironmentId;
   const connectionAtom = environmentCatalog.stateAtom(id);
   const sessionAtom = environmentSession.sessionStateAtom(id);
@@ -154,6 +159,26 @@ function whenHostReady(environmentId: string, signal: { cancelled: boolean }): P
     stops.push(appAtomRegistry.subscribe(connectionAtom, check));
     stops.push(appAtomRegistry.subscribe(sessionAtom, check));
   });
+}
+
+type RestoreInput = Parameters<typeof durableComposerDrafts.restore>[0];
+
+/**
+ * Puts back this window's journaled draft at once, then reconciles with the
+ * host when it is reachable (a newer edit from another window wins there).
+ */
+async function restoreLocalThenHost(
+  environmentId: string,
+  signal: { cancelled: boolean },
+  input: RestoreInput,
+): Promise<void> {
+  try {
+    await durableComposerDrafts.restoreLocal(input);
+    if (signal.cancelled || !(await whenHostReady(environmentId, signal))) return;
+    await durableComposerDrafts.restore(input);
+  } catch (error) {
+    console.warn("Could not restore the saved draft.", error);
+  }
 }
 
 // ── Thread and new-chat composers ────────────────────────────────────────
@@ -287,37 +312,32 @@ export function useDurableThreadDraftRestore(target: ComposerThreadTarget): void
     );
     if (!durable) return;
     const signal = { cancelled: false };
-    void whenHostReady(durable.environmentId, signal)
-      .then((ready) =>
-        ready
-          ? durableComposerDrafts.restore({
-              target: durable,
-              local: () =>
-                snapshotOfThreadDraft(useComposerDraftStore.getState().draftsByThreadKey[storeKey]),
-              apply: (snapshot) => {
-                if (signal.cancelled) return;
-                const store = useComposerDraftStore.getState();
-                const current = store.draftsByThreadKey[storeKey];
-                const incoming = new Set(snapshot.attachments.map((attachment) => attachment.id));
-                for (const image of current?.images ?? []) {
-                  if (!incoming.has(image.id)) store.removeImage(target, image.id);
-                }
-                for (const file of current?.files ?? []) {
-                  if (!incoming.has(file.id)) store.removeFile(target, file.id);
-                }
-                const present = new Set(
-                  [...(current?.images ?? []), ...(current?.files ?? [])].map((item) => item.id),
-                );
-                store.setPrompt(target, snapshot.prompt);
-                addRestoredAttachments(
-                  target,
-                  snapshot.attachments.filter((attachment) => !present.has(attachment.id)),
-                );
-              },
-            })
-          : null,
-      )
-      .catch((error: unknown) => console.warn("Could not restore the saved draft.", error));
+    const input = {
+      target: durable,
+      local: () =>
+        snapshotOfThreadDraft(useComposerDraftStore.getState().draftsByThreadKey[storeKey]),
+      apply: (snapshot: DurableDraftSnapshot) => {
+        if (signal.cancelled) return;
+        const store = useComposerDraftStore.getState();
+        const current = store.draftsByThreadKey[storeKey];
+        const incoming = new Set(snapshot.attachments.map((attachment) => attachment.id));
+        for (const image of current?.images ?? []) {
+          if (!incoming.has(image.id)) store.removeImage(target, image.id);
+        }
+        for (const file of current?.files ?? []) {
+          if (!incoming.has(file.id)) store.removeFile(target, file.id);
+        }
+        const present = new Set(
+          [...(current?.images ?? []), ...(current?.files ?? [])].map((item) => item.id),
+        );
+        store.setPrompt(target, snapshot.prompt);
+        addRestoredAttachments(
+          target,
+          snapshot.attachments.filter((attachment) => !present.has(attachment.id)),
+        );
+      },
+    };
+    void restoreLocalThenHost(durable.environmentId, signal, input);
     return () => {
       signal.cancelled = true;
     };
@@ -371,51 +391,45 @@ export function useDurableCoordinatorDraft(
       durableComposerDrafts.schedule(target, snapshotOfCoordinator(composer));
     });
     const signal = { cancelled: false };
-    void whenHostReady(environmentId, signal)
-      .then((ready) =>
-        ready
-          ? durableComposerDrafts.restore({
-              target,
-              local: () => snapshotOfCoordinator(composer),
-              apply: (snapshot) => {
-                if (signal.cancelled) return;
-                const restored = snapshot.attachments.map((attachment) => {
-                  const file =
-                    attachment.file instanceof File
-                      ? attachment.file
-                      : new File([attachment.file], attachment.name, { type: attachment.mimeType });
-                  return attachment.type === "image"
-                    ? ({
-                        type: "image",
-                        id: attachment.id,
-                        name: attachment.name,
-                        mimeType: attachment.mimeType,
-                        sizeBytes: attachment.sizeBytes,
-                        previewUrl: URL.createObjectURL(file),
-                        file,
-                      } satisfies ComposerImageAttachment)
-                    : ({
-                        type: "file",
-                        id: attachment.id,
-                        name: attachment.name,
-                        mimeType: attachment.mimeType,
-                        sizeBytes: attachment.sizeBytes,
-                        file,
-                      } satisfies ComposerFileAttachment);
-                });
-                const incoming = new Set(restored.map((attachment) => attachment.id));
-                for (const replaced of composer.getSnapshot().attachments) {
-                  if (!incoming.has(replaced.id)) releaseDraftAttachment(replaced);
-                }
-                composer.setPrompt(snapshot.prompt);
-                composer.setAttachments(restored);
-                last = composer.getSnapshot();
-                for (const image of restored) startAttachmentUpload({ environmentId, image });
-              },
-            })
-          : null,
-      )
-      .catch((error: unknown) => console.warn("Could not restore the saved draft.", error));
+    void restoreLocalThenHost(environmentId, signal, {
+      target,
+      local: () => snapshotOfCoordinator(composer),
+      apply: (snapshot) => {
+        if (signal.cancelled) return;
+        const restored = snapshot.attachments.map((attachment) => {
+          const file =
+            attachment.file instanceof File
+              ? attachment.file
+              : new File([attachment.file], attachment.name, { type: attachment.mimeType });
+          return attachment.type === "image"
+            ? ({
+                type: "image",
+                id: attachment.id,
+                name: attachment.name,
+                mimeType: attachment.mimeType,
+                sizeBytes: attachment.sizeBytes,
+                previewUrl: URL.createObjectURL(file),
+                file,
+              } satisfies ComposerImageAttachment)
+            : ({
+                type: "file",
+                id: attachment.id,
+                name: attachment.name,
+                mimeType: attachment.mimeType,
+                sizeBytes: attachment.sizeBytes,
+                file,
+              } satisfies ComposerFileAttachment);
+        });
+        const incoming = new Set(restored.map((attachment) => attachment.id));
+        for (const replaced of composer.getSnapshot().attachments) {
+          if (!incoming.has(replaced.id)) releaseDraftAttachment(replaced);
+        }
+        composer.setPrompt(snapshot.prompt);
+        composer.setAttachments(restored);
+        last = composer.getSnapshot();
+        for (const image of restored) startAttachmentUpload({ environmentId, image });
+      },
+    });
     return () => {
       signal.cancelled = true;
       unsubscribe();

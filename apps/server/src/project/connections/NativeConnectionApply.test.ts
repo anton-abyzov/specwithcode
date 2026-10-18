@@ -38,6 +38,7 @@ const service = <A, E>(
             codexHome: NodePath.join(root, "codex"),
             claudeFile: claudeFile(),
             claudeSettings: NodePath.join(root, "settings.json"),
+            otherTools: [],
           }),
         ),
       ),

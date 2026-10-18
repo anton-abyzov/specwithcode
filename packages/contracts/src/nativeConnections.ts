@@ -21,8 +21,34 @@ export const NativeConnection = Schema.Struct({
   portable: Schema.optionalKey(Schema.Boolean),
   /** An enabled Codex plugin of the same name already provides this server. */
   pluginProvided: Schema.optionalKey(Schema.Boolean),
+  /** Declared by this enabled plugin rather than by a configuration file. */
+  plugin: Schema.optionalKey(Schema.String),
+  /** Outside project context: the private project (folder name) that declares it. */
+  project: Schema.optionalKey(Schema.String),
 });
 export type NativeConnection = typeof NativeConnection.Type;
+/** AI tools whose MCP declarations are listed read-only beside Codex and Claude Code. */
+export const NativeOtherTool = Schema.Literals([
+  "claude-desktop",
+  "gemini",
+  "copilot",
+  "cursor",
+  "opencode",
+  "windsurf",
+]);
+export type NativeOtherTool = typeof NativeOtherTool.Type;
+export const NativeOtherToolConnection = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  transport: Schema.Literals(["stdio", "http", "sse", "unknown"]),
+  state: Schema.Literals(["configured", "disabled", "invalid"]),
+});
+export const NativeOtherToolInventory = Schema.Struct({
+  tool: NativeOtherTool,
+  status: Schema.Literals(["read", "missing", "unreadable", "invalid", "too_large"]),
+  connections: Schema.Array(NativeOtherToolConnection),
+});
+export type NativeOtherToolInventory = typeof NativeOtherToolInventory.Type;
 export const NativeConnectionsInput = Schema.Struct({ projectId: Schema.optional(ProjectId) });
 export type NativeConnectionsInput = typeof NativeConnectionsInput.Type;
 export const NativeConnectionsSnapshot = Schema.Struct({
@@ -31,6 +57,8 @@ export const NativeConnectionsSnapshot = Schema.Struct({
   connections: Schema.Array(NativeConnection),
   truncated: Schema.Boolean,
   runtime: Schema.Literal("unverified"),
+  /** Separate from `connections` so clients that predate it still decode the snapshot. */
+  otherTools: Schema.optionalKey(Schema.Array(NativeOtherToolInventory)),
 });
 export type NativeConnectionsSnapshot = typeof NativeConnectionsSnapshot.Type;
 /**

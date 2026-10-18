@@ -8,8 +8,9 @@
 # and a staging folder release.sh did not make, a new candidate rerunning only per-candidate
 # stages with the server suite on --changed, stage 1 rerunning its failures first, refusing a
 # new candidate once published, missing release-gates interfaces, a failed lookup of the previous
-# release, guards for unpushed release-branch work, untracked fix files and a stale public tag,
-# the timing comparison and release_tools.py's own unit tests (test-release-tools.py). Also:
+# release, a failed server suite stopping the build, guards for unpushed release-branch work,
+# untracked fix files and a stale public tag, the timing comparison and release_tools.py's own
+# unit tests (test-release-tools.py). Also:
 # public before the fleet, a staging folder from the earlier order (fleet before public) resuming,
 # the fleet stages refusing a release the public feed does not show, the Electron runtime repair
 # and its failure, the plan checked into SHA256SUMS before drafts and on the draft before
@@ -352,6 +353,29 @@ sharded_ok() {
 }
 check 'a missing test-sharded.mjs fails the release before anything is published' sharded_ok
 
+# A server suite that failed while build ran stops the release before bundle and signing. The
+# stand-in process keeps start_server from rerunning the suite, as a real one still running would.
+X="$WORK/x"
+make_machine "$X"
+use_machine "$X" 1.2.4
+server_stop_ok() {
+  local fake
+  run 0 1.2.4 --stop-after build || return 1
+  wait_for_server "$SHA_A" || return 1
+  bash -c 'sleep 60; :' --internal-server 1.2.4 &
+  fake=$!
+  printf '%s %s\n' "$fake" "$SHA_A" > "$STAGE/server.pid"
+  printf '%s 1\n' "$SHA_A" > "$STAGE/server.exit"
+  rm -f "$STAGE/markers/server"
+  BEFORE="$(lines)"
+  run 1 1.2.4 --resume
+  local rc=$?
+  kill "$fake" 2> /dev/null || true
+  [ "$rc" -eq 0 ] && has 'the server suite failed' && [ ! -f "$STAGE/markers/bundle" ] || return 1
+  [ "$(stages_after "$BEFORE")" = "main " ] && grep -q 'drop-draft' "$STUB_LOG"
+}
+check 'a failed server suite stops the release before bundle and signing' server_stop_ok
+
 O="$WORK/o"
 make_machine "$O"
 rm "$O/trees.noindex/test/scripts/studio-verify/typecheck-gate.sh"
@@ -433,6 +457,11 @@ prepared_ok() {
     stage_line prev prev-assets > /dev/null && stage_line prev prev-verify | grep -q -- "--digests $STAGE/prev/assets.json studio-update.json" || return 1
   case "$(labels_of plan)" in *sums-plan*sums-check*) ;; *) return 1 ;; esac
   stage_line plan sums-check | grep -q 'deployment-helpers-manifest.json studio-update.json$' || return 1
+  # The command-line installer ships as an asset, listed in the sums, on both releases.
+  stage_line plan installer | grep -q '^cp .*/scripts/install\.sh .*/install\.sh$' &&
+    stage_line plan sums-check | grep -q ' install\.sh ' &&
+    stage_line drafts upload-private | grep -q '/install\.sh ' &&
+    stage_line drafts upload-public | grep -q '/install\.sh ' || return 1
   [ -f "$STAGE/markers/publish-private" ] && [ ! -f "$STAGE/markers/publish-public" ]
 }
 check 'Electron repaired by its install.js, noreply identity set, plan in the sums before drafts' prepared_ok

@@ -11,7 +11,8 @@ import { useProjectCoordinatorDraft } from "../../studio/projectCoordinatorDraft
 import { getProjectCoordinatorComposer } from "../../studio/projectCoordinatorComposer";
 import { settleAfter, settleCaught } from "../../lib/settle";
 import { CoordinatorComposer } from "./CoordinatorComposer";
-import { useDurableCoordinatorDraft } from "../../lib/durableComposerDraftBindings";
+import { useDurableCoordinatorDraft, whenHostReady } from "../../lib/durableComposerDraftBindings";
+import { retryTransientSend } from "../../lib/transientSendRetry";
 import { ProjectCoordinatorDetails } from "./ProjectCoordinatorDetails";
 import { ProjectMachineHandoff } from "./ProjectMachineHandoff";
 import { ProjectPlan } from "./ProjectPlan";
@@ -775,17 +776,22 @@ export function ProjectWorkspaceSurface({
             () => randomUUID(),
             ownsRetryFlight,
           );
+          // A host restarting for an update gets the same command again once it is back.
           const result = await runAfterSave(() =>
-            sendCommand({
-              environmentId: project.environmentId,
-              input: {
-                projectId: project.id,
-                commandId: CommandId.make(commandId),
-                prompt: text,
-                ...(attachments?.length ? { attachments } : {}),
-                ...(sourceThreadId ? { sourceThreadId } : {}),
-              },
-            }),
+            retryTransientSend(
+              () =>
+                sendCommand({
+                  environmentId: project.environmentId,
+                  input: {
+                    projectId: project.id,
+                    commandId: CommandId.make(commandId),
+                    prompt: text,
+                    ...(attachments?.length ? { attachments } : {}),
+                    ...(sourceThreadId ? { sourceThreadId } : {}),
+                  },
+                }),
+              { waitForHost: () => whenHostReady(project.environmentId, { cancelled: false }) },
+            ),
           );
           if (result._tag === "Failure") {
             const e = squashAtomCommandFailure(result);
@@ -1416,6 +1422,7 @@ export function ProjectWorkspaceSurface({
                 controls={
                   <CoordinatorComposerControls
                     project={project}
+                    coordinatorRuntimeMode={coordinator?.runtimeMode ?? null}
                     fallback={
                       coordinatorFallback
                         ? {

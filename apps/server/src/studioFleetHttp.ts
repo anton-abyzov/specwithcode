@@ -5,15 +5,29 @@ import {
   EnvironmentHttpForbiddenError,
   EnvironmentHttpBadRequestError,
   EnvironmentHttpInternalServerError,
+  StudioFleetInviteError,
 } from "@specweave-studio/contracts";
+import { DEFAULT_TAILSCALE_SERVE_PORT } from "@specweave-studio/tailscale";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import { HttpClient } from "effect/http";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as HttpEffect from "effect/http/HttpEffect";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { requireEnvironmentScope } from "./auth/http.ts";
 import * as Config from "./config.ts";
 import * as FleetWorkerGrants from "./fleet/FleetWorkerGrants.ts";
 import * as RemoteWorkers from "./fleet/RemoteWorkers.ts";
+import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
+import {
+  makePersistedServerRuntimeState,
+  type PersistedServerRuntimeState,
+  readPersistedServerRuntimeState,
+} from "./serverRuntimeState.ts";
 import { capacityMutationOriginAllowed, mutationTrustedOrigins } from "./studio/http.ts";
 import {
   connectFleet,
@@ -22,6 +36,13 @@ import {
   FleetError,
   readFleetConfig,
 } from "./studioFleet.ts";
+import {
+  fleetInviteProblem,
+  fleetTailscaleSignInProblem,
+  issueFleetInvitation,
+  readFleetTailscaleStatus,
+  startFleetTailscaleSignIn,
+} from "./studioFleetInvite.ts";
 import { addFleetMachine, FleetJoinError } from "./studioFleetJoin.ts";
 
 const noStore = HttpEffect.appendPreResponseHandler((_request, response) =>
@@ -56,6 +77,26 @@ export const layer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const config = yield* Config.ServerConfig;
     const grants = yield* FleetWorkerGrants.FleetWorkerGrants;
+    const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
+    const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const httpClient = yield* HttpClient.HttpClient;
+    const fileSystem = yield* FileSystem.FileSystem;
+    /**
+     * Where this server listens now: the runtime state it recorded at
+     * startup (the bound port), else its configuration.
+     */
+    const listening = readPersistedServerRuntimeState(config.serverRuntimeStatePath).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.map((found) => Option.filter(found, (state) => state.pid === process.pid)),
+      Effect.orElseSucceed(() => Option.none<PersistedServerRuntimeState>()),
+      Effect.flatMap(
+        Option.match({
+          onSome: Effect.succeed,
+          onNone: () => makePersistedServerRuntimeState({ config, port: config.port }),
+        }),
+      ),
+    );
     /**
      * Allowing or stopping workers mints or revokes a credential on another
      * machine, so it needs the owner's access-management scope and a request
@@ -125,6 +166,65 @@ export const layer = HttpApiBuilder.group(
                 : new EnvironmentHttpBadRequestError({ message });
             },
           });
+        }),
+      )
+      .handle("inviteFleetMachine", ({ payload }) =>
+        Effect.gen(function* () {
+          // The answer holds a management credential: never cached, never logged.
+          yield* noStore;
+          // It mints an access-management session, like allowing workers.
+          yield* requireGrantManager;
+          const descriptor = yield* serverEnvironment.getDescriptor;
+          const state = yield* listening;
+          const issued = yield* issueFleetInvitation({
+            environmentId: descriptor.environmentId,
+            ownLabel: descriptor.label,
+            state,
+            // The port Tailscale HTTPS already uses here, so an existing
+            // mapping for this server is reused rather than duplicated.
+            servePort: config.tailscaleServeEnabled
+              ? config.tailscaleServePort
+              : DEFAULT_TAILSCALE_SERVE_PORT,
+            label: payload.label,
+            ...(payload.days !== undefined ? { ttl: Duration.days(payload.days) } : {}),
+          }).pipe(
+            Effect.provideService(EnvironmentAuth.EnvironmentAuth, environmentAuth),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.provideService(HttpClient.HttpClient, httpClient),
+            Effect.mapError((error) =>
+              EnvironmentAuth.isServerAuthInternalError(error)
+                ? new EnvironmentHttpInternalServerError({
+                    message: "Could not make an invitation on this machine. Try again.",
+                  })
+                : new StudioFleetInviteError(fleetInviteProblem(error)),
+            ),
+          );
+          return issued.invitation;
+        }),
+      )
+      .handle("fleetTailscale", () =>
+        Effect.gen(function* () {
+          // Read-only, but only an access manager can act on it.
+          yield* requireEnvironmentScope(AuthAccessWriteScope);
+          yield* noStore;
+          return yield* readFleetTailscaleStatus().pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+          );
+        }),
+      )
+      .handle("signInFleetTailscale", () =>
+        Effect.gen(function* () {
+          // The answer is a one-time sign-in page: never cached, never logged.
+          yield* noStore;
+          // It starts programs on this machine, like publishing an invitation.
+          yield* requireGrantManager;
+          return yield* startFleetTailscaleSignIn().pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.mapError(
+              (error) => new StudioFleetInviteError(fleetTailscaleSignInProblem(error)),
+            ),
+          );
         }),
       )
       .handle("allowFleetWorkers", ({ payload }) =>

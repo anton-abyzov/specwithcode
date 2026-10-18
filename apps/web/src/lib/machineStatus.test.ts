@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { lastSeenLabel, machineStatus } from "./machineStatus";
+import { lastSeenLabel, machineDetail, machineStatus } from "./machineStatus";
 
 describe("machineStatus", () => {
   it("calls a machine unreachable once an attempt has failed, with the reason", () => {
@@ -36,5 +36,16 @@ describe("lastSeenLabel", () => {
     expect(lastSeenLabel(null, now)).toBeNull();
     expect(lastSeenLabel(now - 20_000, now)).toBe("last seen just now");
     expect(lastSeenLabel(now - 2 * 3_600_000, now)).toBe("last seen 2h ago");
+  });
+});
+
+describe("machineDetail", () => {
+  it("puts last seen before a long reason so truncation keeps it", () => {
+    expect(machineDetail("last seen 1m ago", "Failed to fetch remote environment endpoint")).toBe(
+      "last seen 1m ago · Failed to fetch remote environment endpoint",
+    );
+    expect(machineDetail(null, "Sign in again.")).toBe("Sign in again.");
+    expect(machineDetail("last seen 2h ago", null)).toBe("last seen 2h ago");
+    expect(machineDetail(null, null)).toBe("");
   });
 });

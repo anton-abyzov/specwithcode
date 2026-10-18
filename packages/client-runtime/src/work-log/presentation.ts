@@ -1,6 +1,8 @@
 import {
+  computerUsePermissionFromError,
   isToolLifecycleItemType,
   type AssetResource,
+  type ComputerUsePermission,
   type RuntimeItemStatus,
   type ToolActivitySource,
   type ToolActivitySurface,
@@ -416,6 +418,18 @@ export function workEntryReportsChromeDisconnected(
   if (output === undefined || output === null) return false;
   const text = typeof output === "string" ? output : JSON.stringify(output);
   return CHROME_DISCONNECTED.test(text.slice(0, 8_192));
+}
+
+/** The macOS permission a failed `computer_*` tool says SpecWithCode is missing, if any. */
+export function workEntryComputerUsePermission(
+  entry: Pick<WorkLogPresentationEntry, "detail" | "toolData" | "structuredPayload">,
+): ComputerUsePermission | undefined {
+  const fromDetail = entry.detail ? computerUsePermissionFromError(entry.detail) : undefined;
+  if (fromDetail !== undefined) return fromDetail;
+  const output = workEntryToolOutput(entry);
+  if (output === undefined || output === null) return undefined;
+  const text = typeof output === "string" ? output : JSON.stringify(output);
+  return computerUsePermissionFromError(text.slice(0, 8_192));
 }
 
 /** Decides whether the row can show a success marker. */

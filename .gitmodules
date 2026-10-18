@@ -1,0 +1,13 @@
+# The inherited .repos/alchemy-effect tree keeps its two submodule gitlinks. Without entries
+# here, `git submodule foreach` (which actions/checkout runs when it cleans up) exits 128 on
+# them. They are references only and are never fetched.
+[submodule ".repos/alchemy-effect/submodules/distilled"]
+	path = .repos/alchemy-effect/submodules/distilled
+	url = https://github.com/alchemy-run/distilled.git
+	update = none
+	ignore = all
+[submodule ".repos/alchemy-effect/submodules/floci"]
+	path = .repos/alchemy-effect/submodules/floci
+	url = https://github.com/alchemy-run/floci.git
+	update = none
+	ignore = all

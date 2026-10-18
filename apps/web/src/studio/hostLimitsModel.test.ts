@@ -107,6 +107,32 @@ describe("host limit blocks", () => {
     ]);
   });
 
+  it("marks the app's own machine and lists it right after the project's host", () => {
+    const withPrimary: HostLimitPresentations = new Map([
+      ...presentations,
+      [
+        EnvironmentId.make("env-local"),
+        {
+          ...host("Local Mac", "connected", []),
+          entry: { target: { label: "Local Mac", _tag: "PrimaryConnectionTarget" } },
+        },
+      ],
+    ]);
+    const blocks = collectHostLimitBlocks(withPrimary, {
+      projectEnvironmentId: m4,
+      saved: new Map(),
+      driverLabel: label,
+      now,
+    });
+    expect(blocks.map((block) => [block.label, block.isThisMachine])).toEqual([
+      ["m4", false],
+      ["Local Mac", true],
+      ["M3", false],
+      ["M1", false],
+    ]);
+    expect(blocks[0]?.providers[0]?.instanceId).toBe("claudeAgent");
+  });
+
   it("orders providers, names identities and marks one account on two hosts", () => {
     const [m4Block, m3Block] = collectHostLimitBlocks(presentations, {
       projectEnvironmentId: m4,
@@ -121,7 +147,27 @@ describe("host limit blocks", () => {
     expect(m3Block?.providers[0]?.sharedWith).toEqual(["m4"]);
     expect(m4Block?.providers[1]?.sharedWith).toEqual([]);
     expect(m4Block?.providers[2]?.notice).toBe("Does not report subscription limits.");
+    expect(m4Block?.providers[1]?.notice).toBeNull();
     expect(m4Block?.readAt).toBe(now);
+  });
+
+  it("says why a subscription agent without limits shows none, as the account view does", () => {
+    const [block] = collectHostLimitBlocks(
+      new Map([
+        [
+          m4,
+          host("m4", "connected", [
+            provider({ driver: "claudeAgent", auth: { status: "unauthenticated" } }),
+            provider({ driver: "codex", auth: { status: "unknown" } }),
+          ]),
+        ],
+      ]),
+      { projectEnvironmentId: null, saved: new Map(), driverLabel: label, now },
+    );
+    expect(block?.providers.map((row) => row.notice)).toEqual([
+      "Not signed in, so no limits to show.",
+      "Could not check the sign-in, so no limits to show.",
+    ]);
   });
 
   it("shows an offline host's saved reading with stale windows marked", () => {

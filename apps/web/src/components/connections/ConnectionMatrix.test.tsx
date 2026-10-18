@@ -147,6 +147,10 @@ describe("connection matrix", () => {
       renderer.root.findAll((node) => node.type === "button" && node.props["aria-label"] === label);
     expect(button("Enable: computer-use")).toHaveLength(0);
     expect(text()).toContain("so this older entry can stay off");
+    // The note slot appears only under the computer-use row, and only when given.
+    expect(
+      renderer.root.findAll((node) => node.props["data-testid"] === "computer-use-connection-note"),
+    ).toHaveLength(0);
     expect(text()).toContain("Claude Code has no equivalent entry");
     await act(() => button("Enable: docs")[0]!.props.onClick());
     expect(onApply).toHaveBeenCalledWith({ action: "enable", connectionId: "docs" });
@@ -158,5 +162,115 @@ describe("connection matrix", () => {
       renderer.update(<ConnectionMatrix snapshot={actionable} />);
     });
     expect(button("Enable: docs")).toHaveLength(0);
+    await act(() => {
+      renderer.update(
+        <ConnectionMatrix snapshot={actionable} computerUseNote={<span>permission check</span>} />,
+      );
+    });
+    const notes = renderer.root.findAll(
+      (node) => node.props["data-testid"] === "computer-use-connection-note",
+    );
+    expect(notes).toHaveLength(1);
+    expect(text()).toContain("permission check");
+  });
+  it("groups plugin and private-project rows and adds a read-only column per other tool", async () => {
+    const base = {
+      scope: "user",
+      shadowed: false,
+      transport: "http",
+      state: "configured",
+    } as const;
+    const grouped: NativeConnectionsSnapshot = {
+      ...snapshot,
+      connections: [
+        {
+          ...base,
+          id: "a",
+          name: "amplitude",
+          provider: "codex",
+          sourceId: "codex-user",
+          portable: true,
+        },
+        {
+          ...base,
+          id: "g",
+          name: "github",
+          provider: "codex",
+          sourceId: "codex-plugins",
+          plugin: "GitHub",
+        },
+        {
+          ...base,
+          id: "r",
+          name: "review",
+          provider: "codex",
+          sourceId: "codex-plugins",
+          plugin: "Code Review",
+          state: "disabled",
+        },
+        {
+          ...base,
+          id: "p1",
+          name: "playwright",
+          provider: "claude",
+          sourceId: "claude-all-projects",
+          scope: "local",
+          project: "penn",
+        },
+        {
+          ...base,
+          id: "p2",
+          name: "playwright",
+          provider: "claude",
+          sourceId: "claude-all-projects",
+          scope: "local",
+          project: "ClientPortal",
+        },
+      ],
+      otherTools: [
+        {
+          tool: "gemini",
+          status: "read",
+          connections: [{ id: "x", name: "pencil", transport: "stdio", state: "configured" }],
+        },
+        { tool: "cursor", status: "missing", connections: [] },
+        { tool: "windsurf", status: "invalid", connections: [] },
+      ],
+    };
+    await act(() => {
+      renderer = create(<ConnectionMatrix snapshot={grouped} onApply={vi.fn()} />);
+    });
+    const headers = renderer.root.findAll((n) => n.type === "th" && n.props.scope === "col");
+    expect(headers.map((h) => h.children.join(""))).toEqual([
+      "Connection",
+      "Codex",
+      "Claude Code",
+      "Gemini CLI",
+      "Windsurf",
+    ]);
+    const groupTitles = renderer.root
+      .findAll((n) => n.type === "th" && n.props.scope === "colgroup")
+      .map((n) => n.children.join(""));
+    expect(groupTitles).toEqual([
+      "Your connections · 2",
+      "From plugins · 2",
+      "Private projects only · 1",
+    ]);
+    expect(text()).toContain("Plugin GitHub · http");
+    expect(text()).toContain("ships it turned off");
+    expect(text()).toContain("Private project penn +1 · http");
+    expect(text()).toContain("Windsurf (invalid)");
+    expect(
+      renderer.root.findByProps({ "data-testid": "connection-counts" }).children.join(""),
+    ).toBe("Codex 3 · Claude Code 1 · Gemini CLI 1 · Windsurf 0");
+    // Plugin and other-project declarations are never copied between tools.
+    const labels = renderer.root
+      .findAll((n) => n.type === "button" && typeof n.props["aria-label"] === "string")
+      .map((n) => n.props["aria-label"] as string);
+    expect(labels.filter((l) => l.startsWith("Add to"))).toEqual(["Add to Claude Code: amplitude"]);
+    await act(() =>
+      renderer.root.findByProps({ "aria-label": "github Codex details" }).props.onClick(),
+    );
+    expect(text()).toContain("Codex plugin GitHub");
   });
 });

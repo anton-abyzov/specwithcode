@@ -14,7 +14,13 @@ import {
   StudioFleetSnapshot,
   StudioFleetConnectInput,
   StudioFleetConnectResult,
+  StudioFleetInviteInput,
+  StudioFleetInviteProblem,
+  StudioFleetInviteResult,
   StudioFleetRemoteWorkersQuery,
+  StudioFleetTailscaleSignInInput,
+  StudioFleetTailscaleSignInResult,
+  StudioFleetTailscaleStatus,
   StudioFleetRemoteWorkersResult,
   StudioFleetWorkersAllowInput,
   StudioFleetWorkersResult,
@@ -366,6 +372,23 @@ export class EnvironmentHttpInternalServerError extends Schema.TaggedError<Envir
 ) {
   [HttpServerRespondable.symbol]() {
     return HttpServerResponse.schemaJson(EnvironmentHttpInternalServerError)(this, { status: 500 });
+  }
+}
+
+/**
+ * This server could not publish itself on its Tailscale name for an
+ * invitation. `reason` lets the app say what to do; `message` says it plainly.
+ */
+export class StudioFleetInviteError extends Schema.TaggedError<StudioFleetInviteError>()(
+  "StudioFleetInviteError",
+  {
+    reason: StudioFleetInviteProblem,
+    message: Schema.String,
+  },
+  { httpApiStatus: 409 },
+) {
+  [HttpServerRespondable.symbol]() {
+    return HttpServerResponse.schemaJson(StudioFleetInviteError)(this, { status: 409 });
   }
 }
 
@@ -907,6 +930,41 @@ class EnvironmentStudioFleetHttpApi extends HttpApiGroup.make("studioFleet")
         EnvironmentHttpBadRequestError,
         EnvironmentHttpForbiddenError,
         EnvironmentHttpInternalServerError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("inviteFleetMachine", "/api/studio/fleet/invite", {
+      headers: OptionalBearerHeaders,
+      payload: StudioFleetInviteInput,
+      success: StudioFleetInviteResult,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        EnvironmentHttpBadRequestError,
+        EnvironmentHttpForbiddenError,
+        EnvironmentHttpInternalServerError,
+        StudioFleetInviteError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("fleetTailscale", "/api/studio/fleet/tailscale", {
+      headers: OptionalBearerHeaders,
+      success: StudioFleetTailscaleStatus,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentHttpInternalServerError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("signInFleetTailscale", "/api/studio/fleet/tailscale/sign-in", {
+      headers: OptionalBearerHeaders,
+      payload: StudioFleetTailscaleSignInInput,
+      success: StudioFleetTailscaleSignInResult,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        EnvironmentHttpBadRequestError,
+        EnvironmentHttpForbiddenError,
+        EnvironmentHttpInternalServerError,
+        StudioFleetInviteError,
       ],
     }).middleware(EnvironmentAuthenticatedAuth),
   )

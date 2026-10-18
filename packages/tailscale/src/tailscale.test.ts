@@ -19,7 +19,9 @@ import {
   MACOS_TAILSCALE_APP_EXECUTABLE,
   parseTailscaleMagicDnsName,
   parseTailscaleServeRoutes,
+  parseTailscaleBackendStatus,
   parseTailscaleStatus,
+  startTailscaleLogin,
   readTailscaleServeRoutes,
   readTailscaleStatus,
   TAILSCALE_STATUS_TIMEOUT,
@@ -529,6 +531,87 @@ describe("tailscale", () => {
           localPort: 3773,
         }),
       );
+    }),
+  );
+});
+
+describe("tailscale sign-in", () => {
+  const waitingHandle = (output: string) =>
+    ChildProcessSpawner.makeHandle({
+      pid: ChildProcessSpawner.ProcessId(1),
+      exitCode: Effect.never,
+      isRunning: Effect.succeed(true),
+      kill: () => Effect.void,
+      unref: Effect.succeed(Effect.void),
+      stdin: Sink.drain,
+      stdout: Stream.empty,
+      stderr: Stream.make(encoder.encode(output)),
+      all: Stream.empty,
+      getInputFd: () => Sink.drain,
+      getOutputFd: () => Stream.empty,
+    });
+
+  it.effect("reads whether Tailscale is signed in from BackendState", () =>
+    Effect.gen(function* () {
+      assert.deepEqual(
+        yield* parseTailscaleBackendStatus(
+          `{"BackendState":"Running","Self":{"DNSName":"mac.tail.ts.net."}}`,
+        ),
+        { backendState: "Running", magicDnsName: "mac.tail.ts.net" },
+      );
+      assert.deepEqual(yield* parseTailscaleBackendStatus(`{"BackendState":"NeedsLogin"}`), {
+        backendState: "NeedsLogin",
+        magicDnsName: null,
+      });
+      assert.deepEqual(yield* parseTailscaleBackendStatus("{}"), {
+        backendState: null,
+        magicDnsName: null,
+      });
+    }),
+  );
+
+  it.effect("returns the sign-in link `tailscale up` prints, without flags or keys", () => {
+    const calls: Array<ReadonlyArray<string>> = [];
+    const layer = layerSpawner(
+      ChildProcessSpawner.make((command) => {
+        calls.push((command as unknown as { readonly args: ReadonlyArray<string> }).args);
+        return Effect.succeed(
+          waitingHandle(
+            "\nTo authenticate, visit:\n\n\thttps://login.tailscale.com/a/synthetic123\n\n",
+          ),
+        );
+      }),
+    );
+    return Effect.gen(function* () {
+      const started = yield* startTailscaleLogin().pipe(Effect.provide(layer));
+      assert.deepEqual(started, { loginUrl: "https://login.tailscale.com/a/synthetic123" });
+      assert.deepEqual(calls, [["up"]]);
+    });
+  });
+
+  it.effect("returns no link when this machine is already signed in", () =>
+    Effect.gen(function* () {
+      const started = yield* startTailscaleLogin().pipe(
+        Effect.provide(layerMockSpawner(() => ({ stdout: "" }))),
+      );
+      assert.deepEqual(started, { loginUrl: null });
+    }),
+  );
+
+  it.effect("names a refusal that needs an administrator without returning its output", () =>
+    Effect.gen(function* () {
+      const error = yield* startTailscaleLogin().pipe(
+        Effect.provide(
+          layerMockSpawner(() => ({
+            stderr: "Access denied: prefs write access denied tskey-secret",
+            code: 1,
+          })),
+        ),
+        Effect.flip,
+      );
+      assert.instanceOf(error, TailscaleCommandExitError);
+      assert.equal((error as TailscaleCommandExitError).stderrDiagnostic, "permission-denied");
+      assertCarriesNoSecret(error, "tskey-secret");
     }),
   );
 });

@@ -1,5 +1,6 @@
 import previewStreamScript from "@specweave-studio/mobile-preview-stream";
 import {
+  previewStreamControlAction,
   previewStreamControlLabel,
   previewStreamHostSetupMessage,
   type PreviewStreamControl,
@@ -338,7 +339,7 @@ function PreviewStreamDocumentView({
               }
             >
               <AppText className="text-xs text-secondary-foreground">
-                {control.controller === "you" ? "Release control" : "Take control"}
+                {previewStreamControlAction(control).label}
               </AppText>
             </Pressable>
           ) : null}
@@ -483,7 +484,7 @@ function PreviewStreamDocumentView({
               </View>
             </>
           ) : (
-            <AppText className="text-xs text-foreground-muted">Take control to respond.</AppText>
+            <AppText className="text-xs text-foreground-muted">Take over to respond.</AppText>
           )}
         </View>
       ) : null}

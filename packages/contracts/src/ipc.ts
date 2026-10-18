@@ -22,7 +22,12 @@ import * as Schema from "effect/Schema";
 import { SnapShotSource } from "./chatAttachment.ts";
 import { EnvironmentId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { BrowserProfileId } from "./browserProfile.ts";
-import type { ComputerUseAction, ComputerUseActionResult } from "./computerUse.ts";
+import type {
+  ComputerUseAction,
+  ComputerUseActionResult,
+  ComputerUsePermission,
+  ComputerUsePermissions,
+} from "./computerUse.ts";
 import type {
   BrowserImportResult,
   BrowserImportSource,
@@ -1258,6 +1263,19 @@ export interface DesktopBridge {
    * predating computer use and on platforms without it.
    */
   runComputerUseAction?: (action: ComputerUseAction) => Promise<ComputerUseActionResult>;
+  /** Whether this app has the macOS permissions computer use needs. */
+  getComputerUsePermissions?: () => Promise<ComputerUsePermissions>;
+  /**
+   * Asks macOS for one permission the way the user would: the system prompt
+   * when it has not been answered yet, otherwise the matching Privacy &
+   * Security pane with the drag-to-allow helper. Resolves with the status
+   * right after asking; the user grants it in System Settings.
+   */
+  requestComputerUsePermission?: (
+    permission: ComputerUsePermission,
+  ) => Promise<ComputerUsePermissions>;
+  /** Quits and reopens the app, which macOS needs before a new Screen Recording grant applies. */
+  relaunchForComputerUse?: () => Promise<void>;
   /** Voice calls; all absent on desktop builds predating them. */
   getVoiceStatus?: () => Promise<DesktopVoiceStatus>;
   /** Shows the macOS microphone prompt when the user has not answered it yet. */

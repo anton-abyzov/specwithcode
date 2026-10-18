@@ -30,6 +30,7 @@ import {
   type CreditSendContext,
 } from "./explicitCreditSend";
 import { settleAfter, settleCaught } from "../../lib/settle";
+import { retryTransientSend } from "../../lib/transientSendRetry";
 import { routesViaCoordinator } from "../../studio/projectMessageRouting";
 
 const now = Date.parse("2026-10-09T08:00:00.000Z"),
@@ -542,6 +543,9 @@ describe("actual callback integration", () => {
         runtimeMode: context.runtimeMode,
         sendInteractionMode: "default",
         settlePromise: actualRuntimeFunction("settlePromise"),
+        retryTransientSend,
+        whenHostReady: async () => true,
+        commandIdForSend: "command",
         turnAttachmentsPromise: Promise.resolve([]),
         creditIntentStillCurrent: () => {
           checks++;

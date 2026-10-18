@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 import { AuthGrantScope } from "./auth.ts";
-import { EnvironmentId, IsoDateTime, ProjectId, ThreadId } from "./baseSchemas.ts";
+import { AuthSessionId, EnvironmentId, IsoDateTime, ProjectId, ThreadId } from "./baseSchemas.ts";
 
 export const StudioFleetMachineId = Schema.String.check(
   Schema.isPattern(/^[a-z0-9][a-z0-9-]{0,47}$/),
@@ -139,6 +139,80 @@ export const StudioFleetAddResult = Schema.Struct({
   previousUrl: Schema.optionalKey(Schema.String),
 });
 export type StudioFleetAddResult = typeof StudioFleetAddResult.Type;
+
+/**
+ * Asks this server to publish itself on its own Tailscale name and make an
+ * invitation for another machine's Add a machine, as `fleet invite` does.
+ */
+export const StudioFleetInviteInput = exactStruct({
+  /** Name shown for this machine on the other one. Defaults to this machine's own name. */
+  label: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(80))),
+  /** How long the other machine may use the invitation. Default 365. */
+  days: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 365 }))),
+});
+export type StudioFleetInviteInput = typeof StudioFleetInviteInput.Type;
+
+/**
+ * The invitation line holds a management credential: shown once, never
+ * cached or logged. `sessionId` names that credential so it can be revoked.
+ */
+export const StudioFleetInviteResult = Schema.Struct({
+  code: Schema.String,
+  url: Schema.String,
+  label: Schema.String,
+  expiresAt: IsoDateTime,
+  sessionId: AuthSessionId,
+});
+export type StudioFleetInviteResult = typeof StudioFleetInviteResult.Type;
+
+/** Why this server could not publish itself on its Tailscale name. */
+export const StudioFleetInviteProblem = Schema.Literals([
+  "tailscale_missing",
+  "tailscale_signed_out",
+  "tailscale_unavailable",
+  "magic_dns_missing",
+  "serves_other_server",
+  "port_occupied",
+  "serve_failed",
+  "dev_server_not_proxiable",
+  "tailscale_needs_admin",
+  "tailscale_sign_in_failed",
+]);
+export type StudioFleetInviteProblem = typeof StudioFleetInviteProblem.Type;
+
+/**
+ * Whether Tailscale on this machine is ready for an invitation: not
+ * installed, installed but not signed in (or stopped), or running.
+ */
+export const StudioFleetTailscaleState = Schema.Literals([
+  "not_installed",
+  "signed_out",
+  "running",
+]);
+export type StudioFleetTailscaleState = typeof StudioFleetTailscaleState.Type;
+
+export const StudioFleetTailscaleStatus = Schema.Struct({
+  state: StudioFleetTailscaleState,
+  /** Tailscale's own `BackendState`, such as `NeedsLogin` or `Stopped`; null when unknown. */
+  backendState: Schema.NullOr(Schema.String),
+  /** Whether this machine has a MagicDNS name, which the invitation needs. */
+  magicDns: Schema.Boolean,
+  /** The server's platform, so the app links the right download. */
+  platform: Schema.String,
+  /** Whether Homebrew is installed here, so `brew install --cask tailscale` would work. */
+  homebrew: Schema.Boolean,
+});
+export type StudioFleetTailscaleStatus = typeof StudioFleetTailscaleStatus.Type;
+
+/** Starting a sign-in takes no options: never an auth key or a flag. */
+export const StudioFleetTailscaleSignInInput = exactStruct({});
+export type StudioFleetTailscaleSignInInput = typeof StudioFleetTailscaleSignInInput.Type;
+
+export const StudioFleetTailscaleSignInResult = Schema.Struct({
+  /** The Tailscale sign-in page to open; null when this machine was already signed in. */
+  loginUrl: Schema.NullOr(Schema.String),
+});
+export type StudioFleetTailscaleSignInResult = typeof StudioFleetTailscaleSignInResult.Type;
 
 /** Where a worker this server started on another machine stands, as last observed. */
 export const StudioFleetRemoteWorkerState = Schema.Literals([

@@ -11,12 +11,10 @@
  * Machines reach each other by their own Tailscale names, so none of them
  * depends on another being on the same network.
  */
-import { AuthAccessWriteScope, PortSchema } from "@specweave-studio/contracts";
+import { PortSchema } from "@specweave-studio/contracts";
 import { DEFAULT_TAILSCALE_SERVE_PORT } from "@specweave-studio/tailscale";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
-import * as DateTime from "effect/DateTime";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -29,21 +27,14 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import { resolveBaseDir } from "../os-jank.ts";
 import { discoverFleet, FleetError, readFleetConfig } from "../studioFleet.ts";
-import {
-  addFleetMachine,
-  encodeFleetJoinCode,
-  FleetJoinError,
-  removeFleetMachine,
-} from "../studioFleetJoin.ts";
+import { addFleetMachine, FleetJoinError, removeFleetMachine } from "../studioFleetJoin.ts";
 import { invokedCliName } from "./cliName.ts";
 import { baseDirFlag, DurationFromString } from "./config.ts";
-import { discoverPairTarget, makePairServerConfig, resolveTailscalePairingBase } from "./pair.ts";
+import { fleetInviteLabel, issueFleetInvitation } from "../studioFleetInvite.ts";
+import { discoverPairTarget, makePairServerConfig } from "./pair.ts";
 
 /** The name the user typed, so printed commands can be pasted as they are. */
 const cliName = () => invokedCliName({ env: process.env.STUDIO_CLI_NAME, argv1: process.argv[1] });
-
-/** A year: the primary uses this token for every pairing on the machine, unattended. */
-const DEFAULT_INVITE_TTL = Duration.days(365);
 
 export class FleetCommandError extends Schema.TaggedError<FleetCommandError>()(
   "FleetCommandError",
@@ -108,18 +99,14 @@ const inviteCommand = Command.make("invite", {
     Effect.gen(function* () {
       const logLevel = Option.getOrElse(yield* GlobalFlag.LogLevel, () => "Warn" as const);
       const target = yield* discoverPairTarget(Option.getOrUndefined(flags.baseDir));
-      const served = yield* resolveTailscalePairingBase({
-        target,
-        servePort: flags.tailscaleServePort,
-      });
       const config = yield* makePairServerConfig({ target, logLevel });
-      const issued = yield* Effect.gen(function* () {
-        const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
-        return yield* environmentAuth.issueSession({
-          scopes: [AuthAccessWriteScope],
-          label: "Fleet management (fleet invite)",
-          ttl: Option.getOrElse(flags.ttl, () => DEFAULT_INVITE_TTL),
-        });
+      const { invitation, notes } = yield* issueFleetInvitation({
+        environmentId: target.descriptor.environmentId,
+        ownLabel: target.descriptor.label,
+        state: target.state,
+        servePort: flags.tailscaleServePort,
+        label: Option.getOrUndefined(flags.label),
+        ttl: Option.getOrUndefined(flags.ttl),
       }).pipe(
         Effect.provide(
           EnvironmentAuth.layerRuntime.pipe(
@@ -128,17 +115,8 @@ const inviteCommand = Command.make("invite", {
           ),
         ),
       );
-      const url = new URL(served.baseUrl).origin;
-      const label = Option.getOrElse(flags.label, () => target.descriptor.label)
-        .trim()
-        .slice(0, 80)
-        .trim();
-      const code = encodeFleetJoinCode({
-        url,
-        environmentId: target.descriptor.environmentId,
-        label: label || "Machine",
-        managementToken: issued.token,
-      });
+      const { code, url } = invitation;
+      const label = fleetInviteLabel(Option.getOrUndefined(flags.label), target.descriptor.label);
       yield* Console.log(
         [
           `${label || "This machine"} is published at ${url} (private to your tailnet).`,
@@ -151,8 +129,8 @@ const inviteCommand = Command.make("invite", {
           "",
           code,
           "",
-          `It works until ${DateTime.formatIso(issued.expiresAt)}. Treat it like a password: it lets the primary pair with this machine. Revoke it with \`${cliName()} auth session revoke ${issued.sessionId}\`.`,
-          ...served.notes.flatMap((note) => ["", `Note: ${note}`]),
+          `It works until ${invitation.expiresAt}. Treat it like a password: it lets the primary pair with this machine. Revoke it with \`${cliName()} auth session revoke ${invitation.sessionId}\`.`,
+          ...notes.flatMap((note) => ["", `Note: ${note}`]),
           "",
         ].join("\n"),
       );

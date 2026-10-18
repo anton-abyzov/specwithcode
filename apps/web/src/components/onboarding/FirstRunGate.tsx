@@ -37,8 +37,10 @@ import { Button } from "../ui/button";
  * Nothing renders while pending — no shell, no EventRouter (whose welcome
  * payload would otherwise navigate into a thread), no dialogs.
  *
- * Decision order: a set `onboardingCompletedAt` resolves to the app as soon as
- * settings hydrate (the common case, no server round-trip). A `null` flag also
+ * Decision order: a machine whose first-run choice was "joined" (it only
+ * serves a main machine elsewhere) goes to the welcome flow, which shows that
+ * status. Otherwise a set `onboardingCompletedAt` resolves to the app as soon
+ * as settings hydrate (the common case, no server round-trip). A `null` flag also
  * covers installs that predate the field, so it alone is not enough — the gate
  * waits for environment shells to bootstrap and inspects the workspace.
  * Hosted mode instead checks its saved environment catalog. A timeout shows
@@ -85,6 +87,7 @@ export function FirstRunGate({
   const hydrated = hydrationStatus === "ready";
   const completeOnboarding = useCompleteOnboarding();
   const onboardingCompletedAt = useClientSettings((settings) => settings.onboardingCompletedAt);
+  const joined = useClientSettings((settings) => settings.onboardingMachineRole === "joined");
   const bootstrapped = useAllEnvironmentShellsBootstrapped();
   const { environments, isReady: environmentCatalogReady } = useEnvironments();
   const projects = useProjects();
@@ -97,7 +100,7 @@ export function FirstRunGate({
   // the wizard) resolve synchronously instead of blanking a frame.
   const [gateState, setGateState] = useState<FirstRunGateState>(() => ({
     decision:
-      (!enabled && !hostedStatic) || (hydrated && onboardingCompletedAt !== null)
+      (!enabled && !hostedStatic) || (hydrated && onboardingCompletedAt !== null && !joined)
         ? "app"
         : "pending",
     stalled: false,
@@ -137,6 +140,7 @@ export function FirstRunGate({
         enabled,
         hydrated,
         completed: onboardingCompletedAt !== null,
+        joined,
         bootstrapped,
         authoritative: primaryShellLive,
         workspaceAuthoritative: workspaceEvidenceLive,

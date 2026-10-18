@@ -18,11 +18,46 @@ Windows, Linux and Intel Mac builds are not published yet.
 
 ## Command line
 
-A one-line installer is not available yet. No site hosts `install.sh` or `install.ps1`, and the
-installer scripts in `scripts/` do not yet match the release archive names. Use the desktop app, or
-[build from source](#build-from-source).
+On an Apple silicon Mac, or on Linux (x64 or arm64, with glibc and systemd), install SpecWithCode
+and start it as a [background service](./background-service.md) with one line:
 
-Once `specwithcode` is on your `PATH` (built from source, or from the desktop app), these commands cover the basics.
+```bash
+curl -fsSL https://github.com/anton-abyzov/specwithcode/releases/latest/download/install.sh | bash
+```
+
+It downloads the server archive and `SHA256SUMS` from the latest release, checks the archive,
+and unpacks it under `~/.specwithcode/runtime`. The archive needs Node.js 22, so a private copy
+of Node.js 22.20.0 from nodejs.org, checked against a pinned SHA-256, goes beside it; pass
+`--node /path/to/node` to use your own Node.js 22.20 or later 22.x instead. It puts `specwithcode`
+in `~/.local/bin` and tells you if that folder is not on your `PATH`. Your projects, threads and
+settings are not touched, and it leaves a Mac alone that already runs the desktop app or a managed
+service. Run the same line again to move to a newer release. Add `-s -- --dry-run` after `bash`
+to see what it would do, or `-s -- --no-service` to skip the service. Releases up to 1.0.43 do not
+carry `install.sh` yet. There is no Windows or Intel Mac build.
+
+### Join your existing machines from the terminal
+
+To add this machine to the ones you already use, run the installer with `--join`:
+
+```bash
+curl -fsSL https://github.com/anton-abyzov/specwithcode/releases/latest/download/install.sh | bash -s -- --join
+```
+
+1. It sets up [Tailscale](https://tailscale.com/download) first. If Tailscale is missing, it asks
+   to install it (Tailscale's signed package on macOS, Tailscale's own installer on Linux; both
+   ask for your password). If Tailscale is signed out, it opens the sign-in page in your
+   browser and waits. Sign in with the account your main machine uses. Add `--yes` to install
+   Tailscale without the question.
+2. It installs and starts SpecWithCode as above, then runs `specwithcode fleet invite`, which
+   publishes this machine on its Tailscale name and prints one line starting with `swc-machine-`.
+   On a machine that already runs SpecWithCode, it only prints that line. Treat it like a password.
+3. On your main machine, run the `specwithcode fleet add <line>` it shows, or paste the line into
+   **Settings > Connections > Add a machine**.
+
+Later you can print a new line with `specwithcode fleet invite` on its own.
+
+Once `specwithcode` is on your `PATH` (from the installer, or built from source; the desktop app
+does not add it), these commands cover the basics.
 The same tool is also installed under its original name, `specweave-studio`, so older scripts keep working.
 
 | Task                                             | Command                                                             |
@@ -30,7 +65,7 @@ The same tool is also installed under its original name, `specweave-studio`, so 
 | Start the server and open the web app            | `specwithcode`                                                      |
 | Start the server without a browser               | `specwithcode serve`                                                |
 | Keep it running in the background (macOS, Linux) | `specwithcode service install` ([details](./background-service.md)) |
-| Move to a newer release                          | See [Updating SpecWithCode](./updating.md)                          |
+| Move to a newer release                          | Run the installer again, or see [Updating](./updating.md)           |
 | Remove it again                                  | `specwithcode uninstall`                                            |
 
 Run `specwithcode help` or `specwithcode --help` for the full reference. To start in a new working

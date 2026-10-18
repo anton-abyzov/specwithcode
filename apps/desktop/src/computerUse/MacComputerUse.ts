@@ -2,10 +2,13 @@
 // @effect-diagnostics globalDate:off -- Permission prompts are throttled outside Effect, at the native boundary.
 // @effect-diagnostics nodeBuiltinImport:off -- Native input and capture run as child processes of the app.
 import {
+  COMPUTER_USE_PERMISSION_ERROR_PHRASES,
   COMPUTER_USE_PERMISSION_WAIT_MS,
   COMPUTER_USE_SETTINGS_URL_PREFIX,
+  computerUsePermissionFor,
   type ComputerUseAction,
   type ComputerUseActionResult,
+  type ComputerUsePermission,
   type ComputerUsePermissions,
 } from "@specweave-studio/contracts";
 import * as NodeChildProcess from "node:child_process";
@@ -46,11 +49,42 @@ const execFile = (file: string, args: ReadonlyArray<string>, timeoutMs: number) 
     );
   });
 
-export function currentPermissions(): ComputerUsePermissions {
+// The main process reads Screen Recording once at launch (CGPreflightScreenCaptureAccess
+// caches it), so a grant made later reads as missing until the app reopens. A new child
+// process has the app's identity and reads the current grant; screencapture and osascript,
+// which perform the actions, are such children too.
+const PERMISSION_PROBE_SCRIPT = `
+ObjC.import("CoreGraphics");
+ObjC.import("ApplicationServices");
+ObjC.bindFunction("CGPreflightScreenCaptureAccess", ["bool", []]);
+ObjC.bindFunction("AXIsProcessTrusted", ["bool", []]);
+JSON.stringify({ screenRecording: $.CGPreflightScreenCaptureAccess(), accessibility: $.AXIsProcessTrusted() });`;
+
+function launchPermissions(): ComputerUsePermissions {
   return {
     screenRecording: Electron.systemPreferences.getMediaAccessStatus("screen") === "granted",
     accessibility: Electron.systemPreferences.isTrustedAccessibilityClient(false),
   };
+}
+
+/** The app's current grants, including ones made after it launched. */
+export async function currentPermissions(): Promise<ComputerUsePermissions> {
+  const known = launchPermissions();
+  if (known.screenRecording && known.accessibility) return known;
+  try {
+    const output = await execFile(
+      "/usr/bin/osascript",
+      ["-l", "JavaScript", "-e", PERMISSION_PROBE_SCRIPT],
+      5_000,
+    );
+    const probed = JSON.parse(output.trim()) as Partial<ComputerUsePermissions>;
+    return {
+      screenRecording: known.screenRecording || probed.screenRecording === true,
+      accessibility: known.accessibility || probed.accessibility === true,
+    };
+  } catch {
+    return known;
+  }
 }
 
 function primaryDisplay(): DisplayGeometry {
@@ -58,12 +92,13 @@ function primaryDisplay(): DisplayGeometry {
   return { width, height };
 }
 
-type ComputerUsePermission = "screen-recording" | "accessibility";
+const permissionGranted = async (permission: ComputerUsePermission) =>
+  (await currentPermissions())[COMPUTER_USE_PERMISSION_KEYS[permission]];
 
-const permissionGranted = (permission: ComputerUsePermission) =>
-  permission === "accessibility"
-    ? Electron.systemPreferences.isTrustedAccessibilityClient(false)
-    : Electron.systemPreferences.getMediaAccessStatus("screen") === "granted";
+const COMPUTER_USE_PERMISSION_KEYS = {
+  "screen-recording": "screenRecording",
+  accessibility: "accessibility",
+} as const satisfies Record<ComputerUsePermission, keyof ComputerUsePermissions>;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -71,44 +106,52 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const lastPermissionPrompt = new Map<MacPermission, number>();
 
 /**
- * Asks the user for a missing permission the way macOS expects, with its own
- * prompt and the matching Privacy & Security pane, then holds the action until
- * they allow it so the agent's first request still goes through.
+ * Asks macOS for a missing permission the way it expects: its own prompt the
+ * first time, which also adds the app to the list, then the matching Privacy
+ * & Security pane, where `onPrompt` shows the drag-to-allow helper.
  */
+export async function requestPermission(
+  permission: ComputerUsePermission,
+  onPrompt: (permission: MacPermission) => void,
+): Promise<ComputerUsePermissions> {
+  if (await permissionGranted(permission)) return currentPermissions();
+  lastPermissionPrompt.set(permission, Date.now());
+  if (permission === "accessibility") {
+    // Shows the system prompt and adds the app to the Accessibility list.
+    Electron.systemPreferences.isTrustedAccessibilityClient(true);
+  } else if (Electron.systemPreferences.getMediaAccessStatus("screen") === "not-determined") {
+    // A first capture attempt shows the system prompt and adds the app to the list.
+    await Electron.desktopCapturer
+      .getSources({ types: ["screen"], thumbnailSize: { width: 1, height: 1 } })
+      .catch(() => []);
+    if (await permissionGranted(permission)) return currentPermissions();
+  }
+  void Electron.shell.openExternal(MAC_PERMISSION_SETTINGS_URLS[permission]);
+  onPrompt(permission);
+  return currentPermissions();
+}
+
+/** Holds an action until the user allows its permission, so the agent's first request still goes through. */
 async function ensurePermission(
   permission: ComputerUsePermission,
   onPrompt: (permission: MacPermission) => void,
 ) {
-  if (permissionGranted(permission)) return;
-  const now = Date.now();
-  if (now - (lastPermissionPrompt.get(permission) ?? 0) >= 60_000) {
-    lastPermissionPrompt.set(permission, now);
-    if (permission === "accessibility") {
-      // Shows the system prompt and adds the app to the Accessibility list.
-      Electron.systemPreferences.isTrustedAccessibilityClient(true);
-    } else if (Electron.systemPreferences.getMediaAccessStatus("screen") === "not-determined") {
-      // A first capture attempt shows the system prompt and adds the app to the list.
-      await Electron.desktopCapturer
-        .getSources({ types: ["screen"], thumbnailSize: { width: 1, height: 1 } })
-        .catch(() => []);
-      if (permissionGranted(permission)) return;
-    }
-    void Electron.shell.openExternal(MAC_PERMISSION_SETTINGS_URLS[permission]);
-    onPrompt(permission);
+  if (await permissionGranted(permission)) return;
+  if (Date.now() - (lastPermissionPrompt.get(permission) ?? 0) >= 60_000) {
+    await requestPermission(permission, onPrompt);
   }
   const deadline = Date.now() + COMPUTER_USE_PERMISSION_WAIT_MS;
   while (Date.now() < deadline) {
     await sleep(1_000);
-    if (permissionGranted(permission)) return;
+    if (await permissionGranted(permission)) return;
   }
   throw new Error(PERMISSION_REASON[permission]);
 }
 
+// Each reason opens with the contract's phrase, which threads use to show the permission card.
 const PERMISSION_REASON: Record<ComputerUsePermission, string> = {
-  "screen-recording":
-    "The user did not allow Screen Recording for SpecWithCode within two minutes, so it cannot see the screen. System Settings is open at Privacy & Security > Screen Recording: ask the user to turn on SpecWithCode there (and choose Quit & Reopen if macOS asks), then try again.",
-  accessibility:
-    "The user did not allow Accessibility for SpecWithCode within two minutes, so it cannot click or type. System Settings is open at Privacy & Security > Accessibility: ask the user to turn on SpecWithCode there, then try again.",
+  "screen-recording": `${COMPUTER_USE_PERMISSION_ERROR_PHRASES["screen-recording"]} to see the screen, and the user did not allow it within two minutes. SpecWithCode shows a card in this thread with an Allow button and live status. Tell the user to allow Screen Recording for SpecWithCode there (choosing Quit & Reopen if macOS asks), then try again when they say it is done.`,
+  accessibility: `${COMPUTER_USE_PERMISSION_ERROR_PHRASES.accessibility} to click and type, and the user did not allow it within two minutes. SpecWithCode shows a card in this thread with an Allow button and live status. Tell the user to allow Accessibility for SpecWithCode there, then try again when they say it is done.`,
 };
 
 async function captureScreen(display: DisplayGeometry) {
@@ -190,11 +233,9 @@ export async function runComputerUseAction(
   action: ComputerUseAction,
   onPermissionPrompt: (permission: MacPermission) => void,
 ): Promise<ComputerUseActionResult> {
-  if (action.kind === "screenshot") await ensurePermission("screen-recording", onPermissionPrompt);
-  else if (action.kind !== "status" && action.kind !== "open") {
-    await ensurePermission("accessibility", onPermissionPrompt);
-  }
-  const permissions = currentPermissions();
+  const required = computerUsePermissionFor(action.kind);
+  if (required !== undefined) await ensurePermission(required, onPermissionPrompt);
+  const permissions = await currentPermissions();
   const display = primaryDisplay();
 
   let frontmost: string | undefined;

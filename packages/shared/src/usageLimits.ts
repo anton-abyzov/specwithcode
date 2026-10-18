@@ -377,13 +377,7 @@ export function collectLimitNotices(presentations: LimitPresentations): readonly
         continue;
       if (!provider.enabled || !provider.installed || !isProviderAvailable(provider)) continue;
       const name = provider.displayName?.trim() || String(provider.driver);
-      notices.push(
-        `${label(environmentLabel, name)}: ${
-          provider.auth.status === "unauthenticated"
-            ? "Not signed in, so no limits to show."
-            : "Could not check the sign-in, so no limits to show."
-        }`,
-      );
+      notices.push(`${label(environmentLabel, name)}: ${missingLimitsNotice(provider)}`);
     }
     for (const source of presentation.serverConfig?.usageLimitSources ?? []) {
       if (source.error) {
@@ -398,6 +392,20 @@ export function collectLimitNotices(presentations: LimitPresentations): readonly
 
 /** Drivers whose signed-in instances always report subscription windows. */
 const SUBSCRIPTION_DRIVERS: ReadonlySet<string> = new Set(["claudeAgent", "codex"]);
+
+/**
+ * Why a provider that reported no limits shows none: a subscription agent was
+ * not signed in or could not be checked; any other driver does not report them.
+ */
+export function missingLimitsNotice(provider: {
+  readonly driver: string;
+  readonly auth: { readonly status: string };
+}): string {
+  if (!SUBSCRIPTION_DRIVERS.has(provider.driver)) return "Does not report subscription limits.";
+  return provider.auth.status === "unauthenticated"
+    ? "Not signed in, so no limits to show."
+    : "Could not check the sign-in, so no limits to show.";
+}
 
 export interface LimitPoolMember {
   readonly account: LimitAccount;

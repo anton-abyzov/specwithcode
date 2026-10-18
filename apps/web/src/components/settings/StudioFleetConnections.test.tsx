@@ -441,3 +441,59 @@ describe("workers on private machines", () => {
     ).toBeNull();
   });
 });
+describe("inviting this machine from its own roster", () => {
+  const label = (node: unknown): string =>
+    typeof node === "string"
+      ? node
+      : Array.isArray(node)
+        ? node.map(label).join("")
+        : node && typeof node === "object" && "props" in node
+          ? label((node as { props: { children?: unknown } }).props.children)
+          : "";
+  const inviteButton = (tree: unknown) =>
+    visitElements(
+      tree,
+      (element) =>
+        element.props.onClick !== undefined &&
+        ["Invite this machine", "Manage access required"].includes(label(element)),
+    ) as { props: { onClick: () => void; disabled?: boolean; children: unknown } } | null;
+  it("offers the invitation to an access manager and opens its dialog", () => {
+    const onInvite = vi.fn();
+    const dialog = { type: "fleet-invite-dialog", props: {}, key: null };
+    const tree = render({ canManageWorkers: true, onInvite, inviteDialog: dialog as never });
+    const action = inviteButton(tree)!;
+    expect(label(action)).toBe("Invite this machine");
+    expect(action.props.disabled).toBe(false);
+    action.props.onClick();
+    expect(onInvite).toHaveBeenCalledOnce();
+  });
+  it("needs Manage access, like Add a machine and Allow workers", () => {
+    const action = inviteButton(render({ canManageWorkers: false, onInvite: vi.fn() }))!;
+    expect(label(action)).toBe("Manage access required");
+    expect(action.props.disabled).toBe(true);
+  });
+  it("names the in-app invitation before the command in the Add a machine hint", () => {
+    const hint = label(
+      render({ onAddMachine: vi.fn(), onInvitationChange: vi.fn(), canManageWorkers: true }),
+    );
+    expect(hint).toContain("choose Invite this machine under Settings > Connections");
+    expect(hint.indexOf("Invite this machine")).toBeLessThan(
+      hint.indexOf("specwithcode fleet invite"),
+    );
+  });
+  it("hands the dialog to the roster with this machine's name and permission", () => {
+    hooks.reset();
+    runtime.snapshot = snapshot;
+    runtime.environments = [];
+    hooks.beginRender();
+    const tree = StudioFleetConnections({ environmentId: m4, savedEnvironmentIds: [] });
+    const dialog = tree.props.inviteDialog as {
+      props: { environmentId: string; canManage: boolean; open: boolean };
+    };
+    expect(dialog.props).toMatchObject({ environmentId: m4, canManage: true, open: false });
+    (tree.props.onInvite as () => void)();
+    hooks.beginRender();
+    const opened = StudioFleetConnections({ environmentId: m4, savedEnvironmentIds: [] });
+    expect((opened.props.inviteDialog as { props: { open: boolean } }).props.open).toBe(true);
+  });
+});

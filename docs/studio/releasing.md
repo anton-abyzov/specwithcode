@@ -67,7 +67,7 @@ make, and refuses to start a second run of a version without `--resume`.
 | bundle          | `bundle.mjs`, `verify-bundle.mjs` on the archive, the Google sign-in check, all before signing                         | per candidate           |
 | sign            | `build-desktop-artifact.ts --signed --skip-build` on the verified build, `mac-signature.mjs`                           | per candidate           |
 | helpers         | `make_helpers.py`, compared with the previous manifest                                                                 | per candidate           |
-| plan            | `SHA256SUMS`, `make_update_plan.py --previous-plan`, the plan added to `SHA256SUMS`, every asset checked in it         | per candidate           |
+| plan            | copies `scripts/install.sh`, `SHA256SUMS`, `make_update_plan.py --previous-plan`, the plan added, every asset checked  | per candidate           |
 | drafts          | `notes.md`, both draft releases with every asset, a `publish.mjs` check without `--tag`/`--push`                       | per candidate           |
 | server-wait     | waits for the server suite; when it failed, deletes both drafts                                                        | per candidate           |
 | quit-desktop    | quits `/Applications/SpecWithCode.app` (TERM to its own pid)                                                           | until the desktop stage |
@@ -118,8 +118,9 @@ is the next version.
 
 Commit new files with the fix: the candidate stage cleans the build tree, so a new candidate with
 untracked files is refused before anything is deleted. The bump stage refuses a local
-`release/<version>` that holds commits other than its own bump. When the server suite has already
-failed, the drafts stage stops before any upload and deletes an earlier candidate's drafts.
+`release/<version>` that holds commits other than its own bump. Once the server suite has failed,
+the release stops before the next of bundle, sign, helpers, plan and drafts, so a failed run does
+not go on to sign and upload, and an earlier candidate's drafts are deleted.
 `fleet_rollout.py` stops when a host reports that the install it asked for failed, and names the
 receipt; that host stays on its old version. When publish-public's push failed after `publish.mjs`
 tagged, `--resume` drops the tag left in the public clone, since the remote has none.
@@ -155,7 +156,8 @@ release that widens the gate can install itself.
 
 Every release goes to both repositories: the private `anton-abyzov/specwithcode` (the
 service update agent's default) and the public `anton-abyzov/specwithcode` (the desktop feed for
-0.2.11 and later), with the GitHub flags from the version:
+0.2.11 and later), with the GitHub flags from the version. The public snapshot leaves out
+`.github/workflows`, so no workflow runs there:
 
 ```sh
 node scripts/studio-projects/release-flags.mjs 1.0.37   # --latest --prerelease=false
@@ -165,6 +167,25 @@ A plain `X.Y.Z` gets `--latest --prerelease=false`, so `releases/latest` and the
 `releases/latest/download/SpecWithCode-arm64.dmg` link in the README and on the website resolve to
 it. A suffixed version gets `--prerelease --latest=false`. Drafts are ignored by every updater.
 Signed builds that update through electron-updater never see pre-releases.
+
+### npm
+
+`npm i -g specwithcode` installs the published runtime archive (`studio-<version>-<sha12>.tar.gz`)
+as one package with the `specwithcode` and `specweave-studio` commands. It runs on Node 22.20 or
+newer on macOS and Linux, x64 and arm64: the archive's native dependencies carry prebuilds for all
+of them. Build it from the release's own assets and publish the tarball as written:
+
+```sh
+sha=$(grep " studio-1.0.43-043e9db88a6e.tar.gz$" SHA256SUMS | cut -d' ' -f1)
+node scripts/studio-fleet/npm-package.mjs --archive studio-1.0.43-043e9db88a6e.tar.gz \
+  --sha256 "$sha" --output-dir "$(mktemp -d)/npm"
+npm publish <output-dir>/specwithcode-1.0.43.tgz
+```
+
+The script copies pnpm's symlinked dependency store into a flat `node_modules` and leaves source
+maps out; `npm publish <dir>` would drop that `node_modules`, the tarball keeps it. Before
+publishing, install the tarball with `npm i -g --prefix "$(mktemp -d)" <tarball>` and check
+`specwithcode --version` and `specwithcode fleet invite --help`.
 
 ## Desktop assets
 
