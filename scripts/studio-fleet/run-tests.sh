@@ -4,13 +4,16 @@
 # or leaves no result, and when a new test-*.mjs file is neither a node:test file nor listed
 # below as an acceptance proof, so no fleet test goes unrun without a reason.
 #
-#   bash scripts/studio-fleet/run-tests.sh [--out DIR] [--jobs N]
+#   bash scripts/studio-fleet/run-tests.sh [--out DIR] [--jobs N] [--history DIR]...
 #   pnpm run test:fleet -- --out DIR
 #
 # --out   where <test>.log, <test>.exit, <test>.secs and summary.txt go (default: a new
 #         temporary directory). Earlier results for the same tests there are replaced.
 # --jobs  parallel tests, 1 to 4 (default 4). Several tests shell out to lsof and ps, which
 #         time out under heavy host load, so this stays at 4 or below.
+# --history  an earlier --out folder: tests start longest first by their <test>.secs there (the
+#         first folder that has one wins; a test with none starts first), so a long test does
+#         not start last. Without it, tests start in name order.
 #
 # Environment: STUDIO_TEST_NODE (Node 22 for the tests; default: node on PATH), PYTHON
 # (default: python3), FLEET_TEST_TIMEOUT (seconds per test, default 900). Every test gets
@@ -71,10 +74,12 @@ fi
 
 OUT=""
 JOBS=4
+HISTORY=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --out) [ $# -ge 2 ] || die "--out needs a directory"; OUT="$2"; shift 2;;
     --jobs) [ $# -ge 2 ] || die "--jobs needs a number"; JOBS="$2"; shift 2;;
+    --history) [ $# -ge 2 ] || die "--history needs a directory"; HISTORY+=("$2"); shift 2;;
     -h|--help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$SELF"; exit 0;;
     # pnpm run passes the `--` of `pnpm run <script> -- <options>` through.
     --) shift;;
@@ -124,6 +129,20 @@ for test in test-*.py test-*.mjs; do
   echo "$test" >> "$LIST"
 done
 [ -s "$LIST" ] || die "no fleet tests found in $HERE"
+if [ ${#HISTORY[@]} -gt 0 ]; then
+  while IFS= read -r test; do
+    secs=100000
+    for dir in "${HISTORY[@]}"; do
+      if [ -s "$dir/$test.secs" ] && [ "$dir" != "$OUT" ]; then
+        secs="$(cat "$dir/$test.secs")"
+        break
+      fi
+    done
+    case "$secs" in '' | *[!0-9]*) secs=100000 ;; esac
+    printf '%s\t%s\n' "$secs" "$test"
+  done < "$LIST" | sort -s -t "$(printf '\t')" -k1,1nr | cut -f2 > "$LIST.ordered"
+  mv "$LIST.ordered" "$LIST"
+fi
 
 count=$(wc -l < "$LIST" | tr -d ' ')
 echo "Running $count fleet tests, $JOBS at a time; logs in $OUT"

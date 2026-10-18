@@ -212,6 +212,39 @@ class InstallNow(AgentCase):
         self.assertEqual(len(self.apply_calls()), 1 + update_agent.FORCE_APPLY_RETRIES)
         self.assertFalse((self.updates / 'install-in-progress.json').exists())
 
+    PREFLIGHT_DESCENDANTS = {'phase': 'preflight', 'pointers': 'unchanged',
+                             'error': 'AssertionError: Owned service has unexpected descendants'}
+
+    def descendants_refused_once(self, hold_minutes=None):
+        """The apply's preflight snapshot refuses once for a process under the service; with
+        `hold_minutes` the service holds itself (updates/hold.json) that long, negative = expired."""
+        self.fake.add_release()
+        self.request()
+        if hold_minutes is not None:
+            hold = self.updates / 'hold.json'
+            hold.write_text(json.dumps({'schemaVersion': 1, 'pid': 4242, 'expiresAt': later(hold_minutes)}))
+            hold.chmod(0o600)
+        self.control(applyRefusals=1, applyRefusal=self.PREFLIGHT_DESCENDANTS)
+        return self.run_agent()
+
+    def test_a_preflight_descendant_refusal_retries_while_the_service_holds(self):
+        """A process appeared under the held service between the snapshot and the apply's own
+        preflight: the next snapshot may reap it, so the forced apply runs again (M4, 1.0.46)."""
+        self.assertEqual(self.descendants_refused_once(hold_minutes=15), 0)
+        self.assertEqual(len(self.apply_calls()), 2)
+        self.assertEqual(self.state()['lastInstall']['result'], 'updated')
+
+    def test_a_preflight_descendant_refusal_is_final_without_a_hold(self):
+        """Without a hold nothing may stop that process, so another apply would refuse the same way."""
+        self.assertEqual(self.descendants_refused_once(), 1)
+        self.assertEqual(len(self.apply_calls()), 1)
+        self.assertEqual(self.state()['lastInstall']['result'], 'failed')
+
+    def test_a_preflight_descendant_refusal_is_final_once_the_hold_expired(self):
+        self.assertEqual(self.descendants_refused_once(hold_minutes=-1), 1)
+        self.assertEqual(len(self.apply_calls()), 1)
+        self.assertEqual(self.state()['lastInstall']['result'], 'failed')
+
     def test_a_failure_after_the_restart_is_never_retried(self):
         self.fake.add_release()
         self.request()
