@@ -1023,6 +1023,54 @@ class ApplyRecovery(unittest.TestCase):
   self.assertEqual(self.auth_snapshot_phases,[])
   result=json.loads(self.output.read_text());self.assertEqual(result['result'],'update-failed')
   self.assertNotIn('authHeartbeatWitness',result);self.assertNotEqual(result['before']['rows'],result['attemptedAfter']['rows'])
+ def test_a_client_reconnecting_while_the_gate_settles_is_a_proven_heartbeat(self):
+  # M1, 1.0.49: M4's relay reconnected after the snapshot but before the restart began.
+  self.prepare_heartbeat();advance=self.on_restart;self.on_restart=lambda:None
+  for rows in (self.rows,self.before['rows']):rows[update.AUTH_INVARIANT_KEY]='i'*64
+  real=update.write_install_gate
+  def gate_then_reconnect(own,home):real(own,home);advance();self.rows[update.AUTH_INVARIANT_KEY]='i'*64
+  with patch.object(update,'write_install_gate',side_effect=gate_then_reconnect):self.execute(True)
+  result=json.loads(self.output.read_text())
+  self.assertEqual(result['phase'],'verified');self.assertEqual(result['authHeartbeatWitness']['changedRows'],1)
+  self.assertEqual(len(self.restart_calls),1)
+ def test_a_reconnect_while_the_baseline_is_read_still_opens_the_window_at_the_read(self):
+  # The read is not instant (process inventory first): a heartbeat inside it is the baseline.
+  self.prepare_heartbeat();advance=self.on_restart
+  for rows in (self.rows,self.before['rows']):rows[update.AUTH_INVARIANT_KEY]='i'*64
+  real=self.snapshot_since;calls=[]
+  def reconnect_then_read(*args,**kwargs):
+   if not calls:
+    advance();self.rows[update.AUTH_INVARIANT_KEY]='i'*64
+    self.before['rows']=copy.deepcopy(self.rows)
+   calls.append(1);return real(*args,**kwargs)
+  self.snapshot_since=reconnect_then_read
+  def restart():advance();self.rows[update.AUTH_INVARIANT_KEY]='i'*64
+  self.on_restart=restart
+  self.execute(True);result=json.loads(self.output.read_text())
+  self.assertEqual(result['phase'],'verified');self.assertEqual(result['authHeartbeatWitness']['changedRows'],1)
+ def test_the_heartbeat_window_starts_at_the_read_whatever_the_rows_say(self):
+  auth={'columns':['session_id','last_connected_at'],'rows':[
+   ['during','2026-10-18T19:54:02.500Z'],['future','2026-10-18T20:04:01.000Z'],['old','2026-10-18T03:11:11.377Z'],['odd',None]]}
+  opened,closed='2026-10-18T19:54:01+00:00','2026-10-18T19:54:03+00:00'
+  # A heartbeat stamped during the read moves the start up to it; one stamped after the
+  # read (a clock that stepped back) and unreadable values never move it past the read.
+  self.assertEqual(update.heartbeat_window_start(opened,closed,auth),'2026-10-18T19:54:02.500000+00:00')
+  self.assertEqual(update.heartbeat_window_start(opened,closed,{**auth,'rows':auth['rows'][1:]}),opened)
+  self.assertEqual(update.heartbeat_window_start(opened,closed,None),opened)
+ def test_a_reconnect_during_the_gate_settle_is_proven_on_a_migrating_install(self):
+  self.prepare_heartbeat();advance=self.on_restart
+  self.rows['counts']['projection_projects']=1;self.rows['hashes']['projection_projects']='before-projection'
+  for rows in (self.rows,):rows[update.AUTH_INVARIANT_KEY]='i'*64
+  self.before['rows']=copy.deepcopy(self.rows)
+  real=update.write_install_gate
+  def gate_then_reconnect(own,home):real(own,home);advance();self.rows[update.AUTH_INVARIANT_KEY]='i'*64
+  def restart():self.rows['hashes']['projection_projects']='rebuilt-projection'
+  self.on_restart=restart
+  with patch.object(update,'write_install_gate',side_effect=gate_then_reconnect):
+   self.execute(allow_project_migrations=True,allow_existing_browser_heartbeat=True)
+  result=json.loads(self.output.read_text())
+  self.assertEqual(result['phase'],'verified');self.assertEqual(result['rowPreservation'],'verified-migration')
+  self.assertEqual(result['authHeartbeatWitness']['changedRows'],1)
  def test_opt_in_never_relaxes_pre_restart_rows(self):
   self.prepare_heartbeat();self.scenario='pre-restart-heartbeat'
   with self.assertRaisesRegex(AssertionError,'before restart'):self.execute(True)
