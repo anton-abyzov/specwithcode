@@ -214,6 +214,17 @@ const ThreadLaunchTool = Tool.make("studio_thread_launch", {
     machine: Schema.optional(OrchestratorMcpMachineRef),
     threadRef: Schema.optional(Schema.String),
     reportsBack: Schema.optional(Schema.Boolean),
+    runtimeMode: Schema.optional(
+      RuntimeMode.annotate({
+        description: "For a thread on another machine: the mode it was started with there.",
+      }),
+    ),
+    runtimeModeLoweredFrom: Schema.optional(
+      RuntimeMode.annotate({
+        description:
+          "Set when that machine's grant lowered the requested mode: the mode asked for. Tell the user the worker runs on runtimeMode instead.",
+      }),
+    ),
   }),
   dependencies: [
     ...shared.dependencies,

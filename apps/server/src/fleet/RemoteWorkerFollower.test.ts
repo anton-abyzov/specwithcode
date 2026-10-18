@@ -249,6 +249,109 @@ describe("RemoteWorkerFollower", () => {
   });
 });
 
+describe("a remote worker waiting on the person", () => {
+  const readAnswer = (pendingRequestCount: number) => ({
+    result: {
+      thread: { threadId: "b-thread-1", status: "running", pendingRequestCount },
+      recentRuns: [],
+      items: [],
+      nextPosition: null,
+      hasMore: false,
+    },
+  });
+
+  it.live("shows it as waiting on you, tells the caller once, and goes back to working", () => {
+    let pending = 1;
+    let release = false;
+    const { world, layer } = setup({
+      studio_thread_wait: () => (release ? finished("b-run-1") : stillRunning("b-run-1")),
+      studio_thread_read: () => readAnswer(pending),
+    });
+    return Effect.gen(function* () {
+      yield* allow();
+      const workers = yield* RemoteWorkers.RemoteWorkers;
+      yield* workers.launch(launchInput());
+      const [held] = yield* eventually(
+        rows,
+        (current) => current[0]?.lastStatus === RemoteWorkerFollower.REMOTE_WORKER_WAITING_ON_YOU,
+      );
+      expect(held?.state).toBe("following");
+      // The page lists it as waiting on you, not as a run that is still working.
+      const listed = yield* workers.workersForProject(launchInput().localProject.id);
+      expect(listed[0]).toMatchObject({ state: "following", lastStatus: "waiting_on_you" });
+      // Several passes while it stays held: the caller hears about it once.
+      yield* Effect.sleep("150 millis");
+      expect(world.wakes.map((wake) => wake.commandId)).toEqual([
+        "remote-worker-waiting:rwt:command-1:b-run-1",
+      ]);
+      expect(world.notices).toEqual([
+        {
+          createdBy: "agent",
+          summary:
+            "[Fix the flaky test](studio://thread/env-m1/b-thread-1) on M1 is waiting on you.",
+        },
+      ]);
+      // Answered over there: it reads as running again, then reports back as usual.
+      pending = 0;
+      yield* eventually(rows, (current) => current[0]?.lastStatus === "running");
+      release = true;
+      const [done] = yield* eventually(rows, (current) => current[0]?.state === "idle");
+      expect(done?.lastStatus).toBe("completed");
+      expect(world.wakes.map((wake) => wake.commandId)).toEqual([
+        "remote-worker-waiting:rwt:command-1:b-run-1",
+        "remote-worker-wake:rwt:command-1:b-run-1",
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("leaves a request answered before the next poll as working, with no wake", () => {
+    // A Full access machine answers its own approval within moments.
+    let reads = 0;
+    let release = false;
+    const { world, layer } = setup({
+      studio_thread_wait: () => (release ? finished("b-run-1") : stillRunning("b-run-1")),
+      studio_thread_read: () => readAnswer(++reads === 1 ? 1 : 0),
+    });
+    return Effect.gen(function* () {
+      yield* allow();
+      const workers = yield* RemoteWorkers.RemoteWorkers;
+      yield* workers.launch(launchInput());
+      yield* eventually(
+        Effect.sync(() => reads),
+        (count) => count >= 3,
+      );
+      const [row] = yield* rows;
+      expect(row?.lastStatus).toBe("running");
+      expect(world.wakes).toEqual([]);
+      release = true;
+      const [done] = yield* eventually(rows, (current) => current[0]?.state === "idle");
+      expect(done?.lastStatus).toBe("completed");
+      expect(world.wakes.map((wake) => wake.commandId)).toEqual([
+        "remote-worker-wake:rwt:command-1:b-run-1",
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("keeps following as before when the other machine cannot say", () => {
+    let release = false;
+    const { world, layer } = setup({
+      studio_thread_wait: () => (release ? finished("b-run-1") : stillRunning("b-run-1")),
+      studio_thread_read: machineDown,
+    });
+    return Effect.gen(function* () {
+      yield* allow();
+      const workers = yield* RemoteWorkers.RemoteWorkers;
+      yield* workers.launch(launchInput());
+      yield* eventually(rows, (current) => current[0]?.lastStatus === "running");
+      release = true;
+      yield* eventually(rows, (current) => current[0]?.state === "idle");
+      expect(world.wakes.map((wake) => wake.commandId)).toEqual([
+        "remote-worker-wake:rwt:command-1:b-run-1",
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+});
+
 describe("RemoteStudioMcpClient sessions", () => {
   it.live("one call timing out does not break the others sharing the machine's session", () => {
     const slow: FakeToolHandler = async () => {

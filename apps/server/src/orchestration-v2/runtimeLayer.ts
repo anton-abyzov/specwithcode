@@ -418,6 +418,7 @@ export const layerProduction = Layer.mergeAll(
         layerProjectService,
         layerProjectWorkspaceProvided,
         layerProjectCoordinatorProvided,
+        ProjectRuntimeAccess.layer.pipe(Layer.provide(layerOrchestratorProvided)),
       ),
     ),
   ),

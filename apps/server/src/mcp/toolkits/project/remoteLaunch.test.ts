@@ -42,6 +42,8 @@ const setup = (
     readonly outsideClient?: boolean;
     /** The worker machine was saved for another environment than "m1" has now. */
     readonly staleEnvironment?: boolean;
+    /** The machine's grant lowered the caller's mode to this one. */
+    readonly grantedRuntimeMode?: "approval-required" | "auto-accept-edits";
   } = {},
 ) => {
   const caller = {
@@ -97,6 +99,12 @@ const setup = (
           threadRef: "studio://thread/env-m1/b-thread",
           threadLink: "[Fix CI](studio://thread/env-m1/b-thread)",
           reportsBack: input.reportBack,
+          ...(options.grantedRuntimeMode === undefined
+            ? { runtimeMode: input.runtimeMode }
+            : {
+                runtimeMode: options.grantedRuntimeMode,
+                runtimeModeLoweredFrom: input.runtimeMode,
+              }),
         };
       }),
   };
@@ -154,7 +162,22 @@ const setup = (
       ),
       Effect.map((results) => results.at(-1)?.result as Record<string, unknown>),
     );
-  return { launch, remoteLaunches, localLaunches };
+  /** What the calling agent actually receives: the encoded tool result. */
+  const launchEncoded = (params: Record<string, unknown>) =>
+    ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+          Layer.provide(layerDependencies),
+        ),
+      ),
+      Effect.flatMap((toolkit) =>
+        toolkit
+          .handle("studio_thread_launch", params as never)
+          .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies)),
+      ),
+      Effect.map((results) => results.at(-1)?.encodedResult as Record<string, unknown>),
+    );
+  return { launch, launchEncoded, remoteLaunches, localLaunches };
 };
 
 it.effect(
@@ -186,6 +209,26 @@ it.effect(
     });
   },
 );
+
+it.effect("tells the coordinator which mode the remote worker runs on and what it lowered", () => {
+  const lowered = setup({ grantedRuntimeMode: "approval-required" });
+  const kept = setup();
+  return Effect.gen(function* () {
+    const result = yield* lowered.launchEncoded({
+      title: "Fix CI",
+      message: "Fix it",
+      machine: "M1",
+    });
+    expect(result).toMatchObject({
+      threadId: "b-thread",
+      runtimeMode: "approval-required",
+      runtimeModeLoweredFrom: "full-access",
+    });
+    const same = yield* kept.launchEncoded({ title: "Fix CI", message: "Fix it", machine: "M1" });
+    expect(same).toMatchObject({ runtimeMode: "full-access" });
+    expect(same).not.toHaveProperty("runtimeModeLoweredFrom");
+  });
+});
 
 it.effect("sends a coordinator's workers to the project's worker machine unless told local", () => {
   const { launch, remoteLaunches, localLaunches } = setup({ workerMachine: true });

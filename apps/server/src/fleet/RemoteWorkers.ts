@@ -110,6 +110,10 @@ export interface RemoteLaunchResult {
   /** Ready-made Markdown link to it, for the agent to give the user verbatim. */
   readonly threadLink: string;
   readonly reportsBack: boolean;
+  /** The mode the worker was started with there. */
+  readonly runtimeMode: RuntimeMode;
+  /** Set when the machine's grant lowered the caller's own mode to `runtimeMode`. */
+  readonly runtimeModeLoweredFrom?: RuntimeMode;
 }
 
 /**
@@ -690,6 +694,13 @@ const make = Effect.gen(function* () {
           "runtime_mode_escalation_denied",
           `${machine.label} allows workers up to ${credential.access}; ${input.requestedRuntimeMode} is broader.`,
         );
+      if (clamped.loweredFrom !== undefined)
+        yield* Effect.logWarning("Remote worker starts below its caller's mode", {
+          machineId: machine.id,
+          callerThreadId: input.callerThreadId,
+          runtimeMode: clamped.mode,
+          loweredFrom: clamped.loweredFrom,
+        });
       const target = yield* remoteProjectId(machine, input.localProject, input.machineProjectId);
 
       let modelSelection: ModelSelection | undefined;
@@ -734,7 +745,7 @@ const make = Effect.gen(function* () {
         updatedAt: startedAt,
       }));
       return yield* follower.trackLaunch(rowId)(
-        sendAndRecord({ input, rowId, target, modelSelection, clamped: clamped.mode }),
+        sendAndRecord({ input, rowId, target, modelSelection, clamped }),
       );
     });
 
@@ -752,7 +763,7 @@ const make = Effect.gen(function* () {
       readonly providers: ReadonlyArray<OrchestratorMcpMachineProvider>;
     };
     readonly modelSelection: ModelSelection | undefined;
-    readonly clamped: RuntimeMode;
+    readonly clamped: { readonly mode: RuntimeMode; readonly loweredFrom?: RuntimeMode };
   }) =>
     Effect.gen(function* () {
       const { machine } = input;
@@ -774,7 +785,7 @@ const make = Effect.gen(function* () {
             projectId: target.projectId,
             title: input.title,
             ...(selection === undefined ? {} : { modelSelection: selection }),
-            runtimeMode: clamped,
+            runtimeMode: clamped.mode,
             interactionMode: input.interactionMode,
             ...(input.workspaceStrategy === undefined
               ? {}
@@ -908,6 +919,10 @@ const make = Effect.gen(function* () {
         threadRef: formatStudioThreadHref(launched.threadId, machine.environmentId),
         threadLink: formatStudioThreadLink(launched.threadId, input.title, machine.environmentId),
         reportsBack: input.reportBack,
+        runtimeMode: clamped.mode,
+        ...(clamped.loweredFrom === undefined
+          ? {}
+          : { runtimeModeLoweredFrom: clamped.loweredFrom }),
       };
     });
 

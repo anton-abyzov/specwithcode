@@ -9,6 +9,7 @@ import {
   type NativeConnectionsSnapshot,
   type NativeOtherTool,
   type NativeOtherToolInventory,
+  type NativePlugin,
 } from "@specweave-studio/contracts";
 import { HostProcessEnvironment, HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import * as DateTime from "effect/DateTime";
@@ -18,14 +19,21 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { parse } from "smol-toml";
+import { ServerConfig } from "../../config.ts";
 import {
-  addClaudeServer,
-  appendCodexServer,
   codexPluginProvides,
-  enableCodexServer,
-  parseNativeConfig,
   portableDeclaration,
+  toolDeclaration,
 } from "./NativeConnectionEdit.ts";
+import {
+  EDITABLE_TOOLS,
+  type FileState,
+  backupText,
+  parkedFrom,
+  parkedId,
+  plan,
+  type PlannedFile,
+} from "./NativeConnectionManage.ts";
 
 /** Config locations belong to the execution host, never to browser input. */
 export class NativeConnectionPaths extends Context.Service<
@@ -34,8 +42,12 @@ export class NativeConnectionPaths extends Context.Service<
     readonly codexHome: string;
     readonly claudeFile: string;
     readonly claudeSettings: string;
-    /** Other AI tools' user files, listed read-only. */
+    /** Other AI tools' user files. */
     readonly otherTools: ReadonlyArray<OtherToolFile>;
+    /** SpecWithCode's state folder: turned-off entries and change backups. Absent, edits keep no backup. */
+    readonly stateDir?: string;
+    /** Shown as `~` in change previews. */
+    readonly home?: string;
   }
 >()("studio/connections/NativeConnectionPaths") {}
 export class NativeConnectionDiscovery extends Context.Service<
@@ -55,6 +67,8 @@ const isObject = (v: unknown): v is ObjectValue =>
 const object = (v: unknown): ObjectValue => (isObject(v) ? v : {});
 const MAX_BYTES = 2 * 1024 * 1024;
 const MAX_ENTRIES = 200;
+const MAX_BACKUPS = 20;
+const PARKED_FILE = NodePath.join("connections", "parked.json");
 const digest = (name: string) =>
   NodeCrypto.createHash("sha256").update(name).digest("hex").slice(0, 24);
 const safeName = (name: string) =>
@@ -215,9 +229,47 @@ export function pluginLabel(key: string, manifest: ObjectValue): string {
 }
 
 type Source = NativeConnectionsSnapshot["sources"][number];
+type ConfigRecord = { readonly path: string; readonly mode: number; readonly text: string } | null;
 const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const paths = yield* NativeConnectionPaths;
+  type Status = Source["status"];
+  // Open regular files only, cap reads even if the file grows after stat, close every handle.
+  const bounded = (path: string, toml = false) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const none = (status: Status) => ({ status, data: {} as ObjectValue });
+        const info = yield* fs.stat(path);
+        if (info.type !== "File") return none("unreadable");
+        if (Number(info.size) > MAX_BYTES) return none("too_large");
+        const handle = yield* fs.open(path, { flag: "r" });
+        const chunks: Uint8Array[] = [];
+        let length = 0;
+        while (length <= MAX_BYTES) {
+          const part = yield* handle.readAlloc(Math.min(65536, MAX_BYTES + 1 - length));
+          if (Option.isNone(part) || part.value.length === 0) break;
+          length += part.value.length;
+          chunks.push(part.value);
+        }
+        if (length > MAX_BYTES) return none("too_large");
+        let data: unknown;
+        try {
+          const text = Buffer.concat(chunks).toString("utf8");
+          data = toml ? parse(text) : JSON.parse(text);
+        } catch {
+          return none("invalid");
+        }
+        if (!isObject(data)) return none("invalid");
+        return { status: "read" as Status, data };
+      }),
+    ).pipe(
+      Effect.catch((error) =>
+        Effect.succeed({
+          status: (error.reason._tag === "NotFound" ? "missing" : "unreadable") as Status,
+          data: {} as ObjectValue,
+        }),
+      ),
+    );
   const read = (workspaceRoot?: string) =>
     Effect.gen(function* () {
       const sources: Source[] = [];
@@ -225,43 +277,6 @@ const make = Effect.gen(function* () {
         { -readonly [K in keyof NativeConnection]: NativeConnection[K] } & { key: string }
       > = [];
       let truncated = false;
-      type Status = Source["status"];
-      // Open regular files only, cap reads even if the file grows after stat, close every handle.
-      const bounded = (path: string, toml = false) =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            const none = (status: Status) => ({ status, data: {} as ObjectValue });
-            const info = yield* fs.stat(path);
-            if (info.type !== "File") return none("unreadable");
-            if (Number(info.size) > MAX_BYTES) return none("too_large");
-            const handle = yield* fs.open(path, { flag: "r" });
-            const chunks: Uint8Array[] = [];
-            let length = 0;
-            while (length <= MAX_BYTES) {
-              const part = yield* handle.readAlloc(Math.min(65536, MAX_BYTES + 1 - length));
-              if (Option.isNone(part) || part.value.length === 0) break;
-              length += part.value.length;
-              chunks.push(part.value);
-            }
-            if (length > MAX_BYTES) return none("too_large");
-            let data: unknown;
-            try {
-              const text = Buffer.concat(chunks).toString("utf8");
-              data = toml ? parse(text) : JSON.parse(text);
-            } catch {
-              return none("invalid");
-            }
-            if (!isObject(data)) return none("invalid");
-            return { status: "read" as Status, data };
-          }),
-        ).pipe(
-          Effect.catch((error) =>
-            Effect.succeed({
-              status: (error.reason._tag === "NotFound" ? "missing" : "unreadable") as Status,
-              data: {} as ObjectValue,
-            }),
-          ),
-        );
       const file = (
         path: string,
         id: string,
@@ -354,6 +369,20 @@ const make = Effect.gen(function* () {
       const userCodex = add(codex.mcp_servers, "codex", "codex-user", "user", {}, codex);
       const claude = yield* file(paths.claudeFile, "claude-user", "claude", "user");
       add(claude.mcpServers, "claude", "claude-user", "user");
+      // Entries SpecWithCode turned off in tools without an off switch.
+      const parked =
+        paths.stateDir === undefined
+          ? []
+          : parkedFrom((yield* bounded(NodePath.join(paths.stateDir, PARKED_FILE))).data);
+      for (const entry of parked.filter((e) => e.tool === "claude")) {
+        const before = entries.length;
+        add({ [entry.name]: entry.value }, "claude", "claude-user", "user");
+        for (const added of entries.slice(before)) {
+          added.id = parkedId("claude", digest(entry.name));
+          added.state = added.state === "invalid" ? "invalid" : "disabled";
+          added.parked = true;
+        }
+      }
       let claudeSettings: ObjectValue[] = [];
       if (workspaceRoot) {
         const projectCodex = yield* file(
@@ -456,6 +485,7 @@ const make = Effect.gen(function* () {
       }
       // Plugin bundles declare servers their tool starts with the plugin.
       const pluginStatus: Record<"codex" | "claude", Status> = { codex: "read", claude: "read" };
+      const labels = new Map<string, string>();
       const worse = (provider: "codex" | "claude", status: Status) => {
         if (status !== "read" && status !== "missing") pluginStatus[provider] = status;
       };
@@ -469,6 +499,7 @@ const make = Effect.gen(function* () {
           const manifest = yield* bounded(manifestPath);
           worse(provider, manifest.status);
           const label = pluginLabel(key, manifest.data);
+          labels.set(`${provider}:${key}`, label);
           const origin = { plugin: label, pluginKey: key };
           const sourceId = `${provider}-plugins`;
           const reference = pluginMcpReference(root, manifest.data);
@@ -557,6 +588,36 @@ const make = Effect.gen(function* () {
           install.path,
           NodePath.join(install.path, ".claude-plugin", "plugin.json"),
         );
+      const flags: ObjectValue = Object.assign(
+        {},
+        ...claudeSettings.map((s) => object(s.enabledPlugins)),
+      );
+      const plugins: NativePlugin[] = [
+        ...Object.entries(object(codex.plugins))
+          .filter(([, value]) => isObject(value))
+          .map(([key, value]) => ({
+            provider: "codex" as const,
+            key,
+            enabled: object(value).enabled === true,
+          })),
+        ...Object.keys(object(index.data.plugins)).map((key) => ({
+          provider: "claude" as const,
+          key,
+          enabled: flags[key] === true,
+          // The toggle writes user settings; a project or local flag would win over it.
+          ...(claudeSettings
+            .slice(1)
+            .some((settings) => Object.hasOwn(object(settings.enabledPlugins), key))
+            ? { overridden: true }
+            : {}),
+        })),
+      ]
+        .slice(0, MAX_ENTRIES)
+        .map((p) => ({
+          ...p,
+          key: p.key.slice(0, 200),
+          label: labels.get(`${p.provider}:${p.key}`) ?? pluginLabel(p.key, {}),
+        }));
       sources.push(
         { id: "codex-plugins", provider: "codex", scope: "user", status: pluginStatus.codex },
         { id: "claude-plugins", provider: "claude", scope: "user", status: pluginStatus.claude },
@@ -570,22 +631,49 @@ const make = Effect.gen(function* () {
         otherTools.push({
           tool,
           status: config.status,
-          connections: names.slice(0, MAX_ENTRIES).map((name) => ({
-            id: `${tool}:${digest(name)}`,
-            name: safeName(name),
-            ...otherToolDeclaration(servers[name]),
-          })),
+          connections: [
+            ...names.slice(0, MAX_ENTRIES).map((name) => ({
+              id: `${tool}:${digest(name)}`,
+              name: safeName(name),
+              ...otherToolDeclaration(servers[name]),
+              ...(toolDeclaration(tool, servers[name]) !== null ? { portable: true } : {}),
+            })),
+            ...parked
+              .filter((e) => e.tool === tool)
+              .map((e) => {
+                const declared = otherToolDeclaration(e.value);
+                return {
+                  id: parkedId(tool, digest(e.name)),
+                  name: safeName(e.name),
+                  transport: declared.transport,
+                  state:
+                    declared.state === "invalid" ? ("invalid" as const) : ("disabled" as const),
+                  parked: true,
+                };
+              }),
+          ],
         });
       }
       // Last declaration wins within each client. Codex project tables inherit unspecified fields.
       // Plugin servers and other projects' declarations run beside the user's, never instead.
       const seen = new Set<string>();
       for (const entry of entries.toReversed()) {
-        if (entry.plugin !== undefined || entry.project !== undefined) continue;
+        if (entry.plugin !== undefined || entry.project !== undefined || entry.parked) continue;
         const key = `${entry.provider}:${entry.key}`;
         entry.shadowed = seen.has(key);
         seen.add(key);
       }
+      // A kept copy never stands in for a declaration the tool still runs.
+      for (const entry of entries)
+        if (entry.parked)
+          entry.shadowed = entries.some(
+            (e) =>
+              !e.parked &&
+              e.plugin === undefined &&
+              e.project === undefined &&
+              e.provider === entry.provider &&
+              e.key === entry.key,
+          );
       return {
         observedAt: DateTime.formatIso(yield* DateTime.now),
         sources,
@@ -593,6 +681,7 @@ const make = Effect.gen(function* () {
         truncated,
         runtime: "unverified" as const,
         otherTools,
+        plugins,
       };
     });
   const failure = (code: NativeConnectionsError["code"]) => new NativeConnectionsError({ code });
@@ -623,45 +712,183 @@ const make = Effect.gen(function* () {
         Effect.mapError(() => failure("write_failed")),
       );
     });
+  const display = (path: string) =>
+    paths.home && (path === paths.home || path.startsWith(`${paths.home}${NodePath.sep}`))
+      ? `~${path.slice(paths.home.length)}`
+      : path;
+  /** A file as the planner sees it; one that is too large or unreadable blocks only edits to it. */
+  const state = (path: string) =>
+    Effect.gen(function* () {
+      const read = yield* Effect.result(readConfig(path));
+      const creatable = yield* fs
+        .exists(NodePath.dirname(path))
+        .pipe(Effect.orElseSucceed(() => false));
+      if (read._tag === "Failure")
+        return {
+          record: null,
+          file: { path, text: null, creatable: false, unreadable: true } as FileState,
+        };
+      const current = read.success;
+      return {
+        record: current,
+        file: { path, text: current?.text ?? null, creatable } as FileState,
+      };
+    });
+  const backupsDir = () => NodePath.join(paths.stateDir!, "connections", "backups");
+  const ensureDir = (path: string) =>
+    fs
+      .makeDirectory(path, { recursive: true, mode: 0o700 })
+      .pipe(Effect.mapError(() => failure("write_failed")));
+  /** Write each planned file in order; on a failure put back the ones already written. */
+  const writeAll = (
+    planned: ReadonlyArray<PlannedFile>,
+    records: ReadonlyMap<string, ConfigRecord>,
+  ) =>
+    Effect.gen(function* () {
+      const written: PlannedFile[] = [];
+      for (const change of planned) {
+        if (paths.stateDir && change.path.startsWith(paths.stateDir))
+          yield* ensureDir(NodePath.dirname(change.path));
+        const result = yield* Effect.result(
+          writeConfig(change.path, records.get(change.path) ?? null, change.after),
+        );
+        if (result._tag === "Failure") {
+          for (const done of written.toReversed())
+            yield* restore(done.path, done.after, done.before).pipe(Effect.ignore);
+          return yield* result.failure;
+        }
+        written.push(change);
+      }
+    });
+  /** Put `before` back (deleting a file the change created) if the file still reads `after`. */
+  const restore = (path: string, after: string, before: string | null) =>
+    Effect.gen(function* () {
+      const current = yield* readConfig(path);
+      if ((current?.text ?? null) !== after) return yield* failure("undo_unavailable");
+      if (before === null)
+        return yield* fs.remove(current!.path).pipe(Effect.mapError(() => failure("write_failed")));
+      yield* writeConfig(path, current, before);
+    });
+  /** Write `after` again if the file still reads `before` (absent when null). */
+  const reapply = (path: string, before: string | null, after: string) =>
+    Effect.gen(function* () {
+      const current = yield* readConfig(path);
+      if ((current?.text ?? null) !== before) return yield* failure("changed");
+      yield* writeConfig(path, current, after);
+    });
+  const undo = (changeId: string) =>
+    Effect.gen(function* () {
+      if (!paths.stateDir || !/^\d{13}-[0-9a-f]{8}$/.test(changeId))
+        return yield* failure("undo_unavailable");
+      const backupPath = NodePath.join(backupsDir(), `${changeId}.json`);
+      const backup = yield* bounded(backupPath);
+      const files = Array.isArray(backup.data.files) ? backup.data.files.filter(isObject) : [];
+      if (backup.status !== "read" || files.length === 0) return yield* failure("undo_unavailable");
+      const changes = files.flatMap((f) =>
+        typeof f.path === "string" &&
+        typeof f.after === "string" &&
+        (f.before === null || typeof f.before === "string")
+          ? [{ path: f.path, after: f.after, before: f.before as string | null, label: f.label }]
+          : [],
+      );
+      // All or nothing: every file must still read what the change wrote.
+      for (const change of changes) {
+        const current = yield* readConfig(change.path);
+        if ((current?.text ?? null) !== change.after) return yield* failure("undo_unavailable");
+      }
+      // Reverse order restores the file that adds a server back before the one that drops it.
+      const restored: typeof changes = [];
+      for (const change of changes.toReversed()) {
+        const result = yield* Effect.result(restore(change.path, change.after, change.before));
+        if (result._tag === "Failure") {
+          // Re-apply the change to the files already restored, so no server is left in neither.
+          for (const done of restored.toReversed())
+            yield* reapply(done.path, done.before, done.after).pipe(Effect.ignore);
+          return yield* failure("undo_unavailable");
+        }
+        restored.push(change);
+      }
+      yield* fs.remove(backupPath).pipe(Effect.ignore);
+      return {
+        ...(yield* read()),
+        change: {
+          preview: false,
+          files: changes.map((c) => ({
+            tool: typeof c.label === "string" ? c.label : "",
+            path: display(c.path),
+            lines: ["Restored as it was before the change"],
+          })),
+        },
+      };
+    });
   const apply = (input: NativeConnectionApplyInput) =>
     Effect.gen(function* () {
-      const [provider, sourceId, hash] = input.connectionId.split(":");
-      if (
-        (provider !== "codex" && provider !== "claude") ||
-        sourceId !== `${provider}-user` ||
-        !hash
-      )
-        return yield* failure("not_found");
+      if (input.action === "undo") return yield* undo(input.changeId ?? "");
       const codexPath = NodePath.join(paths.codexHome, "config.toml");
-      const sourcePath = provider === "codex" ? codexPath : paths.claudeFile;
-      const source = yield* readConfig(sourcePath);
-      if (source === null) return yield* failure("not_found");
-      const parsed = parseNativeConfig(provider, source.text);
-      if (parsed === null) return yield* failure("write_failed");
-      const servers = object(provider === "codex" ? parsed.mcp_servers : parsed.mcpServers);
-      const key = Object.keys(servers).find((name) => digest(name) === hash);
-      if (key === undefined) return yield* failure("not_found");
-      if (input.action === "enable") {
-        if (provider !== "codex") return yield* failure("not_portable");
-        const next = enableCodexServer(source.text, key);
-        if (next === null) return yield* failure("write_failed");
-        yield* writeConfig(sourcePath, source, next);
-        return yield* read();
+      const records = new Map<string, ConfigRecord>();
+      const tools: Partial<Record<(typeof EDITABLE_TOOLS)[number], FileState>> = {};
+      const toolPaths = [
+        ["codex", codexPath],
+        ["claude", paths.claudeFile],
+        ...paths.otherTools.map((t) => [t.tool, t.path] as const),
+      ] as const;
+      for (const [tool, path] of toolPaths) {
+        const { record, file } = yield* state(path);
+        records.set(path, record);
+        tools[tool] = file;
       }
-      const declaration = portableDeclaration(provider, servers[key]);
-      if (declaration === null) return yield* failure("not_portable");
-      const targetPath = provider === "codex" ? paths.claudeFile : codexPath;
-      const target = yield* readConfig(targetPath);
-      const targetText = target?.text ?? (provider === "codex" ? "{}" : "");
-      if (parseNativeConfig(provider === "codex" ? "claude" : "codex", targetText) === null)
-        return yield* failure("write_failed");
-      const next =
-        provider === "codex"
-          ? addClaudeServer(targetText, key, declaration)
-          : appendCodexServer(targetText, key, declaration);
-      if (next === null) return yield* failure("exists");
-      yield* writeConfig(targetPath, target, next);
-      return yield* read();
+      const settings = yield* state(paths.claudeSettings);
+      records.set(paths.claudeSettings, settings.record);
+      let parked: FileState | null = null;
+      if (paths.stateDir) {
+        const parkedPath = NodePath.join(paths.stateDir, PARKED_FILE);
+        const current = yield* state(parkedPath);
+        records.set(parkedPath, current.record);
+        parked = { ...current.file, creatable: true };
+      }
+      if (input.action === "plugin") {
+        const known = (yield* read()).plugins ?? [];
+        const plugin = known.find(
+          (p) => p.provider === input.provider && p.key === input.pluginKey,
+        );
+        if (!plugin) return yield* failure("not_found");
+        if (plugin.overridden) return yield* failure("unsupported");
+      }
+      const planned = plan(input, { tools, claudeSettings: settings.file, parked, digest });
+      if ("error" in planned) return yield* failure(planned.error);
+      const summary = planned.files.map((f) => ({
+        tool: f.label,
+        path: display(f.path),
+        lines: [...f.lines],
+      }));
+      if (input.preview) return { ...(yield* read()), change: { preview: true, files: summary } };
+      let id: string | undefined;
+      if (paths.stateDir) {
+        // The backup holds the full texts, secrets included, so it stays owner-only.
+        const millis = DateTime.toEpochMillis(yield* DateTime.now);
+        id = `${String(millis).padStart(13, "0")}-${NodeCrypto.randomUUID().slice(0, 8)}`;
+        yield* ensureDir(backupsDir());
+        yield* fs
+          .writeFileString(
+            NodePath.join(backupsDir(), `${id}.json`),
+            backupText(
+              planned.files.map((f) => ({ ...f, path: records.get(f.path)?.path ?? f.path })),
+            ),
+            { mode: 0o600 },
+          )
+          .pipe(Effect.mapError(() => failure("write_failed")));
+        const old = yield* fs.readDirectory(backupsDir()).pipe(Effect.orElseSucceed(() => []));
+        for (const name of old
+          .filter((n) => /^\d{13}-[0-9a-f]{8}\.json$/.test(n))
+          .toSorted()
+          .slice(0, -MAX_BACKUPS))
+          yield* fs.remove(NodePath.join(backupsDir(), name)).pipe(Effect.ignore);
+      }
+      yield* writeAll(planned.files, records);
+      return {
+        ...(yield* read()),
+        change: { ...(id ? { id } : {}), preview: false, files: summary },
+      };
     });
   return NativeConnectionDiscovery.of({ read, apply });
 });
@@ -673,6 +900,8 @@ export const layerHost = layer.pipe(
       NativeConnectionPaths,
       Effect.gen(function* () {
         const environment = yield* HostProcessEnvironment;
+        // Absent in tests that build the host layer alone; edits then keep no backup.
+        const config = yield* Effect.serviceOption(ServerConfig);
         const platform = yield* HostProcessPlatform;
         const home = NodeOS.homedir();
         const claudeDirectory = environment.CLAUDE_CONFIG_DIR?.trim();
@@ -688,6 +917,8 @@ export const layerHost = layer.pipe(
             "settings.json",
           ),
           otherTools: otherToolFiles(home, platform, environment),
+          ...(Option.isSome(config) ? { stateDir: config.value.stateDir } : {}),
+          home,
         };
       }),
     ),

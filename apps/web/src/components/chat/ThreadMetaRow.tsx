@@ -10,6 +10,7 @@
  * pull requests show, the rest wait behind "+N", newest first.
  */
 import type { ThreadPullRequestLink } from "@specweave-studio/contracts";
+import type { RunAwaitingPerson } from "@specweave-studio/shared/orchestrationV2PendingBackgroundWork";
 import { BotIcon, FolderOpenIcon, TimerIcon } from "lucide-react";
 import { memo, useState, type ComponentType, type ReactNode } from "react";
 
@@ -129,20 +130,46 @@ function MetaChip(props: {
   );
 }
 
-/** How long the latest turn ran, live while it runs. */
-function RunDurationChip({ run }: { run: ThreadMetaRun & { readonly startedAt: string } }) {
+const AWAITING_PERSON_TIPS: Record<RunAwaitingPerson, string> = {
+  approval: "your approval",
+  answer: "your answer",
+  "sign-in": "your sign-in",
+};
+
+/**
+ * How long the latest turn ran, live while it runs. A turn blocked on the
+ * person reads "Waiting on you", in the waiting tone, not "Running".
+ */
+function RunDurationChip({
+  run,
+  awaitingPerson,
+}: {
+  run: ThreadMetaRun & { readonly startedAt: string };
+  awaitingPerson: RunAwaitingPerson | null;
+}) {
   const nowMinute = useNowMinute();
   const running = run.completedAt === null;
   const end = running ? nowMinuteMs(nowMinute) : Date.parse(run.completedAt!);
   const duration = formatRunDuration(end - Date.parse(run.startedAt));
+  const waiting = running && awaitingPerson !== null;
   return (
     <MetaChip
       meta="duration"
       icon={TimerIcon}
-      tip={running ? `The current turn has run for ${duration}.` : `The last turn ran ${duration}.`}
+      {...(waiting ? { iconClassName: "text-warning-foreground" } : {})}
+      tip={
+        waiting
+          ? `The current turn has run for ${duration} and waits on ${AWAITING_PERSON_TIPS[awaitingPerson]}.`
+          : running
+            ? `The current turn has run for ${duration}.`
+            : `The last turn ran ${duration}.`
+      }
     >
-      <span className="shrink-0 tabular-nums" data-run-state={running ? "running" : "done"}>
-        {running ? `Running ${duration}` : `Ran ${duration}`}
+      <span
+        className={cn("shrink-0 tabular-nums", waiting && "font-medium text-warning-foreground")}
+        data-run-state={waiting ? "waiting" : running ? "running" : "done"}
+      >
+        {waiting ? `Waiting on you ${duration}` : running ? `Running ${duration}` : `Ran ${duration}`}
       </span>
     </MetaChip>
   );
@@ -152,6 +179,7 @@ export const ThreadMetaRow = memo(function ThreadMetaRow({
   origin,
   folder,
   run,
+  awaitingPerson = null,
   pullRequests,
   onOpenPullRequest,
 }: {
@@ -162,6 +190,8 @@ export const ThreadMetaRow = memo(function ThreadMetaRow({
     readonly onOpen?: (() => void) | undefined;
   } | null;
   run: ThreadMetaRun | null;
+  /** What the running turn waits on from the person, if anything. */
+  awaitingPerson?: RunAwaitingPerson | null;
   pullRequests: ReadonlyArray<ThreadPullRequestLink>;
   onOpenPullRequest: (url: string) => void;
 }) {
@@ -213,7 +243,7 @@ export const ThreadMetaRow = memo(function ThreadMetaRow({
           </span>
         </MetaChip>
       ) : null}
-      {startedRun ? <RunDurationChip run={startedRun} /> : null}
+      {startedRun ? <RunDurationChip run={startedRun} awaitingPerson={awaitingPerson} /> : null}
       {shown.map((link) => {
         const state = pullRequestPillState(link);
         const branch = link.snapshot?.headBranch ?? link.repository;

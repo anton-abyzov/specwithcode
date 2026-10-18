@@ -14010,6 +14010,11 @@ export default function ChatView(props: ChatViewProps) {
                       origin={threadOrigin}
                       folder={timelineWorkingFolder}
                       run={activeThreadShell?.latestRun ?? null}
+                      awaitingPerson={
+                        timelineRunHealth?.state === "waiting"
+                          ? (timelineRunHealth.awaitingPerson ?? null)
+                          : null
+                      }
                       pullRequests={threadPullRequests}
                       onOpenPullRequest={(url) => void openThreadLink(url).catch(() => undefined)}
                     />

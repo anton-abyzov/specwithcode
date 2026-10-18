@@ -9,7 +9,7 @@ import { useEffect } from "react";
 
 import { SelectedThreadShell } from "../../../state/selectedThreadShell";
 import {
-  SUBAGENT_STATUS_LABELS,
+  subagentEntryLabel,
   subagentStatusTone,
   type SubagentEntry,
 } from "../../../studio/threadSubagents";
@@ -66,10 +66,10 @@ export function SubagentPeek(props: {
             <span className="sws-subagent-kind">
               {entry?.origin === "app_owned" ? "Delegated task" : "Subagent"} of {props.parentTitle}
             </span>
-            {status ? (
+            {entry && status ? (
               <span className="sws-subagent-status" data-tone={tone}>
                 <span className="sws-dot" data-tone={tone} aria-hidden />
-                {SUBAGENT_STATUS_LABELS[status]}
+                {subagentEntryLabel(entry)}
               </span>
             ) : null}
             <ModelBadge

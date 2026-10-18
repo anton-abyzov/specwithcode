@@ -382,6 +382,53 @@ describe("MachineHandoff", () => {
       expect(h.projects.get(result.projectId)?.workspaceSettings?.workerMachine).toBeNull();
     }).pipe(Effect.provide(h.layer));
   });
+  it.effect("carries a Full access coordinator's access to the destination project", () => {
+    // One harness plays both machines: this machine's own default is approval-required.
+    const h = makeHarness({
+      coordinatorRuntimeMode: "full-access",
+      defaultRuntimeMode: "approval-required",
+    });
+    return Effect.gen(function* () {
+      const service = yield* MachineHandoff.MachineHandoff;
+      const prepared = yield* service.prepare(preview);
+      expect(prepared.bundle.context.runtimeMode).toBe("full-access");
+      const bundle = imported(prepared.bundle);
+      const result = yield* service.receive({ projectId, operationId: id, bundle, mode: "start" });
+      const settings = yield* (yield* ServerSettings.ServerSettingsService).getSettings;
+      expect(settings.defaultRuntimeMode).toBe("approval-required");
+      // The coordinator starts on the project's saved mode, so it continues on Full access.
+      expect(settings.projectSettingsOverrides[result.projectId]?.defaultRuntimeMode).toBe(
+        "full-access",
+      );
+      expect(h.state.starts).toHaveLength(1);
+    }).pipe(Effect.provide(h.layer));
+  });
+  it.effect("uses the source project's saved mode when no coordinator mode is known", () => {
+    const h = makeHarness({ defaultRuntimeMode: "auto" });
+    return Effect.gen(function* () {
+      const service = yield* MachineHandoff.MachineHandoff;
+      const prepared = yield* service.prepare(preview);
+      expect(prepared.bundle.context.runtimeMode).toBe("auto");
+    }).pipe(Effect.provide(h.layer));
+  });
+  it.effect("keeps the destination's own default for a bundle without a mode", () => {
+    const h = makeHarness({
+      coordinatorRuntimeMode: "full-access",
+      defaultRuntimeMode: "approval-required",
+    });
+    return Effect.gen(function* () {
+      const service = yield* MachineHandoff.MachineHandoff;
+      const prepared = yield* service.prepare(preview);
+      const { runtimeMode: _runtimeMode, ...olderContext } = prepared.bundle.context;
+      const bundle = imported({ ...prepared.bundle, context: olderContext });
+      expect(bundle.context.runtimeMode).toBeUndefined();
+      const result = yield* service.receive({ projectId, operationId: id, bundle, mode: "start" });
+      const settings = yield* (yield* ServerSettings.ServerSettingsService).getSettings;
+      expect(settings.projectSettingsOverrides[result.projectId]?.defaultRuntimeMode).toBe(
+        "approval-required",
+      );
+    }).pipe(Effect.provide(h.layer));
+  });
   it.effect.each(["/source/project", "/source/project/nested", "/source"])(
     "refuses another active owner at %s",
     (busyRoot) => {

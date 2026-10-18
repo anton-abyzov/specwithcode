@@ -411,6 +411,102 @@ describe("native shells and explicit instance selection", () => {
     expect(tests?.attention).toBeNull();
     expect(tests?.state).toBe("Waiting on pnpm test · 12m");
   });
+  it("lists a run as stalled only after half an hour with nothing in flight", () => {
+    const now = Date.parse("2026-10-15T12:00:00.000Z");
+    const running = { status: "running" } as EnvironmentThreadShell["runtime"];
+    const views = deriveSessions(
+      [
+        shell({
+          id: "quiet" as never,
+          runtime: running,
+          updatedAt: "2026-10-15T11:25:00.000Z",
+          activeWork: null,
+        }),
+        // Quiet past the classifier's ten minutes, but not yet half an hour.
+        shell({
+          id: "briefly-quiet" as never,
+          runtime: running,
+          updatedAt: "2026-10-15T11:45:00.000Z",
+          activeWork: null,
+        }),
+        shell({
+          id: "quiet-build" as never,
+          runtime: running,
+          updatedAt: "2026-10-15T11:00:00.000Z",
+          activeWork: { label: "pnpm build", startedAt: "2026-10-15T10:55:00.000Z" },
+        }),
+        shell({
+          id: "waits-on-worker" as never,
+          runtime: running,
+          updatedAt: "2026-10-15T09:00:00.000Z",
+          activeWork: {
+            label: "another thread",
+            startedAt: "2026-10-15T09:00:00.000Z",
+            waitThreadId: "worker",
+          },
+        }),
+      ],
+      [],
+      new Set(["host"]),
+      now,
+    );
+    const byId = (id: string) => views.find((s) => s.thread.id === id);
+    expect(byId("quiet")).toMatchObject({ attention: "stalled", state: "No activity for 35m" });
+    expect(byId("briefly-quiet")?.attention).toBeNull();
+    // Its own command keeps the long-command allowance.
+    expect(byId("quiet-build")).toMatchObject({
+      attention: null,
+      state: "Waiting on pnpm build · 1h 5m",
+    });
+    // Another thread's work is that thread's progress, not this one stalling.
+    expect(byId("waits-on-worker")?.attention).toBeNull();
+  });
+  it("lists a worker held for hours on a request as waiting on you, never as stalled", () => {
+    const now = Date.parse("2026-10-15T12:00:00.000Z");
+    const running = { status: "running" } as EnvironmentThreadShell["runtime"];
+    const asked = "2026-10-14T21:00:00.000Z";
+    const views = deriveSessions(
+      [
+        // A worker the project coordinator started, quiet 15 hours on a command approval.
+        shell({
+          id: "worker" as never,
+          runtime: running,
+          updatedAt: asked,
+          hasPendingApprovals: true,
+          activeWork: { label: "pnpm install", startedAt: asked },
+          lineage: {
+            rootThreadId: "worker",
+            parentThreadId: "coordinator",
+            relationshipToParent: "subagent",
+          } as EnvironmentThreadShell["lineage"],
+        }),
+        shell({
+          id: "question" as never,
+          runtime: running,
+          updatedAt: asked,
+          hasPendingUserInput: true,
+          activeWork: null,
+        }),
+        shell({
+          id: "sign-in" as never,
+          runtime: running,
+          updatedAt: asked,
+          activeWork: null,
+          source: {
+            pendingRuntimeRequest: { id: "request", kind: "auth_refresh", createdAt: asked },
+          } as never,
+        }),
+      ],
+      [],
+      new Set(["host"]),
+      now,
+    );
+    const byId = (id: string) => views.find((s) => s.thread.id === id);
+    expect(byId("worker")).toMatchObject({ attention: "approval", state: "Approval requested" });
+    expect(byId("question")).toMatchObject({ attention: "input", state: "Answer needed" });
+    expect(byId("sign-in")).toMatchObject({ attention: "signin", state: "Sign-in needed" });
+    expect(views.slice(0, 3).map((s) => s.attention)).not.toContain("stalled");
+  });
   it("keeps the time a limited run stopped when the service restart bumps the thread", () => {
     const limited = shell({
       updatedAt: recent,

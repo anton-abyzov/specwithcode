@@ -5,6 +5,7 @@ import type {
   NativeConnectionsSnapshot,
   NativeOtherTool,
   NativeOtherToolInventory,
+  NativeTool,
 } from "@specweave-studio/contracts";
 import { Button } from "../ui/button";
 import "./connections.css";
@@ -42,6 +43,11 @@ const otherToolFiles: Record<NativeOtherTool, string> = {
   opencode: "opencode.json",
   windsurf: "mcp_config.json",
 };
+export const toolLabels: Record<NativeTool, string> = {
+  codex: "Codex",
+  claude: "Claude Code",
+  ...otherToolNames,
+};
 const toolName = (provider: Provider) => (provider === "codex" ? "Codex" : "Claude Code");
 const sourceName = (id: string) => sourceNames[id] ?? "Native configuration";
 const stateName = {
@@ -65,7 +71,10 @@ export function ConnectionMatrix({
   onApply,
   pendingId = null,
   computerUseNote,
+  manage = true,
 }: {
+  /** The machine supports the full edit set; an older one only enables and copies. */
+  manage?: boolean;
   snapshot: NativeConnectionsSnapshot;
   project?: boolean;
   /**
@@ -95,6 +104,9 @@ export function ConnectionMatrix({
     .map((group) => ({ ...group, names: names.filter((name) => groupOf(name) === group.id) }))
     .filter((group) => group.names.length > 0);
   const selected = snapshot.connections.find((c) => c.id === selectedId);
+  const selectedOther = others
+    .flatMap((t) => t.connections.map((c) => ({ ...c, tool: t.tool })))
+    .find((c) => c.id === selectedId);
   const issues = snapshot.sources.filter((s) => s.status !== "read" && s.status !== "missing");
   const otherIssues = others.filter((t) => t.status !== "read");
   const counts = [
@@ -187,13 +199,22 @@ export function ConnectionMatrix({
         </div>
       );
     }
+    const isSelected = selectedId === found.id;
     return (
       <div className="connection-cell" data-tone={found.state}>
-        <span className="connection-status">
+        <button
+          type="button"
+          className="connection-status connection-status-button"
+          aria-label={`${name} ${otherToolNames[inventory.tool]} details`}
+          aria-pressed={isSelected}
+          onClick={() => setSelectedId(isSelected ? null : found.id)}
+        >
           <span aria-hidden className="connection-dot" />
           {stateName[found.state]}
-        </span>
-        <div className="connection-meta">User · {found.transport}</div>
+        </button>
+        <div className="connection-meta">
+          {found.parked ? "Kept aside by SpecWithCode" : "User"} · {found.transport}
+        </div>
       </div>
     );
   }
@@ -229,6 +250,8 @@ export function ConnectionMatrix({
           Codex runs this through its {connection.name} plugin, so this older entry can stay off.
         </p>
       );
+    if (connection.parked)
+      return actionButton(connection, { action: "enable", connectionId: connection.id }, "Turn on");
     if (connection.provider === "claude")
       return <p className="text-xs text-muted-foreground">Turn it on with /mcp in Claude Code.</p>;
     if (connection.scope !== "user")
@@ -251,6 +274,72 @@ export function ConnectionMatrix({
       source,
       { action: "copy", connectionId: source.id },
       `Add to ${toolName(provider)}`,
+    );
+  }
+  /** Edits for one declaration in a user file: off or on, remove, copy to every tool. */
+  function manageActions(entry: {
+    readonly id: string;
+    readonly name: string;
+    readonly state: NativeConnection["state"];
+    readonly parked?: boolean;
+    readonly portable?: boolean;
+    readonly native: boolean;
+  }) {
+    if (!onApply || !manage) return null;
+    const button = (input: NativeConnectionApplyInput, label: string) => (
+      <Button
+        key={label}
+        variant="outline"
+        size="xs"
+        disabled={pendingId !== null}
+        aria-label={`${label}: ${entry.name}`}
+        onClick={() => onApply(input)}
+      >
+        {pendingId === entry.id ? "Checking…" : label}
+      </Button>
+    );
+    const id = entry.id;
+    return (
+      <div className="flex flex-wrap gap-2" data-testid="connection-actions">
+        {entry.state === "configured"
+          ? button({ action: "disable", connectionId: id }, "Turn off")
+          : entry.state === "disabled" && (entry.parked || entry.native)
+            ? button({ action: "enable", connectionId: id }, "Turn on")
+            : null}
+        {entry.state === "configured" && entry.portable
+          ? button({ action: "copyAll", connectionId: id }, "Add to all tools")
+          : null}
+        {button({ action: "remove", connectionId: id }, "Remove")}
+      </div>
+    );
+  }
+  const plugins = snapshot.plugins ?? [];
+  const selectedPlugin =
+    selected?.plugin !== undefined
+      ? plugins.find((p) => p.provider === selected.provider && p.label === selected.plugin)
+      : undefined;
+  function pluginButton(plugin: (typeof plugins)[number]) {
+    if (!onApply || !manage) return null;
+    if (plugin.overridden)
+      return <span className="text-xs text-muted-foreground">Set by this project's settings</span>;
+    const label = plugin.enabled ? "Turn off plugin" : "Turn on plugin";
+    return (
+      <Button
+        variant="outline"
+        size="xs"
+        disabled={pendingId !== null}
+        aria-label={`${label}: ${plugin.label}`}
+        onClick={() =>
+          onApply({
+            action: "plugin",
+            provider: plugin.provider,
+            pluginKey: plugin.key,
+            enabled: !plugin.enabled,
+          })
+        }
+      >
+        {pendingId === plugin.key ? "Checking…" : label}
+      </Button>
     );
   }
   const alternatives = selected
@@ -393,11 +482,53 @@ export function ConnectionMatrix({
               </>
             )}
           </dl>
+          {own(selected) && selected.scope === "user"
+            ? manageActions({ ...selected, native: selected.provider === "codex" })
+            : selectedPlugin
+              ? pluginButton(selectedPlugin)
+              : null}
           <p className="text-xs text-muted-foreground">
             Project trust, account permissions and runtime policy may prevent use. SpecWithCode
             project grants apply only to SpecWithCode-managed calls.
           </p>
         </div>
+      )}
+      {selectedOther && !selected && (
+        <div aria-live="polite" className="space-y-2 rounded-lg border border-border p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="font-medium">
+              {selectedOther.name} · {otherToolNames[selectedOther.tool]}
+            </h3>
+            <Button variant="ghost" size="sm" onClick={() => setSelectedId(null)}>
+              Close details
+            </Button>
+          </div>
+          <p className="text-sm">
+            {selectedOther.parked
+              ? `Turned off: SpecWithCode keeps the entry until you turn it on again.`
+              : `Declared in ${otherToolFiles[selectedOther.tool]}.`}
+          </p>
+          {manageActions({ ...selectedOther, native: selectedOther.tool === "opencode" })}
+        </div>
+      )}
+      {plugins.length > 0 && (
+        <details className="text-sm" data-testid="connection-plugins">
+          <summary className="cursor-pointer">Plugins · {plugins.length}</summary>
+          <ul className="mt-2 space-y-2">
+            {plugins.map((plugin) => (
+              <li
+                key={`${plugin.provider}:${plugin.key}`}
+                className="flex flex-wrap items-center gap-2"
+              >
+                <span className="font-medium">{plugin.label}</span>
+                <span className="text-xs text-muted-foreground">
+                  {toolName(plugin.provider)} · {plugin.enabled ? "On" : "Off"}
+                </span>
+                {pluginButton(plugin)}
+              </li>
+            ))}
+          </ul>
+        </details>
       )}
       <details className="text-xs text-muted-foreground">
         <summary className="cursor-pointer">Inspected sources and limits</summary>
@@ -417,14 +548,16 @@ export function ConnectionMatrix({
           {project
             ? "Only the registered project root is inspected. "
             : "Select a project to inspect its project files and overrides. "}
-          Plugins count only when enabled. Other tools are listed read-only. claude.ai connectors
-          and other account connectors live in your account rather than in files, so they are not
-          listed. Managed settings, ancestor configurations and alternate client profiles are not
-          inventoried. Matching names do not prove matching servers or accounts.
+          Plugins count only when enabled. Changes go to user files only, each previewed first and
+          backed up so it can be undone. claude.ai connectors and other account connectors live in
+          your account rather than in files, so they are not listed. Managed settings, ancestor
+          configurations and alternate client profiles are not inventoried. Matching names do not
+          prove matching servers or accounts.
         </p>
       </details>
       <p className="text-xs text-muted-foreground">
-        Scanned {new Date(snapshot.observedAt).toLocaleString()} · Read-only discovery
+        Scanned {new Date(snapshot.observedAt).toLocaleString()} · Tools pick up changes when they
+        next start
       </p>
     </div>
   );

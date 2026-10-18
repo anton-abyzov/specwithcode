@@ -35,6 +35,8 @@ import {
   OrchestrationV2Command,
   type OrchestrationV2InternalCommand,
   type OrchestrationV2ServerCommand,
+  type OrchestrationV2Actor,
+  type ProjectId,
   type ThreadPullRequestLink,
   type ThreadPullRequestWatch,
   type OrchestrationV2AppThread,
@@ -2260,10 +2262,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       "orchestration_v2.driver": command.modelSelection.instanceId,
     });
 
-    const runtimeMode = Option.isSome(serverSettings)
-      ? ((yield* serverSettings.value.getSettings.pipe(mapDispatchError(command)))
-          .projectSettingsOverrides[command.projectId]?.defaultRuntimeMode ?? command.runtimeMode)
-      : command.runtimeMode;
+    const runtimeMode = yield* creationRuntimeMode(
+      command,
+      command.projectId,
+      command.runtimeMode,
+    );
     yield* refuseAboveDispatchModeLimit(command, command.threadId, {
       runtimeMode,
       interactionMode: command.interactionMode,
@@ -3614,6 +3617,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  /**
+   * The mode a new chat starts in. An agent's command carries its caller's
+   * mode, already inherited and capped to that caller, so it is kept: a Full
+   * access coordinator's workers run on Full access even when the project's
+   * saved mode is lower. A person's draft or a system launch takes the
+   * project's saved mode, falling back to the command's own.
+   */
+  const creationRuntimeMode = Effect.fn("orchestrationV2.dispatch.creationRuntimeMode")(function* (
+    command: OrchestrationV2ServerCommand & { readonly createdBy: OrchestrationV2Actor },
+    projectId: ProjectId,
+    commandMode: RuntimeMode,
+  ) {
+    if (command.createdBy === "agent" || Option.isNone(serverSettings)) return commandMode;
+    const settings = yield* serverSettings.value.getSettings.pipe(mapDispatchError(command));
+    return settings.projectSettingsOverrides[projectId]?.defaultRuntimeMode ?? commandMode;
+  });
+
   const dispatchThreadFork = Effect.fn("orchestrationV2.dispatch.threadFork")(function* (
     command: Extract<OrchestrationV2Command, { readonly type: "thread.fork" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -3689,11 +3709,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       })
       .pipe(mapDispatchError(command));
 
-    const runtimeMode = Option.isSome(serverSettings)
-      ? ((yield* serverSettings.value.getSettings.pipe(mapDispatchError(command)))
-          .projectSettingsOverrides[targetThread.projectId]?.defaultRuntimeMode ??
-        targetThread.runtimeMode)
-      : targetThread.runtimeMode;
+    const runtimeMode = yield* creationRuntimeMode(
+      command,
+      targetThread.projectId,
+      targetThread.runtimeMode,
+    );
     yield* refuseAboveDispatchModeLimit(command, command.targetThreadId, {
       runtimeMode,
       interactionMode: targetThread.interactionMode,
@@ -6757,11 +6777,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.title === undefined ? {} : { title: command.title }),
         ordinal: parentProjection.subagents.length + 1,
       });
-      const runtimeMode = Option.isSome(serverSettings)
-        ? ((yield* serverSettings.value.getSettings.pipe(mapDispatchError(command)))
-            .projectSettingsOverrides[parentProjection.thread.projectId]?.defaultRuntimeMode ??
-          command.runtimeMode)
-        : command.runtimeMode;
+      const runtimeMode = yield* creationRuntimeMode(
+        command,
+        parentProjection.thread.projectId,
+        command.runtimeMode,
+      );
       yield* refuseAboveDispatchModeLimit(command, childThreadId, {
         runtimeMode,
         interactionMode: command.interactionMode,

@@ -395,6 +395,15 @@ export const RUN_STALL_IDLE_MS = 10 * 60_000;
 /** A turn waiting on a command may stay quiet much longer: test suites, builds. */
 export const RUN_STALL_WAITING_IDLE_MS = 2 * 60 * 60_000;
 
+/** What a turn stopped to ask the person: an approval, an answer or a sign-in. */
+export type RunAwaitingPerson = "approval" | "answer" | "sign-in";
+
+const AWAITING_PERSON_LABELS: Record<RunAwaitingPerson, string> = {
+  approval: "your approval",
+  answer: "your answer",
+  "sign-in": "your sign-in",
+};
+
 export type RunHealth =
   | { readonly state: "working"; readonly idleMs: number }
   | {
@@ -404,6 +413,8 @@ export type RunHealth =
       readonly waitingMs: number;
       /** Set when the wait is on another thread, which the UI links. */
       readonly waitThreadId?: string;
+      /** Set when the turn waits on the person, which no quiet period turns into a stall. */
+      readonly awaitingPerson?: RunAwaitingPerson;
     }
   | { readonly state: "stalled"; readonly idleMs: number; readonly label: string | null };
 
@@ -424,10 +435,29 @@ export function classifyRunHealth(input: {
    * `activeWork`): quiet then means as little as a long command would.
    */
   readonly activeWorkUnknown?: boolean;
+  /**
+   * Set while the turn is blocked on a request to the person. Its quiet is the
+   * person's, however long: never a stall. `sinceMs` is when it was asked.
+   */
+  readonly awaitingPerson?: {
+    readonly kind: RunAwaitingPerson;
+    readonly sinceMs: number;
+  } | null;
   readonly nowMs: number;
 }): RunHealth | null {
   if (!input.running) return null;
   const idleMs = Math.max(0, input.nowMs - input.lastActivityMs);
+  const awaiting = input.awaitingPerson ?? null;
+  if (awaiting !== null) {
+    const sinceMs = Number.isFinite(awaiting.sinceMs) ? awaiting.sinceMs : input.lastActivityMs;
+    return {
+      state: "waiting",
+      idleMs,
+      label: AWAITING_PERSON_LABELS[awaiting.kind],
+      waitingMs: Math.max(0, input.nowMs - sinceMs),
+      awaitingPerson: awaiting.kind,
+    };
+  }
   if (input.activeWork === null) {
     const limit = input.activeWorkUnknown === true ? RUN_STALL_WAITING_IDLE_MS : RUN_STALL_IDLE_MS;
     return idleMs >= limit ? { state: "stalled", idleMs, label: null } : { state: "working", idleMs };

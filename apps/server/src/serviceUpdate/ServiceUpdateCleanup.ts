@@ -16,6 +16,10 @@
  * Each write goes through the event sink, so projections, clients and the
  * terminal-run reactions see it like any other change.
  *
+ * Given `threadIds`, ending runs and cancelling requests touch only those
+ * threads: the stale-wait sweep in `ServiceUpdatePreparation` stops a thread that
+ * only waits on a person and leaves every other thread as it is.
+ *
  * @module ServiceUpdateCleanup
  */
 import {
@@ -73,18 +77,20 @@ export type ServiceUpdateCleanupError =
   | EffectOutbox.EffectOutboxError;
 
 export interface ServiceUpdateCleanupShape {
-  /** Ends runs still preparing, starting, running or waiting. */
+  /** Ends runs still preparing, starting, running or waiting (only in `threadIds`, when given). */
   readonly finalizeStuckRuns: (input: {
     readonly nonce: string;
     readonly reason: string;
+    readonly threadIds?: ReadonlyArray<string>;
   }) => Effect.Effect<
     { readonly interrupted: number; readonly completed: number },
     ServiceUpdateCleanupError
   >;
-  /** Cancels every runtime request still pending. Returns how many. */
+  /** Cancels every runtime request still pending (only in `threadIds`, when given). Returns how many. */
   readonly cancelPendingRequests: (input: {
     readonly nonce: string;
     readonly reason: string;
+    readonly threadIds?: ReadonlyArray<string>;
   }) => Effect.Effect<number, ServiceUpdateCleanupError>;
   /**
    * Questions still pending that were asked as a plain message: the orchestrator
@@ -109,9 +115,14 @@ export class ServiceUpdateCleanup extends Context.Service<
 
 const quoted = (values: ReadonlyArray<string>) => values.map((value) => `'${value}'`).join(", ");
 
-const groupByThread = <Row extends { readonly thread_id: string }>(rows: ReadonlyArray<Row>) => {
+const groupByThread = <Row extends { readonly thread_id: string }>(
+  rows: ReadonlyArray<Row>,
+  threadIds?: ReadonlyArray<string>,
+) => {
+  const only = threadIds === undefined ? null : new Set(threadIds);
   const grouped = new Map<string, Array<Row>>();
   for (const row of rows) {
+    if (only !== null && !only.has(row.thread_id)) continue;
     const existing = grouped.get(row.thread_id);
     if (existing === undefined) grouped.set(row.thread_id, [row]);
     else existing.push(row);
@@ -143,7 +154,11 @@ export const make = Effect.gen(function* () {
           eventSink.commitCommand({ ...input, acceptedAt, effects: [] }),
         ).pipe(Effect.asVoid);
 
-  const finalizeStuckRuns: ServiceUpdateCleanupShape["finalizeStuckRuns"] = ({ nonce, reason }) =>
+  const finalizeStuckRuns: ServiceUpdateCleanupShape["finalizeStuckRuns"] = ({
+    nonce,
+    reason,
+    threadIds,
+  }) =>
     Effect.gen(function* () {
       // A finished turn whose checkpoint is being written is left to finish it:
       // stopping the capture partway would leave its git work half done.
@@ -157,7 +172,7 @@ export const make = Effect.gen(function* () {
       `);
       let interrupted = 0;
       let completed = 0;
-      for (const [rawThreadId, threadRows] of groupByThread(rows)) {
+      for (const [rawThreadId, threadRows] of groupByThread(rows, threadIds)) {
         const threadId = ThreadId.make(rawThreadId);
         const commandId = CommandId.make(`service-update:${nonce}:finalize:${threadId}`);
         const records = yield* projections.getThreadRecords(
@@ -309,6 +324,7 @@ export const make = Effect.gen(function* () {
   const cancelPendingRequests: ServiceUpdateCleanupShape["cancelPendingRequests"] = ({
     nonce,
     reason,
+    threadIds,
   }) =>
     Effect.gen(function* () {
       const rows = yield* sql<{ readonly runtime_request_id: string; readonly thread_id: string }>`
@@ -316,7 +332,7 @@ export const make = Effect.gen(function* () {
          WHERE status = 'pending'
       `;
       let cancelled = 0;
-      for (const [rawThreadId, threadRows] of groupByThread(rows)) {
+      for (const [rawThreadId, threadRows] of groupByThread(rows, threadIds)) {
         const threadId = ThreadId.make(rawThreadId);
         const commandId = CommandId.make(`service-update:${nonce}:requests:${threadId}`);
         const pendingIds = new Set(threadRows.map((row) => row.runtime_request_id));

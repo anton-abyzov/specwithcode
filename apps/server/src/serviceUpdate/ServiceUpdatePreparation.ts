@@ -21,6 +21,21 @@
  * that continues threads after restarts continues them and queues the cancelled
  * messages again; elsewhere the person continues them by hand.
  *
+ * An automatic install waits for quiet instead, and a turn that only waits on a
+ * person for an approval nobody gave would keep it waiting forever. While the
+ * update agent waits for quiet, a sweep every `STALE_WAIT_SWEEP_MS` looks for
+ * that case: when every blocker belongs to a thread whose pending requests are
+ * all approvals (`APPROVAL_REQUEST_KINDS`) older than `STALE_WAIT_MS` and that
+ * thread has had no activity for as long, those threads are stopped the way the
+ * drain stops them (`releaseStaleWaits`): the turn ends `interrupted`, so the
+ * person continues it, and the request is cancelled with a reason. A thread
+ * that waits on a real question or a sign-in is never stopped: it stays in
+ * Needs you and keeps the install waiting. Just before each thread is stopped
+ * its pending requests and latest event are read again, and a thread that
+ * changed since it was picked (someone answered) is left alone. Any other work,
+ * such as a turn still producing output, keeps the install waiting as before,
+ * and the sweep touches nothing then.
+ *
  * @module ServiceUpdatePreparation
  */
 import {
@@ -46,13 +61,16 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import type * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
 
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
+import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
@@ -82,6 +100,56 @@ const LATE_EFFECT_POLLS = 5;
 const STOP_ROUNDS = 3;
 /** With the hold nothing new starts, so one pass is enough. */
 const HELD_STOP_ROUNDS = 1;
+
+/**
+ * How long a request waits on a person, with no activity on its thread, before
+ * that thread no longer holds back an automatic install.
+ */
+export const STALE_WAIT_MS = 30 * 60_000;
+/** How often the service looks for such threads while the update agent waits for quiet. */
+export const STALE_WAIT_SWEEP_MS = 5 * 60_000;
+export const STALE_WAIT_REASON =
+  "Stopped so the app could install its update: this turn waited more than 30 minutes for an answer. Continue it when you are back.";
+/** The agent status (`update_agent.py`) of an install that waits for a quiet moment. */
+const AGENT_WAITING_FOR_QUIET = "waiting-for-quiet";
+/** Blocker kinds a thread that only waits on a person can have. */
+const WAITING_KINDS: ReadonlySet<ServiceUpdateBlockerKind> = new Set(["run", "request", "session"]);
+/**
+ * The request kinds a stale wait may be released for: approvals. A question
+ * (`user_input`), a sign-in (`auth_refresh`) or a tool call waits on the person
+ * for real and keeps blocking.
+ */
+export const APPROVAL_REQUEST_KINDS: ReadonlySet<string> = new Set([
+  "command",
+  "file-read",
+  "file-change",
+  "permission",
+  "mcp-elicitation",
+]);
+
+/**
+ * Whether the update agent's `state.json` says an install waits for a quiet
+ * moment. An unreadable file says nothing is waiting.
+ */
+export function agentWaitsForQuiet(stateText: string): boolean {
+  try {
+    const value: unknown = JSON.parse(stateText);
+    return (
+      typeof value === "object" &&
+      value !== null &&
+      (value as Record<string, unknown>).status === AGENT_WAITING_FOR_QUIET
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Whether an ISO time is at or before `cutoffMs`. No time is long ago; an unreadable one is recent. */
+const atOrBefore = (value: string | null, cutoffMs: number) => {
+  if (value === null) return true;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) && parsed <= cutoffMs;
+};
 
 export interface ServiceUpdatePreparationTimings {
   /** How long Stop gets before a turn that is still running is ended locally. */
@@ -171,12 +239,32 @@ export class ServiceUpdatePreparation extends Context.Service<
   }
 >()("specweave-studio/serviceUpdate/ServiceUpdatePreparation") {}
 
+export interface StaleWaitRelease {
+  /** Threads stopped because they only waited on a person; empty when anything else is left. */
+  readonly releasedThreads: ReadonlyArray<string>;
+}
+
+/**
+ * A thread picked as only waiting on an approval, with what it looked like
+ * then: its pending request ids and its latest event. It is stopped only while
+ * both are unchanged.
+ */
+export interface StaleWaitThread {
+  readonly threadId: string;
+  readonly requestIds: string;
+  readonly latestSequence: number | null;
+}
+
 const quoted = (values: ReadonlyArray<string>) => values.map((value) => `'${value}'`).join(", ");
 const TERMINAL_RUNS_SQL = quoted(TERMINAL_RUN_STATUSES);
 const TERMINAL_EFFECTS_SQL = quoted(TERMINAL_EFFECT_STATUSES);
 const WORKING_SESSIONS_SQL = quoted(WORKING_SESSION_STATUSES);
 
-export const makeWithTimings = (timings: ServiceUpdatePreparationTimings) =>
+/**
+ * The service and what its sweep uses: `releaseStaleWaits` and whether this
+ * process holds itself for an update.
+ */
+export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const threads = yield* ThreadManagementService.ThreadManagementService;
@@ -339,12 +427,12 @@ export const makeWithTimings = (timings: ServiceUpdatePreparationTimings) =>
           ),
         );
 
-    /** Polls until no run is active or the time is up; true when none is left. */
-    const awaitRunsSettled = (budgetMs: number) =>
+    /** Polls until no run (that `only` keeps) is active or the time is up; true when none is left. */
+    const awaitRunsSettled = (budgetMs: number, only: (run: ActiveRun) => boolean = () => true) =>
       Effect.gen(function* () {
         const deadline = (yield* Clock.currentTimeMillis) + budgetMs;
         while (true) {
-          const active = yield* readActiveRuns;
+          const active = (yield* readActiveRuns).filter(only);
           if (active.length === 0) return true;
           if ((yield* Clock.currentTimeMillis) >= deadline) return false;
           yield* Effect.sleep(Duration.millis(timings.pollMs));
@@ -373,8 +461,15 @@ export const makeWithTimings = (timings: ServiceUpdatePreparationTimings) =>
           ),
         );
 
-    /** Ends turns whose provider never answered the interrupt (a hung CLI, a dead socket). */
-    const forceEndRuns = (nonce: string, deadline: number) =>
+    /**
+     * Ends turns whose provider never answered the interrupt (a hung CLI, a dead
+     * socket): every active run, or only those `only` keeps.
+     */
+    const forceEndRuns = (
+      nonce: string,
+      deadline: number,
+      only: (run: ActiveRun) => boolean = () => true,
+    ) =>
       Effect.gen(function* () {
         const endRun = (run: ActiveRun) =>
           Effect.gen(function* () {
@@ -402,12 +497,12 @@ export const makeWithTimings = (timings: ServiceUpdatePreparationTimings) =>
             }
           });
         // All at once, and no longer than the drain's budget: hung CLIs close in parallel.
-        const runs = yield* readActiveRuns;
+        const runs = (yield* readActiveRuns).filter(only);
         yield* boundedBy(
           deadline,
           Effect.forEach(runs, endRun, { concurrency: "unbounded", discard: true }),
         );
-        yield* awaitRunsSettled(yield* within(deadline, timings.settleMs));
+        yield* awaitRunsSettled(yield* within(deadline, timings.settleMs), only);
       });
 
     /** Rollbacks the cancel stopped before they ran: their thread is told so it stops waiting. */
@@ -755,9 +850,229 @@ export const makeWithTimings = (timings: ServiceUpdatePreparationTimings) =>
         ),
       );
 
-    return ServiceUpdatePreparation.of({ prepare });
+    /** A thread's pending requests and latest event, as `StaleWaitThread` keeps them. */
+    const readWaitState = (threadId: string) =>
+      Effect.gen(function* () {
+        const requests = yield* sql<{
+          readonly runtime_request_id: string;
+          readonly kind: string;
+          readonly created_at: string | null;
+        }>`
+          SELECT runtime_request_id, kind, created_at
+            FROM orchestration_v2_projection_runtime_requests
+           WHERE thread_id = ${threadId} AND status = 'pending'
+           ORDER BY runtime_request_id
+        `;
+        const latest = yield* sql<{ readonly sequence: number; readonly occurred_at: string }>`
+          SELECT sequence, occurred_at FROM orchestration_v2_events
+           WHERE thread_id = ${threadId} ORDER BY sequence DESC LIMIT 1
+        `;
+        return { requests, latest: latest[0] ?? null };
+      });
+
+    /**
+     * The threads that only wait on an approval, when nothing else blocks the
+     * update: every blocker is a run, request or session of such a thread, each
+     * of its pending requests is an approval older than `STALE_WAIT_MS`, and
+     * nothing was recorded on it for as long. Empty otherwise.
+     */
+    const selectStaleWaits = Effect.gen(function* () {
+      const nowMs = yield* Clock.currentTimeMillis;
+      const rows = yield* readBlockerRows;
+      const kinds = new Map<string, Set<ServiceUpdateBlockerKind>>();
+      for (const row of rows) {
+        // Work that belongs to no thread cannot be waiting on a person.
+        if (row.threadId === null || !WAITING_KINDS.has(row.kind)) return [];
+        const seen = kinds.get(row.threadId) ?? new Set();
+        seen.add(row.kind);
+        kinds.set(row.threadId, seen);
+      }
+      const cutoffMs = nowMs - STALE_WAIT_MS;
+      const selected: Array<StaleWaitThread> = [];
+      for (const [threadId, seen] of kinds) {
+        if (!seen.has("request")) return [];
+        const { requests, latest } = yield* readWaitState(threadId);
+        if (requests.length === 0) return [];
+        if (
+          !requests.every(
+            (request) =>
+              APPROVAL_REQUEST_KINDS.has(request.kind) &&
+              request.created_at !== null &&
+              atOrBefore(request.created_at, cutoffMs),
+          )
+        )
+          return [];
+        if (!atOrBefore(latest?.occurred_at ?? null, cutoffMs)) return [];
+        selected.push({
+          threadId,
+          requestIds: requests.map((request) => request.runtime_request_id).join("\n"),
+          latestSequence: latest?.sequence ?? null,
+        });
+      }
+      return selected;
+    });
+
+    /** Whether a selected thread still looks as it did: nobody answered or did anything since. */
+    const unchangedSince = (selected: StaleWaitThread) =>
+      Effect.map(
+        readWaitState(selected.threadId),
+        ({ requests, latest }) =>
+          requests.map((request) => request.runtime_request_id).join("\n") ===
+            selected.requestIds && (latest?.sequence ?? null) === selected.latestSequence,
+      );
+
+    /**
+     * Stops the threads `selectStaleWaits` picked, so an automatic install can
+     * go ahead. Each thread is read again just before its turn is interrupted
+     * and skipped when it changed since it was picked. Each turn gets a plain
+     * interrupt (a turn whose provider does not answer is ended locally, its
+     * agent process closed), what is left ends `interrupted` with the update
+     * named as the cause, and each request is cancelled with the reason. The
+     * person continues the thread when back.
+     */
+    const releaseSelected = (selected: ReadonlyArray<StaleWaitThread>) =>
+      Effect.gen(function* () {
+        if (selected.length === 0) return { releasedThreads: [] };
+        const nowMs = yield* Clock.currentTimeMillis;
+        const nonce = `${nowMs}:stale`;
+        const deadline = nowMs + timings.deadlineMs;
+        const activeRuns = yield* readActiveRuns;
+        const stale: Array<string> = [];
+        const runs: Array<ActiveRun> = [];
+        for (const thread of selected) {
+          if (!(yield* unchangedSince(thread))) {
+            yield* Effect.logInfo("service-update.stale-waits.changed", {
+              threadId: thread.threadId,
+            });
+            continue;
+          }
+          stale.push(thread.threadId);
+          for (const run of activeRuns) {
+            if (run.threadId !== thread.threadId) continue;
+            runs.push(run);
+            yield* threads
+              .dispatch({
+                type: "run.interrupt",
+                commandId: CommandId.make(`service-update:${nonce}:interrupt:${run.runId}`),
+                threadId: ThreadId.make(run.threadId),
+                runId: RunId.make(run.runId),
+                reason: STALE_WAIT_REASON,
+                cause: "service_update",
+              })
+              .pipe(logged("stale-interrupt-failed", { threadId: run.threadId, runId: run.runId }));
+          }
+        }
+        if (stale.length === 0) return { releasedThreads: [] };
+        const scope = new Set(stale);
+        const inScope = (run: ActiveRun) => scope.has(run.threadId);
+        yield* Effect.logWarning("service-update.stale-waits.release", { threads: stale.length });
+        if (!(yield* awaitRunsSettled(yield* within(deadline, timings.interruptGraceMs), inScope)))
+          yield* forceEndRuns(nonce, deadline, inScope);
+        // A turn its provider ended can leave its agent process waiting on the
+        // answer; it is closed too, and the next turn opens a new one.
+        const sessionIds = new Set(
+          runs.flatMap((run) => (run.providerSessionId === null ? [] : [run.providerSessionId])),
+        );
+        yield* boundedBy(
+          deadline,
+          Effect.forEach(
+            sessionIds,
+            (providerSessionId) =>
+              providerSessions
+                .release({
+                  providerSessionId: ProviderSessionId.make(providerSessionId),
+                  reason: "manual_shutdown",
+                  detail: RELEASE_DETAIL,
+                  keepMcpCredentials: true,
+                })
+                .pipe(logged("stale-release-failed", { providerSessionId })),
+            { concurrency: "unbounded", discard: true },
+          ),
+        );
+        yield* cleanup.finalizeStuckRuns({ nonce, reason: STALE_WAIT_REASON, threadIds: stale });
+        for (const request of yield* cleanup.listMessageModeRequests) {
+          if (!scope.has(request.threadId)) continue;
+          yield* threads
+            .dispatch({
+              type: "thread.user-input.dismiss",
+              commandId: CommandId.make(`service-update:${nonce}:dismiss:${request.requestId}`),
+              threadId: request.threadId,
+              requestId: request.requestId,
+            })
+            .pipe(logged("stale-dismiss-failed", { requestId: request.requestId }));
+        }
+        yield* cleanup.cancelPendingRequests({
+          nonce,
+          reason: STALE_WAIT_REASON,
+          threadIds: stale,
+        });
+        yield* cleanup.reconcileOrphanedSessions;
+        return { releasedThreads: stale };
+      });
+
+    const releaseStaleWaits = Effect.flatMap(selectStaleWaits, releaseSelected);
+
+    return {
+      service: ServiceUpdatePreparation.of({ prepare }),
+      selectStaleWaits,
+      releaseSelected,
+      releaseStaleWaits,
+      isHeld,
+    };
   });
+
+export const makeWithTimings = (timings: ServiceUpdatePreparationTimings) =>
+  Effect.map(makePartsWithTimings(timings), (parts) => parts.service);
 
 export const make = makeWithTimings(DEFAULT_TIMINGS);
 
-export const layer = Layer.effect(ServiceUpdatePreparation, make);
+/**
+ * One look for threads that only wait on a person, made only while the update
+ * agent waits for a quiet moment to install (`agentWaiting`) and this process
+ * is not held for "Update now", whose drain stops everything anyway.
+ */
+export const sweepStaleWaits = <E>(input: {
+  readonly agentWaiting: Effect.Effect<boolean>;
+  readonly isHeld: Effect.Effect<boolean>;
+  readonly releaseStaleWaits: Effect.Effect<StaleWaitRelease, E>;
+}): Effect.Effect<StaleWaitRelease> =>
+  Effect.gen(function* () {
+    if (!(yield* input.agentWaiting) || (yield* input.isHeld)) return { releasedThreads: [] };
+    return yield* input.releaseStaleWaits;
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("service-update.stale-waits.failed", { cause }).pipe(
+        Effect.as({ releasedThreads: [] }),
+      ),
+    ),
+  );
+
+export const layer = Layer.effect(
+  ServiceUpdatePreparation,
+  Effect.gen(function* () {
+    const parts = yield* makePartsWithTimings(DEFAULT_TIMINGS);
+    // Both are absent in tools and tests that build the runtime alone: no sweep then.
+    const config = yield* Effect.serviceOption(ServerConfig.ServerConfig);
+    const fileSystem = yield* Effect.serviceOption(FileSystem.FileSystem);
+    const path = yield* Effect.serviceOption(Path.Path);
+    if (Option.isSome(config) && Option.isSome(fileSystem) && Option.isSome(path)) {
+      const statePath = path.value.join(config.value.baseDir, "updates", "state.json");
+      const agentWaiting = fileSystem.value.readFileString(statePath).pipe(
+        Effect.map(agentWaitsForQuiet),
+        Effect.orElseSucceed(() => false),
+      );
+      yield* Effect.sleep(Duration.millis(STALE_WAIT_SWEEP_MS)).pipe(
+        Effect.andThen(
+          sweepStaleWaits({
+            agentWaiting,
+            isHeld: parts.isHeld,
+            releaseStaleWaits: parts.releaseStaleWaits,
+          }),
+        ),
+        Effect.forever,
+        Effect.forkScoped,
+      );
+    }
+    return parts.service;
+  }),
+);

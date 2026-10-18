@@ -505,3 +505,156 @@ it.effect("leaves a finished turn whose checkpoint is being written", () =>
     );
   }).pipe(Effect.provide(layerTest)),
 );
+
+it.effect(
+  "with threadIds ends only those threads, leaving the turn interrupted so the person can continue it",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const cleanup = yield* Cleanup.ServiceUpdateCleanup;
+      const now = yield* DateTime.now;
+      const waitingThread = ThreadId.make("thread:update-cleanup-stale");
+      const busyThread = ThreadId.make("thread:update-cleanup-busy");
+      for (const threadId of [waitingThread, busyThread]) {
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`create-${threadId}`),
+          threadId,
+          projectId,
+          title: threadId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        // A turn its provider started, waiting on the person's answer.
+        const runId = RunId.make(`run:${threadId}`);
+        const nodeId = NodeId.make(`node:${threadId}`);
+        const providerThreadId = ProviderThreadId.make(`provider-thread:${threadId}`);
+        yield* projections.apply({
+          id: EventId.make(`node:${threadId}`),
+          type: "node.updated",
+          threadId,
+          runId,
+          nodeId,
+          occurredAt: now,
+          payload: {
+            id: nodeId,
+            threadId,
+            runId,
+            parentNodeId: null,
+            rootNodeId: nodeId,
+            kind: "root_turn",
+            status: "running",
+            countsForRun: true,
+            providerThreadId,
+            providerTurnId: null,
+            nativeItemRef: null,
+            runtimeRequestId: null,
+            checkpointScopeId: null,
+            startedAt: now,
+            completedAt: null,
+          },
+        });
+        yield* projections.apply({
+          id: EventId.make(`run:${threadId}`),
+          type: "run.updated",
+          threadId,
+          runId,
+          nodeId,
+          occurredAt: now,
+          payload: {
+            id: runId,
+            threadId,
+            ordinal: 1,
+            providerInstanceId: instanceId,
+            modelSelection,
+            providerThreadId,
+            userMessageId: MessageId.make(`message:${threadId}`),
+            rootNodeId: nodeId,
+            activeAttemptId: null,
+            status: "running",
+            requestedAt: now,
+            startedAt: now,
+            completedAt: null,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        });
+        yield* projections.apply({
+          id: EventId.make(`request:${threadId}`),
+          type: "runtime-request.updated",
+          threadId,
+          runId,
+          occurredAt: now,
+          payload: {
+            id: RuntimeRequestId.make(`request:${threadId}`),
+            nodeId,
+            providerTurnId: null,
+            nativeRequestRef: null,
+            kind: "user_input",
+            status: "pending",
+            responseCapability: {
+              type: "live",
+              providerSessionId: ProviderSessionId.make(`session:${threadId}`),
+            },
+            createdAt: now,
+            resolvedAt: null,
+          },
+        });
+      }
+
+      assert.deepEqual(
+        yield* cleanup.finalizeStuckRuns({
+          nonce: "stale",
+          reason: Preparation.STALE_WAIT_REASON,
+          threadIds: [waitingThread],
+        }),
+        { interrupted: 1, completed: 0 },
+      );
+      assert.equal(
+        yield* cleanup.cancelPendingRequests({
+          nonce: "stale",
+          reason: Preparation.STALE_WAIT_REASON,
+          threadIds: [waitingThread],
+        }),
+        1,
+      );
+
+      const records = (threadId: ThreadId) =>
+        projections.getThreadRecords(threadId, ["runs", "runtimeRequests", "turnItems"], {
+          turnItemTypes: ["run_interrupt_request"],
+        });
+      const stale = yield* records(waitingThread);
+      assert.deepEqual(
+        stale.runs.map((row) => row.status),
+        ["interrupted"],
+      );
+      assert.deepEqual(
+        stale.runtimeRequests.map((row) => [row.status, row.responseCapability]),
+        [["cancelled", { type: "not_resumable", reason: Preparation.STALE_WAIT_REASON }]],
+      );
+      // Marked stopped for the update, with the reason, so the turn can be continued.
+      assert.deepEqual(
+        stale.turnItems.map((item) =>
+          item.type === "run_interrupt_request" ? [item.cause, item.message] : null,
+        ),
+        [["service_update", Preparation.STALE_WAIT_REASON]],
+      );
+      // The other thread's turn and request are untouched.
+      const busy = yield* records(busyThread);
+      assert.deepEqual(
+        busy.runs.map((row) => row.status),
+        ["running"],
+      );
+      assert.deepEqual(
+        busy.runtimeRequests.map((row) => row.status),
+        ["pending"],
+      );
+      assert.deepEqual(busy.turnItems, []);
+    }).pipe(Effect.provide(layerTest)),
+);

@@ -30,6 +30,7 @@ import {
   type Project,
   type MachineHandoffBundle,
   type MachineHandoffReceiveInput,
+  type RuntimeMode,
 } from "@specweave-studio/contracts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ServerConfig from "../config.ts";
@@ -37,6 +38,8 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectWorkspaceService from "../project/ProjectWorkspaceService.ts";
 import * as ProjectCoordinatorService from "../project/ProjectCoordinatorService.ts";
+import * as ProjectRuntimeAccess from "../project/ProjectRuntimeAccess.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as HandoffGit from "./handoffGit.ts";
 import * as MachineHandoffStore from "./MachineHandoffStore.ts";
@@ -75,6 +78,10 @@ const makeHarness = (
     busyProject?: string;
     realDatabase?: boolean;
     workerPath?: string;
+    /** The source coordinator's own access; omitted leaves the chat without one. */
+    coordinatorRuntimeMode?: RuntimeMode;
+    /** This machine's own default for new projects. */
+    defaultRuntimeMode?: RuntimeMode;
   } = {},
 ) => {
   const state = {
@@ -93,6 +100,9 @@ const makeHarness = (
     gitFailure: null as HandoffGitError | null,
     policyUpdates: [] as ProjectService.ProjectUpdateInput[],
     workerCheckpointFailure: false,
+    /** The destination's existing chats, as a project access save sees them. */
+    destinationChatRuntimeMode: "approval-required" as RuntimeMode,
+    runtimeModeSets: [] as Array<{ threadId: string; runtimeMode: RuntimeMode }>,
   };
   const projects = new Map<string, Project>();
   projects.set(projectId, {
@@ -109,6 +119,9 @@ const makeHarness = (
     deletedAt: null,
     worktreePath: options.workerPath ?? null,
     branch: "main",
+    ...(options.coordinatorRuntimeMode === undefined
+      ? {}
+      : { runtimeMode: options.coordinatorRuntimeMode }),
   };
   const fsLayer = MachineHandoffStore.layer.pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "studio-handoff-test-" })),
@@ -122,6 +135,9 @@ const makeHarness = (
       providerLimitRedeemResets: true,
       providerLimitSpendCredits: true,
       providerLimitUseApiCredits: true,
+      ...(options.defaultRuntimeMode === undefined
+        ? {}
+        : { defaultRuntimeMode: options.defaultRuntimeMode }),
     }),
     Layer.succeed(ServerEnvironment.ServerEnvironment, {
       getEnvironmentId: Effect.succeed(EnvironmentId.make(options.environment ?? "source-env")),
@@ -305,7 +321,43 @@ const makeHarness = (
         }),
     }),
   );
-  return { state, projects, layer: MachineHandoff.layer.pipe(Layer.provideMerge(services)) };
+  // The real project access save, over a recording orchestrator: it moves the
+  // destination's existing coordinator to the saved mode.
+  const access = ProjectRuntimeAccess.layer.pipe(
+    Layer.provide(
+      Layer.mock(Orchestrator.OrchestratorV2)({
+        withProjectPermissionUpdate: (effect) => effect,
+        getShellSnapshot: () =>
+          Effect.sync(
+            () =>
+              ({
+                threads: [...projects.values()].map((p) => ({
+                  ...shell,
+                  projectId: p.id,
+                  id:
+                    p.workspaceSettings?.coordinatorThreadId ??
+                    ThreadId.make(`project-coordinator:${p.id}`),
+                  runtimeMode: state.destinationChatRuntimeMode,
+                  lineage: { relationshipToParent: "none" },
+                  creationSource: "user",
+                })),
+                archivedThreads: [],
+              }) as never,
+          ),
+        dispatch: (command) =>
+          Effect.sync(() => {
+            if (command.type === "thread.runtime-mode.set")
+              state.runtimeModeSets.push({
+                threadId: command.threadId,
+                runtimeMode: command.runtimeMode,
+              });
+            return {} as never;
+          }),
+      }),
+    ),
+    Layer.provideMerge(services),
+  );
+  return { state, projects, layer: MachineHandoff.layer.pipe(Layer.provideMerge(access)) };
 };
 const imported = (bundle: MachineHandoffBundle): MachineHandoffBundle => {
   const { digest: _digest, ...value } = {

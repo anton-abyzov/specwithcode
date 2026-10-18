@@ -13,6 +13,10 @@ Joining always takes the same three steps:
    Your private machines → Add a machine** and choose **Add machine**.
 3. On the worker's card there, choose **Allow workers**.
 
+Prefer to watch first? The
+[1.5-minute video tutorial](https://www.youtube.com/watch?v=GFfnjNYcWrU) shows
+the npm path end to end on 1.0.47.
+
 Only step 1 differs, depending on how SpecWithCode is installed on the worker.
 Pick the row that matches it:
 

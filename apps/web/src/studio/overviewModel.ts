@@ -5,6 +5,7 @@ import type {
 } from "@specweave-studio/client-runtime/state/shell";
 import { threadRuntimeIsActive } from "@specweave-studio/client-runtime/state/shell";
 import { threadRunHealth } from "@specweave-studio/client-runtime/state/models";
+import type { RunHealth } from "@specweave-studio/shared/orchestrationV2PendingBackgroundWork";
 import type { ModelSelection, ServerProvider } from "@specweave-studio/contracts";
 import type {
   StudioCapacityAccount,
@@ -15,6 +16,7 @@ import { resolveSidebarThreadStatus } from "../components/Sidebar.logic";
 export type AttentionKind =
   | "approval"
   | "input"
+  | "signin"
   | "plan"
   | "held"
   | "limited"
@@ -32,6 +34,7 @@ export type SessionView = {
 const ATTENTION_LABELS: Record<AttentionKind, string> = {
   approval: "Approval requested",
   input: "Answer needed",
+  signin: "Sign-in needed",
   plan: "Plan ready to review",
   held: "Queued messages held",
   limited: "Usage limit reached",
@@ -40,6 +43,20 @@ const ATTENTION_LABELS: Record<AttentionKind, string> = {
 };
 
 export const attentionLabel = (kind: AttentionKind) => ATTENTION_LABELS[kind];
+
+/**
+ * A running turn this quiet is listed in Needs you only when nothing explains
+ * it: the classifier already grants its own command the long-command allowance
+ * and never stalls a wait on the person or on another thread.
+ */
+export const NEEDS_YOU_QUIET_MS = 30 * 60_000;
+
+/** The quiet a running thread shows as stalled in Needs you, or null when it is not. */
+function needsYouStall(
+  health: RunHealth | null,
+): { readonly idleMs: number; readonly label: string | null } | null {
+  return health?.state === "stalled" && health.idleMs >= NEEDS_YOU_QUIET_MS ? health : null;
+}
 
 /** Shells carry native attention state; reading the desk does not hydrate every conversation. */
 export function deriveSessions(
@@ -58,10 +75,14 @@ export function deriveSessions(
       const health = connectedEnvironmentIds.has(thread.environmentId)
         ? threadRunHealth(thread, nowMs)
         : null;
-      const observedAttention =
+      const stall = needsYouStall(health);
+      const observedAttention: AttentionKind | null =
         status === "approval" || status === "input"
           ? status
-          : health?.state === "stalled"
+          : health?.state === "waiting" && health.awaitingPerson === "sign-in"
+            ? "signin"
+            : // A turn blocked on the person is never a stall, however long it waits.
+              stall !== null
             ? "stalled"
             : !observedWorking && thread.hasActionableProposedPlan
               ? "plan"
@@ -73,9 +94,9 @@ export function deriveSessions(
                   : null;
       const settled = thread.settledOverride === "settled";
       const observedState =
-        health?.state === "stalled" && observedAttention === "stalled"
-          ? `No activity for ${formatMinutes(health.idleMs)}${
-              health.label === null ? "" : ` on ${health.label}`
+        stall !== null && observedAttention === "stalled"
+          ? `No activity for ${formatMinutes(stall.idleMs)}${
+              stall.label === null ? "" : ` on ${stall.label}`
             }`
           : observedAttention === "held"
             ? `${heldQueueCountLabel(thread.heldQueuedCount ?? 0)} · Resume or discard`
@@ -83,7 +104,9 @@ export function deriveSessions(
               ? attentionLabel(observedAttention)
               : status === "waiting"
                 ? "Waiting for background work"
-                : health?.state === "waiting" && health.waitingMs >= 60_000
+                : health?.state === "waiting" &&
+                    health.awaitingPerson === undefined &&
+                    health.waitingMs >= 60_000
                   ? `Waiting on ${health.label} · ${formatMinutes(health.waitingMs)}`
                   : observedWorking
                     ? "Working"

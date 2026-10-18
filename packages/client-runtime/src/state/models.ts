@@ -1,6 +1,7 @@
 import {
   backgroundWorkHoldsCompletion,
   classifyRunHealth,
+  type RunAwaitingPerson,
   type RunHealth,
 } from "@specweave-studio/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestsOf } from "@specweave-studio/shared/threadPullRequests";
@@ -240,6 +241,22 @@ export function scopeProject(
   return { ...project, environmentId };
 }
 
+/**
+ * The request kinds the person answers. Others, such as a dynamic tool call,
+ * are answered by the app, so a run waiting on one is not waiting on the person.
+ */
+const AWAITING_PERSON_BY_REQUEST_KIND: Partial<
+  Record<NonNullable<OrchestrationV2ThreadShell["pendingRuntimeRequest"]>["kind"], RunAwaitingPerson>
+> = {
+  command: "approval",
+  "file-read": "approval",
+  "file-change": "approval",
+  permission: "approval",
+  "mcp-elicitation": "approval",
+  user_input: "answer",
+  auth_refresh: "sign-in",
+};
+
 export function presentThreadShell(
   environmentId: EnvironmentId,
   thread: OrchestrationV2ThreadShell,
@@ -288,10 +305,10 @@ export function presentThreadShell(
     ...(thread.latestUserAuthoredMessageAt === undefined
       ? {}
       : { latestUserAuthoredMessageAt: nullableIso(thread.latestUserAuthoredMessageAt) }),
+    // Same table as threadAwaitingPerson, so a request the app answers is no approval.
     hasPendingApprovals:
       thread.pendingRuntimeRequest !== null &&
-      thread.pendingRuntimeRequest.kind !== "user_input" &&
-      thread.pendingRuntimeRequest.kind !== "auth_refresh",
+      AWAITING_PERSON_BY_REQUEST_KIND[thread.pendingRuntimeRequest.kind] === "approval",
     hasPendingUserInput: thread.pendingRuntimeRequest?.kind === "user_input",
     hasActionableProposedPlan: thread.hasActionableProposedPlan,
     reportedBlocker: thread.reportedBlocker ?? null,
@@ -388,11 +405,39 @@ export function resolveThreadWorkingStartedAt(input: {
 }
 
 /**
- * Whether a running thread is working, waiting on a long command, or stalled:
- * no provider event for longer than its work explains. Null when idle.
+ * What a thread's open runtime request asks of the person, or null when none
+ * is open or the app answers it. A sign-in counts: the agent cannot go on
+ * until the person acts.
+ */
+export function threadAwaitingPerson(
+  thread: Partial<Pick<EnvironmentThreadShell, "hasPendingApprovals" | "hasPendingUserInput">> & {
+    readonly source?: Pick<OrchestrationV2ThreadShell, "pendingRuntimeRequest"> | undefined;
+  },
+): { readonly kind: RunAwaitingPerson; readonly sinceMs: number } | null {
+  const request = thread.source?.pendingRuntimeRequest ?? null;
+  const createdAt: unknown = request?.createdAt;
+  const sinceMs = DateTime.isDateTime(createdAt)
+    ? DateTime.toEpochMillis(createdAt)
+    : Date.parse(String(createdAt));
+  if (request !== null) {
+    const kind = AWAITING_PERSON_BY_REQUEST_KIND[request.kind];
+    return kind === undefined ? null : { kind, sinceMs };
+  }
+  // Without a request summary the shell flags are all there is to go by.
+  if (thread.hasPendingUserInput === true) return { kind: "answer", sinceMs };
+  if (thread.hasPendingApprovals === true) return { kind: "approval", sinceMs };
+  return null;
+}
+
+/**
+ * Whether a running thread is working, waiting on a long command or on the
+ * person, or stalled: no provider event for longer than its work explains. A
+ * turn blocked on an approval or a question waits on the person however long
+ * it stays quiet. Null when idle.
  */
 export function threadRunHealth(
-  thread: Pick<EnvironmentThreadShell, "runtime" | "updatedAt" | "activeWork">,
+  thread: Pick<EnvironmentThreadShell, "runtime" | "updatedAt" | "activeWork"> &
+    Parameters<typeof threadAwaitingPerson>[0],
   nowMs: number,
 ): RunHealth | null {
   const status = thread.runtime?.status;
@@ -403,6 +448,7 @@ export function threadRunHealth(
   return classifyRunHealth({
     running: status === "running" || status === "waiting",
     lastActivityMs,
+    awaitingPerson: threadAwaitingPerson(thread),
     activeWork:
       thread.activeWork == null
         ? null

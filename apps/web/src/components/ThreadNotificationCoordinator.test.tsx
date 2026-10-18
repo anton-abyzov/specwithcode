@@ -425,6 +425,41 @@ describe("thread notifications", () => {
   });
 });
 
+describe("a quiet run waiting on the person", () => {
+  const minutes = (count: number) => count * 60_000;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    vi.setSystemTime(DateTime.toEpochMillis(SHELL_NOW) + minutes(1));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function passTime(ms: number) {
+    await act(async () => {
+      vi.advanceTimersByTime(ms);
+    });
+  }
+
+  const titles = () => state.add.mock.calls.map((call) => call[0]?.title);
+
+  it("asks for the approval once and never calls the held run inactive", async () => {
+    await render();
+    state.approval = true;
+    await render();
+    await passTime(minutes(15 * 60));
+    expect(titles()).toEqual(["Approval needed"]);
+  });
+
+  it("still flags the same quiet run once nothing is asked of the person", async () => {
+    await render();
+    await passTime(minutes(3 * 60));
+    expect(titles()).toEqual(["No activity in thread"]);
+  });
+});
+
 describe("alerts when a thread needs you", () => {
   let openListener: ((target: { environmentId: string; threadId: string }) => void) | undefined;
   const showThreadNotification = vi.fn(async (_input: unknown) => true);

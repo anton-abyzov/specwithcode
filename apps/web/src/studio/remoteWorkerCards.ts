@@ -15,15 +15,21 @@ const FINISHED: Record<string, ThreadCardStatus> = {
   cancelled: { tone: "idle", label: "Cancelled" },
 };
 
+/** The server's lastStatus for a followed run blocked on the person (RemoteWorkerFollower). */
+export const REMOTE_WORKER_WAITING_ON_YOU = "waiting_on_you";
+
 export function remoteWorkerCardStatus(worker: StudioFleetRemoteWorker): ThreadCardStatus {
   const finished = worker.lastStatus ? FINISHED[worker.lastStatus] : undefined;
   switch (worker.state) {
     case "launching":
       return { tone: "working", label: `Starting on ${worker.machineLabel}` };
     case "following":
-      return worker.reachable
-        ? { tone: "working", label: "Working" }
-        : { tone: "waiting", label: `${worker.machineLabel} unreachable, retrying` };
+      if (!worker.reachable)
+        return { tone: "waiting", label: `${worker.machineLabel} unreachable, retrying` };
+      // Its run asked the person something on that machine; it is not working meanwhile.
+      return worker.lastStatus === REMOTE_WORKER_WAITING_ON_YOU
+        ? { tone: "waiting", label: `Waiting on you on ${worker.machineLabel}` }
+        : { tone: "working", label: "Working" };
     case "wake_pending":
       return { ...(finished ?? { tone: "done", label: "Finished" }) };
     case "idle":

@@ -1,6 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import { EnvironmentId } from "@specweave-studio/contracts";
+import { EnvironmentId, type MachineHandoffBundle } from "@specweave-studio/contracts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as MachineHandoff from "./MachineHandoff.ts";
 import {
   makeHarness,
@@ -11,6 +12,68 @@ import {
   projectId,
   threadId,
 } from "./MachineHandoff.test-fixtures.ts";
+
+/** A bundle that continues in the destination's own, already configured project. */
+const projectFolderBundle = (prepared: MachineHandoffBundle, older = false) => {
+  const importedBundle = imported(prepared);
+  const { runtimeMode: _runtimeMode, ...olderContext } = importedBundle.context;
+  const { digest: _, ...value } = {
+    ...importedBundle,
+    context: older ? olderContext : importedBundle.context,
+    destination: { ...importedBundle.destination!, executionMode: "project-folder" as const },
+    coordinatorBinding: {
+      ...importedBundle.coordinatorBinding!,
+      successor: {
+        environmentId: EnvironmentId.make("source-env"),
+        projectId,
+        coordinatorThreadId: threadId,
+      },
+    },
+  };
+  return { ...value, digest: MachineHandoff.machineHandoffDigest(value) };
+};
+const projectFolderPreview = {
+  ...preview,
+  destination: {
+    ...preview.destination,
+    executionMode: "project-folder" as const,
+    coordinatorThreadId: threadId,
+  },
+};
+
+it.effect("moves the joined project's existing coordinator to the carried access", () => {
+  const h = makeHarness({ coordinatorRuntimeMode: "full-access" });
+  return Effect.gen(function* () {
+    const service = yield* MachineHandoff.MachineHandoff;
+    const prepared = yield* service.prepare(projectFolderPreview);
+    expect(prepared.bundle.context.runtimeMode).toBe("full-access");
+    const bundle = projectFolderBundle(prepared.bundle);
+    yield* service.receive({ projectId, operationId: id, bundle, mode: "start" });
+    const settings = yield* (yield* ServerSettings.ServerSettingsService).getSettings;
+    expect(settings.projectSettingsOverrides[projectId]?.defaultRuntimeMode).toBe("full-access");
+    // The same save a person's project access change makes: the coordinator follows it.
+    expect(h.state.runtimeModeSets).toEqual([{ threadId, runtimeMode: "full-access" }]);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("leaves the joined project's chats alone for a bundle without a mode", () => {
+  const h = makeHarness({
+    coordinatorRuntimeMode: "full-access",
+    defaultRuntimeMode: "approval-required",
+  });
+  return Effect.gen(function* () {
+    const service = yield* MachineHandoff.MachineHandoff;
+    const prepared = yield* service.prepare(projectFolderPreview);
+    const bundle = projectFolderBundle(prepared.bundle, true);
+    expect(bundle.context).not.toHaveProperty("runtimeMode");
+    yield* service.receive({ projectId, operationId: id, bundle, mode: "start" });
+    const settings = yield* (yield* ServerSettings.ServerSettingsService).getSettings;
+    expect(settings.projectSettingsOverrides[projectId]?.defaultRuntimeMode).toBe(
+      "approval-required",
+    );
+    expect(h.state.runtimeModeSets).toEqual([]);
+  }).pipe(Effect.provide(h.layer));
+});
 
 it.effect(
   "continues in the selected project with no extra registration, preserving retry identity",

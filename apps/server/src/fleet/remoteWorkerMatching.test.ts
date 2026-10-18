@@ -292,13 +292,26 @@ describe("translateModel", () => {
 });
 
 describe("clampRuntimeMode", () => {
-  it("never starts above the machine's ceiling", () => {
+  it("never starts above the machine's ceiling, and says which mode it lowered", () => {
     expect(
       clampRuntimeMode({ started: "full-access", requested: undefined, ceiling: "auto" }),
-    ).toEqual({ ok: true, mode: "auto" });
+    ).toEqual({ ok: true, mode: "auto", loweredFrom: "full-access" });
     expect(
       clampRuntimeMode({ started: "approval-required", requested: undefined, ceiling: "auto" }),
     ).toEqual({ ok: true, mode: "approval-required" });
+  });
+
+  it("keeps Full access when the machine allows it", () => {
+    expect(
+      clampRuntimeMode({ started: "full-access", requested: undefined, ceiling: "full-access" }),
+    ).toEqual({ ok: true, mode: "full-access" });
+    expect(
+      clampRuntimeMode({
+        started: "full-access",
+        requested: "full-access",
+        ceiling: "full-access",
+      }),
+    ).toEqual({ ok: true, mode: "full-access" });
   });
 
   it("refuses an explicit request above the ceiling", () => {

@@ -221,26 +221,25 @@ const RUNTIME_MODE_RANK: Record<RuntimeMode, number> = {
 
 /**
  * The runtime mode a remote worker starts with: the caller's own, never above
- * what the user allowed for that machine. An explicit request above that
- * ceiling is refused rather than silently lowered.
+ * what the user allowed for that machine. An inherited mode above that
+ * ceiling is lowered to it and reported in `loweredFrom`, so the caller can
+ * say so; an explicit request above it is refused.
  */
 export function clampRuntimeMode(input: {
   readonly started: RuntimeMode;
   readonly requested: RuntimeMode | undefined;
   readonly ceiling: RuntimeMode;
-}): { readonly ok: true; readonly mode: RuntimeMode } | { readonly ok: false } {
+}):
+  | { readonly ok: true; readonly mode: RuntimeMode; readonly loweredFrom?: RuntimeMode }
+  | { readonly ok: false } {
   if (
     input.requested !== undefined &&
     RUNTIME_MODE_RANK[input.requested] > RUNTIME_MODE_RANK[input.ceiling]
   )
     return { ok: false };
-  return {
-    ok: true,
-    mode:
-      RUNTIME_MODE_RANK[input.started] > RUNTIME_MODE_RANK[input.ceiling]
-        ? input.ceiling
-        : input.started,
-  };
+  return RUNTIME_MODE_RANK[input.started] > RUNTIME_MODE_RANK[input.ceiling]
+    ? { ok: true, mode: input.ceiling, loweredFrom: input.started }
+    : { ok: true, mode: input.started };
 }
 
 /** A machine's status for agents, from its worker grant here. */

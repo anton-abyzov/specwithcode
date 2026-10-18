@@ -124,3 +124,46 @@ describe("waits on other threads", () => {
     );
   });
 });
+
+describe("turns waiting on the person", () => {
+  const hours = (count: number) => count * 60 * 60_000;
+
+  it("reads a turn blocked on an approval for 15 hours as waiting on you, not stalled", () => {
+    const health = classifyRunHealth({
+      running: true,
+      lastActivityMs: 0,
+      activeWork: { label: "pnpm install", startedAtMs: 0 },
+      awaitingPerson: { kind: "approval", sinceMs: hours(1) },
+      nowMs: hours(16),
+    });
+    expect(health).toEqual({
+      state: "waiting",
+      idleMs: hours(16),
+      label: "your approval",
+      waitingMs: hours(15),
+      awaitingPerson: "approval",
+    });
+  });
+
+  it("names an open question and a sign-in the same way, with nothing in flight", () => {
+    const quiet = { running: true, lastActivityMs: 0, activeWork: null, nowMs: hours(3) };
+    expect(
+      classifyRunHealth({ ...quiet, awaitingPerson: { kind: "answer", sinceMs: 0 } }),
+    ).toMatchObject({ state: "waiting", label: "your answer", awaitingPerson: "answer" });
+    expect(
+      classifyRunHealth({ ...quiet, awaitingPerson: { kind: "sign-in", sinceMs: Number.NaN } }),
+    ).toMatchObject({ state: "waiting", label: "your sign-in", waitingMs: hours(3) });
+  });
+
+  it("still stalls the same quiet turn once nothing is asked of the person", () => {
+    expect(
+      classifyRunHealth({
+        running: true,
+        lastActivityMs: 0,
+        activeWork: null,
+        awaitingPerson: null,
+        nowMs: hours(3),
+      })?.state,
+    ).toBe("stalled");
+  });
+});

@@ -273,4 +273,61 @@ describe("connection matrix", () => {
     );
     expect(text()).toContain("Codex plugin GitHub");
   });
+  it("offers turn off, copy everywhere, remove and plugin toggles from the details", async () => {
+    const onApply = vi.fn();
+    const managed: NativeConnectionsSnapshot = {
+      ...snapshot,
+      connections: [
+        {
+          id: "codex:codex-user:a",
+          name: "docs",
+          provider: "codex",
+          sourceId: "codex-user",
+          scope: "user",
+          transport: "stdio",
+          state: "configured",
+          shadowed: false,
+          portable: true,
+        },
+        {
+          id: "claude:claude-user:b",
+          name: "notes",
+          provider: "claude",
+          sourceId: "claude-user",
+          scope: "user",
+          transport: "stdio",
+          state: "disabled",
+          shadowed: false,
+          parked: true,
+        },
+      ],
+      plugins: [{ provider: "claude", key: "web@market", label: "Web", enabled: false }],
+    };
+    await act(() => {
+      renderer = create(<ConnectionMatrix snapshot={managed} onApply={onApply} />);
+    });
+    const byLabel = (label: string) =>
+      renderer.root.findAll((n) => n.type === "button" && n.props["aria-label"] === label);
+    await act(() => byLabel("docs Codex details")[0]!.props.onClick());
+    for (const label of ["Turn off: docs", "Add to all tools: docs", "Remove: docs"])
+      expect(byLabel(label)).toHaveLength(1);
+    await act(() => byLabel("Add to all tools: docs")[0]!.props.onClick());
+    expect(onApply).toHaveBeenLastCalledWith({
+      action: "copyAll",
+      connectionId: "codex:codex-user:a",
+    });
+    // A parked Claude Code entry turns on from its cell.
+    await act(() => byLabel("Turn on: notes")[0]!.props.onClick());
+    expect(onApply).toHaveBeenLastCalledWith({
+      action: "enable",
+      connectionId: "claude:claude-user:b",
+    });
+    await act(() => byLabel("Turn on plugin: Web")[0]!.props.onClick());
+    expect(onApply).toHaveBeenLastCalledWith({
+      action: "plugin",
+      provider: "claude",
+      pluginKey: "web@market",
+      enabled: true,
+    });
+  });
 });
