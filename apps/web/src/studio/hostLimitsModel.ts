@@ -12,7 +12,11 @@ import type {
   ServerProviderUsageWindow,
 } from "@specweave-studio/contracts";
 import { isProviderAvailable } from "@specweave-studio/contracts";
-import { limitAccountKey, limitsNotice } from "@specweave-studio/shared/usageLimits";
+import {
+  limitAccountKey,
+  limitsNotice,
+  missingLimitsNotice,
+} from "@specweave-studio/shared/usageLimits";
 import { blockingWindow, windowModelScope } from "@specweave-studio/shared/usageWindows";
 import { leftPercent, usageTone } from "./usageIndicatorModel";
 
@@ -38,6 +42,8 @@ export interface HostLimitWindow {
 
 export interface HostProviderRow {
   readonly key: string;
+  /** The native instance behind the row; absent on readings saved before it was kept. */
+  readonly instanceId?: string;
   readonly driver: ServerProvider["driver"];
   readonly label: string;
   readonly iconUrl: string | undefined;
@@ -59,6 +65,8 @@ export interface HostLimitBlock {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly isProjectHost: boolean;
+  /** The machine this window is served from: the app's own host. */
+  readonly isThisMachine: boolean;
   readonly status: HostStatus;
   /** Newest provider reading on this host, epoch ms. */
   readonly readAt: number | null;
@@ -77,7 +85,7 @@ export interface SavedHostReading {
 export type HostLimitPresentations = ReadonlyMap<
   EnvironmentId,
   {
-    readonly entry: { readonly target: { readonly label: string } };
+    readonly entry: { readonly target: { readonly label: string; readonly _tag?: string } };
     readonly connection: { readonly phase: string };
     readonly serverConfig: { readonly providers?: readonly ServerProvider[] | undefined } | null;
   }
@@ -171,7 +179,7 @@ function providerRows(
       const label = provider.displayName?.trim() || driverLabel(provider.driver);
       const notice =
         limits === undefined
-          ? "Does not report subscription limits."
+          ? missingLimitsNotice(provider)
           : limits.unavailable?.reason === "probeFailed" && limits.windows.length > 0
             ? null
             : limitsNotice(limits);
@@ -182,6 +190,7 @@ function providerRows(
         key:
           limitAccountKey(provider.driver, email, limits) ??
           `instance:${provider.driver}:${provider.instanceId}`,
+        instanceId: provider.instanceId,
         driver: provider.driver,
         label,
         iconUrl: provider.iconUrl,
@@ -203,9 +212,9 @@ function providerRows(
 }
 
 /**
- * One block per host: the project's host first, then online hosts, then
- * offline hosts with their last saved reading. Account keys shared by two
- * hosts are named on both rows.
+ * One block per host: the project's host first, then the app's own machine,
+ * then online hosts, then offline hosts with their last saved reading.
+ * Account keys shared by two hosts are named on both rows.
  */
 export function collectHostLimitBlocks(
   presentations: HostLimitPresentations,
@@ -245,6 +254,7 @@ export function collectHostLimitBlocks(
       environmentId,
       label: presentation.entry.target.label,
       isProjectHost: environmentId === options.projectEnvironmentId,
+      isThisMachine: presentation.entry.target._tag === "PrimaryConnectionTarget",
       status,
       readAt: readings.length > 0 ? Math.max(...readings) : useSaved ? saved.savedAt : null,
       fromSavedReading: useSaved,
@@ -274,6 +284,7 @@ export function collectHostLimitBlocks(
     .sort(
       (left, right) =>
         Number(right.isProjectHost) - Number(left.isProjectHost) ||
+        Number(right.isThisMachine) - Number(left.isThisMachine) ||
         statusRank[left.status] - statusRank[right.status] ||
         left.label.localeCompare(right.label),
     );

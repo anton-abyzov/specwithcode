@@ -26,19 +26,41 @@ export interface PreviewStreamControl {
   };
 }
 
-/** Status line shown above a viewer; `null` control means the socket is not connected. */
+/**
+ * Status line shown above a viewer; `null` control means the socket is not connected.
+ * One party drives a tab at a time. While a person drives, agent actions on the
+ * tab are refused until they hand it back.
+ */
 export const previewStreamControlLabel = (control: PreviewStreamControl | null): string =>
   !control
     ? "Connecting..."
     : !control.canOperate
-      ? "Read-only"
+      ? "View only"
       : control.controller === "you"
-        ? "You have control"
+        ? "You're driving. The agent waits."
         : control.controller === "agent"
-          ? "Agent has control"
+          ? "The agent is driving"
           : control.controller === "another-viewer"
-            ? "Another viewer has control"
-            : "Watching";
+            ? "Someone else is driving"
+            : "Nobody is driving";
+
+/** The take-over / hand-back button beside the status line. */
+export const previewStreamControlAction = (
+  control: PreviewStreamControl,
+): { readonly label: string; readonly hint: string } =>
+  control.controller === "you"
+    ? { label: "Hand back", hint: "Stop driving so the agent can use this tab again." }
+    : control.controller === "agent"
+      ? {
+          label: "Take over",
+          hint: "Pause the agent and use this tab yourself. Hand it back when you're done.",
+        }
+      : control.controller === "another-viewer"
+        ? { label: "Take over", hint: "Another viewer is driving this tab." }
+        : {
+            label: "Take over",
+            hint: "Use this tab yourself. The agent waits until you hand it back.",
+          };
 
 const isPreviewStreamDialog = (value: unknown): value is PreviewStreamControl["dialog"] =>
   value === null ||

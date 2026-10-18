@@ -19,7 +19,7 @@ import {
   RefreshCwIcon,
 } from "lucide-react";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
-import { useEnvironment, useEnvironments } from "../../state/environments";
+import { useEnvironment, useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -169,9 +169,20 @@ const PROVIDER_CONFIG_FILES: Record<BrowserBridgeProviderWiring["provider"], str
 export function ChromeSettings() {
   const { environments } = useEnvironments();
   const { search, selectScope } = useSettingsScope();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  // Chrome on this computer pairs with this computer's service, so default to it.
   const selected =
     environments.find((environment) => environment.environmentId === search.machine) ??
+    environments.find((environment) => environment.environmentId === primaryEnvironmentId) ??
     environments[0];
+  const here = environments.find(
+    (environment) => environment.environmentId === primaryEnvironmentId,
+  );
+  // This computer first, so the default and the safe choice are the same button.
+  const ordered = here
+    ? [here, ...environments.filter((environment) => environment !== here)]
+    : environments;
+  const elsewhere = here !== undefined && selected !== undefined && selected !== here;
   return (
     <SettingsPageContainer width="wide">
       <SettingsSection title="Chrome for agents" icon={<ChromeIcon className="size-4" />}>
@@ -180,7 +191,8 @@ export function ChromeSettings() {
             Agents publish, read dashboards and fill forms in your real Chrome, signed in as you.
             The SpecWithCode Browser extension is the recommended way: install it once per Chrome
             profile and agents of every provider can use that profile. Claude in Chrome remains as
-            an alternative below. Pick the machine first; each one has its own Chrome.
+            an alternative below. Pick the computer whose Chrome you are setting up: Chrome pairs
+            only with SpecWithCode on its own computer.
           </p>
           {environments.length === 0 ? (
             <p role="status" className="text-sm text-muted-foreground">
@@ -188,8 +200,9 @@ export function ChromeSettings() {
             </p>
           ) : (
             <div role="tablist" aria-label="Machine" className="flex flex-wrap gap-2">
-              {environments.map((environment) => {
+              {ordered.map((environment) => {
                 const active = environment.environmentId === selected?.environmentId;
+                const here = environment.environmentId === primaryEnvironmentId;
                 return (
                   <Button
                     key={environment.environmentId}
@@ -200,6 +213,11 @@ export function ChromeSettings() {
                     onClick={() => selectScope({ ...search, machine: environment.environmentId })}
                   >
                     {environment.label}
+                    {here && (
+                      <Badge variant={active ? "secondary" : "success"} className="ms-1">
+                        This computer
+                      </Badge>
+                    )}
                   </Button>
                 );
               })}
@@ -212,6 +230,10 @@ export function ChromeSettings() {
           key={`extension-${selected.environmentId}`}
           environmentId={selected.environmentId}
           machine={selected.label}
+          thisComputer={elsewhere ? here.label : null}
+          onSwitchToThisComputer={
+            elsewhere ? () => selectScope({ ...search, machine: here.environmentId }) : undefined
+          }
         />
       )}
       <p className="px-1 pt-2 text-sm font-medium text-muted-foreground">

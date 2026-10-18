@@ -6,6 +6,7 @@ import * as StorageCleanup from "./storageCleanup.ts";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as PullRequestWatchReactor from "./orchestration-v2/PullRequestWatchReactor.ts";
 import * as ClaudeIdleCompactionReactor from "./orchestration-v2/ClaudeIdleCompactionReactor.ts";
+import * as FullAccessApprovals from "./orchestration-v2/FullAccessApprovals.ts";
 import * as ThreadManagementService from "./orchestration-v2/ThreadManagementService.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeHttp from "node:http";
@@ -626,6 +627,13 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.provide(ClaudeIdleCompactionReactor.layer),
     Layer.provide(ThreadManagementService.layer),
   ),
+  // A thread on Full access never waits on a prompt from a turn that started stricter.
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      const service = yield* FullAccessApprovals.FullAccessApprovals;
+      yield* service.start();
+    }),
+  ).pipe(Layer.provide(FullAccessApprovals.layer), Layer.provide(ThreadManagementService.layer)),
   // Talks to a project coordinator from Telegram; polls outbound only.
   Layer.effectDiscard(
     Effect.gen(function* () {

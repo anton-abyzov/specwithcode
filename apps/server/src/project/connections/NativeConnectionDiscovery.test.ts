@@ -35,6 +35,7 @@ const scan = (project = false) =>
             codexHome: NodePath.join(root, "custom-codex"),
             claudeFile: NodePath.join(root, "custom-claude", ".claude.json"),
             claudeSettings: NodePath.join(root, "custom-claude", "settings.json"),
+            otherTools: [],
           }),
         ),
       ),
@@ -64,6 +65,9 @@ describe("native connection configuration discovery", () => {
       expect(result.sources.map((s) => [s.id, s.status])).toEqual([
         ["codex-user", "invalid"],
         ["claude-user", "missing"],
+        ["claude-all-projects", "missing"],
+        ["codex-plugins", "read"],
+        ["claude-plugins", "read"],
       ]);
       expect(result.connections).toEqual([]);
     }),
@@ -140,7 +144,13 @@ describe("native connection configuration discovery", () => {
         });
         yield* put("repo/.claude/settings.local.json", { disabledMcpjsonServers: ["onlyProject"] });
         const global = yield* scan();
-        expect(global.connections.map((c) => c.name)).toEqual(["shared"]);
+        // Settings lists every project's private declarations beside the user's own.
+        expect(global.connections.map((c) => [c.name, c.scope, c.project, c.shadowed])).toEqual([
+          ["shared", "user", undefined, false],
+          ["shared", "local", "repo", false],
+          ["foreign", "local", "other", false],
+        ]);
+        expect(global.connections[1]?.state).toBe("disabled");
         const result = yield* scan(true);
         const matches = result.connections.filter((c) => c.name === "shared");
         expect(matches.map((c) => [c.scope, c.shadowed])).toEqual([
@@ -225,4 +235,163 @@ describe("native connection configuration discovery", () => {
       expect((yield* scan(true)).sources.find((s) => s.id === "claude-local")?.status).toBe("read");
     }),
   );
+});
+
+describe("plugin and other-tool discovery", () => {
+  it.effect("lists MCP servers from enabled Codex plugins, newest cached version only", () =>
+    Effect.gen(function* () {
+      yield* put(
+        "custom-codex/config.toml",
+        '[plugins."github@curated"]\nenabled = true\n[plugins."off@curated"]\nenabled = false\n[plugins."apps@remote"]\nenabled = true\n[plugins."absent@curated"]\nenabled = true\n[plugins."../escape@curated"]\nenabled = true\n',
+      );
+      yield* put("custom-codex/plugins/cache/curated/github/old/.mcp.json", {
+        mcpServers: { stale: { command: "echo" } },
+      });
+      yield* Effect.promise(() =>
+        NodeFSP.utimes(NodePath.join(root, "custom-codex/plugins/cache/curated/github/old"), 1, 1),
+      );
+      yield* put("custom-codex/plugins/cache/curated/github/new/.codex-plugin/plugin.json", {
+        name: "github",
+        mcpServers: "./.mcp.json",
+      });
+      yield* put("custom-codex/plugins/cache/curated/github/new/.mcp.json", {
+        mcpServers: {
+          github: { type: "http", url: "https://private.invalid", oauth: { secret: "tok" } },
+          review: { command: "/bin/sh", enabled: false },
+        },
+      });
+      yield* put("custom-codex/plugins/cache/curated/github/new/.app.json", {
+        apps: { github: { id: "connector_github" } },
+      });
+      yield* put("custom-codex/plugins/cache/curated/off/v/.mcp.json", {
+        mcpServers: { hidden: { command: "echo" } },
+      });
+      yield* put("custom-codex/plugins/cache/remote/apps/1/.codex-plugin/plugin.json", {
+        interface: { displayName: "Marketing Agent" },
+      });
+      yield* put("custom-codex/plugins/cache/remote/apps/1/.app.json", {
+        apps: { "app-69a1247fceb88191a0fde719fd50920d": { id: "x" } },
+      });
+      const result = yield* scan();
+      expect(
+        result.connections.map((c) => [c.name, c.plugin, c.transport, c.state, c.portable]),
+      ).toEqual([
+        ["github", "github", "http", "configured", undefined],
+        ["review", "github", "stdio", "disabled", undefined],
+        ["Marketing Agent", "Marketing Agent", "http", "configured", undefined],
+      ]);
+      expect(result.sources.find((s) => s.id === "codex-plugins")?.status).toBe("invalid");
+      expect(JSON.stringify(result)).not.toMatch(/stale|hidden|private\.invalid|tok|app-69a1/);
+    }),
+  );
+  it.effect("lists enabled Claude Code plugin servers and ignores installs outside the cache", () =>
+    Effect.gen(function* () {
+      const plugins = NodePath.join(root, "custom-claude", "plugins");
+      yield* put("custom-claude/settings.json", {
+        enabledPlugins: { "stripe@official": true, "off@official": false, "evil@x": true },
+      });
+      yield* put("custom-claude/plugins/installed_plugins.json", {
+        version: 2,
+        plugins: {
+          "stripe@official": [{ scope: "user", installPath: NodePath.join(plugins, "cache/s/1") }],
+          "off@official": [{ scope: "user", installPath: NodePath.join(plugins, "cache/o/1") }],
+          "evil@x": [{ scope: "user", installPath: NodePath.join(root, "elsewhere") }],
+        },
+      });
+      yield* put("custom-claude/plugins/cache/s/1/.mcp.json", {
+        mcpServers: { stripe: { type: "http", url: "https://private.invalid" } },
+      });
+      yield* put("custom-claude/plugins/cache/o/1/.mcp.json", {
+        mcpServers: { hidden: { command: "echo" } },
+      });
+      yield* put("elsewhere/.mcp.json", { mcpServers: { outside: { command: "echo" } } });
+      const result = yield* scan();
+      expect(result.connections.map((c) => [c.name, c.provider, c.plugin, c.scope])).toEqual([
+        ["stripe", "claude", "stripe", "user"],
+      ]);
+      expect(result.sources.find((s) => s.id === "claude-plugins")?.status).toBe("read");
+    }),
+  );
+  it.effect("keeps a plugin server beside a same-named user declaration", () =>
+    Effect.gen(function* () {
+      yield* put("custom-claude/settings.json", { enabledPlugins: { "gh@m": true } });
+      yield* put("custom-claude/.claude.json", { mcpServers: { github: { command: "gh" } } });
+      const plugins = NodePath.join(root, "custom-claude", "plugins");
+      yield* put("custom-claude/plugins/installed_plugins.json", {
+        plugins: { "gh@m": [{ scope: "user", installPath: NodePath.join(plugins, "cache/gh") }] },
+      });
+      yield* put("custom-claude/plugins/cache/gh/.claude-plugin/plugin.json", {
+        mcpServers: { github: { type: "http", url: "https://x.invalid" } },
+      });
+      const result = yield* scan();
+      expect(result.connections.map((c) => [c.plugin, c.shadowed])).toEqual([
+        [undefined, false],
+        ["gh", false],
+      ]);
+    }),
+  );
+  it.effect("lists other tools read-only with status, transport and disabled entries", () =>
+    Effect.gen(function* () {
+      yield* put("gemini.json", {
+        mcpServers: { pencil: { command: "pencil" }, remote: { httpUrl: "https://x.invalid" } },
+      });
+      yield* put("opencode.json", {
+        mcp: { local: { type: "local", command: ["run"], enabled: false } },
+      });
+      yield* put("windsurf.json", "{broken");
+      const result = yield* Effect.gen(function* () {
+        return yield* (yield* Discovery.NativeConnectionDiscovery).read();
+      }).pipe(
+        Effect.provide(
+          Discovery.layer.pipe(
+            Layer.provide(NodeFileSystem.layer),
+            Layer.provide(
+              Layer.succeed(Discovery.NativeConnectionPaths, {
+                codexHome: NodePath.join(root, "codex"),
+                claudeFile: NodePath.join(root, "claude.json"),
+                claudeSettings: NodePath.join(root, "settings.json"),
+                otherTools: [
+                  { tool: "gemini", path: NodePath.join(root, "gemini.json") },
+                  { tool: "opencode", path: NodePath.join(root, "opencode.json") },
+                  { tool: "windsurf", path: NodePath.join(root, "windsurf.json") },
+                  { tool: "cursor", path: NodePath.join(root, "cursor.json") },
+                ],
+              }),
+            ),
+          ),
+        ),
+      );
+      expect(
+        result.otherTools?.map((t) => [
+          t.tool,
+          t.status,
+          t.connections.map((c) => [c.name, c.transport, c.state]),
+        ]),
+      ).toEqual([
+        [
+          "gemini",
+          "read",
+          [
+            ["pencil", "stdio", "configured"],
+            ["remote", "http", "configured"],
+          ],
+        ],
+        ["opencode", "read", [["local", "stdio", "disabled"]]],
+        ["windsurf", "invalid", []],
+        ["cursor", "missing", []],
+      ]);
+      expect(JSON.stringify(result)).not.toContain("x.invalid");
+    }),
+  );
+  it("finds other tools' files under each platform's configuration folder", () => {
+    const files = Discovery.otherToolFiles("/h", "darwin", {});
+    expect(files.find((f) => f.tool === "claude-desktop")?.path).toBe(
+      "/h/Library/Application Support/Claude/claude_desktop_config.json",
+    );
+    expect(
+      Discovery.otherToolFiles("/h", "linux", { XDG_CONFIG_HOME: "/x" }).find(
+        (f) => f.tool === "opencode",
+      )?.path,
+    ).toBe("/x/opencode/opencode.json");
+  });
 });

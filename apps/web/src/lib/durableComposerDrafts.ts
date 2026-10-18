@@ -60,6 +60,25 @@ export interface DurableDraftEditLog {
   readonly write: (key: string, edit: DurableDraftEdit) => void;
 }
 
+/**
+ * This window's own durable copy of every draft, written on each change
+ * before the host has it. It covers the time the host cannot be reached: an
+ * update stops the host before the window closes, and a remote host can be
+ * offline. An entry is unsynced until the host confirms that exact draft.
+ */
+export interface DurableDraftJournalEntry {
+  readonly key: ComposerDraftKey;
+  readonly environmentId: string;
+  readonly snapshot: DurableDraftSnapshot;
+  readonly editedAt: number;
+  readonly synced: boolean;
+}
+export interface DurableDraftJournal {
+  readonly write: (entry: DurableDraftJournalEntry) => Promise<void>;
+  readonly read: (key: ComposerDraftKey) => Promise<DurableDraftJournalEntry | undefined>;
+  readonly remove: (key: ComposerDraftKey) => Promise<void>;
+}
+
 export const EMPTY_DURABLE_DRAFT: DurableDraftSnapshot = { prompt: "", attachments: [] };
 
 export function durableDraftIsEmpty(snapshot: DurableDraftSnapshot): boolean {
@@ -129,6 +148,15 @@ interface KeyState {
   chain: Promise<void>;
   /** Set while a host copy is being applied, so it is not saved straight back. */
   applying: boolean;
+  /** The newest snapshot this window journaled, and when it was edited. */
+  journaled: { snapshot: DurableDraftSnapshot; editedAt: number } | null;
+  journalWrite: Promise<void>;
+  retry: ReturnType<typeof setTimeout> | null;
+  failures: number;
+  /** `pending` came from the journal at launch and still awaits the host's answer. */
+  fromJournal: boolean;
+  /** The composer shows a journaled copy the host had confirmed; the host may have cleared it since. */
+  showsSyncedJournal: boolean;
 }
 
 export interface DurableDraftSync {
@@ -151,6 +179,17 @@ export interface DurableDraftSync {
     readonly local: () => DurableDraftSnapshot;
     readonly apply: (snapshot: DurableDraftSnapshot) => void;
   }) => Promise<"restored" | "kept" | "none">;
+  /**
+   * Puts back what this window journaled and the host never confirmed, right
+   * away and without the host. `restore` reconciles with the host afterwards.
+   */
+  readonly restoreLocal: (input: {
+    readonly target: DurableDraftTarget;
+    readonly local: () => DurableDraftSnapshot;
+    readonly apply: (snapshot: DurableDraftSnapshot) => void;
+  }) => Promise<"restored" | "kept" | "none">;
+  /** Resolves when every journal write so far is on disk. */
+  readonly journalSettled: () => Promise<void>;
   /** Applies a host copy without saving it straight back. */
   readonly applying: <T>(key: ComposerDraftKey, run: () => T) => T;
   readonly isApplying: (key: string) => boolean;
@@ -161,12 +200,18 @@ export function createDurableDraftSync(options: {
   readonly edits: DurableDraftEditLog;
   readonly debounceMs?: number;
   readonly holdTimeoutMs?: number;
+  readonly journal?: DurableDraftJournal | undefined;
+  /** Waits between retries of a save the host refused or never answered. */
+  readonly retryDelaysMs?: ReadonlyArray<number>;
   readonly now?: () => number;
   readonly onError?: (error: unknown) => void;
 }): DurableDraftSync {
   const debounceMs = options.debounceMs ?? 300;
-  const holdTimeoutMs = options.holdTimeoutMs ?? 120_000;
+  // Outlasts a send retried across an update restart (up to 3 minutes).
+  const holdTimeoutMs = options.holdTimeoutMs ?? 10 * 60_000;
   const now = options.now ?? Date.now;
+  const retryDelays = options.retryDelaysMs ?? [1_000, 2_000, 5_000, 10_000, 30_000];
+  const journal = options.journal;
   const keys = new Map<string, KeyState>();
 
   const stateFor = (key: string, environmentId: string): KeyState => {
@@ -181,6 +226,12 @@ export function createDurableDraftSync(options: {
         sent: null,
         chain: Promise.resolve(),
         applying: false,
+        journaled: null,
+        journalWrite: Promise.resolve(),
+        retry: null,
+        failures: 0,
+        fromJournal: false,
+        showsSyncedJournal: false,
       };
       keys.set(key, state);
     }
@@ -188,9 +239,52 @@ export function createDurableDraftSync(options: {
     return state;
   };
 
+  /** Journals the snapshot; writes run in order, so the newest one lands last. */
+  const journalWrite = (
+    key: ComposerDraftKey,
+    state: KeyState,
+    snapshot: DurableDraftSnapshot,
+    editedAt: number,
+    synced: boolean,
+  ) => {
+    if (!journal) return;
+    state.journaled = { snapshot, editedAt };
+    const entry: DurableDraftJournalEntry = {
+      key,
+      environmentId: state.environmentId,
+      snapshot,
+      editedAt,
+      synced,
+    };
+    state.journalWrite = state.journalWrite
+      .then(() =>
+        synced && durableDraftIsEmpty(snapshot) ? journal.remove(key) : journal.write(entry),
+      )
+      .catch((error: unknown) => options.onError?.(error));
+  };
+
+  /** Marks the journal synced once the host holds exactly what it journaled. */
+  const confirmJournal = (key: ComposerDraftKey, state: KeyState, signature: string) => {
+    const journaled = state.journaled;
+    if (!journaled || signatureOf(journaled.snapshot) !== signature) return;
+    journalWrite(key, state, journaled.snapshot, journaled.editedAt, true);
+  };
+
+  const scheduleRetry = (key: ComposerDraftKey, state: KeyState) => {
+    if (state.retry !== null) return;
+    const delay = retryDelays[Math.min(state.failures - 1, retryDelays.length - 1)] ?? 30_000;
+    state.retry = setTimeout(() => {
+      state.retry = null;
+      void drain(key, state);
+    }, delay);
+  };
+
   const send = async (key: ComposerDraftKey, state: KeyState, snapshot: DurableDraftSnapshot) => {
     const signature = signatureOf(snapshot);
-    if (signature === state.sent) return;
+    if (signature === state.sent) {
+      confirmJournal(key, state, signature);
+      return;
+    }
     const editedAt = options.edits.read(key)?.at ?? now();
     const build = async (resend: ReadonlySet<string>): Promise<ComposerDraftPutInput> => ({
       key,
@@ -219,6 +313,7 @@ export function createDurableDraftSync(options: {
     state.stored = new Set(snapshot.attachments.map((attachment) => attachment.id));
     for (const id of result.missingAttachmentIds) state.stored.delete(id);
     state.sent = signature;
+    if (result.missingAttachmentIds.length === 0) confirmJournal(key, state, signature);
   };
 
   const drain = (key: ComposerDraftKey, state: KeyState) => {
@@ -231,10 +326,16 @@ export function createDurableDraftSync(options: {
     state.pending = null;
     state.chain = state.chain
       .then(() => send(key, state, snapshot))
+      .then(() => {
+        state.failures = 0;
+      })
       .catch((error: unknown) => {
-        // A failed save stays waiting; the next edit or flush tries again.
+        // A failed save stays waiting (the journal still has it) and is tried
+        // again on the next edit, flush or retry: the host may be restarting.
         state.pending ??= snapshot;
-        options.onError?.(error);
+        state.failures += 1;
+        if (state.failures === 1) options.onError?.(error);
+        scheduleRetry(key, state);
       });
     return state.chain;
   };
@@ -249,9 +350,14 @@ export function createDurableDraftSync(options: {
     // A send's clearing is not an edit: should the window die before the send
     // is confirmed, the host copy must still come back.
     if (state.holds === 0) {
-      options.edits.write(target.key, { at: now(), empty: durableDraftIsEmpty(next) });
+      const at = now();
+      options.edits.write(target.key, { at, empty: durableDraftIsEmpty(next) });
+      // Every change reaches this window's disk at once, host or not.
+      journalWrite(target.key, state, next, at, false);
     }
     state.pending = next;
+    // A fresh edit outranks whatever another window saved meanwhile.
+    state.fromJournal = false;
     if (state.timer !== null) clearTimeout(state.timer);
     state.timer = setTimeout(() => void drain(target.key, state), debounceMs);
   };
@@ -269,6 +375,13 @@ export function createDurableDraftSync(options: {
       released = true;
       clearTimeout(expiry);
       state.holds -= 1;
+      if (state.holds === 0 && state.pending !== null) {
+        // The send settled: what the composer holds now (empty, or the
+        // restored text after a failure) becomes the draft.
+        const at = now();
+        options.edits.write(key, { at, empty: durableDraftIsEmpty(state.pending) });
+        journalWrite(key, state, state.pending, at, false);
+      }
       if (state.environmentId) void drain(key, state);
     };
     // A send that never settles must not stop this draft from saving.
@@ -288,10 +401,72 @@ export function createDurableDraftSync(options: {
     }
   };
 
+  const applySnapshot = (
+    key: ComposerDraftKey,
+    state: KeyState,
+    snapshot: DurableDraftSnapshot,
+    apply: (snapshot: DurableDraftSnapshot) => void,
+  ) => {
+    state.applying = true;
+    try {
+      apply(snapshot);
+    } finally {
+      state.applying = false;
+    }
+  };
+
+  const restoreLocal: DurableDraftSync["restoreLocal"] = async ({ target, local, apply }) => {
+    if (!journal) return "none";
+    const entry = await journal.read(target.key);
+    if (!entry) return "none";
+    const state = stateFor(target.key, target.environmentId);
+    state.journaled ??= { snapshot: entry.snapshot, editedAt: entry.editedAt };
+    if (state.pending !== null || state.holds > 0) return "kept";
+    const edit = options.edits.read(target.key);
+    if (edit !== undefined && edit.at > entry.editedAt) return "kept";
+    const current = local();
+    const same = signatureOf(keepable(current)) === signatureOf(entry.snapshot);
+    if (!same && !durableDraftIsEmpty(entry.snapshot)) {
+      applySnapshot(target.key, state, entry.snapshot, apply);
+      state.showsSyncedJournal = entry.synced;
+    }
+    options.edits.write(target.key, {
+      at: entry.editedAt,
+      empty: durableDraftIsEmpty(entry.snapshot),
+    });
+    if (!entry.synced) {
+      // The host never confirmed it; `restore` sends it unless the host has
+      // a newer edit from another window.
+      state.pending = entry.snapshot;
+      state.fromJournal = true;
+    }
+    return same || durableDraftIsEmpty(entry.snapshot) ? "kept" : "restored";
+  };
+
   const restore: DurableDraftSync["restore"] = async ({ target, local, apply }) => {
     const record = await options.transport.get(target.environmentId, target.key);
-    if (record === null) return "none";
     const state = stateFor(target.key, target.environmentId);
+    if (state.fromJournal) {
+      state.fromJournal = false;
+      const journaledAt = state.journaled?.editedAt ?? 0;
+      if (record !== null && record.editedAt > journaledAt && state.pending !== null) {
+        // Another window edited this draft after this one last saved.
+        state.pending = null;
+      } else {
+        void drain(target.key, state);
+        return record === null ? "none" : "kept";
+      }
+    }
+    const showedSynced = state.showsSyncedJournal;
+    state.showsSyncedJournal = false;
+    if (record === null) {
+      if (showedSynced && state.pending === null && state.holds === 0) {
+        // Sent or cleared in another window after this one last saw it.
+        journalWrite(target.key, state, EMPTY_DURABLE_DRAFT, now(), true);
+        applySnapshot(target.key, state, EMPTY_DURABLE_DRAFT, apply);
+      }
+      return "none";
+    }
     // An edit made while the host answered wins over what the host had.
     if (state.pending !== null || state.holds > 0) return "kept";
     const current = local();
@@ -317,12 +492,8 @@ export function createDurableDraftSync(options: {
     state.stored = new Set(record.attachments.map((attachment) => attachment.id));
     state.sent = signatureOf(snapshot);
     options.edits.write(target.key, { at: record.editedAt, empty: durableDraftIsEmpty(snapshot) });
-    state.applying = true;
-    try {
-      apply(snapshot);
-    } finally {
-      state.applying = false;
-    }
+    journalWrite(target.key, state, snapshot, record.editedAt, true);
+    applySnapshot(target.key, state, snapshot, apply);
     return "restored";
   };
 
@@ -331,6 +502,10 @@ export function createDurableDraftSync(options: {
     flush,
     hold,
     restore,
+    restoreLocal,
+    journalSettled: async () => {
+      await Promise.all([...keys.values()].map((state) => state.journalWrite));
+    },
     applying,
     isApplying: (key) => keys.get(key)?.applying === true,
   };

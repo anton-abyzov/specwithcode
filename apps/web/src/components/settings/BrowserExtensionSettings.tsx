@@ -88,10 +88,19 @@ function Steps({ items }: { items: ReadonlyArray<React.ReactNode> }) {
 export function BrowserExtensionCard({
   environmentId,
   machine,
+  thisComputer = null,
+  onSwitchToThisComputer,
 }: {
   environmentId: EnvironmentId;
   machine: string;
+  /**
+   * The computer this app runs on, when it is not `machine`. Chrome here connects
+   * only to this computer's SpecWithCode, so `machine`'s code fails in it.
+   */
+  thisComputer?: string | null;
+  onSwitchToThisComputer?: (() => void) | undefined;
 }) {
+  const otherComputer = thisComputer !== null;
   const permitted = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
   const canOperate = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const canWrite = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
@@ -142,12 +151,19 @@ export function BrowserExtensionCard({
     }
   }
 
-  const showCode = () =>
-    run(
+  const showCode = async () => {
+    if (otherComputer) {
+      const confirmed = await ensureLocalApi().dialogs.confirm(
+        `This code is for Chrome on ${machine}. You are on ${thisComputer}, and Chrome here rejects it. Show it anyway, to paste into Chrome on ${machine}?`,
+      );
+      if (!confirmed) return;
+    }
+    await run(
       "pairing",
       () => pairing({ environmentId, input: {} }),
       (value) => setCode(value.pairingCode),
     );
+  };
   const resetCode = async () => {
     const confirmed = await ensureLocalApi().dialogs.confirm(
       "Reset the pairing code? Every paired Chrome profile disconnects and must be paired again with the new code.",
@@ -219,6 +235,26 @@ export function BrowserExtensionCard({
       data-testid="browser-extension-card"
     >
       <div className="space-y-5 px-4 py-4">
+        {otherComputer && (
+          <div
+            role="alert"
+            data-testid="browser-extension-other-computer"
+            className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-sm"
+          >
+            <p className="flex min-w-0 items-start gap-1.5">
+              <CircleAlertIcon className="mt-0.5 size-4 shrink-0 text-warning-foreground" />
+              <span>
+                You are on <b>{thisComputer}</b>. This sets up Chrome on <b>{machine}</b>, a
+                different computer; its pairing code does not work in Chrome here.
+              </span>
+            </p>
+            {onSwitchToThisComputer && (
+              <Button size="sm" onClick={onSwitchToThisComputer}>
+                Set up Chrome on {thisComputer}
+              </Button>
+            )}
+          </div>
+        )}
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 max-w-prose space-y-1">
             <p className="text-sm">
@@ -337,6 +373,12 @@ export function BrowserExtensionCard({
 
             <div className="space-y-2">
               <p className="text-sm font-medium">2. Pair</p>
+              {otherComputer && (
+                <p className="flex items-start gap-1.5 text-xs text-warning-foreground">
+                  <CircleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
+                  This code works only in Chrome on {machine}, not in Chrome on {thisComputer}.
+                </p>
+              )}
               {code === null ? (
                 <Button
                   size="sm"

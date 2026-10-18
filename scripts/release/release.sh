@@ -877,6 +877,17 @@ server_result() {
   return 0
 }
 
+# The server suite runs in the background from stage 1 on. Once it has failed, stop before the
+# next bundle, signing, plan or drafts stage rather than finish a candidate that cannot ship.
+stop_if_server_failed() {
+  local rc
+  rc="$(server_result)"
+  if [ -z "$rc" ] || [ "$rc" = 0 ]; then return 0; fi
+  if [ -f "$LOG_DIR/server.log" ]; then tail -n 40 "$LOG_DIR/server.log"; fi
+  drop_drafts  # An earlier candidate's drafts.
+  die "the server suite failed for $SHA12 (exit $rc); fix, commit in $BUILD and --resume (reruns only changed files)"
+}
+
 stage_server_wait() {
   local pid="" sha="" rc="" waited=0
   if [ "$MODE" = dry ]; then
@@ -1008,9 +1019,16 @@ linux_assets() {
   for target in $LINUX_ARCHS; do printf '%s\n' "studio-$VERSION-linux-$target-$SHA12.tar.gz"; done
 }
 
+# The command-line installer (docs/user/install.md#command-line), served from the newest release
+# as releases/latest/download/install.sh.
+installer_assets() {
+  printf '%s\n' install.sh
+}
+
 release_assets() {
   desktop_assets
   linux_assets
+  installer_assets
   printf '%s\n' "studio-$VERSION-$SHA12.tar.gz" "studio-$VERSION-deployment-helpers-$SHA12.tar.gz" \
     deployment-helpers-manifest.json studio-update.json SHA256SUMS
 }
@@ -1021,11 +1039,13 @@ stage_plan() {
   while read -r name; do names+=("$name"); done << EOF
 $(desktop_assets)
 $(linux_assets)
+$(installer_assets)
 EOF
   # The plans of 1.0.30 to 1.0.37 passed both flags. Without --allow-project-migrations a release
   # that migrates fails and rolls back on every host, also on one that skipped the migrating release.
   if [ "$MIGRATIONS" -eq 1 ]; then args+=(--arg=--allow-project-migrations); fi
   args+=(--arg=--allow-existing-browser-heartbeat)
+  x installer -- cp "$BUILD/scripts/install.sh" "$ASSETS/install.sh"
   x sums -- python3 -B "$TOOLS" sums --dir "$ASSETS" --out "$ASSETS/SHA256SUMS" "${names[@]}" \
     "$runtime" "$helpers" deployment-helpers-manifest.json
   x plan -C "$BUILD/scripts/studio-fleet" -- python3 -B make_update_plan.py --version "$VERSION" \
@@ -1083,14 +1103,7 @@ EOF
 }
 
 stage_drafts() {
-  local base rc
-  # A server suite that already failed blocks this candidate: make no drafts only to delete them.
-  rc="$(server_result)"
-  if [ -n "$rc" ] && [ "$rc" != 0 ]; then
-    if [ -f "$LOG_DIR/server.log" ]; then tail -n 40 "$LOG_DIR/server.log"; fi
-    drop_drafts  # An earlier candidate's drafts.
-    die "the server suite failed for $SHA12 (exit $rc), so no drafts were made; fix, commit in $BUILD and --resume"
-  fi
+  local base
   release_flags
   if [ ! -s "$STAGE/notes.md" ]; then
     base="$(q prev-source --may-fail -- python3 -B "$TOOLS" json-get "$STAGE/prev/studio-update.json" sourceCommit)"
@@ -1294,6 +1307,7 @@ parse_args() {
 }
 
 main() {
+  local stage
   parse_args "$@"
   if [ "$SELF_TEST" -eq 1 ]; then exec bash "$HERE/release-self-test.sh"; fi
   set_paths
@@ -1320,11 +1334,10 @@ main() {
   run_stage stage1 sha
   start_server
   run_stage build sha
-  run_stage bundle sha
-  run_stage sign sha
-  run_stage helpers sha
-  run_stage plan sha
-  run_stage drafts sha
+  for stage in bundle sign helpers plan drafts; do
+    stop_if_server_failed
+    run_stage "$stage" sha
+  done
   run_stage server-wait sha
   if [ "$CI_MODE" -eq 0 ] && ! is_done desktop once; then run_stage quit-desktop always; fi
   run_stage publish-private once

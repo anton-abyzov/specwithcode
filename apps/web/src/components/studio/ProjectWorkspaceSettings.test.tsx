@@ -142,6 +142,9 @@ vi.mock("../settings/ProjectOverrides", () => ({
 }));
 vi.mock("./ProjectRoutines", () => ({ ProjectRoutines: () => <p>Project routines</p> }));
 vi.mock("./ProjectFolderChange", () => ({ ProjectFolderChange: () => <p>Project folder</p> }));
+vi.mock("../computerUse/ComputerUsePermissions", () => ({
+  ComputerUsePermissionSetup: () => <p>Computer use permissions</p>,
+}));
 const CloseContext = createContext<() => void>(() => {});
 vi.mock("../ui/dialog", () => ({
   Dialog: ({

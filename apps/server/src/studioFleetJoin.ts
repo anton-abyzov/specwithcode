@@ -34,7 +34,7 @@ export class FleetJoinError extends Error {
     super(
       {
         "invalid-code":
-          "This is not a machine invitation. Run `fleet invite` on that machine again and copy the whole line.",
+          "This is not a machine invitation. Make a new line on that machine (Invite this machine in its Settings > Connections, or `fleet invite`) and copy the whole line.",
         "address-in-use": "Another configured machine already uses this address.",
         "id-in-use": "Another configured machine already uses this name.",
         "unknown-machine": "No configured machine has that name.",

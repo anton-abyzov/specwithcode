@@ -49,6 +49,12 @@ const state = vi.hoisted(() => ({
   done: vi.fn(),
 }));
 
+// The machine choice and its invitation have their own tests.
+vi.mock("./JoinMachineSteps", () => ({
+  MachineRoleStep: () => null,
+  JoinMachineStep: () => null,
+  JoinedMachineStep: () => null,
+}));
 vi.mock("../../connection/runtime", () => ({ connectionAtomRuntime: undefined }));
 vi.mock("@specweave-studio/client-runtime/state/session", () => ({
   createEnvironmentSessionAtoms: () => ({

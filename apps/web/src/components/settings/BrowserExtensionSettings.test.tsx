@@ -209,6 +209,31 @@ describe("BrowserExtensionCard", () => {
     expect(text()).not.toContain("SECRET-2");
   });
 
+  it("warns that another computer's code fails in Chrome here", async () => {
+    await render();
+    expect(text()).not.toContain("browser-extension-other-computer");
+    const onSwitch = vi.fn();
+    await act(() => {
+      renderer = create(
+        <BrowserExtensionCard
+          environmentId={m4}
+          machine="MacBookPro.lan"
+          thisComputer="M4 Max"
+          onSwitchToThisComputer={onSwitch}
+        />,
+      );
+    });
+    expect(text()).toContain("browser-extension-other-computer");
+    expect(text()).toContain("This code works only in Chrome on ");
+    await act(() => button("Set up Chrome on ").props.onClick());
+    expect(onSwitch).toHaveBeenCalled();
+
+    state.confirm.mockResolvedValueOnce(false);
+    await act(() => button("Show pairing code").props.onClick());
+    expect(state.confirm).toHaveBeenCalledWith(expect.stringContaining("Chrome on MacBookPro.lan"));
+    expect(state.command).not.toHaveBeenCalled();
+  });
+
   it("prepares the Load unpacked folder with steps", async () => {
     state.command.mockResolvedValue({
       _tag: "Success",

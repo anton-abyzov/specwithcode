@@ -15,16 +15,25 @@ import { ZapIcon } from "lucide-react";
 import type { ModelLabel } from "../../studio/shellModel";
 import { Tip } from "./shell/Tip";
 
-/** Same project setting as Settings → Default permissions, never a chat-local draft. */
+/**
+ * Same project setting as Settings → Default permissions, never a chat-local draft.
+ * Shows the mode the coordinator runs in: a global default change leaves
+ * existing chats as they were, so the setting alone can say Full access while
+ * the coordinator still asks.
+ */
 export function CoordinatorAccessPicker({
   environmentId,
   projectId,
+  coordinatorRuntimeMode = null,
 }: {
   environmentId: EnvironmentId;
   projectId: ProjectId;
+  coordinatorRuntimeMode?: RuntimeMode | null;
 }) {
   const settings = useEnvironmentSettings(environmentId);
-  const value = resolveProjectSettings(settings, projectId).settings.defaultRuntimeMode;
+  const value =
+    coordinatorRuntimeMode ??
+    resolveProjectSettings(settings, projectId).settings.defaultRuntimeMode;
   const allowed = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const save = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
   const [pending, setPending] = useState(false);
@@ -88,10 +97,13 @@ export function CoordinatorAccessPicker({
 
 export function CoordinatorComposerControls({
   project,
+  coordinatorRuntimeMode = null,
   fallback,
   children,
 }: {
   project: { environmentId: EnvironmentId; id: ProjectId };
+  /** The coordinator thread's own mode, once it exists. */
+  coordinatorRuntimeMode?: RuntimeMode | null;
   fallback: {
     saved: ModelLabel;
     now: ModelLabel;
@@ -140,6 +152,7 @@ export function CoordinatorComposerControls({
           key={`${project.environmentId}:${project.id}`}
           environmentId={project.environmentId}
           projectId={project.id}
+          coordinatorRuntimeMode={coordinatorRuntimeMode}
         />
       </div>
     </>

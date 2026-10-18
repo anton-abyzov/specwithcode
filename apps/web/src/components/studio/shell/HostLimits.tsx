@@ -17,6 +17,7 @@ import {
   savableReadings,
   usageToneOf,
   type HostLimitBlock,
+  type HostLimitWindow,
   type HostProviderRow,
 } from "../../../studio/hostLimitsModel";
 import { blockedLabel, leftPercent, usageLeftLabel } from "../../../studio/usageIndicatorModel";
@@ -38,14 +39,25 @@ import "./host-limits.css";
 const driverLabel = (driver: HostProviderRow["driver"]) =>
   getDriverOption(driver)?.label ?? String(driver);
 
-/** Every connected host's blocks as of `now`; online readings are saved for later. */
-export function useHostLimitBlocks(projectEnvironmentId: EnvironmentId | null, now: number) {
+/**
+ * Every connected host's blocks as of `now`, or only the hosts in `only`;
+ * online readings are saved for later.
+ */
+export function useHostLimitBlocks(
+  projectEnvironmentId: EnvironmentId | null,
+  now: number,
+  only: ReadonlySet<EnvironmentId> | null = null,
+) {
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   // Read once: saving below must not feed back into the blocks it came from.
   const [saved] = useState(() => loadSavedHostReadings(Date.now()));
   const blocks = useMemo(
-    () => collectHostLimitBlocks(presentations, { projectEnvironmentId, saved, driverLabel, now }),
-    [presentations, projectEnvironmentId, saved, now],
+    () =>
+      collectHostLimitBlocks(
+        only === null ? presentations : new Map([...presentations].filter(([id]) => only.has(id))),
+        { projectEnvironmentId, saved, driverLabel, now },
+      ),
+    [presentations, projectEnvironmentId, saved, now, only],
   );
   useEffect(() => {
     const at = Date.now();
@@ -91,7 +103,7 @@ function ProviderRow({ row, now, dim }: { row: HostProviderRow; now: number; dim
               title="The same account is signed in on these hosts; they share one quota."
             >
               <LinkIcon aria-hidden />
-              Same account on {row.sharedWith.join(", ")}
+              <span className="truncate">Same account on {row.sharedWith.join(", ")}</span>
             </span>
           ) : null}
         </div>
@@ -147,6 +159,20 @@ function ProviderRow({ row, now, dim }: { row: HostProviderRow; now: number; dim
   );
 }
 
+/** Which machine the viewer is on, and which one runs the open project. */
+function HostBadges({ block }: { block: HostLimitBlock }) {
+  return (
+    <>
+      {block.isThisMachine ? <span className="sws-hl-badge">This machine</span> : null}
+      {block.isProjectHost ? (
+        <Tip label="This project's coordinator runs on this machine." side="top">
+          <span className="sws-hl-badge">This project</span>
+        </Tip>
+      ) : null}
+    </>
+  );
+}
+
 function HostBlock({ block, now }: { block: HostLimitBlock; now: number }) {
   return (
     <section
@@ -157,7 +183,7 @@ function HostBlock({ block, now }: { block: HostLimitBlock; now: number }) {
       <header>
         <MonitorIcon aria-hidden className="sws-hl-icon" />
         <strong>{block.label}</strong>
-        {block.isProjectHost ? <span className="sws-hl-badge">Project device</span> : null}
+        <HostBadges block={block} />
         <span className="sws-hl-status">
           <span className="sws-hl-dot" aria-hidden />
           {statusText(block, now)}
@@ -228,7 +254,8 @@ export function HostLimits({
                 {blocks.map((block) => (
                   <SelectItem key={block.environmentId} value={`host:${block.environmentId}`}>
                     {block.label}
-                    {block.isProjectHost ? " (project device)" : ""}
+                    {block.isThisMachine ? " (this machine)" : ""}
+                    {block.isProjectHost ? " (this project)" : ""}
                   </SelectItem>
                 ))}
               </SelectGroup>
@@ -250,8 +277,40 @@ export function HostLimits({
   );
 }
 
-/** Rows with bars; the settings page explains the providers that report none. */
-const limited = (block: HostLimitBlock) => block.providers.filter((row) => row.notice === null);
+/**
+ * Usage → Limits by machine: one block per selected host with every provider
+ * signed in there, its account and each window. `now` comes from the page,
+ * which advances it on refresh.
+ */
+export function MachineLimitBlocks({
+  only,
+  now,
+}: {
+  only: ReadonlySet<EnvironmentId> | null;
+  now: number;
+}) {
+  const blocks = useHostLimitBlocks(null, now, only);
+  return <MachineLimitBlocksView blocks={blocks} now={now} />;
+}
+
+export function MachineLimitBlocksView({
+  blocks,
+  now,
+}: {
+  blocks: readonly HostLimitBlock[];
+  now: number;
+}) {
+  if (blocks.length === 0) {
+    return <p className="text-sm text-muted-foreground">No host is connected yet.</p>;
+  }
+  return (
+    <div className="sws-hl-limits">
+      {blocks.map((block) => (
+        <HostBlock key={block.environmentId} block={block} now={now} />
+      ))}
+    </div>
+  );
+}
 
 /** When the fullest window resets: shown once a provider runs low, when it matters. */
 function peakResetsAt(row: HostProviderRow): number | null {
@@ -265,67 +324,161 @@ function compactStatus(block: HostLimitBlock, now: number): string {
   return block.readAt === null ? "Offline" : `Offline · ${formatAgo(block.readAt, now)}`;
 }
 
-function CompactProviderRow({ row, now }: { row: HostProviderRow; now: number }) {
+/** Who is signed in, and the other machines sharing that account's quota. */
+function accountLine(row: HostProviderRow): string {
+  const who = row.identity ?? "Account not reported";
+  return row.sharedWith.length > 0 ? `${who} · also on ${row.sharedWith.join(", ")}` : who;
+}
+
+function CompactWindowRow({ window, now }: { window: HostLimitWindow; now: number }) {
+  const tone = window.stale || window.blockedBy ? "stale" : usageToneOf(window.usedPercent);
+  return (
+    <div className="sws-hl-compact-window" data-tone={tone}>
+      <span className="sws-hl-compact-window-label">{window.label}</span>
+      <span className="sws-hl-bar" data-tone={tone} aria-hidden>
+        <span style={{ width: `${leftPercent(window.usedPercent)}%` }} />
+      </span>
+      {window.blockedBy ? (
+        <>
+          <Tip label={blockedLabel(window.blockedBy, now)} side="left">
+            <span className="sws-hl-compact-value">Blocked</span>
+          </Tip>
+          <span className="sws-hl-compact-aside">
+            {window.blockedBy.resetsAt === null || window.blockedBy.resetsAt <= now
+              ? ""
+              : `in ${formatDuration(window.blockedBy.resetsAt - now)}`}
+          </span>
+        </>
+      ) : (
+        <>
+          <span className="sws-hl-compact-value">
+            {window.stale ? "reset since" : usageLeftLabel(window.usedPercent)}
+          </span>
+          <span className="sws-hl-compact-aside">
+            {window.resetsAt === null ? "" : `in ${formatDuration(window.resetsAt - now)}`}
+          </span>
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A provider on a host: its fullest window on the first line, the account
+ * under it. The account the project's coordinator uses opens up to every
+ * window instead, so the popover needs no separate section for it.
+ */
+function CompactProviderEntry({
+  row,
+  now,
+  coordinator,
+}: {
+  row: HostProviderRow;
+  now: number;
+  coordinator: boolean;
+}) {
   const tone = usageToneOf(row.peak);
   const resetsAt = tone === "ok" ? null : peakResetsAt(row);
-  const shared = row.sharedWith.length > 0 ? `Same account on ${row.sharedWith.join(", ")}` : null;
+  const account = [accountLine(row), coordinator ? row.plan : null].filter(Boolean).join(" · ");
   return (
-    <li className="sws-hl-compact-row" data-tone={tone}>
-      <ProviderIcon row={row} size="sm" />
-      <Tip label={[row.label, row.identity].filter(Boolean).join(" · ")} side="left">
-        <span className="sws-hl-compact-provider">{row.label}</span>
-      </Tip>
-      <span className="sws-hl-bar" data-tone={tone} aria-hidden>
-        <span style={{ width: `${row.peak === null ? 0 : leftPercent(row.peak)}%` }} />
-      </span>
-      <span className="sws-hl-compact-value">
-        {row.peak === null ? "–" : usageLeftLabel(row.peak)}
-      </span>
-      <span className="sws-hl-compact-aside">
-        {resetsAt !== null && resetsAt > now ? `in ${formatDuration(resetsAt - now)}` : null}
-        {shared !== null ? (
-          <Tip label={shared} side="left">
-            <span role="img" aria-label={shared}>
-              <LinkIcon aria-hidden />
+    <li
+      className="sws-hl-compact-entry"
+      data-tone={tone}
+      data-coordinator={coordinator || undefined}
+    >
+      <div className="sws-hl-compact-row">
+        <ProviderIcon row={row} size="sm" />
+        {coordinator ? (
+          <span className="sws-hl-compact-provider" data-wide="">
+            {row.label}
+            <span className="sws-hl-tag">Coordinator</span>
+          </span>
+        ) : (
+          <>
+            <span className="sws-hl-compact-provider">{row.label}</span>
+            <span className="sws-hl-bar" data-tone={tone} aria-hidden>
+              <span style={{ width: `${row.peak === null ? 0 : leftPercent(row.peak)}%` }} />
             </span>
-          </Tip>
-        ) : null}
-      </span>
+            <span className="sws-hl-compact-value">
+              {row.peak === null ? "–" : usageLeftLabel(row.peak)}
+            </span>
+            <span className="sws-hl-compact-aside">
+              {resetsAt !== null && resetsAt > now ? `in ${formatDuration(resetsAt - now)}` : null}
+            </span>
+          </>
+        )}
+      </div>
+      <Tip label={account} side="left">
+        <span className="sws-hl-compact-account">{account}</span>
+      </Tip>
+      {coordinator
+        ? row.windows.map((window) => (
+            <CompactWindowRow key={`${window.kind}:${window.id}`} window={window} now={now} />
+          ))
+        : null}
+      {coordinator && row.notice !== null ? (
+        <span className="sws-hl-compact-account">{row.notice}</span>
+      ) : null}
+      {coordinator && row.bankedResets > 0 ? (
+        <span className="sws-hl-compact-account sws-hl-banked">
+          <TicketIcon aria-hidden />
+          {row.bankedResets} {row.bankedResets === 1 ? "reset" : "resets"} banked
+        </span>
+      ) : null}
     </li>
   );
 }
 
 /**
  * All hosts at a glance for the usage chip's popover. One grid shared by
- * every host (subgrid), so icons, bars, values and the reset or shared-account
- * column line up across machines: a header per host, then a row per provider
- * with what is left in its fullest window.
+ * every host (subgrid), so icons, bars, values and resets line up across
+ * machines: a header per host, then each provider with its account.
  */
 export function HostLimitsCompact({
   projectEnvironmentId,
+  coordinatorInstanceId = null,
   now,
 }: {
   projectEnvironmentId: EnvironmentId | null;
+  coordinatorInstanceId?: string | null;
   now: number;
 }) {
   const blocks = useHostLimitBlocks(projectEnvironmentId, now);
-  return <HostLimitsCompactView blocks={blocks} now={now} />;
+  return (
+    <HostLimitsCompactView
+      blocks={blocks}
+      now={now}
+      coordinator={
+        projectEnvironmentId && coordinatorInstanceId
+          ? { environmentId: projectEnvironmentId, instanceId: coordinatorInstanceId }
+          : null
+      }
+    />
+  );
 }
 
 export function HostLimitsCompactView({
   blocks,
   now,
+  coordinator = null,
 }: {
   blocks: readonly HostLimitBlock[];
   now: number;
+  /** The host and instance this project's coordinator runs on: shown in full. */
+  coordinator?: { environmentId: EnvironmentId; instanceId: string } | null;
 }) {
   if (blocks.length === 0) return null;
+  const isCoordinator = (block: HostLimitBlock, row: HostProviderRow) =>
+    coordinator !== null &&
+    block.environmentId === coordinator.environmentId &&
+    row.instanceId === coordinator.instanceId;
   return (
     <section className="sws-hl-compact" aria-label="Limits by machine">
-      <h3>By machine</h3>
       <ul className="sws-hl-compact-grid">
         {blocks.map((block) => {
-          const rows = limited(block);
+          const rows = block.providers.filter(
+            (row) => row.notice === null || isCoordinator(block, row),
+          );
           return (
             <li
               key={block.environmentId}
@@ -338,7 +491,7 @@ export function HostLimitsCompactView({
                   <Tip label={block.label} side="top">
                     <strong>{block.label}</strong>
                   </Tip>
-                  {block.isProjectHost ? <span className="sws-hl-badge">Project</span> : null}
+                  <HostBadges block={block} />
                   <span className="sws-hl-compact-status">{compactStatus(block, now)}</span>
                 </span>
               </div>
@@ -353,7 +506,12 @@ export function HostLimitsCompactView({
               ) : (
                 <ul>
                   {rows.map((row) => (
-                    <CompactProviderRow key={row.key} row={row} now={now} />
+                    <CompactProviderEntry
+                      key={row.key}
+                      row={row}
+                      now={now}
+                      coordinator={isCoordinator(block, row)}
+                    />
                   ))}
                 </ul>
               )}

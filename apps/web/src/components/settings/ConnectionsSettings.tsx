@@ -1705,8 +1705,9 @@ function SavedBackendListRow({
       environment,
       isConnected && prepared._tag === "Some" ? prepared.value.target : null,
     ),
-    resumingServerUpdate ? "Restarting" : status.text,
+    // Last seen before the status: a long connection error is cut off at the end.
     lastSeen,
+    resumingServerUpdate ? "Restarting" : status.text,
     enabled && versionMismatch ? serverVersion : null,
   ]
     .filter((value): value is string => value !== null)

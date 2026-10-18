@@ -9,11 +9,12 @@ target; Windows builds from the same code as an unsigned x64 installer.
 The desktop never runs a second server on data another SpecWithCode process owns.
 On launch it looks for a live server, in this order:
 
-1. Its own home: `STUDIO_HOME`, or `~/.specweave-studio` by default.
+1. Its own home: `STUDIO_HOME`, or `~/.specwithcode` by default (a legacy
+   `~/.specweave-studio` that still holds a profile keeps precedence until it is migrated).
 2. When `STUDIO_HOME` is not set, every home the fleet installer created beside
-   it, read from `~/.specweave-studio/<identity>/installation.json`. The
+   it, read from `~/.specwithcode/<identity>/installation.json`. The
    installed launchd service runs from there (for example
-   `~/.specweave-studio/m4`), not from the default home.
+   `~/.specwithcode/m4`), not from the default home.
 
 If one answers, the desktop uses it as **This Mac** and starts nothing. It
 pairs once through that installation's own `specweave-studio pair` command,
@@ -106,7 +107,7 @@ pnpm --filter @specweave-studio/desktop smoke-test
 It launches the built app with a throwaway home, Electron profile and mock
 keychain, passes only after the backend answers and the main window opens,
 and fails on early exit, a fatal startup error or a renderer error. It never
-touches `~/.specweave-studio`.
+touches `~/.specwithcode` or a legacy `~/.specweave-studio`.
 
 ## Signing and notarization
 

@@ -23,9 +23,9 @@ const requireComputerAccess = McpInvocationContext.requireThreadMcpCapability("c
 
 const run = (action: ComputerUseAction) =>
   Effect.gen(function* () {
-    yield* requireComputerAccess;
+    const scope = yield* requireComputerAccess;
     const broker = yield* ComputerUseBroker.ComputerUseBroker;
-    return yield* broker.invoke(action);
+    return yield* broker.invoke(action, { threadId: scope.thread.threadId });
   });
 
 /** Everything but the image: action tools report where things stand afterwards. */

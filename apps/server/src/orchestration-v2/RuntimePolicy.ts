@@ -79,7 +79,7 @@ export const layer: Layer.Layer<RuntimePolicyV2> = Layer.succeed(RuntimePolicyV2
  * (a thread set before it stopped offering it, or a stale client) runs in
  * Supervised rather than having Studio imitate it.
  */
-function providerRuntimeMode(
+export function providerRuntimeMode(
   runtimeMode: RuntimeMode,
   supportedRuntimeModes: ReadonlyArray<RuntimeMode> | undefined,
 ): RuntimeMode {

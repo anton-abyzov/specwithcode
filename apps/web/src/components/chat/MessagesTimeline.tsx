@@ -70,6 +70,7 @@ import { replaceComposerContextReferences } from "@specweave-studio/shared/compo
 import {
   resolveWorkEntryToolPresentation,
   resolveViewedImageAsset,
+  workEntryComputerUsePermission,
   workEntryReportsChromeDisconnected,
   workEntryViewedImagePath,
 } from "@specweave-studio/client-runtime/work-log/presentation";
@@ -301,6 +302,7 @@ import { ContextChip, ContextChipLabel, type ContextChipKind } from "../ContextC
 import { createContextPresentationRegistry } from "../contextPresentationRegistry";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import { ChromeConnectCard } from "./ChromeConnectCard";
+import { ComputerUsePermissionCard } from "../computerUse/ComputerUsePermissions";
 import { useClientSettings } from "~/hooks/useSettings";
 import type { ChatMarkdownContextReference } from "../ChatMarkdown";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
@@ -5636,6 +5638,18 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEntryRowP
         <>
           <WorkEntryLogRow {...props} />
           <ChromeConnectCard environmentId={ctx.activeThreadEnvironmentId} />
+        </>
+      );
+    }
+    const missingPermission = workEntryComputerUsePermission(props.workEntry);
+    if (missingPermission !== undefined) {
+      return (
+        <>
+          <WorkEntryLogRow {...props} />
+          <ComputerUsePermissionCard
+            permission={missingPermission}
+            environmentId={ctx.activeThreadEnvironmentId}
+          />
         </>
       );
     }

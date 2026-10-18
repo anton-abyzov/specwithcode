@@ -119,6 +119,43 @@ export const ComputerUsePermissions = Schema.Struct({
 });
 export type ComputerUsePermissions = typeof ComputerUsePermissions.Type;
 
+/** A macOS permission computer use needs. Both belong to the SpecWithCode app. */
+export const ComputerUsePermission = Schema.Literals(["screen-recording", "accessibility"]);
+export type ComputerUsePermission = typeof ComputerUsePermission.Type;
+
+/** The permission an action needs before it can run, if any. */
+export function computerUsePermissionFor(
+  kind: ComputerUseActionKind,
+): ComputerUsePermission | undefined {
+  if (kind === "screenshot") return "screen-recording";
+  if (kind === "status" || kind === "open") return undefined;
+  return "accessibility";
+}
+
+/**
+ * The desktop app's errors for a missing permission start with these phrases,
+ * so a thread can tell that failure apart and show the permission card.
+ */
+export const COMPUTER_USE_PERMISSION_ERROR_PHRASES: Record<ComputerUsePermission, string> = {
+  "screen-recording": "SpecWithCode needs Screen Recording",
+  accessibility: "SpecWithCode needs Accessibility",
+};
+
+// Desktop builds up to 1.0.43 wrote "The user did not allow Screen Recording for SpecWithCode".
+const LEGACY_PERMISSION_ERROR = /did not allow (Screen Recording|Accessibility) for SpecWithCode/;
+
+/** Which permission a computer-use error says is missing, if any. */
+export function computerUsePermissionFromError(text: string): ComputerUsePermission | undefined {
+  if (text.includes(COMPUTER_USE_PERMISSION_ERROR_PHRASES["screen-recording"])) {
+    return "screen-recording";
+  }
+  if (text.includes(COMPUTER_USE_PERMISSION_ERROR_PHRASES.accessibility)) return "accessibility";
+  const legacy = LEGACY_PERMISSION_ERROR.exec(text)?.[1];
+  if (legacy === "Screen Recording") return "screen-recording";
+  if (legacy === "Accessibility") return "accessibility";
+  return undefined;
+}
+
 /** What the desktop host reports back for one action. */
 export const ComputerUseActionResult = Schema.Struct({
   /** The host's platform, so agents know which shortcuts apply. */
@@ -142,6 +179,8 @@ export type ComputerUseHostInput = typeof ComputerUseHostInput.Type;
 export const ComputerUseHostRequest = Schema.Struct({
   requestId: TrimmedNonEmptyString,
   action: ComputerUseAction,
+  /** The thread whose agent asked, so the app can show a permission card there. */
+  threadId: Schema.optional(TrimmedNonEmptyString),
 });
 export type ComputerUseHostRequest = typeof ComputerUseHostRequest.Type;
 

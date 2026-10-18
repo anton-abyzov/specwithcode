@@ -142,6 +142,12 @@ contextBridge.exposeInMainWorld("desktopBridge", {
           if (!result.ok) throw new Error(result.error);
           return result.result;
         },
+        getComputerUsePermissions: () =>
+          ipcRenderer.invoke(IpcChannels.GET_COMPUTER_USE_PERMISSIONS_CHANNEL, undefined),
+        requestComputerUsePermission: (permission) =>
+          ipcRenderer.invoke(IpcChannels.REQUEST_COMPUTER_USE_PERMISSION_CHANNEL, permission),
+        relaunchForComputerUse: () =>
+          ipcRenderer.invoke(IpcChannels.RELAUNCH_FOR_COMPUTER_USE_CHANNEL, undefined),
       }
     : {}),
   listLocalVoices: () => ipcRenderer.invoke(IpcChannels.VOICE_LIST_LOCAL_CHANNEL),

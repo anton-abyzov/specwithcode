@@ -18,6 +18,12 @@ and modes you choose in a draft keep their permissions.
 Approve or reject requests in the conversation to let the agent continue. Permission modes do
 not prevent the agent from asking questions about the task.
 
+Providers take a new mode on their next turn. When you raise a thread or project to **Full access**
+while a turn is running, SpecWithCode approves the command, file and permission requests that turn
+still sends, including ones already waiting, so a thread on Full access never waits on them.
+Questions and MCP server requests still come to you. The project permission picker next to the
+coordinator shows the mode the coordinator runs in.
+
 ## Provider differences
 
 Providers enforce permissions differently. Some read-only actions can proceed in **Supervised**.
@@ -32,7 +38,7 @@ session-wide choice, because Grok would remember that command for the whole proj
 ACP Registry agents run their own tools in their own mode; SpecWithCode answers their approval requests
 by the permission mode. See [ACP Registry permissions](./providers-acp.md#permissions-and-terminals).
 
-Antigravity can still send native approval requests in **Full access**. It only offers remembered
-approvals for actions that support them.
+Antigravity can still send native approval requests in **Full access**; SpecWithCode approves its
+command and file requests. It only offers remembered approvals for actions that support them.
 
 See the [provider guides](./install.md#providers) for setup and provider-specific limits.

@@ -18,33 +18,72 @@ one machine moving to another network does not cut the others off.
 
 ## Add it
 
-On the machine you are adding, run:
+### In the app
+
+On the machine you are adding, open the app and go to **Settings →
+Connections → Your private machines → Add this machine to another one**, then
+choose **Invite this machine**. On a new install, the first screen asks how you
+will use the machine: choose **Join my existing machines** to do the same
+there, without setting up agents or projects.
+
+Give the machine a name if you like (it defaults to the machine's own name) and
+choose **Make the line**. The app checks that Tailscale is installed, signed in
+and has a MagicDNS name, publishes the app on the machine's own Tailscale
+name with Tailscale Serve (private to your tailnet, never public) and shows one
+line starting with `swc-machine-`. Copy it. The line holds a management
+credential, so treat it like a password and do not paste it into chat. The app
+shows it only once: close the dialog and it is gone, so make a new line if you
+lose it. **Revoke this line** turns it off.
+
+Before the line, the app shows what Tailscale still needs on this machine and
+looks again every few seconds until it is ready:
+
+- **Not installed:** **Install Tailscale** opens Tailscale's download page. On
+  a Mac with Homebrew, the app also shows `brew install --cask tailscale` to
+  copy into Terminal. The app never installs anything itself.
+- **Not signed in, or turned off:** **Sign in to Tailscale** opens the
+  Tailscale app on a Mac, starts `tailscale up` and opens the sign-in page it
+  prints in your browser. Sign in to the same tailnet as your main machine. The
+  app never runs `sudo` and never uses an auth key; where Tailscale needs
+  administrator rights to sign in (usually Linux), it says so and you run
+  `sudo tailscale up` yourself.
+- **MagicDNS off:** turn it on in the Tailscale admin console under **DNS**.
+
+If something still fails when you make the line, the app says what to do. It
+never replaces a Tailscale Serve mapping that already
+fronts another server or another app on the same port. When Tailscale HTTPS is
+on under **Settings → Connections**, the app uses that port; otherwise it uses 443.
+
+Only a session with **Manage access** on that machine can make the line, and
+only from the app's own page, never from another site.
+
+On your main machine, paste the line into **Settings → Connections → Your
+private machines → Add a machine**. The main machine first checks that the
+address answers as that machine, then saves it. With **Connect automatically**
+on, your browser pairs with it within a minute. Choose **Allow workers** on its
+card to let coordinators start work there.
+
+### From a terminal
+
+The same works with the `specwithcode` command, where it is installed. On the
+machine you are adding, run:
 
 ```bash
 specwithcode fleet invite
 ```
 
-It publishes that machine's SpecWithCode on its own Tailscale name with
-Tailscale Serve (private to your tailnet, never public) and prints one line
-starting with `swc-machine-`. The line holds a management credential, so treat
-it like a password and do not paste it into chat.
-
-On your main machine, either run:
+It prints the same `swc-machine-` line. On your main machine, either paste it
+into **Add a machine** as above or run:
 
 ```bash
 specwithcode fleet add swc-machine-…
 ```
 
-or paste the line into **Settings → Connections → Your private machines → Add
-a machine**. Either way the main machine first checks that the address answers
-as that machine, then saves it. With **Connect automatically** on, your browser
-pairs with it within a minute. Choose **Allow workers** on its card to let
-coordinators start work there.
-
 `specwithcode fleet list` shows every configured machine and whether the main
 machine reaches it now. `specwithcode fleet remove <name>` takes one off the
-list; revoke its credential on that machine with `specwithcode auth session
-list` and `auth session revoke`.
+list; revoke its credential on that machine under **Settings → Connections →
+Authorized clients** (it is listed as "Fleet management (fleet invite)"), or
+with `specwithcode auth session list` and `auth session revoke`.
 
 ## Keep your provider accounts safe
 
@@ -77,11 +116,12 @@ on its own; machines can be offline while it does, and work already running on
 a machine continues there.
 
 If a machine's address does change (a new Tailscale name, a renamed machine, or
-moving off an older setup that reached it through another machine), run `fleet
-invite` on it and add the new line on the main machine. That updates the
+moving off an older setup that reached it through another machine), make a new
+line on it (**Invite this machine**, or `fleet invite`) and add the new line on
+the main machine. That updates the
 machine in place: it keeps its name, and workers you allowed there carry over
 the next time a coordinator uses them. Browsers add the new address on their
 own and keep the old one as a fallback.
 
-The invitation is valid for a year by default (`--ttl` changes it). Adding a
-fresh one renews it.
+The invitation is valid for a year by default (`fleet invite --ttl` changes it).
+Adding a fresh one renews it.

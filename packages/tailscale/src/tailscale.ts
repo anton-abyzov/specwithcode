@@ -1,4 +1,5 @@
 import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -51,7 +52,7 @@ const tailscaleExecutablesForPlatform = (
 
 const TailscaleCommandContext = {
   executable: Schema.Literals(["tailscale", "tailscale.exe", "Tailscale.app"]),
-  subcommand: Schema.Literals(["status", "serve"]),
+  subcommand: Schema.Literals(["status", "serve", "up"]),
   argumentCount: Schema.Number,
 };
 
@@ -164,6 +165,7 @@ const TailscaleStatusSelf = Schema.Struct({
 });
 
 const TailscaleStatusJson = Schema.Struct({
+  BackendState: Schema.optional(Schema.Unknown),
   Self: Schema.optional(TailscaleStatusSelf),
 });
 
@@ -514,3 +516,185 @@ export const probeTailscaleHttpsEndpoint = (input: {
       onSome: (httpResponse) => httpResponse.status >= 200 && httpResponse.status < 300,
     });
   }).pipe(Effect.orElseSucceed(() => false));
+
+/**
+ * Whether Tailscale here is signed in and connected, from `BackendState` in
+ * `tailscale status --json`: `Running` when connected; `NeedsLogin`,
+ * `NeedsMachineAuth`, `Stopped`, `Starting` or `NoState` otherwise.
+ */
+export interface TailscaleBackendStatus {
+  readonly backendState: string | null;
+  readonly magicDnsName: string | null;
+}
+
+export const parseTailscaleBackendStatus = (
+  rawStatusJson: string,
+): Effect.Effect<TailscaleBackendStatus, TailscaleStatusParseError> =>
+  decodeTailscaleStatusJson(rawStatusJson).pipe(
+    Effect.mapError((cause) => new TailscaleStatusParseError({ cause })),
+    Effect.map((parsed) => ({
+      backendState:
+        typeof parsed.BackendState === "string" && parsed.BackendState.trim() !== ""
+          ? parsed.BackendState.trim()
+          : null,
+      magicDnsName: normalizeMagicDnsName(parsed),
+    })),
+  );
+
+export const readTailscaleBackendStatus = runTailscale({
+  subcommand: "status",
+  args: ["status", "--json"],
+  timeout: TAILSCALE_STATUS_TIMEOUT,
+  reportStdoutLength: true,
+}).pipe(Effect.flatMap(parseTailscaleBackendStatus));
+
+/**
+ * Starts the Tailscale app on macOS (`open -a Tailscale`), so its daemon runs
+ * before `tailscale up`. Elsewhere, and when the app is missing, it does
+ * nothing: the caller goes on to `tailscale up`, which says what is wrong.
+ */
+export const openTailscaleApp: Effect.Effect<void, never, ChildProcessSpawner.ChildProcessSpawner> =
+  Effect.gen(function* () {
+    const hostPlatform = yield* HostProcessPlatform;
+    if (hostPlatform !== "darwin") return;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const child = yield* spawner.spawn(ChildProcess.make("open", ["-a", "Tailscale"]));
+        yield* child.exitCode;
+      }),
+    ).pipe(Effect.timeout(TAILSCALE_STATUS_TIMEOUT));
+  }).pipe(
+    Effect.catchDefect(() => Effect.void),
+    Effect.orElseSucceed(() => undefined),
+  );
+
+const TAILSCALE_LOGIN_URL = /https:\/\/login\.tailscale\.com\/[^\s"'<>]+/u;
+/** How long to wait for `tailscale up` to print its sign-in link. */
+export const TAILSCALE_LOGIN_URL_TIMEOUT = Duration.seconds(20);
+/** How long a pending sign-in may wait for the person before it is stopped. */
+const TAILSCALE_LOGIN_LIFETIME = Duration.minutes(10);
+/** The most output kept while looking for the link; the rest is dropped. */
+const TAILSCALE_LOGIN_OUTPUT_LIMIT = 64 * 1024;
+
+/**
+ * Runs `tailscale up` (no flags, never an auth key) in the background and
+ * returns the sign-in link it prints, or `null` when it finished at once
+ * because this machine was already signed in. The command keeps waiting for
+ * the person to finish in the browser, for up to ten minutes, without holding
+ * the caller. Its output is never returned or logged: only the link is read.
+ */
+export const startTailscaleLogin = (
+  input: {
+    readonly urlTimeout?: Duration.Input;
+    readonly lifetime?: Duration.Input;
+  } = {},
+): Effect.Effect<
+  { readonly loginUrl: string | null },
+  TailscaleCommandError,
+  ChildProcessSpawner.ChildProcessSpawner
+> =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const hostPlatform = yield* HostProcessPlatform;
+    const args = ["up"] as const;
+    const urlTimeout = Duration.fromInputUnsafe(input.urlTimeout ?? TAILSCALE_LOGIN_URL_TIMEOUT);
+    const outcome = yield* Deferred.make<string | null, TailscaleCommandError>();
+    const [first, ...fallbacks] = tailscaleExecutablesForPlatform(hostPlatform);
+    const contextOf = (executable: TailscaleExecutable) => ({
+      executable: executable.label,
+      subcommand: "up" as const,
+      argumentCount: args.length,
+    });
+    const spawnOne = (executable: TailscaleExecutable) =>
+      spawner
+        .spawn(
+          executable.env
+            ? ChildProcess.make(executable.path, args, { env: executable.env, extendEnv: true })
+            : ChildProcess.make(executable.path, args),
+        )
+        .pipe(
+          Effect.map((child) => ({ child, executable })),
+          Effect.mapError(
+            (cause) => new TailscaleCommandSpawnError({ ...contextOf(executable), cause }),
+          ),
+          Effect.catchDefect((cause) =>
+            Effect.fail(new TailscaleCommandSpawnError({ ...contextOf(executable), cause })),
+          ),
+        );
+    let spawned = spawnOne(first);
+    for (const fallback of fallbacks) {
+      spawned = spawned.pipe(
+        Effect.catchTags({ TailscaleCommandSpawnError: () => spawnOne(fallback) }),
+      );
+    }
+    const session = Effect.scoped(
+      Effect.gen(function* () {
+        const { child, executable } = yield* spawned;
+        const context = contextOf(executable);
+        let output = "";
+        const scan = Stream.merge(child.stdout, child.stderr).pipe(
+          Stream.decodeText(),
+          Stream.runForEach((chunk) =>
+            Effect.gen(function* () {
+              output = (output + chunk).slice(-TAILSCALE_LOGIN_OUTPUT_LIMIT);
+              const link = TAILSCALE_LOGIN_URL.exec(output)?.[0];
+              if (link !== undefined) yield* Deferred.succeed(outcome, link);
+            }),
+          ),
+        );
+        const [, exitCode] = yield* Effect.all([scan, child.exitCode.pipe(Effect.map(Number))], {
+          concurrency: "unbounded",
+        }).pipe(Effect.mapError((cause) => new TailscaleCommandOutputError({ ...context, cause })));
+        if (exitCode === 0) {
+          yield* Deferred.succeed(outcome, null);
+          return;
+        }
+        const diagnostic = stderrDiagnosticOf(output);
+        yield* Deferred.fail(
+          outcome,
+          new TailscaleCommandExitError({
+            ...context,
+            exitCode,
+            stderrLength: output.length,
+            ...(diagnostic !== undefined ? { stderrDiagnostic: diagnostic } : {}),
+          }),
+        );
+      }),
+    ).pipe(
+      Effect.timeout(input.lifetime ?? TAILSCALE_LOGIN_LIFETIME),
+      Effect.catch((error) =>
+        Deferred.fail(
+          outcome,
+          error._tag === "TimeoutError"
+            ? new TailscaleCommandTimeoutError({
+                executable: first.label,
+                subcommand: "up",
+                argumentCount: args.length,
+                timeoutMs: Duration.toMillis(input.lifetime ?? TAILSCALE_LOGIN_LIFETIME),
+                cause: error,
+              })
+            : error,
+        ),
+      ),
+    );
+    // The person finishes signing in after this returns, so the command
+    // outlives the request; its own lifetime bounds it.
+    yield* Effect.forkDetach(session);
+    const loginUrl = yield* Deferred.await(outcome).pipe(
+      Effect.timeout(urlTimeout),
+      Effect.catchTags({
+        TimeoutError: (cause) =>
+          Effect.fail(
+            new TailscaleCommandTimeoutError({
+              executable: first.label,
+              subcommand: "up",
+              argumentCount: args.length,
+              timeoutMs: Duration.toMillis(urlTimeout),
+              cause,
+            }),
+          ),
+      }),
+    );
+    return { loginUrl };
+  });

@@ -372,6 +372,7 @@ import { resolveChatShortcutCommand, shortcutLabelForCommand } from "../keybindi
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import {
   AlarmClockIcon,
+  MonitorIcon,
   CheckCircle2Icon,
   PaperclipIcon,
   ChevronDownIcon,
@@ -399,7 +400,9 @@ import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import {
   holdDurableThreadDraft,
   useDurableThreadDraftRestore,
+  whenHostReady,
 } from "~/lib/durableComposerDraftBindings";
+import { retryTransientSend } from "~/lib/transientSendRetry";
 import { registerFaviconProjectForThread } from "~/browserFaviconStore";
 import {
   applyProviderInstanceSettings,
@@ -480,7 +483,12 @@ import {
   recordChatContinuation,
   useChatContinuationsVersion,
 } from "../lib/chatContinuations";
-import { lastSeenLabel, machineStatus, machineUnavailableTitle } from "../lib/machineStatus";
+import {
+  lastSeenLabel,
+  machineDetail,
+  machineStatus,
+  machineUnavailableTitle,
+} from "../lib/machineStatus";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useEnvironmentDisconnectDelay } from "../hooks/useEnvironmentDisconnectDelay";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
@@ -575,6 +583,12 @@ import {
 } from "./chat/QueuedRunsControl";
 import { useLinkedThreadPullRequest } from "./ThreadStatusIndicators";
 import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
+import {
+  COMPUTER_USE_PERMISSION_COPY,
+  ComputerUsePermissionWaitNotice,
+  ComputerUseRetryContext,
+} from "./computerUse/ComputerUsePermissions";
+import { useComputerUsePermissionWait } from "../state/computerUsePermissionWait";
 import { ComposerSurface } from "./chat/ComposerSurface";
 import { resolveThreadSyncPhase } from "../threadSync";
 import {
@@ -3434,9 +3448,10 @@ function useChatViewState(props: ChatViewProps) {
     // Why it is unreachable and when it was last connected, so the banner says
     // more than "offline".
     const unavailableDetail = activeEnvironmentUnavailableState
-      ? [unavailableStatus?.reason ?? null, lastSeenLabel(activeMachineLastSeenAt, Date.now())]
-          .filter(Boolean)
-          .join(" · ")
+      ? machineDetail(
+          lastSeenLabel(activeMachineLastSeenAt, Date.now()),
+          unavailableStatus?.reason ?? null,
+        )
       : "";
     const environmentReconnecting =
       unavailableConnection !== null &&
@@ -8639,6 +8654,26 @@ function useChatViewActions(
       onDismiss: acknowledgeActiveThreadWoke,
     };
   }, [acknowledgeActiveThreadWoke, activeThread?.id, activeThreadWokeVisible]);
+  // A computer-use action in this thread is on hold until the user allows a
+  // macOS permission; it continues by itself once they do.
+  const computerUsePermissionWait = useComputerUsePermissionWait(activeThread?.id);
+  const computerUsePermissionBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
+    if (computerUsePermissionWait === null) return null;
+    const { title } = COMPUTER_USE_PERMISSION_COPY[computerUsePermissionWait];
+    return {
+      id: `computer-use-permission:${activeThread?.id ?? "unknown"}`,
+      variant: "warning",
+      priority: "urgent",
+      icon: <MonitorIcon />,
+      title: `The agent is waiting for ${title}`,
+      description: `Allow ${title} for SpecWithCode and its action continues by itself.`,
+      children: <ComputerUsePermissionWaitNotice permission={computerUsePermissionWait} />,
+    };
+  }, [activeThread?.id, computerUsePermissionWait]);
+  const retryAfterComputerUsePermission = useCallback(
+    (text: string) => void sendStandaloneCommand(text, "Could not ask the agent to try again."),
+    [sendStandaloneCommand],
+  );
   const settledNote = activeThreadSettled ? (serverProjection?.thread.settledNote ?? null) : null;
   const parkedThreadBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (!activeThreadSnoozed && !activeThreadSettled) {
@@ -9052,6 +9087,8 @@ function useChatViewActions(
     visiblePullRequestCount,
     visiblePullRequests,
     wokeThreadBannerItem,
+    computerUsePermissionBannerItem,
+    retryAfterComputerUsePermission,
   };
 }
 
@@ -9537,6 +9574,8 @@ export default function ChatView(props: ChatViewProps) {
     visiblePullRequestCount,
     visiblePullRequests,
     wokeThreadBannerItem,
+    computerUsePermissionBannerItem,
+    retryAfterComputerUsePermission,
   } = useChatViewActions(props, chatViewState);
   // Starts the thread over on another machine from a written handoff: when
   // this one's provider hit its limit, or this machine can't be reached. A
@@ -9876,6 +9915,8 @@ export default function ChatView(props: ChatViewProps) {
     const resumeCompactionItems =
       resumeCompactionBannerItem === null ? [] : [resumeCompactionBannerItem];
     const wokeThreadItems = wokeThreadBannerItem === null ? [] : [wokeThreadBannerItem];
+    const computerUseItems =
+      computerUsePermissionBannerItem === null ? [] : [computerUsePermissionBannerItem];
     const parkedThreadItems = parkedThreadBannerItem === null ? [] : [parkedThreadBannerItem];
     // The user asked for this one, so it leads the notice tier instead of trailing it.
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
@@ -9886,6 +9927,7 @@ export default function ChatView(props: ChatViewProps) {
         ...limitRecoveryItems,
         ...usageLimitsItems,
         ...projectCloneItems,
+        ...computerUseItems,
         ...systemComposerBannerItems,
         ...backgroundWorkItems,
         ...resumeCompactionItems,
@@ -9898,6 +9940,7 @@ export default function ChatView(props: ChatViewProps) {
       ...limitRecoveryItems,
       ...usageLimitsItems,
       ...projectCloneItems,
+      ...computerUseItems,
       ...systemComposerBannerItems,
       ...backgroundWorkItems,
       ...resumeCompactionItems,
@@ -9953,6 +9996,7 @@ export default function ChatView(props: ChatViewProps) {
     handleRestoreThreadBranch,
     isRestoringThreadBranch,
     backgroundWorkBannerItem,
+    computerUsePermissionBannerItem,
     goalBannerItem,
     localCheckoutBranchMismatch,
     parkedThreadBannerItem,
@@ -12421,56 +12465,66 @@ export default function ChatView(props: ChatViewProps) {
           ? scopeThreadRef(environmentId, threadIdForSend)
           : null;
       if (backgroundThreadRef) beginBackgroundDraftSubmissionByRef(backgroundThreadRef);
+      const commandIdForSend = CommandId.make(randomUUID());
       const startPromise = !creditIntentStillCurrent()
         ? settlePromise(async () => {
             throw new Error("Credit availability or the selected draft changed. Send again.");
           })
-        : startThreadTurn({
-            environmentId,
-            input: {
-              threadId: threadIdForSend,
-              message: {
-                messageId: messageIdForSend,
-                role: "user",
-                text: outgoingMessageText,
-                attachments: turnAttachmentsResult.value,
-                ...(() => {
-                  const context = buildOutgoingMessageContext(
-                    turnAttachmentsResult.value.map((attachment, index) =>
-                      "id" in attachment && attachment.id !== undefined
-                        ? attachment.id
-                        : composerAttachmentsSnapshot[index]!.id,
-                    ),
-                  );
-                  if (context === undefined) return {};
-                  // Read the capability at dispatch time: the upload and persistence
-                  // awaits above can span a server reconnect that changes it. Servers
-                  // from before inline context drop the records and forward the links
-                  // as literal text, so their turns carry the payload the legacy way.
-                  const supportsInlineMessageContext =
-                    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)
-                      ?.environment.capabilities.inlineMessageContext === true;
-                  if (!supportsInlineMessageContext) {
-                    return {
-                      text: serializeLegacyContextMessage({
-                        text: outgoingMessageText,
-                        records: context.records,
-                      }),
-                    };
-                  }
-                  return { context };
-                })(),
-              },
-              modelSelection: ctxSelectedModelSelection,
-              titleSeed: title,
-              runtimeMode,
-              interactionMode: sendInteractionMode,
-              dispatchMode,
-              ...(manualCodexCreditIntent ? { manualCodexCreditIntent } : {}),
-              ...(bootstrap ? { bootstrap } : {}),
-              createdAt: messageCreatedAt,
+        : retryTransientSend(
+            // One command id for every attempt: the server drops a repeat.
+            () =>
+              startThreadTurn({
+                environmentId,
+                input: {
+                  commandId: commandIdForSend,
+                  threadId: threadIdForSend,
+                  message: {
+                    messageId: messageIdForSend,
+                    role: "user",
+                    text: outgoingMessageText,
+                    attachments: turnAttachmentsResult.value,
+                    ...(() => {
+                      const context = buildOutgoingMessageContext(
+                        turnAttachmentsResult.value.map((attachment, index) =>
+                          "id" in attachment && attachment.id !== undefined
+                            ? attachment.id
+                            : composerAttachmentsSnapshot[index]!.id,
+                        ),
+                      );
+                      if (context === undefined) return {};
+                      // Read the capability at dispatch time: the upload and persistence
+                      // awaits above can span a server reconnect that changes it. Servers
+                      // from before inline context drop the records and forward the links
+                      // as literal text, so their turns carry the payload the legacy way.
+                      const supportsInlineMessageContext =
+                        appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)
+                          ?.environment.capabilities.inlineMessageContext === true;
+                      if (!supportsInlineMessageContext) {
+                        return {
+                          text: serializeLegacyContextMessage({
+                            text: outgoingMessageText,
+                            records: context.records,
+                          }),
+                        };
+                      }
+                      return { context };
+                    })(),
+                  },
+                  modelSelection: ctxSelectedModelSelection,
+                  titleSeed: title,
+                  runtimeMode,
+                  interactionMode: sendInteractionMode,
+                  dispatchMode,
+                  ...(manualCodexCreditIntent ? { manualCodexCreditIntent } : {}),
+                  ...(bootstrap ? { bootstrap } : {}),
+                  createdAt: messageCreatedAt,
+                },
+              }),
+            {
+              // A host that is restarting (an update) takes the send once it is back.
+              waitForHost: () => whenHostReady(environmentId, { cancelled: false }),
             },
-          });
+          );
       if (backgroundThreadRef) {
         markPromotedDraftThreadByRef(backgroundThreadRef);
         try {
@@ -12549,30 +12603,49 @@ export default function ChatView(props: ChatViewProps) {
         );
         clearBackgroundDraftSubmissionByRef(scopeThreadRef(environmentId, threadIdForSend));
       }
-      if (
-        backgroundDraftOpened
-          ? !composerDraftHasUserContent(
-              useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
-            )
-          : promptRef.current.length === 0 &&
-            composerImagesRef.current.length === 0 &&
-            composerFilesRef.current.length === 0 &&
-            composerTerminalContextsRef.current.length === 0 &&
-            (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)
-              ?.previewAnnotations.length ?? 0) === 0 &&
-            (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.reviewComments
-              .length ?? 0) === 0 &&
-            (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.threadContexts
-              .length ?? 0) === 0
-      ) {
-        setOptimisticUserMessages((existing) => {
-          const removed = existing.filter((message) => message.id === messageIdForSend);
-          for (const message of removed) {
-            revokeUserMessagePreviewUrls(message);
-          }
-          const next = existing.filter((message) => message.id !== messageIdForSend);
-          return next.length === existing.length ? existing : next;
+      // A message that was not delivered never stays on screen as if it were.
+      setOptimisticUserMessages((existing) => {
+        const removed = existing.filter((message) => message.id === messageIdForSend);
+        for (const message of removed) {
+          revokeUserMessagePreviewUrls(message);
+        }
+        const next = existing.filter((message) => message.id !== messageIdForSend);
+        return next.length === existing.length ? existing : next;
+      });
+      const composerIsEmpty = backgroundDraftOpened
+        ? !composerDraftHasUserContent(
+            useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
+          )
+        : promptRef.current.length === 0 &&
+          composerImagesRef.current.length === 0 &&
+          composerFilesRef.current.length === 0 &&
+          composerTerminalContextsRef.current.length === 0 &&
+          (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)
+            ?.previewAnnotations.length ?? 0) === 0 &&
+          (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.reviewComments
+            .length ?? 0) === 0 &&
+          (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.threadContexts
+            .length ?? 0) === 0;
+      if (!composerIsEmpty && !backgroundDraftOpened) {
+        // Typed more while it was sending: put the failed message first, keep the rest.
+        const current =
+          useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.prompt ??
+          promptRef.current;
+        const merged = current.trim() ? `${messageTextForSend}\n\n${current}` : messageTextForSend;
+        promptRef.current = merged;
+        setComposerDraftPrompt(composerDraftTarget, merged);
+        addComposerDraftImages(
+          composerDraftTarget,
+          composerImagesSnapshot.map(cloneComposerImageForRetry),
+        );
+        addComposerDraftFiles(composerDraftTarget, composerFilesSnapshot);
+        composerRef.current?.resetCursorState({
+          cursor: collapseExpandedComposerCursor(merged, merged.length),
+          prompt: merged,
+          detectTrigger: false,
         });
+      }
+      if (composerIsEmpty) {
         promptRef.current = messageTextForSend;
         const retryComposerImages = composerImagesSnapshot.map(cloneComposerImageForRetry);
         composerImagesRef.current = retryComposerImages;
@@ -13924,118 +13997,122 @@ export default function ChatView(props: ChatViewProps) {
             {/* Messages Wrapper */}
             <div className="relative flex min-h-0 flex-1 flex-col bg-background">
               {/* Messages — LegendList handles virtualization and scrolling internally */}
-              <MessagesTimeline
-                citationRequest={paintOnlyDisplayedTimeline ? null : citationRequest}
-                citationHistoryLoading={threadDetailLoading}
-                {...(!paintOnlyDisplayedTimeline
-                  ? {
-                      onCiteAssistantText: citeAssistantText,
-                      ...(activeProject ? { onRunShellCommand: runShellCommand } : {}),
-                    }
-                  : {})}
-                isWorking={!paintOnlyDisplayedTimeline && isWorking}
-                runlessWorkActive={runlessWorkStartedAt !== null}
-                activeTurnInProgress={
-                  !paintOnlyDisplayedTimeline && (isWorking || !latestRunSettled)
-                }
-                isCompacting={!paintOnlyDisplayedTimeline && isCompacting}
-                activeTurnStartedAt={paintOnlyDisplayedTimeline ? null : activeWorkStartedAt}
-                runHealth={paintOnlyDisplayedTimeline ? null : timelineRunHealth}
-                workingPlan={paintOnlyDisplayedTimeline ? null : threadPlanView}
-                {...(canInterruptRunningThread && !paintOnlyDisplayedTimeline
-                  ? { onStopStalledRun: onInterrupt, onContinueStalledRun }
-                  : {})}
-                worktreeSetup={paintOnlyDisplayedTimeline ? null : worktreeSetup}
-                onCancelWorktreeSetup={onCancelWorktreeSetup}
-                {...(paintOnlyDisplayedTimeline
-                  ? {}
-                  : { retryableWorkspacePreparationRunIds, onRetryWorkspacePreparation })}
-                threadSettled={serverThreadSettled}
-                {...(draftId ? { onWorktreeSetupWorkLocally } : {})}
-                {...(onOpenWorktreeSetupTerminal ? { onOpenWorktreeSetupTerminal } : {})}
-                isPreparingWorktree={!paintOnlyDisplayedTimeline && isPreparingWorktree}
-                listRef={legendListRef}
-                timelineEntries={displayedTimeline.entries}
-                providerStatuses={
-                  environmentById.get(
-                    displayedThreadTarget?.environmentId ?? activeThread.environmentId,
-                  )?.serverConfig?.providers ?? EMPTY_PROVIDERS
-                }
-                runs={paintOnlyDisplayedTimeline ? [] : (serverProjection?.runs ?? [])}
-                recoveryRuns={paintOnlyDisplayedTimeline ? [] : (serverProjection?.runs ?? [])}
-                recoveryItems={
-                  paintOnlyDisplayedTimeline ? [] : (serverProjection?.turnItems ?? [])
-                }
-                latestRun={paintOnlyDisplayedTimeline ? null : activeActivityRun}
-                runningRunId={paintOnlyDisplayedTimeline ? null : activeRunningTurnId}
-                turnDiffSummaries={
-                  paintOnlyDisplayedTimeline ? EMPTY_HELD_TURN_DIFF_SUMMARIES : turnDiffSummaries
-                }
-                activeThreadEnvironmentId={
-                  displayedThreadTarget?.environmentId ?? activeThread.environmentId
-                }
-                routeThreadKey={displayedTimelineKey}
-                displayThreadKey={displayedTimelineKey}
-                onOpenTurnDiff={paintOnlyDisplayedTimeline ? noopHeldTurnDiff : onOpenTurnDiff}
-                onOpenThread={onOpenRelatedThread}
-                collapseLongReports={collapseLongReports}
-                reportProjectId={collapseLongReports ? (activeProject?.id ?? null) : null}
-                reportFallbackTitle={activeThread.title}
-                onForkFromRun={paintOnlyDisplayedTimeline ? async () => {} : onForkFromRun}
-                onRollbackCheckpoint={(input) => {
-                  if (!paintOnlyDisplayedTimeline) void onRollbackCheckpoint(input);
-                }}
-                supportsConversationRollback={
-                  !paintOnlyDisplayedTimeline && supportsConversationRollback
-                }
-                onRevertToTurnCount={
-                  paintOnlyDisplayedTimeline ? noopHeldRevert : onRevertTimelineTurn
-                }
-                {...(!paintOnlyDisplayedTimeline
-                  ? { onUseArtifactTemplate: useArtifactTemplate }
-                  : {})}
-                isRevertingCheckpoint={isRevertingCheckpoint}
-                onImageExpand={onExpandTimelineImage}
-                onFileOpen={paintOnlyDisplayedTimeline ? noopHeldAttachment : openFileAttachment}
-                onFileDownload={
-                  paintOnlyDisplayedTimeline ? noopHeldAttachment : downloadFileAttachment
-                }
-                markdownCwd={
-                  paintOnlyDisplayedTimeline
-                    ? (heldPaintContext?.markdownCwd ?? undefined)
-                    : (gitCwd ?? undefined)
-                }
-                resolvedTheme={resolvedTheme}
-                timestampFormat={timestampFormat}
-                workspaceRoot={
-                  paintOnlyDisplayedTimeline
-                    ? (heldPaintContext?.workspaceRoot ?? undefined)
-                    : activeWorkspaceRoot
-                }
-                skills={
-                  activeProviderStatus
-                    ? resolveProviderSkillsForCwd(activeProviderStatus, gitCwd)
-                    : EMPTY_PROVIDER_SKILLS
-                }
-                anchorMessageId={paintOnlyDisplayedTimeline ? null : timelineAnchorMessageId}
-                onAnchorReady={onTimelineAnchorReady}
-                onAnchorSizeChanged={onTimelineAnchorSizeChanged}
-                contentInsetEndAdjustment={composerTimelineInset}
-                contentInsetStart={timelineBannerOverlayHeight}
-                liveFollowEnabled={!paintOnlyDisplayedTimeline && timelineLiveFollowEnabled}
-                onIsAtEndChange={onIsAtEndChange}
-                onContentOverflowChange={setTimelineOverflows}
-                onToolOutputCollapsedAtEnd={onToolOutputCollapsedAtEnd}
-                onManualNavigation={cancelTimelineLiveFollowForUserNavigation}
-                cancelPositionRestoreRef={cancelPositionRestoreRef}
-                hideEmptyPlaceholder={
-                  isDraftHeroState || threadDetailLoading || threadOrigin !== null
-                }
-                topFadeEnabled={!hasTimelineTopBanner}
-                {...(paintOnlyDisplayedTimeline || threadHistoryControls === undefined
-                  ? {}
-                  : { historyControls: threadHistoryControls })}
-              />
+              <ComputerUseRetryContext
+                value={canOperateThread && !transcriptOnly ? retryAfterComputerUsePermission : null}
+              >
+                <MessagesTimeline
+                  citationRequest={paintOnlyDisplayedTimeline ? null : citationRequest}
+                  citationHistoryLoading={threadDetailLoading}
+                  {...(!paintOnlyDisplayedTimeline
+                    ? {
+                        onCiteAssistantText: citeAssistantText,
+                        ...(activeProject ? { onRunShellCommand: runShellCommand } : {}),
+                      }
+                    : {})}
+                  isWorking={!paintOnlyDisplayedTimeline && isWorking}
+                  runlessWorkActive={runlessWorkStartedAt !== null}
+                  activeTurnInProgress={
+                    !paintOnlyDisplayedTimeline && (isWorking || !latestRunSettled)
+                  }
+                  isCompacting={!paintOnlyDisplayedTimeline && isCompacting}
+                  activeTurnStartedAt={paintOnlyDisplayedTimeline ? null : activeWorkStartedAt}
+                  runHealth={paintOnlyDisplayedTimeline ? null : timelineRunHealth}
+                  workingPlan={paintOnlyDisplayedTimeline ? null : threadPlanView}
+                  {...(canInterruptRunningThread && !paintOnlyDisplayedTimeline
+                    ? { onStopStalledRun: onInterrupt, onContinueStalledRun }
+                    : {})}
+                  worktreeSetup={paintOnlyDisplayedTimeline ? null : worktreeSetup}
+                  onCancelWorktreeSetup={onCancelWorktreeSetup}
+                  {...(paintOnlyDisplayedTimeline
+                    ? {}
+                    : { retryableWorkspacePreparationRunIds, onRetryWorkspacePreparation })}
+                  threadSettled={serverThreadSettled}
+                  {...(draftId ? { onWorktreeSetupWorkLocally } : {})}
+                  {...(onOpenWorktreeSetupTerminal ? { onOpenWorktreeSetupTerminal } : {})}
+                  isPreparingWorktree={!paintOnlyDisplayedTimeline && isPreparingWorktree}
+                  listRef={legendListRef}
+                  timelineEntries={displayedTimeline.entries}
+                  providerStatuses={
+                    environmentById.get(
+                      displayedThreadTarget?.environmentId ?? activeThread.environmentId,
+                    )?.serverConfig?.providers ?? EMPTY_PROVIDERS
+                  }
+                  runs={paintOnlyDisplayedTimeline ? [] : (serverProjection?.runs ?? [])}
+                  recoveryRuns={paintOnlyDisplayedTimeline ? [] : (serverProjection?.runs ?? [])}
+                  recoveryItems={
+                    paintOnlyDisplayedTimeline ? [] : (serverProjection?.turnItems ?? [])
+                  }
+                  latestRun={paintOnlyDisplayedTimeline ? null : activeActivityRun}
+                  runningRunId={paintOnlyDisplayedTimeline ? null : activeRunningTurnId}
+                  turnDiffSummaries={
+                    paintOnlyDisplayedTimeline ? EMPTY_HELD_TURN_DIFF_SUMMARIES : turnDiffSummaries
+                  }
+                  activeThreadEnvironmentId={
+                    displayedThreadTarget?.environmentId ?? activeThread.environmentId
+                  }
+                  routeThreadKey={displayedTimelineKey}
+                  displayThreadKey={displayedTimelineKey}
+                  onOpenTurnDiff={paintOnlyDisplayedTimeline ? noopHeldTurnDiff : onOpenTurnDiff}
+                  onOpenThread={onOpenRelatedThread}
+                  collapseLongReports={collapseLongReports}
+                  reportProjectId={collapseLongReports ? (activeProject?.id ?? null) : null}
+                  reportFallbackTitle={activeThread.title}
+                  onForkFromRun={paintOnlyDisplayedTimeline ? async () => {} : onForkFromRun}
+                  onRollbackCheckpoint={(input) => {
+                    if (!paintOnlyDisplayedTimeline) void onRollbackCheckpoint(input);
+                  }}
+                  supportsConversationRollback={
+                    !paintOnlyDisplayedTimeline && supportsConversationRollback
+                  }
+                  onRevertToTurnCount={
+                    paintOnlyDisplayedTimeline ? noopHeldRevert : onRevertTimelineTurn
+                  }
+                  {...(!paintOnlyDisplayedTimeline
+                    ? { onUseArtifactTemplate: useArtifactTemplate }
+                    : {})}
+                  isRevertingCheckpoint={isRevertingCheckpoint}
+                  onImageExpand={onExpandTimelineImage}
+                  onFileOpen={paintOnlyDisplayedTimeline ? noopHeldAttachment : openFileAttachment}
+                  onFileDownload={
+                    paintOnlyDisplayedTimeline ? noopHeldAttachment : downloadFileAttachment
+                  }
+                  markdownCwd={
+                    paintOnlyDisplayedTimeline
+                      ? (heldPaintContext?.markdownCwd ?? undefined)
+                      : (gitCwd ?? undefined)
+                  }
+                  resolvedTheme={resolvedTheme}
+                  timestampFormat={timestampFormat}
+                  workspaceRoot={
+                    paintOnlyDisplayedTimeline
+                      ? (heldPaintContext?.workspaceRoot ?? undefined)
+                      : activeWorkspaceRoot
+                  }
+                  skills={
+                    activeProviderStatus
+                      ? resolveProviderSkillsForCwd(activeProviderStatus, gitCwd)
+                      : EMPTY_PROVIDER_SKILLS
+                  }
+                  anchorMessageId={paintOnlyDisplayedTimeline ? null : timelineAnchorMessageId}
+                  onAnchorReady={onTimelineAnchorReady}
+                  onAnchorSizeChanged={onTimelineAnchorSizeChanged}
+                  contentInsetEndAdjustment={composerTimelineInset}
+                  contentInsetStart={timelineBannerOverlayHeight}
+                  liveFollowEnabled={!paintOnlyDisplayedTimeline && timelineLiveFollowEnabled}
+                  onIsAtEndChange={onIsAtEndChange}
+                  onContentOverflowChange={setTimelineOverflows}
+                  onToolOutputCollapsedAtEnd={onToolOutputCollapsedAtEnd}
+                  onManualNavigation={cancelTimelineLiveFollowForUserNavigation}
+                  cancelPositionRestoreRef={cancelPositionRestoreRef}
+                  hideEmptyPlaceholder={
+                    isDraftHeroState || threadDetailLoading || threadOrigin !== null
+                  }
+                  topFadeEnabled={!hasTimelineTopBanner}
+                  {...(paintOnlyDisplayedTimeline || threadHistoryControls === undefined
+                    ? {}
+                    : { historyControls: threadHistoryControls })}
+                />
+              </ComputerUseRetryContext>
 
               {/* scroll to end pill — shown when user has scrolled away from the live edge */}
               {showScrollToBottom && (

@@ -556,8 +556,8 @@ function PoolWindowCard({
           {pool.pace ? <PaceIcon pace={pool.pace} /> : null}
         </span>
         {nextRefill && pool.columns.length > 1 ? (
-          <span className="text-xs font-medium text-foreground tabular-nums">
-            ↻ +{nextRefill.restoresPercent}%
+          <span className="text-xs text-muted-foreground tabular-nums">
+            +{nextRefill.restoresPercent}% at the next reset
           </span>
         ) : null}
       </div>

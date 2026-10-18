@@ -1066,6 +1066,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "private-machines-invite",
+    title: "Invite this machine to another one",
+    to: "/settings/connections",
+    searchTerms: [
+      "fleet invite join main machine primary tailscale serve line swc-machine add this mac",
+    ],
+  },
+  {
     id: "private-machines-auto-connect",
     title: "Connect private machines automatically",
     to: "/settings/connections",

@@ -1,8 +1,9 @@
 /**
  * Subscription usage at a glance, under the coordinator composer: one ring per
- * provider for its fullest window, and a popover with every window, its reset
- * and the banked resets. It reads the snapshots Usage → Limits already holds,
- * so opening it never asks a provider for anything, and it spends nothing.
+ * provider for its fullest window, and a popover listing every machine with
+ * what is signed in there, the coordinator's own account in full. It reads the
+ * snapshots Usage → Limits already holds, so opening it never asks a provider
+ * for anything, and it spends nothing.
  */
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -295,9 +296,18 @@ export function ProjectUsageIndicator({
       </PopoverTrigger>
       <PopoverPopup side="top" align="start" width="lg" padding="compact">
         <div className="sws-usage-popover">
-          <PopoverTitle>Coordinator usage on {usage.environmentLabel}</PopoverTitle>
-          <HostLimitsCompact projectEnvironmentId={projectEnvironmentId} now={now} />
-          <ProviderSections {...usage} now={now} />
+          <header className="sws-usage-popover-head">
+            <PopoverTitle>Limits by machine</PopoverTitle>
+            <p>
+              Each machine uses its own sign-ins. The account this project&apos;s coordinator uses
+              on {usage.environmentLabel} shows every window.
+            </p>
+          </header>
+          <HostLimitsCompact
+            projectEnvironmentId={projectEnvironmentId}
+            coordinatorInstanceId={providerInstanceId}
+            now={now}
+          />
           <footer>
             <Link to="/usage" className="sws-usage-link">
               All limits and accounts <ArrowRightIcon aria-hidden />

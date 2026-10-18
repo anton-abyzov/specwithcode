@@ -19,6 +19,7 @@ import {
   workEntryIndicatesToolFailure,
   workEntryDisplayIndicatesToolFailure,
   workEntryIndicatesToolSuccess,
+  workEntryComputerUsePermission,
   workEntryReportsChromeDisconnected,
 } from "./presentation.js";
 
@@ -980,5 +981,41 @@ describe("workEntryReportsChromeDisconnected", () => {
   it("ignores other failures", () => {
     expect(workEntryReportsChromeDisconnected({ detail: "Navigation timed out" })).toBe(false);
     expect(workEntryReportsChromeDisconnected({})).toBe(false);
+  });
+});
+
+describe("workEntryComputerUsePermission", () => {
+  it("reads which permission a computer-use failure is missing", () => {
+    expect(
+      workEntryComputerUsePermission({
+        detail:
+          "SpecWithCode needs Screen Recording to see the screen, and the user did not allow it within two minutes.",
+      }),
+    ).toBe("screen-recording");
+    expect(
+      workEntryComputerUsePermission({
+        toolData: {
+          content: [{ type: "text", text: "SpecWithCode needs Accessibility to click and type" }],
+        },
+      }),
+    ).toBe("accessibility");
+  });
+
+  it("understands the wording of desktop builds before the permission card", () => {
+    expect(
+      workEntryComputerUsePermission({
+        toolData: {
+          output:
+            "The user did not allow Screen Recording for SpecWithCode within two minutes, so it cannot see the screen.",
+        },
+      }),
+    ).toBe("screen-recording");
+  });
+
+  it("ignores other failures", () => {
+    expect(workEntryComputerUsePermission({ detail: "The desktop app is not open" })).toBe(
+      undefined,
+    );
+    expect(workEntryComputerUsePermission({})).toBe(undefined);
   });
 });

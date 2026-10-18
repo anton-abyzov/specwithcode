@@ -21,6 +21,7 @@ const state = vi.hoisted(() => ({
   search: {} as Record<string, string>,
   selectScope: vi.fn(),
   environments: [] as Array<{ environmentId: string; label: string }>,
+  primary: null as string | null,
   request: vi.fn((input: unknown) => input),
   useQuery: vi.fn(),
   command: vi.fn(),
@@ -33,8 +34,17 @@ vi.mock("../../studio/projectWorkspace", () => ({
   },
 }));
 vi.mock("./BrowserExtensionSettings", () => ({
-  BrowserExtensionCard: ({ machine }: { machine: string }) => (
-    <section aria-label={`SpecWithCode Browser extension on ${machine}`} />
+  BrowserExtensionCard: ({
+    machine,
+    thisComputer,
+  }: {
+    machine: string;
+    thisComputer?: string | null;
+  }) => (
+    <section
+      aria-label={`SpecWithCode Browser extension on ${machine}`}
+      data-this-computer={thisComputer ?? "same"}
+    />
   ),
 }));
 vi.mock("../../state/use-atom-command", () => ({
@@ -50,6 +60,7 @@ vi.mock("../../state/session", async () => {
 vi.mock("../../state/environments", () => ({
   useEnvironment: () => ({ connection: { phase: state.connected ? "connected" : "disconnected" } }),
   useEnvironments: () => ({ environments: state.environments }),
+  usePrimaryEnvironmentId: () => state.primary,
 }));
 vi.mock("../../state/query", () => ({
   useEnvironmentQuery: (atom: unknown) => {
@@ -98,6 +109,7 @@ beforeEach(() => {
   state.connected = true;
   state.query = { data: status, error: null, isPending: false, refresh: vi.fn() };
   state.search = {};
+  state.primary = null;
   state.environments = [
     { environmentId: "m4", label: "M4 Max" },
     { environmentId: "m1", label: "M1" },
@@ -152,6 +164,36 @@ describe("ChromeSettings", () => {
     expect(text()).toContain("Chrome on M1");
     await act(() => tabs[0]!.props.onClick());
     expect(state.selectScope).toHaveBeenCalledWith({ machine: "m4" });
+  });
+});
+
+describe("ChromeSettings this computer", () => {
+  it("lists this computer first, marked, and opens on it", async () => {
+    state.environments = [
+      { environmentId: "m1", label: "M1" },
+      { environmentId: "m4", label: "M4 Max" },
+    ];
+    state.primary = "m4";
+    await act(() => {
+      renderer = create(<ChromeSettings />);
+    });
+    const tabs = renderer.root.findAll(
+      (node) => typeof node.type === "string" && node.props.role === "tab",
+    );
+    expect(tabs.map((tab) => tab.props["aria-selected"])).toEqual([true, false]);
+    const marked = (tab: (typeof tabs)[number]) =>
+      tab.findAll((node) => node.props.children === "This computer").length > 0;
+    expect(tabs.map(marked)).toEqual([true, false]);
+    expect(text()).toContain('"data-this-computer":"same"');
+  });
+
+  it("tells the card which computer you are on when another is picked", async () => {
+    state.primary = "m4";
+    state.search = { machine: "m1" };
+    await act(() => {
+      renderer = create(<ChromeSettings />);
+    });
+    expect(text()).toContain('"data-this-computer":"M4 Max"');
   });
 });
 

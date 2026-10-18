@@ -36,6 +36,7 @@ export class ComputerUseBroker extends Context.Service<
     readonly respond: (input: ComputerUseRespondInput) => Effect.Effect<void, ComputerUseHostError>;
     readonly invoke: (
       action: ComputerUseAction,
+      options?: { readonly threadId?: string },
     ) => Effect.Effect<ComputerUseActionResult, ComputerUseToolError>;
     /** Whether a desktop app is connected to answer actions. */
     readonly hasHost: Effect.Effect<boolean>;
@@ -127,7 +128,7 @@ export const make = Effect.gen(function* () {
       }
     });
 
-  const invoke = (action: ComputerUseAction) =>
+  const invoke = (action: ComputerUseAction, options?: { readonly threadId?: string }) =>
     turn.withPermits(1)(
       Effect.gen(function* () {
         const target = hosts.at(-1);
@@ -137,7 +138,14 @@ export const make = Effect.gen(function* () {
         const requestId = `computer-${++sequence}`;
         const deferred = yield* Deferred.make<ComputerUseActionResult, ComputerUseToolError>();
         pending.set(requestId, { hostId: target.id, deferred });
-        yield* Queue.offer(target.queue, { type: "request", request: { requestId, action } });
+        yield* Queue.offer(target.queue, {
+          type: "request",
+          request: {
+            requestId,
+            action,
+            ...(options?.threadId === undefined ? {} : { threadId: options.threadId }),
+          },
+        });
         return yield* Deferred.await(deferred).pipe(
           Effect.timeoutOrElse({
             // The host may hold an action while the user allows a permission.

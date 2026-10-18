@@ -1,14 +1,28 @@
-import { ComputerUseAction, ComputerUseActionResult } from "@specweave-studio/contracts";
+import {
+  ComputerUseAction,
+  ComputerUseActionResult,
+  ComputerUsePermission,
+  ComputerUsePermissions,
+} from "@specweave-studio/contracts";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import * as Electron from "electron";
 
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
-import { runComputerUseAction } from "../../computerUse/MacComputerUse.ts";
+import * as DesktopLifecycle from "../../app/DesktopLifecycle.ts";
+import {
+  currentPermissions,
+  requestPermission,
+  runComputerUseAction,
+} from "../../computerUse/MacComputerUse.ts";
 import type { MacPermission } from "../../permissions/MacPermission.ts";
 import * as MacPermissions from "../../permissions/MacPermissions.ts";
-import { RUN_COMPUTER_USE_ACTION_CHANNEL } from "../channels.ts";
+import {
+  GET_COMPUTER_USE_PERMISSIONS_CHANNEL,
+  RELAUNCH_FOR_COMPUTER_USE_CHANNEL,
+  REQUEST_COMPUTER_USE_PERMISSION_CHANNEL,
+  RUN_COMPUTER_USE_ACTION_CHANNEL,
+} from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 
 class ComputerUseRunFailed extends Data.TaggedError("ComputerUseRunFailed")<{
@@ -35,11 +49,10 @@ export const installComputerUse = Effect.fn("desktop.ipc.installComputerUse")(fu
   // The drag-to-allow helper sits next to System Settings while the action waits.
   const showHelper = (permission: MacPermission) =>
     void runPromise(
-      permissions.showHelper(permission, null, () =>
-        permission === "accessibility"
-          ? Electron.systemPreferences.isTrustedAccessibilityClient(false)
-          : Electron.systemPreferences.getMediaAccessStatus("screen") === "granted",
-      ),
+      permissions.showHelper(permission, null, async () => {
+        const current = await currentPermissions();
+        return permission === "accessibility" ? current.accessibility : current.screenRecording;
+      }),
     );
   yield* ipc.handle(
     DesktopIpc.makeIpcMethod({
@@ -66,6 +79,37 @@ export const installComputerUse = Effect.fn("desktop.ipc.installComputerUse")(fu
             }),
           ),
         ),
+    }),
+  );
+  yield* ipc.handle(
+    DesktopIpc.makeIpcMethod({
+      channel: GET_COMPUTER_USE_PERMISSIONS_CHANNEL,
+      payload: Schema.Undefined,
+      result: ComputerUsePermissions,
+      handler: () => Effect.promise(currentPermissions),
+    }),
+  );
+  yield* ipc.handle(
+    DesktopIpc.makeIpcMethod({
+      channel: REQUEST_COMPUTER_USE_PERMISSION_CHANNEL,
+      payload: ComputerUsePermission,
+      result: ComputerUsePermissions,
+      handler: (permission) =>
+        Effect.promise(() => requestPermission(permission, showHelper)).pipe(
+          Effect.catchCause(() => Effect.promise(currentPermissions)),
+        ),
+    }),
+  );
+  yield* ipc.handle(
+    DesktopIpc.makeIpcMethod({
+      channel: RELAUNCH_FOR_COMPUTER_USE_CHANNEL,
+      payload: Schema.Undefined,
+      result: Schema.Void,
+      // macOS applies a new Screen Recording grant only to a freshly started app.
+      handler: Effect.fn("desktop.ipc.relaunchForComputerUse")(function* () {
+        const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+        yield* lifecycle.relaunch("computer-use-permission");
+      }),
     }),
   );
 });

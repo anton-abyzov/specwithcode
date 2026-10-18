@@ -51,6 +51,15 @@ export function lastSeenLabel(lastSeenAt: number | null, now: number): string | 
   return age === "now" ? "last seen just now" : `last seen ${age} ago`;
 }
 
+/**
+ * The detail line under an unreachable machine: when it was last seen first,
+ * then why it can't be reached. Raw connection errors can run long, and a
+ * truncated line should still say when the machine was last there.
+ */
+export function machineDetail(lastSeen: string | null, reason: string | null): string {
+  return [lastSeen, reason].filter(Boolean).join(" · ");
+}
+
 /** The banner a chat shows while its machine is not connected. */
 export function machineUnavailableTitle(
   label: string,

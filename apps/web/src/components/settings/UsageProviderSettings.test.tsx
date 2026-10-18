@@ -15,6 +15,7 @@ const state = vi.hoisted(() => ({
   allowedOnClick: true,
   presentations: new Map(),
   pooledEnvironmentIds: [] as string[],
+  machineEnvironmentIds: null as string[] | null,
 }));
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: (atom: string) => (atom === "presentations" ? state.presentations : null),
@@ -31,6 +32,12 @@ vi.mock("../usage/UsageLimitsPooled", () => ({
   UsageLimitsPooled: ({ presentations }: { presentations: ReadonlyMap<string, unknown> }) => {
     state.pooledEnvironmentIds = [...presentations.keys()];
     return <p>Pooled quota reports</p>;
+  },
+}));
+vi.mock("../studio/shell/HostLimits", () => ({
+  MachineLimitBlocks: ({ only }: { only: ReadonlySet<string> | null }) => {
+    state.machineEnvironmentIds = only === null ? null : [...only];
+    return <p>Limits by machine</p>;
   },
 }));
 vi.mock("../../hooks/useSettings", () => ({ useUpdateEnvironmentSettings: () => state.update }));
@@ -110,6 +117,8 @@ beforeEach(() => {
   state.allowedOnClick = true;
   state.presentations = new Map();
   state.pooledEnvironmentIds = [];
+  state.machineEnvironmentIds = null;
+  localStorage.clear();
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -137,6 +146,9 @@ async function render(
 }
 const button = (text: string) =>
   [...container.querySelectorAll("button")].find((b) => b.textContent?.trim() === text);
+/** Setup chips only: the by machine / by account toggle is always there. */
+const setupButton = () =>
+  [...container.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Set up"));
 
 it("offers a detected hub and adds it without the browser handling a key", async () => {
   state.adopt.mockResolvedValue({
@@ -248,7 +260,7 @@ it("hides every setup chip when all machines are ready, keeping the caveat", asy
     [EnvironmentId.make("m1"), usageEnvironment("M1 Mac", "connected", [readyCodex])],
   ]);
   await act(async () => root.render(<UsageLimitsSection selectedEnvironmentIds={null} now={0} />));
-  expect(container.querySelector("button")).toBeNull();
+  expect(setupButton()).toBeUndefined();
   expect(container.textContent).toContain(
     "Quota reports do not confirm that an agent is ready to chat.",
   );
@@ -274,17 +286,19 @@ it("routes usage-view setup to its selected machine without changing the quota f
     search: { environmentId: remoteId },
     hash: "providers",
   });
+  expect(state.machineEnvironmentIds).toEqual([remoteId]);
+  await act(async () => button("By account")!.click());
   expect(state.pooledEnvironmentIds).toEqual([remoteId]);
 });
 
 it("does not offer setup on disconnected machines or without provider-management access", async () => {
   state.presentations = new Map([[environmentId, usageEnvironment("Offline Mac", "disconnected")]]);
   await act(async () => root.render(<UsageLimitsSection selectedEnvironmentIds={null} now={0} />));
-  expect(container.querySelector("button")).toBeNull();
+  expect(setupButton()).toBeUndefined();
   state.presentations = new Map([[environmentId, usageEnvironment("Read-only Mac")]]);
   state.canManage = false;
   await act(async () => root.render(<UsageLimitsSection selectedEnvironmentIds={null} now={0} />));
-  expect(container.querySelector("button")).toBeNull();
+  expect(setupButton()).toBeUndefined();
   expect(container.textContent).toContain("Quota reports do not confirm");
 });
 

@@ -3,6 +3,7 @@
 import {
   createPreviewFramePainter,
   createPreviewStreamClient,
+  previewStreamControlAction,
   previewStreamControlLabel,
   previewStreamModifiers,
   type PreviewStreamClient,
@@ -736,11 +737,12 @@ export function ServerBrowserSurface(props: {
             variant="outline"
             size="xs"
             disabled={control.controller === "another-viewer"}
+            title={previewStreamControlAction(control).hint}
             onClick={() =>
               send({ type: control.controller === "you" ? "releaseControl" : "takeControl" })
             }
           >
-            {control.controller === "you" ? "Release control" : "Take control"}
+            {previewStreamControlAction(control).label}
           </Button>
         ) : null}
       </div>
@@ -864,7 +866,7 @@ export function ServerBrowserSurface(props: {
                 </div>
               </>
             ) : (
-              <p className="text-xs text-muted-foreground">Take control to respond.</p>
+              <p className="text-xs text-muted-foreground">Take over to respond.</p>
             )}
           </div>
         ) : null}

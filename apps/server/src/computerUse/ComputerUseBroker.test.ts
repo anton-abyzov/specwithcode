@@ -66,6 +66,29 @@ it.effect("routes an action to the host and returns its answer", () =>
   }),
 );
 
+it.effect("tells the host which thread asked, so it can show the permission card there", () =>
+  Effect.gen(function* () {
+    const broker = yield* ComputerUseBroker.make;
+    const host = yield* connectHost(broker);
+    const pending = yield* broker
+      .invoke({ kind: "screenshot" }, { threadId: "thread-1" })
+      .pipe(Effect.forkChild);
+    const request = yield* Queue.take(host.events);
+    if (request.type !== "request") throw new Error("expected a request");
+    expect(request.request.threadId).toBe("thread-1");
+    yield* broker.respond({ hostId: host.hostId, requestId: request.request.requestId, result });
+    yield* Fiber.join(pending);
+
+    const anonymous = yield* broker.invoke({ kind: "status" }).pipe(Effect.forkChild);
+    const second = yield* Queue.take(host.events);
+    if (second.type !== "request") throw new Error("expected a request");
+    expect("threadId" in second.request).toBe(false);
+    yield* broker.respond({ hostId: host.hostId, requestId: second.request.requestId, result });
+    yield* Fiber.join(anonymous);
+    yield* Fiber.interrupt(host.fiber);
+  }),
+);
+
 it.effect("passes the host's error message to the agent", () =>
   Effect.gen(function* () {
     const broker = yield* ComputerUseBroker.make;
