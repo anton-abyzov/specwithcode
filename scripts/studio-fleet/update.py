@@ -32,7 +32,7 @@ from launcher import (cli_alias_state, is_studio_wrapper, migrate_runtime_path, 
 from release_policy import validate_manifest, validate_package, validate_upgrade
 from auth_heartbeat import (bind_auth, encoded, prove_restart_heartbeat,
                             read_auth_sessions_in_transaction, restore_witness,
-                            verify_restart_witness)
+                            utc_timestamp, verify_restart_witness)
 from quiescence import (VANISHED_READS, capture_quiescence, assert_quiescence, quiescence_core, read_processes,
                         reap_descendants)
 from release_retention import prune_releases
@@ -761,6 +761,20 @@ def verify_migration_heartbeat_witness(before, after, witness, current_auth, *, 
     assert_migration_preserved(before, auth_comparison(narrowed_rows(after, widenings), before), carried)
     return witness
 
+def heartbeat_window_start(opened_at, closed_at, auth):
+    """The restart window's start: no earlier than any heartbeat stamped during the baseline
+    read, and no later than that read, so every reconnect after it falls inside the window.
+    A row stamped after the read (a clock that stepped back) never moves the start."""
+    latest, closed = utc_timestamp(opened_at), utc_timestamp(closed_at)
+    if auth:
+        column = auth['columns'].index('last_connected_at')
+        for row in auth['rows']:
+            with contextlib.suppress(AssertionError):
+                stamped = utc_timestamp(row[column])
+                if stamped <= closed:
+                    latest = max(latest, stamped)
+    return latest.isoformat()
+
 def prove_migration_preserved(before, after, original_auth, current_auth, restart_started_at,
                               observed_after_at, *, identity, allow_existing_browser_heartbeat, carried=None, web_session_policy=None):
     """Prove auth independently, then permit only the existing projection migrations.
@@ -1112,8 +1126,15 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         assert left > reserve, TOO_SLOW_TO_RESTART
         return left
     capture_auth = allow_existing_browser_heartbeat or allow_project_migrations
+    # The heartbeat window opens at the auth read below: a client may reconnect to the old
+    # service any time after (through the gate settle and the backup), and the checks before
+    # the restart already accept that heartbeat. Recorded in the receipt only once the restart
+    # is next, so a refusal before it stays one the update agent retries.
+    read_opened_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
     # Measure appended rows and private auth in the same transaction as the proof.
     before, original_auth, carried = snapshot_since(identity, expected['rows'], capture_auth)
+    restart_started_at = heartbeat_window_start(
+        read_opened_at, datetime.datetime.now(datetime.timezone.utc).isoformat(), original_auth)
     assert_prestate(expected, before, carried)
     # Without migrations, a heartbeat proof compares existing sessions: refuse before any write.
     assert allow_project_migrations or not allow_existing_browser_heartbeat or original_auth is not None, \
@@ -1253,11 +1274,6 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
             assert re.search(r'^\s*pid = ' + str(before['servicePid']) + r'\s*$', live, re.M), \
                 'The service restarted on its own before the update restarted it'
         assert_same_service_pid()
-        # Taken here, before the browser stop and the backup, so a browser reconnecting to
-        # the old service meanwhile still falls inside the heartbeat window. Recorded in the
-        # receipt only once the restart is next (below), so a refusal before it stays one the
-        # update agent retries.
-        restart_started_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
         plist = home / 'Library/LaunchAgents' / (before['serviceLabel'] + '.plist')
         assert digest(plist.read_bytes()) == before['fileHashes']['plist'], 'Verified LaunchAgent changed before restart'
         # Studio's own server browser is the one process stopped here (gracefully, verified).
