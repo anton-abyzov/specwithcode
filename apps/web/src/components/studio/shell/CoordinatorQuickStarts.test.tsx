@@ -98,9 +98,12 @@ describe("CoordinatorQuickStarts", () => {
     expect(onConnections).toHaveBeenCalledTimes(1);
   });
 
-  it("reads recent work from this machine before the cloud", () => {
+  it("reads recent work from this machine, then private machines, never the cloud", () => {
     const prompt = promptOf("recent-work");
-    expect(prompt.indexOf("sessions on this machine")).toBeLessThan(prompt.indexOf("cloud"));
+    expect(prompt.indexOf("sessions on this machine")).toBeLessThan(
+      prompt.indexOf("private machines"),
+    );
+    expect(prompt).not.toContain("cloud");
   });
 
   it("keeps Connect tools usable while sending is blocked", () => {

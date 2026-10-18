@@ -5,24 +5,26 @@ to keep a terminal open.
 
 ## Manage the service
 
-Install the `specweave-studio` CLI first ([Install SpecWithCode](./install.md#command-line)), then
-run these commands on the machine that will host SpecWithCode:
+Install the `specwithcode` CLI first ([Install SpecWithCode](./install.md#command-line)), then
+run these commands on the machine that will host SpecWithCode. Older installs also answer to
+`specweave-studio`. On a Linux host such as a VPS you rent, follow the
+[Linux worker](./linux-worker.md) guide instead; it installs the service for you.
 
 | Task                            | Command                                    |
 | ------------------------------- | ------------------------------------------ |
-| Install and start               | `specweave-studio service install`         |
-| Inspect status and log location | `specweave-studio service status`          |
+| Install and start               | `specwithcode service install`             |
+| Inspect status and log location | `specwithcode service status`              |
 | Move to a newer release         | See [Updating SpecWithCode](./updating.md) |
-| Restart                         | `specweave-studio service restart`         |
-| Stop and remove from startup    | `specweave-studio service uninstall`       |
+| Restart                         | `specwithcode service restart`             |
+| Stop and remove from startup    | `specwithcode service uninstall`           |
 
 Uninstalling the service leaves your projects, threads, and settings intact.
-Running `specweave-studio service install` again repairs a service that `specweave-studio service status`
+Running `specwithcode service install` again repairs a service that `specwithcode service status`
 reports as broken.
 
-No package registry carries `specweave-studio`, so there is no versioned `npm` or
-`npx` command to run, and the CLI's own `specweave-studio update` is switched off in
-current builds. To move the service to a newer release, use the path that matches
+No package registry carries `specwithcode`, so there is no versioned `npm` or
+`npx` command to run, and the CLI's own `specwithcode update` is off unless
+`STUDIO_ENABLE_SELF_UPDATE=true` is set. To move the service to a newer release, use the path that matches
 how the server was installed:
 
 - **Desktop app on that machine:** open **Settings → About**. The **SpecWithCode service**
@@ -38,7 +40,7 @@ Server updates restart the connection and can interrupt active agents and
 terminal commands. Saved threads, settings, and project files remain. To match a
 remote client's version, follow [Updating SpecWithCode](./updating.md).
 
-`specweave-studio uninstall` removes the background service, the `specweave-studio` launcher, and the
+`specwithcode uninstall` removes the background service, the command launcher, and the
 downloaded versions after showing you the list and asking once. Your projects,
 threads, and settings under `~/.specweave-studio/userdata` are kept. Pass `--yes` from a
 script.
@@ -61,7 +63,7 @@ separately. Signing out of SpecWithCode Connect does not stop or uninstall the s
 
 ## Troubleshooting
 
-Start with `specweave-studio service status` on the host. It prints the log path and, on Linux,
+Start with `specwithcode service status` on the host. It prints the log path and, on Linux,
 checks whether the installed service is running, enabled, and allowed to survive
 logout.
 
@@ -80,7 +82,7 @@ ssh -t your-server 'sudo loginctl enable-linger "$(id -un)"'
 
 Then retry service setup as your normal user. Run only the `loginctl` command
 with sudo; running SpecWithCode as root creates a separate installation and Connect
-identity. Without administrator access, run `specweave-studio serve` in a terminal and keep
+identity. Without administrator access, run `specwithcode serve` in a terminal and keep
 that session open.
 
 | Status problem                          | Next step                                                                                                                      |
@@ -88,7 +90,7 @@ that session open.
 | `linger-unavailable`                    | Run `loginctl show-user "$(id -un)" --property=Linger` and check that systemd-logind is available.                             |
 | `user-manager-unavailable`              | Run `systemctl --user status` in a login session for the service user; check your distribution's systemd user-session support. |
 | `service-disabled` or `service-stopped` | Read the log and `systemctl --user status studio.service`, then use the repair command printed by SpecWithCode.                |
-| `restart-pending`                       | A newer version is installed but the service still runs the previous one. Run `specweave-studio service restart`.              |
+| `restart-pending`                       | A newer version is installed but the service still runs the previous one. Run `specwithcode service restart`.                  |
 
 On macOS, check **System Settings → General → Login Items** if the service no
 longer starts at login. If agent work cannot access Desktop, Documents, or

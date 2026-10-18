@@ -30,6 +30,7 @@ import {
   API_CREDIT_ACCOUNT_DRIVERS,
   type ApiCreditAccountDriver,
   apiCreditAccountInstance,
+  CLAUDE_WORKSPACE_ID_PATTERN,
 } from "./apiCreditAccount";
 
 /**
@@ -57,6 +58,7 @@ export function AddApiCreditAccountDialog({
   const canManage = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const [label, setLabel] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [workspaceId, setWorkspaceId] = useState("");
   const [saving, setSaving] = useState(false);
   const existingIds = useMemo(() => {
     const ids = new Set(["codex", "claudeAgent", ...Object.keys(settings.providerInstances ?? {})]);
@@ -66,11 +68,17 @@ export function AddApiCreditAccountDialog({
     }
     return ids;
   }, [settings.providerInstances, settings.providers]);
-  const canSave = canManage && apiKey.trim().length > 0 && !saving;
+  const asksWorkspace = driver === "claudeAgent";
+  const workspaceInvalid =
+    asksWorkspace &&
+    workspaceId.trim().length > 0 &&
+    !CLAUDE_WORKSPACE_ID_PATTERN.test(workspaceId.trim());
+  const canSave = canManage && apiKey.trim().length > 0 && !workspaceInvalid && !saving;
 
   const close = () => {
     setLabel("");
     setApiKey("");
+    setWorkspaceId("");
     onOpenChange(false);
   };
 
@@ -80,6 +88,7 @@ export function AddApiCreditAccountDialog({
       driver,
       label,
       apiKey,
+      ...(asksWorkspace ? { workspaceId } : {}),
       existingIds,
     });
     setSaving(true);
@@ -134,6 +143,24 @@ export function AddApiCreditAccountDialog({
                 autoFocus
               />
             </div>
+            {asksWorkspace ? (
+              <div className="grid gap-1.5">
+                <Label htmlFor="api-credit-account-workspace">Workspace ID (optional)</Label>
+                <Input
+                  id="api-credit-account-workspace"
+                  autoComplete="off"
+                  placeholder="wrkspc_…"
+                  value={workspaceId}
+                  aria-invalid={workspaceInvalid || undefined}
+                  onChange={(event) => setWorkspaceId(event.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {workspaceInvalid
+                    ? "A workspace ID starts with wrkspc_."
+                    : "Needed for a key that is not scoped to a workspace (user keys, sk-ant-usr…). Copy it from Settings → Workspaces in the Claude Console."}
+                </p>
+              </div>
+            ) : null}
             <div className="grid gap-1.5">
               <Label htmlFor="api-credit-account-label">Name (optional)</Label>
               <Input

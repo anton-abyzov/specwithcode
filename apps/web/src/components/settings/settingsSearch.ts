@@ -1063,6 +1063,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/connections",
     searchTerms: [
       "fleet invite add machine worker tailscale another computer mac linux vps network",
+      "vps linux server rent hetzner",
     ],
   },
   {

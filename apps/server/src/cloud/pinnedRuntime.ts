@@ -11,7 +11,7 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import {
   CLI_RELEASE_CHECKSUMS_FILE,
-  cliArchiveFileName,
+  chooseCliArchive,
   cliArchivePlatformKey,
   cliArchiveTarCommand,
   cliReleaseDownloadBaseUrl,
@@ -65,7 +65,10 @@ export function pinnedRuntimePaths(
   const versionDir = path.join(pinnedRuntimeVersionsDir(path, baseDir), version);
   return {
     versionDir,
-    entryPath: path.join(versionDir, platform === "win32" ? "specweave-studio.exe" : "specweave-studio"),
+    entryPath: path.join(
+      versionDir,
+      platform === "win32" ? "specweave-studio.exe" : "specweave-studio",
+    ),
     sentinelPath: path.join(versionDir, ".install-complete"),
   };
 }
@@ -97,6 +100,31 @@ export class PinnedRuntimePreflightBlockedError extends Schema.TaggedError<Pinne
   override get message(): string {
     return this.reason;
   }
+}
+
+/**
+ * The executable a Node bundle archive lacks: a launcher that runs the
+ * bundle's `bin.mjs` with the Node.js installing it. It finds the bundle
+ * beside its own resolved path, so it works from the staging directory, from
+ * the published version directory and through a symlink on PATH. The marker
+ * comment is the one scripts/install.sh writes, so either installer can
+ * refresh the other's launcher.
+ */
+export function nodeBundleLauncherScript(
+  nodePath: string,
+  electron: boolean = process.versions.electron !== undefined,
+): string {
+  const quoted = `'${nodePath.replaceAll("'", `'\\''`)}'`;
+  return [
+    "#!/bin/sh",
+    "# specwithcode-install launcher: runs this release with the Node.js the installer chose.",
+    'STUDIO_CLI_NAME="${0##*/}"',
+    "export STUDIO_CLI_NAME",
+    ...(electron ? ["ELECTRON_RUN_AS_NODE=1", "export ELECTRON_RUN_AS_NODE"] : []),
+    'STUDIO_BUNDLE_DIR="$(dirname -- "$(readlink -f -- "$0")")"',
+    `exec ${quoted} "$STUDIO_BUNDLE_DIR/bin.mjs" "$@"`,
+    "",
+  ].join("\n");
 }
 
 export type PinnedRuntimeProgress =
@@ -194,7 +222,6 @@ const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(fun
   }
   const httpClient = input.httpClient;
   const baseUrl = cliReleaseDownloadBaseUrl(input.version, input.releaseBaseUrl);
-  const fileName = cliArchiveFileName(input.version, platformKey);
 
   input.onProgress?.({ stage: "download", received: 0, total: undefined });
   const checksums = parseChecksums(
@@ -206,12 +233,14 @@ const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(fun
       ),
     ),
   );
-  const expected = checksums.get(fileName);
-  if (expected === undefined) {
+  const choice = chooseCliArchive(checksums, input.version, platformKey);
+  if (choice === undefined) {
     return yield* new PinnedRuntimeInstallError({
-      step: `finding ${fileName} in the specweave-studio release checksums`,
+      step: `finding a ${platformKey} archive in the specweave-studio ${input.version} release checksums`,
     });
   }
+  const { fileName, layout } = choice;
+  const expected = checksums.get(fileName)!;
   const archive = yield* fetchReleaseAsset(
     httpClient,
     `${baseUrl}/${fileName}`,
@@ -222,7 +251,10 @@ const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(fun
   const digest = yield* Effect.tryPromise({
     try: () => crypto.subtle.digest("SHA-256", archive),
     catch: (cause) =>
-      new PinnedRuntimeInstallError({ step: "verifying the specweave-studio release archive", cause }),
+      new PinnedRuntimeInstallError({
+        step: "verifying the specweave-studio release archive",
+        cause,
+      }),
   });
   if (Hex.encode(new Uint8Array(digest)) !== expected) {
     return yield* new PinnedRuntimeInstallError({
@@ -235,17 +267,28 @@ const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(fun
     .writeFile(archivePath, archive)
     .pipe(
       Effect.mapError(
-        (cause) => new PinnedRuntimeInstallError({ step: "writing the specweave-studio release archive", cause }),
+        (cause) =>
+          new PinnedRuntimeInstallError({
+            step: "writing the specweave-studio release archive",
+            cause,
+          }),
       ),
     );
   input.onProgress?.({ stage: "extract" });
   const extractStep = "extracting the specweave-studio release archive";
-  // The archive wraps everything in one directory named after its stem;
-  // strip it so the executable lands at <versionDir>/specweave-studio.
+  // A single-executable archive wraps everything in one directory named after
+  // its stem; strip it so the executable lands at <versionDir>/specweave-studio.
+  // A Node bundle already has its files at the root.
   yield* input.runner
     .run({
       command: cliArchiveTarCommand(input.platform, process.env),
-      args: ["-xf", archivePath, "-C", stagingDir, "--strip-components=1"],
+      args: [
+        "-xf",
+        archivePath,
+        "-C",
+        stagingDir,
+        ...(layout === "single-executable" ? ["--strip-components=1"] : []),
+      ],
       timeout: PINNED_RUNTIME_INSTALL_TIMEOUT,
     })
     .pipe(
@@ -262,6 +305,14 @@ const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(fun
       ),
     );
   yield* fs.remove(archivePath, { force: true }).pipe(Effect.ignore);
+  if (layout === "node-bundle") {
+    const launcherStep = "writing the specweave-studio launcher";
+    const entryPath = path.join(stagingDir, "specweave-studio");
+    yield* fs.writeFileString(entryPath, nodeBundleLauncherScript(process.execPath)).pipe(
+      Effect.andThen(fs.chmod(entryPath, 0o755)),
+      Effect.mapError((cause) => new PinnedRuntimeInstallError({ step: launcherStep, cause })),
+    );
+  }
 });
 
 const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(function* (

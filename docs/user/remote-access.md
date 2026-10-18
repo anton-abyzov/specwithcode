@@ -3,6 +3,9 @@
 Connect a phone, browser, or another desktop app to SpecWithCode running on a different
 machine. That machine must stay running and reachable while you work.
 
+A Linux VPS you rent joins your private machines the same way, over your
+tailnet; see [Linux worker](./linux-worker.md).
+
 ## SpecWithCode Connect
 
 SpecWithCode Connect makes an environment available to your other devices without setting
@@ -177,6 +180,10 @@ In the desktop app, open **Settings → Connections → Add environment**, choos
 **SSH**, and enter a host or SSH alias such as `user@example.com`. SpecWithCode starts
 or reuses a server there and opens the port forward for you. Projects, provider
 credentials, and agent work stay on the remote machine.
+
+Do not use this path for a VPS you rent. Set the VPS up as a
+[Linux worker](./linux-worker.md) instead: it runs its own background service on
+your tailnet and joins **Your private machines**.
 
 The remote host must be Linux or an Apple Silicon Mac with `curl` or `wget`,
 `tar`, `sha256sum` or `shasum`, and [provider setup](./install.md#providers).

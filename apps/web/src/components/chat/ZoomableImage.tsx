@@ -8,10 +8,20 @@ import {
   type Ref,
 } from "react";
 
-const MAX_ZOOM = 8;
+export const MAX_ZOOM = 8;
 
 export interface ZoomableImageHandle {
   pan: (key: string) => boolean;
+  zoomIn: () => void;
+  zoomOut: () => void;
+  /** Back to the whole image in view. */
+  fit: () => void;
+}
+
+/** The room an image has to fit in, when that is not the window. */
+export interface ZoomableImageBounds {
+  readonly width: number;
+  readonly height: number;
 }
 
 /** Zooms around the pointer and keeps the whole image accessible by dragging or scrolling. */
@@ -19,11 +29,16 @@ export function ZoomableImage({
   src,
   name,
   onError,
+  bounds,
+  onZoomChange,
   ref,
 }: {
   src: string;
   name: string;
   onError: () => void;
+  /** Fits the image to this box instead of the window, as in the viewer overlay. */
+  bounds?: ZoomableImageBounds | null | undefined;
+  onZoomChange?: ((zoom: number) => void) | undefined;
   ref?: Ref<ZoomableImageHandle>;
 }) {
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -44,74 +59,87 @@ export function ZoomableImage({
   } | null>(null);
   const suppressClickRef = useRef(false);
   const [dragging, setDragging] = useState(false);
-  const maxHeight = Math.max(1, Math.min(windowSize.height * 0.86, windowSize.height - 160));
+  const maxHeight = bounds
+    ? Math.max(1, bounds.height)
+    : Math.max(1, Math.min(windowSize.height * 0.86, windowSize.height - 160));
+  const maxWidth = bounds
+    ? Math.max(1, bounds.width)
+    : windowSize.width * 0.92 - (windowSize.width >= 640 ? 96 : 0);
   const fit = Math.min(
     1,
-    (windowSize.width * 0.92 - (windowSize.width >= 640 ? 96 : 0)) / (naturalSize.width || 1),
+    maxWidth / (naturalSize.width || 1),
     maxHeight / (naturalSize.height || 1),
   );
   const width = naturalSize.width * fit * zoom;
   const height = naturalSize.height * fit * zoom;
 
-  useImperativeHandle(
-    ref,
-    () => ({
-      pan(key) {
-        const viewport = viewportRef.current;
-        if (!viewport || zoomRef.current <= 1) return false;
-        // A vertical scrollbar alone must not swallow gallery navigation.
-        if (
-          (key === "ArrowLeft" || key === "ArrowRight") &&
-          viewport.scrollWidth <= viewport.offsetWidth
-        )
-          return false;
-        switch (key) {
-          case "ArrowLeft":
-            viewport.scrollLeft -= 40;
-            break;
-          case "ArrowRight":
-            viewport.scrollLeft += 40;
-            break;
-          case "ArrowUp":
-            viewport.scrollTop -= 40;
-            break;
-          case "ArrowDown":
-            viewport.scrollTop += 40;
-            break;
-          default:
-            return false;
-        }
-        return true;
-      },
-    }),
-    [],
-  );
-
+  const onZoomChangeRef = useRef(onZoomChange);
+  onZoomChangeRef.current = onZoomChange;
   const changeZoom = useCallback((next: number, point?: { x: number; y: number }) => {
     const viewport = viewportRef.current;
     const previous = zoomRef.current;
     const clamped = Math.min(MAX_ZOOM, Math.max(1, next));
     if (!viewport || previous === clamped) return;
-    const bounds = viewport.getBoundingClientRect();
-    const x = point ? point.x - bounds.left : viewport.clientWidth / 2;
-    const y = point ? point.y - bounds.top : viewport.clientHeight / 2;
+    const rect = viewport.getBoundingClientRect();
+    const x = point ? point.x - rect.left : viewport.clientWidth / 2;
+    const y = point ? point.y - rect.top : viewport.clientHeight / 2;
     anchorRef.current = {
       x: (viewport.scrollLeft + x) / previous,
       y: (viewport.scrollTop + y) / previous,
-      clientX: bounds.left + x,
-      clientY: bounds.top + y,
+      clientX: rect.left + x,
+      clientY: rect.top + y,
     };
     zoomRef.current = clamped;
     setZoom(clamped);
+    onZoomChangeRef.current?.(clamped);
   }, []);
+
+  const pan = useCallback((key: string) => {
+    const viewport = viewportRef.current;
+    if (!viewport || zoomRef.current <= 1) return false;
+    // A vertical scrollbar alone must not swallow gallery navigation.
+    if (
+      (key === "ArrowLeft" || key === "ArrowRight") &&
+      viewport.scrollWidth <= viewport.offsetWidth
+    )
+      return false;
+    switch (key) {
+      case "ArrowLeft":
+        viewport.scrollLeft -= 40;
+        break;
+      case "ArrowRight":
+        viewport.scrollLeft += 40;
+        break;
+      case "ArrowUp":
+        viewport.scrollTop -= 40;
+        break;
+      case "ArrowDown":
+        viewport.scrollTop += 40;
+        break;
+      default:
+        return false;
+    }
+    return true;
+  }, []);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      pan,
+      zoomIn: () => changeZoom(zoomRef.current * 1.5),
+      zoomOut: () => changeZoom(zoomRef.current / 1.5),
+      fit: () => changeZoom(1),
+    }),
+    [changeZoom, pan],
+  );
 
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
     const anchor = anchorRef.current;
     if (!viewport || !anchor) return;
-    const bounds = viewport.getBoundingClientRect();
-    viewport.scrollLeft = anchor.x * zoom - (anchor.clientX - bounds.left);
-    viewport.scrollTop = anchor.y * zoom - (anchor.clientY - bounds.top);
+    const rect = viewport.getBoundingClientRect();
+    viewport.scrollLeft = anchor.x * zoom - (anchor.clientX - rect.left);
+    viewport.scrollTop = anchor.y * zoom - (anchor.clientY - rect.top);
     anchorRef.current = null;
   }, [zoom]);
 
@@ -123,6 +151,13 @@ export function ZoomableImage({
     window.addEventListener("resize", resize);
     return () => window.removeEventListener("resize", resize);
   }, [changeZoom]);
+
+  // A new box to fit in (the thread folded away, the window resized) starts from the fit again.
+  const boundsWidth = bounds?.width;
+  const boundsHeight = bounds?.height;
+  useEffect(() => {
+    if (boundsWidth !== undefined && boundsHeight !== undefined) changeZoom(1);
+  }, [boundsHeight, boundsWidth, changeZoom]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -150,11 +185,16 @@ export function ZoomableImage({
         aria-label={`${name}, zoomable image`}
         aria-description="Click to zoom in or return to fit. Scroll to zoom, drag to pan. Use Enter to toggle zoom, plus or minus to zoom, and 0 to fit."
         tabIndex={0}
-        className="max-w-[var(--media-width)] overflow-auto overscroll-contain rounded-lg bg-background shadow-2xl ring-1 ring-border/70 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className={
+          bounds
+            ? "overflow-auto overscroll-contain rounded-md bg-background shadow-lg ring-1 ring-border/70 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            : "max-w-[var(--media-width)] overflow-auto overscroll-contain rounded-lg bg-background shadow-2xl ring-1 ring-border/70 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        }
         style={{
           width: width || undefined,
           height: height || undefined,
           maxHeight,
+          ...(bounds ? { maxWidth } : {}),
           cursor: zoom > 1 ? (dragging ? "grabbing" : "grab") : "zoom-in",
         }}
         onClick={(event) => {
@@ -176,6 +216,10 @@ export function ZoomableImage({
           } else if (event.key === "0") {
             event.preventDefault();
             changeZoom(1);
+          } else if (pan(event.key)) {
+            // A zoomed image pans; the viewer around it keeps arrows for paging otherwise.
+            event.preventDefault();
+            event.stopPropagation();
           }
         }}
         onPointerDown={(event) => {
@@ -183,10 +227,10 @@ export function ZoomableImage({
           suppressClickRef.current = false;
           if (event.pointerType !== "mouse" || event.button !== 0 || zoomRef.current <= 1) return;
           const viewport = event.currentTarget;
-          const bounds = viewport.getBoundingClientRect();
+          const rect = viewport.getBoundingClientRect();
           if (
-            event.clientX - bounds.left >= viewport.clientWidth ||
-            event.clientY - bounds.top >= viewport.clientHeight
+            event.clientX - rect.left >= viewport.clientWidth ||
+            event.clientY - rect.top >= viewport.clientHeight
           )
             return;
           dragRef.current = {
@@ -228,7 +272,9 @@ export function ZoomableImage({
           draggable={false}
           className="block max-w-none select-none"
           style={
-            naturalSize.width ? { width, height } : { maxWidth: "var(--media-width)", maxHeight }
+            naturalSize.width
+              ? { width, height }
+              : { maxWidth: bounds ? maxWidth : "var(--media-width)", maxHeight }
           }
           onLoad={(event) => {
             setNaturalSize({

@@ -135,6 +135,7 @@ import {
   RuntimeMode,
   TerminalOpenInput,
   type WorktreeSetupSnapshot,
+  isInlineRunTerminalId,
 } from "@specweave-studio/contracts";
 import { type EnvironmentConnectionPresentation } from "@specweave-studio/client-runtime/connection";
 import { deriveThreadTitleSeed } from "@specweave-studio/client-runtime/operations";
@@ -230,6 +231,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import { createPortal, flushSync } from "react-dom";
 import { InViewerOverlay, useViewerOverlayStore } from "~/viewerOverlayStore";
@@ -588,6 +590,7 @@ import {
   ComputerUsePermissionWaitNotice,
   ComputerUseRetryContext,
 } from "./computerUse/ComputerUsePermissions";
+import { ShellRunTargetContext, type ShellRunTarget } from "./chat/InlineShellRun";
 import { useComputerUsePermissionWait } from "../state/computerUsePermissionWait";
 import { ComposerSurface } from "./chat/ComposerSurface";
 import { resolveThreadSyncPhase } from "../threadSync";
@@ -1023,6 +1026,23 @@ function serverTerminalIdsStrictSubsetOfClient(
   return true;
 }
 
+/** What thread messages can do from the timeline: retry after a macOS permission, run code. */
+function TimelineActionContexts({
+  computerUseRetry,
+  shellRunTarget,
+  children,
+}: {
+  computerUseRetry: ((text: string) => void) | null;
+  shellRunTarget: ShellRunTarget | null;
+  children: ReactNode;
+}) {
+  return (
+    <ComputerUseRetryContext value={computerUseRetry}>
+      <ShellRunTargetContext value={shellRunTarget}>{children}</ShellRunTargetContext>
+    </ComputerUseRetryContext>
+  );
+}
+
 interface PersistentThreadTerminalDrawerProps {
   threadRef: { environmentId: EnvironmentId; threadId: ThreadId };
   threadId: ThreadId;
@@ -1089,7 +1109,10 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   const drawerTerminalSessions = useMemo(
     () =>
       knownTerminalSessions?.filter(
-        (session) => !panelTerminalIds.has(session.target.terminalId),
+        (session) =>
+          !panelTerminalIds.has(session.target.terminalId) &&
+          // A code block's run shows its output under the block, not as a tab.
+          !isInlineRunTerminalId(session.target.terminalId),
       ) ?? [],
     [knownTerminalSessions, panelTerminalIds],
   );
@@ -2482,7 +2505,9 @@ function useChatViewState(props: ChatViewProps) {
       return [];
     }
     return activeThreadKnownSessionsRaw.filter(
-      (session) => session.target.threadId === activeThreadId,
+      (session) =>
+        session.target.threadId === activeThreadId &&
+        !isInlineRunTerminalId(session.target.terminalId),
     );
   }, [activeThreadId, activeThreadKnownSessionsRaw]);
   const activeServerOrderedTerminalIds = useMemo(
@@ -6056,22 +6081,25 @@ function useChatViewActions(
     ],
   );
 
-  const runProjectScriptRef = useRef(runProjectScript);
-  useLayoutEffect(() => {
-    runProjectScriptRef.current = runProjectScript;
-  }, [runProjectScript]);
-  const runShellCommand = useCallback((command: string) => {
-    void runProjectScriptRef.current(
-      {
-        id: "chat-code-block",
-        name: "Chat code block",
-        command,
-        icon: "play",
-        runOnWorktreeCreate: false,
-      },
-      { rememberAsLastInvoked: false },
-    );
-  }, []);
+  // Shell code blocks in this thread's messages run on its host, in its worktree.
+  const shellRunTarget = useMemo<ShellRunTarget | null>(
+    () =>
+      activeProject && activeThreadId && gitCwd !== null
+        ? {
+            environmentId,
+            threadId: activeThreadId,
+            cwd: gitCwd,
+            fallbackCwd: activeProject.workspaceRoot,
+            worktreePath: activeThreadWorktreePath,
+            env: projectScriptRuntimeEnv({
+              project: { cwd: activeProject.workspaceRoot },
+              worktreePath: activeThreadWorktreePath,
+            }),
+            runtimeMode,
+          }
+        : null,
+    [activeProject, activeThreadId, activeThreadWorktreePath, environmentId, gitCwd, runtimeMode],
+  );
 
   const supportsProjectSettingsOverrides =
     environmentById.get(environmentId)?.serverConfig?.environment.capabilities
@@ -7845,15 +7873,18 @@ function useChatViewActions(
     // Environment identity is part of the scroll session too.
   }, [activeThreadKey]);
 
+  // The viewer overlay's copy of the thread leaves focus with the viewer, so
+  // its keys (arrows, zoom) work on open; a click puts it in the composer.
+  const inViewerOverlay = useContext(InViewerOverlay);
   useEffect(() => {
-    if (!activeThread?.id || terminalUiState.terminalOpen) return;
+    if (!activeThread?.id || terminalUiState.terminalOpen || inViewerOverlay) return;
     const frame = window.requestAnimationFrame(() => {
       focusComposer();
     });
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [activeThread?.id, focusComposer, terminalUiState.terminalOpen]);
+  }, [activeThread?.id, focusComposer, inViewerOverlay, terminalUiState.terminalOpen]);
 
   // Tabbing back into the app lands focus wherever it last was, often the right panel or the
   // body. Put it in the composer unless something that takes typing already holds it. The
@@ -7861,7 +7892,8 @@ function useChatViewActions(
   // terminal is a surface and is recognized by the predicate instead. A phone keyboard is left
   // alone so returning to the app does not raise it; a narrow desktop window still refocuses.
   useEffect(() => {
-    if (!activeThread?.id || terminalUiState.terminalOpen || isPhoneKeyboard) return;
+    if (!activeThread?.id || terminalUiState.terminalOpen || isPhoneKeyboard || inViewerOverlay)
+      return;
     let frame: number | null = null;
     const onWindowFocus = () => {
       if (frame !== null) window.cancelAnimationFrame(frame);
@@ -7880,7 +7912,13 @@ function useChatViewActions(
       window.removeEventListener("focus", onWindowFocus);
       if (frame !== null) window.cancelAnimationFrame(frame);
     };
-  }, [activeThread?.id, focusComposer, isPhoneKeyboard, terminalUiState.terminalOpen]);
+  }, [
+    activeThread?.id,
+    focusComposer,
+    inViewerOverlay,
+    isPhoneKeyboard,
+    terminalUiState.terminalOpen,
+  ]);
 
   useEffect(() => {
     if (!activeThread?.id) return;
@@ -9053,12 +9091,12 @@ function useChatViewActions(
     resumeForAppCommandRef,
     runAppCommand,
     runProjectScript,
-    runShellCommand,
     saveProjectScript,
     scheduleComposerFocus,
     scrollToEnd,
     sendEnvMode,
     sendStandaloneCommand,
+    shellRunTarget,
     setBranchMismatchDismissTick,
     setBranchRestoreConfirmOpen,
     setDeviceSetupThread,
@@ -9540,12 +9578,12 @@ export default function ChatView(props: ChatViewProps) {
     resumeForAppCommandRef,
     runAppCommand,
     runProjectScript,
-    runShellCommand,
     saveProjectScript,
     scheduleComposerFocus,
     scrollToEnd,
     sendEnvMode,
     sendStandaloneCommand,
+    shellRunTarget,
     setBranchMismatchDismissTick,
     setBranchRestoreConfirmOpen,
     setDeviceSetupThread,
@@ -13997,8 +14035,15 @@ export default function ChatView(props: ChatViewProps) {
             {/* Messages Wrapper */}
             <div className="relative flex min-h-0 flex-1 flex-col bg-background">
               {/* Messages — LegendList handles virtualization and scrolling internally */}
-              <ComputerUseRetryContext
-                value={canOperateThread && !transcriptOnly ? retryAfterComputerUsePermission : null}
+              <TimelineActionContexts
+                computerUseRetry={
+                  canOperateThread && !transcriptOnly ? retryAfterComputerUsePermission : null
+                }
+                shellRunTarget={
+                  canOperateThread && !transcriptOnly && !paintOnlyDisplayedTimeline
+                    ? shellRunTarget
+                    : null
+                }
               >
                 <MessagesTimeline
                   citationRequest={paintOnlyDisplayedTimeline ? null : citationRequest}
@@ -14006,7 +14051,6 @@ export default function ChatView(props: ChatViewProps) {
                   {...(!paintOnlyDisplayedTimeline
                     ? {
                         onCiteAssistantText: citeAssistantText,
-                        ...(activeProject ? { onRunShellCommand: runShellCommand } : {}),
                       }
                     : {})}
                   isWorking={!paintOnlyDisplayedTimeline && isWorking}
@@ -14112,7 +14156,7 @@ export default function ChatView(props: ChatViewProps) {
                     ? {}
                     : { historyControls: threadHistoryControls })}
                 />
-              </ComputerUseRetryContext>
+              </TimelineActionContexts>
 
               {/* scroll to end pill — shown when user has scrolled away from the live edge */}
               {showScrollToBottom && (
@@ -14745,6 +14789,8 @@ export default function ChatView(props: ChatViewProps) {
           key={expandedImageKey(expandedImage)}
           preview={expandedImage}
           onClose={closeExpandedImage}
+          // A thread's media opens beside the thread, so it can be steered meanwhile.
+          threadRef={isServerThread ? routeThreadTarget : null}
         />
       )}
     </div>

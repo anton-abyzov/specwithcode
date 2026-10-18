@@ -50,7 +50,9 @@ const handlers = {
   chrome_profiles: McpToolAccess.readsAsCaller(() =>
     run((tools, threadId) => tools.profiles(threadId)),
   ),
-  chrome_tabs: McpToolAccess.readsAsCaller((input) => run((tools) => tools.tabs(input.profile))),
+  chrome_tabs: McpToolAccess.readsAsCaller((input) =>
+    run((tools, threadId) => tools.tabs(threadId, input.profile)),
+  ),
   chrome_open: McpToolAccess.actsAsCaller((input) =>
     run((tools, threadId) => tools.open(threadId, input)),
   ),

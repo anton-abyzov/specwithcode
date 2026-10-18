@@ -304,7 +304,7 @@ export const layerRpcHandlers = WsBrowserExtensionRpcGroup.middleware(RpcInstrum
         }),
       [WS_METHODS.browserExtensionStop]: (payload) =>
         Effect.promise(async () => {
-          await extension.hub.stop(payload.profileId);
+          await extension.hub.stop(payload.profileId, payload.threadId);
           return extension.status();
         }),
       [WS_METHODS.browserExtensionInstallFolder]: () =>

@@ -21,7 +21,6 @@ import {
   MessageSquareIcon,
   MessageSquareWarningIcon,
   OctagonAlertIcon,
-  PlayIcon,
   PresentationIcon,
   SparklesIcon,
   TriangleAlertIcon,
@@ -158,6 +157,17 @@ import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { GitHubIcon } from "./Icons";
 import { createIncrementalHighlightedDocument } from "../lib/incrementalHighlighting";
 import { HighlightedCodeLines } from "./chat/HighlightedCodeLines";
+import {
+  InlineShellRunButton,
+  InlineShellRunPanel,
+  InlineShellRunScope,
+} from "./chat/InlineShellRun";
+import {
+  groupHighlightedWords,
+  resolveCodeFenceLanguage,
+  runnableShellCommand,
+  SHELL_FENCE_LANGUAGE_REGEX,
+} from "./chat/shellCodeBlocks";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
 import { MermaidDiagram } from "./chat/MermaidDiagram";
 import { useTheme } from "../hooks/useTheme";
@@ -252,7 +262,6 @@ interface ChatMarkdownProps {
   formatDates?: boolean;
   /** Append a prompt that invokes a newly created artifact-template skill. */
   onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
-  onRunShellCommand?: ((command: string) => void) | undefined;
   /** Directory that anchors relative links and images; defaults to `cwd`. Set
       to the file's own directory when rendering a markdown file. */
   imageBaseDir?: string | undefined;
@@ -947,8 +956,6 @@ function MarkdownCodeBlock({
   language,
   fenceTitle,
   theme,
-  onRunShellCommand,
-  isStreaming,
   leadingActions,
   canWrap = true,
   diagram = false,
@@ -958,8 +965,6 @@ function MarkdownCodeBlock({
   language: string;
   fenceTitle: string | null;
   theme: "light" | "dark";
-  onRunShellCommand?: ((command: string) => void) | undefined;
-  isStreaming: boolean;
   leadingActions?: ReactNode;
   canWrap?: boolean;
   /** Renders content instead of code, with actions below it like tables. */
@@ -971,17 +976,6 @@ function MarkdownCodeBlock({
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wrapLabel = wrapped ? "Disable line wrap" : "Wrap lines";
   const copyLabel = copied ? "Copied" : "Copy code";
-  const command = code.trim();
-  const canRun =
-    onRunShellCommand !== undefined &&
-    !isStreaming &&
-    /^(?:sh|bash|zsh|fish|shell|powershell|pwsh)$/.test(language) &&
-    code.endsWith("\n") &&
-    command.length > 0 &&
-    !command.endsWith("\\") &&
-    // Control and invisible format characters (bidi overrides, zero-width) can
-    // make the rendered command differ from what the terminal would receive.
-    !/[\p{Cc}\p{Cf}]/u.test(code.slice(0, -1));
 
   const handleCopy = useCallback(() => {
     if (typeof navigator === "undefined" || navigator.clipboard == null) {
@@ -1087,28 +1081,12 @@ function MarkdownCodeBlock({
               <TooltipPopup side="top">{wrapLabel}</TooltipPopup>
             </Tooltip>
           ) : null}
-          {canRun ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    type="button"
-                    variant="ghost-muted"
-                    size="icon-xs"
-                    onClick={() => onRunShellCommand(command)}
-                    aria-label="Run in terminal"
-                  />
-                }
-              >
-                <PlayIcon className="size-3" />
-              </TooltipTrigger>
-              <TooltipPopup side="top">Run in terminal</TooltipPopup>
-            </Tooltip>
-          ) : null}
+          <InlineShellRunButton />
           {copyButton}
         </span>
       </div>
       {children}
+      <InlineShellRunPanel />
     </div>
   );
 }
@@ -1141,7 +1119,6 @@ function MarkdownMermaidCodeBlock({
       language="mermaid"
       fenceTitle={fenceTitle}
       theme={theme}
-      isStreaming={isStreaming}
       canWrap={!showDiagram}
       diagram={showDiagram}
       leadingActions={
@@ -1185,21 +1162,20 @@ function MarkdownMermaidCodeBlock({
 }
 
 interface SuspenseShikiCodeBlockProps {
-  className: string | undefined;
+  language: string;
   code: string;
   themeName: DiffThemeName;
   isStreaming: boolean;
 }
 
 function SuspenseShikiCodeBlock({
-  className,
+  language,
   code,
   themeName,
   isStreaming,
 }: SuspenseShikiCodeBlockProps) {
   const [hasStreamed, setHasStreamed] = useState(isStreaming);
   if (isStreaming && !hasStreamed) setHasStreamed(true);
-  const language = extractFenceLanguage(className);
   const cacheKey = createHighlightCacheKey(code, language, themeName);
   // Once lines are mounted individually, keep that renderer when streaming
   // finishes so switching to cached HTML cannot clear an existing selection.
@@ -1252,6 +1228,15 @@ function UncachedShikiCodeBlock({
   );
   const highlighted = useMemo(() => {
     try {
+      if (SHELL_FENCE_LANGUAGE_REGEX.test(language)) {
+        // Wrapped commands break only at spaces, never inside a flag or path.
+        const root = groupHighlightedWords(
+          incrementalHighlight
+            ? incrementalHighlight(code)
+            : highlighter.codeToHast(code, { lang: language, theme: themeName }),
+        );
+        return preserveLines ? root : toHtml(root);
+      }
       if (incrementalHighlight) return incrementalHighlight(code);
       return preserveLines
         ? highlighter.codeToHast(code, { lang: language, theme: themeName })
@@ -2407,7 +2392,6 @@ function useChatMarkdownState({
   isStreaming = false,
   skills = EMPTY_MARKDOWN_SKILLS,
   onUseArtifactTemplate,
-  onRunShellCommand,
   imageBaseDir,
   onImageExpand,
   renderContextReference,
@@ -2421,7 +2405,17 @@ function useChatMarkdownState({
   const [documentTarget, setDocumentTarget] = useState<MarkdownDocumentTarget | null>(null);
   const [viewerTarget, setViewerTarget] = useState<MarkdownFileLinkMeta | null>(null);
   const markdownRef = useRef<HTMLDivElement>(null);
-  const expandMedia = onImageExpand ?? setLocalMediaPreview;
+  // Media from a document already open in the viewer overlay goes in a
+  // lightbox over it: taking the overlay would close that document, and the
+  // preview with it.
+  const [localMediaInViewer, setLocalMediaInViewer] = useState(false);
+  const openLocalMedia = useCallback((preview: ExpandedImagePreview | null) => {
+    setLocalMediaInViewer(
+      markdownRef.current?.closest('[data-viewer-overlay-content="true"]') != null,
+    );
+    setLocalMediaPreview(preview);
+  }, []);
+  const expandMedia = onImageExpand ?? openLocalMedia;
   const mediaRequestId = useRef(0);
   useEffect(() => {
     setLocalMediaPreview(null);
@@ -2983,7 +2977,6 @@ function useChatMarkdownState({
       markdownFileLinkMetaByHref,
       onTaskListChange,
       onUseArtifactTemplate,
-      onRunShellCommand,
       openChangeRequestLink,
       openDeferredMarkdownLink,
       openExternalLinkInPreview,
@@ -3018,7 +3011,6 @@ function useChatMarkdownState({
       markdownFileLinkMetaByHref,
       onTaskListChange,
       onUseArtifactTemplate,
-      onRunShellCommand,
       openChangeRequestLink,
       openDeferredMarkdownLink,
       openExternalLinkInPreview,
@@ -3040,6 +3032,7 @@ function useChatMarkdownState({
     markdownRef,
     markdownUrlTransform,
     localMediaPreview,
+    localMediaInViewer,
     setLocalMediaPreview,
     documentTarget,
     setDocumentTarget,
@@ -3613,7 +3606,6 @@ const CHAT_MARKDOWN_COMPONENTS = {
       diffThemeName,
       expandMedia,
       isStreaming,
-      onRunShellCommand,
       text,
       cwd,
       imageBaseDir,
@@ -3626,7 +3618,10 @@ const CHAT_MARKDOWN_COMPONENTS = {
       return <pre {...props}>{children}</pre>;
     }
 
-    const language = extractFenceLanguage(codeBlock.className);
+    const language = resolveCodeFenceLanguage(
+      extractFenceLanguage(codeBlock.className),
+      codeBlock.code,
+    );
     // A fence that only lists files shows the files, each with its full path.
     const pathLines = isStreaming ? null : pathListLines(codeBlock.code, language);
     const pathEntries = pathLines?.flatMap((line) => {
@@ -3662,7 +3657,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
           }
         >
           <SuspenseShikiCodeBlock
-            className={codeBlock.className}
+            language={language}
             code={codeBlock.code}
             themeName={diffThemeName}
             isStreaming={isStreaming}
@@ -3683,21 +3678,22 @@ const CHAT_MARKDOWN_COMPONENTS = {
         </MarkdownMermaidCodeBlock>
       );
     }
+    // A closed shell fence gets a Run action that shows its output under the block.
+    const runCommand =
+      !isStreaming && isClosedCodeFence(node, text)
+        ? runnableShellCommand(language, codeBlock.code)
+        : null;
     return (
-      <MarkdownCodeBlock
-        code={codeBlock.code}
-        language={language}
-        fenceTitle={fenceTitle}
-        theme={resolvedTheme}
-        onRunShellCommand={
-          onRunShellCommand && !isStreaming && isClosedCodeFence(node, text)
-            ? onRunShellCommand
-            : undefined
-        }
-        isStreaming={isStreaming}
-      >
-        {highlightedCode}
-      </MarkdownCodeBlock>
+      <InlineShellRunScope command={runCommand}>
+        <MarkdownCodeBlock
+          code={codeBlock.code}
+          language={language}
+          fenceTitle={fenceTitle}
+          theme={resolvedTheme}
+        >
+          {highlightedCode}
+        </MarkdownCodeBlock>
+      </InlineShellRunScope>
     );
   },
 } satisfies Components;
@@ -3718,6 +3714,7 @@ function ChatMarkdown({
     markdownRef,
     markdownUrlTransform,
     localMediaPreview,
+    localMediaInViewer,
     setLocalMediaPreview,
     documentTarget,
     setDocumentTarget,
@@ -3770,6 +3767,7 @@ function ChatMarkdown({
         <ExpandedImageDialog
           preview={localMediaPreview}
           onClose={() => setLocalMediaPreview(null)}
+          threadRef={localMediaInViewer ? null : (props.threadRef ?? null)}
         />
       ) : null}
       {viewerTarget && props.threadRef ? (

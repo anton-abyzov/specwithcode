@@ -53,7 +53,13 @@ import type {
   EnvironmentThreadShell,
 } from "@specweave-studio/client-runtime/state/shell";
 import { scopedThreadKey, scopeThreadRef } from "@specweave-studio/client-runtime/environment";
-import { useThreadProjection, useThreadHistory, useThreadStatus } from "../../state/entities";
+import {
+  useThreadProjection,
+  useThreadHistory,
+  useThreadShell,
+  useThreadStatus,
+} from "../../state/entities";
+import { ShellRunTargetContext, type ShellRunTarget } from "../chat/InlineShellRun";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { threadEnvironment } from "../../state/threads";
 import { useClientSettings } from "../../hooks/useSettings";
@@ -109,6 +115,22 @@ const COORDINATOR_MESSAGE_WINDOW_STEP = 40;
 const CoordinatorThreadsContext = createContext<ReadonlyMap<string, EnvironmentThreadShell>>(
   new Map(),
 );
+
+function CoordinatorContexts({
+  workers,
+  shellRunTarget,
+  children,
+}: {
+  workers: ReadonlyMap<string, EnvironmentThreadShell>;
+  shellRunTarget: ShellRunTarget;
+  children: React.ReactNode;
+}) {
+  return (
+    <CoordinatorThreadsContext.Provider value={workers}>
+      <ShellRunTargetContext value={shellRunTarget}>{children}</ShellRunTargetContext>
+    </CoordinatorThreadsContext.Provider>
+  );
+}
 
 /**
  * The same threads with the same IDs, titles and dates, in any order: all a
@@ -198,6 +220,7 @@ export function CoordinatorConversation({
     [project.environmentId, coordinatorId],
   );
   const thread = useThreadProjection(ref);
+  const coordinatorShell = useThreadShell(ref);
   const history = useThreadHistory(ref);
   const status = useThreadStatus(ref);
   const load = useAtomCommand(threadEnvironment.loadEarlierHistory);
@@ -209,6 +232,18 @@ export function CoordinatorConversation({
     [allMessages],
   );
   const executionEnvironment = useEnvironment(project.environmentId);
+  // A command in the coordinator's reply runs on the project's host, in its folder.
+  const coordinatorRuntimeMode = coordinatorShell?.runtimeMode ?? null;
+  const shellRunTarget = useMemo<ShellRunTarget>(
+    () => ({
+      environmentId: project.environmentId,
+      threadId: coordinatorId,
+      cwd: project.workspaceRoot,
+      worktreePath: null,
+      runtimeMode: coordinatorRuntimeMode,
+    }),
+    [coordinatorId, coordinatorRuntimeMode, project.environmentId, project.workspaceRoot],
+  );
   const executionProviders = useProviderEntries(project.environmentId);
   const working = progress !== null && failure === null;
   // A thread the coordinator started this turn is announced by a card under its message;
@@ -400,7 +435,7 @@ export function CoordinatorConversation({
     [showEarlier],
   );
   return (
-    <CoordinatorThreadsContext.Provider value={workersById}>
+    <CoordinatorContexts workers={workersById} shellRunTarget={shellRunTarget}>
       <div
         ref={setScope}
         className="project-conversation"
@@ -540,7 +575,7 @@ export function CoordinatorConversation({
           </div>
         ) : null}
       </div>
-    </CoordinatorThreadsContext.Provider>
+    </CoordinatorContexts>
   );
 }
 

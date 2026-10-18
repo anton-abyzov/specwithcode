@@ -105,7 +105,7 @@ describe("ssh tunnel scripts", () => {
     assert.include(script, "STUDIO_NODE_SCRIPT_PATH=''");
     assert.include(
       script,
-      "STUDIO_RELEASE_BASE_URL='https://updates.studio.invalid/releases/download'",
+      "STUDIO_RELEASE_BASE_URL='https://github.com/anton-abyzov/specwithcode/releases/download'",
     );
     assert.include(
       script,
@@ -149,9 +149,13 @@ describe("ssh tunnel scripts", () => {
       script.indexOf('"$STUDIO_STAGING/specweave-studio" --version'),
       script.indexOf('> "$STUDIO_STAGING/.install-complete"'),
     );
-    // Node discovery is defined for the dev path but only ever invoked inside
-    // the node-script branch, which the archive path skips entirely.
-    assert.equal(script.split("ensure_remote_node_path || true").length - 1, 1);
+    // Node discovery runs for the dev path, and for an archive only when the
+    // release ships a Node bundle instead of the single executable.
+    assert.equal(script.split("ensure_remote_node_path || true").length - 1, 2);
+    assert.isBelow(
+      script.indexOf('STUDIO_LAYOUT="node-bundle"'),
+      script.indexOf('"$STUDIO_STAGING/specweave-studio" --version'),
+    );
     assert.isBelow(
       script.indexOf("ensure_remote_node_path || true"),
       script.indexOf('exec node "$STUDIO_NODE_SCRIPT_PATH" "$@"'),
@@ -172,6 +176,54 @@ describe("ssh tunnel scripts", () => {
     assert.include(launch, '"$RUNNER_FILE" __ssh-helper runtime-port "$DEFAULT_RUNTIME_FILE"');
     assert.include(SshTunnel.buildRemoteLaunchScript(NODE_SCRIPT), "STUDIO_ARCHIVE_MODE=0");
   });
+
+  it.effect("installs a release's commit-suffixed Node bundle and runs it through a launcher", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "studio-ssh-bundle-" });
+      const { execFileSync } = yield* Effect.promise(() => import("node:child_process"));
+      const { createHash } = yield* Effect.promise(() => import("node:crypto"));
+      const uname = (flag: string) => execFileSync("uname", [flag], { encoding: "utf8" }).trim();
+      const platform = uname("-s") === "Darwin" ? "darwin" : "linux";
+      const arch = /^(arm64|aarch64)$/.test(uname("-m")) ? "arm64" : "x64";
+      const version = "1.2.3";
+      const bundle = `${root}/bundle`;
+      const release = `${root}/release/v${version}`;
+      yield* fs.makeDirectory(bundle, { recursive: true });
+      yield* fs.makeDirectory(release, { recursive: true });
+      yield* fs.writeFileString(
+        `${bundle}/bin.mjs`,
+        "console.log(`${process.env.STUDIO_CLI_NAME} v1.2.3 ${process.argv.slice(2).join(' ')}`);\n",
+      );
+      const archive = `studio-${version}-${platform}-${arch}-043e9db88a6e.tar.gz`;
+      execFileSync("tar", ["-czf", `${release}/${archive}`, "-C", bundle, "."]);
+      const sum = createHash("sha256")
+        .update(new Uint8Array(yield* fs.readFile(`${release}/${archive}`)))
+        .digest("hex");
+      yield* fs.writeFileString(
+        `${release}/SHA256SUMS`,
+        `${"0".repeat(64)}  studio-${version}-043e9db88a6e.tar.gz\n${sum}  ${archive}\n`,
+      );
+      const home = `${root}/home`;
+      yield* fs.makeDirectory(home);
+      const script = SshTunnel.buildRemoteStudioRunnerScript({
+        archiveVersion: version,
+        releaseBaseUrl: `file://${root}/release`,
+      });
+      const run = () =>
+        execFileSync("sh", ["-c", script, "runner", "--version"], {
+          encoding: "utf8",
+          env: { HOME: home, PATH: `${process.execPath.replace(/\/node$/, "")}:/usr/bin:/bin` },
+        });
+      assert.equal(run().trim(), "specweave-studio v1.2.3 --version");
+      const runtime = `${home}/.specwithcode/runtime/versions/${version}`;
+      assert.equal(yield* fs.readFileString(`${runtime}/.install-complete`), `${version}\n`);
+      assert.include(yield* fs.readFileString(`${runtime}/specweave-studio`), process.execPath);
+      // The second launch reuses the pinned runtime without downloading again.
+      yield* fs.remove(`${root}/release`, { recursive: true });
+      assert.equal(run().trim(), "specweave-studio v1.2.3 --version");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 
   it("rejects archive versions that are not a single exact version segment", () => {
     for (const archiveVersion of [

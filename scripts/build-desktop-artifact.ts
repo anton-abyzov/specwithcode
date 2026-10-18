@@ -250,6 +250,22 @@ export class UnsupportedHostBuildPlatformError extends Schema.TaggedError<Unsupp
   }
 }
 
+export class MacVoiceHelperSdkTooOldError extends Schema.TaggedError<MacVoiceHelperSdkTooOldError>()(
+  "MacVoiceHelperSdkTooOldError",
+  {
+    sdkVersion: Schema.String,
+    minimum: Schema.String,
+  },
+) {
+  override get message(): string {
+    return (
+      `The selected macOS SDK is ${this.sdkVersion}; the voice helper (native/voice) needs ` +
+      `${this.minimum} or later. Select Xcode ${this.minimum.split(".")[0]} or later with ` +
+      "xcode-select or DEVELOPER_DIR."
+    );
+  }
+}
+
 export class UnsupportedDesktopBuildArchitectureError extends Schema.TaggedError<UnsupportedDesktopBuildArchitectureError>()(
   "UnsupportedDesktopBuildArchitectureError",
   {
@@ -1147,6 +1163,28 @@ export const MAC_VOICE_EXTRA_RESOURCES = [
 export const MAC_VOICE_HELPER_EXECUTABLE_NAME = "studio-voice";
 /** Oldest macOS the helper runs on; newer speech APIs are gated with #available. */
 export const MAC_VOICE_HELPER_DEPLOYMENT_TARGET = "12.0";
+/**
+ * Oldest SDK that compiles the helper: SpeechAnalyzer, SpeechTranscriber and AssetInventory are
+ * in the macOS 26 SDK. An older Xcode otherwise fails late, in swiftc, with "cannot find
+ * 'SpeechTranscriber' in scope" (release 1.0.43 on an Xcode 16 runner).
+ */
+export const MAC_VOICE_HELPER_MIN_SDK = "26.0";
+
+/** Whether an `xcrun --show-sdk-version` answer is older than the minimum. */
+export function isMacSdkOlderThan(sdkVersion: string, minimum: string): boolean {
+  const parse = (version: string) =>
+    version
+      .trim()
+      .split(".")
+      .map((part) => Number(part) || 0);
+  const have = parse(sdkVersion);
+  const need = parse(minimum);
+  for (let index = 0; index < Math.max(have.length, need.length); index += 1) {
+    const difference = (have[index] ?? 0) - (need[index] ?? 0);
+    if (difference !== 0) return difference < 0;
+  }
+  return false;
+}
 
 export function resolveMacVoiceHelperTargets(arch: typeof BuildArch.Type): ReadonlyArray<string> {
   const triple = (cpu: string) => `${cpu}-apple-macos${MAC_VOICE_HELPER_DEPLOYMENT_TARGET}`;
@@ -2301,6 +2339,16 @@ export const stageMacVoiceHelper = Effect.fn("stageMacVoiceHelper")(function* (i
     .remove(input.destinationDirectory, { recursive: true, force: true })
     .pipe(Effect.ignore);
   yield* fs.makeDirectory(buildDirectory, { recursive: true });
+  const sdk = yield* spawnAndCollectOutput(
+    ChildProcess.make("xcrun", ["--sdk", "macosx", "--show-sdk-version"], { cwd: input.repoRoot }),
+  ).pipe(Effect.orElseSucceed(() => ({ stdout: "", stderr: "", exitCode: 1 })));
+  // Without an answer swiftc runs and reports what is wrong with the toolchain itself.
+  if (sdk.exitCode === 0 && isMacSdkOlderThan(sdk.stdout, MAC_VOICE_HELPER_MIN_SDK)) {
+    return yield* new MacVoiceHelperSdkTooOldError({
+      sdkVersion: sdk.stdout.trim(),
+      minimum: MAC_VOICE_HELPER_MIN_SDK,
+    });
+  }
   const builtBinaries: string[] = [];
   for (const target of resolveMacVoiceHelperTargets(input.arch)) {
     const output = path.join(buildDirectory, `${MAC_VOICE_HELPER_EXECUTABLE_NAME}-${target}`);

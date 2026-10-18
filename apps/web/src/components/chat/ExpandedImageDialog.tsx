@@ -7,7 +7,18 @@ import {
   type ReactNode,
   type KeyboardEvent,
 } from "react";
-import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, XIcon } from "lucide-react";
+import {
+  CheckIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  ClipboardCopyIcon,
+  CopyIcon,
+  DownloadIcon,
+  FileSearchIcon,
+  XIcon,
+} from "lucide-react";
+import { createPortal } from "react-dom";
+import type { ScopedThreadRef } from "@specweave-studio/contracts";
 import { Image as ImageGlyph, Text as TextGlyph } from "lucide";
 import { Button } from "../ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
@@ -16,7 +27,7 @@ import type { ExpandedImageItem, ExpandedImagePreview } from "./ExpandedImagePre
 import { resolveExternalWebLinkHost } from "./externalLinkContextMenu";
 import { useAssetUrlRefresh, useAssetUrlState } from "../../assets/assetUrls";
 import { OpenMediaLink } from "../media/OpenMediaLink";
-import { MediaActions, type MediaActionSource } from "../media/MediaActions";
+import { MediaActions, type MediaActionSource, useMediaActions } from "../media/MediaActions";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import { isContextMenuOpen } from "../../contextMenuFallback";
 import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
@@ -28,10 +39,27 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ZoomableImage, type ZoomableImageHandle } from "./ZoomableImage";
 import { composerFloatingLayerProps } from "./composerEventScope";
+import { ViewerImageStage } from "./ViewerImageStage";
+import { ViewerFileActions } from "./ViewerFileActions";
+import { MenuItem } from "../ui/menu";
+import { stackedThreadToast, toastManager } from "../ui/toast";
+import {
+  useKeepViewerFocus,
+  useViewerContentKeys,
+  useViewerOverlay,
+  viewerExtensionBadge,
+} from "~/viewerOverlayStore";
 
 interface ExpandedImageDialogProps {
   preview: ExpandedImagePreview;
   onClose: () => void;
+  /**
+   * The thread the media was opened from. With it, the media opens in the
+   * app's viewer overlay beside that thread, its composer included, so the
+   * conversation can go on while the image is open. Without it (a draft's
+   * attachment, a page with no thread) it opens as a lightbox.
+   */
+  threadRef?: ScopedThreadRef | null | undefined;
 }
 
 const EXPANDED_MEDIA_STATE_CLASS_NAME =
@@ -103,10 +131,276 @@ function ExpandedVideo({ item }: { readonly item: ExpandedImageItem }) {
   );
 }
 
-export const ExpandedImageDialog = memo(function ExpandedImageDialog({
+export const ExpandedImageDialog = memo(function ExpandedImageDialog(
+  props: ExpandedImageDialogProps,
+) {
+  return props.threadRef ? (
+    <ExpandedMediaOverlay
+      preview={props.preview}
+      onClose={props.onClose}
+      threadRef={props.threadRef}
+    />
+  ) : (
+    <ExpandedMediaLightbox preview={props.preview} onClose={props.onClose} />
+  );
+});
+
+/** Runs a media action with the same progress and failure toasts as the media menu. */
+async function runMediaAction(
+  label: { readonly progress: string; readonly done: string; readonly failed: string },
+  action: () => Promise<void>,
+) {
+  const progressToast = toastManager.add({ type: "loading", title: label.progress });
+  try {
+    await action();
+    toastManager.update(progressToast, { type: "success", title: label.done });
+  } catch (error) {
+    toastManager.update(
+      progressToast,
+      stackedThreadToast({
+        type: "error",
+        title: label.failed,
+        description: error instanceof Error ? error.message : "The media action failed.",
+      }),
+    );
+  }
+}
+
+/**
+ * Media opened from a thread, in the viewer overlay: the image (zoomable,
+ * with its toolbar) or video on the left, the live thread and its composer on
+ * the right. The overlay's header names it and holds Download, the file
+ * actions and Close; Escape closes it as it does every viewer.
+ */
+function ExpandedMediaOverlay({
   preview,
   onClose,
-}: ExpandedImageDialogProps) {
+  threadRef,
+}: {
+  readonly preview: ExpandedImagePreview;
+  readonly onClose: () => void;
+  readonly threadRef: ScopedThreadRef;
+}) {
+  const [imageOffset, setImageOffset] = useState(0);
+  const [failedImageSrc, setFailedImageSrc] = useState<string | null>(null);
+  const [accessibilityDetailsSrc, setAccessibilityDetailsSrc] = useState<string | null>(null);
+  const zoomableImageRef = useRef<ZoomableImageHandle>(null);
+  const imageCount = preview.images.length;
+  const index =
+    imageCount > 0 ? (((preview.index + imageOffset) % imageCount) + imageCount) % imageCount : 0;
+  const item = preview.images[index];
+  const source: MediaActionSource = item?.actionsSource ?? {
+    kind: item?.type === "video" ? "video" : "image",
+    name: item?.name ?? "Media",
+    src: item?.src ?? null,
+  };
+  const { save, copyImage, canReadMedia } = useMediaActions(source);
+  const name = item?.name ?? "Image";
+  const slots = useViewerOverlay({
+    open: item !== undefined,
+    title: name,
+    kind: item?.type === "video" ? "Video" : "Image",
+    badge: viewerExtensionBadge(name),
+    threadRef,
+    onClose,
+  });
+  const keepFocus = useKeepViewerFocus(slots?.content ?? null);
+  const step = (by: -1 | 1) => {
+    keepFocus();
+    setImageOffset((current) => current + by);
+  };
+  const onKeys = (event: globalThis.KeyboardEvent) => {
+    if (event.defaultPrevented || isContextMenuOpen()) return;
+    if (zoomableImageRef.current?.pan(event.key)) {
+      event.preventDefault();
+      return;
+    }
+    if (imageCount <= 1) return;
+    if (event.key === "ArrowLeft") step(-1);
+    if (event.key === "ArrowRight") step(1);
+  };
+  useViewerContentKeys(slots?.content ?? null, onKeys);
+  if (!item || slots === null) return null;
+  const noun = item.type === "video" ? "video" : "image";
+  const unavailable = !canReadMedia || (source.src === null && source.asset === undefined);
+  const path = source.reference?.kind === "file" ? source.reference.path : null;
+  const environmentId = source.asset?.environmentId ?? threadRef.environmentId;
+  const openFile = source.onOpenFile;
+  const openOriginalLink =
+    item.originalUrl && resolveExternalWebLinkHost(item.originalUrl) !== null ? (
+      <OpenMediaLink originalUrl={item.originalUrl} />
+    ) : null;
+  const accessibilityDetails = item.source ? snapShotAccessibilityDetails(item.source) : undefined;
+  const showingAccessibilityDetails =
+    Boolean(accessibilityDetails) && accessibilityDetailsSrc === item.src;
+  const contentsLabel = showingAccessibilityDetails
+    ? "Show screenshot"
+    : accessibilityDetails?.format === "json"
+      ? "Show accessibility JSON"
+      : "Show extracted text";
+  const actions = (
+    <>
+      {accessibilityDetails ? (
+        <Button
+          type="button"
+          size="icon-sm"
+          variant="ghost"
+          aria-label={contentsLabel}
+          title={contentsLabel}
+          aria-pressed={showingAccessibilityDetails}
+          onClick={() => setAccessibilityDetailsSrc(showingAccessibilityDetails ? null : item.src)}
+        >
+          <MorphIcon
+            aria-hidden="true"
+            icon={showingAccessibilityDetails ? ImageGlyph : TextGlyph}
+          />
+        </Button>
+      ) : null}
+      {imageCount > 1 ? (
+        <>
+          <span
+            className="px-1 text-muted-foreground text-xs tabular-nums"
+            data-media-position="true"
+          >
+            {index + 1} of {imageCount}
+          </span>
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            aria-label="Previous media"
+            onClick={() => step(-1)}
+          >
+            <ChevronLeftIcon aria-hidden />
+          </Button>
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            aria-label="Next media"
+            onClick={() => step(1)}
+          >
+            <ChevronRightIcon aria-hidden />
+          </Button>
+        </>
+      ) : null}
+      <Button
+        type="button"
+        size="icon-sm"
+        variant="ghost"
+        aria-label={`Download ${name}`}
+        title={`Download ${name}`}
+        disabled={unavailable}
+        onClick={() =>
+          void runMediaAction(
+            {
+              progress: `Preparing ${noun} download…`,
+              done: "Download started",
+              failed: `Could not save ${noun}`,
+            },
+            save,
+          )
+        }
+      >
+        <DownloadIcon aria-hidden />
+      </Button>
+      <ViewerFileActions
+        environmentId={environmentId}
+        path={path}
+        name={name}
+        menuItems={
+          <>
+            {item.type !== "video" ? (
+              <MenuItem
+                disabled={unavailable}
+                onClick={() =>
+                  void runMediaAction(
+                    {
+                      progress: "Copying image…",
+                      done: "Image copied",
+                      failed: "Could not copy image",
+                    },
+                    copyImage,
+                  )
+                }
+              >
+                <ClipboardCopyIcon aria-hidden />
+                Copy image
+              </MenuItem>
+            ) : null}
+            {openFile ? (
+              <MenuItem
+                disabled={!canReadMedia}
+                onClick={() => {
+                  openFile();
+                  onClose();
+                }}
+              >
+                <FileSearchIcon aria-hidden />
+                Open in file viewer
+              </MenuItem>
+            ) : null}
+          </>
+        }
+      />
+    </>
+  );
+  return createPortal(
+    <div
+      className="viewer-overlay-frame"
+      data-expanded-media-viewer={item.type === "video" ? "video" : "image"}
+      onKeyDown={(event) => {
+        if (!event.currentTarget.contains(event.target as Node)) return;
+        if (event.target instanceof HTMLInputElement || event.target instanceof HTMLVideoElement)
+          return;
+        onKeys(event.nativeEvent);
+      }}
+    >
+      {slots.actions ? createPortal(actions, slots.actions) : null}
+      <div className="artifact-viewer-stage" data-artifact-stage="true">
+        {item.type === "video" ? (
+          <div className="viewer-media-video [--media-height:calc(100%-2rem)] [--media-width:calc(100%-2rem)]">
+            <ExpandedVideo key={index} item={item} />
+          </div>
+        ) : showingAccessibilityDetails && accessibilityDetails ? (
+          <div className="m-auto flex min-h-0 w-full max-w-3xl flex-1 p-6">
+            <SnapShotAccessibilityData
+              details={accessibilityDetails}
+              className="min-h-0 w-full overflow-auto rounded-lg border border-border/70 bg-background p-4 text-xs leading-5"
+            />
+          </div>
+        ) : item.src === null || failedImageSrc === item.src ? (
+          <div className="m-auto p-6">
+            <ExpandedMediaFailure>
+              <p>
+                {openOriginalLink
+                  ? "This image could not be loaded."
+                  : "Image unavailable. The file may have been moved or deleted."}
+              </p>
+              {openOriginalLink}
+            </ExpandedMediaFailure>
+          </div>
+        ) : (
+          <ViewerImageStage
+            ref={zoomableImageRef}
+            key={`${index}:${item.src}`}
+            src={item.src}
+            name={item.name}
+            onError={() => setFailedImageSrc(item.src)}
+          />
+        )}
+        <span className="sr-only" aria-live="polite" aria-atomic="true">
+          {item.name}
+          {imageCount > 1 ? ` (${index + 1}/${imageCount})` : ""}
+        </span>
+      </div>
+    </div>,
+    slots.content,
+  );
+}
+
+/** Media in a lightbox over everything, for media no thread owns. */
+function ExpandedMediaLightbox({ preview, onClose }: ExpandedImageDialogProps) {
   const [imageOffset, setImageOffset] = useState(0);
   const [failedImageSrc, setFailedImageSrc] = useState<string | null>(null);
   const [accessibilityDetailsSrc, setAccessibilityDetailsSrc] = useState<string | null>(null);
@@ -327,4 +621,4 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
       </DialogPopup>
     </Dialog>
   );
-});
+}

@@ -38,8 +38,13 @@ export class AgentTabGroups {
     this._label = label;
     this._onTabReleased = onTabReleased;
     this._tabs = new Set();
+    /** Tabs being grouped now; their group may not carry its title yet. */
+    this._adding = new Set();
+    /** Adds run one at a time, so tabs opened together share one group per window. */
+    this._queue = Promise.resolve();
     this._onUpdated = (tabId, changeInfo) => {
       if (!this._tabs.has(tabId) || changeInfo.groupId === undefined) return;
+      if (this._adding.has(tabId)) return;
       void this._checkStillGrouped(tabId, changeInfo.groupId);
     };
     this._chrome.tabs.onUpdated.addListener(this._onUpdated);
@@ -52,8 +57,16 @@ export class AgentTabGroups {
     if (tabs.length) Promise.resolve(this._chrome.tabs.ungroup(tabs)).catch(() => {});
   }
 
-  async add(tabId) {
+  add(tabId) {
     this._tabs.add(tabId);
+    this._adding.add(tabId);
+    const run = () => this._group(tabId).finally(() => this._adding.delete(tabId));
+    const next = this._queue.then(run, run);
+    this._queue = next.catch(() => {});
+    return next;
+  }
+
+  async _group(tabId) {
     try {
       const tab = await this._chrome.tabs.get(tabId);
       const existing = await this._chrome.tabGroups.query({

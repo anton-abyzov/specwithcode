@@ -54,44 +54,9 @@ This document covers the unified release workflow for stable and nightly desktop
 
 ## Pull request macOS previews
 
-Labeling a PR `preview:mac` publishes a signed, notarized Apple Silicon DMG
-to the rolling `desktop-preview` prerelease, and works for fork PRs. The label is a one-shot request
-for the commit it is applied to: the trusted workflow removes it once the build is in hand, and later
-pushes do not build until a maintainer applies it again. Every signed preview is therefore a
-per-commit maintainer decision, which matters because the result carries the Developer ID signature.
-Vouching a contributor lets their labeled commits be signed; it is not a standing grant. The build is
-split so the Developer ID certificate never shares a job with PR code:
-
-- `.github/workflows/desktop-macos-preview.yml` runs on `pull_request` with no secrets and builds
-  only the JS bundle from the PR (the same `js-bundle` artifact `release.yml` produces).
-- `.github/workflows/desktop-macos-preview-publish.yml` runs on `workflow_run` from `main`. It
-  refuses unless the PR is open, still labeled, its head is the built commit, and the author is a
-  bot, a collaborator, or listed in `.github/VOUCHED.td` (read from the default branch, so a PR cannot vouch
-  for itself). It then packages and signs the bundle through `release-desktop.yml` checked out at
-  `main`, so packaging, native helpers, and the Electron/desktop dependencies come from `main`, not
-  the PR. Only the version is read from the PR commit, as data. A PR that changes packaging must
-  use the `channel=preview` release train above instead.
-
-The public SpecWithCode Connect identifiers never come from the PR. Both workflows read them from the
-repository variables `CLERK_PUBLISHABLE_KEY`, `CLERK_JWT_TEMPLATE`, and `CLERK_CLI_OAUTH_CLIENT_ID`,
-and build the relay URL from `RELAY_DOMAIN` or, when that is unset, as `relay.` followed by
-`RELAY_API_ZONE_NAME`. Reading the same variables in both halves keeps the signed app's passkey
-entitlement matched to the bundle. Neither job declares a GitHub Actions environment, so the
-`production` environment variables of the same names listed under
-[SpecWithCode Connect relay deployment](#specwithcode-connect-relay-deployment) do not reach them; set
-repository-level variables for previews. `.env.example` holds no identifiers. Unset variables stay
-empty: the preview is then packaged with SpecWithCode Connect unconfigured, and its PR comment says so.
-Neither workflow sets `VITE_STUDIO_ENABLE_HOSTED_SERVICES`, which the web client needs at build
-time (see [SpecWithCode Connect setup](./connect-setup.md#public-application-configuration)), so setting
-the identifiers alone does not turn SpecWithCode Connect on in a preview.
-
-Before handing the bundle to the signing runner, the trusted workflow validates its ZIP entries
-and accepts only regular files under `server/dist` and `desktop/dist-electron`, plus the directory
-entries that lead to those roots. The artifact cannot
-overwrite packaging code or installed dependencies. The bundle is copied into the app, never executed,
-on the signing runner. The
-`pull_request_target` cleanup job in the publish workflow removes the download when the PR closes, or
-when the label is removed by hand before a build consumed it, and never checks out PR code.
+There is no per-PR signed preview. For a Mac build of a branch, run
+`gh workflow run desktop-macos-unsigned.yml -f ref=<branch>`; signed builds come only from
+`release-macos.yml` through `scripts/release/release.sh`.
 
 ## Required release credentials
 

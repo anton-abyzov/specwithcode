@@ -1,5 +1,5 @@
 import type { ScopedThreadRef } from "@specweave-studio/contracts";
-import { createContext, type ReactNode, useEffect, useId, useRef } from "react";
+import { createContext, type ReactNode, useCallback, useEffect, useId, useRef } from "react";
 import { createPortal } from "react-dom";
 import { create } from "zustand";
 
@@ -101,6 +101,12 @@ export interface ViewerOverlaySlots {
 
 const NO_TRAIL: ReadonlyArray<ViewerCrumb> = [];
 
+/** The header's type badge for a file name: its extension, such as "PNG". */
+export function viewerExtensionBadge(name: string): string {
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? name.slice(dot + 1, dot + 5).toUpperCase() : "FILE";
+}
+
 /**
  * Shows a viewer in the app's one overlay while `open` is true and returns
  * the elements to portal its content and actions into (null until the
@@ -177,6 +183,45 @@ export function useViewerOverlay(options: {
   const content = useViewerOverlayStore((state) => state.slot);
   const actions = useViewerOverlayStore((state) => state.actionsSlot);
   return open && active && content ? { content, actions } : null;
+}
+
+/**
+ * Keys pressed while the viewer's content area itself has focus, as it does
+ * when the overlay opens. A viewer's frame sits inside that area, so its own
+ * key handler never sees them.
+ */
+export function useViewerContentKeys(
+  content: HTMLElement | null,
+  onKeyDown: (event: KeyboardEvent) => void,
+): void {
+  const handlerRef = useRef(onKeyDown);
+  useEffect(() => {
+    handlerRef.current = onKeyDown;
+  });
+  useEffect(() => {
+    if (content === null) return;
+    const listener = (event: KeyboardEvent) => {
+      if (event.target === content && !event.defaultPrevented) handlerRef.current(event);
+    };
+    content.addEventListener("keydown", listener);
+    return () => content.removeEventListener("keydown", listener);
+  }, [content]);
+}
+
+/**
+ * Paging remounts what held focus. The returned callback, run before a page
+ * step, hands focus back to the content area afterwards so the next arrow
+ * still pages instead of landing on the page body.
+ */
+export function useKeepViewerFocus(content: HTMLElement | null): () => void {
+  return useCallback(() => {
+    if (content === null || !content.contains(document.activeElement)) return;
+    requestAnimationFrame(() => {
+      const active = document.activeElement;
+      if (active === null || active === document.body || !active.isConnected)
+        content.focus({ preventScroll: true });
+    });
+  }, [content]);
 }
 
 /**

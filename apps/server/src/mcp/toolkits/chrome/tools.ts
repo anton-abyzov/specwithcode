@@ -74,7 +74,7 @@ const ACT = { readonly: false, destructive: false } as const;
 const ChromeProfilesTool = make(
   "chrome_profiles",
   "List Chrome profiles",
-  "List the Chrome profiles paired with SpecWithCode on this machine. Call first when you do not know the profile names.",
+  "List the Chrome profiles paired with SpecWithCode on this machine. Call first when you do not know the profile names. Several threads can use one profile at the same time, each in its own tabs.",
   ChromeProfilesInput,
   ChromeProfilesResult,
   READ,
@@ -82,7 +82,7 @@ const ChromeProfilesTool = make(
 const ChromeTabsTool = make(
   "chrome_tabs",
   "List Chrome tabs",
-  "List open tabs in a paired Chrome profile, with ids for the other chrome_* tools.",
+  "List open tabs in a paired Chrome profile, with ids for the other chrome_* tools. Tabs marked anotherThread belong to another thread; leave them alone.",
   ChromeTabsInput,
   ChromeTabsResult,
   READ,
@@ -90,7 +90,7 @@ const ChromeTabsTool = make(
 const ChromeOpenTool = make(
   "chrome_open",
   "Open Chrome tab",
-  "Open a URL in a new tab in the user's Chrome. The tab joins the blue SpecWithCode tab group and becomes this thread's current tab.",
+  "Open a URL in a new tab in the user's Chrome. The tab joins the blue SpecWithCode tab group and becomes this thread's own current tab, which other threads cannot drive.",
   ChromeOpenInput,
   ChromePageResult,
   ACT,

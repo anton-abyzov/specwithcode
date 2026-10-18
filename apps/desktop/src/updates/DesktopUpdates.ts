@@ -52,17 +52,20 @@ import {
 } from "./updateMachine.ts";
 
 const AUTO_UPDATE_STARTUP_DELAY = "15 seconds";
-// Studio reads releases from the GitHub API; hourly keeps background checks
-// far below its rate limit while still finding a release the same morning.
-const AUTO_UPDATE_POLL_INTERVAL = "1 hour";
+// The poller wakes this often and checks once the last successful check is
+// older than STALE_CHECK_MIN_AGE_MS. Timers stop while the Mac sleeps, so a
+// fixed hourly sleep could leave a new release unseen for hours; comparing
+// wall-clock ages catches up on the first tick after a wake.
+const AUTO_UPDATE_POLL_TICK = "1 minute";
 const PREPARED_INSTALL_CHECK_WAIT = Duration.seconds(90);
 // electron-updater's download promise can stay pending after it reported the
 // download (seen after an error event at 100%), holding the updater; the
 // download is given up after this long so the lock cannot stay taken.
 const DOWNLOAD_STALL_LIMIT = Duration.minutes(30);
-// Waking the Mac, unlocking it or focusing a Studio window re-checks only when
-// the last successful check is older than this, so focus changes stay cheap.
-const STALE_CHECK_MIN_AGE_MS = 30 * 60 * 1000;
+// A new release shows in the sidebar within this long. Ten minutes keeps a
+// machine at six feed requests an hour, far below GitHub's limits, and also
+// bounds re-checks on wake, unlock and window focus.
+const STALE_CHECK_MIN_AGE_MS = 10 * 60 * 1000;
 // While checks keep failing (offline, feed errors), those re-checks still wait
 // this long after the last attempt instead of firing on every focus.
 const STALE_RETRY_MIN_AGE_MS = 5 * 60 * 1000;
@@ -925,19 +928,9 @@ export const make = Effect.gen(function* () {
       }),
       Effect.forkScoped,
     );
-    // Each pass handles its own failure, so one bad pass never ends polling.
-    yield* Effect.sleep(AUTO_UPDATE_POLL_INTERVAL).pipe(
-      Effect.andThen(Effect.when(checkThenDownload("poll"), automaticChecksEnabled)),
-      Effect.catchCause((cause) => {
-        if (Cause.hasInterruptsOnly(cause)) {
-          return Effect.failCause(cause);
-        }
-        const error = new DesktopUpdatePollerError({ poller: "poll", cause });
-        return logUpdaterError(error.message, {
-          errorTag: error._tag,
-          poller: error.poller,
-        });
-      }),
+    // checkIfStale handles its own failure, so one bad pass never ends polling.
+    yield* Effect.sleep(AUTO_UPDATE_POLL_TICK).pipe(
+      Effect.andThen(checkIfStale("poll")),
       Effect.forever,
       Effect.ignoreCause,
       Effect.forkScoped,

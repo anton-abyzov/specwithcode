@@ -431,6 +431,9 @@ describe("project settings and memory", () => {
   it("shows no worker machine choice without other machines", async () => {
     await render();
     expect(container.textContent).not.toContain("Worker machine");
+    expect(container.textContent).toContain(
+      "add it under Settings > Connections > Your private machines",
+    );
   });
   it("requires an exact typed title before destructive project deletion", async () => {
     await render();

@@ -175,7 +175,7 @@ describe("specweave-studio server command safety", () => {
     ),
   );
 
-  it.effect("refuses manual startup over a live server before creating directories", () =>
+  it.effect("opens a live server instead of starting another, before creating directories", () =>
     withTempDirectory("studio-cli-running-", (root) =>
       Effect.gen(function* () {
         const baseDir = NodePath.join(root, "home");
@@ -205,8 +205,9 @@ describe("specweave-studio server command safety", () => {
           [newDirectory],
           ["start", newDirectory],
         ]) {
-          // If the refusal ever regresses, the server that starts must not open a browser.
-          const error = yield* runCli(args, {
+          // A live server is opened, never joined by a second one. If that ever regresses,
+          // the server that starts must not open a browser.
+          yield* runCli(args, {
             STUDIO_HOME: baseDir,
             STUDIO_NO_BROWSER: "true",
           }).pipe(
@@ -214,9 +215,7 @@ describe("specweave-studio server command safety", () => {
               HostProcessPlatform,
               args[0] === "C:new-project" ? "win32" : platform,
             ),
-            Effect.flip,
           );
-          expect(String(error)).toContain("A SpecWithCode server is already running");
           expect(yield* Effect.promise(() => NodeFSP.readFile(statePath, "utf8"))).toBe(record);
           expect(yield* pathExists(newDirectory)).toBe(false);
           expect(yield* Effect.promise(() => NodeFSP.readdir(stateDir))).toEqual([

@@ -37,6 +37,7 @@ import {
   holdWindowElapsed,
 } from "./restartHoldWindow";
 import { RestartRunningWorkList } from "./RestartRunningWorkList";
+import { onRestartToUpdateRequest } from "./restartToUpdateRequests";
 import {
   canRetryServiceUpdate,
   describeInstallOutcome,
@@ -261,6 +262,9 @@ function SidebarRestartToUpdateButton() {
       view,
     ],
   );
+
+  // The sidebar update button installs a downloaded update through this flow.
+  useEffect(() => onRestartToUpdateRequest(() => void restart()), [restart]);
 
   // Restart on its own once the work the user let finish is done, or once the
   // hold window has passed: then the work is stopped for the update and

@@ -650,6 +650,9 @@ describe("DesktopUpdates", () => {
 
       yield* Effect.scoped(
         Effect.gen(function* () {
+          // Background polls would re-check after the stall; keep this about the download.
+          const settings = yield* DesktopAppSettings.DesktopAppSettings;
+          yield* settings.setUpdatePreferences({ checkAutomatically: false });
           const updates = yield* DesktopUpdates.DesktopUpdates;
           yield* updates.configure;
           harness.emit("update-available", { version: "1.2.4" });
@@ -907,26 +910,56 @@ describe("DesktopUpdates", () => {
         yield* TestClock.adjust(Duration.seconds(16));
         assert.equal(harness.checkCount(), 1);
 
-        // That check never reached the feed: retry on focus, but not on every one.
+        // That check never reached the feed: retry, but not on every focus.
         yield* updates.checkIfStale("focus");
         assert.equal(harness.checkCount(), 1);
-        yield* TestClock.adjust(Duration.minutes(5));
+        yield* TestClock.adjust(Duration.minutes(4));
         yield* updates.checkIfStale("focus");
-        assert.equal(harness.checkCount(), 2);
+        assert.equal(harness.checkCount(), 1);
+        yield* TestClock.adjust(Duration.minutes(1));
         yield* updates.checkIfStale("focus");
         assert.equal(harness.checkCount(), 2);
 
-        // This one reaches the feed, so the next 30 minutes stay quiet.
+        // This one reaches the feed, so the next ten minutes stay quiet.
         harness.emit("update-not-available");
         yield* flushCallbacks;
-        yield* TestClock.adjust(Duration.minutes(29));
+        yield* TestClock.adjust(Duration.minutes(9));
         yield* updates.checkIfStale("resume");
         assert.equal(harness.checkCount(), 2);
 
-        // Past 30 minutes, and still before the hourly poll.
-        yield* TestClock.adjust(Duration.minutes(2));
+        yield* TestClock.adjust(Duration.seconds(30));
+        yield* updates.checkIfStale("resume");
+        assert.equal(harness.checkCount(), 2);
+        yield* TestClock.adjust(Duration.seconds(40));
         yield* updates.checkIfStale("resume");
         assert.equal(harness.checkCount(), 3);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("polls the feed so a new release shows within ten minutes", () => {
+    const harness = makeHarness();
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        yield* TestClock.adjust(Duration.seconds(16));
+        assert.equal(harness.checkCount(), 1);
+        harness.emit("update-not-available");
+        yield* flushCallbacks;
+
+        // No focus, wake or click: the poller alone asks the feed again.
+        yield* TestClock.adjust(Duration.minutes(9));
+        assert.equal(harness.checkCount(), 1);
+        yield* TestClock.adjust(Duration.minutes(2));
+        assert.equal(harness.checkCount(), 2);
+
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* flushCallbacks;
+        const state = yield* updates.getState;
+        assert.equal(state.status, "available");
+        assert.equal(state.availableVersion, "1.2.4");
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });

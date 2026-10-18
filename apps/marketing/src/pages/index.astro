@@ -194,7 +194,7 @@ import Layout from "../layouts/Layout.astro";
 
           <span id="cta-download-label">Download for macOS</span>
         </a>
-        <a class="btn btn-ghost btn-lg" href="/download">Windows · Linux · other</a>
+        <a class="btn btn-ghost btn-lg" href="/download">Linux server · other</a>
       </div>
     </div>
   </section>
@@ -210,7 +210,7 @@ import Layout from "../layouts/Layout.astro";
     const ua = navigator.userAgent;
     if (/Win/i.test(ua)) return { os: "win", label: "Download for Windows" };
     if (/Mac/i.test(ua)) return { os: "mac", label: "Download for macOS" };
-    if (/Linux/i.test(ua)) return { os: "linux", label: "Download for Linux" };
+    if (/Linux/i.test(ua)) return { os: "linux", label: "Run on Linux / VPS" };
     return null;
   }
 
@@ -224,9 +224,6 @@ import Layout from "../layouts/Layout.astro";
     }
     if (platform.os === "mac") {
       return assets.find((a) => a.name.endsWith("-arm64.dmg"))?.browser_download_url ?? null;
-    }
-    if (platform.os === "linux") {
-      return assets.find((a) => a.name.endsWith("-x86_64.AppImage"))?.browser_download_url ?? null;
     }
     return null;
   }
@@ -244,6 +241,17 @@ import Layout from "../layouts/Layout.astro";
     if (label) label.textContent = platform.label;
     if (ctaLabel) ctaLabel.textContent = platform.label;
     if (kbd && platform.os !== "mac") kbd.textContent = "Ctrl ⏎";
+
+    // There is no Linux desktop app: the server runs on a VPS you rent.
+    if (platform.os === "linux") {
+      for (const link of [btn, ctaBtn]) {
+        if (!link) continue;
+        link.href = "/download#linux";
+        link.removeAttribute("target");
+        link.removeAttribute("rel");
+      }
+      return;
+    }
 
     try {
       const release = await fetchLatestRelease();

@@ -48,6 +48,8 @@ import {
   preflightWindowsDesktopBuild,
   renderMacEntitlements,
   resolveMacVoiceHelperTargets,
+  isMacSdkOlderThan,
+  MAC_VOICE_HELPER_MIN_SDK,
   resolveClerkPasskeyNativeArtifacts,
   resolveMacPasskeySigningConfiguration,
   resolveDesktopRuntimeDependencies,
@@ -2080,6 +2082,16 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "arm64-apple-macos12.0",
       "x86_64-apple-macos12.0",
     ]);
+  });
+
+  it("refuses an SDK older than the voice helper needs", () => {
+    assert.strictEqual(MAC_VOICE_HELPER_MIN_SDK, "26.0");
+    assert.isTrue(isMacSdkOlderThan("15.5\n", MAC_VOICE_HELPER_MIN_SDK));
+    assert.isTrue(isMacSdkOlderThan("25.9", "26.0"));
+    assert.isFalse(isMacSdkOlderThan("26", "26.0"));
+    assert.isFalse(isMacSdkOlderThan("26.0", "26.0"));
+    assert.isFalse(isMacSdkOlderThan("26.2", "26.0"));
+    assert.isFalse(isMacSdkOlderThan("27.0", "26.0"));
   });
 
   it("rejects incomplete macOS passkey signing configuration", () => {

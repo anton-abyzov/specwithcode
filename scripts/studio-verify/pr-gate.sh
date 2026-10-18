@@ -1,5 +1,5 @@
 #!/bin/bash
-# The pull request gate. .github/workflows/pr-gate.yml runs it on every ready PR; run it here on the PR
+# The pull request gate. .github/workflows/checks.yml runs it on every ready PR; run it here on the PR
 # branch before `gh pr merge`; it exits non-zero when anything fails.
 #
 #   bash scripts/studio-verify/pr-gate.sh [--base origin/main] [--out DIR] [--jobs N]
@@ -15,7 +15,7 @@
 #   - scripts/studio-verify/typecheck-gate.sh (fails only on diagnostics beyond the baseline)
 #   - scripts/studio-fleet/run-tests.sh (every fleet test), on macOS only: the fleet runs
 #     under launchd with the system Python, so on Linux the job is left out and said so
-#     (.github/workflows/pr-gate-fleet.yml runs it on a Mac runner when the fleet changes)
+#     (the fleet job in .github/workflows/checks.yml runs it on a Mac runner when the fleet changes)
 #   - a coverage guard: every workspace package with a `test` script is in stage 1 or is
 #     apps/server, and no package has tracked *.test.* files without a `test` script, so a
 #     new package or a package's first test cannot go unrun
@@ -30,7 +30,7 @@
 # --only J   run only stage-1 job J (contrast, typecheck, fleet or a package directory;
 #            repeatable) and no server stage, to reproduce one failure. A partial run never
 #            passes the gate: it exits 3 when what it ran passed.
-# --skip J   leave stage-1 job J out because something else runs it (pr-gate.yml runs the
+# --skip J   leave stage-1 job J out because something else runs it (checks.yml runs the
 #            typecheck gate in its own job: the server's tsc peaks near 11 GB, more than a
 #            16 GB runner has beside two test suites). Repeatable; named in the output.
 #
@@ -218,7 +218,7 @@ fi
 echo "PR gate: HEAD $(git -C "$ROOT" rev-parse --short HEAD) against $BASE (merge base $(git -C "$ROOT" rev-parse --short "$MERGE_BASE")); logs in $OUT"
 echo "Stage 1: $(wc -l < "$JOBLIST" | tr -d ' ') jobs, $JOBS at a time"
 if [ "$(uname -s)" != Darwin ] && [ -z "$ONLY" ]; then
-  echo "fleet: not run on $(uname -s); the fleet tests need macOS (pr-gate-fleet.yml, release stage 1)"
+  echo "fleet: not run on $(uname -s); the fleet tests need macOS (checks.yml fleet job, release stage 1)"
 fi
 for job in $SKIP; do echo "$job: skipped (--skip); run it separately"; done
 began=$(date +%s)

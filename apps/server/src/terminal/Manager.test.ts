@@ -489,6 +489,61 @@ it.layer(
     }),
   );
 
+  it.effect("runs one command through the shell and reruns it after it exits", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, getEvents } = yield* createManager();
+      const input = openInput({ terminalId: "run-abc-4", command: "ls -la" });
+
+      yield* manager.open(input);
+      expect(ptyAdapter.spawnInputs[0]?.args?.slice(-2)).toEqual(["-c", "ls -la"]);
+      const process = ptyAdapter.processes[0];
+      if (!process) return expect(process).toBeDefined();
+
+      process.emitExit({ exitCode: 3, signal: 0 });
+      yield* waitFor(
+        Effect.map(getEvents, (events) => events.some((event) => event.type === "exited")),
+        "1200 millis",
+      );
+      const exited = (yield* getEvents).find((event) => event.type === "exited");
+      expect(exited).toEqual(expect.objectContaining({ exitCode: 3 }));
+
+      const rerun = yield* manager.open(input);
+      expect(rerun.status).toBe("running");
+      expect(ptyAdapter.spawnInputs).toHaveLength(2);
+      expect(ptyAdapter.spawnInputs[1]?.args?.slice(-2)).toEqual(["-c", "ls -la"]);
+
+      // The same terminal id with a different command starts that command instead.
+      yield* manager.open({ ...input, command: "pwd" });
+      expect(ptyAdapter.spawnInputs).toHaveLength(3);
+      expect(ptyAdapter.spawnInputs[2]?.args?.slice(-2)).toEqual(["-c", "pwd"]);
+    }),
+  );
+
+  it.effect("builds one-command arguments for each shell", () =>
+    Effect.sync(() => {
+      const shellCandidateArgs = TerminalManager.shellCandidateArgs;
+      expect(shellCandidateArgs({ shell: "/bin/zsh", args: ["-l"] }, null, "darwin")).toEqual([
+        "-l",
+      ]);
+      expect(
+        shellCandidateArgs(
+          { shell: "/bin/zsh", args: ["-l", "-o", "nopromptsp"] },
+          "pwd",
+          "darwin",
+        ),
+      ).toEqual(["-l", "-o", "nopromptsp", "-c", "pwd"]);
+      expect(shellCandidateArgs({ shell: "bash" }, "pwd", "linux")).toEqual(["-c", "pwd"]);
+      expect(shellCandidateArgs({ shell: "pwsh.exe", args: ["-NoLogo"] }, "dir", "win32")).toEqual([
+        "-NoLogo",
+        "-Command",
+        "dir",
+      ]);
+      expect(
+        shellCandidateArgs({ shell: "C:\\Windows\\System32\\cmd.exe" }, "dir", "win32"),
+      ).toEqual(["/d", "/s", "/c", "dir"]);
+    }),
+  );
+
   it.effect("attaches to exited sessions without restarting them", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter, getEvents } = yield* createManager();

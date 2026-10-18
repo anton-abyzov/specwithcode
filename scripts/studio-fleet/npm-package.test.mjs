@@ -14,7 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { build, dependencyClosure, flatLayout } from "./npm-package.mjs";
+import { build, dependencyClosure, flatLayout, NPM_NODE_ENGINES } from "./npm-package.mjs";
 
 /** A pnpm-style store: node_modules/<root> links into .pnpm/<id>/node_modules/<name>. */
 function storePackage(nodeModules, name, version, dependencies = {}) {
@@ -114,6 +114,8 @@ test("a runtime archive becomes one npm tarball with both commands and no links 
     assert.equal(pkg.name, "specwithcode");
     assert.deepEqual(pkg.bin, { specwithcode: "bin.mjs", "specweave-studio": "bin.mjs" });
     assert.equal(pkg.dependencies, undefined);
+    // The server's range, not the workspace's pinned build version (EBADENGINE on Node 22.19).
+    assert.equal(pkg.engines.node, NPM_NODE_ENGINES);
     const manifest = JSON.parse(
       readFileSync(join(result.packageDir, "studio-manifest.json"), "utf8"),
     );
@@ -143,4 +145,11 @@ test("a runtime archive becomes one npm tarball with both commands and no links 
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("the npm range matches the server package's own engines", () => {
+  const server = JSON.parse(
+    readFileSync(new URL("../../apps/server/package.json", import.meta.url), "utf8"),
+  );
+  assert.equal(NPM_NODE_ENGINES, server.engines.node);
 });

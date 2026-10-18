@@ -27,6 +27,7 @@ import {
   shouldContinueDesktopUpdateCheckAnimation,
   shouldShowDesktopUpdateCheckIcon,
 } from "./DesktopUpdateStatusIcon";
+import { requestRestartToUpdate } from "./restartToUpdateRequests";
 import { SidebarUpdateReleaseNotes } from "./SidebarUpdateReleaseNotes";
 
 type SidebarUpdatePopoverChangeDetails = Parameters<
@@ -174,10 +175,9 @@ function SidebarUpdateControl() {
     }
   }, [prefersReducedMotion, state?.status]);
 
-  // A downloaded update is installed from the one Restart to update button in
-  // the sidebar footer; this control only checks and downloads.
-  const resolvedAction = state ? resolveDesktopUpdateButtonAction(state) : "none";
-  const action = resolvedAction === "install" ? "none" : resolvedAction;
+  // A downloaded update shows its badge here too; a press hands it to the
+  // Restart to update pill, which owns the running-work prompt.
+  const action = state ? resolveDesktopUpdateButtonAction(state) : "none";
   const isDownloading = state?.status === "downloading";
   const showCheckIcon = shouldShowDesktopUpdateCheckIcon({
     isAnimationLatched: isCheckAnimationLatched,
@@ -232,6 +232,19 @@ function SidebarUpdateControl() {
       busyNoticeToastId.current = toastManager.add(
         stackedThreadToast({ type: "info", title: notice.title, description: notice.description }),
       );
+      return;
+    }
+
+    if (action === "install") {
+      if (!requestRestartToUpdate()) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "info",
+            title: "Update downloaded",
+            description: "Quit and reopen SpecWithCode to install it.",
+          }),
+        );
+      }
       return;
     }
 

@@ -244,7 +244,11 @@ alike (never under **Wait for the reset**), and all are off until you turn them 
   subscription instance. SpecWithCode keeps the value in its server secret store, not in the settings
   file. An instance that reaches Claude through a router or proxy token is never used by this
   row. **Add an API key** on the row (or in the limit banner) does all of that in one step: paste
-  the key, optionally name the account, and SpecWithCode adds the instance.
+  the key, optionally name the account, and SpecWithCode adds the instance. A key that is not
+  scoped to a workspace (a Claude Console user key, `sk-ant-usr…`) is refused with "This API key
+  is not scoped to a workspace" unless each request names one: fill in **Workspace ID**
+  (`wrkspc_…`, from Settings → Workspaces in the Claude Console) and the app sends it with
+  `ANTHROPIC_CUSTOM_HEADERS`.
 
   With several API accounts (for example hackathon credits on more than one organization), add
   one instance per key. When an account runs out of credits, Claude answers "Credit balance too

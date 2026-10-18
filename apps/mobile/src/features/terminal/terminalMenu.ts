@@ -1,6 +1,13 @@
 import { type KnownTerminalSession } from "@specweave-studio/client-runtime/state/terminal";
-import { DEFAULT_TERMINAL_ID, type ProjectScript } from "@specweave-studio/contracts";
-import { nextTerminalId, resolveTerminalSessionLabel } from "@specweave-studio/shared/terminalLabels";
+import {
+  DEFAULT_TERMINAL_ID,
+  isInlineRunTerminalId,
+  type ProjectScript,
+} from "@specweave-studio/contracts";
+import {
+  nextTerminalId,
+  resolveTerminalSessionLabel,
+} from "@specweave-studio/shared/terminalLabels";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 
@@ -90,6 +97,8 @@ export function buildTerminalMenuSessions(input: {
   const sessionsById = new Map<string, TerminalMenuSession>();
 
   for (const session of input.knownSessions) {
+    // A chat code block's run shows its output in the chat, not as a terminal.
+    if (isInlineRunTerminalId(session.target.terminalId)) continue;
     if (
       session.state.status !== "running" &&
       session.state.status !== "starting" &&

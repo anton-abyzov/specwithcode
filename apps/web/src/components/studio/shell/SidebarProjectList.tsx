@@ -23,7 +23,7 @@ import {
   PERSONAL_ASSISTANT_DESCRIPTION,
   PERSONAL_ASSISTANT_LABEL,
 } from "@specweave-studio/contracts";
-import { Link } from "@tanstack/react-router";
+import { Link, useRouter } from "@tanstack/react-router";
 import {
   ArchiveIcon,
   ArrowDownIcon,
@@ -35,6 +35,7 @@ import {
 } from "lucide-react";
 import {
   useCallback,
+  useEffect,
   useId,
   useLayoutEffect,
   useRef,
@@ -139,6 +140,21 @@ export function SidebarProjectList(props: {
     useSensor(MouseSensor, { activationConstraint: { distance: 4 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 300, tolerance: 8 } }),
   );
+
+  // Fetch the project page's code once the window is idle, so the first project
+  // opened does not wait for it after the click.
+  const router = useRouter();
+  useEffect(() => {
+    const route = router.routesById["/projects/$projectKey"];
+    if (!route) return;
+    const load = () => void Promise.resolve(router.loadRouteChunk(route)).catch(() => undefined);
+    if (typeof requestIdleCallback !== "function") {
+      const timer = setTimeout(load, 1_000);
+      return () => clearTimeout(timer);
+    }
+    const idle = requestIdleCallback(load, { timeout: 3_000 });
+    return () => cancelIdleCallback(idle);
+  }, [router]);
 
   const setListNode = useCallback((node: HTMLUListElement | null) => {
     listRef.current = node;

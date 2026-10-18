@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { packageFiles, validateManifest } from "../scripts/build.mjs";
 import { parsePairingCode } from "../src/pairing.js";
 import { RelayConnection, isNonDebuggableUrl } from "../src/relayConnection.js";
+import { AgentTabGroups, groupTitle } from "../src/tabGroup.js";
 
 const root = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..");
 const code = (data) =>
@@ -108,6 +109,58 @@ describe("RelayConnection", () => {
   it("knows which pages Chrome never lets an extension debug", () => {
     expect(isNonDebuggableUrl("chrome://settings")).toBe(true);
     expect(isNonDebuggableUrl("https://example.com")).toBe(false);
+  });
+});
+
+describe("AgentTabGroups", () => {
+  /** Chrome reports the new group before its title is set, as real Chrome can. */
+  function fakeGroups() {
+    const listeners = new Set();
+    const groups = new Map();
+    const tabs = new Map();
+    let nextGroup = 1;
+    return {
+      groups,
+      tabs: {
+        onUpdated: {
+          addListener: (f) => listeners.add(f),
+          removeListener: (f) => listeners.delete(f),
+        },
+        get: async (id) => ({ id, windowId: 1, groupId: tabs.get(id) ?? -1 }),
+        group: async ({ tabIds, groupId, createProperties }) => {
+          const id = groupId ?? nextGroup++;
+          if (!groups.has(id))
+            groups.set(id, { id, windowId: createProperties.windowId, title: "" });
+          for (const tabId of tabIds) {
+            tabs.set(tabId, id);
+            for (const f of listeners) f(tabId, { groupId: id });
+          }
+          await Promise.resolve();
+          return id;
+        },
+        ungroup: async () => {},
+      },
+      tabGroups: {
+        get: async (id) => groups.get(id),
+        query: async ({ windowId, title }) =>
+          [...groups.values()].filter((g) => g.windowId === windowId && g.title === title),
+        update: async (id, props) => Object.assign(groups.get(id), props),
+      },
+    };
+  }
+
+  it("keeps a tab whose new group has no title yet, and groups tabs opened together once", async () => {
+    const chrome = fakeGroups();
+    const released = [];
+    const groups = new AgentTabGroups({
+      chrome,
+      label: "Work",
+      onTabReleased: (tabId) => released.push(tabId),
+    });
+    await Promise.all([groups.add(1), groups.add(2), groups.add(3)]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(released).toEqual([]);
+    expect([...chrome.groups.values()].map((g) => g.title)).toEqual([groupTitle("Work")]);
   });
 });
 

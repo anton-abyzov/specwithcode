@@ -72,7 +72,7 @@ vi.mock("@tanstack/react-router", () => ({
     select(state.params),
   useSearch: ({ select }: { select: (search: Record<string, string>) => unknown }) =>
     select(state.search),
-  useRouter: () => ({ navigate: state.navigate }),
+  useRouter: () => ({ navigate: state.navigate, routesById: {} }),
   useNavigate: () => state.navigate,
 }));
 vi.mock("../../sidebar/SidebarPlanProgress", () => ({

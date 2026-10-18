@@ -406,7 +406,6 @@ interface TimelineRowSharedState {
   activeThreadEnvironmentId: EnvironmentId;
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
   onUseArtifactTemplate: (template: CodexArtifactTemplate) => void;
-  onRunShellCommand: ((command: string) => void) | undefined;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   displayThreadKey?: string;
   onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
@@ -582,7 +581,6 @@ interface MessagesTimelineProps {
   supportsConversationRollback: boolean;
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
   onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
-  onRunShellCommand?: (command: string) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onFileOpen?: (attachment: ChatFileAttachment) => void;
@@ -671,7 +669,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   supportsConversationRollback,
   onRevertToTurnCount,
   onUseArtifactTemplate = NOOP_USE_ARTIFACT_TEMPLATE,
-  onRunShellCommand,
   isRevertingCheckpoint,
   onImageExpand,
   onFileOpen = NOOP_OPEN_ATTACHMENT,
@@ -1361,7 +1358,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       runs,
       activeThreadEnvironmentId,
       onRevertToTurnCount,
-      onRunShellCommand,
       onImageExpand,
       onFileOpen,
       onUseArtifactTemplate,
@@ -1403,7 +1399,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       runs,
       activeThreadEnvironmentId,
       onRevertToTurnCount,
-      onRunShellCommand,
       onImageExpand,
       onFileOpen,
       onUseArtifactTemplate,
@@ -2823,7 +2818,6 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
       skills={ctx.skills}
       headingLevelOffset={MESSAGE_HEADING_LEVEL}
       onUseArtifactTemplate={ctx.onUseArtifactTemplate}
-      onRunShellCommand={ctx.onRunShellCommand}
       onImageExpand={ctx.onImageExpand}
       contextFolders={ctx.fileFolders}
     />
@@ -2859,7 +2853,6 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
                   isStreaming={false}
                   skills={ctx.skills}
                   headingLevelOffset={MESSAGE_HEADING_LEVEL}
-                  onRunShellCommand={ctx.onRunShellCommand}
                   onImageExpand={ctx.onImageExpand}
                 />
               )}

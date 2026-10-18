@@ -40,12 +40,7 @@ vi.mock("./BrowserExtensionSettings", () => ({
   }: {
     machine: string;
     thisComputer?: string | null;
-  }) => (
-    <section
-      aria-label={`SpecWithCode Browser extension on ${machine}`}
-      data-this-computer={thisComputer ?? "same"}
-    />
-  ),
+  }) => <section aria-label={`Chrome on ${machine}`} data-this-computer={thisComputer ?? "same"} />,
 }));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (command: string) => (input: unknown) => state.command(command, input),
@@ -162,6 +157,10 @@ describe("ChromeSettings", () => {
     );
     expect(tabs.map((tab) => tab.props["aria-selected"])).toEqual([false, true]);
     expect(text()).toContain("Chrome on M1");
+    // One status: Claude in Chrome stays folded until opened, so it runs no check.
+    expect(text()).toContain("Claude in Chrome (optional)");
+    expect(text()).not.toContain("Test connection");
+    expect(state.useQuery).not.toHaveBeenCalled();
     await act(() => tabs[0]!.props.onClick());
     expect(state.selectScope).toHaveBeenCalledWith({ machine: "m4" });
   });

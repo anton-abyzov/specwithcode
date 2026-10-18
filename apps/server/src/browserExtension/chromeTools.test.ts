@@ -11,7 +11,7 @@ import {
   tokensEqual,
 } from "./BrowserExtension.ts";
 import { ChromeTools, checkUrl } from "./chromeTools.ts";
-import { BrowserRelayError, CLOSE_REJECTED, type RelaySocket } from "./relayHub.ts";
+import { BrowserRelayError, CLOSE_REJECTED, TAB_IDLE_MS, type RelaySocket } from "./relayHub.ts";
 
 const PNG_1x1 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
@@ -52,6 +52,7 @@ function connectFake(
         }
         case "chrome.tabs.create": {
           const tab = { id: nextTab++, url: "about:blank", title: "", active: true };
+          for (const other of tabs.values()) other.active = false;
           tabs.set(tab.id, tab);
           return reply(message.id, { result: tab });
         }
@@ -218,8 +219,11 @@ describe("ChromeTools", () => {
     });
     await expect(tools.evaluateExpression("t1", { expression: "throw" })).rejects.toThrow("Boom");
 
-    const tabs = await tools.tabs(undefined);
-    expect(tabs.tabs.find((t) => t.tabId === opened.tabId)?.agentTab).toBe(true);
+    const tabs = await tools.tabs("t1", undefined);
+    expect(tabs.tabs.find((t) => t.tabId === opened.tabId)).toMatchObject({
+      agentTab: true,
+      thisThread: true,
+    });
     expect(tabs.tabs.find((t) => t.tabId === 1)?.agentTab).toBe(false);
 
     // The user's own tab is never closed by an agent.
@@ -231,18 +235,98 @@ describe("ChromeTools", () => {
     expect(actions).toContain("chrome_click");
   });
 
-  it("holds a profile for one thread at a time", async () => {
+  it("lets several threads use one profile at once, each in its own tabs", async () => {
+    const { extension, token } = setup();
+    const fake = connectFake(extension, token);
+    const tools = new ChromeTools(extension.hub);
+    // A project thread, a chat and the personal assistant, all at the same time.
+    const [a, b, c] = await Promise.all([
+      tools.open("thread-a", { url: "https://easychamp.com" }),
+      tools.open("chat-b", { url: "https://example.com" }),
+      tools.open("aide-c", { url: "https://example.org" }),
+    ]);
+    expect(new Set([a.tabId, b.tabId, c.tabId]).size).toBe(3);
+    expect(tools.profiles("thread-a").profiles[0]?.inUseByAnotherThread).toBe(true);
+    expect(tools.profiles("thread-a").hint).toContain("each thread works in its own tabs");
+
+    // Each keeps acting in its own current tab.
+    await Promise.all([
+      tools.snapshot("thread-a", {}),
+      tools.click("chat-b", { ref: "e1" }),
+      tools.screenshot("aide-c", {}),
+    ]);
+    const evaluated = (tabId: number) =>
+      fake.calls.some(
+        (call) =>
+          call.method === "chrome.debugger.sendCommand" &&
+          (call.params[0] as { tabId: number }).tabId === tabId &&
+          call.params[1] === "Runtime.evaluate",
+      );
+    expect([a.tabId, b.tabId, c.tabId].every(evaluated)).toBe(true);
+
+    // A thread cannot drive or close another thread's tab while it is in use.
+    await expect(tools.snapshot("chat-b", { tabId: a.tabId })).rejects.toMatchObject({
+      code: "tab_in_use",
+    });
+    await expect(tools.close("chat-b", { tabId: a.tabId })).rejects.toMatchObject({
+      code: "tab_in_use",
+    });
+    const listed = await tools.tabs("chat-b", undefined);
+    expect(listed.tabs.find((t) => t.tabId === a.tabId)).toMatchObject({ anotherThread: true });
+    expect(listed.tabs.find((t) => t.tabId === b.tabId)).toMatchObject({ thisThread: true });
+
+    const summary = extension.status().profiles[0]!;
+    expect(summary.threads?.map((use) => use.threadId).sort()).toEqual([
+      "aide-c",
+      "chat-b",
+      "thread-a",
+    ]);
+    expect(summary.lease).not.toBeNull();
+  });
+
+  it("brings a background tab to the front before a screenshot", async () => {
+    const { extension, token } = setup();
+    const fake = connectFake(extension, token);
+    const tools = new ChromeTools(extension.hub);
+    const first = await tools.open("t1", { url: "https://example.com" });
+    await tools.open("t2", { url: "https://example.org" });
+    await tools.screenshot("t1", {});
+    const front = fake.calls.filter(
+      (call) =>
+        call.params[1] === "Page.bringToFront" &&
+        (call.params[0] as { tabId: number }).tabId === first.tabId,
+    );
+    expect(front).toHaveLength(1);
+  });
+
+  it("frees an idle thread's tab and stops one thread without touching others", async () => {
+    let now = 1_000_000;
     const { extension, token } = setup();
     connectFake(extension, token);
+    const hub = extension.hub as unknown as { now: () => number };
+    hub.now = () => now;
     const tools = new ChromeTools(extension.hub);
-    await tools.open("t1", { url: "https://example.com" });
-    await expect(tools.open("t2", { url: "https://example.com" })).rejects.toMatchObject({
-      code: "profile_in_use",
+    const a = await tools.open("t1", { url: "https://example.com" });
+    const b = await tools.open("t2", { url: "https://example.org" });
+
+    // Two minutes of quiet hands the tab back.
+    now += TAB_IDLE_MS + 1;
+    await expect(tools.snapshot("t2", { tabId: a.tabId })).resolves.toMatchObject({
+      tabId: a.tabId,
     });
-    expect(tools.profiles("t2").profiles[0]?.inUseByAnotherThread).toBe(true);
+    // The first thread then hears its tab moved on.
+    await expect(tools.snapshot("t1", {})).rejects.toMatchObject({ code: "tab_in_use" });
+
     const id = extension.hub.profiles()[0]!.id;
+    await tools.open("t3", { url: "https://example.net" });
+    await extension.hub.stop(id, "t2");
+    const left = extension.status().profiles[0]!.threads!.map((use) => use.threadId);
+    expect(left).toEqual(["t3"]);
+    // t2 lost its tabs; it can open a new one at once.
+    await expect(tools.snapshot("t2", {})).rejects.toMatchObject({ code: "tab_not_found" });
+    expect(b.tabId).toBeGreaterThan(0);
     await extension.hub.stop(id);
-    await expect(tools.open("t2", { url: "https://example.com" })).resolves.toBeDefined();
+    expect(extension.status().profiles[0]!.threads).toEqual([]);
   });
 
   it("asks for a profile name when several are paired", async () => {

@@ -1056,6 +1056,72 @@ video.artifact-viewer-media {
   background: black;
 }
 
+/* An image on the stage: fitted to the viewer's room, zoomable, with a
+   floating toolbar at the bottom (zoom out, zoom in, fit, close). */
+.viewer-image-stage {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.viewer-image-frame {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem 1.5rem 4rem;
+}
+
+.viewer-image-toolbar {
+  position: absolute;
+  bottom: 1rem;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 0.125rem;
+  transform: translateX(-50%);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--popover) 92%, transparent);
+  color: var(--popover-foreground);
+  padding: 0.1875rem 0.375rem;
+  box-shadow: 0 8px 24px -8px rgb(0 0 0 / 35%);
+  backdrop-filter: blur(8px);
+}
+
+.viewer-image-toolbar button {
+  border-radius: 999px;
+}
+
+.viewer-image-zoom {
+  min-width: 2.75rem;
+  text-align: center;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+
+.viewer-image-toolbar-rule {
+  width: 1px;
+  height: 1rem;
+  margin-inline: 0.25rem;
+  background: var(--border);
+}
+
+/* Video opened from a thread plays centred on the same stage. */
+.viewer-media-video {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+
 .artifact-cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr));
@@ -1661,6 +1727,14 @@ video.artifact-viewer-media {
 .chat-markdown .chat-markdown-codeblock[data-wrap="true"] pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* Shell commands wrap at spaces only: each word is one box, so `-d` or a path
+   never splits at its dash or slash. A word longer than the line still breaks. */
+.chat-markdown .chat-markdown-codeblock[data-wrap="true"] .chat-markdown-word {
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: top;
 }
 
 .chat-markdown .chat-markdown-shiki .shiki {
