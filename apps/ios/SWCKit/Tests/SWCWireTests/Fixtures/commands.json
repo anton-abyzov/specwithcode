@@ -1,0 +1,109 @@
+[
+  {
+    "type": "message.dispatch",
+    "createdBy": "user",
+    "creationSource": "mobile",
+    "commandId": "c1",
+    "threadId": "thr_1",
+    "messageId": "m1",
+    "text": "hello",
+    "attachments": [],
+    "dispatchMode": {
+      "type": "start_immediately"
+    }
+  },
+  {
+    "type": "message.dispatch",
+    "createdBy": "user",
+    "creationSource": "mobile",
+    "commandId": "c1b",
+    "threadId": "thr_1",
+    "messageId": "m1b",
+    "text": "hello",
+    "attachments": [],
+    "deliveryIntent": "auto",
+    "dispatchMode": {
+      "type": "start_immediately"
+    }
+  },
+  {
+    "type": "message.dispatch",
+    "createdBy": "user",
+    "creationSource": "mobile",
+    "commandId": "c1c",
+    "threadId": "thr_1",
+    "messageId": "m1c",
+    "text": "later",
+    "attachments": [],
+    "dispatchMode": {
+      "type": "queue_after_active"
+    }
+  },
+  {
+    "type": "run.interrupt",
+    "commandId": "c2",
+    "threadId": "thr_1",
+    "runId": "run_1",
+    "holdQueue": true
+  },
+  {
+    "type": "thread.metadata.update",
+    "commandId": "c3",
+    "threadId": "thr_1",
+    "title": "New title"
+  },
+  {
+    "type": "thread.pin",
+    "commandId": "c4",
+    "threadId": "thr_1"
+  },
+  {
+    "type": "thread.unpin",
+    "commandId": "c5",
+    "threadId": "thr_1"
+  },
+  {
+    "type": "thread.settle",
+    "commandId": "c6",
+    "threadId": "thr_1",
+    "note": "Merged in #12"
+  },
+  {
+    "type": "thread.unsettle",
+    "commandId": "c7",
+    "threadId": "thr_1",
+    "reason": "user"
+  },
+  {
+    "type": "thread.archive",
+    "commandId": "c8",
+    "threadId": "thr_1"
+  },
+  {
+    "type": "thread.unarchive",
+    "commandId": "c9",
+    "threadId": "thr_1"
+  },
+  {
+    "type": "thread.delete",
+    "commandId": "c10",
+    "threadId": "thr_1"
+  },
+  {
+    "type": "thread.visit",
+    "commandId": "c11",
+    "threadId": "thr_1",
+    "visitedAt": "2026-10-18T06:00:05.000Z"
+  },
+  {
+    "type": "thread.mark-unread",
+    "commandId": "c12",
+    "threadId": "thr_1"
+  },
+  {
+    "type": "thread.settle",
+    "commandId": "c13",
+    "threadId": "thr_1",
+    "settledAt": "2026-10-18T06:00:05.000Z"
+  }
+]

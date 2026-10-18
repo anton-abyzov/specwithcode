@@ -1,0 +1,218 @@
+{
+  "command.steer": {
+    "type": "message.dispatch",
+    "createdBy": "user",
+    "creationSource": "mobile",
+    "commandId": "c30",
+    "threadId": "thr_1",
+    "messageId": "m30",
+    "text": "Also check logout",
+    "attachments": [],
+    "dispatchMode": {
+      "type": "steer_active",
+      "targetRunId": "run_2"
+    }
+  },
+  "command.respondApproval": {
+    "type": "runtime-request.respond",
+    "commandId": "c31",
+    "threadId": "thr_1",
+    "requestId": "req_1",
+    "decision": "acceptForSession"
+  },
+  "command.respondAnswers": {
+    "type": "runtime-request.respond",
+    "commandId": "c32",
+    "threadId": "thr_1",
+    "requestId": "req_2",
+    "answers": {
+      "q1": "Postgres",
+      "q2": ["a", "b"]
+    }
+  },
+  "command.renameRegenerate": {
+    "type": "thread.metadata.update",
+    "commandId": "c33",
+    "threadId": "thr_1",
+    "regenerateTitle": true
+  },
+  "command.pinOrdered": {
+    "type": "thread.pin",
+    "commandId": "c34",
+    "threadId": "thr_1",
+    "orderKey": "a1"
+  },
+  "command.interruptReason": {
+    "type": "run.interrupt",
+    "commandId": "c35",
+    "threadId": "thr_1",
+    "runId": "run_2",
+    "reason": "Stopped from phone",
+    "holdQueue": true
+  },
+  "launchThread.root": {
+    "commandId": "c40",
+    "creationSource": "mobile",
+    "projectId": "proj_1",
+    "title": "Investigate flaky test",
+    "generateTitle": true,
+    "modelSelection": {
+      "instanceId": "claudeAgent",
+      "model": "claude-opus-5-5"
+    },
+    "runtimeMode": "auto",
+    "interactionMode": "default",
+    "workspaceStrategy": {
+      "type": "root"
+    },
+    "initialMessage": {
+      "messageId": "m40",
+      "text": "Why does the auth test flake?",
+      "attachments": []
+    }
+  },
+  "launchThread.worktree": {
+    "commandId": "c41",
+    "threadId": "thr_new",
+    "projectId": "proj_1",
+    "title": "New branch",
+    "modelSelection": {
+      "instanceId": "claudeAgent",
+      "model": "claude-opus-5-5"
+    },
+    "runtimeMode": "approval-required",
+    "interactionMode": "plan",
+    "workspaceStrategy": {
+      "type": "worktree",
+      "baseRef": "main",
+      "branch": "feat/x",
+      "startFromOrigin": true
+    }
+  },
+  "coordinatorSend": {
+    "projectId": "proj_1",
+    "commandId": "c50",
+    "prompt": "Plan the release"
+  },
+  "coordinatorStart": {
+    "projectId": "proj_1",
+    "commandId": "c51"
+  },
+  "coordinatorResult": {
+    "threadId": "project-coordinator:proj_1",
+    "created": true
+  },
+  "workspaceRead": {
+    "projectId": "proj_1"
+  },
+  "workspaceReadResult": {
+    "settings": {
+      "kind": "code",
+      "environment": {
+        "additionalFolders": [],
+        "repositories": []
+      },
+      "revision": 3,
+      "goal": "Ship v2",
+      "instructions": "",
+      "coordinatorModelSelection": {
+        "instanceId": "codex",
+        "model": "gpt-6"
+      },
+      "coordinatorThreadId": null,
+      "paused": false,
+      "archived": false,
+      "autoResume": false
+    },
+    "memory": {
+      "files": [
+        {
+          "name": "MEMORY.md",
+          "revision": 1,
+          "updatedAt": "2026-10-18T06:00:00Z",
+          "byteLength": 10
+        }
+      ],
+      "totalBytes": 10
+    }
+  },
+  "projectUpdate.rename": {
+    "type": "project.update",
+    "commandId": "c60",
+    "projectId": "proj_1",
+    "title": "SpecWeave 2"
+  },
+  "projectUpdate.workspace": {
+    "type": "project.update",
+    "commandId": "c61",
+    "projectId": "proj_1",
+    "workspaceSettings": {
+      "expectedRevision": 3,
+      "goal": "Ship",
+      "instructions": "Small PRs",
+      "coordinatorModelSelection": null,
+      "paused": true,
+      "archived": false
+    }
+  },
+  "projectUpdate.icon": {
+    "type": "project.update",
+    "commandId": "c62",
+    "projectId": "proj_1",
+    "projectIcon": {
+      "kind": "emoji",
+      "emoji": "🧪"
+    }
+  },
+  "projectUpdate.clearIcon": {
+    "type": "project.update",
+    "commandId": "c63",
+    "projectId": "proj_1",
+    "projectIcon": null
+  },
+  "project": {
+    "id": "proj_1",
+    "title": "SpecWeave 2",
+    "workspaceRoot": "/Users/x/specweave",
+    "defaultModelSelection": null,
+    "scripts": [],
+    "createdAt": "2026-10-01T00:00:00.000Z",
+    "updatedAt": "2026-10-18T00:00:00.000Z",
+    "deletedAt": null
+  },
+  "createNew": {
+    "kind": "personal",
+    "name": "Aide"
+  },
+  "createNewResult": {
+    "projectId": "proj_aide",
+    "workspaceRoot": "/Users/x/projects/aide",
+    "existing": true
+  },
+  "updateSettings.mode": {
+    "patch": {
+      "defaultModelSelection": {
+        "instanceId": "claudeAgent",
+        "model": "claude-opus-5-5"
+      },
+      "defaultRuntimeMode": "auto"
+    }
+  },
+  "updateSettings.clearModel": {
+    "patch": {
+      "defaultModelSelection": null
+    }
+  },
+  "subscribeShell.resume": {
+    "afterSequence": 42,
+    "requestCompletionMarker": true
+  },
+  "subscribeThread": {
+    "threadId": "thr_1",
+    "requestCompletionMarker": true,
+    "acceptBoundedSnapshot": true
+  },
+  "dispatchResult": {
+    "sequence": 7
+  }
+}

@@ -1,0 +1,89 @@
+name: SpecWithCode
+options:
+  bundleIdPrefix: com.specwithcode
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+  developmentLanguage: en
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    DEVELOPMENT_TEAM: ${STUDIO_APPLE_TEAM_ID}
+    CODE_SIGN_STYLE: Automatic
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+packages:
+  SWCKit:
+    path: SWCKit
+targets:
+  SpecWithCode:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+        excludes:
+          - "Tests/**"
+    dependencies:
+      - package: SWCKit
+        product: SWCFeatures
+      - package: SWCKit
+        product: SWCSync
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.specwithcode.ios
+        PRODUCT_NAME: SpecWithCode
+        TARGETED_DEVICE_FAMILY: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: SpecWithCode
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+        INFOPLIST_KEY_NSCameraUsageDescription: Scan the pairing QR code shown by SpecWithCode on your computer.
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: Connect to SpecWithCode on computers in your home or office network.
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+      configs:
+        Debug:
+          PRODUCT_BUNDLE_IDENTIFIER: com.specwithcode.ios.dev
+          INFOPLIST_KEY_CFBundleDisplayName: SpecWithCode Dev
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleURLTypes:
+          - CFBundleURLName: com.specwithcode.ios
+            CFBundleURLSchemes: [specwithcode]
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        UIAppFonts: []
+  SpecWithCodeTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [App/Tests]
+    dependencies:
+      - target: SpecWithCode
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.specwithcode.ios.tests
+        GENERATE_INFOPLIST_FILE: YES
+  SpecWithCodeUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [UITests]
+    dependencies:
+      - target: SpecWithCode
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.specwithcode.ios.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        # XCTestCase initializers are nonisolated; test classes opt in with @MainActor.
+        SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
+schemes:
+  SpecWithCode:
+    build:
+      targets:
+        SpecWithCode: all
+    test:
+      targets: [SpecWithCodeTests, SpecWithCodeUITests]

@@ -1,0 +1,253 @@
+import SwiftUI
+
+/// A side drawer under the main content. Opening slides the content to the
+/// right, shrinks it into a rounded card and dims it; tapping or swiping the
+/// card closes the drawer. Opens from a button (set `isOpen`) or by swiping
+/// from the leading edge. Under Reduce Motion the content stays put: the
+/// drawer fades in over the dimmed content instead.
+///
+/// The edge swipe sits above the content, so turn it off while a pushed
+/// screen needs the system back swipe: `edgeSwipeEnabled: path.isEmpty`.
+public struct DrawerContainer<Drawer: View, Content: View>: View {
+  @Binding var isOpen: Bool
+  let edgeSwipeEnabled: Bool
+  let drawer: Drawer
+  let content: Content
+
+  @State private var drag: CGFloat = 0
+  @State private var dragging = false
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+  public init(isOpen: Binding<Bool>, edgeSwipeEnabled: Bool = true, @ViewBuilder drawer: () -> Drawer, @ViewBuilder content: () -> Content) {
+    self._isOpen = isOpen
+    self.edgeSwipeEnabled = edgeSwipeEnabled
+    self.drawer = drawer()
+    self.content = content()
+  }
+
+  private static var spring: Animation { .spring(response: 0.36, dampingFraction: 0.88) }
+
+  /// The spring, or a short fade under Reduce Motion.
+  private var animation: Animation { reduceMotion ? .easeInOut(duration: 0.2) : Self.spring }
+
+  public var body: some View {
+    GeometryReader { proxy in
+      let width = min(proxy.size.width * 0.8, 340)
+      let progress = progress(drawerWidth: width)
+      ZStack(alignment: .leading) {
+        if isOpen || dragging {
+          drawer
+            .frame(width: width)
+            .frame(maxHeight: .infinity)
+            // Above the content under Reduce Motion, so it needs its own fill.
+            .background(reduceMotion ? Color.weave.sunken : Color.clear)
+            .shadow(color: .black.opacity(reduceMotion ? 0.14 * progress : 0), radius: 24, x: 4)
+            .offset(x: reduceMotion ? 0 : (progress - 1) * width * 0.25)
+            .opacity(reduceMotion ? progress : 0.4 + 0.6 * progress)
+            .allowsHitTesting(progress > 0.99)
+            .accessibilityAction(.escape) { close() }
+            .transition(drawerTransition(drawerWidth: width))
+            .zIndex(reduceMotion ? 1 : 0)
+        }
+
+        content
+          .frame(width: proxy.size.width, height: proxy.size.height)
+          .accessibilityHidden(isOpen)
+          .environment(\.isCoveredByDrawer, isOpen)
+          .overlay { dim(progress: progress, drawerWidth: width) }
+          .clipShape(RoundedRectangle(cornerRadius: reduceMotion ? 0 : WeaveRadius.drawerContent * progress, style: .continuous))
+          .shadow(color: .black.opacity(reduceMotion ? 0 : 0.14 * progress), radius: 24, x: -4)
+          .scaleEffect(reduceMotion ? 1 : 1 - 0.06 * progress, anchor: .leading)
+          .offset(x: reduceMotion ? 0 : (width + 8) * progress)
+          .overlay(alignment: .leading) {
+            if edgeSwipeEnabled, !isOpen {
+              Color.clear
+                .frame(width: WeaveSpacing.gutter)
+                .contentShape(Rectangle())
+                .gesture(openGesture(drawerWidth: width))
+                .accessibilityHidden(true)
+            }
+          }
+      }
+      .background(Color.weave.sunken.ignoresSafeArea())
+      .animation(dragging ? nil : animation, value: isOpen)
+    }
+  }
+
+  /// The drawer leaves the tree once it is closed, so neither VoiceOver nor
+  /// UI automation can reach it. Its transition matches the slide and fade
+  /// it shows at the closed end of a drag.
+  private func drawerTransition(drawerWidth: CGFloat) -> AnyTransition {
+    reduceMotion ? .opacity : .offset(x: -drawerWidth * 0.25).combined(with: .opacity)
+  }
+
+  private func progress(drawerWidth: CGFloat) -> CGFloat {
+    let base: CGFloat = isOpen ? drawerWidth : 0
+    return min(max((base + drag) / drawerWidth, 0), 1)
+  }
+
+  /// Always mounted, so taking hit testing away is instant when `isOpen`
+  /// flips. A layer removed through an animated transition keeps taking taps
+  /// while it fades, which swallowed taps on the content right after closing.
+  private func dim(progress: CGFloat, drawerWidth: CGFloat) -> some View {
+    Color.black.opacity(0.12 * progress)
+      .contentShape(Rectangle())
+      .onTapGesture { close() }
+      .gesture(closeGesture(drawerWidth: drawerWidth))
+      .allowsHitTesting(isOpen)
+      .accessibilityHidden(true)
+      .overlay {
+        // The spoken control exists only while the drawer is open.
+        if isOpen {
+          Color.clear
+            .accessibilityElement()
+            .accessibilityLabel("Close menu")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { close() }
+            .allowsHitTesting(false)
+        }
+      }
+  }
+
+  private func openGesture(drawerWidth: CGFloat) -> some Gesture {
+    DragGesture(minimumDistance: 8, coordinateSpace: .global)
+      .onChanged { value in
+        dragging = true
+        drag = max(0, min(value.translation.width, drawerWidth))
+      }
+      .onEnded { value in
+        let shouldOpen = value.predictedEndTranslation.width > drawerWidth * 0.4
+        withAnimation(animation) {
+          dragging = false
+          drag = 0
+          isOpen = shouldOpen
+        }
+      }
+  }
+
+  private func closeGesture(drawerWidth: CGFloat) -> some Gesture {
+    DragGesture(minimumDistance: 8, coordinateSpace: .global)
+      .onChanged { value in
+        dragging = true
+        drag = min(0, max(value.translation.width, -drawerWidth))
+      }
+      .onEnded { value in
+        let shouldClose = value.predictedEndTranslation.width < -drawerWidth * 0.3
+        withAnimation(animation) {
+          dragging = false
+          drag = 0
+          if shouldClose { isOpen = false }
+        }
+      }
+  }
+
+  private func close() {
+    withAnimation(animation) { isOpen = false }
+  }
+}
+
+private nonisolated struct CoveredByDrawerKey: EnvironmentKey {
+  static let defaultValue = false
+}
+
+extension EnvironmentValues {
+  /// True while an open drawer covers this content.
+  public nonisolated var isCoveredByDrawer: Bool {
+    get { self[CoveredByDrawerKey.self] }
+    set { self[CoveredByDrawerKey.self] = newValue }
+  }
+}
+
+extension View {
+  /// Hides this screen from VoiceOver while an open drawer covers it. A
+  /// navigation stack hosts its screens apart from the views around it, so
+  /// hiding the drawer's content does not reach them: each screen root takes
+  /// this modifier.
+  public func hiddenUnderDrawer() -> some View {
+    modifier(HiddenUnderDrawer())
+  }
+
+  /// Gives an edge bar no accessibility elements at all while an open drawer
+  /// covers it. Edge bars are hosted apart from their screen, and plain
+  /// hiding leaves their controls in the tree UI automation reads. The bar is
+  /// rebuilt when the drawer opens or closes, so use it only on views whose
+  /// state lives elsewhere.
+  public func silentUnderDrawer() -> some View {
+    modifier(SilentUnderDrawer())
+  }
+}
+
+private struct HiddenUnderDrawer: ViewModifier {
+  @Environment(\.isCoveredByDrawer) private var covered
+
+  func body(content: Content) -> some View {
+    content.accessibilityHidden(covered)
+  }
+}
+
+private struct SilentUnderDrawer: ViewModifier {
+  @Environment(\.isCoveredByDrawer) private var covered
+
+  func body(content: Content) -> some View {
+    if covered {
+      content
+        .accessibilityRepresentation { EmptyView() }
+        .transition(.identity)
+    } else {
+      content.transition(.identity)
+    }
+  }
+}
+
+#Preview("Light") {
+  DrawerContainerPreview().environment(\.colorScheme, .light)
+}
+
+#Preview("Dark") {
+  DrawerContainerPreview().environment(\.colorScheme, .dark)
+}
+
+private struct DrawerContainerPreview: View {
+  @State private var open = true
+
+  var body: some View {
+    DrawerContainer(isOpen: $open) {
+      VStack(alignment: .leading, spacing: 0) {
+        Text("SpecWithCode")
+          .weaveFont(.title)
+          .padding(.horizontal, WeaveSpacing.gutter)
+          .padding(.vertical, WeaveSpacing.s4)
+        SectionHeader("Pinned").padding(.horizontal, WeaveSpacing.gutter)
+        WeaveRow("Aide", action: { open = false }) {
+          ProjectAvatar(icon: .lucide(name: "concierge-bell", tint: "violet"), title: "Aide", size: 24, style: .plain)
+        } trailing: {
+          StatusDot(.working)
+        }
+        WeaveRow("specweave", action: { open = false }) {
+          ProjectAvatar(icon: .lucide(name: "dna", tint: "amber"), title: "specweave", size: 24, style: .plain)
+        } trailing: {
+          EmptyView()
+        }
+        Spacer()
+      }
+      .foregroundStyle(Color.weave.ink)
+    } content: {
+      VStack {
+        HStack {
+          WeaveIconButton("line.3.horizontal", label: "Menu") { open.toggle() }
+          Spacer()
+          TitleCapsule(title: "Aide")
+          Spacer()
+          WeaveIconButton("checklist", label: "Overview") {}
+        }
+        .padding(.horizontal, WeaveSpacing.gutter)
+        Spacer()
+        MarkdownText("Good morning. Two threads need you.")
+          .padding(.horizontal, WeaveSpacing.contentInset)
+        Spacer()
+      }
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .background(Color.weave.canvas)
+    }
+  }
+}

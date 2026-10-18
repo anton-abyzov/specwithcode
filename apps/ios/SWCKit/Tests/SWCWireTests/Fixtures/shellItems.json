@@ -1,0 +1,217 @@
+[
+  {
+    "kind": "thread.updated",
+    "sequence": 50,
+    "location": "active",
+    "thread": {
+      "createdBy": "user",
+      "creationSource": "mobile",
+      "id": "thr_1",
+      "projectId": "proj_1",
+      "title": "Fix login",
+      "providerInstanceId": "claudeAgent",
+      "modelSelection": {
+        "instanceId": "claudeAgent",
+        "model": "claude-opus-5-5"
+      },
+      "runtimeMode": "full-access",
+      "interactionMode": "default",
+      "branch": "fix/login",
+      "worktreePath": null,
+      "lineage": {
+        "parentThreadId": null,
+        "relationshipToParent": null,
+        "rootThreadId": "thr_1"
+      },
+      "forkedFrom": null,
+      "activeProviderThreadId": null,
+      "latestRunId": "run_2",
+      "latestRunRequestedAt": "2026-10-18T06:11:00.000Z",
+      "latestRunStartedAt": "2026-10-18T06:11:02.000Z",
+      "latestRunCompletedAt": "2026-10-18T06:04:00.000Z",
+      "activeRunId": "run_2",
+      "activityRunStartedAt": "2026-10-18T06:11:00.000Z",
+      "activityRunStatus": "running",
+      "activeWork": {
+        "label": "npm test",
+        "startedAt": "2026-10-18T06:11:30.000Z"
+      },
+      "status": "running",
+      "lastError": null,
+      "lastErrorClass": null,
+      "usageLimitResetAt": null,
+      "pendingRuntimeRequest": {
+        "id": "req_1",
+        "kind": "command",
+        "createdAt": "2026-10-18T06:13:00.000Z"
+      },
+      "latestVisibleMessage": {
+        "id": "msg_4",
+        "role": "assistant",
+        "text": "Done.",
+        "updatedAt": "2026-10-18T06:12:01.000Z"
+      },
+      "latestUserMessageAt": "2026-10-18T06:11:00.000Z",
+      "latestUserAuthoredMessageAt": "2026-10-18T06:11:00.000Z",
+      "hasActionableProposedPlan": true,
+      "planProgress": {
+        "completed": 1,
+        "total": 3,
+        "current": "Write fix",
+        "next": "Test"
+      },
+      "reportedBlocker": null,
+      "pendingBackgroundTasks": [
+        {
+          "taskId": "bg_1",
+          "description": "dev server",
+          "kind": "command"
+        },
+        {
+          "taskId": "bg_2",
+          "kind": "subagent",
+          "childThreadId": "thr_child"
+        }
+      ],
+      "providerInstanceHistory": ["codex", "claudeAgent"],
+      "goal": {
+        "objective": "Ship login fix",
+        "status": "active",
+        "tokensUsed": 1000
+      },
+      "heldQueuedCount": 2,
+      "itemCount": 18,
+      "visibleItemCount": 16,
+      "createdAt": "2026-10-18T06:00:00.000Z",
+      "updatedAt": "2026-10-18T06:10:00.000Z",
+      "archivedAt": null,
+      "settledOverride": null,
+      "settledAt": null,
+      "snoozedUntil": null,
+      "pinnedAt": "2026-10-18T06:09:00.000Z",
+      "pinOrderKey": "a0",
+      "activeOrderKey": "b1",
+      "lastVisitedAt": "2026-10-18T06:05:00.000Z",
+      "titleRegeneration": {
+        "requestId": "cmd_t",
+        "startedAt": "2026-10-18T06:10:30.000Z"
+      },
+      "deletedAt": null
+    }
+  },
+  {
+    "kind": "thread.removed",
+    "sequence": 51,
+    "location": "archive",
+    "threadId": "thr_old"
+  },
+  {
+    "kind": "project.removed",
+    "sequence": 52,
+    "projectId": "proj_old"
+  },
+  {
+    "kind": "project.updated",
+    "sequence": 53,
+    "project": {
+      "id": "proj_aide",
+      "title": "Aide",
+      "workspaceRoot": "/Users/x/projects/aide",
+      "repositoryIdentity": {
+        "canonicalKey": "github.com/acme/web",
+        "locator": {
+          "source": "git-remote",
+          "remoteName": "origin",
+          "remoteUrl": "git@github.com:acme/web.git"
+        },
+        "displayName": "acme/web",
+        "owner": "acme",
+        "name": "web"
+      },
+      "defaultModelSelection": {
+        "instanceId": "claudeAgent",
+        "model": "claude-opus-5-5"
+      },
+      "projectIcon": {
+        "kind": "lucide",
+        "name": "concierge-bell",
+        "color": "violet"
+      },
+      "workspaceSettings": {
+        "kind": "personal",
+        "environment": {
+          "additionalFolders": ["/Users/x/notes"],
+          "repositories": [
+            {
+              "id": "web",
+              "url": "https://github.com/acme/web",
+              "localPath": null
+            }
+          ]
+        },
+        "revision": 7,
+        "goal": "Help Anton",
+        "instructions": "Be brief",
+        "coordinatorModelSelection": {
+          "instanceId": "claudeAgent",
+          "model": "claude-opus-5-5"
+        },
+        "coordinatorThreadId": null,
+        "paused": false,
+        "archived": false,
+        "autoResume": true,
+        "workerMachine": {
+          "machineId": "m1",
+          "environmentId": "env_m1",
+          "projectId": null
+        }
+      },
+      "scripts": [
+        {
+          "id": "dev",
+          "name": "Dev",
+          "command": "npm run dev",
+          "icon": "play",
+          "runOnWorktreeCreate": false
+        }
+      ],
+      "createdAt": "2026-10-01T00:00:00.000Z",
+      "updatedAt": "2026-10-02T00:00:00.000Z"
+    }
+  },
+  {
+    "kind": "project.updated",
+    "sequence": 54,
+    "project": {
+      "id": "proj_m",
+      "title": "Mono",
+      "workspaceRoot": "/Users/x/mono",
+      "defaultModelSelection": null,
+      "projectIcon": {
+        "kind": "monogram",
+        "text": "MO",
+        "color": "teal"
+      },
+      "scripts": [],
+      "createdAt": "2026-10-01T00:00:00.000Z",
+      "updatedAt": "2026-10-01T00:00:00.000Z"
+    }
+  },
+  {
+    "kind": "project.updated",
+    "sequence": 55,
+    "project": {
+      "id": "proj_e",
+      "title": "Emoji",
+      "workspaceRoot": "/Users/x/emoji",
+      "defaultModelSelection": null,
+      "projectIcon": {
+        "kind": "emoji",
+        "emoji": "🚀"
+      },
+      "scripts": [],
+      "createdAt": "2026-10-01T00:00:00.000Z",
+      "updatedAt": "2026-10-01T00:00:00.000Z"
+    }
+  }
+]

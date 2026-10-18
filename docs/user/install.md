@@ -75,7 +75,7 @@ Then start it with `specwithcode serve`, or make a line for your main machine wi
 `specwithcode fleet invite` ([Add a machine](./add-a-machine.md#with-npm)). On a Mac that already
 runs the desktop app, do not start a second server: run only `specwithcode fleet invite`, which
 uses the server the app is running. To keep an npm install running after you close
-Terminal or restart, run `specwithcode service install` (1.0.45 and later): the service pins a
+Terminal or restart, run `specwithcode service install` (1.0.46 and later): the service pins a
 copy of the installed package under `~/.specwithcode/runtime/versions/<version>` and runs it with
 the Node.js that ran the install.
 
