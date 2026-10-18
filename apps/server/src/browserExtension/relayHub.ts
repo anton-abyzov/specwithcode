@@ -24,12 +24,14 @@ const DEFAULT_CALL_TIMEOUT_MS = 30_000;
 /** A thread keeps a tab while it acts in it at least this often. */
 export const TAB_IDLE_MS = 120_000;
 const MAX_AUDIT = 50;
+const MAX_THREAD_NAMES = 200;
 
 export type BrowserRelayErrorCode =
   | "not_connected"
   | "choose_profile"
   | "profile_not_found"
   | "tab_in_use"
+  | "needs_approval"
   | "tab_not_found"
   | "element_not_found"
   | "page_error"
@@ -75,6 +77,11 @@ export interface TabOwner {
   readonly threadId: string;
   readonly since: number;
   lastActionAt: number;
+}
+
+export interface RemoteThreadName {
+  readonly title: string;
+  readonly machine: string;
 }
 
 export interface RelayThreadUse {
@@ -164,6 +171,7 @@ export class BrowserRelayHub {
   private readonly options: BrowserRelayHubOptions;
   private readonly connections = new Set<Connection>();
   private readonly audit: BrowserExtensionAction[] = [];
+  private readonly threadNames = new Map<string, RemoteThreadName>();
   private readonly now: () => number;
   private profileSeq = 0;
   private readonly waiters = new Set<() => void>();
@@ -339,7 +347,13 @@ export class BrowserRelayHub {
     if (connection.profile) this.changed();
   }
 
-  private changed() {
+  /** This computer's name, as the extension's popup shows it. */
+  machineName() {
+    return this.options.machineName();
+  }
+
+  /** Tells Settings › Chrome to refresh. */
+  changed() {
     this.options.onProfilesChanged?.();
     for (const wake of this.waiters) wake();
   }
@@ -359,6 +373,22 @@ export class BrowserRelayHub {
     return [...this.connections].flatMap((c) => (c.profile ? [c.profile] : []));
   }
 
+  /**
+   * Threads on other machines have no record here, so the title and machine
+   * their machine sent are kept for Settings › Chrome.
+   */
+  nameThread(threadId: string, name: RemoteThreadName) {
+    this.threadNames.delete(threadId);
+    this.threadNames.set(threadId, name);
+    if (this.threadNames.size > MAX_THREAD_NAMES)
+      this.threadNames.delete(this.threadNames.keys().next().value!);
+  }
+
+  private nameOf(threadId: string) {
+    const name = this.threadNames.get(threadId);
+    return name ? { title: name.title, machine: name.machine } : {};
+  }
+
   profileSummaries(): BrowserExtensionProfile[] {
     const iso = (ms: number) => new Date(ms).toISOString();
     return this.profiles().map((profile) => {
@@ -367,6 +397,7 @@ export class BrowserRelayHub {
         tabs: use.tabs,
         since: iso(use.since),
         lastActionAt: iso(use.lastActionAt),
+        ...this.nameOf(use.threadId),
       }));
       const latest = threads[0];
       return {
@@ -505,6 +536,7 @@ export class BrowserRelayHub {
       threadId,
       tool,
       ...(url ? { url: url.slice(0, 300) } : {}),
+      ...this.nameOf(threadId),
     });
     if (this.audit.length > MAX_AUDIT) this.audit.splice(0, this.audit.length - MAX_AUDIT);
   }
@@ -536,6 +568,21 @@ export class BrowserRelayHub {
     );
     for (const tabId of tabs) profile.attachedTabs.delete(tabId);
     this.changed();
+  }
+
+  /**
+   * Let go of every tab held by threads whose key starts with `prefix`, idle
+   * or not, in every profile. The tabs stay open for the user.
+   */
+  async stopThreadsWithPrefix(prefix: string) {
+    for (const profile of this.profiles()) {
+      const threads = new Set<string>();
+      for (const owner of profile.tabOwners.values())
+        if (owner.threadId.startsWith(prefix)) threads.add(owner.threadId);
+      for (const threadId of profile.lastTabByThread.keys())
+        if (threadId.startsWith(prefix)) threads.add(threadId);
+      for (const threadId of threads) await this.stop(profile.id, threadId);
+    }
   }
 
   /** Ask every profile to reconnect; their sockets close and come back. */

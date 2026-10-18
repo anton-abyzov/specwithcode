@@ -8,7 +8,11 @@ import type { AttachedLocalService } from "../../backend/DesktopLocalService.ts"
 import { makeServiceUpdateController } from "../../updates/studioServiceUpdates.ts";
 
 vi.mock("electron", () => ({}));
-import { isStaleService, controllerForAttachedService } from "./serviceUpdates.ts";
+import {
+  appStartAgentRun,
+  isStaleService,
+  controllerForAttachedService,
+} from "./serviceUpdates.ts";
 
 function withInstallations(
   run: (
@@ -142,5 +146,31 @@ describe("isStaleService", () => {
     expect(isStaleService(undefined, "1.0.23")).toBe(false);
     expect(isStaleService("1.0.20", "1.0.23-nightly.1")).toBe(false);
     expect(isStaleService("1.0.20-dev.1", "1.0.23")).toBe(false);
+  });
+});
+
+describe("appStartAgentRun", () => {
+  it("reports a failed agent start at app start instead of leaving a frozen state", () => {
+    expect(
+      appStartAgentRun({
+        checkAutomatically: true,
+        automaticUpdatesAllowed: true,
+        pendingForcedInstall: false,
+      }),
+    ).toEqual({ reason: "app start", reportFailure: true });
+    expect(
+      appStartAgentRun({
+        checkAutomatically: false,
+        automaticUpdatesAllowed: true,
+        pendingForcedInstall: true,
+      }),
+    ).toEqual({ reason: "pending forced install", reportFailure: true });
+    expect(
+      appStartAgentRun({
+        checkAutomatically: true,
+        automaticUpdatesAllowed: false,
+        pendingForcedInstall: false,
+      }),
+    ).toBeNull();
   });
 });

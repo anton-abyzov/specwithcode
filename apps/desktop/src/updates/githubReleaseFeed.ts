@@ -58,10 +58,13 @@ export interface UpdateManifest {
 
 export class GitHubFeedError extends Error {
   readonly status: number | null;
-  constructor(message: string, status: number | null = null) {
+  /** Epoch ms before which the feed will not ask GitHub again (rate limits). */
+  readonly retryAt: number | null;
+  constructor(message: string, status: number | null = null, retryAt: number | null = null) {
     super(message);
     this.name = "GitHubFeedError";
     this.status = status;
+    this.retryAt = retryAt;
   }
 }
 
@@ -244,22 +247,136 @@ function apiHeaders(feed: GitHubFeed, accept: string): Record<string, string> {
   };
 }
 
+/**
+ * What the releases request remembers between checks: the last answer and its
+ * ETag, so an unchanged release list costs a 304 that GitHub does not count
+ * against the rate limit, and when GitHub said to come back after a limit.
+ */
+export interface ReleaseFeedCache {
+  readonly answers: Map<
+    string,
+    { readonly etag: string; readonly releases: ReadonlyArray<GitHubRelease> }
+  >;
+  readonly blockedUntil: Map<string, number>;
+  readonly consecutiveLimits: Map<string, number>;
+}
+
+export function createReleaseFeedCache(): ReleaseFeedCache {
+  return { answers: new Map(), blockedUntil: new Map(), consecutiveLimits: new Map() };
+}
+
+const defaultReleaseFeedCache = createReleaseFeedCache();
+
+const MIN_RATE_LIMIT_BACKOFF_MS = 60_000;
+const MAX_RATE_LIMIT_BACKOFF_MS = 60 * 60_000;
+
+/** A 429, or a 403 GitHub marks as a rate limit (no requests left, or Retry-After). */
+export function isRateLimitResponse(status: number, headers: Headers): boolean {
+  if (status === 429) return true;
+  return (
+    status === 403 &&
+    (headers.get("x-ratelimit-remaining") === "0" || headers.get("retry-after") !== null)
+  );
+}
+
+/**
+ * How long to wait after a rate limit: Retry-After first, then the reset time
+ * GitHub reports, otherwise one minute doubling with each limit in a row.
+ * Always at least a minute and at most an hour.
+ */
+export function rateLimitDelayMs(headers: Headers, now: number, consecutive: number): number {
+  const clamp = (ms: number) =>
+    Math.min(MAX_RATE_LIMIT_BACKOFF_MS, Math.max(MIN_RATE_LIMIT_BACKOFF_MS, ms));
+  const retryAfter = headers.get("retry-after");
+  if (retryAfter !== null) {
+    const seconds = Number(retryAfter.trim());
+    if (Number.isFinite(seconds) && retryAfter.trim() !== "") return clamp(seconds * 1000);
+    const date = Date.parse(retryAfter);
+    if (Number.isFinite(date)) return clamp(date - now);
+  }
+  const reset = Number(headers.get("x-ratelimit-reset") ?? "");
+  if (Number.isFinite(reset) && reset > 0) return clamp(reset * 1000 - now);
+  return clamp(MIN_RATE_LIMIT_BACKOFF_MS * 2 ** Math.max(0, consecutive - 1));
+}
+
+/**
+ * One key per repository and sign-in: the releases list and asset downloads
+ * share GitHub's limit, so a limit hit by either holds back both.
+ */
+function feedCacheKey(feed: GitHubFeed): string {
+  const base = feed.apiUrl ?? GITHUB_API_URL;
+  return `${base}/repos/${feed.owner}/${feed.repo}#${feed.token ? "token" : "anonymous"}`;
+}
+
+function throwIfBlocked(
+  feed: GitHubFeed,
+  cache: ReleaseFeedCache,
+  key: string,
+  now: () => number,
+): void {
+  const blockedUntil = cache.blockedUntil.get(key);
+  if (blockedUntil !== undefined && now() < blockedUntil) {
+    throw new GitHubFeedError(describeFeedError(429, feed.token !== null), 429, blockedUntil);
+  }
+}
+
+function recordRateLimit(
+  feed: GitHubFeed,
+  cache: ReleaseFeedCache,
+  key: string,
+  now: () => number,
+  response: Response,
+): GitHubFeedError {
+  const consecutive = (cache.consecutiveLimits.get(key) ?? 0) + 1;
+  cache.consecutiveLimits.set(key, consecutive);
+  const retryAt = now() + rateLimitDelayMs(response.headers, now(), consecutive);
+  cache.blockedUntil.set(key, retryAt);
+  return new GitHubFeedError(
+    describeFeedError(response.status, feed.token !== null),
+    response.status,
+    retryAt,
+  );
+}
+
 export async function fetchReleases(
   feed: GitHubFeed,
   fetchImpl: FetchLike = fetch,
+  options: { readonly cache?: ReleaseFeedCache; readonly now?: () => number } = {},
 ): Promise<ReadonlyArray<GitHubRelease>> {
+  const cache = options.cache ?? defaultReleaseFeedCache;
+  const now = options.now ?? Date.now;
   const base = feed.apiUrl ?? GITHUB_API_URL;
-  const response = await fetchImpl(
-    `${base}/repos/${encodeURIComponent(feed.owner)}/${encodeURIComponent(feed.repo)}/releases?per_page=30`,
-    { headers: apiHeaders(feed, "application/vnd.github+json") },
-  );
+  const url = `${base}/repos/${encodeURIComponent(feed.owner)}/${encodeURIComponent(feed.repo)}/releases?per_page=30`;
+  const key = feedCacheKey(feed);
+  throwIfBlocked(feed, cache, key, now);
+  const cached = cache.answers.get(key);
+  const response = await fetchImpl(url, {
+    headers: {
+      ...apiHeaders(feed, "application/vnd.github+json"),
+      ...(cached ? { "If-None-Match": cached.etag } : {}),
+    },
+  });
+  if (response.status === 304 && cached) {
+    cache.blockedUntil.delete(key);
+    cache.consecutiveLimits.delete(key);
+    return cached.releases;
+  }
+  if (isRateLimitResponse(response.status, response.headers)) {
+    throw recordRateLimit(feed, cache, key, now, response);
+  }
   if (!response.ok) {
     throw new GitHubFeedError(
       describeFeedError(response.status, feed.token !== null),
       response.status,
     );
   }
-  return parseGitHubReleases(await response.json());
+  cache.blockedUntil.delete(key);
+  cache.consecutiveLimits.delete(key);
+  const releases = parseGitHubReleases(await response.json());
+  const etag = response.headers.get("etag");
+  if (etag) cache.answers.set(key, { etag, releases });
+  else cache.answers.delete(key);
+  return releases;
 }
 
 /**
@@ -270,13 +387,21 @@ export async function openReleaseAsset(
   feed: GitHubFeed,
   assetId: number,
   fetchImpl: FetchLike = fetch,
+  options: { readonly cache?: ReleaseFeedCache; readonly now?: () => number } = {},
 ): Promise<Response> {
+  const cache = options.cache ?? defaultReleaseFeedCache;
+  const now = options.now ?? Date.now;
+  const key = feedCacheKey(feed);
+  throwIfBlocked(feed, cache, key, now);
   const base = feed.apiUrl ?? GITHUB_API_URL;
   const url = `${base}/repos/${encodeURIComponent(feed.owner)}/${encodeURIComponent(feed.repo)}/releases/assets/${assetId}`;
   const first = await fetchImpl(url, {
     headers: apiHeaders(feed, "application/octet-stream"),
     redirect: "manual",
   });
+  if (isRateLimitResponse(first.status, first.headers)) {
+    throw recordRateLimit(feed, cache, key, now, first);
+  }
   if (first.status >= 300 && first.status < 400) {
     const location = first.headers.get("location");
     if (!location) throw new GitHubFeedError("GitHub sent a download redirect without a target.");

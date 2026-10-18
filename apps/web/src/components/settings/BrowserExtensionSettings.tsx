@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import {
+  AuthAccessWriteScope,
   AuthFilesystemReadScope,
   AuthFilesystemWriteScope,
   AuthTerminalOperateScope,
   type BrowserExtensionAction,
   type BrowserExtensionCheck,
   type BrowserExtensionInstallFolder,
+  type BrowserExtensionPeer,
   type BrowserExtensionProfile,
   type BrowserExtensionThreadUse,
   type EnvironmentId,
@@ -106,6 +108,7 @@ export function BrowserExtensionCard({
   const permitted = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
   const canOperate = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const canWrite = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
+  const canGrant = useEnvironmentScope(environmentId, AuthAccessWriteScope);
   const environment = useEnvironment(environmentId);
   const connected = environment?.connection.phase === "connected";
   const query = useEnvironmentQuery(
@@ -118,6 +121,7 @@ export function BrowserExtensionCard({
   const reconnect = useAtomCommand(projectWorkspace.browserExtensionReconnect);
   const stop = useAtomCommand(projectWorkspace.browserExtensionStop);
   const installFolder = useAtomCommand(projectWorkspace.browserExtensionInstallFolder);
+  const answerPeer = useAtomCommand(projectWorkspace.browserExtensionPeer);
 
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -198,6 +202,12 @@ export function BrowserExtensionCard({
           environmentId,
           input: threadId === undefined ? { profileId } : { profileId, threadId },
         }),
+      () => refresh(),
+    );
+  const answer = (id: string, allow: boolean) =>
+    run(
+      `peer:${id}`,
+      () => answerPeer({ environmentId, input: { id, allow } }),
       () => refresh(),
     );
   const prepareFolder = () =>
@@ -398,7 +408,8 @@ export function BrowserExtensionCard({
             <p className="text-sm text-muted-foreground">
               Every chat, project thread and Aide on {machine}, with any provider, uses the paired
               Chrome profile at the same time. Each works in its own tabs, in the blue SpecWithCode
-              tab group.
+              tab group. Threads on your other connected machines can use it too, once you allow
+              that machine here.
             </p>
           </div>
           {profiles.length > 0 && (
@@ -447,6 +458,13 @@ export function BrowserExtensionCard({
             setup
           ) : (
             <>
+              <OtherMachines
+                machine={machine}
+                peers={status.peers ?? []}
+                canGrant={canGrant}
+                busy={busy}
+                onAnswer={(id, allow) => void answer(id, allow)}
+              />
               <ConnectedProfiles
                 environmentId={environmentId}
                 profiles={profiles}
@@ -464,6 +482,73 @@ export function BrowserExtensionCard({
         ) : null}
       </div>
     </SettingsSection>
+  );
+}
+
+/**
+ * Other machines that asked to use this Chrome for their threads. Nothing
+ * from them runs here until the owner allows that machine.
+ */
+function OtherMachines({
+  machine,
+  peers,
+  canGrant,
+  busy,
+  onAnswer,
+}: {
+  machine: string;
+  peers: ReadonlyArray<BrowserExtensionPeer>;
+  canGrant: boolean;
+  busy: string | null;
+  onAnswer: (id: string, allow: boolean) => void;
+}) {
+  if (peers.length === 0) return null;
+  const answerButton = (peer: BrowserExtensionPeer, allow: boolean, label: string) => (
+    <Button
+      size="xs"
+      variant={allow ? "default" : "outline"}
+      disabled={!canGrant || busy !== null}
+      onClick={() => onAnswer(peer.id, allow)}
+    >
+      {busy === `peer:${peer.id}` && <Spinner />}
+      {label}
+    </Button>
+  );
+  return (
+    <div className="space-y-2" data-testid="browser-extension-peers">
+      <p className="text-sm font-medium">Your other machines</p>
+      <ul className="divide-y divide-border/60 rounded-md border border-border/60">
+        {peers.map((peer) => (
+          <li
+            key={peer.id}
+            data-testid="browser-extension-peer"
+            className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm"
+          >
+            <span className="min-w-0">
+              <span className="font-medium">{peer.machine}</span>{" "}
+              <span className="text-muted-foreground">
+                {peer.state === "pending"
+                  ? `wants its threads to use Chrome on ${machine} · asked ${formatRelativeTimeLabel(peer.requestedAt)}`
+                  : peer.state === "allowed"
+                    ? `can use Chrome on ${machine}`
+                    : "was declined"}
+              </span>
+              <span className="block text-xs text-muted-foreground">{`Signed in as ${peer.label}`}</span>
+            </span>
+            <span className="flex gap-2">
+              {peer.state !== "allowed" && answerButton(peer, true, "Allow")}
+              {peer.state === "pending" && answerButton(peer, false, "Decline")}
+              {peer.state === "allowed" && answerButton(peer, false, "Remove access")}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {!canGrant && (
+        <p className="text-xs text-muted-foreground">
+          This device cannot change who may use {machine}'s Chrome.
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -532,6 +617,24 @@ export function ThreadName({
   );
 }
 
+/** A thread here by its sidebar title; one on another machine by the title that machine sent. */
+function ThreadLabel({
+  environmentId,
+  use,
+}: {
+  environmentId: EnvironmentId;
+  use: { readonly threadId: string; readonly title?: string; readonly machine?: string };
+}) {
+  if (use.machine === undefined)
+    return <ThreadName environmentId={environmentId} threadId={use.threadId} />;
+  return (
+    <span>
+      <span className="font-medium text-foreground">{use.title?.trim() || "Untitled thread"}</span>{" "}
+      on {use.machine}
+    </span>
+  );
+}
+
 function ConnectedProfiles({
   environmentId,
   profiles,
@@ -595,8 +698,8 @@ function ConnectedProfiles({
                       className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"
                     >
                       <span className="min-w-0 truncate">
-                        <ThreadName environmentId={environmentId} threadId={use.threadId} /> ·{" "}
-                        {use.tabs} tab{use.tabs === 1 ? "" : "s"} · last action{" "}
+                        <ThreadLabel environmentId={environmentId} use={use} /> · {use.tabs} tab
+                        {use.tabs === 1 ? "" : "s"} · last action{" "}
                         {formatRelativeTimeLabel(use.lastActionAt)}
                       </span>
                       {stopButton(`stop:${profile.id}:${use.threadId}`, "Stop", () =>
@@ -634,7 +737,7 @@ function RecentActions({
           >
             <span className="shrink-0 tabular-nums">{formatRelativeTimeLabel(action.at)}</span>
             <span className="shrink-0">
-              <ThreadName environmentId={environmentId} threadId={action.threadId} />
+              <ThreadLabel environmentId={environmentId} use={action} />
             </span>
             <code className="shrink-0 text-foreground">{action.tool}</code>
             {action.url && <span className="min-w-0 truncate">{action.url}</span>}

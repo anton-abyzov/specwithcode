@@ -22,10 +22,11 @@ Uninstalling the service leaves your projects, threads, and settings intact.
 Running `specwithcode service install` again repairs a service that `specwithcode service status`
 reports as broken.
 
-No package registry carries `specwithcode`, so there is no versioned `npm` or
-`npx` command to run, and the CLI's own `specwithcode update` is off unless
-`STUDIO_ENABLE_SELF_UPDATE=true` is set. To move the service to a newer release, use the path that matches
-how the server was installed:
+If the server was installed from npm (`npm i -g specwithcode`), update it with
+`npm i -g specwithcode@<version>` and then `specwithcode service install`, which
+re-pins the service to the new package. The CLI's own `specwithcode update` is off
+unless `STUDIO_ENABLE_SELF_UPDATE=true` is set. For other installs, move the service to a newer
+release the way the server was installed:
 
 - **Desktop app on that machine:** open **Settings → About**. The **SpecWithCode service**
   row offers **Check now** or **Install now**.

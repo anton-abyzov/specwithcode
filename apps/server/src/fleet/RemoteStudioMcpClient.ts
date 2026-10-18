@@ -32,10 +32,14 @@ export const REMOTE_TOOL_ALLOWLIST = [
   "studio_thread_wait",
   "studio_thread_send",
   "studio_thread_interrupt",
+  // chrome_* calls for a thread here, run in the Chrome paired on that machine.
+  "chrome_peer",
 ] as const;
 export type RemoteTool = (typeof REMOTE_TOOL_ALLOWLIST)[number];
 
-const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
+// A Chrome screenshot comes back as base64, twice (structured and text); chrome_peer
+// refuses images past 8 MiB of base64 so its answers fit.
+const MAX_RESPONSE_BYTES = 24 * 1024 * 1024;
 const IDENTITY_TTL = Duration.minutes(5);
 const DEFAULT_TIMEOUT_MS = 10_000;
 const CONNECT_TIMEOUT_MS = 10_000;

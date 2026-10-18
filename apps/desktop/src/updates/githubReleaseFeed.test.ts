@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  createReleaseFeedCache,
   describeFeedError,
   fetchReleases,
+  GitHubFeedError,
+  rateLimitDelayMs,
   isPlainAssetName,
   macUpdateManifestName,
   openReleaseAsset,
@@ -171,6 +174,94 @@ describe("githubReleaseFeed", () => {
     expect(releases.map((entry) => entry.tagName)).toEqual(["v0.2.1"]);
     expect(calls[0]?.url).toBe("https://api.github.com/repos/acme/studio/releases?per_page=30");
     expect(calls[0]?.headers.Authorization).toBe("Bearer secret-token");
+  });
+
+  it("sends the stored ETag and reuses the last answer on 304", async () => {
+    const cache = createReleaseFeedCache();
+    const feed = { owner: "acme", repo: "studio", token: null };
+    const seen: Array<string | undefined> = [];
+    const fetchImpl = async (_url: string, init?: RequestInit) => {
+      const headers = init?.headers as Record<string, string>;
+      seen.push(headers["If-None-Match"]);
+      if (headers["If-None-Match"] === '"v1"') return new Response(null, { status: 304 });
+      return new Response(JSON.stringify([{ tag_name: "v1.0.44", assets: [] }]), {
+        status: 200,
+        headers: { etag: '"v1"' },
+      });
+    };
+    const first = await fetchReleases(feed, fetchImpl, { cache });
+    const second = await fetchReleases(feed, fetchImpl, { cache });
+    expect(seen).toEqual([undefined, '"v1"']);
+    expect(second).toBe(first);
+    expect(second.map((entry) => entry.tagName)).toEqual(["v1.0.44"]);
+  });
+
+  it("backs off after a rate limit until Retry-After passes", async () => {
+    const cache = createReleaseFeedCache();
+    const feed = { owner: "acme", repo: "studio", token: null };
+    let clock = 1_000_000;
+    let calls = 0;
+    const fetchImpl = async () => {
+      calls += 1;
+      if (calls === 1) {
+        return new Response("{}", { status: 429, headers: { "retry-after": "120" } });
+      }
+      return new Response("[]", { status: 200 });
+    };
+    const options = { cache, now: () => clock };
+    const error = await fetchReleases(feed, fetchImpl, options).catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(GitHubFeedError);
+    expect((error as GitHubFeedError).retryAt).toBe(1_000_000 + 120_000);
+    // Still inside the window: no request reaches GitHub.
+    clock += 60_000;
+    await expect(fetchReleases(feed, fetchImpl, options)).rejects.toThrow("rate limiting");
+    expect(calls).toBe(1);
+    clock += 61_000;
+    await expect(fetchReleases(feed, fetchImpl, options)).resolves.toEqual([]);
+    expect(calls).toBe(2);
+  });
+
+  it("holds back release checks after an asset download hits the rate limit", async () => {
+    const cache = createReleaseFeedCache();
+    const feed = { owner: "acme", repo: "studio", token: null };
+    let calls = 0;
+    const fetchImpl = async () => {
+      calls += 1;
+      return new Response("{}", { status: 429, headers: { "retry-after": "300" } });
+    };
+    const options = { cache, now: () => 1_000_000 };
+    await expect(openReleaseAsset(feed, 7, fetchImpl, options)).rejects.toThrow("rate limiting");
+    expect(calls).toBe(1);
+    // The same limit covers the releases list and other assets.
+    await expect(fetchReleases(feed, fetchImpl, options)).rejects.toThrow("rate limiting");
+    await expect(openReleaseAsset(feed, 8, fetchImpl, options)).rejects.toThrow("rate limiting");
+    expect(calls).toBe(1);
+  });
+
+  it("treats a 403 with no requests left as a rate limit and waits for the reset", async () => {
+    const cache = createReleaseFeedCache();
+    const now = 1_700_000_000_000;
+    const error = await fetchReleases(
+      { owner: "acme", repo: "studio", token: null },
+      async () =>
+        new Response("{}", {
+          status: 403,
+          headers: {
+            "x-ratelimit-remaining": "0",
+            "x-ratelimit-reset": String(now / 1000 + 600),
+          },
+        }),
+      { cache, now: () => now },
+    ).catch((cause: unknown) => cause);
+    expect((error as GitHubFeedError).retryAt).toBe(now + 600_000);
+  });
+
+  it("bounds rate-limit waits between a minute and an hour", () => {
+    const now = 0;
+    expect(rateLimitDelayMs(new Headers({ "retry-after": "5" }), now, 1)).toBe(60_000);
+    expect(rateLimitDelayMs(new Headers({ "retry-after": "99999" }), now, 1)).toBe(3_600_000);
+    expect(rateLimitDelayMs(new Headers(), now, 1)).toBe(60_000);
+    expect(rateLimitDelayMs(new Headers(), now, 3)).toBe(240_000);
   });
 
   it("turns a private-repo 404 into the sign-in message", async () => {

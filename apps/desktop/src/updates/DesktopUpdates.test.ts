@@ -1097,4 +1097,140 @@ describe("DesktopUpdates", () => {
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
+
+  it.effect("checks when Settings opens and the last check is over a minute old", () => {
+    const harness = makeHarness();
+    const settingsCheck = {
+      minAgeMs: DesktopUpdates.SETTINGS_CHECK_MIN_AGE_MS,
+      retryMinAgeMs: DesktopUpdates.SETTINGS_CHECK_MIN_AGE_MS,
+    };
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+
+        yield* TestClock.adjust(Duration.seconds(16));
+        assert.equal(harness.checkCount(), 1);
+        harness.emit("update-not-available");
+        yield* flushCallbacks;
+
+        yield* TestClock.adjust(Duration.seconds(30));
+        yield* updates.checkIfStale("settings", settingsCheck);
+        assert.equal(harness.checkCount(), 1);
+
+        yield* TestClock.adjust(Duration.seconds(31));
+        yield* updates.checkIfStale("settings", settingsCheck);
+        assert.equal(harness.checkCount(), 2);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("posts one system notification per version when found and when downloaded", () => {
+    const harness = makeHarness();
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* flushCallbacks;
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* flushCallbacks;
+        assert.deepEqual(
+          harness.notices.map(({ notice }) => `${notice.kind}:${notice.version}`),
+          ["available:1.2.4"],
+        );
+        assert.equal(harness.notices[0]?.notice.title, "SpecWithCode 1.2.4 is available");
+
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+        assert.deepEqual(
+          harness.notices.map(({ notice }) => `${notice.kind}:${notice.version}`),
+          ["available:1.2.4", "downloaded:1.2.4"],
+        );
+
+        // A newer release is announced again.
+        harness.emit("update-available", { version: "1.2.5" });
+        yield* flushCallbacks;
+        assert.equal(harness.notices.length, 3);
+
+        // Clicking with no window open does nothing harmful.
+        harness.notices[0]?.click();
+        yield* flushCallbacks;
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("does not announce a version again after the app restarts", () => {
+    const harness = makeHarness();
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* flushCallbacks;
+        assert.equal(harness.notices.length, 1);
+        const saved = [...harness.files.values()];
+        assert.deepEqual(saved, ['["available:1.2.4"]']);
+      }),
+    ).pipe(
+      Effect.provide(Layer.merge(TestClock.layer(), harness.layer)),
+      Effect.andThen(() => {
+        // A second launch reads the same file.
+        const relaunch = makeHarness();
+        for (const [path, text] of harness.files) relaunch.files.set(path, text);
+        return Effect.scoped(
+          Effect.gen(function* () {
+            const updates = yield* DesktopUpdates.DesktopUpdates;
+            yield* updates.configure;
+            relaunch.emit("update-available", { version: "1.2.4" });
+            yield* flushCallbacks;
+            assert.equal(relaunch.notices.length, 0);
+            relaunch.emit("update-downloaded", { version: "1.2.4" });
+            yield* flushCallbacks;
+            assert.equal(relaunch.notices.length, 1);
+          }),
+        ).pipe(Effect.provide(Layer.merge(TestClock.layer(), relaunch.layer)));
+      }),
+    );
+  });
+
+  it.effect("posts no update notification while automatic checks are off", () => {
+    const harness = makeHarness();
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        yield* settings.setUpdatePreferences({ checkAutomatically: false });
+
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* flushCallbacks;
+        const state = yield* updates.getState;
+        assert.equal(state.status, "available");
+        assert.equal(harness.notices.length, 0);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it("words update notices for found and downloaded releases", () => {
+    assert.equal(
+      DesktopUpdates.describeUpdateNotice("available", "1.0.44", true).body,
+      "It is downloading in the background. Click to open Settings.",
+    );
+    assert.equal(
+      DesktopUpdates.describeUpdateNotice("available", "1.0.44", false).body,
+      "Click to open Settings and download it.",
+    );
+    assert.equal(
+      DesktopUpdates.describeUpdateNotice("downloaded", "1.0.44", true).title,
+      "SpecWithCode 1.0.44 is ready to install",
+    );
+  });
 });

@@ -8,6 +8,8 @@ import {
   ChromeNavigateInput,
   ChromeOpenInput,
   ChromePageResult,
+  ChromePeerInput,
+  ChromePeerResult,
   ChromePressInput,
   ChromeProfilesInput,
   ChromeProfilesResult,
@@ -24,6 +26,8 @@ import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
 import * as BrowserExtension from "../../../browserExtension/BrowserExtension.ts";
+import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
+import * as RemoteWorkers from "../../../fleet/RemoteWorkers.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 
@@ -31,6 +35,9 @@ const dependencies = [
   McpInvocationContext.McpInvocationContext,
   ThreadManagementService.ThreadManagementService,
   BrowserExtension.BrowserExtension,
+  // A thread here may use Chrome paired on another machine in the fleet.
+  RemoteWorkers.RemoteWorkers,
+  ServerEnvironment.ServerEnvironment,
 ];
 
 const ChromeToolFailure = Schema.Union([BrowserExtensionToolError, OrchestratorMcpFailure]);
@@ -74,7 +81,7 @@ const ACT = { readonly: false, destructive: false } as const;
 const ChromeProfilesTool = make(
   "chrome_profiles",
   "List Chrome profiles",
-  "List the Chrome profiles paired with SpecWithCode on this machine. Call first when you do not know the profile names. Several threads can use one profile at the same time, each in its own tabs.",
+  "List the Chrome profiles paired with SpecWithCode on this machine and on the other machines it is connected to. Call first when you do not know the profile names. Several threads can use one profile at the same time, each in its own tabs.",
   ChromeProfilesInput,
   ChromeProfilesResult,
   READ,
@@ -160,6 +167,15 @@ const ChromeCloseTool = make(
   { readonly: false, destructive: true },
 );
 
+const ChromePeerTool = make(
+  "chrome_peer",
+  "Chrome for another machine",
+  "Used by other SpecWithCode machines in the owner's fleet to run a chrome_* call here for one of their threads. Agents never call it; use the chrome_* tools.",
+  ChromePeerInput,
+  ChromePeerResult,
+  ACT,
+);
+
 export const ChromeStandardToolkit = Toolkit.make(
   ChromeProfilesTool,
   ChromeTabsTool,
@@ -171,6 +187,7 @@ export const ChromeStandardToolkit = Toolkit.make(
   ChromePressTool,
   ChromeEvaluateTool,
   ChromeCloseTool,
+  ChromePeerTool,
 );
 
 export const ChromeScreenshotToolkit = Toolkit.make(ChromeScreenshotTool);
@@ -187,4 +204,5 @@ export const ChromeToolkit = Toolkit.make(
   ChromeScreenshotTool,
   ChromeEvaluateTool,
   ChromeCloseTool,
+  ChromePeerTool,
 );

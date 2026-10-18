@@ -73,6 +73,7 @@ import {
   ChromeStandardToolkit,
 } from "./toolkits/chrome/tools.ts";
 import * as BrowserExtension from "../browserExtension/BrowserExtension.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ComputerUseBroker from "../computerUse/ComputerUseBroker.ts";
 import * as ComputerHandlers from "./toolkits/computer/handlers.ts";
 import {
@@ -760,6 +761,8 @@ const registerDeviceScreenshot = Effect.fn("McpHttpServer.registerDeviceScreensh
 const registerChromeScreenshot = Effect.fn("McpHttpServer.registerChromeScreenshot")(function* () {
   const extension = yield* BrowserExtension.BrowserExtension;
   const threads = yield* ThreadManagementService.ThreadManagementService;
+  // A thread here may take the screenshot in Chrome paired on another machine.
+  const environment = yield* ServerEnvironment.ServerEnvironment;
   const built = yield* ChromeScreenshotToolkit;
   yield* registerImageTool(
     ChromeScreenshotTool,
@@ -771,13 +774,19 @@ const registerChromeScreenshot = Effect.fn("McpHttpServer.registerChromeScreensh
       effect.pipe(
         Effect.provideService(BrowserExtension.BrowserExtension, extension),
         Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
+        Effect.provideService(ServerEnvironment.ServerEnvironment, environment),
       ),
     "screenshot",
-    // Chrome tool errors are written by the server for the agent.
-    (error) =>
-      typeof (error as { reason?: unknown })?.reason === "string"
-        ? (error as { reason: string }).reason
-        : "Chrome screenshot failed.",
+    // Chrome tool errors, and failures from the machine whose Chrome this was, are written by
+    // a server for the agent.
+    (error) => {
+      const { reason, message } = (error ?? {}) as { reason?: unknown; message?: unknown };
+      return typeof reason === "string"
+        ? reason
+        : typeof message === "string" && message !== ""
+          ? message
+          : "Chrome screenshot failed.";
+    },
   );
 });
 

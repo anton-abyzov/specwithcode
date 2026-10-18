@@ -191,19 +191,31 @@ export const makeSweep = Effect.gen(function* () {
                 currentProject.value.workspaceSettings?.archived
               )
                 return;
-              const current = yield* projections.getThreadShell(thread.id);
-              if (!current || current.projectId !== shell.projectId) return;
-              const armAt = DateTime.toEpochMillis(yield* DateTime.now);
-              const freshArm = limitRecoveryCommand(
-                current,
-                autoResumeByDefault(
-                  currentProject.value.workspaceSettings?.autoResume,
-                  preferences,
-                ) || waitRuleArmsResume(current, rule, armAt),
-                armAt,
-                preferences.snoozeLimitedThreads,
+              // Lock order: project admission -> settings -> metadata dispatch.
+              // A completed settings write must precede this decision, or wait
+              // until its arm commits. Policy arms never bind native availability.
+              yield* settings.withSettingsSnapshot((currentSettings) =>
+                Effect.gen(function* () {
+                  const current = yield* projections.getThreadShell(thread.id);
+                  if (!current || current.projectId !== shell.projectId) return;
+                  const armAt = DateTime.toEpochMillis(yield* DateTime.now);
+                  const currentRule = resolveProjectSettings(
+                    currentSettings,
+                    shell.projectId,
+                  ).settings;
+                  const freshArm = limitRecoveryCommand(
+                    current,
+                    autoResumeByDefault(
+                      currentProject.value.workspaceSettings?.autoResume,
+                      currentSettings,
+                    ) || waitRuleArmsResume(current, currentRule, armAt),
+                    armAt,
+                    currentSettings.snoozeLimitedThreads,
+                  );
+                  if (freshArm?.type === "thread.metadata.update")
+                    yield* threads.dispatch(freshArm);
+                }),
               );
-              if (freshArm?.type === "thread.metadata.update") yield* threads.dispatch(freshArm);
             }),
           );
           return; // Observe only a committed user/policy choice on the next sweep.
@@ -252,23 +264,40 @@ export const makeSweep = Effect.gen(function* () {
               currentProject.value.workspaceSettings?.archived
             )
               return;
-            const current = yield* projections.getThreadShell(thread.id);
-            if (!current || current.projectId !== shell.projectId) return;
-            const at = DateTime.toEpochMillis(yield* DateTime.now);
-            if (
-              checked.codex &&
-              (checked.mayResume !== true || !hasFreshLimitPermission(current, at))
-            )
-              return;
-            const command = limitRecoveryCommand(
-              current,
-              autoResumeByDefault(
-                currentProject.value.workspaceSettings?.autoResume,
-                preferences,
-              ) || waitRuleArmsResume(current, rule, at),
-              at,
-              preferences.snoozeLimitedThreads,
+            const command = yield* settings.withSettingsSnapshot((currentSettings) =>
+              Effect.gen(function* () {
+                const current = yield* projections.getThreadShell(thread.id);
+                if (!current || current.projectId !== shell.projectId) return null;
+                const at = DateTime.toEpochMillis(yield* DateTime.now);
+                if (
+                  checked.codex &&
+                  (checked.mayResume !== true || !hasFreshLimitPermission(current, at))
+                )
+                  return null;
+                const currentRule = resolveProjectSettings(
+                  currentSettings,
+                  shell.projectId,
+                ).settings;
+                const next = limitRecoveryCommand(
+                  current,
+                  autoResumeByDefault(
+                    currentProject.value.workspaceSettings?.autoResume,
+                    currentSettings,
+                  ) || waitRuleArmsResume(current, currentRule, at),
+                  at,
+                  currentSettings.snoozeLimitedThreads,
+                );
+                // The observed stop may have changed during the probe. Any new
+                // policy arm uses the same settings/commit ordering as above.
+                if (next?.type === "thread.metadata.update") {
+                  yield* threads.dispatch(next);
+                  return null;
+                }
+                return next;
+              }),
             );
+            // Persisted recovery remains authoritative; never hold the settings
+            // lock across continuation admission or provider work.
             if (command) yield* threads.dispatch(command);
           }),
         );

@@ -51,7 +51,7 @@ MANIFEST_ASSET = 'deployment-helpers-manifest.json'
 RESERVED_ASSETS = (PLAN_ASSET, SUMS_ASSET, MANIFEST_ASSET)
 DEFAULT_REPOSITORY = 'anton-abyzov/specwithcode'
 DEFAULT_API = 'https://api.github.com'
-CHECK_INTERVAL = datetime.timedelta(minutes=60)
+CHECK_INTERVAL = update_request.CHECK_INTERVAL  # 60 minutes; status() calls a check older than 2x stale.
 # Two process inventories bracket the snapshot and it hashes every guarded table; on a
 # loaded Mac one took almost 4 minutes, so the limit leaves room before reporting "busy".
 SNAPSHOT_TIMEOUT = 600
@@ -642,13 +642,12 @@ def read_tail(path, home, limit=HELPER_TAIL):
         handle.seek(max(0, info.st_size - limit))
         return handle.read(limit).decode('utf-8', 'replace')
 
-def launchctl(args):
+def launchctl(args, output=None):
+    """launchctl's exit status; its stdout and stderr are appended to `output` when given."""
     _refuse_if(sys.platform != 'darwin', 'LaunchAgents are only available on macOS')
-    try:
-        return subprocess.run(['/bin/launchctl'] + list(args), stdin=subprocess.DEVNULL,
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30).returncode
-    except (OSError, subprocess.SubprocessError):
-        return 1
+    code, stdout, stderr = update_request.launchctl_run(args)
+    (output if output is not None else []).extend((stdout, stderr))
+    return code
 
 def current_uid():
     return os.getuid()
@@ -1423,9 +1422,17 @@ def install_launch_agent(home, identity, out):
         domain, result = 'gui/%d' % current_uid(), 'installed' if written else 'unchanged'
         if not same(plist_path, content) or launchctl(['print', domain + '/' + label]) != 0:
             atomic_write(plist_path, content, home, 0o644)
+            listing = []  # A disabled label never bootstraps: booting it out would only lose the job.
+            if launchctl(['print-disabled', domain], listing) == 0 and \
+                    update_request.label_disabled(''.join(listing[:1]), label):
+                out(json.dumps({'result': 'disabled', 'label': label, 'message': update_request.DISABLED}))
+                return update_request.DISABLED_EXIT  # Only Repair, on a person's click, turns it back on.
             launchctl(['bootout', domain + '/' + label])  # Not loaded yet is fine.
-            if launchctl(['bootstrap', domain, str(plist_path)]) != 0:
-                raise AgentError('launchctl could not load the update agent')
+            errors = []
+            code = launchctl(['bootstrap', domain, str(plist_path)], errors)
+            if code != 0:
+                raise AgentError('launchctl could not load the update agent: ' +
+                                 update_request.launchctl_reason(code, *errors[1:2]))
             result = 'installed'
     finally:
         if lock_fd is not None:
@@ -1453,6 +1460,7 @@ def main(argv=None):
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--install-launch-agent', action='store_true')
     mode.add_argument('--uninstall-launch-agent', action='store_true')
+    mode.add_argument('--repair-launch-agent', action='store_true')  # Settings' Repair, on a click only.
     mode.add_argument('--status', action='store_true')
     args = parser.parse_args(argv)
     home = pathlib.Path(args.home) if args.home else pathlib.Path.home()
@@ -1465,6 +1473,9 @@ def main(argv=None):
         installation_descriptor.validate_identity(args.identity)
         if args.install_launch_agent:
             return install_launch_agent(home, args.identity, out)
+        if args.repair_launch_agent:
+            return update_request.repair_launch_agent(args.identity, current_uid(), launchctl, lambda: install_launch_agent(
+                home, args.identity, out), AgentError, out)
         if args.uninstall_launch_agent:
             return uninstall_launch_agent(home, args.identity, out)
         if args.status:

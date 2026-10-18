@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
+  HostProcessArchitecture,
   HostProcessExecutablePath,
   HostProcessPlatform,
   HostProcessUserId,
@@ -11,7 +12,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import { HttpClient } from "effect/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ProcessRunner from "../processRunner.ts";
@@ -49,7 +50,9 @@ it("reads the served Studio home back out of a rendered unit or plist", () => {
   });
 
   expect(
-    BootService.bootServiceBaseDirOf(BootService.renderBootServiceUnit(plan("/home/dev/.specweave-studio"))),
+    BootService.bootServiceBaseDirOf(
+      BootService.renderBootServiceUnit(plan("/home/dev/.specweave-studio")),
+    ),
   ).toBe("/home/dev/.specweave-studio");
   // Spaces and specifiers are quoted and escaped on the way in.
   expect(
@@ -593,7 +596,11 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       const path = yield* Path.Path;
       const otherHome = yield* fs.makeTempDirectoryScoped({ prefix: "studio-other-home-" });
 
-      const other = yield* makeService(undefined, "1.2.3", path.join(otherHome, ".specweave-studio"));
+      const other = yield* makeService(
+        undefined,
+        "1.2.3",
+        path.join(otherHome, ".specweave-studio"),
+      );
       expect(yield* other.restart).toBe(false);
       expect(commands.filter((command) => command.startsWith("systemctl "))).toEqual([]);
     }),
@@ -828,6 +835,195 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
           `launchctl bootstrap gui/501 ${plistPath}`,
         ]);
       }
+    }),
+  );
+});
+
+it.layer(NodeServices.layer)("boot service install from the npm package", (it) => {
+  it.effect(
+    "pins the installed npm package on macOS and downloads nothing (specwithcode@1.0.43 regression)",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "studio-boot-service-npm-" });
+        const baseDir = path.join(home, ".specwithcode");
+        // What `npm i -g specwithcode` leaves on disk, reduced to what the service needs.
+        const npmDir = path.join(home, "npm", "lib", "node_modules", "specwithcode");
+        yield* fs.makeDirectory(path.join(npmDir, "node_modules", "dep"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(npmDir, "bin.mjs"),
+          "console.log(`${process.env.STUDIO_CLI_NAME} v1.2.3`);\n",
+        );
+        yield* fs.writeFileString(path.join(npmDir, "node_modules", "dep", "index.js"), "");
+        const commands: string[] = [];
+        const requests: string[] = [];
+        const runner = ProcessRunner.ProcessRunner.of({
+          run: (input) =>
+            Effect.gen(function* () {
+              commands.push(`${input.command} ${input.args.join(" ")}`);
+              // Run the generated launcher for real; launchctl stays a fake.
+              const stdout =
+                input.command === "launchctl"
+                  ? ""
+                  : yield* Effect.promise(async () => {
+                      const { execFileSync } = await import("node:child_process");
+                      return execFileSync(input.command, [...input.args], { encoding: "utf8" });
+                    });
+              return {
+                stdout,
+                stderr: "",
+                code: ChildProcessSpawner.ExitCode(0),
+                timedOut: false,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                stdoutInvalidUtf8: false,
+                stderrInvalidUtf8: false,
+              };
+            }),
+        });
+        const service = yield* BootService.make({
+          baseDir,
+          logsDir: path.join(baseDir, "userdata", "logs"),
+          cliVersion: "1.2.3",
+          host: { execPath: process.execPath },
+          npmPackage: { dir: npmDir, version: "1.2.3" },
+        }).pipe(
+          Effect.provideService(ProcessRunner.ProcessRunner, runner),
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.succeed(HostProcessPlatform, "darwin"),
+              Layer.succeed(HostProcessArchitecture, "arm64"),
+              Layer.succeed(HostProcessUserId, 501),
+              Layer.succeed(HostProcessExecutablePath, process.execPath),
+              // 1.0.43 fetched updates.studio.invalid here, and no darwin archive is published.
+              Layer.succeed(
+                HttpClient.HttpClient,
+                HttpClient.make((request) => {
+                  requests.push(request.url);
+                  return Effect.die("no release download expected");
+                }),
+              ),
+              ConfigProvider.layer(
+                ConfigProvider.fromEnv({ env: { HOME: home, PATH: "/usr/bin" } }),
+              ),
+            ),
+          ),
+        );
+
+        const plan = yield* service.install();
+
+        const runtime = pinnedRuntimePaths(path, baseDir, "1.2.3", "darwin");
+        expect(requests).toEqual([]);
+        expect(plan.program).toEqual([runtime.entryPath, "__service-launcher"]);
+        const plist = yield* fs.readFileString(plan.unitPath);
+        expect(plist).toContain(`<string>${runtime.entryPath}</string>`);
+        expect(yield* fs.readFileString(runtime.sentinelPath)).toBe("1.2.3\n");
+        expect(
+          yield* fs.exists(path.join(runtime.versionDir, "node_modules", "dep", "index.js")),
+        ).toBe(true);
+        expect(commands).toContain(`launchctl bootstrap gui/501 ${plan.unitPath}`);
+        // The pinned copy keeps working after npm replaces or removes the package.
+        yield* fs.remove(npmDir, { recursive: true });
+        const output = yield* Effect.promise(async () => {
+          const { execFileSync } = await import("node:child_process");
+          return execFileSync(runtime.entryPath, ["--version"], { encoding: "utf8" });
+        });
+        expect(output.trim()).toBe("specweave-studio v1.2.3");
+        expect((yield* service.status).current).toBe(true);
+      }),
+  );
+
+  it.effect("ignores an npm package of another version and falls back to the release", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "studio-boot-service-npm-old-" });
+      const requests: string[] = [];
+      const service = yield* BootService.make({
+        baseDir: path.join(home, ".specwithcode"),
+        logsDir: path.join(home, ".specwithcode", "userdata", "logs"),
+        cliVersion: "1.2.4",
+        npmPackage: { dir: path.join(home, "npm"), version: "1.2.3" },
+      }).pipe(
+        Effect.provideService(
+          ProcessRunner.ProcessRunner,
+          ProcessRunner.ProcessRunner.of({ run: () => Effect.die("no command expected") }),
+        ),
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.succeed(HostProcessPlatform, "darwin"),
+            Layer.succeed(HostProcessArchitecture, "arm64"),
+            Layer.succeed(HostProcessUserId, 501),
+            Layer.succeed(
+              HttpClient.HttpClient,
+              HttpClient.make((request) => {
+                requests.push(request.url);
+                return Effect.succeed(
+                  HttpClientResponse.fromWeb(request, new Response("", { status: 404 })),
+                );
+              }),
+            ),
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: { HOME: home } })),
+          ),
+        ),
+      );
+
+      const error = yield* service.install().pipe(Effect.flip);
+
+      expect(error.message).toContain("downloading the specweave-studio release checksums");
+      expect(requests).toEqual([
+        "https://github.com/anton-abyzov/specwithcode/releases/download/v1.2.4/SHA256SUMS",
+      ]);
+    }),
+  );
+  it.effect("does not pin from the pinned copy the CLI itself runs from", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "studio-boot-service-npm-pin-" });
+      const baseDir = path.join(home, ".specwithcode");
+      // installFromLocalBundle copied the npm manifest, so the pin looks like the npm package.
+      const runtime = pinnedRuntimePaths(path, baseDir, "1.2.3", "darwin");
+      yield* fs.makeDirectory(runtime.versionDir, { recursive: true });
+      yield* fs.writeFileString(path.join(runtime.versionDir, "bin.mjs"), "");
+      const requests: string[] = [];
+      const service = yield* BootService.make({
+        baseDir,
+        logsDir: path.join(baseDir, "userdata", "logs"),
+        cliVersion: "1.2.3",
+        npmPackage: { dir: runtime.versionDir, version: "1.2.3" },
+      }).pipe(
+        Effect.provideService(
+          ProcessRunner.ProcessRunner,
+          ProcessRunner.ProcessRunner.of({ run: () => Effect.die("no command expected") }),
+        ),
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.succeed(HostProcessPlatform, "darwin"),
+            Layer.succeed(HostProcessArchitecture, "arm64"),
+            Layer.succeed(HostProcessUserId, 501),
+            Layer.succeed(
+              HttpClient.HttpClient,
+              HttpClient.make((request) => {
+                requests.push(request.url);
+                return Effect.succeed(
+                  HttpClientResponse.fromWeb(request, new Response("", { status: 404 })),
+                );
+              }),
+            ),
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: { HOME: home } })),
+          ),
+        ),
+      );
+
+      const error = yield* service.install().pipe(Effect.flip);
+
+      // The pin is treated as the install target and the release is fetched instead.
+      expect(error.message).toContain("downloading the specweave-studio release checksums");
+      expect(requests).toEqual([
+        "https://github.com/anton-abyzov/specwithcode/releases/download/v1.2.3/SHA256SUMS",
+      ]);
     }),
   );
 });

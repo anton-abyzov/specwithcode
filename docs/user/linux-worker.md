@@ -67,8 +67,8 @@ steps below.
 ## Install the server
 
 On the Linux host, download the archive and its checksums from the release and
-verify them. Use 1.0.44 or later: in 1.0.43, `service install` cannot fetch
-its own Linux archive.
+verify them. Use 1.0.45 or later: in 1.0.43 and 1.0.44,
+`service install` cannot fetch its own Linux archive.
 
 ```bash
 VERSION=$(curl -fsSL https://api.github.com/repos/anton-abyzov/specwithcode/releases/latest \

@@ -67,3 +67,17 @@ export const checkForUpdate = DesktopIpc.makeIpcMethod({
     return yield* updates.check("web-ui");
   }),
 });
+
+/** Settings > General opened: check unless the last check is under a minute old. */
+export const checkForUpdateIfStale = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.UPDATE_CHECK_IF_STALE_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.updates.checkIfStale")(function* () {
+    const updates = yield* DesktopUpdates.DesktopUpdates;
+    yield* updates.checkIfStale("settings", {
+      minAgeMs: DesktopUpdates.SETTINGS_CHECK_MIN_AGE_MS,
+      retryMinAgeMs: DesktopUpdates.SETTINGS_CHECK_MIN_AGE_MS,
+    });
+  }),
+});

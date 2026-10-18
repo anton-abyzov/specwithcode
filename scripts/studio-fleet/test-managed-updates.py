@@ -68,6 +68,18 @@ class ManagedConsent(unittest.TestCase):
         # A forgotten stub must never access a network or read real GitHub credentials.
         self.context.enter_context(mock.patch.object(agent.Agent, 'open_url', side_effect=AssertionError('Unexpected network')))
         self.context.enter_context(mock.patch.object(agent, 'find_gh_token', side_effect=AssertionError('Unexpected auth access')))
+        # launchd as the stub reports it: never the real launchctl.
+        self.launchd = {'loaded': True, 'disabled': False, 'calls': []}
+        self.context.enter_context(mock.patch.object(agent.update_request, 'launchctl_run', self.fake_launchctl))
+
+    def fake_launchctl(self, args, timeout=30):
+        self.launchd['calls'].append(list(args))
+        self.assertIn(args[0], ('print', 'print-disabled'), 'status must only read launchd')
+        if args[0] == 'print-disabled':
+            label = 'com.specweave.studio.lab-502.updater'
+            return 0, 'disabled services = {\n\t"%s" => %s\n}\n' % (
+                label, 'disabled' if self.launchd['disabled'] else 'enabled'), ''
+        return (0, 'state = running\n', '') if self.launchd['loaded'] else (113, '', 'Could not find service')
 
     def grant(self, controller=None, scopes=None, **values):
         controller = controller or self.controller
@@ -114,8 +126,37 @@ class ManagedConsent(unittest.TestCase):
         self.assertEqual(value, {'environmentId': self.environment, 'installationId': self.identity,
                                 'support': 'supported', 'localAutomation': 'enabled',
                                 'remoteConsent': 'not-enrolled', 'revision': 0, 'operation': 'idle',
-                                'currentVersion': '1.0.17', 'availableVersion': None, 'checkedAt': None})
+                                'currentVersion': '1.0.17', 'availableVersion': None, 'checkedAt': None,
+                                'agentLoaded': True, 'agentDisabled': False, 'stale': False})
         self.assertEqual(before, sorted(str(path.relative_to(self.home)) for path in self.home.rglob('*')))
+        self.assertEqual(self.launchd['calls'], [['print-disabled', 'gui/502'],
+                                                 ['print', 'gui/502/com.specweave.studio.lab-502.updater']])
+
+    def test_status_reports_a_disabled_unloaded_or_overdue_agent(self):
+        self.launchd.update(loaded=False, disabled=True)
+        value = self.run_request()
+        self.assertEqual((value['agentLoaded'], value['agentDisabled'], value['stale']), (False, True, False))
+        self.launchd.update(disabled=False)
+        self.assertEqual((self.run_request()['agentLoaded'], self.run_request()['agentDisabled']), (False, False))
+        self.launchd.update(loaded=True)
+        self.updates.mkdir(mode=0o700)
+        old = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=4)).isoformat()
+        (self.updates / 'state.json').write_text(json.dumps({**agent.blank_state(), 'status': 'up-to-date',
+                                                              'checkedAt': old}))
+        value = self.run_request()
+        self.assertEqual((value['operation'], value['checkedAt'], value['stale']), ('up-to-date', old, True))
+        recent = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=90)).isoformat()
+        (self.updates / 'state.json').write_text(json.dumps({**agent.blank_state(), 'checkedAt': recent}))
+        self.assertFalse(self.run_request()['stale'])
+        # Automatic checks off: an old check is expected, not a stopped agent.
+        (self.updates / 'state.json').write_text(json.dumps({**agent.blank_state(), 'checkedAt': old}))
+        (self.updates / 'config.json').write_text(json.dumps({**agent.DEFAULT_CONFIG, 'checkAutomatically': False}))
+        self.assertFalse(self.run_request()['stale'])
+        self.launchd['calls'].clear()
+        with mock.patch.object(managed.sys, 'platform', 'linux'):
+            value = self.run_request()
+        self.assertEqual((value['agentLoaded'], value['agentDisabled'], value['stale']), (None, None, False))
+        self.assertEqual(self.launchd['calls'], [])
 
     def test_enrollment_binds_uid502_service_environment_and_logical_origin(self):
         receipt = self.receipt_path.read_bytes(); database = self.database.read_bytes()

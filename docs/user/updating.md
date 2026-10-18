@@ -46,10 +46,11 @@ The offered action depends on how the server runs:
 | **Update the desktop app** | Update the desktop app on the machine running the server, then reopen it if needed.                                                                                                             |
 | **Copy update steps**      | The server cannot update itself. Follow the copied steps on the named host, then start the server again with your usual options.                                                                |
 
-No package registry carries `specweave-studio`, so there is no versioned `npm` or
-`npx` command to run, and the CLI's own `specwithcode update` is switched off in
-current builds. On the named host, use the path that matches how the server was
-installed:
+If the server was installed from npm (`npm i -g specwithcode`), update it with
+`npm i -g specwithcode@<version>` and then `specwithcode service install`, which
+re-pins the service to the new package. The CLI's own `specwithcode update` is off
+unless `STUDIO_ENABLE_SELF_UPDATE=true` is set. For other installs, on the named host, use the path that matches how
+the server was installed:
 
 - **Desktop app on that machine:** open **Settings → About**. The **SpecWithCode service**
   row offers **Check now** or **Install now**.

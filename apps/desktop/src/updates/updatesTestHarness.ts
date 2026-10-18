@@ -49,6 +49,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
   const listeners = new Map<string, Set<(...args: readonly unknown[]) => void>>();
   const sentStates: DesktopUpdateState[] = [];
   const installSteps: string[] = [];
+  const notices: Array<{ notice: DesktopUpdates.DesktopUpdateNotice; click: () => void }> = [];
 
   const addListener = (eventName: string, listener: (...args: readonly unknown[]) => void) => {
     const eventListeners = listeners.get(eventName) ?? new Set();
@@ -222,22 +223,27 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
   // Tracks the restart markers installs leave, so installs stay free of real
   // disk I/O that would outrun the tests' settle loops.
   const updateRestartMarkers = new Set<string>();
+  // Other files the updater keeps (the shown-notices list), by path.
+  const files = new Map<string, string>();
   const layerFileSystem = FileSystem.layerNoop({
     readFileString: (path) =>
       path === "/missing/resources/package-type" && options.packageType !== undefined
         ? Effect.succeed(options.packageType)
-        : Effect.fail(
-            PlatformError.systemError({
-              module: "FileSystem",
-              method: "readFileString",
-              _tag: "NotFound",
-              pathOrDescriptor: path,
-            }),
-          ),
+        : files.has(path)
+          ? Effect.succeed(files.get(path) ?? "")
+          : Effect.fail(
+              PlatformError.systemError({
+                module: "FileSystem",
+                method: "readFileString",
+                _tag: "NotFound",
+                pathOrDescriptor: path,
+              }),
+            ),
     makeDirectory: () => Effect.void,
-    writeFileString: (path) =>
+    writeFileString: (path, data) =>
       Effect.sync(() => {
-        updateRestartMarkers.add(path);
+        if (path.endsWith("update-notices.json")) files.set(path, data);
+        else updateRestartMarkers.add(path);
       }),
     remove: (path) =>
       Effect.sync(() => {
@@ -245,8 +251,14 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
       }),
   });
 
+  // System notifications are recorded instead of shown.
+  const layerNotifier = Layer.succeed(DesktopUpdates.DesktopUpdateNotifier, (notice, click) => {
+    notices.push({ notice, click });
+  });
+
   const layer = DesktopUpdates.layer.pipe(
     Layer.provide(layerFileSystem),
+    Layer.provide(layerNotifier),
     Layer.provideMerge(layerUpdater),
     Layer.provideMerge(layerWindow),
     Layer.provideMerge(layerBackend),
@@ -270,6 +282,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     quitAndInstalls: () => quitAndInstallCount,
     installSteps,
     updateRestartMarkers,
+    files,
     downloadCount: () => downloadCount,
     feedUrls: (): ElectronUpdater.ElectronUpdaterFeedUrl[] => feedUrls,
     fullChangelog: () => fullChangelog,
@@ -279,6 +292,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
         0,
       ),
     sentStates,
+    notices,
     emit: (eventName: string, payload?: unknown) => {
       for (const listener of listeners.get(eventName) ?? []) {
         listener(payload);

@@ -31,6 +31,7 @@ vi.mock("../../studio/projectWorkspace", () => ({
     browserExtensionReconnect: "reconnect",
     browserExtensionStop: "stop",
     browserExtensionInstallFolder: "folder",
+    browserExtensionPeer: "peer",
   },
 }));
 vi.mock("../../state/use-atom-command", () => ({
@@ -211,6 +212,77 @@ describe("BrowserExtensionCard", () => {
       ),
     ).toHaveLength(1);
     expect(text()).toContain("Publish the launch post");
+  });
+
+  it("names a thread from another machine by the title and machine it sent", async () => {
+    const [first, second] = status.profiles;
+    const remote = {
+      threadId: "peer:env-m1:t9",
+      tabs: 2,
+      since: "2026-10-16T09:01:00Z",
+      lastActionAt: "2026-10-16T09:03:00Z",
+      title: "Check the invoice page",
+      machine: "M1 Air",
+    };
+    state.query.data = {
+      ...status,
+      profiles: [{ ...first!, threads: [remote] }, second!],
+      recentActions: [
+        {
+          at: remote.lastActionAt,
+          profile: "Marketing",
+          threadId: remote.threadId,
+          tool: "chrome_click",
+          title: remote.title,
+          machine: remote.machine,
+        },
+      ],
+    };
+    await render();
+    expect(text()).toContain("Check the invoice page");
+    expect(text()).toContain("M1 Air");
+    expect(text()).not.toContain("peer:env-m1");
+    expect(text()).not.toContain("A thread no longer listed");
+    expect(text()).toContain("Threads on your other connected machines");
+  });
+
+  it("asks before another machine uses this Chrome, and takes access back", async () => {
+    state.query.data = {
+      ...status,
+      peers: [
+        {
+          id: "s1",
+          machine: "M1 Air",
+          label: "SpecWithCode workers · env-m1",
+          state: "pending",
+          requestedAt: "2026-10-16T09:02:00Z",
+        },
+        {
+          id: "s2",
+          machine: "Mini",
+          label: "SpecWithCode workers · env-mini",
+          state: "allowed",
+          requestedAt: "2026-10-16T08:00:00Z",
+        },
+      ],
+    };
+    await render();
+    expect(text()).toContain("Your other machines");
+    expect(text()).toContain("M1 Air");
+    expect(text()).toContain("wants its threads to use Chrome on M4 Max");
+    expect(text()).toContain("Signed in as SpecWithCode workers · env-m1");
+    expect(text()).toContain("can use Chrome on M4 Max");
+    state.command.mockResolvedValue({ _tag: "Success", value: status });
+    await act(() => button("Allow").props.onClick());
+    expect(state.command).toHaveBeenCalledWith("peer", {
+      environmentId: m4,
+      input: { id: "s1", allow: true },
+    });
+    await act(() => button("Remove access").props.onClick());
+    expect(state.command).toHaveBeenCalledWith("peer", {
+      environmentId: m4,
+      input: { id: "s2", allow: false },
+    });
   });
 
   it("links the store listing when it is public", async () => {

@@ -290,6 +290,12 @@ function AboutVersionSection() {
 
   const hasDesktopBridge = typeof window !== "undefined" && Boolean(window.desktopBridge);
   const selectedUpdateChannel = updateState?.channel ?? "latest";
+
+  // Opening this page checks when the last check is over a minute old, so
+  // the row never reports an old "Up to date".
+  useEffect(() => {
+    void window.desktopBridge?.checkForUpdateIfStale?.().catch(() => undefined);
+  }, []);
   const selectedHostedAppChannel = hasDesktopBridge ? null : HOSTED_APP_CHANNEL;
 
   const handleUpdateChannelChange = useCallback(
@@ -415,13 +421,13 @@ function AboutVersionSection() {
       : isDesktopUpdateButtonDisabled(updateState);
 
   const actionLabel: Record<string, string> = { download: "Download", install: "Install" };
+  // The status ("Up to date", "Last checked …") is in the description; the
+  // button always says what a click does.
   const statusLabel: Record<string, string> = {
     checking: "Checking…",
     downloading: "Downloading…",
-    "up-to-date": "Up to Date",
   };
-  const buttonLabel =
-    actionLabel[action] ?? statusLabel[updateState?.status ?? ""] ?? "Check for Updates";
+  const buttonLabel = actionLabel[action] ?? statusLabel[updateState?.status ?? ""] ?? "Check now";
   const releaseNotesUrl =
     action === "download" || action === "install"
       ? getDesktopUpdateReleaseUrl(
