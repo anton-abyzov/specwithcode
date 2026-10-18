@@ -16,6 +16,9 @@
 # and its failure, the plan checked into SHA256SUMS before drafts and on the draft before
 # publishing, the previous release's digests file, the public clone's noreply identity and a --ci
 # rerun removing the bump-only release branch a failed run left, and every stubbed command existing.
+# And the one retry of a flaky test: a stage-1 job or server file that fails once passes as a
+# FLAKE, one that fails twice fails the stage, too many failures or a crashed shard get no retry,
+# --no-retry turns it off, and every retry is in retries.jsonl and the timing table.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -144,8 +147,8 @@ use_machine() {  # use_machine ROOT VERSION
   STUB_ENV=(HOME="$root/home" RELEASE_STUB=1 RELEASE_STAGING_ROOT="$STAGING" RELEASE_TREES="$root/trees.noindex"
     RELEASE_ENV="$root/secrets/release.env" NVM_DIR="$root/nvm" STUDIO_FLEET_HOSTS="$root/fleet/hosts.json"
     STUDIO_PUBLIC_RULES="$root/public-rules/rules.json" RELEASE_DESKTOP_APP="$root/Applications/SpecWithCode.app"
-    RELEASE_STUB_PREVIOUS=1.1.0 RELEASE_STUB_SHA="$SHA_A" RELEASE_STUB_FAIL= RELEASE_STUB_FAIL_ONCE= RELEASE_STUB_STATUS= RELEASE_STUB_OUTPUT=
-    RELEASE_JOBS=2)
+    RELEASE_STUB_PREVIOUS=1.1.0 RELEASE_STUB_SHA="$SHA_A" RELEASE_STUB_FAIL= RELEASE_STUB_FAIL_ONCE=
+    RELEASE_STUB_STATUS= RELEASE_STUB_OUTPUT= RELEASE_JOBS=2)
   mkdir -p "$root/home"
 }
 
@@ -201,12 +204,13 @@ check 'argument errors write nothing' test -z "$(find "$ARGS_HOME" -mindepth 1 -
 DRY_HOME="$WORK/dry-home"
 mkdir -p "$DRY_HOME"
 STUB_ENV=(HOME="$DRY_HOME" RELEASE_STUB= RELEASE_STAGING_ROOT= RELEASE_TREES= RELEASE_ENV=)
-EXPECTED_ORDER="preflight trees prev bump candidate stage1 server build bundle sign helpers plan drafts server-wait quit-desktop publish-private publish-public fleet-m4 fleet-workers desktop merge"
+EXPECTED_ORDER="preflight trees prev bump candidate stage1 server build bundle sign helpers plan drafts server-wait quit-desktop publish-private publish-public fleet-m4 desktop fleet-workers merge"
 dry_ok() {
   run 0 9.9.9 --dry-run || return 1
   [ "$(sed -n 's/^> \([a-z0-9-]*\).*/\1/p' "$LAST_OUT" | tr '\n' ' ' | sed 's/ $//')" = "$EXPECTED_ORDER" ] || return 1
   has 'would stop: the installer and updater accept only 1.x.y' && has 'Dry-run done: nothing was run or written.' &&
-    has 'test-sharded.mjs --shards 3' && has 'fleet_rollout.py --version 9.9.9 --only m4 --hold-minutes 15' &&
+    has 'test-sharded.mjs --shards 4' && has 'fleet_rollout.py --version 9.9.9 --only m4 --hold-minutes 15' &&
+    has 'server-retry: (in ' && has 'runs once more, alone' && has 'typecheck-gate.sh --jobs 3' &&
     has '--arg=--allow-project-migrations --arg=--allow-existing-browser-heartbeat' &&
     has 'electron-check: (in ' && has 'sums-check: python3 -B' && has 'fetch-sums-private: gh release download v9.9.9' &&
     has "verify-sums --dir $DRY_HOME/.specwithcode/release-staging/9.9.9/prev --digests" &&
@@ -221,7 +225,7 @@ CI_ORDER="preflight trees prev bump candidate stage1 server build bundle sign he
 dry_ci_ok() {
   run 0 9.9.9 --dry-run --ci || return 1
   [ "$(sed -n 's/^> \([a-z0-9-]*\).*/\1/p' "$LAST_OUT" | tr '\n' ' ' | sed 's/ $//')" = "$CI_ORDER" ] &&
-    has 'fleet-m4, fleet-workers, desktop: skipped (--ci)' && lacks 'fleet_rollout.py' && lacks 'osascript'
+    has 'fleet-m4, desktop, fleet-workers: skipped (--ci)' && lacks 'fleet_rollout.py' && lacks 'osascript'
 }
 check '--ci leaves out quit-desktop, the fleet stages and the desktop swap' dry_ci_ok
 
@@ -301,18 +305,24 @@ BEFORE="$(lines)"
 finish_ok() {
   run 0 1.2.0 --resume || return 1
   has 'SpecWithCode 1.2.0 is released.' && has 'Stage timings for 1.2.0, compared with 1.1.0' || return 1
-  [ "$(stages_after "$BEFORE")" = "publish-private publish-public fleet-m4 fleet-workers desktop merge " ] || return 1
+  [ "$(stages_after "$BEFORE")" = "publish-private publish-public fleet-m4 desktop fleet-workers merge " ] || return 1
   local order
   order="$(awk -F '\t' -v from="$BEFORE" 'NR > from { printf "%s ", $2 }' "$STUB_LOG")"
   case "$order" in
-    *fetch-sums-private*check-sums-private*publish-private*public-untag*mirror-publish*fetch-sums-public*check-sums-public*publish-public*fleet-m4*fleet-workers*desktop-install*desktop-open*pr-merge*) ;;
+    *fetch-sums-private*check-sums-private*publish-private*public-untag*mirror-publish*fetch-sums-public*check-sums-public*publish-public*fleet-m4*desktop-install*desktop-open*fleet-workers*pr-merge*) ;;
     *) return 1 ;;
   esac
   grep -q 'fleet_rollout.py --version 1.2.0 --only m4 --hold-minutes 15' "$STUB_LOG" &&
     grep -q 'publish.mjs --public .* --ref '"$SHA_B"' --tag --push' "$STUB_LOG" &&
     [ "$(cat "$STAGE/published.sha")" = "$SHA_B" ]
 }
-check 'publish private, then public, then M4, then M1 and M3, desktop and merge' finish_ok
+check 'publish private, then public, then M4, the desktop app, M1 and M3, and merge' finish_ok
+uploads_ok() {
+  awk -F '\t' '$2 == "upload-private"' "$STUB_LOG" | grep -q 'SpecWithCode-1.2.0-arm64.dmg' &&
+    ! awk -F '\t' '$2 == "upload-private"' "$STUB_LOG" | grep -q '/SpecWithCode-arm64.dmg' &&
+    awk -F '\t' '$2 == "upload-public"' "$STUB_LOG" | grep -q '/SpecWithCode-arm64.dmg'
+}
+check 'the private draft gets every asset but the version-free DMG; the public one gets it too' uploads_ok
 stub_set RELEASE_STUB_OUTPUT=
 
 BEFORE="$(lines)"
@@ -477,18 +487,18 @@ BEFORE="$(lines)"
 old_order_guard_ok() {
   run 1 1.4.0 --resume || return 1
   has '= fleet-m4: done' && has 'is not published on anton-abyzov/specwithcode, the feed the fleet' || return 1
-  [ "$(stages_after "$BEFORE")" = "publish-public " ] && [ -f "$STAGE/markers/publish-public" ] &&
+  [ "$(stages_after "$BEFORE")" = "publish-public desktop " ] && [ -f "$STAGE/markers/publish-public" ] &&
     ! awk -F '\t' -v from="$BEFORE" 'NR > from && $2 == "fleet-workers"' "$STUB_LOG" | grep -q . &&
     [ ! -f "$STAGE/markers/fleet-workers" ]
 }
-check 'a folder from the fleet-first order resumes public first; the fleet refuses an unpublished feed' old_order_guard_ok
+check 'a folder from the fleet-first order resumes public first (then the app); the fleet refuses an unpublished feed' old_order_guard_ok
 stub_set RELEASE_STUB_OUTPUT=
 BEFORE="$(lines)"
 old_order_finish_ok() {
   run 0 1.4.0 --resume || return 1
-  [ "$(stages_after "$BEFORE")" = "fleet-workers desktop merge " ] && has 'SpecWithCode 1.4.0 is released.'
+  [ "$(stages_after "$BEFORE")" = "fleet-workers merge " ] && has 'SpecWithCode 1.4.0 is released.'
 }
-check '... and then finishes with M1 and M3, desktop and merge' old_order_finish_ok
+check '... and then finishes with M1 and M3 and merge' old_order_finish_ok
 
 U="$WORK/u"
 make_machine "$U"
@@ -682,6 +692,105 @@ merge_check_refused() {
 check 'a failed required check on the release PR stops the merge' merge_check_refused
 stub_set RELEASE_STUB_OUTPUT=
 
+# ---------------------------------------------------------------- flaky tests: one retry
+
+F="$WORK/f"
+make_machine "$F"
+commands_of() {  # commands_of STAGE LABEL: how many times the label ran (its failures not counted)
+  awk -F '\t' -v stage="$1" -v label="$2" '$1 == stage && $2 == label && $3 != "FAILED (stub)"' "$STUB_LOG" | wc -l | tr -d ' '
+}
+use_machine "$F" 1.5.0
+stub_set RELEASE_STUB_FAIL_ONCE=stage1:fleet-tests
+stage1_flake_ok() {
+  run 0 1.5.0 --stop-after stage1 || return 1
+  has 'stage1: FLAKE fleet' && has 'FLAKY (passed only on retry): stage1/fleet' && has '1 flake: fleet' || return 1
+  [ "$(commands_of stage1 fleet-tests)" = 2 ] && [ "$(cat "$STAGE/markers/stage1")" = "$SHA_A" ] &&
+    [ ! -f "$STAGE/stage1/failed.txt" ] && grep -q '"job": "fleet"' "$STAGE/timings/retries.jsonl" &&
+    grep -q '"result": "passed"' "$STAGE/timings/retries.jsonl" && grep -q '"retries"' "$STAGE/timings/stages.json" &&
+    grep -qE '^fleet +FLAKE' "$STAGE/logs/stage1.log" && ls "$STAGE"/stage1/*/try-1/fleet.exit > /dev/null
+}
+check 'a stage-1 job that fails once runs again, alone, and passes as a FLAKE' stage1_flake_ok
+
+use_machine "$F" 1.5.1
+stub_set RELEASE_STUB_FAIL_ONCE= RELEASE_STUB_FAIL=stage1:fleet-tests
+stage1_twice_ok() {
+  run 1 1.5.1 || return 1
+  has 'stage 1 failed: fleet (failed again on retry)' && has 'stage1: fleet failed again on retry' &&
+    has 'Failed again on retry: stage1/fleet' || return 1
+  [ "$(commands_of stage1 fleet-tests)" = 2 ] && grep -qx fleet "$STAGE/stage1/failed.txt" &&
+    [ ! -f "$STAGE/markers/build" ] && grep -q '"result": "failed"' "$STAGE/timings/retries.jsonl"
+}
+check 'a stage-1 job that fails twice fails the stage' stage1_twice_ok
+stub_set RELEASE_STUB_FAIL=
+stage1_resume_ok() {
+  run 0 1.5.1 --resume --stop-after stage1 || return 1
+  has "rerunning last attempt's failures first: fleet" && [ ! -f "$STAGE/stage1/failed.txt" ] &&
+    [ "$(wc -l < "$STAGE/timings/retries.jsonl" | tr -d ' ')" = 1 ] && [ "$(commands_of stage1 fleet-tests)" = 3 ]
+}
+check '... and --resume runs it first and keeps the earlier retry on record' stage1_resume_ok
+
+use_machine "$F" 1.5.2
+stub_set RELEASE_STUB_FAIL=stage1
+stage1_break_ok() {
+  run 1 1.5.2 || return 1
+  has 'a break, not a flake; no retry' && [ "$(awk -F '\t' '$1 == "stage1" && $3 != "FAILED (stub)"' "$STUB_LOG" | wc -l | tr -d ' ')" = 5 ] &&
+    [ ! -f "$STAGE/timings/retries.jsonl" ]
+}
+check 'more failed stage-1 jobs than the cap get no retry' stage1_break_ok
+
+use_machine "$F" 1.5.3
+stub_set RELEASE_STUB_FAIL= RELEASE_STUB_FAIL_ONCE=stage1:fleet-tests
+no_retry_ok() {
+  run 1 1.5.3 --no-retry || return 1
+  has '--no-retry, so none runs again' && [ "$(commands_of stage1 fleet-tests)" = 1 ]
+}
+check '--no-retry fails a stage on its first failure' no_retry_ok
+
+use_machine "$F" 1.5.4
+stub_set RELEASE_STUB_FAIL_ONCE= RELEASE_STUB_FAIL=server:server-shards RELEASE_STUB_OUTPUT=server-failed-files=src/serverSettings.test.ts
+server_flake_ok() {
+  run 0 1.5.4 --stop-after server-wait || return 1
+  wait_for_server "$SHA_A" || return 1
+  has 'server: green for aaaaaaaaaaaa, after a retry of: src/serverSettings.test.ts (FLAKY)' || return 1
+  stage_line server server-retry | grep -qE -- '--shards 1 --out .*/retry-1 -- src/serverSettings.test.ts$' &&
+    ! stage_line server server-retry | grep -q -- '--changed' && [ "$(cat "$STAGE/green-server.sha")" = "$SHA_A" ] &&
+    ! logged drop-draft && grep -q '"job": "src/serverSettings.test.ts"' "$STAGE/timings/retries.jsonl" &&
+    grep -q 'server: FLAKE src/serverSettings.test.ts' "$STAGE/logs/server.log"
+}
+check 'a server file that fails once runs again alone and the drafts stay' server_flake_ok
+
+use_machine "$F" 1.5.5
+stub_set RELEASE_STUB_FAIL=server RELEASE_STUB_OUTPUT=server-failed-files=src/serverSettings.test.ts
+server_twice_ok() {
+  run 1 1.5.5 || return 1
+  wait_for_server "$SHA_A" || return 1
+  logged drop-draft && [ ! -f "$STAGE/green-server.sha" ] && [ -n "$(stage_line server server-retry)" ] &&
+    grep -q '"result": "failed"' "$STAGE/timings/retries.jsonl"
+}
+check 'a server file that fails twice fails the release and drops the drafts' server_twice_ok
+
+use_machine "$F" 1.5.6
+stub_set RELEASE_STUB_FAIL=server:server-shards RELEASE_STUB_OUTPUT=
+server_crash_ok() {
+  run 1 1.5.6 || return 1
+  wait_for_server "$SHA_A" || return 1
+  [ -z "$(stage_line server server-retry)" ] && grep -q 'server: no retry (a shard crashed' "$STAGE/logs/server.log"
+}
+check 'a server run with no failed file named (crash or timeout) gets no retry' server_crash_ok
+stub_set RELEASE_STUB_FAIL= RELEASE_STUB_OUTPUT=
+
+# An old app's own updater swapped the release in when it quit: the desktop stage keeps it, and
+# no snapshot zips the new version or prunes the previous version's rollback zip.
+use_machine "$F" 1.5.7
+stub_set RELEASE_STUB_OUTPUT=app-version-before=1.5.7
+desktop_kept_ok() {
+  run 0 1.5.7 || return 1
+  has 'SpecWithCode 1.5.7 is released.' && has 'is already 1.5.7' && ! logged desktop-install &&
+    ! logged desktop-backup && ! logged desktop-prune && logged desktop-codesign && logged desktop-open
+}
+check 'a desktop app already on the release is kept, not snapshotted or reinstalled' desktop_kept_ok
+stub_set RELEASE_STUB_OUTPUT=
+
 # ---------------------------------------------------------------- timing comparison
 
 T="$WORK/timing"
@@ -701,7 +810,14 @@ timing_ok() {
     grep -E '^tiny +3 +2 ' "$LAST_OUT" | grep -qv SLOWER &&
     grep -E '^sign +100 +95 ' "$LAST_OUT" | grep -q '2 attempts, 110s in all' &&
     has 'Slower than the previous release by more than 25%: build' &&
-    [ "$(python3 -B "$TOOLS" timing attempts --file "$T/stages.jsonl" --stage sign)" = 3 ]
+    [ "$(python3 -B "$TOOLS" timing attempts --file "$T/stages.jsonl" --stage sign)" = 3 ] || return 1
+  python3 -B "$TOOLS" timing retry --file "$T/retries.jsonl" --stage build --job fleet --first 9 --retry 4 \
+    --result passed --log /x/try-1/fleet.log --sha x --attempt 1 || return 1
+  python3 -B "$TOOLS" timing summary --file "$T/stages.jsonl" --out "$T/stages.json" --version 1.2.0 \
+    --retries "$T/retries.jsonl" || return 1
+  python3 -B "$TOOLS" timing compare --current "$T/stages.json" --previous "$T/stages.json" > "$LAST_OUT" || return 1
+  has 'FLAKY (passed only on retry): build/fleet 9s then 4s' && has 'REPEAT FLAKE: build/fleet also flaked in 1.2.0' &&
+    grep -E '^build ' "$LAST_OUT" | grep -q '1 flake: fleet'
 }
 check 'timing compare flags a stage over 25% and 10s slower, not a small one' timing_ok
 

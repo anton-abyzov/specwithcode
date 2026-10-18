@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """release_tools.py in temporary folders: workspace packages, SHA256SUMS, the Google pair file,
-the previous release, release notes and the public notes check. release.sh --self-test runs it.
+the previous release, release notes, the public notes check, which failed server files are worth
+a retry, stage-1 ordering and the retry lines of the timing table. release.sh --self-test runs it.
 
 Run: python3 -B scripts/release/test-release-tools.py
 """
@@ -217,6 +218,87 @@ class PublicNotes(Temporary):
                      'branch ' + 'codex' + '/0912-thing'):
             with self.assertRaises(release_tools.ToolError):
                 release_tools.public_notes('Note: %s\n' % leak, str(rules))
+
+
+class ShardFailures(Temporary):
+    def summary(self, shards):
+        path = self.root / 'shards.json'
+        path.write_text(json.dumps({'shards': shards}))
+        return str(path)
+
+    def shard(self, index, failed=(), exit_code=None, timed_out=False, signal=None, times=None):
+        report = self.root / ('server-%d.json' % index)
+        report.write_text(json.dumps({'testResults': [
+            {'name': '/tree/apps/server/' + name, 'startTime': 1000, 'endTime': 1000 + int(1000 * seconds)}
+            for name, seconds in (times or {}).items()]}))
+        return {'index': index, 'exitCode': (1 if failed else 0) if exit_code is None else exit_code,
+                'timedOut': timed_out, 'signal': signal, 'failedFiles': list(failed), 'report': str(report)}
+
+    def test_failed_files_with_their_seconds(self):
+        path = self.summary([self.shard(1, ['src/a.test.ts'], times={'src/a.test.ts': 17.2}),
+                             self.shard(2), self.shard(3, ['src/b.test.ts'])])
+        self.assertEqual(release_tools.shard_failures(path, 5), [('src/a.test.ts', 17), ('src/b.test.ts', 0)])
+        self.assertEqual(cli('shard-failures', '--summary', path, '--names'), (0, 'src/a.test.ts\nsrc/b.test.ts\n', ''))
+
+    def test_nothing_to_retry_after_a_crash_a_timeout_or_too_many_files(self):
+        crashed = self.summary([self.shard(1, [], exit_code=1), self.shard(2, ['src/a.test.ts'])])
+        self.assertEqual(release_tools.shard_failures(crashed, 5), [])
+        timed_out = self.summary([self.shard(1, ['src/a.test.ts'], timed_out=True)])
+        self.assertEqual(release_tools.shard_failures(timed_out, 5), [])
+        many = self.summary([self.shard(1, ['src/%d.test.ts' % n for n in range(6)])])
+        self.assertEqual(release_tools.shard_failures(many, 5), [])
+        self.assertEqual(release_tools.shard_failures(self.summary([self.shard(1)]), 5), [])
+
+
+class StageOneOrder(Temporary):
+    def secs(self, attempt, name, value, age):
+        path = self.root / 'stage1' / attempt / (name + '.secs')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('%d\n' % value)
+        os.utime(str(path), (1000000 - age, 1000000 - age))
+
+    def test_longest_first_by_the_newest_time(self):
+        self.secs('old', 'fleet', 10, age=100)
+        self.secs('new', 'fleet', 109, age=1)
+        self.secs('new', 'apps_web', 90, age=1)
+        self.secs('new/try-1', 'scripts', 500, age=1)  # A first try is not a job's time.
+        history = release_tools.stage1_history([str(self.root / 'stage1'), str(self.root / 'missing')])
+        self.assertEqual(history, {'fleet': 109, 'apps_web': 90})
+        self.assertEqual(release_tools.stage1_order(['scripts', 'apps_web', 'tiny', 'fleet'], history),
+                         ['fleet', 'apps_web', 'scripts', 'tiny'])
+
+    def test_newest_fleet_results(self):
+        for attempt, age in (('a', 50), ('b', 5)):
+            summary = self.root / 'stage1' / attempt / 'fleet' / 'summary.txt'
+            summary.parent.mkdir(parents=True)
+            summary.write_text('TEST RESULT SECS\n')
+            os.utime(str(summary), (1000000 - age, 1000000 - age))
+        self.assertEqual(release_tools.stage1_fleet_dirs([str(self.root / 'stage1')]),
+                         [str(self.root / 'stage1/b/fleet'), str(self.root / 'stage1/a/fleet')])
+
+
+class Retries(Temporary):
+    def test_flakes_are_summarised_and_a_repeat_is_named(self):
+        stages, retries = self.root / 'stages.jsonl', self.root / 'retries.jsonl'
+        release_tools.timing_record(stages, 'stage1', 0, 160, 'ok', 'abc', 1)
+        release_tools.timing_retry(retries, 'stage1', 'fleet', 109, 65, 'passed', '/s/try-1/fleet.log', 'test-reap.py', 'abc', 1)
+        release_tools.timing_retry(retries, 'server', 'src/a.test.ts', 17, 9, 'failed', '/s/shards.json', '', 'abc', 1)
+        summary = release_tools.timing_summary(stages, '1.2.0', retries)
+        by_stage = dict((stage['stage'], stage) for stage in summary['stages'])
+        self.assertEqual((by_stage['stage1']['flakes'], by_stage['stage1']['retriesFailed']), (1, 0))
+        self.assertEqual((by_stage['server']['flakes'], by_stage['server']['retriesFailed']), (0, 1))
+        self.assertEqual(len(summary['retries']), 2)
+        previous = {'version': '1.1.0', 'stages': [], 'retries': [{'stage': 'stage1', 'job': 'fleet', 'result': 'passed'}]}
+        lines, _slower = release_tools.timing_compare(summary, previous)
+        text = '\n'.join(lines)
+        self.assertIn('1 flake: fleet', text)
+        self.assertIn('FLAKY (passed only on retry): stage1/fleet 109s then 65s, first try /s/try-1/fleet.log (test-reap.py)', text)
+        self.assertIn('REPEAT FLAKE: stage1/fleet also flaked in 1.1.0', text)
+        self.assertIn('Failed again on retry: server/src/a.test.ts', text)
+        lines, _slower = release_tools.timing_compare(summary, {'version': '1.0.9', 'stages': []})
+        self.assertNotIn('REPEAT FLAKE', '\n'.join(lines))
+        self.assertEqual(release_tools.timing_summary(stages, '1.2.0', str(self.root / 'none.jsonl'))['retries'], [])
+        self.assertEqual([entry['job'] for entry in release_tools.timing_retries(retries, 'server', 'abc')], ['src/a.test.ts'])
 
 
 if __name__ == '__main__':

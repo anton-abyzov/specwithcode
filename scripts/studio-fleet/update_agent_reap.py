@@ -50,6 +50,20 @@ def _process_refusal(host, message):
     return message.startswith(work) and PROCESS_WORK.search(message[len(work):]) is not None
 
 
+def held(agent):
+    """True while updates/hold.json, which the service keeps while it holds itself for an update,
+    has not expired: update_agent retries a forced apply its preflight refused for a process under
+    the service only then, so the next snapshot may reap it. update.py --reap checks the hold in
+    full (assert_held) before it stops anything."""
+    host = _agent_module(agent)
+    try:
+        hold = host.read_json(agent.updates / 'hold.json', agent.home)
+    except (host.AgentError, OSError):
+        return False
+    ends = host.parse_time(hold.get('expiresAt')) if isinstance(hold, dict) else None
+    return ends is not None and host.utcnow() < ends
+
+
 def reset(agent, request, since=None):
     """A fresh reap budget for `request`, counted from `since` (else the pass's start). Runs at
     the start of every pass, since one Agent serves a second pass for a request that arrived

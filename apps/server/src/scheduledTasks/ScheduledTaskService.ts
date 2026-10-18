@@ -859,9 +859,20 @@ export const layer = Layer.effect(
     // crash, so next_run_at must advance and run_count must count the attempt — otherwise the
     // first poll after every restart re-fires the interrupted task (same rationale as
     // releaseStuckRun). Schedules are JSON, so this is per-row Effect work, not one UPDATE.
-    yield* Effect.gen(function* () {
-      const rows = yield* selectAllRows();
-      const stuck = rows.filter((row) => row.last_run_status === "running");
+    // While an update's install gate (or hold) is live it waits: the update helper compares
+    // these rows with its snapshot, and a row stuck in 'running' cannot run or re-fire
+    // meanwhile (the due filter and markRunning both skip it). Only the rows stuck when
+    // this server started are recovered, each only if it still shows that same run, so a
+    // run that starts after the gate opens is never taken for an interrupted one.
+    const stuckAtStart = (yield* selectAllRows().pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Could not read interrupted schedule task runs", { cause }).pipe(
+          Effect.as([]),
+        ),
+      ),
+    )).filter((row) => row.last_run_status === "running");
+    const recoverInterruptedRuns = Effect.gen(function* () {
+      const stuck = stuckAtStart;
       if (stuck.length === 0) return;
       const now = yield* localNow;
       yield* Effect.forEach(
@@ -878,6 +889,7 @@ export const layer = Layer.effect(
                     updated_at = ${iso(now)},
                     run_count = run_count + 1
                 WHERE task_id IS ${row.task_id} AND last_run_status = 'running'
+                  AND last_run_at IS ${row.last_run_at} AND run_count = ${row.run_count}
               `;
               return;
             }
@@ -894,6 +906,7 @@ export const layer = Layer.effect(
                   updated_at = ${iso(now)},
                   run_count = run_count + 1
               WHERE task_id IS ${row.task_id} AND last_run_status = 'running'
+                AND last_run_at IS ${row.last_run_at} AND run_count = ${row.run_count}
             `;
           }),
         { concurrency: 1, discard: true },
@@ -904,6 +917,14 @@ export const layer = Layer.effect(
         Effect.logWarning("Could not reset interrupted schedule task runs", { cause }),
       ),
     );
+    if (yield* updateHold.isHeld) {
+      yield* updateHold.awaitReleased.pipe(
+        Effect.andThen(recoverInterruptedRuns),
+        Effect.forkScoped,
+      );
+    } else {
+      yield* recoverInterruptedRuns;
+    }
 
     yield* scheduler.register("scheduled-tasks", runDueTasks());
 
