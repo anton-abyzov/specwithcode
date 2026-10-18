@@ -1,0 +1,462 @@
+import Foundation
+import Observation
+
+// The UI contract. SwiftUI views read `AppModel` and `ChatSession` only; they
+// never see wire types, sockets or reducers. An `AppEngine` fills the model:
+// `LiveEngine` talks to real machines, `FixtureEngine` serves sample data for
+// previews, snapshot tests and simulator screenshots.
+
+// MARK: - References
+
+public struct ProjectRef: Hashable, Sendable, Codable {
+  public let environmentId: String
+  public let projectId: String
+  public init(environmentId: String, projectId: String) {
+    self.environmentId = environmentId
+    self.projectId = projectId
+  }
+}
+
+public struct ThreadRef: Hashable, Sendable, Codable {
+  public let environmentId: String
+  public let threadId: String
+  public init(environmentId: String, threadId: String) {
+    self.environmentId = environmentId
+    self.threadId = threadId
+  }
+}
+
+/// Where a message goes. Aide and projects talk to their coordinator.
+public enum ChatTarget: Hashable, Sendable, Codable {
+  case aide(ProjectRef)
+  case project(ProjectRef)
+  case thread(ThreadRef)
+
+  public var environmentId: String {
+    switch self {
+    case let .aide(p), let .project(p): p.environmentId
+    case let .thread(t): t.environmentId
+    }
+  }
+}
+
+// MARK: - Machines
+
+public enum MachineStatus: String, Sendable, Codable {
+  case offline, connecting, connected, reconnecting, needsRepair, unsupported
+
+  public var isOnline: Bool { self == .connected }
+
+  public var label: String {
+    switch self {
+    case .offline: "Offline"
+    case .connecting: "Connecting"
+    case .connected: "Online"
+    case .reconnecting: "Reconnecting"
+    case .needsRepair: "Pair again"
+    case .unsupported: "Update needed"
+    }
+  }
+}
+
+public struct MachineSummary: Identifiable, Hashable, Sendable {
+  /// The machine's environment id.
+  public let id: String
+  public var label: String
+  public var status: MachineStatus
+  /// e.g. "macOS · arm64"
+  public var platform: String?
+  public var serverVersion: String?
+  /// Base URL the app currently uses, e.g. https://m4.tailnet.ts.net
+  public var address: String?
+  /// Days until the pairing token expires, when known.
+  public var tokenDaysLeft: Int?
+  /// Online, but the machine's projects and threads are not live right now:
+  /// the app is catching up or subscribing again after a failed stream.
+  public var isStale: Bool
+
+  public init(id: String, label: String, status: MachineStatus, platform: String? = nil, serverVersion: String? = nil, address: String? = nil, tokenDaysLeft: Int? = nil, isStale: Bool = false) {
+    self.id = id
+    self.label = label
+    self.status = status
+    self.platform = platform
+    self.serverVersion = serverVersion
+    self.address = address
+    self.tokenDaysLeft = tokenDaysLeft
+    self.isStale = isStale
+  }
+}
+
+// MARK: - Projects
+
+public enum ProjectIcon: Hashable, Sendable {
+  /// A Lucide icon name (e.g. "concierge-bell") and a color name or hex.
+  case symbol(name: String, color: String?)
+  case emoji(String)
+  case monogram(text: String, color: String?)
+  case none
+}
+
+public enum ProjectKind: String, Sendable { case code, personal }
+
+public struct ProjectSummary: Identifiable, Hashable, Sendable {
+  public var id: ProjectRef { ref }
+  public let ref: ProjectRef
+  public var title: String
+  public var icon: ProjectIcon
+  public var kind: ProjectKind
+  public var machineLabel: String
+  public var machineOnline: Bool
+  public var isPinned: Bool
+  public var paused: Bool
+  public var archived: Bool
+  /// Threads of this project that are working right now.
+  public var workingCount: Int
+  public var hasUnread: Bool
+
+  public init(ref: ProjectRef, title: String, icon: ProjectIcon = .none, kind: ProjectKind = .code, machineLabel: String, machineOnline: Bool, isPinned: Bool = false, paused: Bool = false, archived: Bool = false, workingCount: Int = 0, hasUnread: Bool = false) {
+    self.ref = ref
+    self.title = title
+    self.icon = icon
+    self.kind = kind
+    self.machineLabel = machineLabel
+    self.machineOnline = machineOnline
+    self.isPinned = isPinned
+    self.paused = paused
+    self.archived = archived
+    self.workingCount = workingCount
+    self.hasUnread = hasUnread
+  }
+}
+
+// MARK: - Threads
+
+public enum ThreadActivity: String, Sendable {
+  /// Waiting for an approval or an answer from you.
+  case needsYou
+  case working
+  case failed
+  case idle
+}
+
+public struct ThreadSummary: Identifiable, Hashable, Sendable {
+  public var id: ThreadRef { ref }
+  public let ref: ThreadRef
+  public var projectRef: ProjectRef?
+  public var projectTitle: String?
+  public var title: String
+  public var activity: ThreadActivity
+  /// Latest status line or message preview.
+  public var preview: String?
+  public var updatedAt: Date
+  /// When the current run started, for "2m" style elapsed labels.
+  public var workStartedAt: Date?
+  public var isPinned: Bool
+  public var isResolved: Bool
+  public var isUnread: Bool
+  public var machineLabel: String
+  public var machineOnline: Bool
+  public var planProgress: PlanProgress?
+
+  public init(ref: ThreadRef, projectRef: ProjectRef? = nil, projectTitle: String? = nil, title: String, activity: ThreadActivity, preview: String? = nil, updatedAt: Date, workStartedAt: Date? = nil, isPinned: Bool = false, isResolved: Bool = false, isUnread: Bool = false, machineLabel: String, machineOnline: Bool, planProgress: PlanProgress? = nil) {
+    self.ref = ref
+    self.projectRef = projectRef
+    self.projectTitle = projectTitle
+    self.title = title
+    self.activity = activity
+    self.preview = preview
+    self.updatedAt = updatedAt
+    self.workStartedAt = workStartedAt
+    self.isPinned = isPinned
+    self.isResolved = isResolved
+    self.isUnread = isUnread
+    self.machineLabel = machineLabel
+    self.machineOnline = machineOnline
+    self.planProgress = planProgress
+  }
+}
+
+public struct PlanProgress: Hashable, Sendable {
+  public var completed: Int
+  public var total: Int
+  public init(completed: Int, total: Int) {
+    self.completed = completed
+    self.total = total
+  }
+}
+
+public enum ThreadAction: Sendable, Hashable {
+  case pin, unpin, resolve, unresolve, archive, delete, markUnread
+  case rename(String)
+}
+
+// MARK: - Transcript
+
+public struct TodoStep: Hashable, Sendable, Identifiable {
+  public enum Status: String, Sendable { case pending, running, completed }
+  public let id: String
+  public var text: String
+  public var status: Status
+  public init(id: String, text: String, status: Status) {
+    self.id = id
+    self.text = text
+    self.status = status
+  }
+}
+
+public enum ToolStatus: String, Sendable { case running, completed, failed }
+
+/// Where a message you sent stands.
+public enum UserMessageState: String, Hashable, Sendable {
+  /// The machine has it and its run started or finished.
+  case sent
+  /// On its way to the machine.
+  case sending
+  /// Waits for the active run to finish.
+  case queued
+  /// Queued behind a stop or a restart; it runs once the queue is resumed.
+  case held
+}
+
+public struct TranscriptRow: Identifiable, Hashable, Sendable {
+  public enum Kind: Hashable, Sendable {
+    case user(text: String, state: UserMessageState = .sent)
+    case assistant(markdown: String, streaming: Bool)
+    case reasoning(text: String, streaming: Bool)
+    /// A command, file change, search or other tool call.
+    case tool(title: String, detail: String?, symbol: String, status: ToolStatus)
+    case plan(steps: [TodoStep])
+    case proposedPlan(markdown: String)
+    case approval(requestId: String, prompt: String, resolved: Bool)
+    case question(requestId: String, prompt: String, resolved: Bool)
+    case subagent(title: String, child: ThreadRef?)
+    case error(message: String)
+    case notice(text: String)
+  }
+
+  public let id: String
+  public var kind: Kind
+
+  public init(id: String, kind: Kind) {
+    self.id = id
+    self.kind = kind
+  }
+}
+
+public enum ApprovalDecision: String, Sendable { case approve, approveForSession, deny }
+
+/// One open conversation. The engine keeps it current while the view is visible.
+@MainActor @Observable
+public final class ChatSession: Identifiable {
+  public nonisolated let id: ChatTarget
+  public var title: String
+  /// e.g. "Coordinator · M4" or "Thread · 2 artifacts"
+  public var subtitle: String
+  public var rows: [TranscriptRow] = []
+  /// True from the moment the first cached or live data arrives.
+  public var isLoaded = false
+  /// Content came from the disk cache and is not live yet. Stop and queue stay disabled.
+  public var isStale = false
+  public var isRunning = false
+  public var queuedCount = 0
+  public var plan: PlanProgress?
+  public var machineLabel: String
+  public var machineOnline: Bool
+  /// When set, the composer is disabled and shows this reason.
+  public var sendBlockedReason: String?
+  /// Last send error, shown inline above the composer.
+  public var lastError: String?
+  /// The conversation could not be loaded; `AppEngine.reload` tries again.
+  public var loadError: String?
+
+  public init(id: ChatTarget, title: String, subtitle: String, machineLabel: String, machineOnline: Bool) {
+    self.id = id
+    self.title = title
+    self.subtitle = subtitle
+    self.machineLabel = machineLabel
+    self.machineOnline = machineOnline
+  }
+}
+
+// MARK: - Settings
+
+public struct ProjectSettingsDraft: Hashable, Sendable {
+  public var title: String
+  public var goal: String
+  public var instructions: String
+  public var paused: Bool
+  public var archived: Bool
+  /// Display name of the coordinator model, read only in v1.
+  public var coordinatorModel: String?
+  /// Optimistic-concurrency revision from the last read.
+  public var revision: Int
+
+  public init(title: String, goal: String, instructions: String, paused: Bool, archived: Bool, coordinatorModel: String?, revision: Int) {
+    self.title = title
+    self.goal = goal
+    self.instructions = instructions
+    self.paused = paused
+    self.archived = archived
+    self.coordinatorModel = coordinatorModel
+    self.revision = revision
+  }
+}
+
+public enum AppearancePreference: String, Sendable, CaseIterable, Codable {
+  case system, light, dark
+  public var label: String {
+    switch self {
+    case .system: "System"
+    case .light: "Light"
+    case .dark: "Dark"
+    }
+  }
+}
+
+public enum RuntimeModeChoice: String, Sendable, CaseIterable {
+  case approvalRequired = "approval-required"
+  case autoAcceptEdits = "auto-accept-edits"
+  case auto
+  case fullAccess = "full-access"
+
+  public var label: String {
+    switch self {
+    case .approvalRequired: "Ask before changes"
+    case .autoAcceptEdits: "Accept edits"
+    case .auto: "Auto"
+    case .fullAccess: "Full access"
+    }
+  }
+}
+
+/// Settings that live on one machine's server.
+public struct MachineSettings: Hashable, Sendable {
+  public var defaultRuntimeMode: RuntimeModeChoice?
+  public var defaultModel: String?
+  public init(defaultRuntimeMode: RuntimeModeChoice?, defaultModel: String?) {
+    self.defaultRuntimeMode = defaultRuntimeMode
+    self.defaultModel = defaultModel
+  }
+}
+
+// MARK: - Engine
+
+/// Everything that talks to machines. Methods throw `ServerError`-style errors
+/// with user-readable `localizedDescription`.
+@MainActor
+public protocol AppEngine: AnyObject {
+  /// Called once. The engine keeps `model` current from then on.
+  func start(model: AppModel)
+  /// The app came to the foreground or went to the background.
+  func setActive(_ active: Bool)
+
+  func pair(link: String) async throws -> MachineSummary
+  /// "Pair again" on a known machine: a link to another machine fails before
+  /// its one-time code is spent.
+  func pair(link: String, expectedEnvironmentId: String?) async throws -> MachineSummary
+  func removeMachine(id: String)
+  /// Tries again now, closing a live connection first.
+  func reconnect(machineId: String)
+  /// Skips the rest of a dropped connection's backoff. A live connection,
+  /// an attempt in flight and pairings that need the person are left alone.
+  func wake(machineId: String)
+
+  /// Opens a live conversation. The engine fills and updates the session until `close`.
+  func open(_ session: ChatSession)
+  func close(_ session: ChatSession)
+  /// Loads an open conversation again after `loadError`.
+  func reload(_ session: ChatSession)
+  func send(_ text: String, to target: ChatTarget) async throws
+  /// Stops the active run and holds the queue.
+  func stop(_ target: ChatTarget) async throws
+  func respond(to requestId: String, in target: ChatTarget, decision: ApprovalDecision) async throws
+
+  func perform(_ action: ThreadAction, on thread: ThreadRef) async throws
+  func setupAide() async throws -> ProjectRef
+
+  func loadProjectSettings(_ project: ProjectRef) async throws -> ProjectSettingsDraft
+  func saveProjectSettings(_ draft: ProjectSettingsDraft, for project: ProjectRef) async throws
+  func loadMachineSettings(_ machineId: String) async throws -> MachineSettings
+  func saveMachineSettings(_ settings: MachineSettings, for machineId: String) async throws
+}
+
+extension AppEngine {
+  public func pair(link: String, expectedEnvironmentId: String?) async throws -> MachineSummary {
+    try await pair(link: link)
+  }
+
+  public func wake(machineId: String) {
+    reconnect(machineId: machineId)
+  }
+
+  public func reload(_ session: ChatSession) {
+    close(session)
+    open(session)
+  }
+}
+
+/// Everything the UI shows outside an open conversation.
+@MainActor @Observable
+public final class AppModel {
+  public var machines: [MachineSummary] = []
+  /// The personal assistant project, if one exists on any machine.
+  public var aide: ProjectSummary?
+  /// Code projects across machines, pinned first, then by title.
+  public var projects: [ProjectSummary] = []
+  /// Threads by project.
+  public var threadsByProject: [ProjectRef: [ThreadSummary]] = [:]
+  /// Most recent top-level threads across machines, pinned first.
+  public var recentThreads: [ThreadSummary] = []
+  /// True until every enabled machine has answered once (or failed).
+  public var isLoading = true
+  /// False while a paired machine's projects and threads have not arrived
+  /// yet, so a missing Aide or project may only be missing for now.
+  public var allShellsLoaded = true
+  public var appearance: AppearancePreference {
+    didSet { UserDefaults.standard.set(appearance.rawValue, forKey: "appearance") }
+  }
+
+  @ObservationIgnored public let engine: AppEngine
+  @ObservationIgnored private var sessions: [ChatTarget: ChatSession] = [:]
+
+  public init(engine: AppEngine) {
+    self.engine = engine
+    self.appearance = UserDefaults.standard.string(forKey: "appearance").flatMap(AppearancePreference.init) ?? .system
+    engine.start(model: self)
+  }
+
+  public var pinnedProjects: [ProjectSummary] { projects.filter { $0.isPinned && !$0.archived } }
+  public var otherProjects: [ProjectSummary] { projects.filter { !$0.isPinned && !$0.archived } }
+
+  public func machine(_ id: String) -> MachineSummary? { machines.first { $0.id == id } }
+
+  public func project(_ ref: ProjectRef) -> ProjectSummary? {
+    if aide?.ref == ref { return aide }
+    return projects.first { $0.ref == ref }
+  }
+
+  public func threads(in project: ProjectRef) -> [ThreadSummary] { threadsByProject[project] ?? [] }
+
+  public func thread(_ ref: ThreadRef) -> ThreadSummary? {
+    for list in threadsByProject.values { if let t = list.first(where: { $0.ref == ref }) { return t } }
+    return recentThreads.first { $0.ref == ref }
+  }
+
+  /// The shared session for a target; views call `engine.open` on appear.
+  public func session(for target: ChatTarget) -> ChatSession {
+    if let s = sessions[target] { return s }
+    let s: ChatSession
+    switch target {
+    case let .aide(p), let .project(p):
+      let summary = project(p)
+      let machine = machine(p.environmentId)
+      s = ChatSession(id: target, title: summary?.title ?? "Project", subtitle: "Coordinator · \(machine?.label ?? "machine")", machineLabel: machine?.label ?? "", machineOnline: machine?.status.isOnline ?? false)
+    case let .thread(t):
+      let summary = thread(t)
+      let machine = machine(t.environmentId)
+      s = ChatSession(id: target, title: summary?.title ?? "Thread", subtitle: summary?.projectTitle ?? "Thread", machineLabel: machine?.label ?? "", machineOnline: machine?.status.isOnline ?? false)
+    }
+    sessions[target] = s
+    return s
+  }
+}

@@ -154,10 +154,10 @@ with `brew install node@22`.
    It prints the same `swc-machine-…` line as above.
 
 To keep it running after you close Terminal or restart, run
-`specwithcode service install` (1.0.45 and later). The service pins a copy of
+`specwithcode service install` (1.0.46 and later). The service pins a copy of
 the installed package under `~/.specwithcode/runtime/versions/<version>` and runs
 it with the Node.js that ran the install. After `npm i -g specwithcode@<version>`,
-run `specwithcode service install` again to move the service to it. On 1.0.44 and
+run `specwithcode service install` again to move the service to it. On 1.0.45 and
 earlier, start `specwithcode serve` again after a restart.
 
 **If the desktop app is already on this Mac**, you do not need a second server.
