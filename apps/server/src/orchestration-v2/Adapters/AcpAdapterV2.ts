@@ -154,6 +154,7 @@ export interface AcpAdapterV2RuntimeInput {
   readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
   readonly mcpServers: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly acpMcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
+  readonly httpMcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   /** Scoped credentials for terminal fallback when an ACP agent drops `mcpServers`. */
   readonly processEnvironment?: NodeJS.ProcessEnv;
   readonly resumeSessionId?: string;
@@ -703,16 +704,17 @@ function negotiatedCapabilities(
 interface AcpMcpContext {
   readonly servers: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly acpServers: ReadonlyArray<EffectAcpSchema.McpServer>;
+  readonly httpServers: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly processEnvironment?: NodeJS.ProcessEnv;
   readonly endpoint?: string;
   readonly authorization?: string;
 }
 
 function acpMcpContext(threadId: ThreadId | null, self: SelfInvocation): AcpMcpContext {
-  if (threadId === null) return { servers: [], acpServers: [] };
+  if (threadId === null) return { servers: [], acpServers: [], httpServers: [] };
   const session = McpProviderSession.readMcpProviderSession(threadId);
   if (session === undefined) {
-    return { servers: [], acpServers: [] };
+    return { servers: [], acpServers: [], httpServers: [] };
   }
   // Stdio is ACP's required baseline MCP transport. Agents that advertise
   // optional http support still routinely fail to wire injected http servers
@@ -741,6 +743,16 @@ function acpMcpContext(threadId: ThreadId | null, self: SelfInvocation): AcpMcpC
       },
     ],
     acpServers: [{ type: "acp", name: "studio-code", serverId: "studio-code" }],
+    // For agents that accept only http servers. The header is fixed for the
+    // session, so a re-issued credential reaches them when the session reopens.
+    httpServers: [
+      {
+        type: "http",
+        name: "studio-code",
+        url: session.endpoint,
+        headers: [{ name: "Authorization", value: session.authorizationHeader }],
+      },
+    ],
     endpoint: session.endpoint,
     authorization: session.authorizationHeader,
     processEnvironment: {
@@ -764,7 +776,11 @@ function acpMcpServers(
 
 function acpMcpActivation(threadId: ThreadId | null, self: SelfInvocation) {
   const context = acpMcpContext(threadId, self);
-  return { mcpServers: context.servers, acpMcpServers: context.acpServers };
+  return {
+    mcpServers: context.servers,
+    acpMcpServers: context.acpServers,
+    httpMcpServers: context.httpServers,
+  };
 }
 
 function nativeThreadId(
@@ -2120,6 +2136,7 @@ export function makeAcpAdapterV2(
             runtimePolicy: input.runtimePolicy,
             mcpServers: mcpContext.servers,
             acpMcpServers: mcpContext.acpServers,
+            httpMcpServers: mcpContext.httpServers,
             ...(mcpContext.processEnvironment === undefined
               ? {}
               : { processEnvironment: mcpContext.processEnvironment }),

@@ -14,9 +14,12 @@ export const BROWSER_EXTENSION_RPC_METHODS = {
   browserExtensionTest: "browserExtension.test",
   browserExtensionReconnect: "browserExtension.reconnect",
   browserExtensionStop: "browserExtension.stop",
-  browserExtensionInstallFolder: "browserExtension.installFolder",
   browserExtensionPeer: "browserExtension.peer",
 } as const;
+
+/** The extension's Chrome Web Store item; a copy loaded by hand gets another id. */
+export const BROWSER_EXTENSION_STORE_ID = "okoinngelinfjfkmkcnbgndapeiofgbb";
+export const BROWSER_EXTENSION_STORE_URL = `https://chromewebstore.google.com/detail/specwithcode-browser/${BROWSER_EXTENSION_STORE_ID}`;
 
 /** Where agents' Chrome tools send people when no profile answers. */
 export const BROWSER_EXTENSION_NOT_CONNECTED_MESSAGE =
@@ -47,6 +50,8 @@ export const BrowserExtensionProfile = Schema.Struct({
   /** The name the user gave this Chrome profile when pairing. */
   label: Schema.String,
   extensionVersion: Schema.String,
+  /** False for a copy loaded by hand rather than installed from the Chrome Web Store. */
+  fromStore: Schema.optionalKey(Schema.Boolean),
   /** For example "Chrome 141". */
   browser: Schema.String,
   connectedAt: Schema.String,
@@ -90,9 +95,9 @@ export type BrowserExtensionPeer = typeof BrowserExtensionPeer.Type;
 export const BrowserExtensionStatus = Schema.Struct({
   /** The loopback address the extension connects to. */
   relayUrl: Schema.String,
-  /** The version the app ships for Load unpacked. */
+  /** The newest extension version this app was built with. */
   bundledVersion: Schema.String,
-  /** The Chrome Web Store page, once the listing is public. */
+  /** The extension's Chrome Web Store page; null from servers that predate the listing. */
   storeUrl: Schema.NullOr(Schema.String),
   profiles: Schema.Array(BrowserExtensionProfile),
   recentActions: Schema.Array(BrowserExtensionAction),
@@ -124,12 +129,6 @@ export const BrowserExtensionCheck = Schema.Struct({
   checkedAt: Schema.String,
 });
 export type BrowserExtensionCheck = typeof BrowserExtensionCheck.Type;
-
-export const BrowserExtensionInstallFolder = Schema.Struct({
-  path: Schema.String,
-  version: Schema.String,
-});
-export type BrowserExtensionInstallFolder = typeof BrowserExtensionInstallFolder.Type;
 
 export const browserExtensionRpcs = [
   Rpc.make(BROWSER_EXTENSION_RPC_METHODS.browserExtensionStatus, {
@@ -167,12 +166,6 @@ export const browserExtensionRpcs = [
   Rpc.make(BROWSER_EXTENSION_RPC_METHODS.browserExtensionPeer, {
     payload: Schema.Struct({ id: Schema.String, allow: Schema.Boolean }),
     success: BrowserExtensionStatus,
-    error: EnvironmentAuthorizationError,
-  }),
-  /** Writes the bundled extension to a folder Chrome can Load unpacked. */
-  Rpc.make(BROWSER_EXTENSION_RPC_METHODS.browserExtensionInstallFolder, {
-    payload: Schema.Struct({}),
-    success: BrowserExtensionInstallFolder,
     error: EnvironmentAuthorizationError,
   }),
 ] as const;

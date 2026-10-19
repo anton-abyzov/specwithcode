@@ -40,7 +40,8 @@ const emitUrlElicitation = process.env.STUDIO_ACP_EMIT_URL_ELICITATION === "1";
 const emitXAiAskUserQuestion = process.env.STUDIO_ACP_EMIT_XAI_ASK_USER_QUESTION === "1";
 const emitXAiExitPlanMode = process.env.STUDIO_ACP_EMIT_XAI_EXIT_PLAN_MODE === "1";
 const emitXAiPlanMdWrite = process.env.STUDIO_ACP_EMIT_XAI_PLAN_MD_WRITE === "1";
-const emitXAiPromptCompleteThenHang = process.env.STUDIO_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG === "1";
+const emitXAiPromptCompleteThenHang =
+  process.env.STUDIO_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG === "1";
 const emitXAiRateLimitThenHang = process.env.STUDIO_ACP_EMIT_XAI_RATE_LIMIT_THEN_HANG === "1";
 const emitXAiAskUserQuestionThenHang =
   process.env.STUDIO_ACP_EMIT_XAI_ASK_USER_QUESTION_THEN_HANG === "1";
@@ -48,7 +49,8 @@ const emitContentThenHang = process.env.STUDIO_ACP_EMIT_CONTENT_THEN_HANG === "1
 const emitPlanThenHang = process.env.STUDIO_ACP_EMIT_PLAN_THEN_HANG === "1";
 const emitActiveToolThenHang = process.env.STUDIO_ACP_EMIT_ACTIVE_TOOL_THEN_HANG === "1";
 const emitGrokMonitorPostTurnPoll = process.env.STUDIO_ACP_EMIT_GROK_MONITOR_POST_TURN_POLL === "1";
-const emitGrokBackgroundTaskStarted = process.env.STUDIO_ACP_EMIT_GROK_BACKGROUND_TASK_STARTED === "1";
+const emitGrokBackgroundTaskStarted =
+  process.env.STUDIO_ACP_EMIT_GROK_BACKGROUND_TASK_STARTED === "1";
 const emitForeignSessionUpdates = process.env.STUDIO_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
 const waitForResumeRelease = process.env.STUDIO_ACP_WAIT_FOR_RESUME_RELEASE === "1";
 const completeFirstPromptOnCancel = process.env.STUDIO_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL === "1";
@@ -77,8 +79,10 @@ const emitEmptySuccessfulBashThenHang =
 const exitOnCancel = process.env.STUDIO_ACP_EXIT_ON_CANCEL === "1";
 const runningCommandIgnoresTerm = process.env.STUDIO_ACP_RUNNING_COMMAND_IGNORE_TERM === "1";
 const runningCommandPidPath = process.env.STUDIO_ACP_RUNNING_COMMAND_PID_PATH;
-const runningCommandSeparateSession = process.env.STUDIO_ACP_RUNNING_COMMAND_SEPARATE_SESSION === "1";
-const exitAfterRunningCommandLaunch = process.env.STUDIO_ACP_EXIT_AFTER_RUNNING_COMMAND_LAUNCH === "1";
+const runningCommandSeparateSession =
+  process.env.STUDIO_ACP_RUNNING_COMMAND_SEPARATE_SESSION === "1";
+const exitAfterRunningCommandLaunch =
+  process.env.STUDIO_ACP_EXIT_AFTER_RUNNING_COMMAND_LAUNCH === "1";
 const omitXAiPromptCompleteStopReason =
   process.env.STUDIO_ACP_OMIT_XAI_PROMPT_COMPLETE_STOP_REASON === "1";
 const failLoadSession = process.env.STUDIO_ACP_FAIL_LOAD_SESSION === "1";
@@ -102,6 +106,8 @@ const initialGrokReasoningEffort =
 const promptDelayMs = Number(process.env.STUDIO_ACP_PROMPT_DELAY_MS ?? "0");
 const supportsSessionLifecycle = process.env.STUDIO_ACP_SESSION_LIFECYCLE === "1";
 const supportsAcpMcp = process.env.STUDIO_ACP_MCP_ACP === "1";
+const supportsHttpMcp = process.env.STUDIO_ACP_MCP_HTTP === "1";
+const agentName = process.env.STUDIO_ACP_AGENT_NAME ?? "studio-acp-mock-agent";
 const supportsV2Management = process.env.STUDIO_ACP_V2_MANAGEMENT === "1";
 const omitSessionListHandler = process.env.STUDIO_ACP_OMIT_SESSION_LIST_HANDLER === "1";
 const advertisedAuthMethodId = process.env.STUDIO_ACP_AUTH_METHOD_ID?.trim();
@@ -487,13 +493,20 @@ const program = Effect.gen(function* () {
       parameterizedModelPicker = request.capabilities?._meta?.parameterizedModelPicker === true;
       return {
         protocolVersion: 2,
-        info: { name: "studio-acp-mock-agent", version: "0.0.0" },
+        info: { name: agentName, version: "0.0.0" },
         _meta: { modelState: modelState() },
         capabilities: {
           session: {
             ...(supportsSessionLifecycle ? { fork: {}, additionalDirectories: {} } : {}),
             ...(supportsV2Management ? { delete: {} } : {}),
-            ...(supportsAcpMcp ? { mcp: { acp: {} } } : {}),
+            ...(supportsAcpMcp || supportsHttpMcp
+              ? {
+                  mcp: {
+                    ...(supportsAcpMcp ? { acp: {} } : {}),
+                    ...(supportsHttpMcp ? { http: {} } : {}),
+                  },
+                }
+              : {}),
           },
           ...(supportsV2Management ? { providers: {} } : {}),
         },

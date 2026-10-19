@@ -14,6 +14,14 @@ supported way while the service runs), then runs that release's own update.py: f
 --snapshot, then the guarded apply with the snapshot as its prestate. Its exit code is the
 apply's. The staging folder defaults to <studio root>/release-staging/<version>; the backup,
 snapshot and receipt go to <studio root>/backups/pre-<version>-<time>/.
+
+Those folders are not pruned. release_retention.prune_state_backups removes only the
+pre-<commit>-<stamp> folders update.py writes, holding nothing but the database copy and
+settings.json; a pre-<version>-<time> folder here also keeps the prestate, the helper output
+and the apply receipt, which are the evidence of this manual update. The apply itself still
+prunes update.py's own copies and refuses when the disk is too full for its backup; this script
+refuses first, before its own copy, when the disk cannot hold both. Remove a folder here by
+hand once its update is verified: each holds a full database copy.
 """
 import argparse
 import datetime
@@ -40,6 +48,10 @@ IDENTITY = re.compile(r'[a-z][a-z0-9_-]{0,31}')
 ALLOWED_ARGS = ('--allow-existing-browser-heartbeat', '--allow-project-migrations')
 SNAPSHOT_TIMEOUT = 900
 APPLY_TIMEOUT = 1800
+
+
+# update.py's BACKUP_SPACE_MARGIN: room for the staged release and for the Mac to run.
+BACKUP_SPACE_MARGIN = 2 * 1024 ** 3
 
 
 class UpdateError(Exception):
@@ -124,6 +136,26 @@ def backup_database(database, backup):
     return result
 
 
+def assert_backup_space(database, backups, usage=None):
+    """Refuses before any copy when the disk cannot hold both database copies: this one and
+    the one the apply makes for its rollback, each the size of the database and its log,
+    plus update.py's margin. Sizes come from stat alone: the live database is not opened."""
+    size = 0
+    for path in (database, database.with_name(database.name + '-wal')):
+        try:
+            size += os.stat(str(path)).st_size
+        except FileNotFoundError:
+            pass
+    needed = 2 * size + BACKUP_SPACE_MARGIN
+    root = backups
+    while not root.exists() and root != root.parent:
+        root = root.parent  # The first update makes the backups folder; measure its disk.
+    free = (usage or shutil.disk_usage)(str(root)).free
+    if free < needed:
+        raise UpdateError('Not enough free disk space for the pre-update backup: needs %.1f GB, %.1f GB free; '
+                          'nothing was copied or applied' % (needed / 1e9, free / 1e9))
+
+
 def run_helper(python, helpers, argv, log, timeout):
     with open(str(log), 'wb') as output:
         try:
@@ -162,6 +194,7 @@ def update(home, identity, version, runtime, helpers_asset, staging=None, extra_
     helpers = unpack_helpers(staging / helpers_asset, staging / 'helpers', helpers_asset[:-len('.tar.gz')])
     stamp = (now or datetime.datetime.now(datetime.timezone.utc)).strftime('%Y%m%dT%H%M%SZ')
     backup = studio_paths.backups_root(home) / ('pre-%s-%s' % (version, stamp))
+    assert_backup_space(database, backup.parent)
     backup.mkdir(parents=True, mode=0o700)
     copied = backup_database(database, backup)
     say('backup: %s (%d bytes, integrity ok)' % (copied['path'], copied['bytes']))

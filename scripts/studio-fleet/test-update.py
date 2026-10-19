@@ -10,6 +10,7 @@ from launcher import legacy_runtime_path, runtime_path
 spec=importlib.util.spec_from_file_location("owned_update",pathlib.Path(__file__).with_name("update.py"))
 update=importlib.util.module_from_spec(spec);spec.loader.exec_module(update)
 REAL_ROWS_SNAPSHOT,REAL_ROWS_SINCE=update.rows_snapshot,update.rows_since
+DISK=__import__('collections').namedtuple('DiskUsage','total used free')
 WAITING_SCHEMA="""
 CREATE TABLE projection_projects(project_id TEXT PRIMARY KEY, title TEXT);
 CREATE TABLE projection_threads(thread_id TEXT PRIMARY KEY);
@@ -94,6 +95,48 @@ class ReleaseRetention(unittest.TestCase):
   source=pathlib.Path(update.__file__).read_text()
   self.assertIn("prune_releases(home, [new_release, old_release])",source)
   self.assertLess(source.index("prune_releases(home, [new_release, old_release])"),source.index("print(json.dumps({'identity': identity, 'result': 'updated'"))
+class StateBackupRetention(unittest.TestCase):
+ def backup(self, root, stamp, age, files=('statev2.sqlite','settings.json')):
+  folder=root/('pre-%s-%s-%s'%('abc123def456',stamp,'0'*32));folder.mkdir(parents=True)
+  for name in files:(folder/name).write_text('x')
+  moment=time.time()-age;os.utime(folder,(moment,moment))
+  return folder
+ def test_keeps_the_newest_and_protected_copies_and_prunes_the_rest(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   home=pathlib.Path(tmp).resolve();root=studio_paths.backups_root(home)
+   old=[self.backup(root,'202610%02dT000000Z'%day,86400) for day in range(1,8)]
+   kept=old[2]
+   odd=self.backup(root,'20261009T000000Z',86400,files=('statev2.sqlite','notes.md'))
+   fresh=self.backup(root,'20260101T000000Z',60)
+   legacy=root/'pre-753f7067b-20260910T021513';legacy.mkdir();(legacy/'statev2.sqlite').write_text('x');os.utime(legacy,(time.time()-86400,)*2)
+   (root/'home-migration-20261016T135351Z').mkdir();(root/'pre-0.2.10-20261011T203834Z').mkdir()
+   removed=release_retention.prune_state_backups(home,[kept/'statev2.sqlite'],keep_newest=2)
+   self.assertEqual(removed,sorted([legacy.name]+[p.name for p in old[:5] if p!=kept]))
+   self.assertEqual(sorted(p.name for p in root.iterdir()),sorted([odd.name,old[6].name,old[5].name,kept.name,fresh.name,'home-migration-20261016T135351Z','pre-0.2.10-20261011T203834Z']))
+ def test_symlinked_backups_root_or_entries_are_never_followed(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   home=pathlib.Path(tmp).resolve();outside=home/'outside'
+   target=self.backup(outside,'20261001T000000Z',86400)
+   root=studio_paths.backups_root(home);root.parent.mkdir(parents=True);root.symlink_to(outside)
+   self.assertEqual(release_retention.prune_state_backups(home,keep_newest=0),[])
+   root.unlink();root.mkdir();(root/target.name).symlink_to(target)
+   self.assertEqual(release_retention.prune_state_backups(home,keep_newest=0),[])
+   self.assertTrue((target/'statev2.sqlite').is_file())
+ def test_an_update_prunes_state_backups_before_copying_the_database(self):
+  source=pathlib.Path(update.__file__).read_text()
+  self.assertIn("prune_state_backups(home, keep_newest=1)",source)
+  self.assertLess(source.index("prune_state_backups(home, keep_newest=1)"),source.index("state_backup = backup_state(own, before['artifactSourceCommit'])"))
+ def test_a_copy_cut_short_is_removed(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   home=pathlib.Path(tmp).resolve();own=home/'.specwithcode/m4';(own/'userdata').mkdir(parents=True)
+   sqlite3.connect(own/'userdata/statev2.sqlite').execute('CREATE TABLE t(x)').connection.commit()
+   class Failing:
+    def __init__(self,real):self.real=real
+    def backup(self,target):raise sqlite3.OperationalError('database or disk is full')
+    def close(self):self.real.close()
+   with patch.object(pathlib.Path,'home',return_value=home),patch.object(update.live_database,'connect',side_effect=lambda path:Failing(sqlite3.connect(path))):
+    with self.assertRaises(sqlite3.OperationalError):update.backup_state(own,'abc')
+   self.assertEqual(list(studio_paths.backups_root(home).iterdir()),[])
 class UpdateGuards(unittest.TestCase):
  def idle_fixture(self, state):
   db=sqlite3.connect(state/'statev2.sqlite')
@@ -554,6 +597,35 @@ class ApplyRecovery(unittest.TestCase):
   self.assertIn('No state backup',result['rollbackError']);self.assertEqual(result['pointers'],'new-release')
   self.assertEqual(self.launchd,[])
   self.assertEqual(json.loads((self.own/'installation.json').read_text())['archiveSha256'],self.sha)
+ def test_a_disk_too_full_for_the_backup_refuses_before_staging_pointers_or_a_stop(self):
+  (self.own/'userdata/statev2.sqlite').write_bytes(b'x'*3000);(self.own/'userdata/statev2.sqlite-wal').write_bytes(b'x'*1000)
+  measured=[]
+  def usage(path):
+   measured.append(path);return DISK(1<<40,(1<<40)-update.BACKUP_SPACE_MARGIN-3999,update.BACKUP_SPACE_MARGIN+3999)
+  def never_opened(path):raise AssertionError('The live database was opened')
+  with patch.object(update.shutil,'disk_usage',side_effect=usage),patch.object(update.live_database,'connect',side_effect=never_opened),patch.object(update.sqlite3,'connect',side_effect=never_opened):
+   with self.assertRaisesRegex(AssertionError,r'^Not enough free disk space for the pre-update backup: needs 2\.1 GB, 2\.1 GB free$') as caught:self.execute()
+  self.assertEqual(measured,[str(self.home/'.specwithcode')])  # backups/ is made by the first copy.
+  self.assertEqual((self.stage_timeouts,self.restart_calls,self.backups,self.quiescence_checks,self.launchd,self.stops),([],[],[],[],[],[]))
+  self.assertEqual({p:p.read_bytes() for p in self.original},self.original)
+  self.assertFalse(self.output.exists());self.assertFalse((self.own/'owned-updates').exists());self.assertFalse((self.own/'updates'/update.INSTALL_GATE_FILE).exists())
+  update.write_preflight_failure(self.output,'m4',caught.exception)
+  failure=json.loads(self.output.read_text())
+  self.assertEqual((failure['phase'],failure['pointers']),('preflight','unchanged'))
+  self.assertEqual(failure['error'],'AssertionError: '+str(caught.exception))
+  self.assertEqual(update.refusal_line('m4',caught.exception),'REFUSAL environment '+str(caught.exception))
+ def test_old_state_copies_are_pruned_before_free_space_is_measured(self):
+  root=studio_paths.backups_root(self.home);old=[]
+  for day in (1,2,3):
+   folder=root/('pre-abc123def456-2026100%dT000000Z-%s'%(day,'0'*32));folder.mkdir(parents=True);(folder/'statev2.sqlite').write_bytes(b'x')
+   os.utime(folder,(time.time()-86400,)*2);old.append(folder)
+  def usage(path):
+   copies=len(list(root.iterdir()))
+   return DISK(1<<40,0,(1<<40) if copies<=1 else 1<<20)  # Full until pruned.
+  with patch.object(update.shutil,'disk_usage',side_effect=usage):self.execute()
+  result=json.loads(self.output.read_text())
+  self.assertEqual(result['phase'],'verified')
+  self.assertEqual(result['prunedStateBackups'],[old[0].name,old[1].name]);self.assertEqual(list(root.iterdir()),[old[2]])
  def test_work_appearing_before_restart_restores_owned_pointers_without_restart(self):
   self.scenario='pre-restart-active'
   with self.assertRaises(AssertionError):self.execute()
