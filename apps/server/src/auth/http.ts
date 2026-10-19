@@ -25,6 +25,7 @@ import {
 import type { AuthEnvironmentScope, DpopFailureReason } from "@specweave-studio/contracts";
 import { parseOAuthScope } from "@specweave-studio/shared/oauthScope";
 import { causeErrorTag } from "@specweave-studio/shared/observability";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -73,6 +74,13 @@ const currentEnvironmentTraceId = Effect.currentParentSpan.pipe(
   Effect.orElseSucceed(() => "unavailable"),
 );
 
+/** Whether a failed request ended on a typed error or a defect. The full
+    cause (stacks, nested fibers, arbitrary defect text) stays in the trace
+    span; the warning carries only bounded fields. */
+function requestFailureKind(cause: Cause.Cause<unknown>): "error" | "defect" {
+  return Cause.hasFails(cause) ? "error" : "defect";
+}
+
 export function annotateEnvironmentRequest(endpoint: string) {
   return Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
@@ -80,12 +88,14 @@ export function annotateEnvironmentRequest(endpoint: string) {
     const traceId = yield* currentEnvironmentTraceId;
 
     yield* Effect.addFinalizer((exit) =>
-      exit._tag === "Failure"
+      // A client that gave up (its fetch timed out or the socket closed)
+      // interrupts the handler; that is not a server failure worth a warning.
+      exit._tag === "Failure" && !Cause.hasInterruptsOnly(exit.cause)
         ? Effect.logWarning("environment api request failed", {
             endpoint,
             traceId,
             errorTag: causeErrorTag(exit.cause),
-            cause: exit.cause,
+            failureKind: requestFailureKind(exit.cause),
           })
         : Effect.void,
     );

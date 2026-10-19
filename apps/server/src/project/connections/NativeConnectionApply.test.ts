@@ -407,6 +407,172 @@ describe("managing declarations across tools", () => {
       expect(yield* readText("codex/config.toml")).toContain("# edited");
     }),
   );
+  const stripe = Effect.gen(function* () {
+    const remote = "codex/plugins/cache/openai-curated-remote/stripe";
+    yield* write(`${remote}/.codex-remote-plugin-install.json`, { schema_version: 1 });
+    yield* write(`${remote}/8.0.0/.codex-plugin/plugin.json`, {
+      name: "stripe",
+      skills: "./skills",
+    });
+    for (const skill of ["stripe-directory", "stripe-docs", "stripe-pay"])
+      yield* write(`${remote}/8.0.0/skills/${skill}/SKILL.md`, `---\nname: ${skill}\n---\n`);
+    // A stale local copy Codex never loads, with one skill of its own.
+    yield* write(
+      "codex/plugins/cache/openai-curated/stripe/0722921d/skills/metronome/SKILL.md",
+      "",
+    );
+  });
+  const CONFIG = `${LEGACY_COMPUTER_USE}
+[plugins."stripe@openai-curated"]
+enabled = true
+
+[[skills.config]]
+path = "/Users/me/.codex/skills/stripe-docs/SKILL.md"
+enabled = false
+
+[[skills.config]]
+name = "stripe:stripe-docs"
+enabled = false
+`;
+  it.effect("turns an account plugin off by its skills and back on, touching nothing else", () =>
+    Effect.gen(function* () {
+      yield* setup;
+      yield* stripe;
+      yield* write("codex/config.toml", CONFIG);
+      const key = "stripe@openai-curated-remote";
+      const before = yield* managed((d) => d.read());
+      expect(before.plugins?.find((p) => p.key === key)).toEqual({
+        provider: "codex",
+        key,
+        label: "stripe",
+        enabled: true,
+        account: true,
+      });
+      const off = yield* managed((d) =>
+        d.apply({ action: "plugin", provider: "codex", pluginKey: key, enabled: false }),
+      );
+      expect(off.change?.files.map((f) => f.lines)).toEqual([
+        [`Turn off the skills of plugin ${key} (4 skills)`],
+      ]);
+      const written = yield* readText("codex/config.toml");
+      expect(written.startsWith(CONFIG)).toBe(true);
+      expect(written.slice(CONFIG.length).match(/^name = .*$/gm)).toEqual([
+        'name = "stripe:metronome"',
+        'name = "stripe:stripe-directory"',
+        'name = "stripe:stripe-pay"',
+      ]);
+      expect(off.plugins?.find((p) => p.key === key)?.enabled).toBe(false);
+      // The account copy ignores its table, so none is written for it.
+      expect(written).not.toContain("openai-curated-remote");
+      const on = yield* managed((d) =>
+        d.apply({ action: "plugin", provider: "codex", pluginKey: key, enabled: true }),
+      );
+      expect(on.plugins?.find((p) => p.key === key)?.enabled).toBe(true);
+      expect(yield* readText("codex/config.toml")).toBe(
+        CONFIG.replace('\n[[skills.config]]\nname = "stripe:stripe-docs"\nenabled = false\n', ""),
+      );
+    }),
+  );
+  it.effect("turns off a stale local plugin together with the account copy of its name", () =>
+    Effect.gen(function* () {
+      yield* setup;
+      yield* stripe;
+      yield* write("codex/config.toml", CONFIG);
+      const off = yield* managed((d) =>
+        d.apply({
+          action: "plugin",
+          provider: "codex",
+          pluginKey: "stripe@openai-curated",
+          enabled: false,
+        }),
+      );
+      const written = yield* readText("codex/config.toml");
+      expect(written).toContain('[plugins."stripe@openai-curated"]\nenabled = false');
+      expect(written.match(/name = "stripe:stripe-docs"/g)).toHaveLength(1);
+      expect(written).toContain("/Users/me/.codex/skills/stripe-docs/SKILL.md");
+      expect(
+        off.plugins?.filter((p) => p.key.startsWith("stripe@")).map((p) => [p.key, p.enabled]),
+      ).toEqual([
+        ["stripe@openai-curated", false],
+        ["stripe@openai-curated-remote", false],
+      ]);
+      const absent = yield* Effect.flip(
+        managed((d) =>
+          d.apply({ action: "plugin", provider: "codex", pluginKey: "gone@x", enabled: false }),
+        ),
+      );
+      expect(absent.code).toBe("not_found");
+    }),
+  );
+  it.effect("switches skills when config.toml writes the plugin table or skill list inline", () =>
+    Effect.gen(function* () {
+      yield* setup;
+      yield* stripe;
+      const inline = `${LEGACY_COMPUTER_USE}
+[plugins]
+"stripe@openai-curated" = { enabled = true }
+
+[skills]
+config = [ { path = "/x/SKILL.md", enabled = false } ]
+`;
+      yield* write("codex/config.toml", inline);
+      const key = "stripe@openai-curated";
+      const off = yield* managed((d) =>
+        d.apply({ action: "plugin", provider: "codex", pluginKey: key, enabled: false }),
+      );
+      expect(off.change?.files.map((f) => f.lines)).toEqual([
+        [`Turn off the skills of plugin ${key} (4 skills)`],
+      ]);
+      const written = yield* readText("codex/config.toml");
+      expect(written).toContain('"stripe@openai-curated" = { enabled = true }');
+      expect(written).toContain('config = [ { path = "/x/SKILL.md", enabled = false }, { name = ');
+      expect(written.match(/enabled = false \}/g)).toHaveLength(5);
+      expect(off.plugins?.find((p) => p.key === key)?.enabled).toBe(false);
+      yield* managed((d) =>
+        d.apply({ action: "plugin", provider: "codex", pluginKey: key, enabled: true }),
+      );
+      expect(yield* readText("codex/config.toml")).toBe(inline);
+      // A plain skills.config table is not a form Codex documents, so it is left alone.
+      yield* write("codex/config.toml", '[skills.config]\nname = "stripe:stripe-pay"\n');
+      const odd = yield* Effect.flip(
+        managed((d) =>
+          d.apply({
+            action: "plugin",
+            provider: "codex",
+            pluginKey: "stripe@openai-curated-remote",
+            enabled: false,
+          }),
+        ),
+      );
+      expect(odd.code).toBe("unsupported");
+    }),
+  );
+  it.effect("offers no switch for an account plugin that ships no skills", () =>
+    Effect.gen(function* () {
+      yield* setup;
+      const remote = "codex/plugins/cache/openai-curated-remote/notes";
+      yield* write(`${remote}/.codex-remote-plugin-install.json`, {});
+      yield* write(`${remote}/1/.codex-plugin/plugin.json`, { name: "notes" });
+      // A non-table value under its key does not hide it.
+      yield* write("codex/config.toml", '[plugins]\n"notes@openai-curated-remote" = true\n');
+      const key = "notes@openai-curated-remote";
+      const read = yield* managed((d) => d.read());
+      expect(read.plugins?.find((p) => p.key === key)).toEqual({
+        provider: "codex",
+        key,
+        label: "notes",
+        enabled: true,
+        account: true,
+        switchable: false,
+      });
+      const refused = yield* Effect.flip(
+        managed((d) =>
+          d.apply({ action: "plugin", provider: "codex", pluginKey: key, enabled: false }),
+        ),
+      );
+      expect(refused.code).toBe("unsupported");
+    }),
+  );
   it.effect("keeps a parked copy apart from a live entry of the same name", () =>
     Effect.gen(function* () {
       yield* setup;

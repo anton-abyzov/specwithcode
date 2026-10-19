@@ -198,8 +198,10 @@ export type HostAdmissionContext = {
 
 const REMOTE_PAST_GRACE: HostAdmissionContext = { isThisDevice: false, graceElapsed: true };
 
+// Sends are refused while it catches up (nothing queues them), so the text
+// says when sending works again and that the draft is kept.
 export const THIS_DEVICE_BUSY_ADMISSION =
-  "SpecWithCode on this Mac is busy. Messages send when it catches up.";
+  "SpecWithCode on this Mac is busy. You can send once it catches up; your draft is kept.";
 
 /** A short status for a host that is not connected, naming why where it is known. */
 export function hostDisconnectedLabel(

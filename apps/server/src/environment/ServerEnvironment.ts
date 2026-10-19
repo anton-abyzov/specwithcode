@@ -5,13 +5,17 @@ import {
   type ExecutionEnvironmentDescriptor,
 } from "@specweave-studio/contracts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -81,6 +85,74 @@ function platformArch(
       return "other";
   }
 }
+
+/** How long a read of the agent-activity publishing secrets is reused. */
+export const AGENT_ACTIVITY_PUBLISHING_CACHE_TTL_MS = 5_000;
+/** How long a descriptor request waits on a due refresh before answering from
+    the last known value; the refresh keeps running and updates the cache. */
+const AGENT_ACTIVITY_PUBLISHING_REFRESH_WAIT = "250 millis";
+
+/**
+ * Keeps the descriptor's publishing capability in memory. The environment
+ * probe (`/.well-known/studio/environment`) is how this machine's own client
+ * decides whether the server is reachable, so it must not queue behind disk
+ * I/O: on a full or busy disk three secret-file reads per probe took longer
+ * than the client's 10 s timeout and the app showed its own machine offline.
+ * The secrets are read once at startup, reused for 5 s, and then refreshed by
+ * one shared read that is forked into the service scope so a timed-out
+ * request cannot cancel it.
+ */
+const makeCachedAgentActivityPublishing = Effect.fnUntraced(function* (
+  read: Effect.Effect<boolean>,
+) {
+  const scope = yield* Scope.Scope;
+  let value = yield* read;
+  let readAtMs = yield* Clock.currentTimeMillis;
+  let inFlight: Deferred.Deferred<boolean> | undefined;
+
+  // Claiming `inFlight` and forking the read that completes it happen without
+  // an interruption point between them; otherwise a request that gave up
+  // there would leave a Deferred nobody completes, and every later request
+  // would wait it out. Only the wait itself can be interrupted.
+  const refresh = Effect.uninterruptibleMask((restore) => {
+    if (inFlight !== undefined) {
+      return restore(Deferred.await(inFlight));
+    }
+    const done = Deferred.makeUnsafe<boolean>();
+    inFlight = done;
+    return read.pipe(
+      Effect.flatMap((next) =>
+        Clock.currentTimeMillis.pipe(
+          Effect.map((nowMs) => {
+            value = next;
+            readAtMs = nowMs;
+            return next;
+          }),
+        ),
+      ),
+      Effect.onExit((exit) =>
+        Effect.sync(() => {
+          inFlight = undefined;
+        }).pipe(Effect.andThen(Deferred.done(done, exit))),
+      ),
+      // The read stays interruptible so closing the service scope stops it.
+      Effect.interruptible,
+      Effect.forkIn(scope),
+      Effect.andThen(restore(Deferred.await(done))),
+    );
+  });
+
+  return Effect.gen(function* () {
+    const nowMs = yield* Clock.currentTimeMillis;
+    if (nowMs - readAtMs < AGENT_ACTIVITY_PUBLISHING_CACHE_TTL_MS) {
+      return value;
+    }
+    const refreshed = yield* refresh.pipe(
+      Effect.timeoutOption(AGENT_ACTIVITY_PUBLISHING_REFRESH_WAIT),
+    );
+    return Option.getOrElse(refreshed, () => value);
+  });
+});
 
 const makeIdentity = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -276,12 +348,16 @@ export const make = Effect.gen(function* () {
     },
   };
 
+  // The publish opt-in and relay link change at runtime (`specweave-studio connect
+  // publish`, the client settings toggle), so the capability is not baked in at
+  // startup; it follows the secrets within AGENT_ACTIVITY_PUBLISHING_CACHE_TTL_MS.
+  const agentActivityPublishingActive = yield* makeCachedAgentActivityPublishing(
+    readAgentActivityPublishingActive(secrets),
+  );
+
   return ServerEnvironment.of({
     getEnvironmentId: Effect.succeed(environmentId),
-    // The publish opt-in and relay link change at runtime (`specweave-studio connect
-    // publish`, the client settings toggle), so the capability is read per
-    // descriptor request rather than baked in at startup.
-    getDescriptor: readAgentActivityPublishingActive(secrets).pipe(
+    getDescriptor: agentActivityPublishingActive.pipe(
       Effect.map((agentActivityPublishing) => ({
         ...descriptor,
         capabilities: { ...descriptor.capabilities, agentActivityPublishing },

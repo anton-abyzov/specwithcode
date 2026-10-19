@@ -51,6 +51,7 @@ import * as Projects from "../project/ProjectService.ts";
 import * as ProjectAdmission from "../project/ProjectAdmission.ts";
 import { SIMULATED_USAGE_LIMIT_MESSAGE, simulatedUsageLimitInstances } from "./ProviderFailure.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { SWEEP_SHELL_SNAPSHOT_MAX_AGE_MS } from "./ShellSnapshotCache.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import { recoverySnoozeBlocks } from "./usageLimitRecovery.ts";
 
@@ -881,7 +882,9 @@ export const makeSweep = Effect.gen(function* () {
       { readonly next: number; readonly failures: number; readonly lastFailureAt: number }
     >(),
   );
-  const apiCreditReturn = Effect.fn("ProviderFallbackWorker.apiCreditReturn")(function* (
+  // Whether this thread, as given, has a way back to send. Reads only the
+  // thread's runs, once per latest run; never the current shell.
+  const apiCreditReturnPlan = Effect.fn("ProviderFallbackWorker.apiCreditReturnPlan")(function* (
     thread: FallbackThread,
     providers: ReadonlyArray<ServerProvider>,
     nowMs: number,
@@ -935,6 +938,17 @@ export const makeSweep = Effect.gen(function* () {
       return null;
     const command = returnCommand(thread, origin, tries.next);
     if (command === null) return null;
+    return { command, origin, attemptKey, tries, returnCommand };
+  });
+  const apiCreditReturn = Effect.fn("ProviderFallbackWorker.apiCreditReturn")(function* (
+    thread: FallbackThread,
+    providers: ReadonlyArray<ServerProvider>,
+    nowMs: number,
+    ruleOn: boolean,
+  ) {
+    const plan = yield* apiCreditReturnPlan(thread, providers, nowMs, ruleOn);
+    if (plan === null) return null;
+    const { command, origin, attemptKey, tries, returnCommand } = plan;
     // Checked against the thread as it is now: a turn may have started since the snapshot.
     const current = yield* projections
       .getThreadShell(thread.id)
@@ -1056,7 +1070,10 @@ export const makeSweep = Effect.gen(function* () {
     if (!anyLimitRule(preferences) && !providers.some(isClaudeApiKeyProvider)) return;
     // Simulated limits test the banner and the switch; they never redeem or spend.
     const simulated = simulatedUsageLimitInstances(env).length > 0;
-    const snapshot = yield* projections.getShellSnapshot({ unsettledOnly: true });
+    const snapshot = yield* projections.getShellSnapshot({
+      unsettledOnly: true,
+      maxAgeMs: SWEEP_SHELL_SNAPSHOT_MAX_AGE_MS,
+    });
     const held = unreportedLimitStops(
       yield* Ref.get(unreportedStops),
       snapshot.threads,
@@ -1165,6 +1182,11 @@ export const makeSweep = Effect.gen(function* () {
         step = stepFor(thread);
       }
       if (step === null) {
+        // Most threads have no way back to send. Judged on the snapshot first,
+        // so they cost no lock, settings read or shell re-read each sweep.
+        // The rule-off answer is the looser one: it can only find more.
+        if ((yield* apiCreditReturnPlan(thread, providersFor(thread), now, false)) === null)
+          continue;
         // Nothing to continue: a thread the rule moved to API credits goes back
         // to its subscription. Sent once: after that, where the thread runs is
         // the person's choice again.

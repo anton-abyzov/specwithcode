@@ -34,9 +34,10 @@ from auth_heartbeat import (bind_auth, encoded, prove_restart_heartbeat,
                             read_auth_sessions_in_transaction, restore_witness,
                             utc_timestamp, verify_restart_witness)
 from quiescence import (VANISHED_READS, capture_quiescence, assert_quiescence, quiescence_core, read_processes,
-                        reap_descendants)
+                        reap_descendants, idle_providers, idle_provider_trees)
 from release_retention import prune_releases, prune_state_backups
 import database_continuity as continuity
+import idle_agents
 import live_database
 import settings_continuity
 from service_launch_agent import upgraded_service_plist
@@ -632,6 +633,88 @@ def reap(identity, request, report=None):
                      guard=lambda: assert_held(service, request))
     report.update(result='reaped', observedAt=datetime.datetime.now(datetime.timezone.utc).isoformat())
     return dict(report)
+
+def guarded_row_counts(state):
+    """Each guarded table's row count, as in _read_state's proof, without reading a row."""
+    db = live_database.connect(state / 'statev2.sqlite')
+    try:
+        db.execute('BEGIN')
+        tables = [row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")]
+        assert all(re.fullmatch('[a-z0-9_]+', table) for table in tables), 'Unexpected table identifier'
+        return {table: db.execute('SELECT count(*) FROM ' + table).fetchone()[0] for table in tables
+                if table.startswith(('projection_', 'orchestration_', 'project_')) or table in AUTHORITY_TABLES}
+    finally:
+        db.close()
+
+IDLE_WINDOW_RESETS = {'Native work is not idle', idle_agents.NOT_ALLOWED, 'Owned service has unexpected descendants',
+                      'Owned service has unexpected or missing descendants'}
+
+def idle_agent_refusal(identity, error, report=None, now=None):
+    """A normal update's fallback when a snapshot refused for processes beneath the service
+    (idle_agents): the service's own idle provider servers, and nothing else, are stopped once
+    the database has shown no work and the same row counts for the quiet window. Returns the
+    REFUSAL line, or None to keep refusal_line's; raises when the fallback does not apply. The
+    snapshot still refuses: the next one decides. `report` holds the reap's record."""
+    home = pathlib.Path.home().resolve()
+    marker_path = safe_path(studio_paths.identity_home(home, identity) / 'updates' / idle_agents.MARKER, home)
+
+    def restart_window(reason):
+        """Work, a terminal or anything else this cannot stop: the quiet window starts again.
+        A slow or busy reading says nothing about work and keeps it."""
+        message = str(reason) if isinstance(reason, AssertionError) else ''
+        if message in IDLE_WINDOW_RESETS and os.path.lexists(str(marker_path)):
+            marker_path.unlink()
+    if not isinstance(error, AssertionError) or 'descendants' not in str(error):
+        restart_window(error)
+        return None
+    service = _service(identity)
+    own, pid = service['own'], service['runtime']['pid']
+    uid, node, arguments = service['owner'].uid, str(service['node']), service['content']['ProgramArguments']
+    assert marker_path == safe_path(own / 'updates' / idle_agents.MARKER, home), 'Owned service home changed'
+    config_path = safe_path(own / 'updates' / 'config.json', home)
+    runtime_path = safe_path(own / 'userdata' / 'server-runtime.json', home)
+
+    def settled():  # Checked first, and again right before every signal.
+        assert (idle_agents.read_json(runtime_path) or {}).get('pid') == pid, 'Owned service process identity changed'
+        config = idle_agents.read_json(config_path)
+        assert idle_agents.allowed(config) and idle_agents.idle(native_work_counts(own / 'userdata')), \
+            idle_agents.NOT_ALLOWED
+        return config
+    try:
+        config = settled()
+        digest = idle_agents.work_digest(guarded_row_counts(own / 'userdata'))
+        providers = idle_providers(pid, uid, node, arguments)
+    except BaseException as reason:
+        restart_window(reason)
+        raise
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    marker, left = idle_agents.observe(idle_agents.read_json(marker_path), pid, digest, now,
+                                       idle_agents.quiet_minutes(config))
+    if left:
+        _write_private(marker_path, (json.dumps(marker, indent=2) + '\n').encode())
+        return idle_agents.refusal(providers, wait=left)
+    marker_path.unlink()
+    report = {} if report is None else report
+    report.update(schemaVersion=1, identity=identity, reason=idle_agents.CODE, servicePid=pid, providers=providers,
+                  result='refused')
+    receipts = safe_path(own / 'updates' / 'receipts', home)
+    receipts.mkdir(mode=0o700, exist_ok=True)
+    record = safe_path(receipts / ('idle-agents-%s-%s.json' % (now.strftime('%Y%m%dT%H%M%SZ'), uuid.uuid4().hex[:8])), home)
+    try:
+        reap_descendants(pid, uid, node, arguments, report=report, guard=settled, select=idle_provider_trees)
+        report['result'] = 'reaped'
+    finally:  # Whatever was signalled is recorded, even when the reap stopped part way.
+        report['observedAt'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        _write_private(record, (json.dumps(report, indent=2) + '\n').encode())
+    return idle_agents.refusal(providers, stopped=len(report['signals']))
+
+def snapshot_refusal(identity, error):
+    """The REFUSAL line for a refused snapshot: idle_agent_refusal's when it applies."""
+    try:
+        line = idle_agent_refusal(identity, error)
+    except Exception:  # Not idle, a terminal is open, or the service changed: wait as before.
+        line = None
+    return line or refusal_line(identity, error)
 
 def snapshot_with_auth(identity):
     """Return the unchanged public snapshot plus private auth; never serialize the pair."""
@@ -1768,7 +1851,7 @@ def main():
             value = snapshot(args.identity)
         except Exception as error:
             traceback.print_exc()
-            print(refusal_line(args.identity, error), file=sys.stderr, flush=True)
+            print(snapshot_refusal(args.identity, error), file=sys.stderr, flush=True)
             sys.exit(1)
         args.snapshot.write_text(json.dumps(value, indent=2) + '\n')
         print(json.dumps({'identity': args.identity, 'result': 'snapshotted', 'report': str(args.snapshot), 'servicePid': value['servicePid']}))

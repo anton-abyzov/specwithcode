@@ -217,17 +217,6 @@ export const make = Effect.gen(function* () {
   const driver = yield* ConnectionDriver.ConnectionDriver;
   const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
   const ssh = yield* ClientCapabilities.SshEnvironmentGateway;
-  // The desktop app's primary environment is its own server on this machine.
-  // Any other client (a browser tab, a phone) can reach a remote machine at a
-  // loopback address through a port forward, so only the desktop gets the
-  // this-machine connection policy.
-  const onDesktop = Option.match(
-    yield* Effect.serviceOption(ClientCapabilities.ClientPresentation),
-    {
-      onNone: () => false,
-      onSome: (presentation) => presentation.metadata.surface === "desktop",
-    },
-  );
   const persistedTargets = yield* storage.list;
   const disabledEnvironmentIds = new Set(yield* storage.listDisabled);
   const loadRoute = Effect.fn("EnvironmentRegistry.loadRoute")(function* (
@@ -376,7 +365,11 @@ export const make = Effect.gen(function* () {
           const scope = yield* Scope.fork(registryScope);
           const supervisor = yield* EnvironmentSupervisor.make(entry, {
             initiallyDesired: false,
-            thisMachine: onDesktop && entry.target._tag === "PrimaryConnectionTarget",
+            // The primary environment at a loopback address is the server on
+            // this machine for every client: the desktop app and a browser tab
+            // opened at http://127.0.0.1 alike. The supervisor applies the
+            // policy to the loopback route only.
+            thisMachine: entry.target._tag === "PrimaryConnectionTarget",
             learnRoutes: (input) => learnRoutes({ environmentId, ...input }),
           }).pipe(
             Effect.provideService(Connectivity.Connectivity, connectivity),

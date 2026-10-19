@@ -43,9 +43,10 @@ describe("EventLoopMonitor", () => {
         yield* Layer.build(
           EventLoopMonitor.layerWith(Effect.succeed(Effect.sync(() => samples.shift() ?? quiet))),
         );
-        yield* TestClock.adjust("60 seconds");
+        // Samples every 10 s: startup (discarded), then quiet.
+        yield* TestClock.adjust("20 seconds");
         assert.lengthOf(spans, 0);
-        yield* TestClock.adjust("30 seconds");
+        yield* TestClock.adjust("10 seconds");
       }).pipe(Effect.scoped, Effect.withTracer(tracer));
 
       assert.deepStrictEqual(
@@ -65,8 +66,33 @@ describe("EventLoopMonitor", () => {
       });
       assert.deepStrictEqual(
         span!.events.map(([name, , attributes]) => [name, attributes["effect.logLevel"]]),
-        [["event loop stalled for 4950 ms", "WARN"]],
+        [["longest event loop stall since the previous sample: 4950 ms", "WARN"]],
       );
+    }),
+  );
+
+  it.effect("adds free disk space to the stall span when a reading is available", () =>
+    Effect.gen(function* () {
+      const spans: Array<Tracer.NativeSpan> = [];
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
+      const lowDisk = { ...stalled, freeDiskBytes: 180 * 1024 * 1024 };
+      const samples = [quiet, lowDisk];
+
+      yield* Effect.gen(function* () {
+        yield* Layer.build(
+          EventLoopMonitor.layerWith(Effect.succeed(Effect.sync(() => samples.shift() ?? quiet))),
+        );
+        yield* TestClock.adjust("20 seconds");
+      }).pipe(Effect.scoped, Effect.withTracer(tracer));
+
+      assert.lengthOf(spans, 1);
+      assert.strictEqual(spans[0]!.attributes.get("freeDiskMb"), 180);
     }),
   );
 

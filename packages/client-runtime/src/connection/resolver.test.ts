@@ -12,6 +12,7 @@ import * as Ref from "effect/Ref";
 import * as Tracer from "effect/Tracer";
 
 import * as ConnectionResolver from "./resolver.ts";
+import { LOOPBACK_SETUP_REQUEST_TIMEOUT_MS } from "./thisMachine.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import {
@@ -81,7 +82,8 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
   readonly primaryBearerToken?: string;
   readonly prepareSsh?: ClientCapabilities.SshEnvironmentGateway["Service"]["prepare"];
   readonly descriptorProtocolVersion?: number | null | undefined;
-  readonly descriptorFetches?: Ref.Ref<number>;
+  /** Counts descriptor requests; the fetch stub is plain JS, so a plain counter. */
+  readonly descriptorFetches?: { count: number };
 }) => {
   const profiles = new Map(
     (options?.profiles ?? []).map((profile) => [profile.connectionId, profile]),
@@ -149,7 +151,7 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
   const layerDependencies = Layer.mergeAll(
     RpcHttp.layerRemoteHttpClient((() => {
       if (options?.descriptorFetches !== undefined) {
-        Effect.runSync(Ref.update(options.descriptorFetches, (count) => count + 1));
+        options.descriptorFetches.count += 1;
       }
       return Promise.resolve(
         Response.json({
@@ -291,6 +293,37 @@ describe("ConnectionResolver", () => {
     }),
   );
 
+  it.effect("gives setup requests to the server on this machine a longer budget", () =>
+    Effect.gen(function* () {
+      const timeouts = yield* Ref.make<ReadonlyArray<number | undefined>>([]);
+      const layerBroker = yield* makeDependencies({
+        primaryBearerToken: "desktop-bearer",
+        authorizeBearer: (input) =>
+          Ref.update(timeouts, (values) => [...values, input.requestTimeoutMs]).pipe(
+            Effect.as({
+              environmentId: input.expectedEnvironmentId,
+              label: "Primary",
+              httpBaseUrl: input.httpBaseUrl,
+              socketUrl: "ws://127.0.0.1:3777/ws?wsTicket=desktop",
+              httpAuthorization: { _tag: "Bearer" as const, token: input.bearerToken },
+            }),
+          ),
+      });
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(layerBroker));
+      const target = new PrimaryConnectionTarget({
+        environmentId: ENVIRONMENT_ID,
+        label: "Primary",
+        httpBaseUrl: "http://127.0.0.1:3777",
+        wsBaseUrl: "ws://127.0.0.1:3777",
+      });
+
+      yield* broker.prepare(catalogEntry(target), { thisMachine: true });
+      yield* broker.prepare(catalogEntry(target));
+
+      expect(yield* Ref.get(timeouts)).toEqual([LOOPBACK_SETUP_REQUEST_TIMEOUT_MS, undefined]);
+    }),
+  );
+
   it.effect("uses the registered bearer profile without re-reading the profile store", () =>
     Effect.gen(function* () {
       const bearerInputs = yield* Ref.make<ReadonlyArray<{ token: string; method: string }>>([]);
@@ -377,7 +410,7 @@ describe("ConnectionResolver", () => {
 
     it.effect("for a desktop primary with a bearer token", () =>
       Effect.gen(function* () {
-        const descriptorFetches = yield* Ref.make(0);
+        const descriptorFetches = { count: 0 };
         const layerBroker = yield* makeDependencies({
           primaryBearerToken: "desktop-bearer",
           authorizeBearer: authorizeWith(authorizedDescriptor()),
@@ -391,13 +424,13 @@ describe("ConnectionResolver", () => {
 
         expect(prepared.socketUrl).toContain("orchestrationProtocol=");
         expect(prepared).not.toHaveProperty("descriptor");
-        expect(yield* Ref.get(descriptorFetches)).toBe(0);
+        expect(descriptorFetches.count).toBe(0);
       }),
     );
 
     it.effect("for a saved bearer route", () =>
       Effect.gen(function* () {
-        const descriptorFetches = yield* Ref.make(0);
+        const descriptorFetches = { count: 0 };
         const layerBroker = yield* makeDependencies({
           credentials: [["loopback-1", new BearerConnectionCredential({ token: "saved-bearer" })]],
           authorizeBearer: authorizeWith(authorizedDescriptor()),
@@ -412,13 +445,13 @@ describe("ConnectionResolver", () => {
         );
 
         expect(descriptor.label).toBe("This machine");
-        expect(yield* Ref.get(descriptorFetches)).toBe(0);
+        expect(descriptorFetches.count).toBe(0);
       }),
     );
 
     it.effect("still rejects a descriptor for another environment", () =>
       Effect.gen(function* () {
-        const descriptorFetches = yield* Ref.make(0);
+        const descriptorFetches = { count: 0 };
         const layerBroker = yield* makeDependencies({
           primaryBearerToken: "desktop-bearer",
           authorizeBearer: authorizeWith(
@@ -433,7 +466,7 @@ describe("ConnectionResolver", () => {
         const error = yield* Effect.flip(broker.prepare(catalogEntry(loopbackPrimary)));
 
         expect(error).toMatchObject({ _tag: "ConnectionBlockedError", reason: "configuration" });
-        expect(yield* Ref.get(descriptorFetches)).toBe(0);
+        expect(descriptorFetches.count).toBe(0);
       }),
     );
 
@@ -442,7 +475,7 @@ describe("ConnectionResolver", () => {
     // returned none and the resolver checks a fresh one.
     it.effect("fetches the descriptor once when authorization reused a cached one", () =>
       Effect.gen(function* () {
-        const descriptorFetches = yield* Ref.make(0);
+        const descriptorFetches = { count: 0 };
         const layerBroker = yield* makeDependencies({
           primaryBearerToken: "desktop-bearer",
           authorizeBearer: authorizeWith(undefined),
@@ -454,13 +487,13 @@ describe("ConnectionResolver", () => {
 
         yield* broker.prepare(catalogEntry(loopbackPrimary));
 
-        expect(yield* Ref.get(descriptorFetches)).toBe(1);
+        expect(descriptorFetches.count).toBe(1);
       }),
     );
 
     it.effect("blocks on a fresh incompatible descriptor after a cached check", () =>
       Effect.gen(function* () {
-        const descriptorFetches = yield* Ref.make(0);
+        const descriptorFetches = { count: 0 };
         const layerBroker = yield* makeDependencies({
           primaryBearerToken: "desktop-bearer",
           authorizeBearer: authorizeWith(undefined),
@@ -474,13 +507,13 @@ describe("ConnectionResolver", () => {
         const error = yield* Effect.flip(broker.prepare(catalogEntry(loopbackPrimary)));
 
         expect(error).toMatchObject({ _tag: "ConnectionBlockedError", reason: "unsupported" });
-        expect(yield* Ref.get(descriptorFetches)).toBe(1);
+        expect(descriptorFetches.count).toBe(1);
       }),
     );
 
     it.effect("fetches the descriptor once for a primary without a bearer token", () =>
       Effect.gen(function* () {
-        const descriptorFetches = yield* Ref.make(0);
+        const descriptorFetches = { count: 0 };
         const layerBroker = yield* makeDependencies({ descriptorFetches });
         const broker = yield* ConnectionResolver.ConnectionResolver.pipe(
           Effect.provide(layerBroker),
@@ -488,7 +521,7 @@ describe("ConnectionResolver", () => {
 
         yield* broker.prepare(catalogEntry(loopbackPrimary));
 
-        expect(yield* Ref.get(descriptorFetches)).toBe(1);
+        expect(descriptorFetches.count).toBe(1);
       }),
     );
   });

@@ -24,6 +24,7 @@ export function connectFake(
   token: string,
   label = "Personal",
   page: { url: string; title: string } = { url: "https://example.com/", title: "Example" },
+  instanceId?: string,
 ): FakeChrome {
   const calls: FakeChrome["calls"] = [];
   const closed: FakeChrome["closed"] = [];
@@ -118,6 +119,7 @@ export function connectFake(
         label,
         extensionVersion: "1.0.0",
         extensionId: `ext-${label}`,
+        ...(instanceId === undefined ? {} : { instanceId }),
         userAgent: "Mozilla/5.0 Chrome/141.0.0.0 Safari/537.36",
       },
     }),

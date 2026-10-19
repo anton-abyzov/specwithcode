@@ -15,6 +15,7 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -36,6 +37,9 @@ import * as AuthHttp from "./http.ts";
 import * as SessionStore from "./SessionStore.ts";
 
 const DEV_TOKEN = "reusable-dev-auth-token-that-is-long-enough";
+class DiskFullTestError extends Schema.TaggedError<DiskFullTestError>()("DiskFullTestError", {
+  message: Schema.String,
+}) {}
 class AuthTestApi extends HttpApi.make("environment").add(EnvironmentHttpApi.groups.auth) {}
 
 const layerConfig = Layer.effect(
@@ -603,4 +607,47 @@ it.effect("exports only verified Studio Connect requests", () =>
     expect(productSpans).toEqual([]);
     expect(localSpans).toEqual(["EnvironmentAuth.authenticateHttpRequest", "environment.handler"]);
   }).pipe(Effect.scoped),
+);
+
+it.effect(
+  "warns once without the full cause for failed requests and stays quiet for client timeouts",
+  () =>
+    Effect.gen(function* () {
+      const warnings: Array<{ message: unknown }> = [];
+      const logger = Logger.make(({ message, logLevel }) => {
+        if (logLevel === "Warn") warnings.push({ message });
+      });
+      const run = (body: Effect.Effect<void, Error>) =>
+        Effect.gen(function* () {
+          yield* AuthHttp.annotateEnvironmentRequest("environment.descriptor");
+          yield* body;
+        }).pipe(
+          Effect.scoped,
+          Effect.exit,
+          Effect.provideService(
+            HttpServerRequest.HttpServerRequest,
+            HttpServerRequest.fromWeb(
+              new Request("http://127.0.0.1:8319/.well-known/studio/environment"),
+            ),
+          ),
+          Effect.provide(Logger.layer([logger], { mergeWithExisting: false })),
+        );
+
+      // The client timed out and the handler was interrupted: no warning.
+      yield* run(Effect.interrupt);
+      expect(warnings).toEqual([]);
+
+      yield* run(
+        Effect.fail(new DiskFullTestError({ message: `disk full\n${"x".repeat(1_000)}` })),
+      );
+      expect(warnings).toHaveLength(1);
+      const [text, fields] = warnings[0]!.message as [string, Record<string, unknown>];
+      expect(text).toBe("environment api request failed");
+      expect(fields).toEqual({
+        endpoint: "environment.descriptor",
+        traceId: expect.any(String),
+        errorTag: "DiskFullTestError",
+        failureKind: "error",
+      });
+    }),
 );

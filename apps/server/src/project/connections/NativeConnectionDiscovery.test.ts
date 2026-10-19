@@ -284,6 +284,65 @@ describe("plugin and other-tool discovery", () => {
       expect(JSON.stringify(result)).not.toMatch(/stale|hidden|private\.invalid|tok|app-69a1/);
     }),
   );
+  it.effect("lists account plugins and reads a Codex plugin as off when its skills are", () =>
+    Effect.gen(function* () {
+      yield* put(
+        "custom-codex/config.toml",
+        '[plugins."stripe@openai-curated"]\nenabled = true\n[plugins."docs@curated"]\nenabled = true\n\n[[skills.config]]\nname = "stripe:stripe-docs"\nenabled = false\n[[skills.config]]\nname = "stripe:stripe-pay"\nenabled = false\n[[skills.config]]\npath = "/x/docs/SKILL.md"\nenabled = false\n',
+      );
+      const remote = "custom-codex/plugins/cache/openai-curated-remote";
+      yield* put(`${remote}/stripe/.codex-remote-plugin-install.json`, {
+        schema_version: 1,
+        remote_plugin_id: "plugin_x",
+      });
+      yield* put(`${remote}/stripe/8.0.0/.codex-plugin/plugin.json`, {
+        name: "stripe",
+        interface: { displayName: "Stripe" },
+        skills: "./skills",
+      });
+      yield* put(
+        `${remote}/stripe/8.0.0/skills/stripe-docs/SKILL.md`,
+        "---\nname: stripe-docs\n---\n",
+      );
+      yield* put(`${remote}/stripe/8.0.0/skills/pay/SKILL.md`, '---\nname: "stripe-pay"\n---\n');
+      yield* put(`${remote}/notes/.codex-remote-plugin-install.json`, {});
+      yield* put(`${remote}/notes/1/.codex-plugin/plugin.json`, { name: "notes" });
+      yield* put(
+        "custom-codex/plugins/cache/curated/docs/1/skills/read/SKILL.md",
+        "no frontmatter",
+      );
+      yield* put("custom-codex/plugins/cache/curated/docs/1/skills/empty/notes.txt", "x");
+      const result = yield* scan();
+      expect(result.plugins?.filter((p) => p.provider === "codex")).toEqual([
+        { provider: "codex", key: "stripe@openai-curated", label: "stripe", enabled: false },
+        { provider: "codex", key: "docs@curated", label: "docs", enabled: true },
+        {
+          provider: "codex",
+          key: "notes@openai-curated-remote",
+          label: "notes",
+          enabled: true,
+          account: true,
+          switchable: false,
+        },
+        {
+          provider: "codex",
+          key: "stripe@openai-curated-remote",
+          label: "Stripe",
+          enabled: false,
+          account: true,
+        },
+      ]);
+      // One skill still on keeps the plugin on.
+      yield* put(
+        `${remote}/stripe/8.0.0/skills/stripe-directory/SKILL.md`,
+        "---\nname: stripe-directory\n---\n",
+      );
+      const more = yield* scan();
+      expect(more.plugins?.find((p) => p.key === "stripe@openai-curated-remote")?.enabled).toBe(
+        true,
+      );
+    }),
+  );
   it.effect("lists enabled Claude Code plugin servers and ignores installs outside the cache", () =>
     Effect.gen(function* () {
       const plugins = NodePath.join(root, "custom-claude", "plugins");

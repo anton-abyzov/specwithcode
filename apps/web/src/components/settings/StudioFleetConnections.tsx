@@ -29,7 +29,13 @@ import {
 } from "../../studio/fleetAutoConnect";
 import { useEnvironments } from "../../state/environments";
 import { machineLastSeenAt, useMachineLastSeenVersion } from "../../lib/machineLastSeen";
-import { lastSeenLabel, machineDetail, machineStatus } from "../../lib/machineStatus";
+import {
+  isThisMachineCatchingUp,
+  lastSeenLabel,
+  machineDetail,
+  machineStatus,
+} from "../../lib/machineStatus";
+import { isThisMachineTarget } from "../../connection/desktopLocal";
 import {
   useClientSettings,
   useEnvironmentSettings,
@@ -216,17 +222,21 @@ export function StudioFleetConnections({ environmentId, savedEnvironmentIds }: P
   const machineStatuses: Record<string, FleetMachineConnection> = {};
   for (const environment of environments) {
     if (!environment.connection) continue;
-    const status = machineStatus(environment.connection);
+    // This Mac is never offline here either: while its server is busy it
+    // reads "Catching up…" with no last-seen or failure line.
+    const isThisMachine = isThisMachineTarget(environment.entry);
+    const status = machineStatus(environment.connection, true, isThisMachine);
     const connected = environment.connection.phase === "connected";
     machineStatuses[environment.environmentId] = {
       text: status.text,
       connected,
-      detail: connected
-        ? null
-        : machineDetail(
-            lastSeenLabel(machineLastSeenAt(environment.environmentId), Date.now()),
-            status.reason,
-          ) || null,
+      detail:
+        connected || (isThisMachine && isThisMachineCatchingUp(environment.connection.phase))
+          ? null
+          : machineDetail(
+              lastSeenLabel(machineLastSeenAt(environment.environmentId), Date.now()),
+              status.reason,
+            ) || null,
     };
   }
   const saved = new Set<string>(savedEnvironmentIds);

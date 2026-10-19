@@ -427,6 +427,326 @@ export function setCodexPlugin(text: string, key: string, enabled: boolean): str
   return isObject(plugin) && plugin.enabled === enabled ? next : null;
 }
 
+/** A Codex plugin key `<name>@<marketplace>` without its marketplace; skills are named `<name>:<skill>`. */
+export const codexPluginName = (key: string) => key.split("@")[0] ?? key;
+
+/** Normalize a TOML array-of-tables header to `a.b`, or null for any other line. */
+const arrayTableKey = (line: string) => {
+  const match = /^\s*\[\[([^[\]]+)\]\]\s*(?:#.*)?$/.exec(line);
+  if (!match) return null;
+  return match[1]!
+    .split(".")
+    .map((part) => part.trim().replace(/^"(.*)"$|^'(.*)'$/, "$1$2"))
+    .join(".");
+};
+
+/** A `[[skills.config]]` entry that names a skill; entries with a SKILL.md `path` are left alone. */
+const namedSkill = (entry: unknown): entry is ObjectValue & { name: string } =>
+  isObject(entry) && typeof entry.name === "string" && entry.path === undefined;
+const skillEntries = (config: ObjectValue): unknown[] => {
+  const list = object(config.skills).config;
+  return Array.isArray(list) ? list : [];
+};
+/** An entry with nothing beyond its name and switch, so it can go or come whole. */
+const plainSkill = (entry: ObjectValue) =>
+  Object.keys(entry).every((key) => key === "name" || key === "enabled");
+
+/** Skill names a Codex config turns off by name, whichever install they load from. */
+export function disabledCodexSkills(config: ObjectValue): Set<string> {
+  return new Set(
+    skillEntries(config)
+      .filter(namedSkill)
+      .filter((entry) => entry.enabled === false)
+      .map((entry) => entry.name),
+  );
+}
+
+/** The config with each skill entry mapped; entries mapped to null go, and a list or table emptied by that too. */
+const mapSkills = (config: ObjectValue, map: (entry: unknown) => unknown) => {
+  if (!Array.isArray(object(config.skills).config)) return config;
+  const skills = { ...object(config.skills) };
+  const kept = skillEntries(config)
+    .map(map)
+    .filter((entry) => entry !== null);
+  if (kept.length > 0) skills.config = kept;
+  else delete skills.config;
+  const next = { ...config };
+  if (Object.keys(skills).length > 0) next.skills = skills;
+  else delete next.skills;
+  return next;
+};
+
+const parseEntry = (text: string): unknown => {
+  try {
+    return parse(text);
+  } catch {
+    return null;
+  }
+};
+
+/** Line ranges of every `[[skills.config]]` entry with its sub-tables, and the entry each holds. */
+function skillBlocks(lines: ReadonlyArray<string>) {
+  const ranges: Array<{ start: number; end: number }> = [];
+  let start = -1;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]!;
+    if (!/^\s*\[/.test(line)) continue;
+    const array = arrayTableKey(line);
+    const key = array ?? tableKey(line);
+    if (start !== -1 && key !== null && key.startsWith("skills.config.")) continue;
+    if (start !== -1) ranges.push({ start, end: index });
+    start = array === "skills.config" ? index : -1;
+  }
+  if (start !== -1) ranges.push({ start, end: lines.length });
+  return ranges.map((range) => ({
+    ...range,
+    entry: parseEntry(lines.slice(range.start + 1, range.end).join("\n")),
+  }));
+}
+
+const quotedKey = (key: string) => `(?:${key}|"${key}"|'${key}')`;
+const CONFIG_ARRAY = new RegExp(`^\\s*${quotedKey("config")}\\s*=\\s*\\[`);
+const SKILLS_CONFIG_ARRAY = new RegExp(
+  `^\\s*${quotedKey("skills")}\\s*\\.\\s*${quotedKey("config")}\\s*=\\s*\\[`,
+);
+
+/** The value spans of a TOML array opening at `open`, and its closing bracket; null when it never closes. */
+function arrayElements(text: string, open: number) {
+  const elements: Array<{ start: number; end: number }> = [];
+  let depth = 0;
+  let start = -1;
+  let end = -1;
+  for (let index = open; index < text.length; index += 1) {
+    const char = text[index]!;
+    if (char === "#") {
+      while (index + 1 < text.length && text[index + 1] !== "\n") index += 1;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      const quote = text.startsWith(char.repeat(3), index) ? char.repeat(3) : char;
+      if (depth === 1 && start === -1) start = index;
+      index += quote.length;
+      while (index < text.length && !text.startsWith(quote, index))
+        index += char === '"' && text[index] === "\\" ? 2 : 1;
+      index += quote.length - 1;
+      if (depth === 1) end = index + 1;
+      continue;
+    }
+    if (char === "[" || char === "{") {
+      depth += 1;
+      if (depth === 2 && start === -1) start = index;
+      continue;
+    }
+    if (char === "]" || char === "}") {
+      depth -= 1;
+      if (depth === 1) end = index + 1;
+      if (depth > 0) continue;
+      if (start !== -1) elements.push({ start, end });
+      return { close: index, elements };
+    }
+    if (depth !== 1 || /\s/.test(char)) continue;
+    if (char === ",") {
+      if (start !== -1) elements.push({ start, end });
+      start = -1;
+      continue;
+    }
+    if (start === -1) start = index;
+    end = index + 1;
+  }
+  return null;
+}
+
+/** `skills.config` written as one inline array, under `[skills]` or at the top level. */
+function inlineSkillArray(text: string) {
+  let table = "";
+  let offset = 0;
+  for (const raw of text.split("\n")) {
+    const line = raw.replace(/\r$/, "");
+    if (/^\s*\[/.test(line)) table = arrayTableKey(line) ?? tableKey(line) ?? "?";
+    else {
+      const pattern = table === "" ? SKILLS_CONFIG_ARRAY : table === "skills" ? CONFIG_ARRAY : null;
+      const match = pattern?.exec(line);
+      if (match) {
+        const open = offset + match[0].length - 1;
+        const found = arrayElements(text, open);
+        return found === null ? null : { open, ...found };
+      }
+    }
+    offset += raw.length + 1;
+  }
+  return null;
+}
+
+/**
+ * How a Codex config writes `skills.config`: as `[[skills.config]]` blocks
+ * (or not at all), as one inline array, or null for any other form, such as
+ * a plain table or an array inside an inline `skills` table.
+ */
+function skillLayout(text: string, config: ObjectValue) {
+  const list = object(config.skills).config;
+  const lines = text.split("\n").map((line) => line.replace(/\r$/, ""));
+  const blocks = skillBlocks(lines);
+  if (list === undefined) return { kind: "blocks" as const, blocks };
+  if (!Array.isArray(list)) return null;
+  const inline = inlineSkillArray(text);
+  if (inline !== null)
+    return inline.elements.length === list.length ? { kind: "inline" as const, ...inline } : null;
+  return blocks.length === list.length ? { kind: "blocks" as const, blocks } : null;
+}
+
+/** Whether setCodexSkills can edit this config's skill entries; false for a form it does not write. */
+export function editableCodexSkills(text: string): boolean {
+  const config = parseNativeConfig("codex", text);
+  return config !== null && skillLayout(text, config) !== null;
+}
+
+/**
+ * Turn Codex skills off or on by name in `skills.config`. Off appends an
+ * `enabled = false` entry for each name that lacks one, dropping a name entry
+ * that turns it on; on removes exactly the name entries that turn them off.
+ * An entry with keys of its own keeps them and only has its switch flipped.
+ * Path entries and every other line stay as written, in the file's own line
+ * endings. Null when the result does not parse, anything beyond those entries
+ * reads differently, or an entry for one of the names still says otherwise.
+ */
+export function setCodexSkills(
+  text: string,
+  names: ReadonlyArray<string>,
+  enabled: boolean,
+): string | null {
+  const before = parseNativeConfig("codex", text);
+  if (before === null) return null;
+  const layout = skillLayout(text, before);
+  if (layout === null) return null;
+  const targets = new Set(names);
+  const named = (entry: unknown): entry is ObjectValue & { name: string } =>
+    namedSkill(entry) && targets.has(entry.name);
+  // On touches only the entries that turn a name off; off, every other entry for it.
+  const wrong = (entry: unknown): entry is ObjectValue =>
+    named(entry) && (entry.enabled === false) === enabled;
+  const eol = text.includes("\r\n") ? "\r\n" : "\n";
+  const entryText = (name: string) => stringify({ name }).trim();
+  let next = text;
+  if (layout.kind === "blocks") {
+    const lines = text.split("\n");
+    const clean = lines.map((line) => line.replace(/\r$/, ""));
+    const cr = eol === "\r\n" ? "\r" : "";
+    const blank = (index: number) => index < clean.length && /^\s*$/.test(clean[index]!);
+    for (const block of layout.blocks.toReversed()) {
+      if (!wrong(block.entry)) continue;
+      if (!plainSkill(block.entry)) {
+        let flipped = false;
+        for (let index = block.start + 1; index < block.end; index += 1) {
+          if (/^\s*\[/.test(clean[index]!)) break;
+          if (/^\s*enabled\s*=\s*(true|false)\s*(?:#.*)?$/.test(clean[index]!)) {
+            lines[index] = lines[index]!.replace(/true|false/, String(enabled));
+            flipped = true;
+            break;
+          }
+        }
+        if (!flipped) {
+          lines.splice(block.start + 1, 0, `enabled = ${enabled}${cr}`);
+          clean.splice(block.start + 1, 0, `enabled = ${enabled}`);
+        }
+        continue;
+      }
+      // Comments after the last key belong to whatever follows, so they stay.
+      let end = block.end;
+      while (end > block.start + 1 && /^\s*(?:#.*)?$/.test(clean[end - 1]!)) end -= 1;
+      // The blank line that set the entry apart goes with it.
+      if (block.start === 0 || blank(block.start - 1)) while (blank(end)) end += 1;
+      lines.splice(block.start, end - block.start);
+      clean.splice(block.start, end - block.start);
+    }
+    next = lines.join("\n");
+  } else {
+    const items = layout.elements.map((item) => ({ ...item }));
+    let close = layout.close;
+    const replace = (from: number, to: number, insert: string) => {
+      next = `${next.slice(0, from)}${insert}${next.slice(to)}`;
+      const move = (at: number) => (at >= to ? at + insert.length - (to - from) : at);
+      for (const item of items)
+        Object.assign(item, { start: move(item.start), end: move(item.end) });
+      close = move(close);
+    };
+    for (let index = items.length - 1; index >= 0; index -= 1) {
+      const item = items[index]!;
+      const source = next.slice(item.start, item.end);
+      const entry = object(parseEntry(`entry = ${source}`)).entry;
+      if (!wrong(entry)) continue;
+      if (!plainSkill(entry)) {
+        const switches = [...source.matchAll(/\benabled\s*=\s*(true|false)\b/g)];
+        if (switches.length === 1) {
+          const at = item.start + switches[0]!.index!;
+          replace(at, at + switches[0]![0].length, `enabled = ${enabled}`);
+        } else if (switches.length === 0 && !enabled) {
+          const at = item.start + /^\{\s*/.exec(source)![0].length;
+          replace(at, at, "enabled = false, ");
+        }
+        continue;
+      }
+      // Each entry takes the separator after it; the last takes the one before it.
+      const following = items[index + 1];
+      const previous = items[index - 1];
+      if (following) replace(item.start, following.start, "");
+      else if (previous) replace(previous.end, item.end, "");
+      else replace(item.start, item.end + /^\s*,?/.exec(next.slice(item.end))![0].length, "");
+      items.splice(index, 1);
+    }
+    if (!enabled) {
+      const edited = parseNativeConfig("codex", next);
+      if (edited === null) return null;
+      const off = disabledCodexSkills(edited);
+      const added = [...targets]
+        .filter((name) => !off.has(name))
+        .map((name) => `{ ${entryText(name)}, enabled = false }`);
+      const last = items.at(-1);
+      if (added.length > 0 && last) {
+        // A multi-line array gets one entry per line, at the last entry's indent.
+        const lineStart = next.lastIndexOf("\n", last.start) + 1;
+        const indent = /^[ \t]*/.exec(next.slice(lineStart))![0];
+        const multiline = next.slice(layout.open, last.start).includes("\n");
+        const separator = multiline ? `,${eol}${indent}` : ", ";
+        replace(last.end, last.end, added.map((entry) => `${separator}${entry}`).join(""));
+      } else if (added.length > 0) replace(close, close, added.join(", "));
+    }
+  }
+  if (!enabled && layout.kind === "blocks") {
+    const edited = parseNativeConfig("codex", next);
+    if (edited === null) return null;
+    const off = disabledCodexSkills(edited);
+    const missing = [...targets].filter((name) => !off.has(name));
+    if (missing.length > 0) {
+      const blocks = missing.map(
+        (name) => `[[skills.config]]${eol}${entryText(name)}${eol}enabled = false${eol}`,
+      );
+      const separator =
+        next.length === 0 || next.endsWith(`${eol}${eol}`)
+          ? ""
+          : next.endsWith("\n")
+            ? eol
+            : `${eol}${eol}`;
+      next = `${next}${separator}${blocks.join(eol)}`;
+    }
+  }
+  const after = parseNativeConfig("codex", next);
+  if (after === null) return null;
+  // Everything but the switches of the named entries, and plain entries for the names, reads the same.
+  const rest = (config: ObjectValue) =>
+    JSON.stringify(
+      mapSkills(config, (entry) => {
+        if (!named(entry)) return entry;
+        if (plainSkill(entry)) return null;
+        return Object.fromEntries(Object.entries(entry).filter(([key]) => key !== "enabled"));
+      }),
+    );
+  if (rest(before) !== rest(after)) return null;
+  const entries = skillEntries(after).filter(named);
+  if (entries.some(wrong)) return null;
+  const off = disabledCodexSkills(after);
+  return names.every((name) => off.has(name) === !enabled) ? next : null;
+}
+
 /** Turn a Claude Code plugin on or off in user settings.json `enabledPlugins`. */
 export function setClaudePlugin(text: string | null, key: string, enabled: boolean): string | null {
   const data = parseNativeConfig("claude", text === null || text.trim() === "" ? "{}" : text);

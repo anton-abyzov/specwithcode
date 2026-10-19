@@ -9,6 +9,7 @@ import {
   RotatingFileSink,
   RotatingFileSinkConfigurationError,
   RotatingFileSinkError,
+  rotatingFileSinkErrorCode,
 } from "./logging.ts";
 
 const windowsHost = HostProcessPlatform.defaultValue() === "win32";
@@ -171,5 +172,30 @@ describe("RotatingFileSink", () => {
     expect(thrown).toBeInstanceOf(RotatingFileSinkError);
     expect(thrown).toMatchObject({ operation: "prune", filePath });
     expect((thrown as RotatingFileSinkError).cause).toBeInstanceOf(Error);
+  });
+});
+
+describe("rotatingFileSinkErrorCode", () => {
+  it("reads the errno code behind a failed write", () => {
+    const directory = makeTempDirectory();
+    // A directory at the log path fails every append, like an unwritable disk.
+    const filePath = NodePath.join(directory, "trace.log");
+    NodeFS.mkdirSync(filePath);
+    // Larger than any directory's st_size (4096 on Linux), so the sink never rotates it away.
+    const sink = new RotatingFileSink({
+      filePath,
+      maxBytes: 1024 * 1024,
+      maxFiles: 1,
+      throwOnError: true,
+    });
+
+    const thrown = captureError(() => sink.write("record\n"));
+
+    expect(rotatingFileSinkErrorCode(thrown)).toEqual(windowsHost ? expect.any(String) : "EISDIR");
+    expect(rotatingFileSinkErrorCode(Object.assign(new Error("full"), { code: "ENOSPC" }))).toBe(
+      "ENOSPC",
+    );
+    expect(rotatingFileSinkErrorCode(new Error("no code"))).toBeUndefined();
+    expect(rotatingFileSinkErrorCode(undefined)).toBeUndefined();
   });
 });

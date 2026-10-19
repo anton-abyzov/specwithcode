@@ -639,9 +639,9 @@ describe("EnvironmentRegistry", () => {
       }),
     );
 
-    // A browser tab at a loopback address can be an SSH port forward to a
-    // remote machine, so it keeps the remote policy.
-    it.effect("parks offline in a browser while the network reports offline", () =>
+    // A browser tab opened at http://127.0.0.1:8319 talks to the server on
+    // this machine just as the desktop app does.
+    it.effect("connects in a browser tab while the network reports offline", () =>
       Effect.gen(function* () {
         const harness = yield* makeHarness([LOOPBACK_PRIMARY], [], [], { surface: "web" });
         yield* SubscriptionRef.set(harness.networkStatus, "offline");
@@ -649,12 +649,12 @@ describe("EnvironmentRegistry", () => {
         yield* Effect.gen(function* () {
           const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
           yield* registry.start;
-          yield* awaitConnectionState(
+          const state = yield* awaitConnectionState(
             registry,
             TARGET.environmentId,
-            (current) => current.phase === "offline",
+            (current) => current.phase === "connected",
           );
-          expect(yield* Ref.get(harness.sessions)).toHaveLength(0);
+          expect(state.network).toBe("offline");
         }).pipe(Effect.provide(harness.layer), Effect.scoped);
       }),
     );

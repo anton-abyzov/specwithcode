@@ -106,7 +106,7 @@ If OTLP is not configured, metrics still exist in-process, but you will not have
 
 ### Event Loop Stalls
 
-`apps/server/src/observability/EventLoopMonitor.ts` samples the server's event loop every 30 s. When
+`apps/server/src/observability/EventLoopMonitor.ts` samples the server's event loop every 10 s. When
 the loop stalled for more than 2 s since the previous sample, it records a root
 `server.eventLoop.stall` span with a warning. The span has trace level `Warn`, so it stays when
 `STUDIO_TRACE_MIN_LEVEL` is `Warn`. The warning shows in Settings > Diagnostics unless OTLP logs are
@@ -125,7 +125,7 @@ Some delay is not recorded:
   can block the loop for seconds on a large database.
 
 CPU times and page faults cover the whole process over the whole window since the previous sample.
-The window is nominally 30 s, but a long stall delays the sample and makes the window longer. Other
+The window is nominally 10 s, but a long stall delays the sample and makes the window longer. Other
 work in the window can hide a wait, so only CPU time far below `delayMaxMs` proves the thread was
 waiting. Read CPU together with page faults:
 

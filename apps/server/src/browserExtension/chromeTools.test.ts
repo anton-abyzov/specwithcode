@@ -9,7 +9,7 @@ import {
 } from "./BrowserExtension.ts";
 import { ChromeTools, checkUrl } from "./chromeTools.ts";
 import { connectFake, setup } from "./fakeChrome.testkit.ts";
-import { BrowserRelayError, CLOSE_REJECTED, TAB_IDLE_MS } from "./relayHub.ts";
+import { BrowserRelayError, CLOSE_REJECTED, CLOSE_REPLACED, TAB_IDLE_MS } from "./relayHub.ts";
 
 describe("pairing", () => {
   it("encodes a loopback relay URL, a long token and the machine name", () => {
@@ -245,6 +245,26 @@ describe("ChromeTools", () => {
     await expect(
       tools.open("t1", { url: "https://example.com", profile: "work" }),
     ).resolves.toMatchObject({ profile: "Work" });
+  });
+
+  it("replaces only the same install's older socket", () => {
+    const { extension, token } = setup();
+    const page = { url: "https://example.com/", title: "Example" };
+    // Two Chrome profiles with the store build share an extension id and may share a name.
+    const home = connectFake(extension, token, "Chrome", page, "install-a");
+    const work = connectFake(extension, token, "Chrome", page, "install-b");
+    expect(home.closed).toEqual([]);
+    expect(extension.hub.profileSummaries()).toHaveLength(2);
+    // The same install reconnecting replaces its stale socket.
+    connectFake(extension, token, "Chrome", page, "install-a");
+    expect(home.closed).toEqual([
+      { code: CLOSE_REPLACED, reason: "replaced by a newer connection" },
+    ]);
+    expect(work.closed).toEqual([]);
+    // Versions before 1.0.3 send no install id, so the name still decides.
+    const old = connectFake(extension, token, "Old");
+    connectFake(extension, token, "Old");
+    expect(old.closed.map((c) => c.code)).toEqual([CLOSE_REPLACED]);
   });
 
   it("only loads web pages", () => {

@@ -32,6 +32,7 @@ import * as Duration from "effect/Duration";
 import * as Ref from "effect/Ref";
 import * as Hold from "../serviceUpdate/ServiceUpdateHold.ts";
 import { awaitGateOpen, makeGatedHold } from "../serviceUpdate/UpdateInstallGate.testkit.ts";
+import { SWEEP_SHELL_SNAPSHOT_MAX_AGE_MS } from "./ShellSnapshotCache.ts";
 
 describe("ThreadPullRequestServiceV2 project guard", () => {
   it.effect("discovers a repository from a project shell without enrichment", () =>
@@ -69,7 +70,9 @@ describe("ThreadPullRequestServiceV2 project guard", () => {
       );
       expect(resolvedRoot).toBe("/workspace/project");
       expect(result.repository).toBe("anton-abyzov/specwithcode");
-      expect(result.project.repositoryIdentity?.canonicalKey).toBe("github.com/anton-abyzov/specwithcode");
+      expect(result.project.repositoryIdentity?.canonicalKey).toBe(
+        "github.com/anton-abyzov/specwithcode",
+      );
     }),
   );
 
@@ -225,7 +228,11 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           yield* service.start();
           yield* Deferred.succeed(activation, undefined);
           // Startup backfill reads every active thread.
-          expect(yield* Queue.take(reads)).toEqual({ location: "active", unsettledOnly: false });
+          expect(yield* Queue.take(reads)).toEqual({
+            location: "active",
+            unsettledOnly: false,
+            maxAgeMs: SWEEP_SHELL_SNAPSHOT_MAX_AGE_MS,
+          });
           yield* service.drain;
           yield* PubSub.publish(events, {
             type: "thread.metadata-updated",
@@ -314,11 +321,19 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           yield* service.start();
           yield* Deferred.succeed(activation, undefined);
           // Backfill finds the settled branch thread and must read it again.
-          expect(yield* Queue.take(reads)).toEqual({ location: "active", unsettledOnly: false });
+          expect(yield* Queue.take(reads)).toEqual({
+            location: "active",
+            unsettledOnly: false,
+            maxAgeMs: SWEEP_SHELL_SNAPSHOT_MAX_AGE_MS,
+          });
           yield* service.drain;
           // Its project is gone, so backfill finishes it on the first pass.
           yield* TestClock.adjust("1 minute");
-          expect(yield* Queue.take(reads)).toEqual({ location: "active", unsettledOnly: true });
+          expect(yield* Queue.take(reads)).toEqual({
+            location: "active",
+            unsettledOnly: true,
+            maxAgeMs: SWEEP_SHELL_SNAPSHOT_MAX_AGE_MS,
+          });
           yield* service.drain;
         }).pipe(Effect.provide(layerDependencies));
       }),
@@ -380,7 +395,11 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           expect(yield* awaitGateOpen(gated.hold, pollMs)).toBe(true);
           yield* TestClock.adjust(Duration.millis(pollMs));
           // The activation backfill runs first, once the gate is gone.
-          expect(yield* Queue.take(reads)).toEqual({ location: "active", unsettledOnly: false });
+          expect(yield* Queue.take(reads)).toEqual({
+            location: "active",
+            unsettledOnly: false,
+            maxAgeMs: SWEEP_SHELL_SNAPSHOT_MAX_AGE_MS,
+          });
           yield* service.drain;
         }).pipe(
           Effect.provide(layerDependencies),

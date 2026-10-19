@@ -1,4 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - only node:perf_hooks exposes the event loop delay histogram.
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePerfHooks from "node:perf_hooks";
 
 import * as Effect from "effect/Effect";
@@ -12,7 +14,8 @@ import type * as Scope from "effect/Scope";
 // is caught, at 1 wakeup per second that never enters JS.
 const RESOLUTION_MS = 1000;
 const STALL_THRESHOLD_MS = 2000;
-const SAMPLE_INTERVAL = "30 seconds";
+const SAMPLE_INTERVAL_SECONDS = 10;
+const SAMPLE_INTERVAL = `${SAMPLE_INTERVAL_SECONDS} seconds` as const;
 
 /** One sample interval as Node reports it. Delay in ns, active time in ms, CPU in µs. */
 export interface EventLoopReadings {
@@ -28,6 +31,8 @@ export interface EventLoopReadings {
     | "involuntaryContextSwitches"
   >;
   readonly rssBytes: number;
+  /** Free space on the home volume from the latest finished async statfs, if any. */
+  readonly freeDiskBytes?: number | undefined;
 }
 
 // Enables the delay histogram for the layer's lifetime. Each read returns the
@@ -44,6 +49,29 @@ const makeNodeSampler = Effect.gen(function* () {
   );
   let elu = NodePerfHooks.performance.eventLoopUtilization();
   let usage = process.resourceUsage();
+  // Free disk space is read asynchronously and at most one read is in flight,
+  // so a disk that is slow to answer never adds to the stall being measured.
+  // Each sample reports the value from the previous read.
+  let freeDiskBytes: number | undefined;
+  let freeDiskReadInFlight = false;
+  const refreshFreeDisk = () => {
+    if (freeDiskReadInFlight) return;
+    freeDiskReadInFlight = true;
+    NodeFS.promises
+      .statfs(NodeOS.homedir())
+      .then(
+        (stats) => {
+          freeDiskBytes = Number(stats.bavail) * Number(stats.bsize);
+        },
+        () => {
+          freeDiskBytes = undefined;
+        },
+      )
+      .finally(() => {
+        freeDiskReadInFlight = false;
+      });
+  };
+  refreshFreeDisk();
 
   // @effect-diagnostics-next-line returnEffectInGen:off - the read effect is the result.
   return Effect.sync(() => {
@@ -63,7 +91,9 @@ const makeNodeSampler = Effect.gen(function* () {
           nextUsage.involuntaryContextSwitches - usage.involuntaryContextSwitches,
       },
       rssBytes: process.memoryUsage.rss(),
+      freeDiskBytes,
     };
+    refreshFreeDisk();
     histogram.reset();
     elu = nextElu;
     usage = nextUsage;
@@ -84,8 +114,8 @@ export const stallMs = ({ delayMaxNs, activeMs }: EventLoopReadings) => {
 };
 
 /**
- * Samples event loop health every 30 s and records a `server.eventLoop.stall` span
- * with a warning when the loop stalled for more than 2 s, so stalls land in
+ * Samples event loop health every 10 s and records a `server.eventLoop.stall` span
+ * with a warning when the longest stall since the previous sample exceeded 2 s, so stalls land in
  * the local trace file and Settings > Diagnostics without OTLP. Takes the sampler
  * so tests can inject readings.
  */
@@ -99,10 +129,14 @@ export const layerWith = (
         const readings = yield* sample;
         const delayMaxMs = stallMs(readings);
         if (delayMaxMs === undefined) return;
-        const { utilization, usage, rssBytes } = readings;
+        const { utilization, usage, rssBytes, freeDiskBytes } = readings;
         // Root, as the stall has no caller to attach to. Warn level keeps it when
         // STUDIO_TRACE_MIN_LEVEL is raised to cut trace noise.
-        yield* Effect.logWarning(`event loop stalled for ${delayMaxMs} ms`).pipe(
+        yield* Effect.logWarning(
+          // No fixed window in the text: a stall delays the sample, so the
+          // window since the previous sample grows with the stall.
+          `longest event loop stall since the previous sample: ${delayMaxMs} ms`,
+        ).pipe(
           Effect.withSpan("server.eventLoop.stall", {
             root: true,
             level: "Warn",
@@ -115,6 +149,9 @@ export const layerWith = (
               minorPageFaults: usage.minorPageFault,
               involuntaryContextSwitches: usage.involuntaryContextSwitches,
               rssMb: Math.round(rssBytes / 1024 / 1024),
+              ...(freeDiskBytes === undefined
+                ? {}
+                : { freeDiskMb: Math.round(freeDiskBytes / 1024 / 1024) }),
             },
           }),
         );

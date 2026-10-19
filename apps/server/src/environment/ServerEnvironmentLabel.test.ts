@@ -101,6 +101,87 @@ describe("resolveServerEnvironmentLabel", () => {
     }),
   );
 
+  it.effect.each([
+    {
+      name: "strips a macOS name-conflict counter the LocalHostName does not carry",
+      computerName: "Alex's MacBook Pro (149)",
+      localHostName: "Alexs-MacBook-Pro",
+      expected: "Alex's MacBook Pro",
+    },
+    {
+      name: "strips the counter when the LocalHostName has a different counter",
+      computerName: "Studio Mac (3)",
+      localHostName: "Studio-Mac-2",
+      expected: "Studio Mac",
+    },
+    {
+      name: "keeps a parenthesized number the LocalHostName also carries",
+      computerName: "Lab Mac (2)",
+      localHostName: "Lab-Mac-2",
+      expected: "Lab Mac (2)",
+    },
+    {
+      name: "strips the counter when the LocalHostName is unavailable",
+      computerName: "Alex's MacBook (7)",
+      localHostName: null,
+      expected: "Alex's MacBook",
+    },
+  ])("$name", ({ computerName, localHostName, expected }) =>
+    Effect.gen(function* () {
+      const output = (stdout: string, code: number) =>
+        Effect.succeed({
+          stdout,
+          stderr: "",
+          code: ChildProcessSpawner.ExitCode(code),
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          stdoutInvalidUtf8: false,
+          stderrInvalidUtf8: false,
+        });
+      runMock.mockImplementation((input) =>
+        input.args[1] === "ComputerName"
+          ? output(`${computerName}\n`, 0)
+          : localHostName === null
+            ? output("", 1)
+            : output(`${localHostName}\n`, 0),
+      );
+
+      const result = yield* ServerEnvironmentLabel.resolveServerEnvironmentLabel({
+        cwdBaseName: "studio",
+      }).pipe(Effect.provide(withHostPlatform(layerTest, "darwin", "macbook-pro")));
+
+      expect(result).toBe(expected);
+      expect(runMock).toHaveBeenCalledWith(
+        expect.objectContaining({ command: "scutil", args: ["--get", "LocalHostName"] }),
+      );
+    }),
+  );
+
+  it.effect("does not ask for the LocalHostName when the ComputerName has no counter", () =>
+    Effect.gen(function* () {
+      runMock.mockReturnValueOnce(
+        Effect.succeed({
+          stdout: "Build Mac\n",
+          stderr: "",
+          code: ChildProcessSpawner.ExitCode(0),
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          stdoutInvalidUtf8: false,
+          stderrInvalidUtf8: false,
+        }),
+      );
+
+      const result = yield* ServerEnvironmentLabel.resolveServerEnvironmentLabel({
+        cwdBaseName: "studio",
+      }).pipe(Effect.provide(withHostPlatform(layerTest, "darwin", "macbook-pro")));
+
+      expect(result).toBe("Build Mac");
+      expect(runMock).toHaveBeenCalledTimes(1);
+    }),
+  );
+
   it.effect("prefers Linux PRETTY_HOSTNAME from machine-info", () =>
     Effect.gen(function* () {
       const result = yield* ServerEnvironmentLabel.resolveServerEnvironmentLabel({
