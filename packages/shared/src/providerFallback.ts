@@ -96,9 +96,10 @@ export function isClaudeApiKeyProvider(provider: ServerProvider | undefined): bo
 }
 
 /**
- * A Claude instance whose own environment holds an Anthropic API key and no
- * custom endpoint. Only this kind takes a limited turn on API credits: a
- * proxy or router token is billed somewhere else.
+ * A Claude instance billed to Anthropic API credits: its own environment
+ * holds an Anthropic API key and no custom endpoint, or its CLI is signed in
+ * to the Claude Console. Only this kind takes a limited turn on API credits:
+ * a proxy or router token is billed somewhere else.
  */
 export function isDirectClaudeApiKeyProvider(provider: ServerProvider | undefined): boolean {
   return provider?.driver === "claudeAgent" && provider.auth.apiKeyBilling === true;
@@ -275,7 +276,7 @@ export function isApiCreditExhaustedMessage(text: string | null | undefined): bo
 /**
  * An instance that bills an API account's own credits for the driver's
  * models, so a person can move a limited subscription thread there: a Claude
- * instance with its own Anthropic key (`isDirectClaudeApiKeyProvider`), a
+ * instance on Anthropic API credits (`isDirectClaudeApiKeyProvider`), a
  * Grok instance on an xAI API key, or Codex signed in with an OpenAI API
  * key. Proxies, routers and Bedrock are billed elsewhere and do not count.
  */

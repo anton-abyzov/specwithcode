@@ -256,6 +256,33 @@ const STUDIO_MCP_TOOLS: Readonly<Record<string, StudioMcpToolDefinition>> = {
     "browser",
     "browser",
   ),
+  chrome_profiles: tool(
+    ["List", "Listing", "Listed", "connected Chrome profiles"],
+    "browser",
+    "browser",
+  ),
+  chrome_tabs: tool(["List", "Listing", "Listed", "tabs in Chrome"], "browser", "browser"),
+  chrome_open: tool(["Open", "Opening", "Opened", "a tab in Chrome"], "browser", "browser"),
+  chrome_navigate: tool(
+    ["Navigate", "Navigating", "Navigated", "a Chrome tab"],
+    "browser",
+    "browser",
+  ),
+  chrome_snapshot: tool(["Read", "Reading", "Read", "a Chrome tab"], "browser", "browser"),
+  chrome_click: tool(["Click", "Clicking", "Clicked", "in Chrome"], "browser", "browser"),
+  chrome_type: tool(["Type", "Typing", "Typed", "in Chrome"], "browser", "browser"),
+  chrome_press: tool(["Press", "Pressing", "Pressed", "a key in Chrome"], "browser", "browser"),
+  chrome_screenshot: tool(
+    ["Capture", "Capturing", "Captured", "a Chrome tab"],
+    "browser",
+    "browser",
+  ),
+  chrome_evaluate: tool(
+    ["Evaluate", "Evaluating", "Evaluated", "script in Chrome"],
+    "browser",
+    "browser",
+  ),
+  chrome_close: tool(["Close", "Closing", "Closed", "a Chrome tab"], "browser", "browser"),
   device_list: tool(["List", "Listing", "Listed", "simulators and emulators"], "device", "device"),
   device_open: tool(
     ["Open", "Opening", "Opened", "a device in the Device panel"],

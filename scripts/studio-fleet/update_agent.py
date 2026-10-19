@@ -68,6 +68,8 @@ RETRYABLE_REFUSALS = ('Guarded prestate changed', 'Native work changed before re
                       'Complete database prestate changed', 'Complete database changed before restart')
 # Retried only from the apply's preflight while the service holds, so a reap can stop the process.
 HELD_RETRYABLE_REFUSALS = ('Owned service has unexpected descendants',)
+# update.py's assert_backup_space; shown to the user as it is, not as "did not install".
+DISK_REFUSAL = 'Not enough free disk space for the pre-update backup'
 GH_TIMEOUT = 10
 # launchd runs the agent as a Background process; on a loaded Mac its children ran about
 # 25x slower, so `gh auth token` and the snapshot timed out. Children leave darwin background.
@@ -99,6 +101,11 @@ LIMITS = {'list': 10 << 20, PLAN_ASSET: 256 << 10, SUMS_ASSET: 256 << 10, MANIFE
 HELPER_MAX_FILES = 2000
 HELPER_MAX_BYTES = 64 << 20
 LOG_LIMIT = 1 << 20
+# launchd's StandardOutPath and StandardErrorPath for the service grow forever otherwise
+# (52 MB seen); past the limit the newest SERVICE_LOG_KEPT bytes move to <name>.1.
+SERVICE_LOG_LIMIT = 16 << 20
+SERVICE_LOG_KEPT = 8 << 20
+SERVICE_LOGS = ('stdout.log', 'stderr.log')
 HELPER_TAIL = 4096  # Bytes of a failed helper's output kept in its fallback receipt.
 # The service appends to these logs on its own while a thread waits on a usage limit
 # (one availability check every five minutes), so they cannot tell work from waiting.
@@ -1156,11 +1163,29 @@ class Agent(object):
                              'See the update receipt.' % version)
         if outcome == 'interrupted':
             return 'error', 'The install of SpecWithCode %s was interrupted; SpecWithCode is on %s.' % (version, current)
+        disk = self.disk_refusal(receipt) if outcome == 'failed' else None
+        if disk:  # One cause the user can act on, not "see the receipt".
+            return 'error', '%s; SpecWithCode stayed on %s.' % (disk, current)
         if inst is not None and inst['version'] == version and self.kept_after_restart(receipt):
             # Retained pointers and a past observation do not prove liveness after a failed rollback.
             return 'error', ('SpecWithCode %s was kept after a restart check failed. The update was not '
                              'confirmed. See the update receipt.' % version)
         return 'error', 'SpecWithCode %s did not install; SpecWithCode stayed on %s. See the update receipt.' % (version, current)
+
+    def disk_refusal(self, receipt):
+        """The apply's own refusal when the disk had no room for its pre-update backup: it
+        stops in preflight with every pointer unchanged. None for any other failure."""
+        try:
+            value = read_json(owned(pathlib.Path(receipt), self.home), self.home) if receipt else None
+        except (AgentError, OSError):
+            return None
+        if not isinstance(value, dict) or value.get('phase') != 'preflight' or value.get('pointers') != 'unchanged':
+            return None
+        error = value.get('error')
+        prefix = 'AssertionError: '
+        if not isinstance(error, str) or not error.startswith(prefix + DISK_REFUSAL):
+            return None
+        return error[len(prefix):].splitlines()[0][:200]
 
     def kept_after_restart(self, receipt):
         """True only when the helper restarted into the new release, observed it and kept it (any `held-*`
@@ -1219,6 +1244,8 @@ class Agent(object):
                                      marker.get('previousSourceCommit'))
 
     def rotate_log(self):
+        for name in SERVICE_LOGS:
+            rotate_service_log(self.own / name)
         path = self.updates / 'agent.log'
         try:
             info = os.lstat(str(path))
@@ -1315,6 +1342,54 @@ class Agent(object):
             if held:
                 return self.finish('error', held)
         return self.quiet_then_install(verified, install_request)
+
+def rotate_service_log(path, limit=SERVICE_LOG_LIMIT, kept=SERVICE_LOG_KEPT):
+    """Bounds a log launchd appends to. Over `limit`, its newest `kept` bytes (from the first
+    whole line) replace <name>.1, written privately and never through a link, and the live
+    file is truncated in place: launchd opened it with O_APPEND, so the service's next write
+    lands at the new end. A disk too full for <name>.1 still truncates the live file. Returns
+    True when it truncated; never raises."""
+    try:
+        fd = os.open(str(path), os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return False
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size <= limit:
+            return False
+        start = max(0, info.st_size - kept)
+        os.lseek(fd, start, os.SEEK_SET)
+        chunks, left = [], info.st_size - start
+        while left > 0:
+            chunk = os.read(fd, min(left, 1 << 20))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            left -= len(chunk)
+        tail = b''.join(chunks)
+        if start and b'\n' in tail:
+            tail = tail.split(b'\n', 1)[1]  # The cut line's end alone would mislead a reader.
+        older = path.with_name(path.name + '.1')
+        temporary = path.with_name('%s.1.rotate-%s' % (path.name, uuid.uuid4().hex))
+        try:
+            out = os.open(str(temporary), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            try:
+                with os.fdopen(out, 'wb') as handle:
+                    handle.write(tail)
+                os.replace(str(temporary), str(older))  # Replaces a link at .1 itself, never its target.
+            finally:
+                if os.path.lexists(str(temporary)):
+                    os.unlink(str(temporary))
+        except OSError as error:
+            # A full disk is when the bound matters most: drop the tail, keep the old .1.
+            if error.errno not in (errno.ENOSPC, errno.EDQUOT):
+                raise
+        os.ftruncate(fd, 0)
+        return True
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
 
 # ---------------------------------------------------------------- entry points
 

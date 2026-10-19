@@ -52,7 +52,7 @@ const nativeCapabilities = {
   models: undefined as ReadonlyArray<ModelInfo> | undefined,
   subscriptionType: "Claude Max" as string | undefined,
   apiProvider: "firstParty",
-  email: "subscriber@example.com",
+  email: "subscriber@example.com" as string | undefined,
   tokenSource: undefined as string | undefined,
   apiKeySource: undefined as string | undefined,
   slashCommands: [],
@@ -67,6 +67,8 @@ type Command = {
 const checkNative = (
   input: {
     stdout?: string;
+    textStdout?: string;
+    environment?: NodeJS.ProcessEnv;
     code?: number;
     failure?: "spawn" | "timeout";
     started?: Deferred.Deferred<void>;
@@ -86,7 +88,8 @@ const checkNative = (
       Effect.gen(function* () {
         const cmd = command as unknown as Command;
         input.record?.(cmd, configDir, cwd);
-        const isAuth = cmd.args.join(" ") === "auth status";
+        const isText = cmd.args.join(" ") === "auth status --text";
+        const isAuth = isText || cmd.args.join(" ") === "auth status";
         expect(isAuth || cmd.args.join(" ") === "--version").toBe(true);
         if (isAuth && input.started) yield* Deferred.succeed(input.started, undefined);
         if (isAuth && input.failure === "timeout") return yield* Effect.never;
@@ -97,9 +100,11 @@ const checkNative = (
             method: "spawn",
             description: "fixture failure",
           });
-        const stdout = isAuth
-          ? (input.stdout ?? JSON.stringify(nativeAuth))
-          : "2.1.295 (Claude Code)\n";
+        const stdout = isText
+          ? (input.textStdout ?? "")
+          : isAuth
+            ? (input.stdout ?? JSON.stringify(nativeAuth))
+            : "2.1.295 (Claude Code)\n";
         return ChildProcessSpawner.makeHandle({
           pid: ChildProcessSpawner.ProcessId(1),
           exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(isAuth ? (input.code ?? 0) : 0)),
@@ -127,7 +132,13 @@ const checkNative = (
             ? undefined
             : { ...capabilities, ...(models === undefined ? {} : { models }) },
         ),
-      { HOME: cwd, PATH: "/synthetic/bin", ANTHROPIC_API_KEY: "", CLAUDE_CODE_OAUTH_TOKEN: "" },
+      {
+        HOME: cwd,
+        PATH: "/synthetic/bin",
+        ANTHROPIC_API_KEY: "",
+        CLAUDE_CODE_OAUTH_TOKEN: "",
+        ...input.environment,
+      },
       cwd,
       undefined,
       undefined,
@@ -279,5 +290,96 @@ it.layer(NodeServices.layer)("native subscription status corroboration", (it) =>
         expect(status.status).toBe(expectedStatus);
         expect(status.auth.type).toBe(type);
       }),
+  );
+  // Actual 2.1.302 output after `claude /login` with a Claude Console account.
+  const consoleCapabilities = {
+    subscriptionType: undefined,
+    tokenSource: undefined,
+    apiKeySource: undefined,
+    email: undefined,
+  };
+  const consoleStatus = JSON.stringify({
+    loggedIn: true,
+    authMethod: "oauth_token",
+    apiProvider: "firstParty",
+  });
+  const consoleText =
+    "Profile: credentials-file \u00b7 user_oauth \u00b7 profile default\n" +
+    "Organization: Example Org \u00b7 00000000-0000-0000-0000-000000000000\n" +
+    "Email: console@example.com\n";
+
+  it.effect("reads a Claude Console sign-in as ready and billed to API credits", () =>
+    Effect.gen(function* () {
+      const commands: Command[] = [];
+      const status = yield* checkNative({
+        capabilities: consoleCapabilities,
+        stdout: consoleStatus,
+        textStdout: consoleText,
+        record: (command) => commands.push(command),
+      });
+      expect(commands.map((command) => command.args.join(" "))).toEqual([
+        "--version",
+        "auth status",
+        "auth status --text",
+      ]);
+      expect(status.status).toBe("ready");
+      expect(status.auth).toMatchObject({
+        status: "authenticated",
+        type: "apiKey",
+        label: "Claude Console (API Usage Billing)",
+        apiKeyBilling: true,
+      });
+    }),
+  );
+
+  it.effect.each([
+    ["another profile kind", consoleStatus, consoleText.replace("user_oauth", "oidc_federation")],
+    ["no profile line", consoleStatus, "Auth token: CLAUDE_CODE_OAUTH_TOKEN\n"],
+    [
+      "a claude.ai login",
+      JSON.stringify({ ...nativeAuth, subscriptionType: undefined }),
+      consoleText,
+    ],
+    ["signed out", JSON.stringify({ loggedIn: false, authMethod: "none" }), consoleText],
+  ] as const)("keeps %s without a plan unverified", ([, stdout, textStdout]) =>
+    Effect.gen(function* () {
+      const status = yield* checkNative({ capabilities: consoleCapabilities, stdout, textStdout });
+      expect(status.status).toBe("warning");
+      expect(status.auth).toMatchObject({
+        status: "unknown",
+        type: "subscription-auth-unverified",
+      });
+      expect(status.auth.apiKeyBilling).toBeUndefined();
+    }),
+  );
+
+  it.effect.each([
+    ["CLAUDE_CODE_OAUTH_TOKEN"],
+    ["ANTHROPIC_AUTH_TOKEN"],
+    ["ANTHROPIC_BASE_URL"],
+  ] as const)("does not read the Console profile when %s supplies the token", ([name]) =>
+    Effect.gen(function* () {
+      const commands: Command[] = [];
+      const status = yield* checkNative({
+        capabilities: consoleCapabilities,
+        stdout: consoleStatus,
+        textStdout: consoleText,
+        environment: { [name]: "synthetic" },
+        record: (command) => commands.push(command),
+      });
+      expect(commands.map((command) => command.args.join(" "))).toEqual(["--version"]);
+      expect(status.auth.type).toBe("subscription-auth-unverified");
+    }),
+  );
+
+  it.effect("keeps a Console status read that never finished unchecked", () =>
+    Effect.gen(function* () {
+      const status = yield* checkNative({
+        capabilities: consoleCapabilities,
+        failure: "spawn",
+      });
+      expect(status.status).toBe("warning");
+      expect(status.auth).toMatchObject({ status: "unknown", type: "status-check-failed" });
+    }),
   );
 });

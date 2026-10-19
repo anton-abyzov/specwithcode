@@ -389,7 +389,7 @@ export class BrowserRelayHub {
     return name ? { title: name.title, machine: name.machine } : {};
   }
 
-  profileSummaries(): BrowserExtensionProfile[] {
+  profileSummaries(): Array<BrowserExtensionProfile & { readonly extensionId: string }> {
     const iso = (ms: number) => new Date(ms).toISOString();
     return this.profiles().map((profile) => {
       const threads = this.threadsUsing(profile).map((use) => ({
@@ -404,6 +404,7 @@ export class BrowserRelayHub {
         id: profile.id,
         label: profile.label,
         extensionVersion: profile.extensionVersion,
+        extensionId: profile.extensionId,
         browser: profile.browser,
         connectedAt: iso(profile.connectedAt),
         attachedTabs: profile.attachedTabs.size,

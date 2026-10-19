@@ -25,6 +25,18 @@ const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
 const mockAgentCommand = "node";
 const mockAgentArgs = [mockAgentPath];
+const stdioStudioServer = {
+  type: "stdio" as const,
+  name: "studio-code",
+  command: "/usr/bin/node",
+  args: [],
+};
+const httpStudioServer = {
+  type: "http" as const,
+  name: "studio-code",
+  url: "http://127.0.0.1:1/mcp",
+  headers: [{ name: "Authorization", value: "Bearer test" }],
+};
 const mockRuntimeOptions = {
   spawn: { command: mockAgentCommand, args: mockAgentArgs },
   cwd: process.cwd(),
@@ -638,6 +650,78 @@ describe("AcpSessionRuntime", () => {
           authMethodId: "test",
           mcpServers: [{ type: "stdio", name: "studio-code", command: "/usr/bin/node", args: [] }],
           acpMcpServers: [{ type: "acp", name: "studio-code", serverId: "studio-code" }],
+          requestLogger: (event) =>
+            Effect.sync(() => {
+              requestEvents.push(event);
+            }),
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    );
+  });
+
+  it.effect("sends Copilot the http server because it rejects client stdio servers", () => {
+    const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
+    return Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+
+      const created = requestEvents.find(
+        (event) => event.method === "session/new" && event.status === "started",
+      );
+      expect(created?.payload).toMatchObject({
+        mcpServers: [{ type: "http", name: "studio-code", url: "http://127.0.0.1:1/mcp" }],
+      });
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: { STUDIO_ACP_MCP_HTTP: "1", STUDIO_ACP_AGENT_NAME: "Copilot" },
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "studio-test", version: "0.0.0" },
+          authMethodId: "test",
+          mcpServers: [stdioStudioServer],
+          httpMcpServers: [httpStudioServer],
+          requestLogger: (event) =>
+            Effect.sync(() => {
+              requestEvents.push(event);
+            }),
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    );
+  });
+
+  it.effect("keeps the stdio server for other agents that also accept http", () => {
+    const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
+    return Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+
+      const created = requestEvents.find(
+        (event) => event.method === "session/new" && event.status === "started",
+      );
+      expect(created?.payload).toMatchObject({
+        mcpServers: [{ type: "stdio", name: "studio-code" }],
+      });
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: { STUDIO_ACP_MCP_HTTP: "1", STUDIO_ACP_AGENT_NAME: "other-agent" },
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "studio-test", version: "0.0.0" },
+          authMethodId: "test",
+          mcpServers: [stdioStudioServer],
+          httpMcpServers: [httpStudioServer],
           requestLogger: (event) =>
             Effect.sync(() => {
               requestEvents.push(event);

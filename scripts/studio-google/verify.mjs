@@ -261,6 +261,15 @@ try {
         JSON.stringify({ onboardingCompletedAt: "2026-10-09T00:00:00.000Z" }),
       );
   });
+  // A provider CLI on the runner can be older than its latest release, and the
+  // update toast then covers the buttons this check clicks. No check here reads toasts.
+  await context.addInitScript(() => {
+    document.addEventListener("DOMContentLoaded", () => {
+      const style = document.createElement("style");
+      style.textContent = '[data-slot="toast-portal"] { display: none !important; }';
+      document.head.append(style);
+    });
+  });
   const auth = await context.request.post(origin + "/api/auth/browser-session", {
     data: { credential },
     headers: { Origin: origin },
@@ -290,6 +299,15 @@ try {
   activePage = page;
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
+  // The stand-in claude falls behind npm's latest release, which raises a
+  // provider-update toast over the page; dismiss it whenever it blocks a click.
+  await page.addLocatorHandler(
+    page.getByText("Install the update now or review provider settings."),
+    async () => {
+      const close = page.getByRole("button", { name: "Dismiss notification" });
+      if (await close.count()) await close.first().click();
+    },
+  );
   await page.goto(origin + "/settings/google");
   const shot = async (name, target = page) => {
     const file = NodePath.join(out, name);
@@ -520,7 +538,7 @@ try {
   for (const method of ["cancel", "escape"]) {
     await page.getByRole("button", { name: "Add provider", exact: true }).click();
     // Settings is itself a dialog; wait on the wizard nested inside it.
-    const wizard = page.locator('[role="dialog"]:not([data-settings-dialog])');
+    const wizard = page.locator('[role="dialog"]:not([data-settings-dialog]):visible');
     await wizard.waitFor();
     await dismiss(method);
     await wizard.waitFor({ state: "detached" });

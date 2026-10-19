@@ -242,7 +242,17 @@ export class ChromeTools {
     profile.agentTabs.add(tab.id);
     profile.lastTabByThread.set(threadId, tab.id);
     await this.attach(profile, tab.id);
-    await this.cdp(profile, tab.id, "Page.navigate", { url });
+    try {
+      await this.cdp(profile, tab.id, "Page.navigate", { url });
+    } catch (error) {
+      // SpecWithCode Browser 1.0.1 drops the debugger from a tab while it adds
+      // the tab to the agent tab group. Attach once more for those installs.
+      if (!/not attached/i.test(error instanceof Error ? error.message : String(error)))
+        throw error;
+      profile.attachedTabs.delete(tab.id);
+      await this.attach(profile, tab.id);
+      await this.cdp(profile, tab.id, "Page.navigate", { url });
+    }
     await this.waitForLoad(profile, tab.id);
     return this.page(profile, tab.id);
   }

@@ -992,7 +992,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/chrome",
     targetId: "chrome-browser-extension",
     searchTerms: [
-      "browser extension chrome profile pair pairing code load unpacked install add to chrome web store agents tabs stop reconnect test codex grok gemini copilot meta muse claude",
+      "browser extension chrome profile pair pairing code install add to chrome web store unpacked hand loaded developer mode update agents tabs stop reconnect test codex grok gemini copilot meta muse claude",
     ],
   },
   {

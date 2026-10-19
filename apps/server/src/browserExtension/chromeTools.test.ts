@@ -1,6 +1,4 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off -- drives the plain relay hub with a fake extension.
-import * as NodeFS from "node:fs";
-import * as NodePath from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -113,6 +111,33 @@ describe("ChromeTools", () => {
     const actions = extension.status().recentActions.map((a) => a.tool);
     expect(actions).toContain("chrome_open");
     expect(actions).toContain("chrome_click");
+  });
+
+  it("attaches again when the extension drops the debugger from a new tab", async () => {
+    const { extension, token } = setup();
+    const fake = connectFake(extension, token);
+    fake.failNext.set("Page.navigate", "Debugger is not attached to the tab with id: 100.");
+    const tools = new ChromeTools(extension.hub);
+
+    const opened = await tools.open("t1", { url: "https://example.com" });
+    expect(opened).toMatchObject({ profile: "Personal", url: "https://example.com/" });
+    expect(fake.calls.filter((c) => c.method === "chrome.debugger.attach")).toHaveLength(2);
+    const navigations = fake.calls.filter(
+      (c) => c.method === "chrome.debugger.sendCommand" && c.params[1] === "Page.navigate",
+    );
+    expect(navigations).toHaveLength(2);
+  });
+
+  it("does not retry other navigation failures", async () => {
+    const { extension, token } = setup();
+    const fake = connectFake(extension, token);
+    fake.failNext.set("Page.navigate", "Cannot navigate to invalid URL");
+    const tools = new ChromeTools(extension.hub);
+
+    await expect(tools.open("t1", { url: "https://example.com" })).rejects.toThrow(
+      /Cannot navigate/,
+    );
+    expect(fake.calls.filter((c) => c.method === "chrome.debugger.attach")).toHaveLength(1);
   });
 
   it("lets several threads use one profile at once, each in its own tabs", async () => {
@@ -237,14 +262,14 @@ describe("ChromeTools", () => {
     expect(check.profiles[0]).toMatchObject({ label: "Personal", ok: true, tabCount: 1 });
   });
 
-  it("writes the unpacked extension for Load unpacked", () => {
-    const { extension } = setup();
-    const folder = extension.installFolder();
-    const manifest = JSON.parse(
-      NodeFS.readFileSync(NodePath.join(folder.path, "manifest.json"), "utf8"),
+  it("links the store listing and tells a hand-loaded copy from a store install", () => {
+    const { extension, token } = setup();
+    connectFake(extension, token);
+    const status = extension.status();
+    expect(status.storeUrl).toBe(
+      "https://chromewebstore.google.com/detail/specwithcode-browser/okoinngelinfjfkmkcnbgndapeiofgbb",
     );
-    expect(manifest.manifest_version).toBe(3);
-    expect(manifest.version).toBe(folder.version);
-    expect(NodeFS.existsSync(NodePath.join(folder.path, "src", "background.js"))).toBe(true);
+    expect(status.profiles[0]).toMatchObject({ label: "Personal", fromStore: false });
+    expect(status.profiles[0]).not.toHaveProperty("extensionId");
   });
 });
