@@ -1,14 +1,20 @@
-import { EnvironmentId } from "@specweave-studio/contracts";
+import { EnvironmentId, ProjectWriteFileError } from "@specweave-studio/contracts";
+import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { act, StrictMode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-const { writeFile, confirmFile, readScope, getUnsavedFile } = vi.hoisted(() => ({
+const { writeFile, confirmFile, readScope, getUnsavedFile, addToast } = vi.hoisted(() => ({
   writeFile: vi.fn(),
   confirmFile: vi.fn(),
   readScope: vi.fn(),
   getUnsavedFile: vi.fn(),
+  addToast: vi.fn(),
+}));
+vi.mock("~/components/ui/toast", () => ({
+  toastManager: { add: addToast },
+  stackedThreadToast: (options: object) => options,
 }));
 vi.mock("~/state/projects", () => ({ projectEnvironment: { writeFile: {} } }));
 vi.mock("~/state/session", () => ({
@@ -38,9 +44,18 @@ function ChangeSource(_props: { onChange: (contents: string) => void }) {
   return null;
 }
 
+function ReadOnlyProbe(_props: { readOnly: boolean }) {
+  return null;
+}
+
 function FileSurface(props: Parameters<typeof useFileSaveCoordinator>[0]) {
   const coordinator = useFileSaveCoordinator(props);
-  return <ChangeSource onChange={(contents) => coordinator.change(contents)} />;
+  return (
+    <>
+      <ChangeSource onChange={(contents) => coordinator.change(contents)} />
+      <ReadOnlyProbe readOnly={coordinator.readOnly} />
+    </>
+  );
 }
 
 function mount(props = defaultProps) {
@@ -66,6 +81,7 @@ beforeEach(() => {
   readScope.mockReset().mockReturnValue(true);
   getUnsavedFile.mockReset().mockReturnValue(null);
   onPendingChange.mockReset();
+  addToast.mockReset();
 });
 
 afterEach(async () => {
@@ -75,6 +91,80 @@ afterEach(async () => {
 });
 
 describe("file-save React lifecycle", () => {
+  it("stops saving a protected file after one refusal and shows one toast", async () => {
+    writeFile.mockResolvedValue(
+      AsyncResult.failure(
+        Cause.fail(
+          new ProjectWriteFileError({
+            cwd: "/workspace",
+            relativePath: "file.txt",
+            failure: "operation_failed",
+            operation: "write-file",
+            reason: "protected",
+          }),
+        ),
+      ),
+    );
+    mount();
+    expect(renderer!.root.findByType(ReadOnlyProbe).props.readOnly).toBe(false);
+    changeHandler()("first edit");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(writeFile).toHaveBeenCalledTimes(1);
+    expect(addToast).toHaveBeenCalledTimes(1);
+    expect(addToast.mock.calls[0]![0]).toMatchObject({
+      type: "error",
+      description:
+        "This file is protected from edits inside SpecWithCode. Use another editor to change it.",
+      id: expect.stringContaining("file.txt"),
+    });
+    expect(renderer!.root.findByType(ReadOnlyProbe).props.readOnly).toBe(true);
+
+    changeHandler()("second edit");
+    changeHandler()("third edit");
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+    expect(writeFile).toHaveBeenCalledTimes(1);
+    expect(addToast).toHaveBeenCalledTimes(1);
+
+    // Another file starts writable.
+    writeFile.mockResolvedValue(AsyncResult.success(undefined));
+    act(() =>
+      renderer!.update(
+        <StrictMode>
+          <FileSurface {...defaultProps} relativePath="other.txt" />
+        </StrictMode>,
+      ),
+    );
+    expect(renderer!.root.findByType(ReadOnlyProbe).props.readOnly).toBe(false);
+    changeHandler()("other edit");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(writeFile).toHaveBeenCalledTimes(2);
+    expect(writeFile.mock.calls[1]![0]).toMatchObject({
+      input: { relativePath: "other.txt", contents: "other edit" },
+    });
+  });
+
+  it("keeps saving after an ordinary failure, without the protected toast", async () => {
+    writeFile.mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("socket closed"))));
+    mount();
+    changeHandler()("first edit");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    changeHandler()("second edit");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(writeFile).toHaveBeenCalledTimes(2);
+    expect(addToast).not.toHaveBeenCalled();
+    expect(renderer!.root.findByType(ReadOnlyProbe).props.readOnly).toBe(false);
+  });
+
   it("persists editor model changes after StrictMode setup replay", async () => {
     mount();
     changeHandler()("AUDIT7907NATIVE\n");

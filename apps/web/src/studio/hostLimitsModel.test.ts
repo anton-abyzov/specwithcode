@@ -7,10 +7,12 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  bindingWindowId,
   collectHostLimitBlocks,
   formatAgo,
   hostStatus,
   savableReadings,
+  windowDisplayLabel,
   type HostLimitPresentations,
   type SavedHostReading,
 } from "./hostLimitsModel";
@@ -296,5 +298,46 @@ describe("host limit blocks", () => {
       null,
     ]);
     expect(fableSpent.peak).toBe(40);
+  });
+
+  it("names a session by its reported length and keeps other labels", () => {
+    const base = { id: "w", usedPercent: 0, resetsAt: null, stale: false } as const;
+    expect(
+      windowDisplayLabel({ ...base, label: "Session", kind: "session", durationMins: 300 }),
+    ).toBe("5-hour");
+    expect(
+      windowDisplayLabel({ ...base, label: "team: Session", kind: "session", durationMins: 60 }),
+    ).toBe("team: 1-hour");
+    expect(windowDisplayLabel({ ...base, label: "Session", kind: "session" })).toBe("Session");
+    // A reading saved before lengths were kept still names Claude's 5-hour.
+    expect(
+      windowDisplayLabel({ ...base, id: "five_hour", label: "Session", kind: "session" }),
+    ).toBe("5-hour");
+    expect(
+      windowDisplayLabel({ ...base, label: "Weekly", kind: "weekly", durationMins: 10_080 }),
+    ).toBe("Weekly");
+  });
+
+  it("picks the fullest current account-wide window as binding, never a model one", () => {
+    const w = (id: string, used: number, extra: Record<string, unknown> = {}) => ({
+      id,
+      label: id,
+      kind: "weekly" as const,
+      usedPercent: used,
+      resetsAt: Date.parse("2026-10-20T00:00:00Z"),
+      stale: false,
+      ...extra,
+    });
+    expect(bindingWindowId([w("five", 30), w("week", 88)])).toBe("weekly:week");
+    expect(
+      bindingWindowId([w("five", 90), w("week", 10), w("fable", 100, { modelScope: "Fable" })]),
+    ).toBe("weekly:five");
+    // A stale reading never binds; a tie goes to the window that resets last.
+    expect(bindingWindowId([w("five", 95, { stale: true }), w("week", 20)])).toBe("weekly:week");
+    expect(
+      bindingWindowId([w("a", 50), w("b", 50, { resetsAt: Date.parse("2026-10-25T00:00:00Z") })]),
+    ).toBe("weekly:b");
+    expect(bindingWindowId([w("fable", 40, { modelScope: "Fable" })])).toBe("weekly:fable");
+    expect(bindingWindowId([])).toBeNull();
   });
 });

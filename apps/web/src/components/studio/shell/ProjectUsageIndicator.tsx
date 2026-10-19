@@ -299,8 +299,8 @@ export function ProjectUsageIndicator({
           <header className="sws-usage-popover-head">
             <PopoverTitle>Limits by machine</PopoverTitle>
             <p>
-              Each machine uses its own sign-ins. The account this project&apos;s coordinator uses
-              on {usage.environmentLabel} shows every window.
+              Each machine uses its own sign-ins. Every limit window is listed; when a provider has
+              several, the one that runs out first is brighter.
             </p>
           </header>
           <HostLimitsCompact

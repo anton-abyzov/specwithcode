@@ -668,7 +668,7 @@ function EditableFileSurface({
         >
           <File<FileCommentAnnotationGroup>
             file={externalFile}
-            edit={editable}
+            edit={editable && !saveCoordinator.readOnly}
             editorOptions={editorOptions}
             onEditChange={handleEditChange}
             options={{
@@ -745,7 +745,7 @@ function RenderedMarkdownSurface({
         relativePath={relativePath}
         threadRef={threadRef}
         onTaskListChange={
-          readOnly
+          readOnly || saveCoordinator.readOnly
             ? undefined
             : ({ markerOffset, checked }) => {
                 const currentContents =

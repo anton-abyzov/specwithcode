@@ -673,6 +673,25 @@ function makeProviderSettingsSchema<const Fields extends Schema.Struct.Fields>(
   );
 }
 
+/**
+ * Keys of a provider settings schema rendered as password inputs. Their values
+ * are secrets, so the server redacts them before settings reach a client.
+ */
+export function providerSettingsPasswordKeys(schema: {
+  readonly fields: Schema.Struct.Fields;
+}): ReadonlyArray<string> {
+  return Object.entries(schema.fields).flatMap(([key, field]) => {
+    const annotations = Schema.resolveAnnotationsKey(field) ?? Schema.resolveAnnotations(field);
+    return annotations?.providerSettingsForm?.control === "password" ? [key] : [];
+  });
+}
+
+/**
+ * Value a client receives in place of a stored secret. Sending it back means
+ * "keep the stored value"; an empty string clears it.
+ */
+export const REDACTED_SECRET_MARKER = "••••••";
+
 export const CodexSettings = makeProviderSettingsSchema(
   {
     setupMode: Schema.optionalKey(Schema.Literals(["managed", "existing"])).pipe(

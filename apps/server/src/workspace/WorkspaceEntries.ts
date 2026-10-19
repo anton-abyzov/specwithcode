@@ -27,6 +27,7 @@ import { expandHomePathWith } from "../pathExpansion.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
+import * as WorkspaceSensitivePaths from "./WorkspaceSensitivePaths.ts";
 
 export class WorkspaceEntriesWindowsPathUnsupportedError extends Schema.TaggedError<WorkspaceEntriesWindowsPathUnsupportedError>()(
   "WorkspaceEntriesWindowsPathUnsupportedError",
@@ -137,6 +138,7 @@ export const make = Effect.gen(function* () {
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const workspaceSearchIndexes = yield* WorkspaceSearchIndex.WorkspaceSearchIndexMap;
   const vcsProcess = yield* VcsProcess.VcsProcess;
+  const sensitivePaths = yield* WorkspaceSensitivePaths.sensitivePathGuard;
 
   const normalizeWorkspaceRoot = Effect.fn("WorkspaceEntries.normalizeWorkspaceRoot")(function* (
     cwd: string,
@@ -255,9 +257,34 @@ export const make = Effect.gen(function* () {
     "WorkspaceEntries.searchContents",
   )(function* (input) {
     const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
+    const realpath = yield* WorkspaceSensitivePaths.SensitivePathsRealpath;
+    // A root that is, or sits inside, a folder refused as a whole is not searched
+    // at all, so a query cannot probe its contents; nor is one that cannot be resolved.
+    const realRoot = yield* Effect.promise(() => realpath(normalizedCwd).catch(() => null));
+    if (
+      realRoot === null ||
+      sensitivePaths.isInsideDeniedFolder(normalizedCwd) ||
+      sensitivePaths.isInsideDeniedFolder(realRoot) ||
+      (yield* Effect.promise(() => sensitivePaths.matchesProtectedIdentity(realRoot)))
+    ) {
+      return { matches: [], truncated: false };
+    }
+    // Content search returns matching lines, so it must not surface a protected
+    // file any more than a read may: a client can name any folder as the root.
+    // Each matched file is resolved once per search however many lines match, and
+    // one that cannot be resolved is dropped. Matches in protected files are
+    // dropped inside the search, before the limit, so they change neither the
+    // other results nor `truncated`.
+    const protectedPaths = WorkspaceSensitivePaths.makeProtectedPathCheck(
+      sensitivePaths,
+      normalizedCwd,
+      { realpath },
+    );
     return yield* Effect.gen(function* () {
       const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
-      return yield* searchIndex.searchContents(input);
+      return yield* searchIndex.searchContents(input, (relativePaths) =>
+        Effect.promise(() => protectedPaths.protectedAmong(relativePaths)),
+      );
     }).pipe(
       Effect.provide(
         workspaceSearchIndexes.get(

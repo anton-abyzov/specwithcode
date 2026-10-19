@@ -7,10 +7,24 @@
  * stops the work and holds itself; nothing here drains or holds by other means.
  * The credential is minted the way `project` does it against a live server: a
  * session issued in this home's auth store, here with only `environment:maintain`
- * (the scope the RPC needs) and five minutes to live, a WebSocket ticket signed
- * for it, and the session revoked as soon as the call returns. Run it with the
- * service's own CLI (`cliWrapper` in its installation.json), so the build that
- * writes the auth store is the one that owns it.
+ * (the scope the RPC needs) and five minutes to live, and a WebSocket ticket
+ * signed for it. Run it with the service's own CLI (`cliWrapper` in its
+ * installation.json), so the build that writes the auth store is the one that
+ * owns it.
+ *
+ * That session row is the only database write this command makes, and nothing
+ * writes it again: it is not revoked, it lapses after its five minutes. The
+ * update helper (scripts/studio-fleet/update.py) hashes every auth_sessions cell
+ * except `last_connected_at` when its agent takes the prestate snapshot, and
+ * again right before it applies; any other change in between fails the install
+ * with "Guarded prestate changed: rows". A revoke (`revoked_at`) after the call
+ * could land in that window as soon as the drain has made the service quiet.
+ * Nothing in the server writes the row later either: no sweeper deletes or
+ * revokes expired sessions, the ticket is only signed and checked, the connect
+ * sets only `last_connected_at`, and the URL carries neither `clientSurface` nor
+ * `clientAppVersion`, the only parameters that make a connect write other cells.
+ * The caller (fleet_rollout.py) runs this only while it holds the update agent's
+ * lock, so the insert itself never falls between a snapshot and its apply.
  *
  * @module servicePrepareUpdate
  */
@@ -48,7 +62,8 @@ export const STOP_WORK_TIMEOUT = Duration.seconds(150);
 /** A report or a release changes no work; the desktop allows 5 s. */
 export const QUICK_CALL_TIMEOUT = Duration.seconds(20);
 const SOCKET_OPEN_TIMEOUT = Duration.seconds(10);
-const SESSION_TTL = Duration.minutes(5);
+/** The session lapses instead of being revoked (see the module comment), so it stays short. */
+export const SESSION_TTL = Duration.minutes(5);
 export const SESSION_LABEL = "specweave-studio service prepare-update";
 
 export class ServicePrepareUpdateUsageError extends Schema.TaggedError<ServicePrepareUpdateUsageError>()(
@@ -219,26 +234,18 @@ const runPrepareUpdate = Effect.fn("cli.service.prepareUpdate")(function* (
     const origin = runtime.value.origin;
     return yield* Effect.gen(function* () {
       const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
-      return yield* Effect.acquireUseRelease(
-        environmentAuth.issueSession({
-          scopes: [AuthEnvironmentMaintainScope],
-          ttl: SESSION_TTL,
-          label: SESSION_LABEL,
-        }),
-        (issued) =>
-          Effect.gen(function* () {
-            const ticket = yield* environmentAuth.issueWebSocketTicket({
-              sessionId: issued.sessionId,
-            });
-            return yield* callPrepareServiceUpdate({
-              url: serviceWebSocketUrl(origin, ticket.ticket),
-              payload,
-              timeout: payload.stopWork ? STOP_WORK_TIMEOUT : QUICK_CALL_TIMEOUT,
-            });
-          }),
-        (issued) =>
-          environmentAuth.revokeSession(issued.sessionId).pipe(Effect.ignore({ log: true })),
-      );
+      // Left to lapse, never revoked: see the module comment on prestate hashing.
+      const issued = yield* environmentAuth.issueSession({
+        scopes: [AuthEnvironmentMaintainScope],
+        ttl: SESSION_TTL,
+        label: SESSION_LABEL,
+      });
+      const ticket = yield* environmentAuth.issueWebSocketTicket({ sessionId: issued.sessionId });
+      return yield* callPrepareServiceUpdate({
+        url: serviceWebSocketUrl(origin, ticket.ticket),
+        payload,
+        timeout: payload.stopWork ? STOP_WORK_TIMEOUT : QUICK_CALL_TIMEOUT,
+      });
     }).pipe(
       Effect.provide(
         EnvironmentAuth.layerRuntime.pipe(

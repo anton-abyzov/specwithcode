@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { reportBlocker, reportDocument, reportSentences } from "./reportDocument.ts";
+import {
+  markdownDocument,
+  reportBlocker,
+  reportDocument,
+  reportSentences,
+} from "./reportDocument.ts";
 import { reportSummary, reportTitle } from "./threadReport.ts";
 
 const WORKER_REPORT = [
@@ -156,5 +161,111 @@ describe("reportBlocker", () => {
     expect(reportBlocker("**Blockers:** Nonexistent signing key. Upload it or skip signing?")).toBe(
       "Nonexistent signing key. Upload it or skip signing?",
     );
+  });
+});
+
+describe("markdownDocument", () => {
+  // The opening of a research report as an agent wrote it (October 19, 2026).
+  const RESEARCH = [
+    "---",
+    "title: Project joining, folder handoff and machine pairing",
+    "date: October 19, 2026",
+    "source: anton-abyzov/specwithcode origin/main 8358add5d9 (read-only checkout ~/Projects/github/studio-live-activity-base)",
+    "installed: M4 1.0.54, M3 1.0.53",
+    "status: research and design only, nothing implemented",
+    "---",
+    "",
+    "# Project joining, folder handoff and machine pairing",
+    "",
+    "**Verdict.** Build three things.",
+    "",
+    "## 1. The session",
+    "",
+    "| Field | Value |",
+    "|---|---|",
+    "| App | Claude desktop |",
+  ].join("\n");
+
+  it("turns frontmatter into the title and properties and keeps the body as written", () => {
+    expect(markdownDocument(RESEARCH)).toEqual({
+      title: "Project joining, folder handoff and machine pairing",
+      properties: [
+        { label: "Date", markdown: "October 19, 2026" },
+        {
+          label: "Source",
+          markdown:
+            "anton-abyzov/specwithcode origin/main 8358add5d9 (read-only checkout ~/Projects/github/studio-live-activity-base)",
+        },
+        { label: "Installed", markdown: "M4 1.0.54, M3 1.0.53" },
+        { label: "Status", markdown: "research and design only, nothing implemented" },
+      ],
+      body: [
+        "**Verdict.** Build three things.",
+        "",
+        "## 1. The session",
+        "",
+        "| Field | Value |",
+        "|---|---|",
+        "| App | Claude desktop |",
+      ].join("\n"),
+    });
+  });
+
+  it("names the page from its opening heading and keeps a heading that differs", () => {
+    expect(markdownDocument("---\ndate: today\n---\n\n# Notes\n\nBody.")).toMatchObject({
+      title: "Notes",
+      body: "Body.",
+    });
+    expect(markdownDocument("---\ntitle: A\n---\n\n# B\n\nBody.")).toMatchObject({
+      title: "A",
+      properties: [],
+      body: "# B\n\nBody.",
+    });
+  });
+
+  it("shows frontmatter too rich for a table as YAML, never as a rule and a heading", () => {
+    expect(markdownDocument("---\nmeta:\n  nested: 1\n---\n\nBody.")).toEqual({
+      title: null,
+      properties: [],
+      body: "~~~~yaml\nmeta:\n  nested: 1\n~~~~\n\nBody.",
+    });
+  });
+
+  it("keeps a title's own characters and a heading's closing hash only after a space", () => {
+    expect(
+      markdownDocument("---\ndate: x\n---\n\n# The my_module API for Vec<T>\n\nBody."),
+    ).toMatchObject({
+      title: "The my_module API for Vec<T>",
+      body: "Body.",
+    });
+    expect(markdownDocument("---\ndate: x\n---\n\n# Learn C#\n\nBody.").title).toBe("Learn C#");
+    expect(markdownDocument("---\ndate: x\n---\n\n# Closed ##\n\nBody.").title).toBe("Closed");
+    expect(
+      markdownDocument("---\ntitle: snake_case_name\n---\n\n# **The** `snake_case_name`\n\nBody."),
+    ).toMatchObject({ title: "snake_case_name", body: "# **The** `snake_case_name`\n\nBody." });
+    expect(markdownDocument('---\ntitle: "`snake_case_name`"\n---\n\nBody.').title).toBe(
+      "snake_case_name",
+    );
+  });
+
+  it("keeps an indented code block that opens the body", () => {
+    expect(markdownDocument("---\ndate: x\n---\n\n    indented code\n    more\n").body).toBe(
+      "    indented code\n    more",
+    );
+  });
+
+  it("leaves rules around prose as written", () => {
+    for (const text of [
+      "---\n\nNote: draft only\n\n---\n\n# Real\n\nText",
+      "---\n\nJust an intro\n\n---",
+      "---\nJust an intro\n---\n",
+    ]) {
+      expect(markdownDocument(text)).toEqual({ title: null, properties: [], body: text });
+    }
+  });
+
+  it("leaves a file without frontmatter untouched", () => {
+    const text = "# Title\n\n---\n\nBody.\n";
+    expect(markdownDocument(text)).toEqual({ title: null, properties: [], body: text });
   });
 });

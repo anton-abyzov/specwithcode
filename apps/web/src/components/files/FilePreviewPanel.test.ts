@@ -1,4 +1,4 @@
-import { ProjectReadFileError } from "@specweave-studio/contracts";
+import { ProjectReadFileError, ProjectWriteFileError } from "@specweave-studio/contracts";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -8,6 +8,8 @@ import {
   remapFileCommentAnnotations,
 } from "./fileCommentAnnotations";
 import {
+  protectedFileSaveToastId,
+  fileSaveErrorMessage,
   filePreviewReadErrorMessage,
   isMarkdownPreviewFile,
   resolveFilePreviewPath,
@@ -48,6 +50,44 @@ describe("file preview read errors", () => {
       operationPath: "/workspace",
     });
     expect(filePreviewReadErrorMessage(error)).toBe("The workspace folder could not be accessed.");
+  });
+
+  it("says a protected file cannot be opened or saved here", () => {
+    const readError = new ProjectReadFileError({
+      cwd: "/home/owner",
+      relativePath: ".ssh/id_ed25519",
+      failure: "operation_failed",
+      operation: "open",
+      reason: "protected",
+    });
+    expect(filePreviewReadErrorMessage(readError)).toBe(
+      "This file is protected from viewing inside SpecWithCode. Use another editor to open it.",
+    );
+    const writeError = new ProjectWriteFileError({
+      cwd: "/home/owner",
+      relativePath: ".zshrc",
+      failure: "operation_failed",
+      operation: "write-file",
+      reason: "protected",
+    });
+    expect(fileSaveErrorMessage(writeError)).toBe(
+      "This file is protected from edits inside SpecWithCode. Use another editor to change it.",
+    );
+    const otherWriteError = new ProjectWriteFileError({
+      cwd: "/home/owner",
+      relativePath: "notes.md",
+      failure: "operation_failed",
+      operation: "write-file",
+    });
+    expect(fileSaveErrorMessage(otherWriteError)).toBeNull();
+    expect(fileSaveErrorMessage(new Error("socket closed"))).toBeNull();
+    // One toast id per file, stable across saves.
+    expect(protectedFileSaveToastId("env", "/w", "a.md")).toBe(
+      protectedFileSaveToastId("env", "/w", "a.md"),
+    );
+    expect(protectedFileSaveToastId("env", "/w", "a.md")).not.toBe(
+      protectedFileSaveToastId("env", "/w", "b.md"),
+    );
   });
 
   it("preserves the public message from older servers", () => {

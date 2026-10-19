@@ -55,7 +55,8 @@ SIMPLIFIED_MARKER = '/projectSettingsSimplified'
 LEGACY_PROJECT_MAPS = {'projectAgentBrowserAccessOverrides': 'enableAgentBrowserAccess',
                        'projectAutoPullOverrides': 'defaultAutoPull',
                        'projectScriptOverrides': 'defaultProjectScripts'}
-# apps/server/src/serverSettings.ts SECRET_REDACTED and BITBUCKET_SECRET_FIELDS.
+# packages/contracts/src/settings.ts REDACTED_SECRET_MARKER (the server's SECRET_REDACTED)
+# and apps/server/src/serverSettings.ts BITBUCKET_SECRET_FIELDS.
 SECRET_REDACTED = '•' * 6
 BITBUCKET_SECRET_FIELDS = ('accessToken', 'apiToken')
 

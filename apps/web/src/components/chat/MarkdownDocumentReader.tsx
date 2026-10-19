@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 
 import { useProjectFileQuery } from "../files/projectFilesQueryState";
 import { Button } from "../ui/button";
-import { ReportReader } from "./ReportReader";
+import { MarkdownDocumentView, ReportReader } from "./ReportReader";
 
 /** A markdown file a message links to, opened as a document. */
 export interface MarkdownDocumentTarget {
@@ -59,7 +59,7 @@ export function MarkdownDocumentReader(props: {
       threadRef={props.threadRef}
     >
       {contents !== null ? (
-        renderMarkdown(contents)
+        <MarkdownDocumentView text={contents} renderMarkdown={renderMarkdown} />
       ) : file.error !== null ? (
         <div className="flex flex-col items-start gap-3 font-sans text-sm" role="alert">
           <p className="text-muted-foreground">

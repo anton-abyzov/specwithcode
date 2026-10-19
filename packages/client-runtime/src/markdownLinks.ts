@@ -278,7 +278,8 @@ export function isMarkdownFileLinkLabel(label: string, href: string): boolean {
   ) {
     return false;
   }
-  let labelPath = normalize(labelPosition.path);
+  // A home-relative label (`~/notes/a.md`) names the same file as its absolute destination.
+  let labelPath = normalize(labelPosition.path).replace(/^~\//, "");
   let destinationPath = normalize(destination.path);
   if (labelPath.length === 0) return true;
   if (isWindowsAbsolutePath(destination.path)) {

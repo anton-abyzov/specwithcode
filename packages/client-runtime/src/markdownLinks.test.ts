@@ -28,6 +28,8 @@ describe("isMarkdownFileLinkLabel", () => {
     ["EXAMPLE.TS", "C:/repo/src/example.ts:12", true],
     ["file name.ts", "file:///repo/file%20name.ts", true],
     ["", "/repo/src/example.ts", true],
+    ["~/notes/report.md", "file:///Users/me/notes/report.md", true],
+    ["~/other/report.md", "file:///Users/me/notes/report.md", false],
   ])("classifies %s for %s", (label, href, expected) => {
     expect(isMarkdownFileLinkLabel(label, href)).toBe(expected);
   });

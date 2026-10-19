@@ -18,11 +18,13 @@ import {
 } from "@specweave-studio/contracts";
 import * as NetService from "@specweave-studio/shared/Net";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Scope from "effect/Scope";
+import * as SqlClient from "effect/sql/SqlClient";
 import { Command } from "effect/cli";
 import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
@@ -46,6 +48,7 @@ import {
   SESSION_LABEL,
   ServicePrepareUpdateCallError,
   ServicePrepareUpdateNotRunningError,
+  SESSION_TTL,
   serviceWebSocketUrl,
 } from "./servicePrepareUpdate.ts";
 
@@ -147,9 +150,20 @@ const startService = (
         port,
       }),
     });
+    const sql = Context.get(context, SqlClient.SqlClient);
     return {
       seen,
-      auth: Context.get(context, EnvironmentAuth.EnvironmentAuth),
+      /**
+       * Every auth_sessions row, without `last_connected_at`: the cells update.py's
+       * prestate hashes (auth_invariant_hash) and compares between snapshot and apply.
+       */
+      guardedSessionRows: sql
+        .unsafe<Record<string, unknown>>("SELECT * FROM auth_sessions ORDER BY issued_at, session_id")
+        .pipe(
+          Effect.map((rows) =>
+            rows.map(({ last_connected_at: _heartbeat, ...guarded }) => guarded),
+          ),
+        ),
       stop: Scope.close(scope, Exit.void),
     };
   });
@@ -238,12 +252,35 @@ describe("specweave-studio service prepare-update", () => {
         assert.deepStrictEqual(service.seen.scopes, [[AuthEnvironmentMaintainScope]]);
         assert.isTrue((service.seen.urls[0]?.searchParams.get("wsTicket") ?? "").length > 0);
         assert.equal(service.seen.urls[0]?.searchParams.get("orchestrationProtocol"), "2");
-        // The session is revoked once the call returns.
-        const active = yield* service.auth.listSessions();
-        assert.isFalse(active.some((session) => session.client.label === SESSION_LABEL));
+        // The two parameters that make ws.ts record client metadata in the session row.
+        assert.isNull(service.seen.urls[0]?.searchParams.get("clientSurface"));
+        assert.isNull(service.seen.urls[0]?.searchParams.get("clientAppVersion"));
+
+        // One row, written before the call and never again: not revoked, it lapses.
+        const afterHold = yield* service.guardedSessionRows;
+        assert.equal(afterHold.length, 1);
+        const row = afterHold[0] ?? {};
+        assert.equal(row.client_label, SESSION_LABEL);
+        assert.isNull(row.revoked_at);
+        assert.isNull(row.client_surface);
+        assert.isNull(row.client_app_version);
+        assert.equal(
+          Date.parse(String(row.expires_at)) - Date.parse(String(row.issued_at)),
+          Duration.toMillis(SESSION_TTL),
+        );
+        assert.isAtMost(Duration.toMillis(SESSION_TTL), Duration.toMillis(Duration.minutes(5)));
 
         yield* runCli(["service", "prepare-update", "--base-dir", baseDir, "--release-hold"]);
         assert.deepStrictEqual(service.seen.payloads[1], { stopWork: false, releaseHold: true });
+        // After the first socket closed and a second call connected, the first row is
+        // unchanged in every guarded cell; the release left its own row unrevoked too.
+        const afterRelease = yield* service.guardedSessionRows;
+        assert.equal(afterRelease.length, 2);
+        assert.deepStrictEqual(
+          afterRelease.find((entry) => entry.session_id === row.session_id),
+          row,
+        );
+        assert.isTrue(afterRelease.every((entry) => entry.revoked_at === null));
         yield* service.stop;
       }).pipe(Effect.provide(layerCliRuntime)),
     60_000,

@@ -46,6 +46,7 @@ import {
   parseRemoteRefWithRemoteNames,
 } from "../git/remoteRefs.ts";
 import * as ServerConfig from "../config.ts";
+import * as WorkspaceSensitivePaths from "../workspace/WorkspaceSensitivePaths.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const gitProcesses = Semaphore.makeUnsafe(8);
@@ -916,12 +917,102 @@ const collectOutput = Effect.fnUntraced(function* (
   };
 });
 
+/**
+ * Adds `core.fsmonitor=false` to the configuration git reads from the
+ * environment, after any entries the caller set. A repository's `core.fsmonitor`
+ * names a program that `git status` and `git diff` run, so a planted
+ * `.git/config` would otherwise be a command.
+ */
+function withoutFsmonitor(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const parsed = Number.parseInt(env.GIT_CONFIG_COUNT ?? "0", 10);
+  const count = Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
+  return {
+    ...env,
+    GIT_CONFIG_COUNT: String(count + 1),
+    [`GIT_CONFIG_KEY_${count}`]: "core.fsmonitor",
+    [`GIT_CONFIG_VALUE_${count}`]: "false",
+  };
+}
+
+/**
+ * A path as git names it inside a tree: relative to the repository top,
+ * `/`-separated, with no empty, `.` or `..` segment (so `path.posix.normalize`
+ * leaves it unchanged). Git reads `<rev>:./x` and `<rev>:../x` relative to its
+ * working folder, so such a path could name a file the protected-path checks,
+ * which resolve against the top, never saw. Windows also refuses backslashes and
+ * drive letters.
+ */
+function isRepositoryRelativePath(value: string, platform: NodeJS.Platform): boolean {
+  if (value.length === 0 || value.includes("\0") || value.startsWith("/")) return false;
+  if (platform === "win32" && (value.includes("\\") || /^[a-zA-Z]:/.test(value))) return false;
+  return value.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
+}
+
+/**
+ * Pathspec arguments one git call carries at most, in count and characters:
+ * Windows caps a whole command line at 32K characters.
+ */
+const PATHSPEC_ARGS_MAX_COUNT = 200;
+const PATHSPEC_ARGS_MAX_CHARS = 24_000;
+
+const pathspecLength = (args: ReadonlyArray<string>) =>
+  args.reduce((total, arg) => total + arg.length + 1, 0);
+
+/**
+ * Splits the files a patch should show into groups that each fit one command
+ * line, keeping both sides of a rename or copy together so git still pairs them.
+ */
+function chunkPathspecs(files: ReadonlyArray<ReviewDiffFileStat>): Array<Array<string>> {
+  const chunks: Array<Array<string>> = [];
+  let current: Array<string> = [];
+  let currentLength = 0;
+  for (const file of files) {
+    const args = [file.path, ...(file.previousPath === null ? [] : [file.previousPath])].map(
+      (filePath) => `:(top,literal)${filePath}`,
+    );
+    const length = pathspecLength(args);
+    if (
+      current.length > 0 &&
+      (current.length + args.length > PATHSPEC_ARGS_MAX_COUNT ||
+        currentLength + length > PATHSPEC_ARGS_MAX_CHARS)
+    ) {
+      chunks.push(current);
+      current = [];
+      currentLength = 0;
+    }
+    current.push(...args);
+    currentLength += length;
+  }
+  if (current.length > 0) chunks.push(current);
+  return chunks;
+}
+
+/** Leaves out every numstat entry with a protected side, as the review preview does. */
+const withoutProtectedFiles = async (
+  check: WorkspaceSensitivePaths.ProtectedPathCheck,
+  files: ReadonlyArray<ReviewDiffFileStat>,
+) => {
+  const protectedPaths = await check.protectedAmong(
+    files.flatMap((file) =>
+      file.previousPath === null ? [file.path] : [file.path, file.previousPath],
+    ),
+  );
+  return files.filter(
+    (file) =>
+      !protectedPaths.has(file.path) &&
+      (file.previousPath === null || !protectedPaths.has(file.previousPath)),
+  );
+};
+
 export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const { worktreesDir } = yield* ServerConfig.ServerConfig;
   const crypto = yield* Crypto.Crypto;
+  // Review expansion reads working-tree files for a client-chosen cwd, so it
+  // refuses the same credential and app state files as project reads.
+  const sensitivePaths = yield* WorkspaceSensitivePaths.sensitivePathGuardSnapshot;
 
   const executeRaw: GitVcsDriver.GitVcsDriver["Service"]["execute"] = Effect.fnUntraced(
     function* (input) {
@@ -951,11 +1042,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             ChildProcess.make("git", commandInput.args, {
               cwd: commandInput.cwd,
               env: {
-                ...process.env,
-                // Status polling runs beside the user's own git commands; without this,
-                // `git status` takes index.lock to save its refreshed index.
-                GIT_OPTIONAL_LOCKS: "0",
-                ...input.env,
+                ...withoutFsmonitor({
+                  ...process.env,
+                  // Status polling runs beside the user's own git commands; without this,
+                  // `git status` takes index.lock to save its refreshed index.
+                  GIT_OPTIONAL_LOCKS: "0",
+                  ...input.env,
+                }),
                 ...trace2Monitor.env,
               },
             }),
@@ -2696,6 +2789,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           )
         : null);
     if (baseRef === null) return { baseRef, mergeBase: "HEAD" };
+    if (baseRef.startsWith("-")) {
+      return yield* new GitCommandError({
+        operation: "GitVcsDriver.resolveReviewMergeBase",
+        command: "git merge-base",
+        cwd,
+        detail: `'${baseRef}' is not a branch or commit.`,
+      });
+    }
+    // The leading-dash refusal above keeps a client ref from being read as an option;
+    // `--end-of-options` would do the same but needs a newer git than the app supports.
     const args = ["merge-base", baseRef, "HEAD"];
     const result = yield* executeGit("GitVcsDriver.resolveReviewMergeBase", cwd, args, {
       allowNonZeroExit: true,
@@ -2760,9 +2863,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         exitCode: result.exitCode,
       });
     }
+    // Protected files are left out of the Changes list, so their line counts are too.
+    const reviewPaths = WorkspaceSensitivePaths.makeProtectedPathCheck(sensitivePaths, cwd, {
+      realpath: yield* WorkspaceSensitivePaths.SensitivePathsRealpath,
+      allowMissing: true,
+    });
+    const files = yield* Effect.promise(() =>
+      withoutProtectedFiles(reviewPaths, parseReviewNumstat(result.stdout)),
+    );
     let insertions = 0;
     let deletions = 0;
-    for (const file of parseReviewNumstat(result.stdout)) {
+    for (const file of files) {
       insertions += file.additions;
       deletions += file.deletions;
     }
@@ -2795,6 +2906,34 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
 
     const cwd = repository.worktreeRoot;
+    // Protected files never reach the patch text: a repository can track them (a
+    // dotfiles repository at the home folder, a provider home under git). One
+    // check serves both sources, so a path both list is resolved once. A deleted
+    // file resolves through its folder; any other path that cannot be resolved,
+    // or a root that cannot, counts as protected.
+    const reviewPaths = WorkspaceSensitivePaths.makeProtectedPathCheck(sensitivePaths, cwd, {
+      realpath: yield* WorkspaceSensitivePaths.SensitivePathsRealpath,
+      allowMissing: true,
+    });
+    const isProtectedReviewPath = (relativePath: string) =>
+      Effect.promise(() => reviewPaths.isProtected(relativePath));
+    if (input.file) {
+      const platform = yield* HostProcessPlatform;
+      for (const filePath of [input.file.path, input.file.previousPath]) {
+        if (
+          filePath &&
+          (!isRepositoryRelativePath(filePath, platform) ||
+            (yield* isProtectedReviewPath(filePath)))
+        ) {
+          return yield* new GitCommandError({
+            operation: "GitVcsDriver.getReviewDiffPreview",
+            command: "git diff",
+            cwd: input.cwd,
+            detail: `Could not read diff file '${filePath}'.`,
+          });
+        }
+      }
+    }
     // A per-file request only reads its own source.
     const dirtyRef = input.file?.sourceKind === "branch-range" ? null : "HEAD";
     const review =
@@ -2843,14 +2982,62 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     ) {
       if (ref === null) return { stdout: "", stdoutTruncated: false, files: [] };
       const stat = yield* readStats(ref, env);
-      if (stat.files.length === 0) return { stdout: "", stdoutTruncated: false, files: [] };
-      const patch = yield* executeGit(
-        "GitVcsDriver.getReviewDiffPreview.patch",
-        cwd,
-        [...diffArgs, "--patch", stat.ref, "--", ...pathArgs],
-        { maxOutputBytes: patchLimit, appendTruncationMarker: true, env },
+      const protectedPaths = yield* Effect.promise(() =>
+        reviewPaths.protectedAmong(
+          stat.files.flatMap((file) =>
+            file.previousPath === null ? [file.path] : [file.path, file.previousPath],
+          ),
+        ),
       );
-      return { ...patch, files: stat.files };
+      // A rename or copy touching a protected path leaves out both sides: the new
+      // side holds much of the protected content, and the patch and the file list
+      // must agree.
+      const excludedPaths = new Set<string>();
+      const files = stat.files.filter((file) => {
+        const touchesProtected =
+          protectedPaths.has(file.path) ||
+          (file.previousPath !== null && protectedPaths.has(file.previousPath));
+        if (!touchesProtected) return true;
+        excludedPaths.add(file.path);
+        if (file.previousPath !== null) excludedPaths.add(file.previousPath);
+        return false;
+      });
+      if (files.length === 0) return { stdout: "", stdoutTruncated: false, files: [] };
+      const excludeArgs = [...excludedPaths].map((filePath) => `:(top,exclude,literal)${filePath}`);
+      const readPatch = (pathspecs: ReadonlyArray<string>, maxOutputBytes: number) =>
+        executeGit(
+          "GitVcsDriver.getReviewDiffPreview.patch",
+          cwd,
+          [...diffArgs, "--patch", stat.ref, "--", ...pathspecs],
+          { maxOutputBytes, appendTruncationMarker: true, env },
+        );
+      const pathspecs = [...pathArgs, ...excludeArgs];
+      if (
+        pathspecs.length <= PATHSPEC_ARGS_MAX_COUNT &&
+        pathspecLength(pathspecs) <= PATHSPEC_ARGS_MAX_CHARS
+      ) {
+        return { ...(yield* readPatch(pathspecs, patchLimit)), files };
+      }
+      // Too many exclusions for one command line (git diff takes no pathspec
+      // file): name the allowed files instead, a command line's worth at a time,
+      // within one output budget.
+      let stdout = "";
+      let remaining = patchLimit;
+      let stdoutTruncated = false;
+      for (const chunk of chunkPathspecs(files)) {
+        if (remaining <= 0) {
+          stdoutTruncated = true;
+          break;
+        }
+        const part = yield* readPatch(chunk, remaining);
+        stdout += part.stdout;
+        remaining -= new TextEncoder().encode(part.stdout).byteLength;
+        if (part.stdoutTruncated) {
+          stdoutTruncated = true;
+          break;
+        }
+      }
+      return { stdout, stdoutTruncated, files };
     });
     const [dirtyTrackedResult, baseResult] = yield* Effect.gen(function* () {
       const untracked = yield* prepareUntrackedReviewIndex(cwd, pathArgs, input.file?.path);
@@ -2952,13 +3139,45 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const readReviewFileAtRevision = Effect.fn("readReviewFileAtRevision")(function* (
     input: ReviewDiffFileContentsInput,
+    repositoryRoot: string,
     revision: string,
     relativePath: string,
   ) {
+    const requestedPath = path.resolve(repositoryRoot, relativePath);
+    const realpath = yield* WorkspaceSensitivePaths.SensitivePathsRealpath;
+    // A root that cannot be resolved is refused rather than checked by name alone.
+    const realRepositoryRoot = yield* Effect.promise(() =>
+      realpath(repositoryRoot).catch(() => null),
+    );
+    if (
+      realRepositoryRoot === null ||
+      sensitivePaths.isDenied(requestedPath) ||
+      sensitivePaths.isDenied(path.resolve(realRepositoryRoot, relativePath))
+    ) {
+      return yield* reviewDiffFileError(input, `Could not read diff file '${relativePath}'.`);
+    }
+    // The revision can come straight from the client: refuse anything git would
+    // parse as an option, and read the file from the commit it names.
+    const notACommit = () => reviewDiffFileError(input, `'${revision}' is not a branch or commit.`);
+    if (revision.startsWith("-")) return yield* notACommit();
+    // Both run at the top, where `<commit>:<path>` and the checks above agree. No
+    // `--end-of-options`: rev-parse takes it only from Git 2.30 (Ubuntu 20.04 ships
+    // 2.25), and the leading-dash refusal above already covers it.
+    const verified = yield* executeGit(
+      "GitVcsDriver.getReviewDiffFileContents.revision.verify",
+      repositoryRoot,
+      ["rev-parse", "--verify", "--quiet", `${revision}^{commit}`],
+      { allowNonZeroExit: true },
+    );
+    const commit = verified.stdout.trim();
+    if (verified.exitCode !== 0 || !/^[0-9a-f]{40,64}$/.test(commit)) {
+      return yield* notACommit();
+    }
     const result = yield* executeGit(
       "GitVcsDriver.getReviewDiffFileContents.revision",
-      input.cwd,
-      ["show", `${revision}:${relativePath}`],
+      repositoryRoot,
+      // `commit` is the verified hex id, so this argument can never start with `-`.
+      ["show", `${commit}:${relativePath}`],
       { maxOutputBytes: REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES },
     );
     if (result.stdout.includes("\0")) {
@@ -2986,20 +3205,33 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         `Diff file '${input.newPath}' resolves outside the review workspace.`,
       );
     }
+    const protectedFileError = () =>
+      fileError("fs.readFile", `Could not read diff file '${input.newPath}'.`);
+    if (sensitivePaths.isDenied(requestedPath)) return yield* protectedFileError();
 
-    const [realRepositoryRoot, realTarget] = yield* Effect.all([
-      fileSystem.realPath(repositoryRoot),
-      fileSystem.realPath(requestedPath),
-    ]).pipe(
-      Effect.mapError((cause) =>
+    // The native realpath returns the on-disk spelling; the JS one keeps the typed
+    // spelling, which a case-folding file system would still open.
+    const [realRepositoryRoot, realTarget] = yield* Effect.tryPromise({
+      try: () =>
+        Promise.all([
+          WorkspaceSensitivePaths.realpathNative(repositoryRoot),
+          WorkspaceSensitivePaths.realpathNative(requestedPath),
+        ]),
+      catch: (cause) =>
         fileError("fs.realPath", `Could not resolve diff file '${input.newPath}'.`, cause),
-      ),
-    );
+    });
     if (!isPathWithinRoot(realRepositoryRoot, realTarget)) {
       return yield* fileError(
         "fs.realPath",
         `Diff file '${input.newPath}' resolves outside the review workspace.`,
       );
+    }
+    // The file identity also catches a hard link to a protected file.
+    if (
+      sensitivePaths.isDenied(realTarget) ||
+      (yield* Effect.promise(() => sensitivePaths.matchesProtectedIdentity(realTarget)))
+    ) {
+      return yield* protectedFileError();
     }
 
     const info = yield* fileSystem
@@ -3045,6 +3277,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     if (repositoryRoot.length === 0) {
       return yield* reviewDiffFileError(input, "Could not resolve the Git repository root.");
     }
+    const platform = yield* HostProcessPlatform;
+    for (const [filePath, used] of [
+      [input.oldPath, input.changeType !== "new"],
+      [input.newPath, input.changeType !== "deleted"],
+    ] as const) {
+      if (used && !isRepositoryRelativePath(filePath, platform)) {
+        return yield* reviewDiffFileError(input, `Could not read diff file '${filePath}'.`);
+      }
+    }
     const oldRevision =
       input.sourceKind === "working-tree"
         ? (input.baseRef ?? "HEAD")
@@ -3053,7 +3294,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       [
         input.changeType === "new"
           ? Effect.succeed("")
-          : readReviewFileAtRevision(input, oldRevision, input.oldPath),
+          : readReviewFileAtRevision(input, repositoryRoot, oldRevision, input.oldPath),
         input.changeType === "deleted"
           ? Effect.succeed("")
           : readWorkingTreeReviewFile(input, repositoryRoot),

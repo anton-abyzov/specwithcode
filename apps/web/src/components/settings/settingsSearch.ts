@@ -1023,7 +1023,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Network access",
     to: "/settings/connections",
     targetId: "connections-environment",
-    searchTerms: ["expose backend remote pairing local machine interfaces host restart"],
+    searchTerms: [
+      "expose backend remote pairing local machine interfaces host restart lan http unencrypted",
+    ],
     localBackendManagementOnly: true,
   },
   {

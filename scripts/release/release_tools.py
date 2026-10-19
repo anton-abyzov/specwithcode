@@ -407,16 +407,37 @@ def retry_lines(current, previous):
 
 # ---------------------------------------------------------------- retries and ordering
 
+def shard_unexplained(shard):
+    """Why a failed shard's failed files do not account for its failure, or None when they do.
+    Vitest's JSON report leaves out unhandled errors (it marks the file they came from as passed)
+    and errors outside any test, so only the shard's log can tell; without a readable log
+    summary the failure counts as unexplained."""
+    try:
+        text = pathlib.Path(shard['log']).read_text(errors='replace') if shard.get('log') else ''
+    except OSError:
+        text = ''
+    text = re.sub(r'\x1b\[[0-9;]*m', '', text)
+    if re.search(r'Unhandled (Error|Rejection)|^\s*Errors\s+\d+ errors?\b', text, re.M):
+        return 'unhandled errors'
+    counts = re.findall(r'^\s*Test Files\s+(\d+) failed\b', text, re.M)
+    if not counts or int(counts[-1]) != len(shard.get('failedFiles', [])):
+        return 'the log does not name the same failed files'
+    return None
+
+
 def shard_failures(summary, maximum):
     """[(file, seconds)] of a failed test-sharded.mjs run worth one retry, or [] when it is not:
-    a shard that crashed, timed out or failed with no file named leaves nothing to blame, and
-    more than `maximum` failed files are a break, not a flake. Seconds come from the shard's
-    vitest JSON report (0 when it has none)."""
+    a shard that crashed, timed out, failed with no file named or failed for more than its
+    failed files (an unhandled error, see shard_unexplained) leaves something a retry of those
+    files would hide, and more than `maximum` failed files are a break, not a flake. Seconds
+    come from the shard's vitest JSON report (0 when it has none)."""
     data = json.loads(pathlib.Path(summary).read_text())
     files = []
     for shard in data.get('shards', []):
         failed = shard.get('exitCode') != 0 or shard.get('timedOut')
         if shard.get('timedOut') or shard.get('signal') or (failed and not shard.get('failedFiles')):
+            return []
+        if failed and shard_unexplained(shard):
             return []
         times = {}
         report = shard.get('report')

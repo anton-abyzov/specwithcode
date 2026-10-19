@@ -212,6 +212,15 @@ export const resolveAntigravityInstanceDirectories = Effect.fn(
   } satisfies AntigravityInstanceDirectories;
 });
 
+/** Deletes a removed instance's GEMINI_HOME, which holds its Google sign-in. */
+export const removeAntigravityInstanceProfile = Effect.fn("removeAntigravityInstanceProfile")(
+  function* (stateDir: string, instanceId: ProviderInstanceId) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const { profile } = yield* resolveAntigravityInstanceDirectories(stateDir, instanceId);
+    yield* fileSystem.remove(profile, { recursive: true, force: true });
+  },
+);
+
 function quoteBrowserArgument(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }

@@ -11,6 +11,17 @@
  * @module ServerSettings
  */
 import {
+  AcpRegistrySettings,
+  AntigravitySettings,
+  ClaudeSettings,
+  CodexSettings,
+  CursorSettings,
+  GrokSettings,
+  MuseSettings,
+  OpenCodeSettings,
+  PiSettings,
+  providerSettingsPasswordKeys,
+  REDACTED_SECRET_MARKER,
   DEFAULT_TEXT_GENERATION_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   DEFAULT_MODEL_BY_PROVIDER,
@@ -35,6 +46,7 @@ import {
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
@@ -64,6 +76,8 @@ import {
   isModelSelectionProviderEnabled,
 } from "@specweave-studio/shared/serverSettings";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import * as ProviderCredentialStore from "./provider/ProviderCredentialStore.ts";
+import { removeAntigravityInstanceProfile } from "./provider/antigravityAuthSupport.ts";
 
 export { resolveSourceControlWriterModelSelection } from "@specweave-studio/shared/serverSettings";
 
@@ -151,7 +165,7 @@ function providerEnvironmentSecretName(input: {
  * real value lives in the secret store, mirroring provider environment
  * secrets. A client that sends the marker back means "keep what you have".
  */
-const SECRET_REDACTED = "\u2022\u2022\u2022\u2022\u2022\u2022";
+const SECRET_REDACTED = REDACTED_SECRET_MARKER;
 
 function usageLimitSourceSecretName(sourceId: string): string {
   return `usage-limit-source-${Buffer.from(sourceId, "utf8").toString("base64url")}`;
@@ -193,17 +207,370 @@ function redactProviderEnvironmentVariable(
   };
 }
 
-export function redactServerSettingsForClient(settings: ServerSettings): ServerSettings {
-  const providerInstances = Object.fromEntries(
-    Object.entries(settings.providerInstances).map(([instanceId, instance]) => [
-      instanceId,
-      instance.environment
-        ? {
-            ...instance,
-            environment: instance.environment.map(redactProviderEnvironmentVariable),
-          }
-        : instance,
+const PROVIDER_SETTINGS_SCHEMAS = {
+  acpRegistry: AcpRegistrySettings,
+  antigravity: AntigravitySettings,
+  claudeAgent: ClaudeSettings,
+  codex: CodexSettings,
+  cursor: CursorSettings,
+  grok: GrokSettings,
+  muse: MuseSettings,
+  opencode: OpenCodeSettings,
+  pi: PiSettings,
+} as const;
+
+/**
+ * Password fields of each known driver's settings (empty when it has none),
+ * keyed by driver kind (which is also the key in the legacy `providers`
+ * struct). Derived from the form annotation, so a new password field is
+ * redacted without touching this file. A driver missing here is unknown to
+ * this build: its whole config is opaque (see `redactOpaqueConfigValue`).
+ * These values stay where they are stored today; only client copies change.
+ */
+export const PROVIDER_SETTINGS_SECRET_KEYS: Readonly<Record<string, ReadonlyArray<string>>> =
+  Object.fromEntries(
+    Object.entries(PROVIDER_SETTINGS_SCHEMAS).map(
+      ([driver, schema]) => [driver, providerSettingsPasswordKeys(schema)] as const,
+    ),
+  );
+
+/**
+ * Address fields (`serverUrl`, `apiEndpoint`, `baseUrl`...) of each known
+ * driver: where its password, or a token kept in an opaque key, is sent.
+ * Only addresses count: a changed binary or command path, or instance
+ * environment, already runs code as the server user, which can read every
+ * stored secret anyway, so those edits keep the stored values.
+ */
+export const PROVIDER_SETTINGS_SECRET_DESTINATION_KEYS: Readonly<
+  Record<string, ReadonlyArray<string>>
+> = Object.fromEntries(
+  Object.entries(PROVIDER_SETTINGS_SCHEMAS).map(([driver, schema]) => [
+    driver,
+    Object.keys(schema.fields).filter((key) => /(url|endpoint)$/i.test(key)),
+  ]),
+);
+
+/**
+ * Non-secret keys a client writes into a known driver's config besides its
+ * schema fields. Clients read them back, so they are not withheld:
+ * - `acpRegistry.registryIconUrl`: the Registry icon the add dialog stores.
+ * - `muse.customModels`: the instance card manages custom models for every
+ *   driver but Antigravity, and Muse's schema has no such field.
+ * Every other key the web and mobile clients read or write is a schema field.
+ */
+const PROVIDER_SETTINGS_PUBLIC_METADATA_KEYS: Readonly<Record<string, ReadonlyArray<string>>> = {
+  acpRegistry: ["registryIconUrl"],
+  muse: ["customModels"],
+};
+
+/** Keys this build knows for each driver; any other config key is opaque. */
+const PROVIDER_SETTINGS_FIELD_KEYS: Readonly<Record<string, ReadonlyArray<string>>> =
+  Object.fromEntries(
+    Object.entries(PROVIDER_SETTINGS_SCHEMAS).map(([driver, schema]) => [
+      driver,
+      [
+        ...Object.keys(schema.fields),
+        ...(ownEntry(PROVIDER_SETTINGS_PUBLIC_METADATA_KEYS, driver) ?? []),
+      ],
     ]),
+  );
+
+function isConfigRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * Reads an own property only. Driver kinds and instance ids are client-chosen
+ * slugs, so `constructor` or `toString` must not resolve to Object.prototype.
+ */
+function ownEntry<R extends object>(record: R | undefined, key: string): R[keyof R] | undefined {
+  return record !== undefined && Object.hasOwn(record, key)
+    ? (record as Record<string, R[keyof R]>)[key]
+    : undefined;
+}
+
+/**
+ * How a driver's config holds secrets. `passwordKeys` are the known password
+ * fields. Every other key this build does not know as a field of the driver
+ * (all of them for a driver it does not know, or for a broken lookup) is
+ * opaque: a newer build or another tool may keep a token there, nested in
+ * objects or arrays, so every string in it is treated as a secret.
+ */
+function providerConfigSecretLayout(driver: string): {
+  readonly passwordKeys: ReadonlyArray<string>;
+  readonly isOpaque: (key: string) => boolean;
+} {
+  const passwordKeys: unknown = ownEntry(PROVIDER_SETTINGS_SECRET_KEYS, driver);
+  const fields: unknown = ownEntry(PROVIDER_SETTINGS_FIELD_KEYS, driver);
+  if (!Array.isArray(passwordKeys) || !Array.isArray(fields)) {
+    return { passwordKeys: [], isOpaque: () => true };
+  }
+  const known = new Set<string>(fields as ReadonlyArray<string>);
+  return {
+    passwordKeys: passwordKeys as ReadonlyArray<string>,
+    isOpaque: (key) => !known.has(key),
+  };
+}
+
+/** Replaces every non-empty string inside an opaque value, at any depth, with the marker. */
+function redactOpaqueConfigValue(value: unknown): unknown {
+  if (typeof value === "string") return value.length > 0 ? SECRET_REDACTED : value;
+  if (Array.isArray(value)) return value.map(redactOpaqueConfigValue);
+  if (isConfigRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, redactOpaqueConfigValue(entry)]),
+    );
+  }
+  return value;
+}
+
+function containsRedactedMarker(value: unknown): boolean {
+  if (value === SECRET_REDACTED) return true;
+  if (Array.isArray(value)) return value.some(containsRedactedMarker);
+  if (isConfigRecord(value)) return Object.values(value).some(containsRedactedMarker);
+  return false;
+}
+
+/**
+ * True when an opaque value holds a string, other than the marker, that the
+ * stored value does not hold at the same path: the caller changed something
+ * it cannot see the meaning of, such as the address a token is sent to.
+ */
+function opaqueConfigValueEdited(next: unknown, stored: unknown): boolean {
+  if (typeof next === "string") return next !== SECRET_REDACTED && next !== stored;
+  if (Array.isArray(next)) {
+    return next.some((entry, index) =>
+      opaqueConfigValueEdited(entry, Array.isArray(stored) ? stored[index] : undefined),
+    );
+  }
+  if (isConfigRecord(next)) {
+    return Object.entries(next).some(([key, entry]) =>
+      opaqueConfigValueEdited(entry, isConfigRecord(stored) ? ownEntry(stored, key) : undefined),
+    );
+  }
+  return false;
+}
+
+const DROPPED = Symbol("dropped");
+
+/**
+ * Mirrors `redactOpaqueConfigValue`: a marker restores the stored string at
+ * the same path when `keep`, and is dropped otherwise (an array keeps its
+ * length with an empty string in its place).
+ */
+function restoreOpaqueConfigValue(next: unknown, stored: unknown, keep: boolean): unknown {
+  if (next === SECRET_REDACTED) {
+    return keep && typeof stored === "string" && stored.length > 0 && stored !== SECRET_REDACTED
+      ? stored
+      : DROPPED;
+  }
+  if (Array.isArray(next)) {
+    return next.map((entry, index) => {
+      const restored = restoreOpaqueConfigValue(
+        entry,
+        Array.isArray(stored) ? stored[index] : undefined,
+        keep,
+      );
+      return restored === DROPPED ? "" : restored;
+    });
+  }
+  if (isConfigRecord(next)) {
+    return Object.fromEntries(
+      Object.entries(next).flatMap(([key, entry]) => {
+        const restored = restoreOpaqueConfigValue(
+          entry,
+          isConfigRecord(stored) ? ownEntry(stored, key) : undefined,
+          keep,
+        );
+        return restored === DROPPED ? [] : [[key, restored]];
+      }),
+    );
+  }
+  return next;
+}
+
+function redactProviderConfigSecrets<T>(driver: string, config: T): T {
+  // A config that is not an object (an array or a string an unknown driver
+  // keeps) has no keys to sort, so all of it is opaque.
+  if (!isConfigRecord(config)) return redactOpaqueConfigValue(config) as T;
+  const { passwordKeys, isOpaque } = providerConfigSecretLayout(driver);
+  let next: Record<string, unknown> | undefined;
+  for (const [key, value] of Object.entries(config)) {
+    const redacted = passwordKeys.includes(key)
+      ? typeof value === "string" && value.length > 0
+        ? SECRET_REDACTED
+        : value
+      : isOpaque(key)
+        ? redactOpaqueConfigValue(value)
+        : value;
+    if (redacted === value) continue;
+    next ??= { ...config };
+    next[key] = redacted;
+  }
+  return (next ?? config) as T;
+}
+
+function readConfigString(config: unknown, key: string): string {
+  const value = isConfigRecord(config) ? config[key] : undefined;
+  return typeof value === "string" ? value.trim() : "";
+}
+
+/** True when a password would now go to a different origin than the one it was saved for. */
+function providerSecretDestinationChanged(driver: string, next: unknown, current: unknown) {
+  const keys: unknown = ownEntry(PROVIDER_SETTINGS_SECRET_DESTINATION_KEYS, driver);
+  return (Array.isArray(keys) ? (keys as ReadonlyArray<string>) : []).some((key) => {
+    const before = readConfigString(current, key);
+    const after = readConfigString(next, key);
+    return before !== after && !sameUrlOrigin(before, after);
+  });
+}
+
+/**
+ * A client edits provider settings from its redacted copy, so a password
+ * field arrives as the marker unless the user typed a new value. The marker
+ * restores the stored value of the same field; anything else replaces it.
+ *
+ * Like the usage hub key, a stored password never follows its config to a new
+ * origin: when an address field moves, the marker (or the stored value kept by
+ * a partial `providers` patch) is dropped until the user enters it again.
+ */
+function restoreProviderConfigSecrets<T>(
+  driver: string,
+  next: T,
+  current: unknown,
+  // Whether the caller sent this key itself. A value it typed is kept even
+  // when the address moves; only the marker or a merged-in stored value is not.
+  sentByCaller: (key: string) => boolean,
+): T {
+  if (!isConfigRecord(next)) {
+    // Mirrors the redaction of a config that is not an object.
+    if (!containsRedactedMarker(next)) return next;
+    const keep =
+      !providerSecretDestinationChanged(driver, next, current) &&
+      !opaqueConfigValueEdited(next, current);
+    const restored = restoreOpaqueConfigValue(next, current, keep);
+    return (restored === DROPPED ? "" : restored) as T;
+  }
+  const { passwordKeys, isOpaque } = providerConfigSecretLayout(driver);
+  const opaqueKeys = Object.keys(next).filter((key) => isOpaque(key));
+  const keys = passwordKeys.filter((key) => Object.hasOwn(next, key));
+  if (keys.length === 0 && !opaqueKeys.some((key) => containsRedactedMarker(next[key]))) {
+    return next;
+  }
+  const destinationChanged = providerSecretDestinationChanged(driver, next, current);
+  const storedValue = (key: string) =>
+    isConfigRecord(current) ? ownEntry(current, key) : undefined;
+  let restored: Record<string, unknown> | undefined;
+  for (const key of keys) {
+    const value = next[key];
+    const stored = storedValue(key);
+    const reusesStored =
+      value === SECRET_REDACTED ||
+      (!sentByCaller(key) && typeof stored === "string" && stored.length > 0 && value === stored);
+    if (!reusesStored) continue;
+    if (value !== SECRET_REDACTED && !destinationChanged) continue;
+    restored ??= { ...next };
+    if (!destinationChanged && typeof stored === "string" && stored !== SECRET_REDACTED) {
+      restored[key] = stored;
+    } else {
+      delete restored[key];
+    }
+  }
+  // Opaque values follow the same rule without knowing which field is the
+  // address: any edited string among them, or a moved known address, drops
+  // every marker in them instead of restoring the stored secret.
+  const keepOpaque =
+    !destinationChanged &&
+    !opaqueKeys.some((key) => opaqueConfigValueEdited(next[key], storedValue(key)));
+  for (const key of opaqueKeys) {
+    if (!containsRedactedMarker(next[key])) continue;
+    const value = restoreOpaqueConfigValue(next[key], storedValue(key), keepOpaque);
+    restored ??= { ...next };
+    if (value === DROPPED) delete restored[key];
+    else restored[key] = value;
+  }
+  return (restored ?? next) as T;
+}
+
+function restoreRedactedProviderSettingsSecrets(
+  current: ServerSettings,
+  next: ServerSettings,
+  patch: ServerSettingsPatch,
+): ServerSettings {
+  let providers: Record<string, unknown> | undefined;
+  for (const [driver, config] of Object.entries(next.providers)) {
+    // `providers` entries are merged, so a key the patch left out still holds
+    // the stored value; only keys the patch names came from the caller.
+    const sent = ownEntry(patch.providers as Record<string, unknown> | undefined, driver);
+    const restored = restoreProviderConfigSecrets(
+      driver,
+      config,
+      ownEntry(current.providers as Record<string, unknown>, driver),
+      (key) => isConfigRecord(sent) && Object.hasOwn(sent, key),
+    );
+    if (restored === config) continue;
+    providers ??= { ...next.providers };
+    providers[driver] = restored;
+  }
+  let providerInstances: Record<string, ProviderInstanceConfig> | undefined;
+  for (const [instanceId, instance] of Object.entries(next.providerInstances)) {
+    if (instance.config === undefined) continue;
+    const previous = ownEntry(current.providerInstances, instanceId);
+    // The first edit of a built-in default instance moves its config out of
+    // the legacy `providers` entry, so that entry holds the stored secret.
+    const previousConfig =
+      previous !== undefined
+        ? previous.driver === instance.driver
+          ? previous.config
+          : undefined
+        : instanceId === instance.driver
+          ? ownEntry(current.providers as Record<string, unknown>, instance.driver)
+          : undefined;
+    // Instance configs are replaced whole, so every value in one was sent.
+    const config = restoreProviderConfigSecrets(
+      instance.driver,
+      instance.config,
+      previousConfig,
+      () => true,
+    );
+    if (config === instance.config) continue;
+    providerInstances ??= { ...next.providerInstances };
+    providerInstances[instanceId] = { ...instance, config };
+  }
+  if (providers === undefined && providerInstances === undefined) return next;
+  return {
+    ...next,
+    ...(providers ? { providers: providers as ServerSettings["providers"] } : {}),
+    ...(providerInstances
+      ? { providerInstances: providerInstances as ServerSettings["providerInstances"] }
+      : {}),
+  };
+}
+
+export function redactServerSettingsForClient(settings: ServerSettings): ServerSettings {
+  const providers = Object.fromEntries(
+    Object.entries(settings.providers).map(([driver, config]) => [
+      driver,
+      redactProviderConfigSecrets(driver, config),
+    ]),
+  ) as ServerSettings["providers"];
+  const providerInstances = Object.fromEntries(
+    Object.entries(settings.providerInstances).map(([instanceId, instance]) => {
+      const config =
+        instance.config === undefined
+          ? undefined
+          : redactProviderConfigSecrets(instance.driver, instance.config);
+      return [
+        instanceId,
+        {
+          ...instance,
+          ...(instance.environment
+            ? { environment: instance.environment.map(redactProviderEnvironmentVariable) }
+            : {}),
+          ...(config !== undefined ? { config } : {}),
+        },
+      ];
+    }),
   );
   // The hub key is a bearer secret; clients only need to know one is set.
   const usageLimitSources = Object.fromEntries(
@@ -230,7 +597,101 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
     ...settings.voice,
     elevenLabsApiKey: redactSecret(settings.voice.elevenLabsApiKey),
   };
-  return { ...settings, providerInstances, usageLimitSources, bitbucket, github, voice };
+  return {
+    ...settings,
+    providers,
+    providerInstances,
+    usageLimitSources,
+    bitbucket,
+    github,
+    voice,
+  };
+}
+
+type InstanceSignIn = { readonly driver: string; readonly instanceId: ProviderInstanceId };
+
+/**
+ * Ids removed by an explicit remove whose sign-in may still be on disk, with
+ * the driver of each removed instance. Persisted beside the settings so a
+ * failed cleanup is retried before the id is used again.
+ *
+ * `readded`: a write added the id back after clearing its leftovers. Until
+ * the provider registry is about to start the new instance, the removed
+ * one's driver may still be shutting down and write its token back, so the
+ * entry stays for `clearSignInsBeforeStart` to delete once more first.
+ */
+type SignInTombstone = { readonly driver: string; readonly readded?: boolean };
+type SignInTombstones = Readonly<Record<string, ReadonlyArray<SignInTombstone>>>;
+type SignInTombstoneState = "removed" | "readded" | "gone";
+
+const SIGN_IN_TOMBSTONES_FILE = "provider-sign-in-tombstones.json";
+
+const SignInTombstonesJson = fromJsonStringPretty(
+  Schema.Record(
+    Schema.String,
+    Schema.Array(
+      Schema.Struct({ driver: Schema.String, readded: Schema.optionalKey(Schema.Boolean) }),
+    ),
+  ),
+);
+const decodeSignInTombstones = Schema.decodeUnknownOption(SignInTombstonesJson);
+const encodeSignInTombstones = Schema.encodeEffect(SignInTombstonesJson);
+
+function hasSignInTombstone(tombstones: SignInTombstones, { driver, instanceId }: InstanceSignIn) {
+  return (ownEntry(tombstones, instanceId) ?? []).some((entry) => entry.driver === driver);
+}
+
+function withSignInTombstone(
+  tombstones: SignInTombstones,
+  { driver, instanceId }: InstanceSignIn,
+  state: SignInTombstoneState,
+): SignInTombstones {
+  const others = (ownEntry(tombstones, instanceId) ?? []).filter(
+    (entry) => entry.driver !== driver,
+  );
+  const next: Record<string, ReadonlyArray<SignInTombstone>> = { ...tombstones };
+  if (state !== "gone") {
+    next[instanceId] = [...others, state === "readded" ? { driver, readded: true } : { driver }];
+  } else if (others.length > 0) next[instanceId] = others;
+  else delete next[instanceId];
+  return next;
+}
+
+/**
+ * Sorts the tombstones a write meets. Entries already `readded` wait for the
+ * registry (see `SignInTombstone`) and are neither cleared nor stale here.
+ *
+ * `clear`: an id the write adds back (absent before, or now under another
+ * driver) must start signed out, so the sign-in its removed namesake left is
+ * deleted before the write. Ids without a tombstone are never cleared, so a
+ * whole-map write that re-adds an instance a stale client dropped keeps it.
+ *
+ * `stale`: an instance live before and after the write under the tombstoned
+ * driver is not removed; the tombstone is left over from a remove that was
+ * interrupted or failed to save. Its sign-in belongs to the live instance,
+ * so only the tombstone goes, whatever the write names.
+ */
+function classifySignInTombstones(
+  current: ServerSettings,
+  next: ServerSettings,
+  tombstones: SignInTombstones,
+): {
+  readonly clear: ReadonlyArray<InstanceSignIn>;
+  readonly stale: ReadonlyArray<InstanceSignIn>;
+} {
+  const clear: Array<InstanceSignIn> = [];
+  const stale: Array<InstanceSignIn> = [];
+  for (const [instanceId, entries] of Object.entries(tombstones)) {
+    const before = ownEntry(current.providerInstances, instanceId);
+    const after = ownEntry(next.providerInstances, instanceId);
+    for (const { driver, readded } of entries) {
+      if (readded === true) continue;
+      const signIn = { driver, instanceId: instanceId as ProviderInstanceId };
+      if (before?.driver === driver && after?.driver === driver) stale.push(signIn);
+      else if (after !== undefined && before?.driver !== after.driver) clear.push(signIn);
+    }
+  }
+  return { clear, stale };
 }
 
 export function applyProviderInstanceMutation(
@@ -253,7 +714,7 @@ function ensureProviderInstanceMutationAllowed(
 ): Effect.Effect<void, ServerSettingsError> {
   if (
     mutation.operation === "create" &&
-    settings.providerInstances[mutation.instanceId] !== undefined
+    ownEntry(settings.providerInstances, mutation.instanceId) !== undefined
   ) {
     return Effect.fail(
       new ServerSettingsError({
@@ -303,6 +764,35 @@ export class ServerSettingsService extends Context.Service<
      * snapshot and a lazily started stream must not be lost.
      */
     readonly subscribeChanges: Effect.Effect<Stream.Stream<ServerSettings>, never, Scope.Scope>;
+
+    /**
+     * Finish removing the sign-ins of explicitly removed provider instances.
+     * Call it after the provider registry has disposed every instance not in
+     * `runningInstanceIds`; a removed instance's tombstone stays until then.
+     * Never fails. Absent from test doubles, which keep no sign-ins.
+     */
+    readonly clearRemovedInstanceSignIns?: (
+      runningInstanceIds: Iterable<string>,
+    ) => Effect.Effect<void>;
+
+    /**
+     * Call just before the provider registry starts `instanceIds`, after it
+     * disposed what ran under them before. Deletes the sign-in a removed
+     * instance of a re-added id may have written while shutting down. Returns
+     * the ids that must not start yet because that delete failed.
+     */
+    readonly clearSignInsBeforeStart?: (
+      instanceIds: Iterable<string>,
+    ) => Effect.Effect<ReadonlySet<string>>;
+
+    /**
+     * Of `instanceIds`, the ones re-added whose old sign-in
+     * `clearSignInsBeforeStart` has not deleted yet. The registry stops
+     * whatever still runs under them and clears before it starts the new one.
+     */
+    readonly instancesAwaitingSignInClear?: (
+      instanceIds: Iterable<string>,
+    ) => Effect.Effect<ReadonlySet<string>>;
   }
 >()("specweave-studio/serverSettings/ServerSettingsService") {
   /** @deprecated Import and use `layerTest` from this module. */
@@ -329,10 +819,15 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
 
     const updateTestSettings = (
       update: (current: ServerSettings) => Effect.Effect<ServerSettings, ServerSettingsError>,
+      patch: ServerSettingsPatch,
     ): Effect.Effect<ServerSettings, ServerSettingsError> =>
       writeSemaphore.withPermits(1)(
         Ref.get(currentSettingsRef).pipe(
-          Effect.flatMap(update),
+          Effect.flatMap((current) =>
+            update(current).pipe(
+              Effect.map((next) => restoreRedactedProviderSettingsSecrets(current, next, patch)),
+            ),
+          ),
           Effect.flatMap(normalizeServerSettings),
           Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
           Effect.map(resolveTextGenerationProvider),
@@ -344,20 +839,23 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
       ready: Effect.void,
       getSettings,
       updateSettings: (patch) =>
-        updateTestSettings((currentSettings) =>
-          Effect.succeed(applyServerSettingsPatch(currentSettings, patch)),
+        updateTestSettings(
+          (currentSettings) => Effect.succeed(applyServerSettingsPatch(currentSettings, patch)),
+          patch,
         ),
       updateProviderInstance: (mutation, patch = {}) =>
-        updateTestSettings((currentSettings) =>
-          Effect.gen(function* () {
-            yield* ensureProviderInstanceMutationAllowed(
-              currentSettings,
-              mutation,
-              "test settings",
-            );
-            const patched = applyServerSettingsPatch(currentSettings, patch);
-            return applyProviderInstanceMutation(patched, mutation);
-          }),
+        updateTestSettings(
+          (currentSettings) =>
+            Effect.gen(function* () {
+              yield* ensureProviderInstanceMutationAllowed(
+                currentSettings,
+                mutation,
+                "test settings",
+              );
+              const patched = applyServerSettingsPatch(currentSettings, patch);
+              return applyProviderInstanceMutation(patched, mutation);
+            }),
+          patch,
         ),
       withSettingsSnapshot: (use) =>
         writeSemaphore.withPermits(1)(getSettings.pipe(Effect.flatMap(use))),
@@ -647,10 +1145,11 @@ function foldLegacyProjectSettings(
 }
 
 const make = Effect.gen(function* () {
-  const { settingsPath } = yield* ServerConfig.ServerConfig;
+  const { settingsPath, stateDir } = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const pathService = yield* Path.Path;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
+  const crypto = yield* Crypto.Crypto;
   const sql = yield* SqlClient.SqlClient;
   const writeSemaphore = yield* Semaphore.make(1);
   const cacheKey = "settings" as const;
@@ -1320,30 +1819,177 @@ const make = Effect.gen(function* () {
     );
   };
 
-  const updateAndPersistSettings = (
+  const removeInstanceSignIn = ({ driver, instanceId }: InstanceSignIn) =>
+    Effect.gen(function* () {
+      if (driver === "antigravity") {
+        return yield* removeAntigravityInstanceProfile(stateDir, instanceId);
+      }
+      return yield* ProviderCredentialStore.removeInstanceCredentials(driver, instanceId);
+    }).pipe(
+      Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore),
+      Effect.provideService(Crypto.Crypto, crypto),
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, pathService),
+    );
+
+  const tombstonesPath = pathService.join(stateDir, SIGN_IN_TOMBSTONES_FILE);
+  const tombstonesSemaphore = yield* Semaphore.make(1);
+
+  const readSignInTombstones = Effect.gen(function* () {
+    if (!(yield* fs.exists(tombstonesPath))) return {} as SignInTombstones;
+    const parsed = decodeSignInTombstones(yield* fs.readFileString(tombstonesPath));
+    if (Option.isNone(parsed)) {
+      yield* Effect.logWarning("Ignoring an unreadable provider sign-in tombstone file");
+      return {} as SignInTombstones;
+    }
+    return parsed.value as SignInTombstones;
+  }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ServerSettingsError({ settingsPath: tombstonesPath, operation: "read-secret", cause }),
+    ),
+  );
+
+  /**
+   * Tombstones for a decision that only skips work when the file is gone: a
+   * file that cannot be read (EACCES, EISDIR...) must not fail every settings
+   * write, so it counts as empty. Recording a tombstone stays strict.
+   */
+  const readSignInTombstonesOrEmpty = tombstonesSemaphore
+    .withPermits(1)(readSignInTombstones)
+    .pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Could not read provider sign-in tombstones", error).pipe(
+          Effect.as({} as SignInTombstones),
+        ),
+      ),
+    );
+
+  /** Replaces the tombstone file with `tombstones`. Callers hold `tombstonesSemaphore`. */
+  const writeSignInTombstones = (tombstones: SignInTombstones, instanceId: ProviderInstanceId) =>
+    Effect.gen(function* () {
+      if (Object.keys(tombstones).length === 0) {
+        yield* fs.remove(tombstonesPath, { force: true });
+        return;
+      }
+      yield* writeFileStringAtomically({
+        filePath: tombstonesPath,
+        contents: `${yield* encodeSignInTombstones(tombstones)}\n`,
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, pathService),
+      );
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ServerSettingsError({
+            settingsPath: tombstonesPath,
+            operation: "write-secret",
+            providerInstanceId: instanceId,
+            cause,
+          }),
+      ),
+    );
+
+  const updateSignInTombstone = (signIn: InstanceSignIn, state: SignInTombstoneState) =>
+    tombstonesSemaphore.withPermits(1)(
+      readSignInTombstones.pipe(
+        Effect.flatMap((tombstones) =>
+          writeSignInTombstones(withSignInTombstone(tombstones, signIn, state), signIn.instanceId),
+        ),
+      ),
+    );
+
+  /**
+   * Records the tombstone of an explicit remove. A tombstone file that cannot
+   * be read must not make every instance undeletable: it is replaced by one
+   * holding only this tombstone (losing the others it may have held). When
+   * even that fails (the path is a directory, say) the remove still goes
+   * ahead untracked: false tells the caller to delete the sign-in at once,
+   * as a best effort without a retry.
+   */
+  const recordRemovedSignIn = (removed: InstanceSignIn) =>
+    updateSignInTombstone(removed, "removed").pipe(
+      Effect.as(true),
+      Effect.catch((error) =>
+        Effect.gen(function* () {
+          yield* Effect.logWarning("Replacing an unusable provider sign-in tombstone file", error);
+          return yield* tombstonesSemaphore
+            .withPermits(1)(
+              writeSignInTombstones(
+                withSignInTombstone({}, removed, "removed"),
+                removed.instanceId,
+              ),
+            )
+            .pipe(
+              Effect.as(true),
+              Effect.catch((replaceError) =>
+                Effect.logWarning(
+                  "Could not record a removed provider instance; deleting its sign-in once now",
+                  replaceError,
+                ).pipe(Effect.as(false)),
+              ),
+            );
+        }),
+      ),
+    );
+
+  const persistSettingsUpdate = (
     update: (current: ServerSettings) => Effect.Effect<ServerSettings, ServerSettingsError>,
-  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+    patch: ServerSettingsPatch,
+    mutation: ProviderInstanceMutation | undefined,
+  ) =>
     writeSemaphore.withPermits(1)(
       Effect.gen(function* () {
         const current = yield* getSettingsFromCache;
-        const updated = yield* update(current);
+        const updated = restoreRedactedProviderSettingsSecrets(
+          current,
+          yield* update(current),
+          patch,
+        );
+        const tombstones = yield* readSignInTombstonesOrEmpty;
+        const { clear: leftovers, stale } = classifySignInTombstones(current, updated, tombstones);
+        // Cleared outside the settings lock: Codex removal waits on its sign-in lock.
+        if (leftovers.length > 0) return { _tag: "clear" as const, leftovers };
         const persisted = yield* persistProviderEnvironmentSecrets(current, updated);
         const next = yield* normalizeServerSettings(persisted.settings);
+        const removedInstance =
+          mutation?.operation === "remove"
+            ? ownEntry(current.providerInstances, mutation.instanceId)
+            : undefined;
+        // Only an explicit remove deletes a sign-in. A whole-map write can come
+        // from a client that has not seen an instance created elsewhere yet.
+        const removed: InstanceSignIn | undefined =
+          mutation !== undefined &&
+          removedInstance !== undefined &&
+          (mutation.instanceId as string) !== removedInstance.driver &&
+          ownEntry(next.providerInstances, mutation.instanceId) === undefined
+            ? { driver: removedInstance.driver as string, instanceId: mutation.instanceId }
+            : undefined;
+        // Recorded before the instance disappears, so a cleanup that fails or
+        // never runs is still done before the id is used again.
+        const tracked = removed === undefined ? false : yield* recordRemovedSignIn(removed);
+        const dropUnusedTombstone =
+          removed === undefined || !tracked || hasSignInTombstone(tombstones, removed)
+            ? Effect.void
+            : updateSignInTombstone(removed, "gone").pipe(Effect.ignore({ log: true }));
         const materialized = yield* Effect.uninterruptibleMask(() =>
           Effect.gen(function* () {
             const rollbackSecretChanges = yield* applyProviderEnvironmentSecretChanges(
               persisted.changes,
-            );
+            ).pipe(Effect.tapError(() => dropUnusedTombstone));
             const materializedExit = yield* Effect.exit(
               materializeProviderEnvironmentSecrets(next),
             );
             if (Exit.isFailure(materializedExit)) {
               yield* rollbackSecretChanges;
+              yield* dropUnusedTombstone;
               return yield* Effect.failCause(materializedExit.cause);
             }
             const writeExit = yield* Effect.exit(writeSettingsAtomically(next));
             if (Exit.isFailure(writeExit)) {
               yield* rollbackSecretChanges;
+              yield* dropUnusedTombstone;
               return yield* Effect.failCause(writeExit.cause);
             }
             return materializedExit.value;
@@ -1351,9 +1997,198 @@ const make = Effect.gen(function* () {
         );
         yield* Cache.set(settingsCache, cacheKey, next);
         yield* emitChange(next);
-        return resolveTextGenerationProvider(materialized);
+        // The instance outlived its tombstone: keep its sign-in, drop the tombstone.
+        yield* Effect.forEach(
+          stale,
+          (signIn) => updateSignInTombstone(signIn, "gone").pipe(Effect.ignore({ log: true })),
+          { discard: true },
+        );
+        return {
+          _tag: "saved" as const,
+          saved: resolveTextGenerationProvider(materialized),
+          removed: removed === undefined ? undefined : { ...removed, tracked },
+        };
       }),
     );
+
+  /**
+   * Deletes a tombstoned sign-in, then moves its tombstone to `after` (or
+   * leaves it). Every deletion runs under `signInCleanupSemaphore`, outside
+   * the settings lock (Codex removal can wait on its sign-in lock), so a write
+   * that adds the id back waits for a deletion in progress instead of racing it.
+   */
+  const deleteTombstonedSignIn = (signIn: InstanceSignIn, after?: SignInTombstoneState) =>
+    removeInstanceSignIn(signIn).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ServerSettingsError({
+            settingsPath,
+            operation: "remove-secret",
+            providerInstanceId: signIn.instanceId,
+            cause,
+          }),
+      ),
+      Effect.andThen(after === undefined ? Effect.void : updateSignInTombstone(signIn, after)),
+    );
+
+  const signInCleanupSemaphore = yield* Semaphore.make(1);
+
+  /**
+   * Deletes the sign-ins of removed instances the provider registry no longer
+   * runs, then their tombstones. Until the registry has disposed a removed
+   * instance, its driver can still write (a Cursor token refresh, an OAuth
+   * completion, a gemini login recreating GEMINI_HOME), so the tombstone stays.
+   * Never touches an instance that is live in settings: that tombstone is
+   * stale and only it is dropped. Entries already `readded` are left to
+   * `clearSignInsBeforeStart`.
+   */
+  const clearRemovedInstanceSignIns = (runningInstanceIds: Iterable<string>) => {
+    const running = new Set(runningInstanceIds);
+    return signInCleanupSemaphore
+      .withPermits(1)(
+        Effect.gen(function* () {
+          // Runs after every reconcile: nothing to do is the common case.
+          const pending = yield* tombstonesSemaphore.withPermits(1)(readSignInTombstones);
+          if (Object.keys(pending).length === 0) return;
+          // Read under the settings lock so a remove in progress is either
+          // fully saved (tombstone and settings) or not seen at all.
+          const { settings, tombstones } = yield* writeSemaphore.withPermits(1)(
+            Effect.all({
+              settings: getSettingsFromCache,
+              tombstones: tombstonesSemaphore.withPermits(1)(readSignInTombstones),
+            }),
+          );
+          for (const [instanceId, entries] of Object.entries(tombstones)) {
+            if (running.has(instanceId)) continue;
+            const live = ownEntry(settings.providerInstances, instanceId);
+            for (const { driver, readded } of entries) {
+              if (readded === true) continue;
+              const signIn = { driver, instanceId: instanceId as ProviderInstanceId };
+              yield* (
+                live?.driver === driver
+                  ? updateSignInTombstone(signIn, "gone")
+                  : deleteTombstonedSignIn(signIn, "gone")
+              ).pipe(
+                Effect.catch((error) =>
+                  Effect.logWarning(
+                    "Could not remove a deleted provider instance's sign-in",
+                    error,
+                  ),
+                ),
+              );
+            }
+          }
+        }),
+      )
+      .pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Could not read removed provider instance sign-ins", error),
+        ),
+      );
+  };
+
+  /**
+   * Called by the provider registry just before it starts `instanceIds`, after
+   * it disposed whatever ran under those ids before. Deletes the sign-in a
+   * removed instance of the same id may have written while shutting down
+   * (entries a write marked `readded`), then drops the tombstone. Returns the
+   * ids whose sign-in could not be deleted: those must not start yet.
+   */
+  const clearSignInsBeforeStart = (instanceIds: Iterable<string>) =>
+    signInCleanupSemaphore.withPermits(1)(
+      Effect.gen(function* () {
+        const blocked = new Set<string>();
+        const tombstones = yield* readSignInTombstonesOrEmpty;
+        for (const instanceId of instanceIds) {
+          for (const { driver, readded } of ownEntry(tombstones, instanceId) ?? []) {
+            if (readded !== true) continue;
+            const signIn = { driver, instanceId: instanceId as ProviderInstanceId };
+            yield* deleteTombstonedSignIn(signIn, "gone").pipe(
+              Effect.catch((error) => {
+                blocked.add(instanceId);
+                return Effect.logWarning(
+                  "Could not clear a re-added provider instance's old sign-in",
+                  error,
+                );
+              }),
+            );
+          }
+        }
+        return blocked as ReadonlySet<string>;
+      }),
+    );
+
+  const instancesAwaitingSignInClear = (instanceIds: Iterable<string>) =>
+    readSignInTombstonesOrEmpty.pipe(
+      Effect.map(
+        (tombstones): ReadonlySet<string> =>
+          new Set(
+            [...instanceIds].filter((instanceId) =>
+              (ownEntry(tombstones, instanceId) ?? []).some(({ readded }) => readded === true),
+            ),
+          ),
+      ),
+    );
+
+  const updateAndPersistSettings = (
+    update: (current: ServerSettings) => Effect.Effect<ServerSettings, ServerSettingsError>,
+    patch: ServerSettingsPatch,
+    mutation?: ProviderInstanceMutation,
+  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+    Effect.gen(function* () {
+      for (let attempt = 1; ; attempt++) {
+        const result = yield* persistSettingsUpdate(update, patch, mutation);
+        if (result._tag === "clear") {
+          // A new instance must not start with the sign-in a removed one of the
+          // same id left behind: the write fails unless the leftovers are gone.
+          // The tombstone stays, marked `readded`: the removed instance's driver
+          // may not be disposed yet, so the registry clears once more before it
+          // starts the new one (`clearSignInsBeforeStart`).
+          yield* signInCleanupSemaphore.withPermits(1)(
+            Effect.forEach(
+              result.leftovers,
+              (signIn) => deleteTombstonedSignIn(signIn, "readded"),
+              { discard: true },
+            ),
+          );
+          if (attempt < 3) continue;
+          return yield* new ServerSettingsError({
+            settingsPath,
+            operation: "remove-secret",
+            providerInstanceId: result.leftovers[0]?.instanceId,
+          });
+        }
+        const removed = result.removed;
+        if (removed !== undefined && !removed.tracked) {
+          yield* signInCleanupSemaphore
+            .withPermits(1)(deleteTombstonedSignIn(removed))
+            .pipe(
+              Effect.catch((error) =>
+                Effect.logWarning("Could not remove a deleted provider instance's sign-in", error),
+              ),
+            );
+        } else if (removed !== undefined) {
+          // Delete now, but keep the tombstone: the registry disposes the
+          // instance's driver later, and `clearRemovedInstanceSignIns` deletes
+          // again after that and only then drops it.
+          yield* signInCleanupSemaphore
+            .withPermits(1)(
+              Effect.gen(function* () {
+                const tombstones = yield* tombstonesSemaphore.withPermits(1)(readSignInTombstones);
+                // Already cleared and dropped before the id started again.
+                if (!hasSignInTombstone(tombstones, removed)) return;
+                yield* deleteTombstonedSignIn(removed);
+              }),
+            )
+            .pipe(
+              Effect.catch((error) =>
+                Effect.logWarning("Could not remove a deleted provider instance's sign-in", error),
+              ),
+            );
+        }
+        return result.saved;
+      }
+    });
 
   const withSettingsSnapshot: ServerSettingsService["Service"]["withSettingsSnapshot"] = (use) =>
     writeSemaphore.withPermits(1)(
@@ -1364,6 +2199,7 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  // An edit to settings.json never deletes or clears a sign-in.
   const revalidateAndEmit = writeSemaphore.withPermits(1)(
     Effect.gen(function* () {
       yield* Cache.invalidate(settingsCache, cacheKey);
@@ -1478,18 +2314,25 @@ const make = Effect.gen(function* () {
       Effect.map(resolveTextGenerationProvider),
     ),
     updateSettings: (patch) =>
-      updateAndPersistSettings((current) =>
-        Effect.succeed(applyServerSettingsPatch(current, patch)),
+      updateAndPersistSettings(
+        (current) => Effect.succeed(applyServerSettingsPatch(current, patch)),
+        patch,
       ),
     updateProviderInstance: (mutation, patch = {}) =>
-      updateAndPersistSettings((current) =>
-        Effect.gen(function* () {
-          yield* ensureProviderInstanceMutationAllowed(current, mutation, settingsPath);
-          const patched = applyServerSettingsPatch(current, patch);
-          return applyProviderInstanceMutation(patched, mutation);
-        }),
+      updateAndPersistSettings(
+        (current) =>
+          Effect.gen(function* () {
+            yield* ensureProviderInstanceMutationAllowed(current, mutation, settingsPath);
+            const patched = applyServerSettingsPatch(current, patch);
+            return applyProviderInstanceMutation(patched, mutation);
+          }),
+        patch,
+        mutation,
       ),
     withSettingsSnapshot,
+    clearRemovedInstanceSignIns,
+    clearSignInsBeforeStart,
+    instancesAwaitingSignInClear,
     get streamChanges() {
       return materializeChanges(Stream.fromPubSub(changesPubSub));
     },

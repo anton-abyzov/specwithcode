@@ -117,8 +117,15 @@ export class WorkspaceSearchIndex extends Context.Service<
       kind?: ProjectEntryKind,
       imageOnly?: boolean,
     ) => Effect.Effect<ProjectSearchEntriesResult, WorkspaceSearchIndexSearchFailed>;
+    /**
+     * `excludedPaths` names the files (of those given, relative to the root) whose
+     * matches must not be returned. They are dropped before the limit is applied,
+     * so they never change which other matches come back or whether the result is
+     * marked truncated.
+     */
     readonly searchContents: (
       input: Omit<ProjectSearchContentsInput, "cwd">,
+      excludedPaths?: (relativePaths: ReadonlyArray<string>) => Effect.Effect<ReadonlySet<string>>,
     ) => Effect.Effect<ProjectSearchContentsResult, WorkspaceSearchIndexSearchFailed>;
     readonly refresh: () => Effect.Effect<
       void,
@@ -493,14 +500,15 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
 
   const searchContents: WorkspaceSearchIndex["Service"]["searchContents"] = Effect.fn(
     "WorkspaceSearchIndex.searchContents",
-  )(function* (input) {
+  )(function* (input, excludedPaths) {
     const { searchQuery, regexMode } = buildContentSearchQuery(input);
     const deadline = performance.now() + CONTENT_SEARCH_TIME_BUDGET_MS;
     // Grep cursors advance by file, so whole-word post-filtering needs enough
-    // raw candidates from the current file before moving to the next one.
+    // raw candidates from the current file before moving to the next one. One
+    // more than the limit, so a full first page already says whether more remain.
     const rawPageSize = input.wholeWord
-      ? Math.max(input.limit, CONTENT_SEARCH_MAX_MATCHES_PER_FILE)
-      : input.limit;
+      ? Math.max(input.limit + 1, CONTENT_SEARCH_MAX_MATCHES_PER_FILE)
+      : input.limit + 1;
     const matches: Array<ProjectSearchContentsResult["matches"][number]> = [];
     let nextCursor: GrepCursor | null = null;
     let regexFallbackError: string | undefined;
@@ -519,7 +527,14 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         }),
       );
 
+      const excluded =
+        excludedPaths === undefined || result.items.length === 0
+          ? new Set<string>()
+          : yield* excludedPaths([
+              ...new Set(result.items.map((match) => toPosixPath(match.relativePath))),
+            ]);
       for (const match of result.items) {
+        if (excluded.has(toPosixPath(match.relativePath))) continue;
         const matchRanges = mapContentMatchRanges(match.lineContent, match.matchRanges).filter(
           (range) => !input.wholeWord || isWholeWordRange(match.lineContent, range),
         );
@@ -533,7 +548,9 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       }
       nextCursor = result.nextCursor;
       regexFallbackError ??= result.regexFallbackError;
-    } while (matches.length < input.limit && nextCursor !== null && performance.now() < deadline);
+      // One match past the limit says whether more remain, so `truncated` never
+      // depends on an excluded file further on.
+    } while (matches.length <= input.limit && nextCursor !== null && performance.now() < deadline);
 
     return {
       matches: matches.slice(0, input.limit),

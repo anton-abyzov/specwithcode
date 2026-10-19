@@ -1356,7 +1356,9 @@ video.artifact-viewer-media {
   color: color-mix(in srgb, var(--foreground) 82%, transparent);
 }
 
+/* Facts read in the interface face, never the serif of the prose around them. */
 .report-document-properties {
+  font-family: var(--font-sans);
   display: grid;
   grid-template-columns: minmax(0, max-content) 1fr;
   align-items: baseline;
@@ -1367,8 +1369,20 @@ video.artifact-viewer-media {
   padding-block: 0.875rem;
 }
 
+/* A long path or session id wraps inside its cell instead of widening the page. */
 .report-document-property-value {
   min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* A Markdown file's body sits under its title as a lead does, and a
+   section's room below its facts. */
+.report-document-title + [data-markdown-body] {
+  margin-top: 1rem;
+}
+
+.report-document-properties + [data-markdown-body] {
+  margin-top: 2rem;
 }
 
 .report-document-property-value .chat-markdown p {

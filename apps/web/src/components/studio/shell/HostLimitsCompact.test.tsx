@@ -100,9 +100,9 @@ describe("HostLimitsCompactView", () => {
       aside: el.querySelector(".sws-hl-compact-aside")?.textContent,
       account: el.querySelector(".sws-hl-compact-account")?.textContent,
     }));
-    // Resets show only once a provider runs low; the account names who shares its quota.
+    // Every provider shows its window with its reset; the account names who shares its quota.
     expect(rows).toEqual([
-      { value: "87% left", aside: "", account: "a@example.com · also on m1" },
+      { value: "87% left", aside: "in 2h 0m", account: "a@example.com · also on m1" },
       { value: "Limit reached", aside: "in 2h 0m", account: "Account not reported" },
       { value: "15% left", aside: "in 2h 0m", account: "Account not reported" },
     ]);
@@ -135,6 +135,71 @@ describe("HostLimitsCompactView", () => {
       [...(claude?.querySelectorAll(".sws-hl-compact-window") ?? [])].map((el) => el.textContent),
     ).toEqual(["Session87% leftin 2h 0m"]);
     expect(codex?.hasAttribute("data-coordinator")).toBe(false);
-    expect(codex?.querySelectorAll(".sws-hl-compact-window")).toHaveLength(0);
+    expect(codex?.querySelectorAll(".sws-hl-compact-window")).toHaveLength(1);
+  });
+
+  it("lists a 5-hour and a weekly window side by side and marks the one that binds", () => {
+    const claude: HostProviderRow = {
+      ...row("Claude", 88),
+      windows: [
+        {
+          id: "five_hour",
+          label: "Session",
+          kind: "session",
+          usedPercent: 30,
+          resetsAt: now + 2 * HOUR,
+          stale: false,
+          durationMins: 300,
+        },
+        {
+          id: "seven_day",
+          label: "Weekly",
+          kind: "weekly",
+          usedPercent: 88,
+          resetsAt: now + 100 * HOUR,
+          stale: false,
+          durationMins: 10_080,
+        },
+      ],
+    };
+    const spent: HostProviderRow = {
+      ...row("Codex", 100),
+      windows: [
+        {
+          id: "primary",
+          label: "Session",
+          kind: "session",
+          usedPercent: 10,
+          resetsAt: now + HOUR,
+          stale: false,
+          durationMins: 300,
+          blockedBy: { label: "Weekly", resetsAt: now + 50 * HOUR },
+        },
+        {
+          id: "secondary",
+          label: "Weekly",
+          kind: "weekly",
+          usedPercent: 100,
+          resetsAt: now + 50 * HOUR,
+          stale: false,
+        },
+      ],
+    };
+    act(() =>
+      root.render(
+        <HostLimitsCompactView now={now} blocks={[block("m4", "online", [claude, spent])]} />,
+      ),
+    );
+    const windows = [...container.querySelectorAll(".sws-hl-compact-window")].map((el) => ({
+      rank: el.getAttribute("data-rank"),
+      text: el.textContent,
+    }));
+    expect(windows).toEqual([
+      { rank: "other", text: "5-hour70% leftin 2h 0m" },
+      { rank: "binding", text: "Weekly, runs out first12% leftin 4d 4h" },
+      // A spent weekly: the 5-hour's 90% is not usable, and it says why.
+      { rank: "other", text: "5-hourBlockedby Weekly, usable again in 2d 2h" },
+      { rank: "binding", text: "Weekly, runs out firstLimit reachedin 2d 2h" },
+    ]);
   });
 });

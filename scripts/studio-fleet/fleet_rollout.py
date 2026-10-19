@@ -169,8 +169,8 @@ class ServiceHold(object):
     """Drains and holds this Mac's service for an install the way the desktop's Update now does:
     its own CLI (`cliWrapper` in the identity's installation.json, which runs the installed
     release with the service's environment) calls `service prepare-update`, which makes the
-    service's prepareServiceUpdate call over its socket with a five-minute session it revokes
-    after. The service then refuses new work until the update installs, fails, is released, or
+    service's prepareServiceUpdate call over its socket with a five-minute session it leaves to
+    lapse (a revoke could land between update.py's snapshot and apply). The service then refuses new work until the update installs, fails, is released, or
     its hold runs out, and keeps updates/hold.json for update.py --reap. Raises HoldUnavailable
     when that CLI or its service cannot do it (an older release has no such command)."""
 

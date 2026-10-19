@@ -212,6 +212,10 @@
 .sws-hl-window[data-blocked] .sws-hl-window-label {
   opacity: 0.6;
 }
+.sws-hl-window[data-binding] .sws-hl-window-label {
+  color: var(--foreground);
+  font-weight: 500;
+}
 .sws-hl-window-blocked {
   grid-column: 3 / -1;
   color: var(--muted-foreground);
@@ -272,7 +276,8 @@
 }
 .sws-hl-compact-grid {
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) minmax(2.5rem, 4.5rem) max-content max-content;
+  /* Window names keep their width when they can; the bar takes what is left. */
+  grid-template-columns: 16px minmax(0, max-content) minmax(1.5rem, 1fr) max-content max-content;
   column-gap: 8px;
 }
 .sws-hl-compact-host,
@@ -350,9 +355,23 @@
 .sws-hl-compact-provider[data-wide] {
   grid-column: 2 / -1;
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 6px;
+  min-width: 0;
   color: var(--foreground);
+}
+.sws-hl-compact-name {
+  flex: 0 1 auto;
+  min-width: 2.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sws-hl-compact-provider .sws-hl-compact-account {
+  min-width: 4rem;
+}
+.sws-hl-compact-provider .sws-hl-tag {
+  align-self: center;
 }
 .sws-hl-tag {
   flex: none;
@@ -363,9 +382,10 @@
   color: var(--foreground);
   background: color-mix(in srgb, var(--primary, var(--foreground)) 14%, transparent);
 }
-/* The account under each provider: who is signed in, and who shares it. */
+/* Who is signed in, and who shares it: beside the provider, or under it. */
 .sws-hl-compact-account {
   grid-column: 2 / -1;
+  flex: 1 1 0;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -393,19 +413,10 @@
 .sws-hl-compact-window[data-tone="full"] .sws-hl-compact-value {
   color: var(--destructive-foreground);
 }
-.sws-hl-compact-window[data-tone="stale"] .sws-hl-compact-window-label {
-  opacity: 0.6;
-}
 .sws-hl-compact-value {
   justify-self: end;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
-}
-.sws-hl-compact-entry[data-tone="warn"] > .sws-hl-compact-row .sws-hl-compact-value {
-  color: var(--warning-foreground);
-}
-.sws-hl-compact-entry[data-tone="full"] > .sws-hl-compact-row .sws-hl-compact-value {
-  color: var(--destructive-foreground);
 }
 .sws-hl-compact-aside {
   display: inline-flex;
@@ -430,9 +441,32 @@
   margin: 0;
   color: var(--muted-foreground);
 }
-/* A spent provider's empty bar still reads as spent. */
-.sws-hl-compact-row .sws-hl-bar[data-tone="full"] {
+/* A spent window's empty bar still reads as spent. */
+.sws-hl-compact-window .sws-hl-bar[data-tone="full"] {
   background: color-mix(in srgb, var(--destructive) 22%, transparent);
+}
+/*
+ * Several windows: the one that stops the provider first keeps full
+ * contrast, the others recede. Warning and spent tones keep their colour.
+ */
+.sws-hl-compact-window[data-rank="binding"] .sws-hl-compact-window-label {
+  color: var(--foreground);
+}
+.sws-hl-compact-window[data-rank="binding"] .sws-hl-compact-value {
+  font-weight: 500;
+}
+/* Colour, not opacity, so the receding rows keep AA contrast. */
+.sws-hl-compact-window[data-rank="other"] .sws-hl-compact-window-label,
+.sws-hl-compact-window[data-rank="other"][data-tone="ok"] .sws-hl-compact-value,
+.sws-hl-compact-window[data-rank="other"][data-tone="stale"] .sws-hl-compact-value {
+  color: var(--muted-foreground);
+}
+.sws-hl-compact-window[data-rank="other"][data-tone="ok"] .sws-hl-bar > span {
+  opacity: 0.4;
+}
+/* Dark muted text is close to the foreground; 0.7 still clears AA (about 6:1). */
+:root.dark .sws-hl-compact-window[data-rank="other"][data-tone="ok"] > :not(.sws-hl-bar) {
+  opacity: 0.7;
 }
 /* A narrow panel or phone: drop the bars before anything wraps. */
 @container sws-hl-compact (max-width: 280px) {
@@ -456,5 +490,13 @@
   }
   .sws-hl-compact-head .sws-hl-dot {
     margin-top: 5px;
+  }
+  /* The account moves under the provider's name. */
+  .sws-hl-compact-provider[data-wide] {
+    flex-wrap: wrap;
+    row-gap: 1px;
+  }
+  .sws-hl-compact-provider .sws-hl-compact-account {
+    flex-basis: 100%;
   }
 }
