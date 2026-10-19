@@ -17,12 +17,14 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import type { BrowserContext, Page } from "playwright-core";
 import { beforeEach, expect, vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
+import { resolveAgentPath } from "../provider/AgentProtectedPaths.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Broker from "../mcp/PreviewAutomationBroker.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -975,6 +977,7 @@ it.live("an agent answers the page's file picker or sets files on a file input",
   Effect.scoped(
     Effect.gen(function* () {
       const { broker, tabId } = yield* ready;
+      const fileSystem = yield* FileSystem.FileSystem;
       const page = contexts[0]!.page;
       const upload = (input: Record<string, unknown>) =>
         broker.invoke<void>({ scope, tabId, operation: "upload", input });
@@ -1001,17 +1004,79 @@ it.live("an agent answers the page's file picker or sets files on a file input",
       expect(opened.fileChooser).toEqual({ multiple: false, accept: ".csv" });
       // A single-file picker rejects several files instead of dropping some.
       yield* Effect.flip(upload({ paths: ["/tmp/a.csv", "/tmp/b.csv"] }));
+      // Playwright gets the link-resolved path the guard checked (`/private/tmp` on macOS).
+      const path = yield* Path.Path;
+      const resolved = (file: string) => resolveAgentPath(fileSystem, path, file);
       yield* upload({ paths: ["/tmp/a.csv"] });
-      expect(setFiles).toHaveBeenCalledExactlyOnceWith(["/tmp/a.csv"], expect.anything());
+      expect(setFiles).toHaveBeenCalledExactlyOnceWith(
+        [yield* resolved("/tmp/a.csv")],
+        expect.anything(),
+      );
       expect((yield* status).fileChooser).toBeNull();
 
       const setInputFiles = vi.fn(async () => {});
       page.locator.mockReturnValue({ setInputFiles } as never);
       yield* upload({ paths: ["/tmp/b.csv"], locator: "input[type=file]" });
       expect(page.locator).toHaveBeenLastCalledWith("input[type=file]");
-      expect(setInputFiles).toHaveBeenCalledWith(["/tmp/b.csv"], expect.anything());
+      expect(setInputFiles).toHaveBeenCalledWith(
+        [yield* resolved("/tmp/b.csv")],
+        expect.anything(),
+      );
     }),
   ).pipe(Effect.provide(layer)),
+);
+
+it.live(
+  "an upload of the app's secrets, fleet file or a folder is refused, also through a link",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { broker, tabId } = yield* ready;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const config = yield* ServerConfig.ServerConfig;
+        const page = contexts[0]!.page;
+        const setInputFiles = vi.fn(async () => {});
+        page.locator.mockReturnValue({ setInputFiles } as never);
+        const upload = (paths: ReadonlyArray<string>) =>
+          broker.invoke<void>({
+            scope,
+            tabId,
+            operation: "upload",
+            input: { paths, locator: "input[type=file]" },
+          });
+        yield* fileSystem.makeDirectory(config.secretsDir, { recursive: true });
+        const secret = `${config.secretsDir}/anthropic-api-key.bin`;
+        yield* fileSystem.writeFileString(secret, "fake-key");
+        const fleet = `${config.baseDir}/studio-fleet.json`;
+        yield* fileSystem.writeFileString(fleet, "{}");
+        const outside = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-upload-" });
+        const link = `${outside}/report.csv`;
+        yield* fileSystem.symlink(secret, link);
+        const ordinary = `${outside}/data.csv`;
+        yield* fileSystem.writeFileString(ordinary, "a,b");
+
+        for (const paths of [[secret], [fleet], [link], [ordinary, secret]]) {
+          expect(yield* Effect.flip(upload(paths))).toMatchObject({
+            _tag: "PreviewAutomationExecutionError",
+            reason: expect.stringContaining("credential store"),
+          });
+        }
+        // A folder upload (webkitdirectory) would carry everything inside it.
+        for (const folder of [config.stateDir, config.baseDir, config.secretsDir, outside]) {
+          expect(yield* Effect.flip(upload([folder]))).toMatchObject({
+            _tag: "PreviewAutomationExecutionError",
+            reason: expect.stringContaining("is a folder"),
+          });
+        }
+        expect(setInputFiles).not.toHaveBeenCalled();
+        // Playwright gets the resolved path that was checked, not the link.
+        const real = yield* fileSystem.realPath(ordinary);
+        const ordinaryLink = `${outside}/notes.csv`;
+        yield* fileSystem.symlink(ordinary, ordinaryLink);
+        yield* upload([ordinaryLink]);
+        expect(setInputFiles).toHaveBeenCalledExactlyOnceWith([real], expect.anything());
+      }),
+    ).pipe(Effect.provide(layer)),
 );
 
 it.live("viewers see the agent's pointer move to its target and click there", () =>

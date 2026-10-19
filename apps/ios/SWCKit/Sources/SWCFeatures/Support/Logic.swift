@@ -108,8 +108,9 @@ nonisolated enum DeepLink: Equatable, Sendable {
     let parts = url.pathComponents.filter { $0 != "/" }
     switch url.host()?.lowercased() {
     case "pair":
-      let link = URLComponents(url: url, resolvingAgainstBaseURL: false)?
-        .queryItems?.first { $0.name == "link" }?.value?
+      // `pairingUrl` is the name the desktop's wrapper links use.
+      let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+      let link = (items.first { $0.name == "link" } ?? items.first { $0.name == "pairingUrl" })?.value?
         .trimmingCharacters(in: .whitespacesAndNewlines)
       self = .pair(link: link?.isEmpty == false ? link : nil)
     case "thread":

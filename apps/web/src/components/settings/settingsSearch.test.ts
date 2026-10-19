@@ -116,6 +116,11 @@ describe("searchSettings", () => {
     ).toEqual(["network-access", "connections-environment"]);
   });
 
+  it("finds phone pairing by the words people use for it", () => {
+    expect(searchSettings("pair iphone")[0]?.id).toBe("pair-phone");
+    expect(searchSettings("qr code")[0]?.id).toBe("pair-phone");
+  });
+
   it("finds settings that used to be reachable only through their section", () => {
     expect(searchSettings("pull request template")[0]?.id).toBe("follow-change-request-templates");
     expect(searchSettings("git security keys")[0]?.id).toBe("git-fetch-interval");

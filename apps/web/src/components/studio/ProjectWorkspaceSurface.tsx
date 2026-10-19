@@ -159,6 +159,11 @@ import { randomUUID } from "../../lib/utils";
 
 import { CoordinatorConversation, CoordinatorMachine } from "./CoordinatorConversation";
 import { useUnreachableHosts } from "../../studio/unreachableHosts";
+import { isThisMachineTarget } from "../../connection/desktopLocal";
+import {
+  environmentWaitsForReconnectGrace,
+  scheduleEnvironmentReconnectWarning,
+} from "../ChatView.logic";
 const OVERVIEW_OPEN_STORAGE_KEY = "studio:project-overview-open:v1";
 const PANE_TAB_STORAGE_KEY = "studio:project-pane-tab:v1";
 const PaneTabSchema = Schema.Literals(PROJECT_PANE_TABS);
@@ -413,6 +418,31 @@ export function ProjectWorkspaceSurface({
   const sendCommand = useAtomCommand(projectWorkspace.send, { reportFailure: false });
   const navigate = useNavigate();
   const connected = environment?.connection.phase === "connected";
+  // This machine reads as busy, never offline: a short blip shows neutral
+  // text and only a stall past the grace says more. The grace runs in the same
+  // phases as the chat banner's, so the two surfaces agree. Remote hosts keep
+  // today's text and never wait on it.
+  const hostPhase = environment?.connection.phase;
+  const hostIsThisDevice = isThisMachineTarget(environment?.entry);
+  const waitingEnvironmentId =
+    hostIsThisDevice &&
+    hostPhase !== undefined &&
+    environmentWaitsForReconnectGrace(hostPhase, hostIsThisDevice)
+      ? project.environmentId
+      : null;
+  const [graceElapsedEnvironmentId, setGraceElapsedEnvironmentId] = useState<string | null>(null);
+  useEffect(() => {
+    setGraceElapsedEnvironmentId(null);
+    if (waitingEnvironmentId === null) return;
+    return scheduleEnvironmentReconnectWarning(() =>
+      setGraceElapsedEnvironmentId(waitingEnvironmentId),
+    );
+  }, [waitingEnvironmentId]);
+  const hostAdmission = {
+    isThisDevice: hostIsThisDevice,
+    graceElapsed:
+      waitingEnvironmentId === null || graceElapsedEnvironmentId === waitingEnvironmentId,
+  };
   const blocked =
     ownershipProblem ??
     projectAdmissionReason(
@@ -420,6 +450,7 @@ export function ProjectWorkspaceSurface({
       connected,
       canOperate,
       environment?.connection,
+      hostAdmission,
     );
   // Memoized, not just computed: these feed memoized callbacks below, and the
   // React Compiler keeps those only for values it knows are not changed later.
@@ -1381,7 +1412,10 @@ export function ProjectWorkspaceSurface({
                     <CoordinatorMachine
                       label={environment?.label ?? "Host"}
                       connected={connected}
-                      disconnectedLabel={hostDisconnectedLabel(environment?.connection)}
+                      disconnectedLabel={hostDisconnectedLabel(
+                        environment?.connection,
+                        hostAdmission,
+                      )}
                       current={`${project.environmentId}:${project.id}`}
                       checkouts={checkouts}
                       savedMachineMissing={savedMachineMissing}

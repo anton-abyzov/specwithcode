@@ -30,6 +30,11 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
 import * as ServerConfig from "../config.ts";
 import { resolveBaseDir } from "../os-jank.ts";
+import { stringifyJson } from "../json.ts";
+import {
+  claudeAgentSecretDenyForConfig,
+  withClaudeAgentSecretDenySettings,
+} from "../provider/AgentProtectedPaths.ts";
 import { withHeadlessBrowserEnvironment } from "../provider/RuntimeInstructions.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { baseDirFlag } from "./config.ts";
@@ -50,6 +55,39 @@ const TRIAGE_AGENTS: ReadonlyArray<TriageAgent> = [
   { id: "claude", command: "claude", label: "Claude Code" },
   { id: "codex", command: "codex", label: "Codex" },
 ];
+
+/**
+ * Extra launch arguments for the triage agent. Claude Code gets the same
+ * credential-store deny settings as the app's own Claude threads, from a file
+ * (cmd.exe shims cannot carry the JSON as an argument). They cover Claude's
+ * file tools, not every shell command; Codex has no equivalent.
+ */
+export const triageAgentSettingsArgs = Effect.fn("triage.agentSettingsArgs")(function* (input: {
+  readonly agentId: "claude" | "codex";
+  readonly scratchDir: string;
+  readonly config: {
+    readonly baseDir: string;
+    readonly stateDir: string;
+    readonly secretsDir: string;
+  };
+  readonly homeDir: string;
+}) {
+  if (input.agentId !== "claude") return [];
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const deny = yield* claudeAgentSecretDenyForConfig({
+    fileSystem,
+    path,
+    config: input.config,
+    homeDir: input.homeDir,
+  });
+  const settingsPath = path.join(input.scratchDir, "claude-settings.json");
+  yield* fileSystem.writeFileString(
+    settingsPath,
+    stringifyJson(withClaudeAgentSecretDenySettings({}, deny), null, 2),
+  );
+  return ["--settings", settingsPath];
+});
 
 export class TriageAgentUnavailableError extends Schema.TaggedError<TriageAgentUnavailableError>()(
   "TriageAgentUnavailableError",
@@ -268,8 +306,15 @@ export const triageCommand = Command.make("triage", {
       }
 
       const model = Option.getOrUndefined(flags.model);
+      const settingsArgs = yield* triageAgentSettingsArgs({
+        agentId: selected.id,
+        scratchDir,
+        config: { baseDir, stateDir: paths.stateDir, secretsDir: paths.secretsDir },
+        homeDir: NodeOS.homedir(),
+      });
       const spawnSpec = yield* resolveSpawnCommand(selected.command, [
         ...(model === undefined ? [] : ["--model", model]),
+        ...settingsArgs,
         buildTriageLaunchPrompt(promptFilePath),
       ]);
       yield* Console.log(`Starting ${selected.label}. It will ask what went wrong.\n`);

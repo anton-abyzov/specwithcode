@@ -479,3 +479,49 @@ it("shows on the closed picker when the chosen machine can't be reached", async 
     "Can't reach",
   );
 });
+
+it("calls this machine busy, not unreachable, while its own server catches up", async () => {
+  runtime.environments[0] = {
+    environmentId: m4,
+    label: "M4",
+    entry: {
+      target: { _tag: "PrimaryConnectionTarget", httpBaseUrl: "http://127.0.0.1:8319" },
+      profile: { _tag: "None" },
+    },
+    connection: {
+      phase: "reconnecting",
+      error:
+        "Environment endpoint http://127.0.0.1:8319/.well-known/studio/environment timed out after 10000ms.",
+    },
+  };
+  await render();
+  const control = document.querySelector('button[data-composer-shortcut="composer.host"]')!;
+  expect(control.getAttribute("aria-label")).toBe("Machine: M4, Catching up…");
+  expect(control.querySelector("[data-draft-machine-unreachable]")).toBeNull();
+  expect(control.querySelector("[data-draft-machine-busy]")?.textContent).toBe("Catching up…");
+  await open();
+  const row = button("M4Catching up…");
+  expect(row.textContent).not.toContain("Can't reach");
+  expect(row.textContent).not.toContain("timed out");
+  expect(row.textContent).not.toContain("Retry");
+  expect(document.body.textContent).not.toContain("Can't reach");
+});
+
+it("says Connection failed, never Can't reach, when this machine's connection stopped", async () => {
+  runtime.environments[0] = {
+    environmentId: m4,
+    label: "M4",
+    entry: {
+      target: { _tag: "PrimaryConnectionTarget", httpBaseUrl: "http://127.0.0.1:8319" },
+      profile: { _tag: "None" },
+    },
+    connection: { phase: "error", error: "Sign in again." },
+  };
+  await render();
+  const control = document.querySelector('button[data-composer-shortcut="composer.host"]')!;
+  const status = control.querySelector("[data-draft-machine-unreachable]");
+  expect(status?.textContent).toBe("Connection failed");
+  expect(status?.className).toContain("text-warning-foreground");
+  expect(control.querySelector("[data-draft-machine-busy]")).toBeNull();
+  expect(control.textContent).not.toContain("Can't reach");
+});

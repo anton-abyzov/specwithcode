@@ -4,6 +4,7 @@
 // SQLite store, so the desktop discovers the running owner and talks to it as
 // its local environment instead of starting a second backend.
 
+import { AuthAdministrativeScopes } from "@specweave-studio/contracts";
 import { canonicalStudioPath } from "@specweave-studio/shared/studioIdentity";
 
 export interface RunningServerRuntimeState {
@@ -205,6 +206,21 @@ function rebuildArgv(
   return argv;
 }
 
+/**
+ * The app pairs through the service's own CLI, which only someone who can run
+ * it against this home can do, so it gets the same administrative scopes a
+ * backend the app starts itself grants. Without them Settings hid pairing
+ * links, authorized clients and fleet invites on a machine running the service.
+ */
 export function buildPairArgs(input: { readonly baseDir: string; readonly label: string }) {
-  return ["pair", "--base-dir", input.baseDir, "--ttl", "2m", "--label", input.label];
+  return [
+    "pair",
+    "--base-dir",
+    input.baseDir,
+    "--ttl",
+    "2m",
+    "--label",
+    input.label,
+    ...AuthAdministrativeScopes.flatMap((scope) => ["--scope", scope]),
+  ];
 }

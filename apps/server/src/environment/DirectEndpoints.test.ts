@@ -205,3 +205,111 @@ describe("DirectEndpoints Tailscale Serve", () => {
     }),
   );
 });
+
+/** `tailscale status` plus a `tailscale serve status` someone else set up. */
+const layerTailscaleWithServeRoutes = (
+  serveStatusJson: string,
+  onSpawn: (args: ReadonlyArray<string>) => void = () => {},
+) =>
+  Layer.succeed(
+    ChildProcessSpawner.ChildProcessSpawner,
+    ChildProcessSpawner.make((command) => {
+      const { args } = command as unknown as { readonly args: ReadonlyArray<string> };
+      onSpawn(args);
+      const stdout = args[0] === "serve" ? serveStatusJson : TAILSCALE_STATUS_JSON;
+      return Effect.succeed(
+        ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(1),
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          isRunning: Effect.succeed(false),
+          kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
+          stdin: Sink.drain,
+          stdout: Stream.make(new TextEncoder().encode(stdout)),
+          stderr: Stream.empty,
+          all: Stream.empty,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        }),
+      );
+    }),
+  );
+
+/** A loopback-only service whose own config leaves Serve off, like the fleet's launchd service. */
+const resolveWithOutsideServe = (input: {
+  readonly serveTarget: (port: number) => string;
+  readonly mode?: ServerConfig.RuntimeMode;
+  readonly onSpawn?: (args: ReadonlyArray<string>) => void;
+}) =>
+  Effect.gen(function* () {
+    const baseConfig = yield* ServerConfig.ServerConfig;
+    const config = { ...baseConfig, mode: input.mode ?? "web" };
+    const serveStatus = JSON.stringify({
+      Web: {
+        "bb-1.tail1234.ts.net:443": {
+          Handlers: { "/": { Proxy: input.serveTarget(config.port) } },
+        },
+      },
+    });
+    return yield* Effect.flatMap(DirectEndpoints.DirectEndpoints, (service) =>
+      service.resolve(),
+    ).pipe(
+      Effect.provide(
+        DirectEndpoints.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(ServerConfig.ServerConfig, config),
+              layerTailscaleWithServeRoutes(serveStatus, input.onSpawn),
+              layerServeProbe(200),
+            ),
+          ),
+        ),
+      ),
+    );
+  }).pipe(
+    Effect.provide(
+      Layer.effect(
+        ServerConfig.ServerConfig,
+        Effect.map(ServerConfig.ServerConfig, (config) => ({
+          ...config,
+          host: "127.0.0.1",
+          tailscaleServeEnabled: false,
+        })),
+      ).pipe(
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "studio-direct-" })),
+        Layer.provide(NodeServices.layer),
+      ),
+    ),
+  );
+
+describe("DirectEndpoints Tailscale Serve set up outside this server", () => {
+  effectIt.effect("lists the tailnet name when a Serve route forwards to this server's port", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* resolveWithOutsideServe({ serveTarget: (port) => `http://127.0.0.1:${port}` }),
+      ).toEqual([{ kind: "tailnet", httpBaseUrl: "https://bb-1.tail1234.ts.net/" }]);
+    }),
+  );
+
+  effectIt.effect("leaves Tailscale alone in the desktop app's own backend", () =>
+    Effect.gen(function* () {
+      const spawned: Array<ReadonlyArray<string>> = [];
+      expect(
+        yield* resolveWithOutsideServe({
+          serveTarget: (port) => `http://127.0.0.1:${port}`,
+          mode: "desktop",
+          onSpawn: (args) => spawned.push(args),
+        }),
+      ).toEqual([]);
+      expect(spawned).toEqual([]);
+    }),
+  );
+
+  effectIt.effect("ignores Serve routes that forward to another port", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* resolveWithOutsideServe({ serveTarget: (port) => `http://127.0.0.1:${port + 1}` }),
+      ).toEqual([]);
+    }),
+  );
+});

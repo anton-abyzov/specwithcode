@@ -28,6 +28,7 @@ struct LinkCase: Sendable, CustomTestStringConvertible {
     LinkCase(input: "studio-dev://pair?pairingUrl=http%3A%2F%2F192.168.1.20%3A8319%2Fpair%23token%3DABC234", code: "ABC234", http: "http://192.168.1.20:8319/", ws: "ws://192.168.1.20:8319/"),
     LinkCase(input: "specwithcode://pair?pairingUrl=https%3A%2F%2Fm4.tail1234.ts.net%2F%23token%3DXYZ789", code: "XYZ789", http: "https://m4.tail1234.ts.net/", ws: "wss://m4.tail1234.ts.net/"),
     LinkCase(input: "specwithcode:pair?pairingUrl=https%3A%2F%2Fm4.tail1234.ts.net%2F%23token%3DXYZ789", code: "XYZ789", http: "https://m4.tail1234.ts.net/", ws: "wss://m4.tail1234.ts.net/"),
+    LinkCase(input: "specwithcode://pair?link=https%3A%2F%2Fm4.tail1234.ts.net%2Fpair%23token%3DXYZ789", code: "XYZ789", http: "https://m4.tail1234.ts.net/", ws: "wss://m4.tail1234.ts.net/"),
     LinkCase(input: "specwithcode://pair?host=https%3A%2F%2Fm4.tail1234.ts.net&token=XYZ789", code: "XYZ789", http: "https://m4.tail1234.ts.net/", ws: "wss://m4.tail1234.ts.net/"),
     // Origin only: path, query, user info and default ports go
     LinkCase(input: "http://192.168.1.20:8319/pair#token=ABC", code: "ABC", http: "http://192.168.1.20:8319/", ws: "ws://192.168.1.20:8319/"),
@@ -161,6 +162,7 @@ struct LinkCase: Sendable, CustomTestStringConvertible {
     #expect(PairingLink.unwrap("  https://remote.example.com/pair#token=pairing-token  ") == "https://remote.example.com/pair#token=pairing-token")
     #expect(PairingLink.unwrap("studio://pair?pairingUrl=https%3A%2F%2Fremote.example.com%2Fpair%23token%3Dpairing-token") == "https://remote.example.com/pair#token=pairing-token")
     #expect(PairingLink.unwrap("studio://pair") == "studio://pair")
+    #expect(PairingLink.unwrap("specwithcode://pair?link=https%3A%2F%2Fm4.tail1234.ts.net%2Fpair%23token%3DXYZ789") == "https://m4.tail1234.ts.net/pair#token=XYZ789")
   }
 
   @Test func errorsHaveUserFacingText() {

@@ -14,6 +14,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 
 import { useComposerDraftStore, type DraftId } from "~/composerDraftStore";
 import { environmentCatalog } from "~/connection/catalog";
+import { isThisMachineTarget } from "~/connection/desktopLocal";
 import { useScratchProject } from "~/hooks/useScratchProject";
 import { useClientSettings, useLegacySidebarEnabled } from "~/hooks/useSettings";
 import { useProjectCoordinatorHandoff } from "~/hooks/useProjectCoordinatorHandoff";
@@ -30,7 +31,12 @@ import { useEnvironments } from "~/state/environments";
 import { readEnvironmentScope, useEnvironmentsWithScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { machineLastSeenAt, useMachineLastSeenVersion } from "~/lib/machineLastSeen";
-import { lastSeenLabel, machineDetail, machineStatus } from "~/lib/machineStatus";
+import {
+  isThisMachineCatchingUp,
+  lastSeenLabel,
+  machineDetail,
+  machineStatus,
+} from "~/lib/machineStatus";
 import {
   Menu,
   MenuGroup,
@@ -101,12 +107,25 @@ export function DraftMachinePicker(props: Props) {
     (item) => item.environmentId === draft?.environmentId,
   );
   const activeLabel = activeEnvironment?.label ?? "Unavailable machine";
+  const activeIsThisMachine = activeEnvironment
+    ? isThisMachineTarget(activeEnvironment.entry)
+    : false;
   const activeStatus = activeEnvironment
-    ? machineStatus(activeEnvironment.connection, permitted.has(activeEnvironment.environmentId))
+    ? machineStatus(
+        activeEnvironment.connection,
+        permitted.has(activeEnvironment.environmentId),
+        activeIsThisMachine,
+      )
     : null;
   const activeUnreachable = activeEnvironment
     ? activeEnvironment.connection.phase !== "connected"
     : true;
+  // Only this machine catching up reads as busy; a stopped connection there
+  // keeps the warning and says "Connection failed", never "Can't reach".
+  const activeBusy =
+    activeIsThisMachine &&
+    activeEnvironment !== undefined &&
+    isThisMachineCatchingUp(activeEnvironment.connection.phase);
   const locked = disabled || !draft || Boolean(draft.promotedTo);
   const attachmentsBlock = draftHasMachineBoundContent(composer);
   const activeProject = projects.find(
@@ -119,6 +138,7 @@ export function DraftMachinePicker(props: Props) {
     ? draftMachineUnavailableReason(
         choosingEnvironment.connection.phase,
         permitted.has(choosingEnvironment.environmentId),
+        isThisMachineTarget(choosingEnvironment.entry),
       )
     : null;
   const destinationProjects = projects.filter(
@@ -151,6 +171,7 @@ export function DraftMachinePicker(props: Props) {
           const reason = draftMachineUnavailableReason(
             environment.connection.phase,
             readEnvironmentScope(target.environmentId, AuthOrchestrationOperateScope),
+            isThisMachineTarget(environment.entry),
           );
           if (reason) return reason;
           return projectDestinationUnavailableReason(target, latest.current.projects, resolved);
@@ -269,10 +290,15 @@ export function DraftMachinePicker(props: Props) {
           <span className="min-w-0 truncate">{activeLabel}</span>
           {activeUnreachable && (
             <span
-              className="shrink-0 text-xs text-warning-foreground"
-              data-draft-machine-unreachable=""
+              className={`shrink-0 text-xs ${activeBusy ? "text-muted-foreground" : "text-warning-foreground"}`}
+              data-draft-machine-unreachable={activeBusy ? undefined : ""}
+              data-draft-machine-busy={activeBusy ? "" : undefined}
             >
-              {activeStatus?.retryable ? "Can't reach" : (activeStatus?.text ?? "Not saved")}
+              {activeIsThisMachine
+                ? activeStatus?.text
+                : activeStatus?.retryable
+                  ? "Can't reach"
+                  : (activeStatus?.text ?? "Not saved")}
             </span>
           )}
           {props.autoEnvironmentLabel && (
@@ -355,17 +381,21 @@ export function DraftMachinePicker(props: Props) {
             <MenuGroup>
               <MenuGroupLabel>Run this draft on</MenuGroupLabel>
               {environments.map((environment) => {
+                const thisMachine = isThisMachineTarget(environment.entry);
                 const reason = draftMachineUnavailableReason(
                   environment.connection.phase,
                   permitted.has(environment.environmentId),
+                  thisMachine,
                 );
                 const status = machineStatus(
                   environment.connection,
                   permitted.has(environment.environmentId),
+                  thisMachine,
                 );
                 const isRetrying = retrying.has(environment.environmentId);
+                // This machine is only busy, so it has no "last seen" or failure to explain.
                 const detail = machineDetail(
-                  reason
+                  reason && !thisMachine
                     ? lastSeenLabel(machineLastSeenAt(environment.environmentId), Date.now())
                     : null,
                   status.reason,

@@ -15,6 +15,8 @@ import {
 
 import * as TextGenerationOperations from "./TextGenerationOperations.ts";
 import { cursorSdkModelSelection } from "../provider/cursorSdkModel.ts";
+import { redactProviderFailureText } from "../orchestration-v2/ProviderFailure.ts";
+import { cursorSdkErrorInCause } from "../orchestration-v2/Adapters/cursorFailure.ts";
 import type { CursorAuth } from "../provider/CursorAuth.ts";
 
 const CURSOR_TIMEOUT_MS = 180_000;
@@ -25,11 +27,23 @@ function cursorSdkResultDetail(result: RunResult): string {
   switch (result.status) {
     case "cancelled":
       return "Cursor SDK request was cancelled.";
-    case "error":
-      return "Cursor SDK request finished with an error.";
+    case "error": {
+      const message = result.error?.message?.trim();
+      return message
+        ? `Cursor SDK request finished with an error: ${redactProviderFailureText(message).slice(0, 500)}`
+        : "Cursor SDK request finished with an error.";
+    }
     case "finished":
       return "Cursor SDK returned empty output.";
   }
+}
+
+/** A thrown SDK error keeps Cursor's own (redacted) text, like a run that ended in error. */
+function cursorThrownDetail(cause: unknown): string {
+  const message = cursorSdkErrorInCause(cause)?.message?.trim();
+  return message
+    ? `Cursor SDK text generation failed: ${redactProviderFailureText(message).slice(0, 500)}`
+    : "Cursor SDK text generation failed.";
 }
 
 /**
@@ -193,7 +207,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
           ? cause
           : new TextGenerationError({
               operation,
-              detail: "Cursor SDK text generation failed.",
+              detail: cursorThrownDetail(cause),
               cause,
             }),
       ),

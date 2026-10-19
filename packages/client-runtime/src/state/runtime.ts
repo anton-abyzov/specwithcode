@@ -10,6 +10,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
@@ -31,6 +32,27 @@ import {
   subscribe,
 } from "../rpc/client.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import { isRpcTransportError } from "../errors/transport.ts";
+
+const isEnvironmentRpcUnavailableError = Schema.is(EnvironmentRpcUnavailableError);
+
+/**
+ * Waits instead of failing when a request finds its session already gone: the
+ * connection state change re-runs the query, which then reports the machine's
+ * actual state. An unavailable error on a session that is still there (such
+ * as a timeout) fails as usual.
+ */
+const waitWhenSessionGone = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R | EnvironmentSupervisor.EnvironmentSupervisor> =>
+  effect.pipe(
+    Effect.catchIf(isEnvironmentRpcUnavailableError, (error) =>
+      EnvironmentSupervisor.EnvironmentSupervisor.pipe(
+        Effect.flatMap((supervisor) => SubscriptionRef.get(supervisor.session)),
+        Effect.flatMap((session) => (Option.isNone(session) ? Effect.never : Effect.fail(error))),
+      ),
+    ),
+  );
 
 interface EnvironmentAtomOptions<Input, A, E, R> {
   readonly label: string;
@@ -549,8 +571,14 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
         const [connectionState, session] = connection;
         switch (connectionState.phase) {
           case "connected":
+            // A socket that dies under an in-flight request is not the
+            // request's failure: wait for the replacement session, which
+            // re-runs this query, instead of settling to a raw socket error.
             return Option.isSome(session)
-              ? runInEnvironment(target.environmentId, options.execute(target.input))
+              ? runInEnvironment(
+                  target.environmentId,
+                  waitWhenSessionGone(options.execute(target.input)),
+                ).pipe(Effect.catchIf(isRpcTransportError, () => Effect.never))
               : Effect.never;
           case "connecting":
           case "backoff":

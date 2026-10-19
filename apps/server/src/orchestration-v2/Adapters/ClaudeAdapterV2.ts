@@ -131,6 +131,11 @@ import {
   type ClaudeWorkflowMode,
 } from "../../provider/ClaudeWorkflowPolicy.ts";
 import { STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS } from "../../provider/StudioOrchestrationInstructions.ts";
+import {
+  claudeAgentSecretDenyForConfig,
+  withClaudeAgentSecretDenySettings,
+  type ClaudeAgentSecretDeny,
+} from "../../provider/AgentProtectedPaths.ts";
 import { mcpToolPresentation, normalizeMcpText } from "../../provider/McpToolPresentation.ts";
 import { withHeadlessBrowserEnvironment } from "../../provider/RuntimeInstructions.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
@@ -943,6 +948,11 @@ export function makeClaudeQueryOptions(input: {
   readonly onUserDialog?: ClaudeQueryOptions["onUserDialog"];
   readonly supportedDialogKinds?: ClaudeQueryOptions["supportedDialogKinds"];
   readonly allowDangerouslySkipPermissions?: boolean;
+  /**
+   * Credential stores the agent must not open. Applied in every permission
+   * mode: Claude Code checks deny rules before the mode, bypass included.
+   */
+  readonly agentSecretDeny?: ClaudeAgentSecretDeny;
 }): ClaudeAgentSdkQueryOptions {
   const compiledSelection = compileClaudeModelSelection(input.modelSelection, input.modelCatalog);
   const {
@@ -1003,10 +1013,14 @@ export function makeClaudeQueryOptions(input: {
     disallowedTools: input.disallowedTools,
     environment: input.environment ?? process.env,
   });
-  const workflowSettings = mergeClaudeWorkflowSettings(
+  const mergedWorkflowSettings = mergeClaudeWorkflowSettings(
     effectiveQuerySettings,
     workflowPolicy.settings,
   );
+  const workflowSettings =
+    input.agentSecretDeny === undefined
+      ? mergedWorkflowSettings
+      : withClaudeAgentSecretDenySettings(mergedWorkflowSettings, input.agentSecretDeny);
   const options: ClaudeAgentSdkQueryOptions = {
     model: compiledSelection.apiModelId,
     tools: claudeAgentSdkQueryToolsForSdk(selectedTools),
@@ -3275,6 +3289,8 @@ export interface ClaudeAdapterV2Options {
   readonly settings: ClaudeSettings;
   readonly environment: NodeJS.ProcessEnv;
   readonly attachmentsDir: string;
+  /** Deny rules keeping every turn out of the server's credential stores. */
+  readonly agentSecretDeny?: ClaudeAgentSecretDeny;
   readonly fileSystem: FileSystem.FileSystem;
   readonly path: Path.Path;
   readonly crypto: Crypto.Crypto;
@@ -7563,6 +7579,9 @@ export function makeClaudeAdapterV2(
             subagentPromptFileContents,
             claudeInChromeDefault,
             attachmentsDir,
+            ...(adapterOptions.agentSecretDeny === undefined
+              ? {}
+              : { agentSecretDeny: adapterOptions.agentSecretDeny }),
             settings: adapterOptions.settings,
             // SpecWeave hooks read it: inside Studio they save a checkpoint
             // instead of asking the model to hand off.
@@ -8449,11 +8468,23 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
       expandHomePath(config.binaryPath),
       claudeEnvironment,
     );
+    // Scoped to Claude Code's own file tools (Read/Edit deny rules). Shell
+    // commands get only best-effort Bash rules unless Claude's sandbox is on,
+    // and threads this turn launches on other providers (studio_thread_launch,
+    // create_threads) or commands the server runs for it (scheduler checks,
+    // MCP-launched commands) are not covered. See AgentProtectedPaths.ts.
+    const agentSecretDeny = yield* claudeAgentSecretDenyForConfig({
+      fileSystem,
+      path,
+      config: serverConfig,
+      homeDir: claudeEnvironment.HOME ?? expandHomePath("~"),
+    });
     return makeClaudeAdapterV2({
       instanceId,
       settings: { ...config, enabled, binaryPath },
       environment: claudeEnvironment,
       attachmentsDir: serverConfig.attachmentsDir,
+      agentSecretDeny,
       fileSystem,
       path,
       crypto,
@@ -8496,12 +8527,20 @@ const makeDefaultClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2.layer")(function* 
   const queryRunner = yield* ClaudeAgentSdkQueryRunner;
   const serverConfig = yield* ServerConfig.ServerConfig;
   const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+  // Claude Code's own file tools only; see the driver above and AgentProtectedPaths.ts.
+  const agentSecretDeny = yield* claudeAgentSecretDenyForConfig({
+    fileSystem,
+    path,
+    config: serverConfig,
+    homeDir: hostEnvironment.HOME ?? expandHomePath("~"),
+  });
 
   return makeClaudeAdapterV2({
     instanceId: CLAUDE_DEFAULT_INSTANCE_ID,
     settings: DEFAULT_CLAUDE_SETTINGS,
     environment: hostEnvironment,
     attachmentsDir: serverConfig.attachmentsDir,
+    agentSecretDeny,
     fileSystem,
     path,
     crypto,

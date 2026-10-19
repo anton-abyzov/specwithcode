@@ -186,8 +186,11 @@ function replaceUnsafeControlCharacters(value: string): string {
   return sanitized.join("");
 }
 
-/** Removes common credential forms before provider text crosses a transport boundary. */
-function redactProviderFailureText(value: string): string {
+/**
+ * Removes common credential forms before provider text crosses a transport
+ * boundary. Cursor and xAI keys (`crsr_`, `grok_`, `xai_`, `xai-`) can appear bare; `grok-` is left alone because model ids use it.
+ */
+export function redactProviderFailureText(value: string): string {
   return replaceUnsafeControlCharacters(value)
     .replace(/\bhttps?:\/\/[^\s<>"']+/giu, redactUrl)
     .replace(/\b(Bearer|Basic)\s+[^\s,;]+/giu, "$1 [REDACTED]")
@@ -200,6 +203,7 @@ function redactProviderFailureText(value: string): string {
       "$1[REDACTED]",
     )
     .replace(/\bsk-[A-Za-z0-9_-]{16,}\b/gu, "[REDACTED]")
+    .replace(/\b(?:(?:grok|xai|crsr)_|xai-)[A-Za-z0-9_-]{16,}\b/gu, "[REDACTED]")
     .trim();
 }
 

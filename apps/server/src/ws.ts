@@ -90,6 +90,7 @@ import {
   type ServerConfig as ClientServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleStreamEvent,
+  type StorageStatus,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
   AssetWorkspaceContextNotFoundError,
@@ -228,6 +229,7 @@ import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as DirectEndpoints from "./environment/DirectEndpoints.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as DefectReporter from "./observability/DefectReporter.ts";
+import * as DiskSpaceMonitor from "./observability/DiskSpaceMonitor.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { requiredScopeForDeviceList, rpcAuthorizationError } from "./auth/RpcAuthorization.ts";
@@ -320,11 +322,17 @@ const resolveEditorConfig = <E, R>(
  * this resends the config: clients replace theirs on any snapshot. The resent
  * config is folded from the live updates already sent, so it cannot roll back
  * a change that landed while the scan ran.
+ *
+ * Storage checks ride the same resend: a snapshot that carries the new
+ * status, sent only when the level or the shown free space changes. A client
+ * that predates the field ignores it, where a new event type would break its
+ * whole config subscription.
  */
 export const withLateEditorConfig = <E, R>(
   config: ClientServerConfig,
   liveUpdates: Stream.Stream<ServerConfigStreamEvent, E, R>,
   launcher: EditorDiscovery,
+  storageChanges: Stream.Stream<StorageStatus> = Stream.empty,
 ) => {
   const lateEditorConfig = Stream.fromEffect(launcher.resolveAvailableEditors()).pipe(
     Stream.filter(
@@ -345,7 +353,11 @@ export const withLateEditorConfig = <E, R>(
     Stream.map((editorConfig) => ({ type: "editorsResolved" as const, editorConfig })),
   );
 
-  return Stream.merge(liveUpdates, lateEditorConfig).pipe(
+  const storageUpdates = storageChanges.pipe(
+    Stream.map((storage) => ({ type: "storageChecked" as const, storage })),
+  );
+
+  return Stream.merge(liveUpdates, Stream.merge(lateEditorConfig, storageUpdates)).pipe(
     Stream.mapAccum(
       (): ClientServerConfig => config,
       (current, event): readonly [ClientServerConfig, ReadonlyArray<ServerConfigStreamEvent>] => {
@@ -358,6 +370,16 @@ export const withLateEditorConfig = <E, R>(
               ...rest
             } = current;
             const next = { ...rest, ...event.editorConfig };
+            return [next, [{ version: 1, type: "snapshot", config: next }]];
+          }
+          case "storageChecked": {
+            if (
+              current.storage !== undefined &&
+              DiskSpaceMonitor.sameStorageReport(current.storage, event.storage)
+            ) {
+              return [current, []];
+            }
+            const next = { ...current, storage: event.storage };
             return [next, [{ version: 1, type: "snapshot", config: next }]];
           }
           case "keybindingsUpdated":
@@ -1271,6 +1293,7 @@ const layerWsRpc = (
             );
       const usage = yield* UsageService.UsageService;
       const usageLimitSources = yield* UsageLimitSources.UsageLimitSources;
+      const diskSpace = yield* DiskSpaceMonitor.DiskSpaceMonitor;
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
       const worktreeSetupTracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
       const projectCloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
@@ -1709,6 +1732,7 @@ const layerWsRpc = (
 
       const loadServerConfig = (options: { readonly usageLimitsCommand: boolean }) =>
         Effect.gen(function* () {
+          const storage = yield* diskSpace.current;
           const keybindingsConfig = yield* keybindings.loadConfigState;
           const currentProviders = yield* providerRegistry.getProviders;
           const providers = options.usageLimitsCommand
@@ -1764,6 +1788,10 @@ const layerWsRpc = (
               onSome: (root) => ({ scratchWorkspaceRoot: root }),
             }),
             newProjectsRoot: managedFolders.namedProjectsRoot,
+            ...Option.match(storage, {
+              onNone: () => ({}),
+              onSome: (status) => ({ storage: status }),
+            }),
           };
         });
 
@@ -3091,7 +3119,7 @@ const layerWsRpc = (
 
               return Stream.concat(
                 rpcInitialItems([{ version: 1 as const, type: "snapshot" as const, config }]),
-                withLateEditorConfig(config, liveUpdates, externalLauncher),
+                withLateEditorConfig(config, liveUpdates, externalLauncher, diskSpace.changes),
               );
             }),
           ),

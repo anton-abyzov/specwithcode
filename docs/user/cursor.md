@@ -10,9 +10,41 @@ TypeScript package. It does not use Cursor's ACP transport for V2 execution.
   `CURSOR_API_KEY`.
 - A model accepted by the Cursor SDK. `auto` is sent to the SDK as its `default` model selection.
 
-The adapter currently uses the SDK's local-agent runtime so runs operate in the selected SpecWithCode
-workspace. Cursor cloud agents need repository and cloud-environment configuration that SpecWithCode does
-not expose yet.
+SpecWithCode runs Cursor only as the SDK's local agent in the selected workspace. It never starts
+Cursor cloud agents. You do not need the Cursor CLI to run Cursor in SpecWithCode.
+
+## Plans and billing
+
+SpaceX, which absorbed xAI, acquired Cursor in August 2026. Since 12 October 2026, new Cursor
+accounts are on [The X Subscription](https://x.ai/news/x-subscription):
+
+| Plan    | Price      | Cursor access                                                 |
+| ------- | ---------- | ------------------------------------------------------------- |
+| Free    | $0         | Starter allowance. No third-party models and no cloud agents. |
+| Plus    | $8/month   | Grok and Composer models only. No Auto.                       |
+| Premium | $30/month  | Grok models. Claude, GPT and Gemini from prepaid credit.      |
+| Super   | $100/month | Grok models. Claude, GPT and Gemini from prepaid credit.      |
+| Ultra   | $200/month | Grok models. Claude, GPT and Gemini from prepaid credit.      |
+| Teams   | See x.ai   | Plan for teams.                                               |
+
+Grok usage is one pool that refreshes weekly. It is shared with the Grok apps and X, so chatting
+in Grok uses the same allowance as Cursor runs in SpecWithCode. Claude, GPT and Gemini need
+Premium or higher and bill at API list price from prepaid credit, not from the plan allowance.
+See [Cursor models and pricing](https://cursor.com/docs/models-and-pricing).
+
+Earlier Cursor plans keep working for existing subscribers. They have two monthly pools,
+Cursor Models and Other Models, plus an overall total.
+
+OpenAI has proposed ending OpenAI model access through Cursor on 12 November 2026. If that
+happens, GPT models will no longer be available through a Cursor instance.
+
+SpecWithCode adds no caps of its own. **Usage → Limits** shows one weekly **Included usage** bar
+for X Subscription accounts and monthly **Overall**, **Cursor Models** and **Other Models** bars
+for earlier plans, or when Cursor's plan details cannot be read. Limits come from the Cursor CLI
+login (`agent login`) or `CURSOR_AUTH_TOKEN`, not from signing in inside SpecWithCode. For an
+instance signed in inside SpecWithCode, they appear only when that CLI login is the same Cursor
+account. On macOS, also turn on Cursor account usage so SpecWithCode can read the CLI login from
+Keychain. An explicit `CURSOR_API_KEY` does not report them. See [Usage](./usage.md).
 
 ## Sign in
 

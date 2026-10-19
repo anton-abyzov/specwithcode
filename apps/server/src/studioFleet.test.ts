@@ -5,6 +5,7 @@ import { chmod, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "./nodePath.ts";
 import {
+  authScopeResponse,
   AuthAccessWriteScope,
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
@@ -208,8 +209,9 @@ describe("private fleet boundary", () => {
       "cannot pair",
     );
     expect(f).not.toHaveBeenCalled();
+    // A revoked token: the machine refuses the pairing and the session read.
     const rejected = vi.fn<typeof fetch>(async (url) =>
-      String(url).endsWith("/pairing-token")
+      String(url).endsWith("/pairing-token") || String(url).endsWith("/api/auth/session")
         ? new Response("secret detail", { status: 401 })
         : Response.json(descriptor("environment-m1")),
     );
@@ -221,5 +223,25 @@ describe("private fleet boundary", () => {
         rejected,
       ),
     ).rejects.toThrow("renew");
+  });
+  it("says to make a new invitation when the token can only manage access there", async () => {
+    const config = parseFleetConfig(source());
+    // What `fleet invite` made before 1.0.52: the machine accepts the token
+    // but will not hand out scopes it does not hold.
+    const limited = vi.fn<typeof fetch>(async (url) =>
+      String(url).endsWith("/pairing-token")
+        ? Response.json({ code: "insufficient_scope" }, { status: 403 })
+        : String(url).endsWith("/api/auth/session")
+          ? Response.json({ authenticated: true, ...authScopeResponse([AuthAccessWriteScope]) })
+          : Response.json(descriptor("environment-m1")),
+    );
+    await expect(
+      connectFleet(
+        config,
+        "m1",
+        new Set([AuthAccessWriteScope, AuthOrchestrationReadScope]),
+        limited,
+      ),
+    ).rejects.toThrow("cannot open sessions");
   });
 });

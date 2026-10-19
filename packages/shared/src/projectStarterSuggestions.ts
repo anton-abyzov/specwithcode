@@ -68,6 +68,10 @@ export const STARTER_SUGGESTION_LIMIT = 6;
 /** Fewer than this is noise, not a backlog worth a thread. */
 const TODO_FLOOR = 3;
 const INCREMENT_ID = /^\d{3,5}[A-Z]?-[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+/** A thread that works an increment also closes it once its last task is done. */
+const CLOSE_INCREMENT =
+  "When none of its tasks is left, close the increment in the same thread without asking: `specweave verify`, a review in a fresh context (a subagent), then `specweave complete`. If a close gate stops you, say which.";
 /** Path segments of letters, digits and `._@+-`, none of them only dots. */
 const PLAIN_PATH = /^(?:[\w@+-][\w.@+-]*\/)*[\w@+-][\w.@+-]*$/;
 const PLAIN_PATH_LENGTH = 160;
@@ -151,8 +155,8 @@ function repositorySuggestions(signals: ProjectStarterSignals): ProjectStarterSu
       prompt: thread(
         "Pick up the handoff",
         handedOff
-          ? `Run \`specweave pickup ${handedOff}\` in this project, read .specweave/increments/${handedOff}/handoff.md and continue the task it names. Report what you picked up and what is left.`
-          : "Run `specweave pickup` in this project and continue the task it names. Report what you picked up and what is left.",
+          ? `Run \`specweave pickup ${handedOff}\` in this project, read .specweave/increments/${handedOff}/handoff.md and continue the task it names, recording each finished task with \`specweave task done\`. ${CLOSE_INCREMENT} Report what you picked up and what is left.`
+          : `Run \`specweave pickup\` in this project and continue the task it names, recording each finished task with \`specweave task done\`. ${CLOSE_INCREMENT} Report what you picked up and what is left.`,
       ),
     });
   const increment = signals.openIncrements.find(
@@ -172,7 +176,7 @@ function repositorySuggestions(signals: ProjectStarterSignals): ProjectStarterSu
           : `${name} is still open.`,
       prompt: thread(
         `Continue increment ${increment.id.split("-")[0]}`,
-        `Read .specweave/increments/${increment.id}/spec.md, claim the next open task and work it to its acceptance criteria. Report what you finished and what is left.`,
+        `Read .specweave/increments/${increment.id}/spec.md and work its open tasks to their acceptance criteria, recording each with \`specweave task done\`. ${CLOSE_INCREMENT} Report what you finished, the verify result and what is left.`,
       ),
     });
   }

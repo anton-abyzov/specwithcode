@@ -300,6 +300,33 @@ describe("projects and chats sidebar", () => {
     expect(row("Gone").querySelector(".sws-row-machine[data-offline]")).not.toBeNull();
     expect(row("Gone").textContent).toContain("M3 can't be reached");
   });
+  it("never marks this machine's chats offline, even while its server reconnects", async () => {
+    state.environments = [
+      { environmentId: "host", label: "M4" },
+      { environmentId: "m3", label: "M3" },
+    ];
+    state.shells = [
+      shell("here", { title: "Here" }),
+      shell("gone", {
+        title: "Gone",
+        environmentId: "m3" as EnvironmentThreadShell["environmentId"],
+      }),
+    ];
+    await act(async () =>
+      root.render(
+        <UnreachableHostsContext.Provider value={new Set(["host", "m3"])}>
+          <StudioSidebar />
+        </UnreachableHostsContext.Provider>,
+      ),
+    );
+    const row = (title: string) =>
+      [...container.querySelectorAll<HTMLElement>(".sws-chat-row")].find((item) =>
+        item.textContent?.includes(title),
+      )!;
+    expect(row("Here").querySelector("[data-offline]")).toBeNull();
+    expect(row("Here").textContent).not.toContain("can't be reached");
+    expect(row("Gone").querySelector(".sws-row-machine[data-offline]")).not.toBeNull();
+  });
   it("collapses a date heading without losing the others", async () => {
     await render();
     const today = container.querySelector<HTMLButtonElement>(".sws-side-subheading button")!;

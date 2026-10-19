@@ -1,12 +1,15 @@
 import {
+  BearerConnectionProfile,
   BearerConnectionTarget,
   PrimaryConnectionTarget,
+  RelayConnectionTarget,
 } from "@specweave-studio/client-runtime/connection";
 import {
   type DesktopEnvironmentBootstrap,
   EnvironmentId,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
 } from "@specweave-studio/contracts";
+import * as Option from "effect/Option";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -14,6 +17,7 @@ import {
   desktopLocalBackendId,
   desktopLocalConnectionId,
   isDesktopLocalConnectionTarget,
+  isThisMachineTarget,
   isWslConnectionTarget,
 } from "./desktopLocal";
 
@@ -51,6 +55,79 @@ describe("desktop local connection identity", () => {
 
     expect(isDesktopLocalConnectionTarget(target)).toBe(false);
     expect(desktopLocalBackendId(target)).toBeNull();
+  });
+});
+
+function bearerEntry(connectionId: string, httpBaseUrl: string) {
+  const target = new BearerConnectionTarget({
+    connectionId,
+    environmentId: EnvironmentId.make(`environment-${connectionId}`),
+    label: connectionId,
+  });
+  return {
+    target,
+    profile: Option.some(
+      new BearerConnectionProfile({
+        connectionId,
+        environmentId: target.environmentId,
+        label: target.label,
+        httpBaseUrl,
+        wsBaseUrl: httpBaseUrl.replace(/^http/, "ws"),
+      }),
+    ),
+  };
+}
+
+describe("isThisMachineTarget", () => {
+  it("counts the primary environment as this machine", () => {
+    const target = new PrimaryConnectionTarget({
+      environmentId: EnvironmentId.make("environment-primary"),
+      httpBaseUrl: "http://127.0.0.1:8319",
+      label: "Anton's MacBook M4MAX",
+      wsBaseUrl: "ws://127.0.0.1:8319",
+    });
+    expect(isThisMachineTarget({ target, profile: Option.none() })).toBe(true);
+  });
+
+  it("keeps a primary reached over Tailscale or the relay remote", () => {
+    // A phone or another computer that opened this Mac over the network loads
+    // the page from a non-loopback origin; for that viewer the Mac is remote.
+    const target = new PrimaryConnectionTarget({
+      environmentId: EnvironmentId.make("environment-primary"),
+      httpBaseUrl: "https://mac.tailnet.example.test",
+      label: "Example Mac",
+      wsBaseUrl: "wss://mac.tailnet.example.test",
+    });
+    expect(isThisMachineTarget({ target, profile: Option.none() })).toBe(false);
+  });
+
+  it("counts a desktop-local backend on loopback as this machine", () => {
+    expect(
+      isThisMachineTarget(
+        bearerEntry(desktopLocalConnectionId("wsl:Ubuntu"), "http://127.0.0.1:4000"),
+      ),
+    ).toBe(true);
+    expect(
+      isThisMachineTarget(bearerEntry(desktopLocalConnectionId("native"), "http://localhost:4100")),
+    ).toBe(true);
+  });
+
+  it("keeps saved remote machines remote, even on loopback addresses", () => {
+    // A saved SSH forward or tunnel can sit on 127.0.0.1 but reaches another machine.
+    expect(isThisMachineTarget(bearerEntry("saved-m1", "http://127.0.0.1:9000"))).toBe(false);
+    expect(isThisMachineTarget(bearerEntry("saved-m1", "https://m1.tailnet.example.test"))).toBe(
+      false,
+    );
+    expect(
+      isThisMachineTarget(
+        bearerEntry(desktopLocalConnectionId("wsl:Ubuntu"), "http://192.168.1.4:4000"),
+      ),
+    ).toBe(false);
+    const relay = new RelayConnectionTarget({
+      environmentId: EnvironmentId.make("environment-relay"),
+      label: "M3",
+    });
+    expect(isThisMachineTarget({ target: relay, profile: Option.none() })).toBe(false);
   });
 });
 

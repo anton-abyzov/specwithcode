@@ -527,6 +527,55 @@ describe("Project admission and retry", () => {
       /Unarchive/,
     );
   });
+  it("calls this machine busy, never offline, and never suggests reloading it", () => {
+    const settings = { paused: false, archived: false };
+    const thisDevice = { isThisDevice: true, graceElapsed: true };
+    for (const phase of ["connecting", "reconnecting", "offline", "available"]) {
+      const reason = projectAdmissionReason(settings, false, true, { phase }, thisDevice);
+      expect(reason).toBe("SpecWithCode on this Mac is busy. Messages send when it catches up.");
+      expect(hostDisconnectedLabel({ phase }, thisDevice)).toBe("Catching up");
+    }
+    for (const connection of [
+      { phase: "error" },
+      { phase: "error", blockedReason: "authentication" },
+      { phase: "unsupported" },
+      { phase: "reconnecting" },
+    ]) {
+      const reason = projectAdmissionReason(settings, false, true, connection, thisDevice)!;
+      expect(reason).not.toMatch(/reload/i);
+      expect(reason).not.toMatch(/offline|Can't reach/);
+    }
+    expect(hostDisconnectedLabel({ phase: "error" }, thisDevice)).toBe("Connection failed");
+    expect(
+      projectAdmissionReason(
+        settings,
+        false,
+        true,
+        { phase: "reconnecting" },
+        {
+          isThisDevice: true,
+          graceElapsed: false,
+        },
+      ),
+    ).toBe("Catching up…");
+  });
+  it("keeps today's text for a remote host, before and after the reconnect grace", () => {
+    const settings = { paused: false, archived: false };
+    for (const graceElapsed of [false, true]) {
+      const remote = { isThisDevice: false, graceElapsed };
+      expect(projectAdmissionReason(settings, false, true, { phase: "offline" }, remote)).toBe(
+        "This device is offline.",
+      );
+      expect(projectAdmissionReason(settings, false, true, { phase: "reconnecting" }, remote)).toBe(
+        "Reconnecting to this host. If this does not clear, reload the page.",
+      );
+      expect(projectAdmissionReason(settings, false, true, { phase: "connecting" }, remote)).toBe(
+        "Connecting to this host.",
+      );
+      expect(hostDisconnectedLabel({ phase: "reconnecting" }, remote)).toBe("Reconnecting");
+      expect(hostDisconnectedLabel({ phase: "offline" }, remote)).toBe("Offline");
+    }
+  });
   it("retains unresolved receipts across reloads, isolated by scope, and removes acknowledgements", () => {
     const values = new Map<string, string>();
     const storage = {

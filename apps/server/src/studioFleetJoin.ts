@@ -2,9 +2,14 @@
 import * as NodeFSP from "node:fs/promises";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - a random temp name keeps two writers from sharing one file.
 import * as NodeCrypto from "node:crypto";
-import { EnvironmentId } from "@specweave-studio/contracts";
+import {
+  AuthStandardClientScopes,
+  type AuthEnvironmentScope,
+  EnvironmentId,
+} from "@specweave-studio/contracts";
 import { join } from "./nodePath.ts";
 import {
+  assertManagementTokenCanPair,
   checkIdentity,
   FLEET_CONFIG_FILE,
   type FleetFetch,
@@ -186,6 +191,18 @@ export async function addFleetMachine(input: {
     (machine) => typeof machine.url === "string" && new URL(machine.url).origin === invite.url,
   );
   if (sameUrl !== -1 && sameUrl !== index) throw new FleetJoinError("address-in-use");
+  // An invitation whose token cannot open sessions there would be saved as
+  // "Added" yet never connect, so check it before writing anything.
+  const wantedScopes = (
+    index !== -1 && Array.isArray(document.machines[index]!.scopes)
+      ? document.machines[index]!.scopes
+      : AuthStandardClientScopes
+  ) as ReadonlyArray<AuthEnvironmentScope>;
+  await assertManagementTokenCanPair(
+    input.fetcher ?? fetch,
+    { url: invite.url, managementToken: invite.managementToken },
+    wantedScopes,
+  );
 
   let result: FleetAddResult;
   const machines = [...document.machines];

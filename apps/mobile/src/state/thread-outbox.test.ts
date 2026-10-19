@@ -1469,9 +1469,7 @@ describe("thread outbox", () => {
     ];
     for (const reason of socketReasons) {
       const error = new RpcClientError.RpcClientError({ reason });
-      expect(isTransportConnectionErrorMessage(error.message)).toBe(
-        reason._tag === "SocketCloseError" || reason._tag === "SocketOpenError",
-      );
+      expect(isTransportConnectionErrorMessage(error.message)).toBe(true);
       expect(shouldRetryThreadOutboxDelivery(error)).toBe(true);
     }
     expect(

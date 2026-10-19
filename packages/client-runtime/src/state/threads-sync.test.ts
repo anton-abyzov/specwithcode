@@ -40,6 +40,7 @@ import { v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
 import * as ThreadHistoryController from "./threadHistoryController.ts";
 import {
   EMPTY_ENVIRONMENT_THREAD_STATE,
+  THREAD_RESUME_COMPLETION_TIMEOUT,
   makeEnvironmentThreadState,
   type EnvironmentThreadState,
   type ThreadSnapshotLoadResult,
@@ -67,7 +68,15 @@ const BASE_PROJECTION: OrchestrationV2ThreadProjection = {
   thread: { ...v2Projection.thread, title: "Cached thread" },
 };
 
-type TestThreadInput = OrchestrationV2ThreadStreamItem | Error;
+/** Makes the test subscription die (a defect) instead of failing. */
+class SubscriptionDefect {
+  readonly defect: Error;
+  constructor(defect: Error) {
+    this.defect = defect;
+  }
+}
+
+type TestThreadInput = OrchestrationV2ThreadStreamItem | Error | SubscriptionDefect;
 
 function testSession(
   client: WsRpcProtocolClient,
@@ -132,7 +141,11 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   const streamFrom = (queue: Queue.Queue<TestThreadInput>) =>
     Stream.fromQueue(queue).pipe(
       Stream.mapEffect((input) =>
-        input instanceof Error ? Effect.fail(input) : Effect.succeed(input),
+        input instanceof SubscriptionDefect
+          ? Effect.die(input.defect)
+          : input instanceof Error
+            ? Effect.fail(input)
+            : Effect.succeed(input),
       ),
     );
   const client = {
@@ -1830,6 +1843,201 @@ describe("EnvironmentThreads", () => {
         (value) => value.status === "live" && Option.isSome(value.data),
       );
       expect(Option.getOrThrow(live.data).thread.title).toBe("Caught-up title");
+    }),
+  );
+
+  const settleFibers = Effect.gen(function* () {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      yield* Effect.yieldNow;
+    }
+  });
+  const awaitSubscriptionCount = (subscriptionCount: Ref.Ref<number>, count: number) =>
+    Effect.gen(function* () {
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((yield* Ref.get(subscriptionCount)) >= count) break;
+        yield* Effect.yieldNow;
+      }
+      yield* settleFibers;
+    });
+
+  it.effect(
+    "resubscribes a resume that never confirms synchronization on a connected session",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({ cached: BASE_PROJECTION, completionMarker: true });
+        yield* awaitSubscriptionCount(harness.subscriptionCount, 1);
+        yield* Queue.offer(
+          harness.inputs,
+          titleUpdated("Caught-up title", CACHED_SNAPSHOT_SEQUENCE + 1),
+        );
+        yield* awaitThreadState(
+          harness.observed,
+          (value) =>
+            value.status === "synchronizing" &&
+            Option.isSome(value.data) &&
+            value.data.value.thread.title === "Caught-up title",
+        );
+
+        yield* TestClock.adjust("14 seconds");
+        yield* settleFibers;
+        expect(yield* Ref.get(harness.subscriptionCount)).toBe(1);
+
+        yield* TestClock.adjust("1 second");
+        yield* awaitSubscriptionCount(harness.subscriptionCount, 2);
+        expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+        expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(
+          CACHED_SNAPSHOT_SEQUENCE + 1,
+        );
+        expect(yield* Ref.get(harness.lastRequestCompletionMarker)).toBe(true);
+        expect(yield* Ref.get(harness.retryCount)).toBe(0);
+        expect((yield* Ref.get(harness.latest)).status).toBe("synchronizing");
+
+        yield* Queue.offer(harness.inputs, synchronized());
+        const live = yield* awaitThreadState(
+          harness.observed,
+          (value) => value.status === "live" && Option.isSome(value.data),
+        );
+        expect(Option.getOrThrow(live.data).thread.title).toBe("Caught-up title");
+      }),
+  );
+
+  it.effect("goes live with applied events when a resubscribed resume also never confirms", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_PROJECTION, completionMarker: true });
+      yield* awaitSubscriptionCount(harness.subscriptionCount, 1);
+
+      yield* TestClock.adjust(THREAD_RESUME_COMPLETION_TIMEOUT);
+      yield* awaitSubscriptionCount(harness.subscriptionCount, 2);
+      expect((yield* Ref.get(harness.latest)).status).toBe("synchronizing");
+
+      yield* TestClock.adjust(THREAD_RESUME_COMPLETION_TIMEOUT);
+      const live = yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "live" && Option.isSome(value.data),
+      );
+      expect(Option.isNone(live.error)).toBe(true);
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+
+      // Going live disarms the watchdog: no further resubscriptions.
+      yield* TestClock.adjust("1 minute");
+      yield* settleFibers;
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+    }),
+  );
+
+  it.effect("does not resubscribe a resume that confirmed synchronization", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_PROJECTION, completionMarker: true });
+      yield* awaitSubscriptionCount(harness.subscriptionCount, 1);
+      yield* Queue.offer(harness.inputs, synchronized());
+      yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+
+      yield* TestClock.adjust("1 minute");
+      yield* settleFibers;
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(1);
+      expect((yield* Ref.get(harness.latest)).status).toBe("live");
+    }),
+  );
+
+  it.effect("leaves a resume to the replacement session when the session changes", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_PROJECTION, completionMarker: true });
+      yield* awaitSubscriptionCount(harness.subscriptionCount, 1);
+      yield* SubscriptionRef.set(harness.supervisorSession, Option.none());
+      yield* settleFibers;
+
+      // The old session is gone; its watchdog must not resubscribe on it.
+      yield* TestClock.adjust(THREAD_RESUME_COMPLETION_TIMEOUT);
+      yield* settleFibers;
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(1);
+
+      yield* harness.replaceSession;
+      yield* awaitSubscriptionCount(harness.subscriptionCount, 2);
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+    }),
+  );
+
+  it.effect("gives a replacement session its own resubscribe before going live", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_PROJECTION, completionMarker: true });
+      yield* awaitSubscriptionCount(harness.subscriptionCount, 1);
+
+      // Session A times out once and resubscribes.
+      yield* TestClock.adjust(THREAD_RESUME_COMPLETION_TIMEOUT);
+      yield* awaitSubscriptionCount(harness.subscriptionCount, 2);
+
+      // Session B replaces A before A's second timeout.
+      yield* harness.replaceSession;
+      yield* awaitSubscriptionCount(harness.subscriptionCount, 3);
+
+      // B's first timeout resubscribes on B instead of going live.
+      yield* TestClock.adjust(THREAD_RESUME_COMPLETION_TIMEOUT);
+      yield* awaitSubscriptionCount(harness.subscriptionCount, 4);
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(4);
+      expect((yield* Ref.get(harness.latest)).status).toBe("synchronizing");
+
+      yield* TestClock.adjust(THREAD_RESUME_COMPLETION_TIMEOUT);
+      yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(4);
+    }),
+  );
+
+  it.effect("gives a retry after a stream error its own resubscribe before going live", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_PROJECTION, completionMarker: true });
+      yield* awaitSubscriptionCount(harness.subscriptionCount, 1);
+
+      yield* TestClock.adjust(THREAD_RESUME_COMPLETION_TIMEOUT);
+      yield* awaitSubscriptionCount(harness.subscriptionCount, 2);
+
+      // The resubscribed stream fails; the same session retries after 250 ms.
+      yield* Queue.offer(harness.inputs, new Error("temporarily unavailable"));
+      yield* awaitThreadState(harness.observed, (value) => Option.isSome(value.error));
+      yield* TestClock.adjust("250 millis");
+      yield* awaitSubscriptionCount(harness.subscriptionCount, 3);
+
+      yield* TestClock.adjust(THREAD_RESUME_COMPLETION_TIMEOUT);
+      yield* awaitSubscriptionCount(harness.subscriptionCount, 4);
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(4);
+      expect((yield* Ref.get(harness.latest)).status).toBe("synchronizing");
+    }),
+  );
+
+  it.effect("recovers the thread subscription after a defect on a connected session", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_PROJECTION });
+      yield* Queue.offer(harness.inputs, snapshot(BASE_PROJECTION));
+      yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+
+      yield* Queue.offer(
+        harness.inputs,
+        new SubscriptionDefect(new Error("Synthetic projection invariant")),
+      );
+      const failed = yield* awaitThreadState(harness.observed, (value) =>
+        Option.isSome(value.error),
+      );
+      expect(Option.getOrThrow(failed.error)).toBe("Could not synchronize the thread.");
+      expect(Option.getOrThrow(failed.data)).toEqual(BASE_PROJECTION);
+
+      yield* TestClock.adjust("250 millis");
+      yield* awaitSubscriptionCount(harness.subscriptionCount, 2);
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+      yield* Queue.offer(
+        harness.inputs,
+        snapshot({
+          ...BASE_PROJECTION,
+          thread: { ...BASE_PROJECTION.thread, title: "Recovered after defect" },
+        }),
+      );
+      const recovered = yield* awaitThreadState(
+        harness.observed,
+        (value) =>
+          value.status === "live" &&
+          Option.isSome(value.data) &&
+          value.data.value.thread.title === "Recovered after defect",
+      );
+      expect(Option.isNone(recovered.error)).toBe(true);
+      expect(yield* Ref.get(harness.retryCount)).toBe(0);
     }),
   );
 

@@ -17,6 +17,7 @@ import {
   AuthSessionState,
   ExecutionEnvironmentDescriptor,
   ServerAuthDescriptor,
+  statfsBytes,
   TrimmedNonEmptyString,
 } from "@specweave-studio/contracts";
 import * as Clock from "effect/Clock";
@@ -67,6 +68,9 @@ const UNRESPONSIVE_GRACE_INTERVAL_MS = 1_000;
 // never longer than this in all, measured in time rather than probes.
 const INSTALL_WAIT_LIMIT_MS = SERVICE_INSTALL_LIMIT_MS;
 const PAIR_TIMEOUT_MS = 30_000;
+// Under this much free space (1 GB, the server's critical line) the service
+// stalls on its own writes, which is the likely reason it does not answer.
+const LOW_DISK_FREE_BYTES = 1e9;
 const DESKTOP_SESSION_LABEL = "SpecWithCode Desktop";
 
 export interface AttachedLocalService {
@@ -95,7 +99,28 @@ export type LocalServiceDiscovery =
       readonly _tag: "unresponsive";
       readonly runtime: RunningServerRuntimeState;
       readonly stateDir: string;
+      /** Free bytes on the disk holding `stateDir`, present only when it is nearly full. */
+      readonly lowDiskFreeBytes?: number;
     };
+
+/** Reads free bytes on the disk holding `path`; none when it cannot tell. */
+export type FreeDiskBytesReader = (path: string) => Effect.Effect<Option.Option<number>>;
+
+/** How discovery reads free disk space; tests replace it. */
+export const FreeDiskBytes = Context.Reference<FreeDiskBytesReader>(
+  "@specweave-studio/desktop/backend/DesktopLocalService/FreeDiskBytes",
+  {
+    defaultValue: () => (path) =>
+      Effect.sync(() => {
+        try {
+          const stats = NodeFS.statfsSync(path, { bigint: true });
+          return Option.some(statfsBytes(stats.bavail, stats.bsize));
+        } catch {
+          return Option.none<number>();
+        }
+      }),
+  },
+);
 
 interface StudioHomeCandidate {
   readonly baseDir: string;
@@ -245,6 +270,7 @@ const runPair = (command: ServiceCliCommand, pairArgs: ReadonlyArray<string>) =>
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const readFreeDiskBytes = yield* FreeDiskBytes;
   const httpClient = yield* HttpClient.HttpClient;
   const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
   const attachedRef = yield* Ref.make(Option.none<AttachedLocalService>());
@@ -418,11 +444,25 @@ export const make = Effect.gen(function* () {
         return { _tag: "none" } as const;
       }
       if (!isProcessAlive(unresponsive.runtime.pid)) return { _tag: "none" } as const;
+      // A full disk is the usual reason a live service stops answering; name it
+      // instead of leaving the person to guess.
+      // The disk the stalled service writes to, which STUDIO_HOME can put on
+      // another volume than the home folder.
+      const freeBytes = yield* readFreeDiskBytes(unresponsive.stateDir);
+      const lowDiskFreeBytes =
+        Option.isSome(freeBytes) && freeBytes.value < LOW_DISK_FREE_BYTES
+          ? freeBytes.value
+          : undefined;
       yield* logWarning("a live process owns this Studio home but does not answer", {
         pid: unresponsive.runtime.pid,
         origin: unresponsive.runtime.origin,
+        ...(lowDiskFreeBytes === undefined ? {} : { lowDiskFreeBytes }),
       });
-      return { _tag: "unresponsive", ...unresponsive } as const;
+      return {
+        _tag: "unresponsive",
+        ...unresponsive,
+        ...(lowDiskFreeBytes === undefined ? {} : { lowDiskFreeBytes }),
+      } as const;
     }).pipe(Effect.withSpan("desktop.localService.discover"));
 
   const resolvePairCommand = Effect.fn("desktop.localService.resolvePairCommand")(function* (

@@ -7,6 +7,7 @@ import { makeCodexFileChangeApprovalGuard } from "./codexFileChangeApprovalGuard
 import { residentCreditPermission } from "./codexManualCredits.ts";
 import * as Clock from "effect/Clock";
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
+import { ProviderProcessSupervisor } from "../../process/ProviderProcessSupervisor.ts";
 import { historyResponseItems } from "../ContextHandoffBudget.ts";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import {
@@ -1389,6 +1390,7 @@ const layerCodexAppServerClientFactoryCommand = (
               env: withHeadlessBrowserEnvironment(options.env),
               extendEnv: true,
             });
+            const superviseProviderProcess = yield* (yield* ProviderProcessSupervisor).reserve;
             const handle = yield* spawner.spawn(command).pipe(
               Effect.provideService(Scope.Scope, scope),
               Effect.mapError(
@@ -1400,6 +1402,7 @@ const layerCodexAppServerClientFactoryCommand = (
                   }),
               ),
             );
+            yield* superviseProviderProcess(Number(handle.pid));
             const context = yield* Layer.build(CodexClient.layerChildProcess(handle, options));
             return yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
               Effect.provide(context),
@@ -1511,6 +1514,8 @@ export const layerAppServerClientFactory: Layer.Layer<
             ),
             env: environment,
           });
+          // Lowered priority; its MCP servers and tool processes are reaped after it closes.
+          const superviseProviderProcess = yield* (yield* ProviderProcessSupervisor).reserve;
           const handle = yield* spawner.spawn(command).pipe(
             Effect.provideService(Scope.Scope, scope),
             Effect.mapError(
@@ -1522,6 +1527,7 @@ export const layerAppServerClientFactory: Layer.Layer<
                 }),
             ),
           );
+          yield* superviseProviderProcess(Number(handle.pid));
           const protocolLogger = makeCodexAppServerProtocolLogger({
             nativeEventLogger,
             threadId: input.threadId,

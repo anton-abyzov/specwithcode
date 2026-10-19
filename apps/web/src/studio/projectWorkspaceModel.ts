@@ -183,9 +183,36 @@ type HostConnection = {
   readonly blockedReason?: string;
 };
 
+/**
+ * Where the host runs, and whether it has been slow for longer than a blip.
+ * isThisDevice: the host is this machine (see isThisMachineTarget), whose UI
+ * is served by that same server. graceElapsed: the connection has been down
+ * past ENVIRONMENT_RECONNECT_WARNING_GRACE_MS; before that this device shows
+ * only neutral text. Remote hosts ignore it and keep today's text. Omitted, it
+ * reads as a remote host.
+ */
+export type HostAdmissionContext = {
+  readonly isThisDevice: boolean;
+  readonly graceElapsed: boolean;
+};
+
+const REMOTE_PAST_GRACE: HostAdmissionContext = { isThisDevice: false, graceElapsed: true };
+
+export const THIS_DEVICE_BUSY_ADMISSION =
+  "SpecWithCode on this Mac is busy. Messages send when it catches up.";
+
 /** A short status for a host that is not connected, naming why where it is known. */
-export function hostDisconnectedLabel(connection: HostConnection | null | undefined): string {
+export function hostDisconnectedLabel(
+  connection: HostConnection | null | undefined,
+  context: HostAdmissionContext = REMOTE_PAST_GRACE,
+): string {
   if (connection?.blockedReason === "authentication") return "Signed out";
+  if (context.isThisDevice) {
+    // This machine is never offline: its server is busy and catches up.
+    if (connection?.phase === "error") return "Connection failed";
+    if (connection?.phase === "unsupported") return "Disconnected";
+    return "Catching up";
+  }
   if (connection?.phase === "connecting") return "Connecting";
   if (connection?.phase === "reconnecting") return "Reconnecting";
   if (connection?.phase === "offline") return "Offline";
@@ -197,8 +224,20 @@ export function projectAdmissionReason(
   connected: boolean,
   canOperate: boolean,
   connection?: HostConnection | null,
+  context: HostAdmissionContext = REMOTE_PAST_GRACE,
 ): string | null {
   if (!connected) {
+    if (context.isThisDevice) {
+      // The desktop window loads its UI from this same server, so reloading
+      // while it is stalled gives a blank page: never suggest it here.
+      if (connection?.blockedReason === "authentication") {
+        return "This window is signed out of SpecWithCode on this Mac. Quit and reopen the app to sign in again.";
+      }
+      if (connection?.phase === "error" || connection?.phase === "unsupported") {
+        return "SpecWithCode on this Mac stopped answering. Quit and reopen the app to continue.";
+      }
+      return context.graceElapsed ? THIS_DEVICE_BUSY_ADMISSION : "Catching up…";
+    }
     if (connection?.blockedReason === "authentication") {
       return "This browser is signed out of this host. Reload the page to sign in again.";
     }

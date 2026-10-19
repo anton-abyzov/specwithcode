@@ -29,6 +29,7 @@ import * as Persistence from "../platform/persistence.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import { subscribeDynamic } from "../rpc/client.ts";
+import type { RpcSession } from "../rpc/session.ts";
 import { parseThreadKey, threadKey } from "./entities.ts";
 import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection.ts";
 import { THREAD_SNAPSHOT_IDLE_TTL_MS } from "./threadRetention.ts";
@@ -51,6 +52,12 @@ import {
 } from "./threadState.ts";
 
 const MISSING_THREAD_RELOAD_DELAY = "250 millis";
+/**
+ * How long a resumed subscription may wait for the server's "synchronized"
+ * marker on a connected session. A busy or briefly stalled server can drop the
+ * marker; without a limit the thread would show "Syncing messages..." forever.
+ */
+export const THREAD_RESUME_COMPLETION_TIMEOUT = "15 seconds";
 
 function statusWithoutLiveData(
   data: Option.Option<OrchestrationV2ThreadProjection>,
@@ -244,6 +251,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   };
   if (resumeCache?.owner === owner) resumeCache.snapshot = committed;
   const awaitingCompletion = yield* Ref.make(false);
+  // The session on which the completion watchdog already resubscribed once
+  // without the marker arriving. Cleared by the marker, a disconnect or a
+  // stream error, so a new session or a fresh retry gets its own resubscribe.
+  const completionTimedOutSession = yield* Ref.make<RpcSession | undefined>(undefined);
   const applyLock = yield* Semaphore.make(1);
   // Save only completed data/cursor updates. A canceled scope must not cache
   // a cursor whose event has not reached the data yet.
@@ -348,6 +359,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   );
   const setDisconnected = Effect.gen(function* () {
     yield* Ref.set(awaitingCompletion, false);
+    yield* Ref.set(completionTimedOutSession, undefined);
     yield* SubscriptionRef.update(state, (current) => ({
       ...current,
       status: current.status === "deleted" ? current.status : statusWithoutLiveData(current.data),
@@ -355,6 +367,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   });
   const setStreamError = (message: string) =>
     Ref.set(awaitingCompletion, false).pipe(
+      Effect.andThen(Ref.set(completionTimedOutSession, undefined)),
       Effect.andThen(
         SubscriptionRef.update(state, (current) => ({
           ...current,
@@ -584,6 +597,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   ) {
     if (item.kind === "synchronized") {
       yield* Ref.set(awaitingCompletion, false);
+      yield* Ref.set(completionTimedOutSession, undefined);
       yield* SubscriptionRef.update(state, (current) =>
         Option.isSome(current.data) && current.status !== "deleted" && Option.isNone(current.error)
           ? { ...current, status: "live" as const, error: Option.none() }
@@ -850,6 +864,41 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     );
   });
 
+  // Completion watchdog. A resumed subscription that asked for the
+  // "synchronized" marker and still lacks it after the timeout, on the same
+  // connected session, subscribes again from the latest applied sequence. If the
+  // retry also never confirms, the thread goes live with what it applied: the
+  // stream is still delivering events, only the marker is missing.
+  const watchdogScope = yield* Scope.Scope;
+  const watchdogResubscriptions = yield* Queue.unbounded<void>();
+  const completionWatchdog = yield* Ref.make<Fiber.Fiber<void> | undefined>(undefined);
+  const armCompletionWatchdog = Effect.fn("EnvironmentThreadState.armCompletionWatchdog")(
+    function* (session: RpcSession) {
+      const previous = yield* Ref.getAndSet(completionWatchdog, undefined);
+      if (previous !== undefined) yield* Fiber.interrupt(previous);
+      const watchdog = yield* Effect.gen(function* () {
+        yield* Effect.sleep(THREAD_RESUME_COMPLETION_TIMEOUT);
+        if (!(yield* Ref.get(awaitingCompletion))) return;
+        const currentSession = yield* SubscriptionRef.get(supervisor.session);
+        if (Option.isNone(currentSession) || currentSession.value !== session) return;
+        if ((yield* Ref.getAndSet(completionTimedOutSession, session)) === session) {
+          yield* Effect.logWarning(
+            "Thread resume never confirmed synchronization; showing applied events as live.",
+            { threadId },
+          );
+          yield* applyLock.withPermits(1)(applyItemLocked({ kind: "synchronized" }));
+          return;
+        }
+        yield* Effect.logWarning(
+          "Thread resume did not confirm synchronization in time; subscribing again.",
+          { threadId },
+        );
+        yield* Queue.offer(watchdogResubscriptions, undefined);
+      }).pipe(Effect.forkIn(watchdogScope));
+      yield* Ref.set(completionWatchdog, watchdog);
+    },
+  );
+
   yield* markSynchronizing;
   yield* Effect.forkScoped(
     subscribeDynamic(
@@ -944,6 +993,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           }));
         }
 
+        if (supportsCompletionMarker && canResume) {
+          yield* armCompletionWatchdog(session);
+        }
+
         return {
           threadId,
           ...(canResume ? { afterSequence: sequence } : {}),
@@ -955,7 +1008,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         onDefect: () => setStreamError("Could not synchronize the thread."),
         onExpectedFailure: (cause) => setStreamError(formatThreadError(cause)),
         retryExpectedFailureAfter: "250 millis",
-        resubscribe: foregroundResubscriptions,
+        resubscribe: Stream.merge(
+          foregroundResubscriptions,
+          Stream.fromQueue(watchdogResubscriptions),
+        ),
       },
     ).pipe(Stream.runForEachArray(applyItems)),
   );

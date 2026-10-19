@@ -3,7 +3,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import {
+  formatStorageFreeSpace,
   resolveEnvironmentMachineKind,
+  statfsBytes,
   ServerConfig,
   ServerObservability,
   ServerProvider,
@@ -193,6 +195,80 @@ describe("server config forward compatibility", () => {
     expect(parsed.usageLimits?.windows).toEqual([
       { id: "primary", kind: "session", label: "Session", usedPercent: 12 },
     ]);
+  });
+});
+
+describe("ServerConfig storage", () => {
+  const status = {
+    level: "low",
+    freeBytes: 3_200_000_000,
+    totalBytes: 994_662_584_320,
+    checkedAt: "2026-10-18T12:00:00.000Z",
+  };
+  const decodeStorage = Schema.decodeUnknownSync(
+    Schema.Struct({ storage: ServerConfig.fields.storage }),
+  );
+
+  it("decodes a server's storage status, and its absence from older servers", () => {
+    expect(decodeStorage({ storage: status })).toEqual({ storage: status });
+    expect(decodeStorage({})).toEqual({});
+  });
+
+  it("is ignored by a client whose config schema predates it", () => {
+    // Older clients decode the snapshot against a struct without the field.
+    const decodeOlderConfig = Schema.decodeUnknownSync(
+      Schema.Struct({ cwd: ServerConfig.fields.cwd }),
+    );
+    expect(decodeOlderConfig({ cwd: "/repo", storage: status })).toEqual({ cwd: "/repo" });
+  });
+
+  // A status this build cannot read must cost only the status: failing the
+  // config decode drops the config subscription, and the machine then reads
+  // as offline, the failure the field exists to explain.
+  it("drops a storage status this build cannot read instead of failing the config", () => {
+    const decodeConfig = Schema.decodeUnknownSync(
+      Schema.Struct({ cwd: ServerConfig.fields.cwd, storage: ServerConfig.fields.storage }),
+    );
+    expect(decodeConfig({ cwd: "/repo", storage: { ...status, level: "future" } })).toEqual({
+      cwd: "/repo",
+    });
+    expect(decodeConfig({ cwd: "/repo", storage: { ...status, freeBytes: 2 ** 60 } })).toEqual({
+      cwd: "/repo",
+    });
+  });
+
+  it("sends no storage status rather than failing to encode the config", () => {
+    const encodeConfig = Schema.encodeSync(
+      Schema.Struct({ cwd: ServerConfig.fields.cwd, storage: ServerConfig.fields.storage }),
+    );
+    expect(
+      encodeConfig({ cwd: "/repo", storage: { ...status, totalBytes: 2 ** 60 } } as never),
+    ).toEqual({
+      cwd: "/repo",
+    });
+    expect(encodeConfig({ cwd: "/repo", storage: status } as never)).toEqual({
+      cwd: "/repo",
+      storage: status,
+    });
+  });
+
+  it("caps statfs byte counts at the largest safe integer", () => {
+    expect(statfsBytes(1_000n, 4_096n)).toBe(4_096_000);
+    expect(statfsBytes(2n ** 52n, 4_096n)).toBe(Number.MAX_SAFE_INTEGER);
+    expect(statfsBytes(0n, 4_096n)).toBe(0);
+  });
+
+  it("formats free space the way a Mac shows it", () => {
+    expect(formatStorageFreeSpace(3_249_000_000)).toBe("3.2 GB");
+    expect(formatStorageFreeSpace(1_000_000_000)).toBe("1.0 GB");
+    expect(formatStorageFreeSpace(48_700_000_000)).toBe("49 GB");
+    expect(formatStorageFreeSpace(640_400_000)).toBe("640 MB");
+    expect(formatStorageFreeSpace(0)).toBe("0 MB");
+    // Rounded before the unit is picked.
+    expect(formatStorageFreeSpace(9_970_000_000)).toBe("10 GB");
+    expect(formatStorageFreeSpace(9_940_000_000)).toBe("9.9 GB");
+    expect(formatStorageFreeSpace(999_700_000)).toBe("1.0 GB");
+    expect(formatStorageFreeSpace(999_400_000)).toBe("999 MB");
   });
 });
 

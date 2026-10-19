@@ -4,7 +4,7 @@
  * machine accepts. `specweave-studio fleet invite` and Settings > Connections
  * both end here, so the two never disagree about what the line holds.
  */
-import { AuthAccessWriteScope } from "@specweave-studio/contracts";
+import { AuthAccessWriteScope, AuthStandardClientScopes } from "@specweave-studio/contracts";
 import type {
   StudioFleetInviteProblem,
   StudioFleetInviteResult,
@@ -29,6 +29,13 @@ import { publishOnTailscale, type TailscalePublishError } from "./tailscalePubli
 
 /** The label the owner sees in this machine's client list for the line's credential. */
 export const FLEET_INVITE_SESSION_LABEL = "Fleet management (fleet invite)";
+
+/**
+ * What the line's token holds: pairing here can only hand out scopes the token
+ * holds, so it carries every scope a connection from the primary may ask for,
+ * plus access:write to mint those pairings.
+ */
+export const FLEET_INVITE_SCOPES = [...AuthStandardClientScopes, AuthAccessWriteScope] as const;
 
 /** A year: the primary uses this token for every pairing on the machine, unattended. */
 export const DEFAULT_FLEET_INVITE_TTL = Duration.days(365);
@@ -57,7 +64,7 @@ export const issueFleetInvitation = Effect.fnUntraced(function* (input: {
   });
   const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
   const issued = yield* environmentAuth.issueSession({
-    scopes: [AuthAccessWriteScope],
+    scopes: [...FLEET_INVITE_SCOPES],
     label: FLEET_INVITE_SESSION_LABEL,
     ttl: input.ttl ?? DEFAULT_FLEET_INVITE_TTL,
   });

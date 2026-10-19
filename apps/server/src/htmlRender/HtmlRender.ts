@@ -21,13 +21,18 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import type * as Path from "effect/Path";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
+import {
+  agentProtectedPathsForConfig,
+  makeAgentPathGuard,
+  type AgentPathGuard,
+} from "../provider/AgentProtectedPaths.ts";
 import { createAttachmentId } from "../attachmentStore.ts";
 import { resolveRootCliCommand } from "../cli/invocation.ts";
 import * as ServerConfig from "../config.ts";
@@ -228,18 +233,28 @@ const afterDoctype = (text: string, from: number) => {
 };
 
 /** Replaces every local image reference with a data URI; unreadable paths stay as written. */
-const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (html: string) {
+const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (
+  html: string,
+  agentPathGuard: AgentPathGuard,
+) {
   const fileSystem = yield* FileSystem.FileSystem;
   const references = findLocalImages(html);
   const files = yield* Effect.forEach(
     [...new Set(references.map((reference) => reference.path))],
     (path) =>
-      fileSystem.stat(filePathFor(path)).pipe(
-        Effect.map((info) => ({
-          path,
-          size: info.type === "File" ? Number(info.size) : undefined,
-        })),
-        Effect.orElseSucceed(() => ({ path, size: undefined })),
+      // A credential store never reaches the page, also through a link named *.png.
+      agentPathGuard.isProtected(filePathFor(path)).pipe(
+        Effect.flatMap((isProtected) =>
+          isProtected
+            ? Effect.succeed({ path, size: undefined })
+            : fileSystem.stat(filePathFor(path)).pipe(
+                Effect.map((info) => ({
+                  path,
+                  size: info.type === "File" ? Number(info.size) : undefined,
+                })),
+                Effect.orElseSucceed(() => ({ path, size: undefined })),
+              ),
+        ),
       ),
     { concurrency: 8 },
   );
@@ -335,6 +350,12 @@ const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const config = yield* ServerConfig.ServerConfig;
   const previewBrowser = yield* PreviewBrowser.PreviewBrowser;
+  const pathOps = yield* Path.Path;
+  const agentPathGuard = makeAgentPathGuard(
+    fileSystem,
+    pathOps,
+    agentProtectedPathsForConfig(config, pathOps),
+  );
   const services = yield* Effect.context<
     FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
   >();
@@ -403,7 +424,9 @@ const make = Effect.gen(function* () {
 
   // The bootstrap goes in first so its head scan never runs over inlined image data.
   const inline = (html: string) =>
-    inlineLocalImages(injectHtmlRenderBootstrap(html)).pipe(Effect.provideContext(services));
+    inlineLocalImages(injectHtmlRenderBootstrap(html), agentPathGuard).pipe(
+      Effect.provideContext(services),
+    );
 
   const prepare = Effect.fn("HtmlRender.prepare")(function* (html: string) {
     const inlined = yield* inline(html);

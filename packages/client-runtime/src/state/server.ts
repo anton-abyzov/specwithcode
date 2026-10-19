@@ -36,10 +36,10 @@ import {
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
+import { isRpcClientErrorWithReason, type RpcClientErrorReasonTag } from "../errors/transport.ts";
 import * as Persistence from "../platform/persistence.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
 import {
-  isRpcClientError,
   request,
   runStream,
   subscribe,
@@ -313,19 +313,13 @@ export function serverUpdateFailureMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Server update failed.";
 }
 
-function isRpcSocketError(error: unknown): boolean {
-  if (!isRpcClientError(error)) {
-    return false;
-  }
-  switch (error.reason._tag) {
-    case "SocketReadError":
-    case "SocketWriteError":
-    case "SocketCloseError":
-      return true;
-    default:
-      return false;
-  }
-}
+// Lost update handoffs keep their original set: an open failure means the
+// update never reached the server, so it is not a handoff loss.
+const LEGACY_UPDATE_HANDOFF_LOSS_REASONS: ReadonlySet<RpcClientErrorReasonTag> = new Set([
+  "SocketReadError",
+  "SocketWriteError",
+  "SocketCloseError",
+]);
 
 export function isLegacyUpdateHandoffLoss(cause: Cause.Cause<unknown>): boolean {
   if (Cause.hasInterruptsOnly(cause)) {
@@ -333,7 +327,11 @@ export function isLegacyUpdateHandoffLoss(cause: Cause.Cause<unknown>): boolean 
   }
   return (
     cause.reasons.length > 0 &&
-    cause.reasons.every((reason) => Cause.isFailReason(reason) && isRpcSocketError(reason.error))
+    cause.reasons.every(
+      (reason) =>
+        Cause.isFailReason(reason) &&
+        isRpcClientErrorWithReason(reason.error, LEGACY_UPDATE_HANDOFF_LOSS_REASONS),
+    )
   );
 }
 

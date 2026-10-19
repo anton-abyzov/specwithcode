@@ -621,6 +621,58 @@ export const ServerDirectEndpoint = Schema.Struct({
 });
 export type ServerDirectEndpoint = typeof ServerDirectEndpoint.Type;
 
+/**
+ * How full the disk holding a machine's app data is, in the decimal units a
+ * Mac shows: `low` is under 5 GB free and `critical` under 1 GB. The server
+ * clears `low` only above 6 GB and `critical` only above 1.5 GB, so a disk
+ * hovering at a line does not flap. A level this build does not know drops
+ * the whole status rather than the config (see `ServerConfig.storage`).
+ */
+export const StorageStatusLevel = Schema.Literals(["ok", "low", "critical"]);
+export type StorageStatusLevel = typeof StorageStatusLevel.Type;
+
+export const StorageStatus = Schema.Struct({
+  level: StorageStatusLevel,
+  freeBytes: NonNegativeInt,
+  totalBytes: NonNegativeInt,
+  checkedAt: IsoDateTime,
+});
+export type StorageStatus = typeof StorageStatus.Type;
+
+/**
+ * A byte count from statfs as a wire-safe integer. Some network, FUSE and
+ * cloud mounts report capacities near 2^64, past what `NonNegativeInt`
+ * accepts, so the count is capped at `Number.MAX_SAFE_INTEGER` (8 PB).
+ */
+export function statfsBytes(blocks: bigint, blockSize: bigint): number {
+  const bytes = blocks * blockSize;
+  if (bytes <= 0n) return 0;
+  return bytes >= BigInt(Number.MAX_SAFE_INTEGER) ? Number.MAX_SAFE_INTEGER : Number(bytes);
+}
+
+/**
+ * Free space as people read it on a Mac (decimal units): "3.2 GB", "640 MB".
+ * One decimal under 10 GB, whole numbers above. Rounds before picking the
+ * unit, so 9.97 GB reads "10 GB" and 999.7 MB reads "1.0 GB".
+ */
+export function formatStorageFreeSpace(bytes: number): string {
+  const tenthsOfGigabyte = Math.round(bytes / 1e8);
+  if (tenthsOfGigabyte >= 100) return `${Math.round(bytes / 1e9)} GB`;
+  const megabytes = Math.max(0, Math.round(bytes / 1e6));
+  if (megabytes >= 1000) return `${(tenthsOfGigabyte / 10).toFixed(1)} GB`;
+  return `${megabytes} MB`;
+}
+
+/**
+ * The storage field of a config: a status this build cannot read or write
+ * (a newer level, an out-of-range count) drops the key instead of failing
+ * the whole config, which would read as the machine being offline.
+ */
+const BestEffortStorageStatus = StorageStatus.pipe(
+  Schema.catchDecoding(() => Effect.succeedNone),
+  Schema.catchEncoding(() => Effect.succeedNone),
+);
+
 export const ServerConfig = Schema.Struct({
   environment: ExecutionEnvironmentDescriptor,
   auth: ServerAuthDescriptor,
@@ -689,6 +741,14 @@ export const ServerConfig = Schema.Struct({
    * stays absent for subscribers that did not opt in.
    */
   usageLimitSources: Schema.optional(UsageLimitSourceSnapshots),
+  /**
+   * Free space on the disk holding this machine's app data. Absent on servers
+   * that predate the feature, before the first check, and when the status
+   * cannot be read. The server resends the snapshot when the level or the
+   * free space changes noticeably, so clients that predate the field just
+   * ignore it.
+   */
+  storage: Schema.optionalKey(BestEffortStorageStatus),
 });
 export type ServerConfig = typeof ServerConfig.Type;
 

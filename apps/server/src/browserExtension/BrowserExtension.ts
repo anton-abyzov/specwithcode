@@ -28,6 +28,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import { EXTENSION_VERSION } from "./extensionVersion.generated.ts";
 import { BrowserRelayHub, type RelaySocket } from "./relayHub.ts";
@@ -312,7 +313,13 @@ export const layer = Layer.effect(
   BrowserExtension,
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
-    return makeBrowserExtension({ stateDir: config.stateDir, port: config.port });
+    // The popup names this computer as the app does (its computer name), not by its host name.
+    const { label } = yield* (yield* ServerEnvironment.ServerEnvironment).getDescriptor;
+    return makeBrowserExtension({
+      stateDir: config.stateDir,
+      port: config.port,
+      machineName: label,
+    });
   }),
 );
 

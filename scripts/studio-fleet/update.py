@@ -39,6 +39,7 @@ from release_retention import prune_releases, prune_state_backups
 import database_continuity as continuity
 import live_database
 import settings_continuity
+from service_launch_agent import upgraded_service_plist
 import managed_updates
 import studio_paths
 
@@ -985,6 +986,27 @@ def wait_for_stopped(pid, timeout=30, *, port=8319):
         time.sleep(0.5)
     raise AssertionError('Owned service did not stop for the state restore')
 
+def restart_service(domain, label, plist, old, new, pid, port):
+    """Restart the service. `new` is a rewritten LaunchAgent (service_launch_agent): launchd
+    reads it only on bootstrap, so the job is booted out and bootstrapped again; otherwise
+    `kickstart -k`. The job is always loaded again, from the original file if launchd refuses
+    the rewritten one. Bounded to 135 s, inside the rollback reserve after a late restart."""
+    if new is None:
+        run(['/bin/launchctl', 'kickstart', '-k', domain + '/' + label])
+        return
+    mode = plist.stat().st_mode & 0o777
+    atomic(plist, new, mode)
+    try:
+        run(['/bin/launchctl', 'bootout', domain + '/' + label], timeout=45)
+        wait_for_stopped(pid, port=port)
+    finally:
+        try:
+            run(['/bin/launchctl', 'bootstrap', domain, str(plist)], timeout=30)
+        except BaseException:
+            atomic(plist, old, mode)
+            run(['/bin/launchctl', 'bootstrap', domain, str(plist)], timeout=30)
+            raise
+
 def assert_prestate(expected, actual, carried=None):
     for key in ['identity', 'uid', 'serviceLabel', 'servicePid', 'archiveSha256', 'artifactSourceCommit', 'fileHashes', 'rows', 'otherListenersOwned', 'cookieName', 'processQuiescence']:
         if key == 'rows':
@@ -1261,6 +1283,7 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         progress['stateBackupPruneError'] = prune_error
     output.write_text(json.dumps(progress, indent=2) + '\n')
     restart_requested = False
+    plist_hashes = {before['fileHashes']['plist']}  # Plus the rewritten LaunchAgent once written.
     state_backup = None
     after = None
     after_carried = None
@@ -1311,7 +1334,9 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
                 'The service restarted on its own before the update restarted it'
         assert_same_service_pid()
         plist = home / 'Library/LaunchAgents' / (before['serviceLabel'] + '.plist')
-        assert digest(plist.read_bytes()) == before['fileHashes']['plist'], 'Verified LaunchAgent changed before restart'
+        old_plist = plist.read_bytes()
+        assert digest(old_plist) == before['fileHashes']['plist'], 'Verified LaunchAgent changed before restart'
+        new_plist = upgraded_service_plist(old_plist)
         # Studio's own server browser is the one process stopped here (gracefully, verified).
         browser_stop = {}  # Filled as signals are sent, so a failure receipt names them too.
         try:
@@ -1340,7 +1365,10 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         progress['stateBackup'] = str(state_backup)
         output.write_text(json.dumps(progress, indent=2) + '\n')
         restart_requested = True
-        run(['/bin/launchctl', 'kickstart', '-k', domain + '/' + before['serviceLabel']])
+        if new_plist is not None:
+            plist_hashes.add(digest(new_plist))
+            progress['serviceLaunchAgent'] = 'process-type-interactive-added'
+        restart_service(domain, before['serviceLabel'], plist, old_plist, new_plist, before['servicePid'], port)
         # One reading can take a minute when the process inventory times out and retries, so
         # the loop is bounded by time, not attempts: the rollback must finish well inside the
         # update agent's APPLY_TIMEOUT (900 s), which kills the helper outright.
@@ -1433,7 +1461,8 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
             assert after['otherListeners'] == before['otherListeners']
         assert after['cookieName'] == before['cookieName']
         assert after['fileHashes']['environment'] == before['fileHashes']['environment'], 'Environment identity changed after restart'
-        assert after['fileHashes']['plist'] == before['fileHashes']['plist'], 'Service LaunchAgent changed after restart'
+        assert after['fileHashes']['plist'] == (digest(new_plist) if new_plist is not None else before['fileHashes']['plist']), \
+            'Service LaunchAgent changed after restart'
         # A release may rewrite settings.json once on start (a one-time migration); the values
         # the user set must survive it. Environment identity and the LaunchAgent stay exact.
         settings_continuity_report = settings_preserved(before, after)
@@ -1453,6 +1482,8 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
             # Names only: which protected tables gained which empty columns.
             result['migrationAddedColumns'] = {table: [column[1] for column in widening['added']]
                                                for table, widening in sorted(widenings.items())}
+        if 'serviceLaunchAgent' in progress:
+            result['serviceLaunchAgent'] = progress['serviceLaunchAgent']
         if 'serverBrowserStop' in progress:
             result['serverBrowserStop'] = progress['serverBrowserStop']
         if 'cliAliasKeptAside' in progress:
@@ -1482,7 +1513,7 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         # A failed proof never authorizes killing native work that appeared meanwhile.
         try:
             plist = home / 'Library/LaunchAgents' / (before['serviceLabel'] + '.plist')
-            assert digest(plist.read_bytes()) == before['fileHashes']['plist']
+            assert digest(plist.read_bytes()) in plist_hashes
             if restart_requested:
                 try:
                     owned = snapshot(identity)  # Exact current owned PID/release + idle before any rollback stop.
@@ -1530,7 +1561,7 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
                 rows_snapshot(own / 'userdata')
                 live = run(['/bin/launchctl', 'print', domain + '/' + before['serviceLabel']], text=True)
                 assert re.search(r'^\s*pid = ' + str(owned['servicePid']) + r'\s*$', live, re.M)
-                assert digest(plist.read_bytes()) == before['fileHashes']['plist'], 'Verified LaunchAgent changed before rollback'
+                assert digest(plist.read_bytes()) in plist_hashes, 'Verified LaunchAgent changed before rollback'
                 rollback_browser_stop = {}
                 try:
                     stopped = assert_quiescence(owned['processQuiescence'], receipt['node'], ['/usr/bin/caffeinate', '-s', str(own / 'launch.sh')],

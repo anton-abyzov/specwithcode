@@ -30,7 +30,8 @@ export function usesChatGptSharing(provider: ServerProvider | null | undefined):
   return provider?.auth.status === "authenticated" && provider.auth.subscriptionSharing === true;
 }
 
-export const CURSOR_USAGE_WINDOWS = [
+/** Earlier Cursor plans report two monthly pools plus their combined percentage. */
+export const CURSOR_LEGACY_USAGE_WINDOWS = [
   {
     id: "totalPercentUsed",
     label: "Overall",
@@ -39,13 +40,25 @@ export const CURSOR_USAGE_WINDOWS = [
   {
     id: "autoPercentUsed",
     label: "Cursor Models",
-    description: "Grok and Composer use this first. Auto can use either pool.",
+    description:
+      "Earlier Cursor plans. Grok and Composer use this first. Auto can use either pool.",
   },
   {
     id: "apiPercentUsed",
     label: "Other Models",
-    description: "Claude, GPT, and Gemini use this pool. Grok and Composer fall back here.",
+    description:
+      "Earlier Cursor plans. Claude, GPT, and Gemini use this pool. Grok and Composer fall back here.",
   },
+] as const;
+
+export const CURSOR_USAGE_WINDOWS = [
+  {
+    id: "includedPool",
+    label: "Included usage",
+    description:
+      "The X Subscription pool, shared with the Grok apps and X. Claude, GPT, and Gemini bill prepaid credit instead.",
+  },
+  ...CURSOR_LEGACY_USAGE_WINDOWS,
 ] as const;
 
 export function cursorUsageWindowDetails(id: string) {

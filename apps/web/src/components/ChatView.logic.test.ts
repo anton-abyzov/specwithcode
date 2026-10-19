@@ -3,6 +3,7 @@ import {
   isSettledRunStatus,
   resolveVisibleWorktreeSetup,
 } from "./ChatView.logic";
+import { environmentUnavailableBanner, environmentWaitsForReconnectGrace } from "./ChatView.logic";
 import {
   recallCheckoutIsRepo,
   rememberCheckoutIsRepo,
@@ -2219,5 +2220,89 @@ describe("waitForRevertedMessage", () => {
     await vi.advanceTimersByTimeAsync(50);
     await settled;
     vi.useRealTimers();
+  });
+});
+
+describe("environmentUnavailableBanner", () => {
+  const stall = {
+    phase: "reconnecting" as const,
+    error:
+      "Environment endpoint http://127.0.0.1:8319/.well-known/studio/environment timed out after 10000ms.",
+  };
+
+  it("gives this machine one calm line, without a failure, reason or retry", () => {
+    for (const phase of ["connecting", "reconnecting", "offline", "available"] as const) {
+      const banner = environmentUnavailableBanner({
+        label: "Anton's MacBook M4MAX (149)",
+        connection: { ...stall, phase },
+        isThisMachine: true,
+      });
+      expect(banner.calm).toBe(true);
+      expect(banner.variant).toBe("info");
+      expect(banner.title).toBe("SpecWithCode on this Mac is busy");
+      expect(banner.status.reason).toBeNull();
+      expect(banner.status.retryable).toBe(false);
+      expect(banner.waitsForGrace).toBe(true);
+    }
+  });
+
+  it("keeps Connection failed for a stopped connection on this machine", () => {
+    const banner = environmentUnavailableBanner({
+      label: "M4",
+      connection: { phase: "error", error: "Sign in again." },
+      isThisMachine: true,
+    });
+    expect(banner.calm).toBe(false);
+    expect(banner.variant).toBe("error");
+    expect(banner.title).not.toMatch(/Can't reach|offline/);
+    expect(banner.status.text).toBe("Connection failed");
+    expect(banner.status.retryable).toBe(true);
+  });
+
+  it("keeps today's warning for another machine", () => {
+    const banner = environmentUnavailableBanner({
+      label: "M1",
+      connection: stall,
+      isThisMachine: false,
+    });
+    expect(banner.calm).toBe(false);
+    expect(banner.variant).toBe("warning");
+    expect(banner.title).toBe("Can't reach M1");
+    expect(banner.status.reason).toBe(stall.error);
+    expect(banner.status.retryable).toBe(true);
+    expect(
+      environmentUnavailableBanner({
+        label: "M1",
+        connection: { phase: "offline", error: null },
+        isThisMachine: false,
+      }).waitsForGrace,
+    ).toBe(false);
+  });
+});
+
+describe("environmentWaitsForReconnectGrace", () => {
+  it("runs the grace timer for this machine in every catching-up phase", () => {
+    // The banner waits for the grace in "available" too, so the timer must run
+    // there or the calm banner would never show.
+    for (const phase of ["connecting", "reconnecting", "offline", "available"] as const) {
+      expect(environmentWaitsForReconnectGrace(phase, true)).toBe(true);
+      expect(
+        environmentUnavailableBanner({
+          label: "This Mac",
+          connection: { phase, error: null },
+          isThisMachine: true,
+        }).waitsForGrace,
+      ).toBe(environmentWaitsForReconnectGrace(phase, true));
+    }
+    expect(environmentWaitsForReconnectGrace("error", true)).toBe(false);
+    expect(environmentWaitsForReconnectGrace("unsupported", true)).toBe(false);
+  });
+
+  it("keeps today's grace for another machine", () => {
+    expect(environmentWaitsForReconnectGrace("connecting", false)).toBe(true);
+    expect(environmentWaitsForReconnectGrace("reconnecting", false)).toBe(true);
+    for (const phase of ["offline", "available", "error", "unsupported", "connected"] as const) {
+      expect(environmentWaitsForReconnectGrace(phase, false)).toBe(false);
+    }
   });
 });

@@ -1,6 +1,7 @@
 import {
   DEFAULT_SERVER_SETTINGS,
   type EditorId,
+  type EnvironmentId,
   type EnvironmentTheme,
   type ServerConfig,
   type ServerConfigStreamEvent,
@@ -8,6 +9,7 @@ import {
   type ServerLifecycleWelcomePayload,
   type ServerProvider,
   type ServerSettings,
+  type StorageStatus,
 } from "@specweave-studio/contracts";
 import { createServerEnvironmentAtoms } from "@specweave-studio/client-runtime/state/server";
 import { createOutdatedServerUpdateCommand } from "@specweave-studio/client-runtime/state/outdatedServerUpdate";
@@ -39,6 +41,40 @@ export const environmentServerConfigsAtom = createEnvironmentServerConfigsAtom({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   serverConfigValueAtom: serverEnvironment.configValueAtom,
 });
+
+/** The last storage status one environment's machine reported. */
+export interface EnvironmentStorageStatus {
+  readonly environmentId: EnvironmentId;
+  readonly os: string;
+  readonly storage: StorageStatus;
+}
+
+const EMPTY_STORAGE_STATUSES: ReadonlyArray<EnvironmentStorageStatus> = [];
+const storageStatusesKey = (statuses: ReadonlyArray<EnvironmentStorageStatus>) =>
+  statuses
+    .map(({ environmentId, storage }) => `${environmentId}:${storage.level}:${storage.freeBytes}`)
+    .join("\n");
+
+/**
+ * Storage reported by every enabled environment. The config keeps the last
+ * report through a disconnect (and across launches, through the config
+ * cache), so a machine that stopped answering because its disk filled up
+ * still says why. Stable until a status changes, as every other config
+ * update would otherwise re-render the banner.
+ */
+export const environmentStorageStatusesAtom = (() => {
+  let previous = EMPTY_STORAGE_STATUSES;
+  return Atom.make((get): ReadonlyArray<EnvironmentStorageStatus> => {
+    const next: Array<EnvironmentStorageStatus> = [];
+    for (const [environmentId, config] of get(environmentServerConfigsAtom)) {
+      if (config.storage === undefined) continue;
+      next.push({ environmentId, os: config.environment.platform.os, storage: config.storage });
+    }
+    if (storageStatusesKey(next) === storageStatusesKey(previous)) return previous;
+    previous = next.length === 0 ? EMPTY_STORAGE_STATUSES : next;
+    return previous;
+  }).pipe(Atom.withLabel("web-environment-storage-statuses"));
+})();
 
 interface PrimaryServerState {
   readonly config: ServerConfig | null;

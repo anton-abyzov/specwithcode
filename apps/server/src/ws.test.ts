@@ -104,6 +104,80 @@ it.effect("resends late editors without rolling back updates already sent", () =
   }),
 );
 
+const storage = (level: "ok" | "low" | "critical", freeBytes: number) => ({
+  level,
+  freeBytes,
+  totalBytes: 994_000_000_000,
+  checkedAt: "2026-10-18T12:00:00.000Z",
+});
+const noEditorChange = {
+  resolveAvailableEditors: () => Effect.succeed([]),
+  resolveFileManagerRevealKind: () => Effect.succeed(undefined),
+};
+
+it.effect("resends the snapshot only when the storage status reads differently", () =>
+  Effect.gen(function* () {
+    const settingsSent = yield* Deferred.make<void>();
+    const events = yield* withLateEditorConfig(
+      snapshotConfig({ storage: storage("ok", 80_000_000_000) }),
+      Stream.make(settingsUpdated({ enableProviderUpdateChecks: false })),
+      noEditorChange,
+      // Waits for the settings change, so the resent snapshot must carry it.
+      Stream.fromEffect(Deferred.await(settingsSent)).pipe(
+        Stream.flatMap(() =>
+          Stream.make(
+            // The current status, as the monitor replays it on subscribe.
+            storage("ok", 80_000_000_000),
+            storage("ok", 70_000_000_000),
+            storage("low", 3_210_000_000),
+            storage("low", 3_240_000_000),
+            storage("low", 2_900_000_000),
+            storage("critical", 600_000_000),
+          ),
+        ),
+      ),
+    ).pipe(
+      Stream.tap((event) =>
+        event.type === "settingsUpdated" ? Deferred.succeed(settingsSent, undefined) : Effect.void,
+      ),
+      Stream.runCollect,
+    );
+
+    const snapshots = Array.from(events).flatMap((event) =>
+      event.type === "snapshot" ? [event.config] : [],
+    );
+    assert.deepEqual(
+      snapshots.map((config) => [config.storage?.level, config.storage?.freeBytes]),
+      [
+        ["low", 3_210_000_000],
+        ["low", 2_900_000_000],
+        ["critical", 600_000_000],
+      ],
+    );
+    for (const config of snapshots) {
+      assert.deepEqual(config.settings, { enableProviderUpdateChecks: false } as never);
+    }
+  }),
+);
+
+it.effect("sends the first storage status a snapshot went out without", () =>
+  Effect.gen(function* () {
+    const events = yield* withLateEditorConfig(
+      snapshotConfig({}),
+      Stream.empty,
+      noEditorChange,
+      Stream.make(storage("ok", 80_000_000_000)),
+    ).pipe(Stream.runCollect);
+
+    const [late] = Array.from(events);
+    assert.equal(events.length, 1);
+    assert.equal(late?.type, "snapshot");
+    if (late?.type === "snapshot") {
+      assert.deepEqual(late.config.storage, storage("ok", 80_000_000_000));
+    }
+  }),
+);
+
 it.effect("sends no late snapshot when the scan matches the snapshot", () =>
   Effect.gen(function* () {
     const events = yield* withLateEditorConfig(

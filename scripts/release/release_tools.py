@@ -476,6 +476,22 @@ def stage1_fleet_dirs(roots, limit=3):
     return [path for _mtime, path in sorted(found, reverse=True)[:limit]]
 
 
+OBJECT_ID = re.compile(r'(?<![0-9a-f])[0-9a-f]{40}(?![0-9a-f])')
+
+
+def pinned_objects(root):
+    """Every 40-hex object id written in the .mjs, .js and .json files under ROOT (not
+    node_modules), sorted and unique: the commits and blobs the stage-1 audits read with git."""
+    root = pathlib.Path(root)
+    found = set()
+    if root.is_dir():
+        for path in root.rglob('*'):
+            if 'node_modules' in path.parts or path.suffix not in ('.mjs', '.js', '.json') or not path.is_file():
+                continue
+            found.update(OBJECT_ID.findall(path.read_text(errors='replace')))
+    return sorted(found)
+
+
 # ---------------------------------------------------------------- command line
 
 def main(argv=None):
@@ -519,6 +535,8 @@ def main(argv=None):
     command.add_argument('names', nargs='*')
     command = commands.add_parser('stage1-fleet-dirs')
     command.add_argument('--history', action='append', default=[])
+    command = commands.add_parser('pinned-objects')
+    command.add_argument('root')
     command = commands.add_parser('timing')
     command.add_argument('action', choices=('record', 'attempts', 'summary', 'compare', 'retry', 'retries'))
     command.add_argument('--file')
@@ -615,6 +633,9 @@ def main(argv=None):
         elif args.command == 'stage1-fleet-dirs':
             for path in stage1_fleet_dirs(args.history):
                 print(path)
+        elif args.command == 'pinned-objects':
+            for object_id in pinned_objects(args.root):
+                print(object_id)
         elif args.command == 'json-get':
             value = json.loads(pathlib.Path(args.file).read_text()).get(args.key)
             if value is None:

@@ -163,6 +163,8 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
       target: ConnectionTarget,
     ) => Effect.Effect<ConnectionBlockedError | undefined>;
     readonly initialDisabled?: ReadonlyArray<EnvironmentId>;
+    /** The client surface the registry runs in; no presentation when omitted. */
+    readonly surface?: "desktop" | "web";
   },
 ) {
   const storedTargets = yield* Ref.make<ReadonlyArray<ConnectionTarget>>(initialTargets);
@@ -453,6 +455,14 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
         Layer.succeed(ConnectionDriver.ConnectionDriver, driver),
         layerCache,
         Layer.succeed(Persistence.EnvironmentOwnedDataCleanup, ownedDataCleanup),
+        options?.surface === undefined
+          ? Layer.empty
+          : Layer.succeed(
+              ClientCapabilities.ClientPresentation,
+              ClientCapabilities.ClientPresentation.of({
+                metadata: { surface: options.surface },
+              }),
+            ),
       ),
     ),
   );
@@ -602,6 +612,53 @@ describe("EnvironmentRegistry", () => {
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );
+
+  describe("the primary at a loopback address", () => {
+    const LOOPBACK_PRIMARY = new PrimaryConnectionTarget({
+      environmentId: TARGET.environmentId,
+      label: TARGET.label,
+      httpBaseUrl: "http://127.0.0.1:8319",
+      wsBaseUrl: "ws://127.0.0.1:8319",
+    });
+
+    it.effect("connects on the desktop while the network reports offline", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness([LOOPBACK_PRIMARY], [], [], { surface: "desktop" });
+        yield* SubscriptionRef.set(harness.networkStatus, "offline");
+
+        yield* Effect.gen(function* () {
+          const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+          yield* registry.start;
+          const state = yield* awaitConnectionState(
+            registry,
+            TARGET.environmentId,
+            (current) => current.phase === "connected",
+          );
+          expect(state.network).toBe("offline");
+        }).pipe(Effect.provide(harness.layer), Effect.scoped);
+      }),
+    );
+
+    // A browser tab at a loopback address can be an SSH port forward to a
+    // remote machine, so it keeps the remote policy.
+    it.effect("parks offline in a browser while the network reports offline", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness([LOOPBACK_PRIMARY], [], [], { surface: "web" });
+        yield* SubscriptionRef.set(harness.networkStatus, "offline");
+
+        yield* Effect.gen(function* () {
+          const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+          yield* registry.start;
+          yield* awaitConnectionState(
+            registry,
+            TARGET.environmentId,
+            (current) => current.phase === "offline",
+          );
+          expect(yield* Ref.get(harness.sessions)).toHaveLength(0);
+        }).pipe(Effect.provide(harness.layer), Effect.scoped);
+      }),
+    );
+  });
 
   it.effect("starts persisted environments independently", () =>
     Effect.gen(function* () {

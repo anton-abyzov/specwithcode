@@ -3,6 +3,7 @@ import * as FS from "node:fs";
 import * as OS from "node:os";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Native disk fixtures prove the legacy-root link rule.
 import * as Path from "node:path";
+import { AuthAdministrativeScopes } from "@specweave-studio/contracts";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import {
@@ -242,6 +243,13 @@ describe("buildPairArgs", () => {
       "2m",
       "--label",
       "Desktop",
+      ...AuthAdministrativeScopes.flatMap((scope) => ["--scope", scope]),
     ]);
+  });
+
+  it("asks for the access scopes Settings needs to pair phones and other clients", () => {
+    const args = buildPairArgs({ baseDir: "/Users/a/.specweave-studio", label: "Desktop" });
+    expect(args).toContain("access:read");
+    expect(args).toContain("access:write");
   });
 });

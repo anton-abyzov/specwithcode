@@ -804,7 +804,11 @@ export default function StudioSidebar() {
                           thread.modelSelection.instanceId,
                           thread.modelSelection.model,
                         );
-                        const hostOffline = unreachable.has(thread.environmentId);
+                        // This machine is never offline (see isEnvironmentUnreachable);
+                        // the check here keeps its chats from ever showing it.
+                        const hostOffline =
+                          thread.environmentId !== primaryEnvironmentId &&
+                          unreachable.has(thread.environmentId);
                         const tone = threadTone(thread, hostOffline);
                         // A chat names its machine when it is not this one, and
                         // says when that machine can't be reached.

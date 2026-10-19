@@ -67,6 +67,33 @@ export class ConnectionResolver extends Context.Service<
   }
 >()("@specweave-studio/client-runtime/connection/resolver/ConnectionResolver") {}
 
+/**
+ * What a broker hands back: the prepared connection, and the environment
+ * descriptor when authorizing it fetched and checked one during this connect,
+ * so the resolver does not fetch the same descriptor a second time.
+ */
+interface BrokeredConnection {
+  readonly prepared: PreparedConnection;
+  readonly descriptor: ExecutionEnvironmentDescriptor | undefined;
+}
+
+function brokered(
+  authorized: RemoteEnvironmentAuthorization.AuthorizedRemoteEnvironment,
+  target: ConnectionTarget,
+): BrokeredConnection {
+  return {
+    prepared: {
+      environmentId: authorized.environmentId,
+      label: authorized.label,
+      httpBaseUrl: authorized.httpBaseUrl,
+      socketUrl: authorized.socketUrl,
+      httpAuthorization: authorized.httpAuthorization,
+      target,
+    },
+    descriptor: authorized.descriptor,
+  };
+}
+
 const isBearerProfile = Schema.is(BearerConnectionProfile);
 const isSshProfile = Schema.is(SshConnectionProfile);
 const isBearerCredential = Schema.is(BearerConnectionCredential);
@@ -94,13 +121,16 @@ const makePrimaryBroker = Effect.fn("clientRuntime.connection.broker.makePrimary
     const bearerToken = yield* auth.bearerToken;
     if (Option.isNone(bearerToken)) {
       return {
-        environmentId: target.environmentId,
-        label: target.label,
-        httpBaseUrl: target.httpBaseUrl,
-        socketUrl: primarySocketUrl(target, presentation.metadata),
-        httpAuthorization: null,
-        target,
-      } satisfies PreparedConnection;
+        prepared: {
+          environmentId: target.environmentId,
+          label: target.label,
+          httpBaseUrl: target.httpBaseUrl,
+          socketUrl: primarySocketUrl(target, presentation.metadata),
+          httpAuthorization: null,
+          target,
+        },
+        descriptor: undefined,
+      } satisfies BrokeredConnection;
     }
 
     const authorized = yield* remote.authorizeBearer({
@@ -110,10 +140,7 @@ const makePrimaryBroker = Effect.fn("clientRuntime.connection.broker.makePrimary
       bearerToken: bearerToken.value,
       connectionMethod: "direct",
     });
-    return {
-      ...authorized,
-      target,
-    } satisfies PreparedConnection;
+    return brokered(authorized, target);
   });
 });
 
@@ -145,7 +172,7 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
         expectedEnvironmentId: target.environmentId,
         directEndpoint: { httpBaseUrl: profile.httpBaseUrl, wsBaseUrl: profile.wsBaseUrl },
       });
-      return { ...authorized, target } satisfies PreparedConnection;
+      return brokered(authorized, target);
     }
     // A learned route borrows the credential of the route it was learned from.
     const credential = yield* credentials.get(credentialConnectionId(target.connectionId)).pipe(
@@ -166,14 +193,7 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
       bearerToken: credential.token,
       connectionMethod: "direct",
     });
-    return {
-      environmentId: authorized.environmentId,
-      label: authorized.label,
-      httpBaseUrl: authorized.httpBaseUrl,
-      socketUrl: authorized.socketUrl,
-      httpAuthorization: authorized.httpAuthorization,
-      target,
-    } satisfies PreparedConnection;
+    return brokered(authorized, target);
   });
 });
 
@@ -185,14 +205,7 @@ const makeRelayBroker = Effect.fn("clientRuntime.connection.broker.makeRelay")(f
       const authorized = yield* remote.authorizeDpop({
         expectedEnvironmentId: target.environmentId,
       });
-      return {
-        environmentId: authorized.environmentId,
-        label: authorized.label,
-        httpBaseUrl: authorized.httpBaseUrl,
-        socketUrl: authorized.socketUrl,
-        httpAuthorization: authorized.httpAuthorization,
-        target,
-      } satisfies PreparedConnection;
+      return brokered(authorized, target);
     },
     Effect.withSpan("clientRuntime.connection.broker.relay"),
     withRelayClientTracing,
@@ -249,14 +262,7 @@ const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(funct
       bearerToken: prepared.bearerToken,
       connectionMethod: "ssh",
     });
-    return {
-      environmentId: authorized.environmentId,
-      label: authorized.label,
-      httpBaseUrl: authorized.httpBaseUrl,
-      socketUrl: authorized.socketUrl,
-      httpAuthorization: authorized.httpAuthorization,
-      target,
-    } satisfies PreparedConnection;
+    return brokered(authorized, target);
   });
 });
 
@@ -276,7 +282,7 @@ export const make = Effect.gen(function* () {
       "connection.environment.id": target.environmentId,
       "connection.target.kind": target._tag,
     });
-    const prepared = yield* (() => {
+    const brokeredConnection: BrokeredConnection = yield* (() => {
       switch (target._tag) {
         case "PrimaryConnectionTarget":
           return primary(target);
@@ -288,12 +294,19 @@ export const make = Effect.gen(function* () {
           return ssh({ ...entry, target });
       }
     })();
-    const descriptor = yield* fetchRemoteEnvironmentDescriptor({
-      httpBaseUrl: prepared.httpBaseUrl,
-    }).pipe(
-      Effect.mapError(mapRemoteEnvironmentError),
-      Effect.provideService(HttpClient.HttpClient, httpClient),
-    );
+    const prepared = brokeredConnection.prepared;
+    // Reuse the descriptor authorization fetched at this address during this
+    // connect; fetch one when it did not (a primary without a bearer token, a
+    // Studio Connect authorization, or a check that reused a cached
+    // descriptor, which may predate a restart onto another protocol).
+    const descriptor =
+      brokeredConnection.descriptor ??
+      (yield* fetchRemoteEnvironmentDescriptor({
+        httpBaseUrl: prepared.httpBaseUrl,
+      }).pipe(
+        Effect.mapError(mapRemoteEnvironmentError),
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+      ));
     if (descriptor.environmentId !== target.environmentId) {
       return yield* environmentMismatchError({
         expected: target.environmentId,

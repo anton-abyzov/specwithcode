@@ -11,6 +11,7 @@ import * as Option from "effect/Option";
 import { useMemo } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
+import { isThisMachineTarget } from "../connection/desktopLocal";
 import {
   environmentPresentations,
   environmentSummaries,
@@ -115,16 +116,38 @@ export function useConnectedEnvironmentIds() {
  * Hosts that cannot be reached now: retrying, stopped or refused. A host on its
  * first connection attempt is not one yet, so a page load does not flash every
  * remote host as offline.
+ *
+ * This machine is never offline: its server shares this device, so a slow or
+ * dropped answer means the app is busy (a stalled event loop, a full disk) and
+ * catches up on its own. It counts only once the connection has stopped for
+ * good ("error") or this build cannot talk to it ("unsupported").
  */
-export function isEnvironmentUnreachable(phase: EnvironmentConnectionPhase): boolean {
+export function isEnvironmentUnreachable(
+  phase: EnvironmentConnectionPhase,
+  isThisMachine = false,
+): boolean {
+  if (isThisMachine) return phase === "error" || phase === "unsupported";
   return phase !== "connected" && phase !== "connecting";
+}
+
+/** The ids of {@link isEnvironmentUnreachable} environments, this machine judged as local. */
+export function unreachableEnvironmentIds(
+  environments: ReadonlyArray<
+    Pick<EnvironmentPresentation, "environmentId" | "entry" | "connection">
+  >,
+): ReadonlyArray<EnvironmentId> {
+  return environments
+    .filter((environment) =>
+      isEnvironmentUnreachable(
+        environment.connection.phase,
+        isThisMachineTarget(environment.entry),
+      ),
+    )
+    .map((environment) => environment.environmentId);
 }
 
 export function useUnreachableEnvironmentIds(): ReadonlySet<string> {
   const { environments } = useEnvironments();
-  const key = environments
-    .filter((environment) => isEnvironmentUnreachable(environment.connection.phase))
-    .map((environment) => environment.environmentId)
-    .join("\n");
+  const key = unreachableEnvironmentIds(environments).join("\n");
   return useMemo(() => new Set(key === "" ? [] : key.split("\n")), [key]);
 }

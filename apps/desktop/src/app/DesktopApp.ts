@@ -5,6 +5,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
+import { formatStorageFreeSpace } from "@specweave-studio/contracts";
 import * as NetService from "@specweave-studio/shared/Net";
 import * as Crypto from "effect/Crypto";
 import * as Electron from "electron";
@@ -67,10 +68,17 @@ export class DesktopLocalServiceUnresponsiveError extends Schema.TaggedError<Des
     pid: Schema.Int,
     origin: Schema.String,
     stateDir: Schema.String,
+    /** The home disk, set only when it is nearly full. */
+    lowDisk: Schema.optional(Schema.Struct({ freeBytes: Schema.Int, onMac: Schema.Boolean })),
   },
 ) {
   override get message(): string {
-    return `Another SpecWithCode process (pid ${this.pid}) owns ${this.stateDir} but does not answer at ${this.origin}. Wait for it to finish starting or stop it, then open the app again. Starting a second server on the same data could damage it.`;
+    const unresponsive = `Another SpecWithCode process (pid ${this.pid}) owns ${this.stateDir} but does not answer at ${this.origin}.`;
+    if (this.lowDisk !== undefined) {
+      const machine = this.lowDisk.onMac ? "This Mac" : "This computer";
+      return `${machine} is almost out of disk space (${formatStorageFreeSpace(this.lowDisk.freeBytes)} free), which is the likely reason SpecWithCode does not respond. ${unresponsive} Free some space, then open the app again. Starting a second server on the same data could damage it.`;
+    }
+    return `${unresponsive} Wait for it to finish starting or stop it, then open the app again. Starting a second server on the same data could damage it.`;
   }
 }
 
@@ -227,6 +235,14 @@ const bootstrap = Effect.gen(function* () {
         pid: discovery.runtime.pid,
         origin: discovery.runtime.origin,
         stateDir: discovery.stateDir,
+        ...(discovery.lowDiskFreeBytes === undefined
+          ? {}
+          : {
+              lowDisk: {
+                freeBytes: discovery.lowDiskFreeBytes,
+                onMac: environment.platform === "darwin",
+              },
+            }),
       });
     }
     if (discovery._tag === "running") {

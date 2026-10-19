@@ -575,34 +575,37 @@ describe("environment RPC", () => {
   );
 
   it.effect.each(["input", "stream"] as const)(
-    "does not classify %s subscription defects as expected failures",
+    "retries %s subscription defects without classifying them as expected failures",
     (where) =>
       Effect.gen(function* () {
         const defect = new Error("subscription invariant failed");
         let expectedFailureCount = 0;
         let inputs = 0;
         let streams = 0;
-        const observedDefects: unknown[] = [];
+        const observedDefects = yield* Queue.unbounded<unknown>();
         const client = {
           [WS_METHODS.subscribeTerminalEvents]: () => {
             streams += 1;
-            return where === "stream" ? Stream.die(defect) : Stream.never;
+            return where === "stream" && streams === 1 ? Stream.die(defect) : Stream.never;
           },
         } as unknown as WsRpcProtocolClient;
         const { activeSession, supervisor } = yield* makeHarness();
 
         yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
-        const exit = yield* subscribeDynamicWithSession(
+        const fiber = yield* subscribeDynamicWithSession(
           WS_METHODS.subscribeTerminalEvents,
           () =>
             Effect.sync(() => {
               inputs += 1;
-            }).pipe(Effect.andThen(where === "input" ? Effect.die(defect) : Effect.succeed({}))),
+              return inputs;
+            }).pipe(
+              Effect.flatMap((attempt) =>
+                where === "input" && attempt === 1 ? Effect.die(defect) : Effect.succeed({}),
+              ),
+            ),
           {
             onDefect: (cause) =>
-              Effect.sync(() => {
-                observedDefects.push(Cause.squash(cause));
-              }),
+              Queue.offer(observedDefects, Cause.squash(cause)).pipe(Effect.asVoid),
             onExpectedFailure: () =>
               Effect.sync(() => {
                 expectedFailureCount += 1;
@@ -612,25 +615,169 @@ describe("environment RPC", () => {
         ).pipe(
           Stream.runDrain,
           Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-          Effect.exit,
+          Effect.forkChild,
         );
 
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          expect(Cause.hasDies(exit.cause)).toBe(true);
-          expect(Cause.squash(exit.cause)).toBe(defect);
-        }
+        expect(yield* Queue.take(observedDefects)).toBe(defect);
+        // Reported once, never as an expected failure, and the subscription
+        // stays alive instead of ending for good.
+        expect(fiber.pollUnsafe()).toBeUndefined();
         expect(inputs).toBe(1);
         expect(streams).toBe(where === "input" ? 0 : 1);
         expect(expectedFailureCount).toBe(0);
-        expect(observedDefects).toEqual([defect]);
+
+        yield* TestClock.adjust("250 millis");
+        for (let attempt = 0; attempt < 100 && inputs < 2; attempt += 1) {
+          yield* Effect.yieldNow;
+        }
+        for (let attempt = 0; attempt < 10; attempt += 1) {
+          yield* Effect.yieldNow;
+        }
+
+        expect(inputs).toBe(2);
+        expect(streams).toBe(where === "input" ? 1 : 2);
+        expect(Option.isNone(yield* Queue.poll(observedDefects))).toBe(true);
+        expect(expectedFailureCount).toBe(0);
+        expect(fiber.pollUnsafe()).toBeUndefined();
+        yield* Fiber.interrupt(fiber);
       }),
+  );
+
+  it.effect("retries a protocol defect on the same live session after the backoff", () =>
+    Effect.gen(function* () {
+      const decodeFailure = new RpcClientError.RpcClientError({
+        reason: new RpcClientError.RpcClientDefect({
+          message: "Error decoding message",
+          cause: new Error("bad frame"),
+        }),
+      });
+      const subscriptions = yield* Queue.unbounded<number>();
+      const observedDefects = yield* Queue.unbounded<unknown>();
+      let attempts = 0;
+      let expectedFailureCount = 0;
+      const client = {
+        [WS_METHODS.subscribeTerminalEvents]: () =>
+          Stream.unwrap(
+            Effect.sync(() => {
+              attempts += 1;
+              return attempts;
+            }).pipe(
+              Effect.tap((attempt) => Queue.offer(subscriptions, attempt)),
+              Effect.map((attempt) => (attempt === 1 ? Stream.fail(decodeFailure) : Stream.never)),
+            ),
+          ),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, retryCount, supervisor } = yield* makeHarness();
+
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+      const fiber = yield* subscribe(
+        WS_METHODS.subscribeTerminalEvents,
+        {},
+        {
+          onDefect: (cause) =>
+            Queue.offer(observedDefects, Cause.squash(cause)).pipe(Effect.asVoid),
+          onExpectedFailure: () =>
+            Effect.sync(() => {
+              expectedFailureCount += 1;
+            }),
+          retryExpectedFailureAfter: "250 millis",
+        },
+      ).pipe(
+        Stream.runDrain,
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+
+      expect(yield* Queue.take(subscriptions)).toBe(1);
+      expect(yield* Queue.take(observedDefects)).toBe(decodeFailure);
+      yield* TestClock.adjust("249 millis");
+      expect(Option.isNone(yield* Queue.poll(subscriptions))).toBe(true);
+
+      // The socket is still up, so no next session comes: retry on this one.
+      yield* TestClock.adjust("1 millis");
+      expect(yield* Queue.take(subscriptions)).toBe(2);
+      expect(expectedFailureCount).toBe(0);
+      expect(yield* Ref.get(retryCount)).toBe(0);
+      expect(fiber.pollUnsafe()).toBeUndefined();
+      yield* Fiber.interrupt(fiber);
+    }),
+  );
+
+  it.effect("waits for the next session after a reported defect without a retry delay", () =>
+    Effect.gen(function* () {
+      const defect = new Error("subscription invariant failed");
+      const subscriptions = yield* Queue.unbounded<number>();
+      const observedDefects = yield* Queue.unbounded<unknown>();
+      let attempts = 0;
+      const client = {
+        [WS_METHODS.subscribeTerminalEvents]: () =>
+          Stream.unwrap(
+            Effect.sync(() => {
+              attempts += 1;
+              return attempts;
+            }).pipe(
+              Effect.tap((attempt) => Queue.offer(subscriptions, attempt)),
+              Effect.map((attempt) => (attempt === 1 ? Stream.die(defect) : Stream.never)),
+            ),
+          ),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, retryCount, supervisor } = yield* makeHarness();
+
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+      const fiber = yield* subscribe(
+        WS_METHODS.subscribeTerminalEvents,
+        {},
+        {
+          onDefect: (cause) =>
+            Queue.offer(observedDefects, Cause.squash(cause)).pipe(Effect.asVoid),
+        },
+      ).pipe(
+        Stream.runDrain,
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+
+      expect(yield* Queue.take(subscriptions)).toBe(1);
+      expect(yield* Queue.take(observedDefects)).toBe(defect);
+      yield* TestClock.adjust("1 minute");
+      expect(Option.isNone(yield* Queue.poll(subscriptions))).toBe(true);
+      expect(fiber.pollUnsafe()).toBeUndefined();
+
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+      expect(yield* Queue.take(subscriptions)).toBe(2);
+      expect(yield* Ref.get(retryCount)).toBe(0);
+      yield* Fiber.interrupt(fiber);
+    }),
+  );
+
+  it.effect("still ends a subscription on a defect when nothing reports it", () =>
+    Effect.gen(function* () {
+      const defect = new Error("subscription invariant failed");
+      const client = {
+        [WS_METHODS.subscribeTerminalEvents]: () => Stream.die(defect),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+      const exit = yield* subscribe(WS_METHODS.subscribeTerminalEvents, {}).pipe(
+        Stream.runDrain,
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.exit,
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.hasDies(exit.cause)).toBe(true);
+        expect(Cause.squash(exit.cause)).toBe(defect);
+      }
+    }),
   );
 
   it.effect("reports an initializer defect once after an expected failure retries", () =>
     Effect.gen(function* () {
       const defect = new Error("Synthetic retry initializer defect");
       const expectedFailure = yield* Deferred.make<void>();
+      const defectReported = yield* Deferred.make<void>();
       const observations: string[] = [];
       const observedDefects: unknown[] = [];
       let inputs = 0;
@@ -657,7 +804,7 @@ describe("environment RPC", () => {
             Effect.sync(() => {
               observations.push("defect");
               observedDefects.push(Cause.squash(cause));
-            }),
+            }).pipe(Effect.andThen(Deferred.succeed(defectReported, undefined)), Effect.asVoid),
           onExpectedFailure: () =>
             Effect.sync(() => {
               observations.push("expected failure");
@@ -667,19 +814,20 @@ describe("environment RPC", () => {
       ).pipe(
         Stream.runDrain,
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-        Effect.exit,
         Effect.forkChild,
       );
       yield* Deferred.await(expectedFailure);
       yield* TestClock.adjust("250 millis");
-      const exit = yield* Fiber.join(fiber);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.hasDies(exit.cause)).toBe(true);
-        expect(Cause.squash(exit.cause)).toBe(defect);
+      yield* Deferred.await(defectReported);
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        yield* Effect.yieldNow;
       }
+      // The defect backs off like any retry (500ms after one earlier failure)
+      // instead of ending the subscription.
+      expect(fiber.pollUnsafe()).toBeUndefined();
       expect(observations).toEqual(["input 1", "stream", "expected failure", "input 2", "defect"]);
       expect(observedDefects).toEqual([defect]);
+      yield* Fiber.interrupt(fiber);
     }),
   );
 });

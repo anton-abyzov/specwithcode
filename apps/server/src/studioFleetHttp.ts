@@ -39,6 +39,7 @@ import {
 import {
   fleetInviteProblem,
   fleetTailscaleSignInProblem,
+  FLEET_INVITE_SCOPES,
   issueFleetInvitation,
   readFleetTailscaleStatus,
   startFleetTailscaleSignIn,
@@ -174,6 +175,14 @@ export const layer = HttpApiBuilder.group(
           yield* noStore;
           // It mints an access-management session, like allowing workers.
           yield* requireGrantManager;
+          // The line hands out the invite scopes, so only a caller holding all
+          // of them may make one: never more than the maker holds.
+          const principal = yield* requireEnvironmentScope(AuthAccessWriteScope);
+          if (!FLEET_INVITE_SCOPES.every((scope) => principal.scopes.has(scope)))
+            return yield* new EnvironmentHttpForbiddenError({
+              message:
+                "Inviting this machine hands out full access to it, so it needs a sign-in that has full access here. Use Invite this machine in the SpecWithCode app on this machine, or run `specwithcode fleet invite` there.",
+            });
           const descriptor = yield* serverEnvironment.getDescriptor;
           const state = yield* listening;
           const issued = yield* issueFleetInvitation({

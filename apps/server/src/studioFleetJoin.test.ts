@@ -1,3 +1,9 @@
+import {
+  AuthAccessWriteScope,
+  AuthStandardClientScopes,
+  authScopeResponse,
+  type AuthEnvironmentScope,
+} from "@specweave-studio/contracts";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Native permissions and symlinks independently exercise the fleet-file writer.
 import * as NodeFSP from "node:fs/promises";
@@ -28,13 +34,32 @@ const invite = (overrides: Partial<FleetJoin> = {}): FleetJoin => ({
   managementToken: "synthetic-new-management-token",
   ...overrides,
 });
-/** Answers every address as the environment it is mapped to. */
-const fetcher = (byOrigin: Record<string, string>) =>
+/** As a real server answers: `scopes` is the legacy subset, `permissions` the grant. */
+const session = (scopes: ReadonlyArray<AuthEnvironmentScope>) => ({
+  authenticated: true,
+  ...authScopeResponse(scopes),
+  sessionMethod: "bearer-access-token",
+});
+/**
+ * Answers every address as the environment it is mapped to, and its session
+ * endpoint with the scopes the invitation's token holds there.
+ */
+const fetcher = (
+  byOrigin: Record<string, string>,
+  tokenScopes: ReadonlyArray<AuthEnvironmentScope> | "unsupported" = [
+    ...AuthStandardClientScopes,
+    AuthAccessWriteScope,
+  ],
+) =>
   vi.fn<typeof fetch>(async (url) => {
-    const environmentId = byOrigin[new URL(String(url)).origin];
-    return environmentId === undefined
-      ? Promise.reject(new TypeError("unreachable"))
-      : Response.json(descriptor(environmentId));
+    const target = new URL(String(url));
+    const environmentId = byOrigin[target.origin];
+    if (environmentId === undefined) return Promise.reject(new TypeError("unreachable"));
+    if (target.pathname === "/api/auth/session")
+      return tokenScopes === "unsupported"
+        ? new Response("not found", { status: 404 })
+        : Response.json(session(tokenScopes));
+    return Response.json(descriptor(environmentId));
   });
 const dirs: string[] = [];
 const home = async () => {
@@ -158,6 +183,50 @@ describe("adding machines to the fleet file", () => {
       addFleetMachine({ baseDir, code: encodeFleetJoinCode(invite()), fetcher: fetcher({}) }),
     ).rejects.toThrow("unavailable");
     expect(await NodeFSP.readFile(join(baseDir, "studio-fleet.json"), "utf8")).toBe(before);
+  });
+
+  it("refuses an invitation whose token cannot open sessions there, and writes nothing", async () => {
+    const baseDir = await home();
+    await NodeFSP.writeFile(join(baseDir, "studio-fleet.json"), JSON.stringify(relayed), {
+      mode: 0o600,
+    });
+    const before = await NodeFSP.readFile(join(baseDir, "studio-fleet.json"), "utf8");
+    // What `fleet invite` made before 1.0.52: a token that can only manage access.
+    const fetch = fetcher({ "https://m1.fixture.ts.net": "environment-m1" }, [
+      AuthAccessWriteScope,
+    ]);
+    await expect(
+      addFleetMachine({ baseDir, code: encodeFleetJoinCode(invite()), fetcher: fetch }),
+    ).rejects.toThrow("cannot open sessions");
+    expect(await NodeFSP.readFile(join(baseDir, "studio-fleet.json"), "utf8")).toBe(before);
+    const sessionCall = fetch.mock.calls.find(
+      ([url]) => new URL(String(url)).pathname === "/api/auth/session",
+    );
+    expect(new Headers(sessionCall?.[1]?.headers).get("authorization")).toBe(
+      "Bearer synthetic-new-management-token",
+    );
+  });
+
+  it("refuses a new machine whose token cannot open sessions there", async () => {
+    const baseDir = await home();
+    await expect(
+      addFleetMachine({
+        baseDir,
+        code: encodeFleetJoinCode(invite()),
+        fetcher: fetcher({ "https://m1.fixture.ts.net": "environment-m1" }, [AuthAccessWriteScope]),
+      }),
+    ).rejects.toThrow("cannot open sessions");
+    await expect(NodeFSP.stat(join(baseDir, "studio-fleet.json"))).rejects.toThrow();
+  });
+
+  it("adds a machine whose server does not report its token's scopes", async () => {
+    const baseDir = await home();
+    const added = await addFleetMachine({
+      baseDir,
+      code: encodeFleetJoinCode(invite()),
+      fetcher: fetcher({ "https://m1.fixture.ts.net": "environment-m1" }, "unsupported"),
+    });
+    expect(added.change).toBe("added");
   });
 
   it("refuses an address another machine uses and a symlinked fleet file", async () => {

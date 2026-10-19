@@ -62,7 +62,9 @@ describe("HtmlRender", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const htmlRender = yield* HtmlRender.HtmlRender;
-      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-html-images-" });
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "studio-html-images-",
+      });
       const png = path.join(directory, "shot.png");
       const svg = path.join(directory, "logo.svg");
       yield* fileSystem.writeFile(png, PNG_BYTES);
@@ -92,8 +94,12 @@ describe("HtmlRender", () => {
       expect(prepared).not.toContain(directory);
       for (const src of kept) expect(prepared).toContain(`<img src="${src}">`);
       // The theme bootstrap opens the head, ahead of the page's own markup.
-      expect(prepared.indexOf("<head>")).toBeLessThan(prepared.indexOf('<style id="studio-theme">'));
-      expect(prepared.indexOf('<style id="studio-theme">')).toBeLessThan(prepared.indexOf("<title>"));
+      expect(prepared.indexOf("<head>")).toBeLessThan(
+        prepared.indexOf('<style id="studio-theme">'),
+      );
+      expect(prepared.indexOf('<style id="studio-theme">')).toBeLessThan(
+        prepared.indexOf("<title>"),
+      );
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -102,7 +108,9 @@ describe("HtmlRender", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const htmlRender = yield* HtmlRender.HtmlRender;
-      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-html-images-" });
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "studio-html-images-",
+      });
       const svg = path.join(directory, "styled.svg");
       const source = [
         '<?xml version="1.0"?>',
@@ -123,7 +131,9 @@ describe("HtmlRender", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const htmlRender = yield* HtmlRender.HtmlRender;
-      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-html-images-" });
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "studio-html-images-",
+      });
       const folder = path.join(directory, "folder.png");
       yield* fileSystem.makeDirectory(folder);
       const missing = path.join(directory, "missing.jpg");
@@ -167,6 +177,35 @@ describe("HtmlRender", () => {
         upper,
         longer,
       ]);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("never inlines the app's credential stores, even image bytes behind a link", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* ServerConfig.ServerConfig;
+      const htmlRender = yield* HtmlRender.HtmlRender;
+      // PNG bytes, so only the credential store check can keep these out.
+      yield* fileSystem.makeDirectory(config.secretsDir, { recursive: true });
+      const secret = path.join(config.secretsDir, "signing-key.png");
+      yield* fileSystem.writeFile(secret, PNG_BYTES);
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "studio-html-images-",
+      });
+      const link = path.join(directory, "shot.png");
+      yield* fileSystem.symlink(path.join(config.secretsDir, "signing-key.png"), link);
+      const ordinary = path.join(directory, "ordinary.png");
+      yield* fileSystem.writeFile(ordinary, PNG_BYTES);
+
+      const error = yield* htmlRender
+        .prepare(`<img src="${secret}"><img src="${link}"><img src="${ordinary}">`)
+        .pipe(Effect.flip);
+      expect(error._tag === "HtmlRenderImagesNotFoundError" && error.paths).toEqual([secret, link]);
+
+      const prepared = yield* htmlRender.prepare(`<img src="${ordinary}">`);
+      expect(prepared).toContain(`data:image/png;base64,${Base64.encode(PNG_BYTES)}`);
+      expect(prepared).not.toContain(ordinary);
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -274,7 +313,9 @@ describe("HtmlRender", () => {
               { level: "info", text: HTML_RENDER_MEASURE_FONTS.sans },
               {
                 level: "warning",
-                text: htmlRenderTheme(STUDIO_CODE_DARK_THEME_COLORS, "dark").variables["--background"],
+                text: htmlRenderTheme(STUDIO_CODE_DARK_THEME_COLORS, "dark").variables[
+                  "--background"
+                ],
               },
               { level: "error", text: "boom" },
               {
@@ -298,7 +339,9 @@ describe("HtmlRender", () => {
           const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const htmlRender = yield* HtmlRender.HtmlRender;
-          const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-html-files-" });
+          const directory = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "studio-html-files-",
+          });
           const secret = path.join(directory, "secret.js");
           yield* fileSystem.writeFileString(secret, 'window.secret = "abc123";');
           const secretUrl = NodeURL.pathToFileURL(secret).href;

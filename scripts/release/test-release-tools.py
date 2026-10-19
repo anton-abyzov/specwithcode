@@ -68,6 +68,17 @@ class Packages(Temporary):
             release_tools.packages(self.root)
 
 
+class PinnedObjects(Temporary):
+    def test_object_ids_in_audit_sources_only_once_and_sorted(self):
+        (self.root / 'node_modules').mkdir()
+        (self.root / 'node_modules/x.mjs').write_text("'cccccccccccccccccccccccccccccccccccccccc'")
+        (self.root / 'a.test.mjs').write_text("git show 0123456789abcdef0123456789abcdef01234567:pnpm-lock.yaml aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0123456789abcdef0123456789abcdef01234567")
+        (self.root / 'reviewed.json').write_text('{"commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "long": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0"}')
+        (self.root / 'notes.md').write_text('dddddddddddddddddddddddddddddddddddddddd')
+        self.assertEqual(release_tools.pinned_objects(self.root), ['0123456789abcdef0123456789abcdef01234567', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'])
+        self.assertEqual(release_tools.pinned_objects(self.root / 'missing'), [])
+
+
 class Sums(Temporary):
     def test_written_appended_verified_and_tampering_caught(self):
         for name in ('a.zip', 'b.tar.gz', 'plan.json'):

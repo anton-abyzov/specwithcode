@@ -116,6 +116,7 @@ import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
+import * as ProviderProcessSupervisor from "./process/ProviderProcessSupervisor.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
@@ -128,6 +129,7 @@ import * as SourceControlRepositoryService from "./sourceControl/SourceControlRe
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as Observability from "./observability/Observability.ts";
 import * as HeapSnapshot from "./observability/HeapSnapshot.ts";
+import * as DiskSpaceMonitor from "./observability/DiskSpaceMonitor.ts";
 import * as EventLoopMonitor from "./observability/EventLoopMonitor.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as DirectEndpoints from "./environment/DirectEndpoints.ts";
@@ -214,10 +216,12 @@ const HTTP_ROUTER_CONFIG = {
 // those finalizers get a chance to run.
 const HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS = 0;
 const layerResourceAttribution = ResourceAttribution.layer;
-const layerApplicationObservability = EventLoopMonitor.layer.pipe(
-  Layer.provideMerge(Observability.layer),
-  Layer.provideMerge(layerResourceAttribution),
-);
+const layerApplicationObservability = Layer.mergeAll(
+  EventLoopMonitor.layer,
+  // A full disk stalls the event loop long before writes fail outright, so
+  // clients get one storage status instead of a cascade of timeouts.
+  DiskSpaceMonitor.layer,
+).pipe(Layer.provideMerge(Observability.layer), Layer.provideMerge(layerResourceAttribution));
 
 const layerPtyAdapter = NodePtyAdapter.layer;
 
@@ -583,10 +587,16 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,
   layerThreadFinishActionWorker,
-  // Ends runs a provider finished but never reported ended (stuck Working).
+  // Ends runs a provider finished but never reported ended (stuck Working),
+  // and runs nothing drives any more (their session ended or nobody reads
+  // their provider events).
   Layer.effectDiscard(
     StaleRunWatchdog.make.pipe(Effect.flatMap((watchdog) => watchdog.start())),
-  ).pipe(Layer.provide(ProjectionStoreV2.layer)),
+  ).pipe(
+    Layer.provide(
+      Layer.mergeAll(ProjectionStoreV2.layer, RuntimeLayer.layerEventSink, IdAllocator.layer),
+    ),
+  ),
   // Deletes projects that scripts made with temporary tokens once the token ends.
   Layer.effectDiscard(
     TemporaryProjects.make.pipe(Effect.flatMap((sweeper) => sweeper.start())),
@@ -1201,6 +1211,8 @@ const layerMakeServer = Layer.unwrap(
       Layer.provideMerge(layerHttpServer),
       Layer.provide(layerApplicationObservability),
       Layer.provideMerge(FetchHttpClient.layer),
+      // Provider runtimes run below the server and are reaped with their sessions.
+      Layer.provide(ProviderProcessSupervisor.layer),
       // PR reads, Git operations, and WebSocket discovery share one process limiter.
       Layer.provide(VcsProcess.layer),
       Layer.provideMerge(layerPlatformServices),

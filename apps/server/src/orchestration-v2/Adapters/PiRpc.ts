@@ -31,6 +31,7 @@ import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { resolveSpawnCommand } from "@specweave-studio/shared/shell";
 
 import { signalProcessGroup } from "../../process/processGroup.ts";
+import { ProviderProcessSupervisor } from "../../process/ProviderProcessSupervisor.ts";
 import { withHeadlessBrowserEnvironment } from "../../provider/RuntimeInstructions.ts";
 
 export class PiRpcError extends Schema.TaggedError<PiRpcError>()("PiRpcError", {
@@ -221,6 +222,7 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
   const spawnCommand = yield* resolveSpawnCommand(options.command, [...options.args], {
     env: options.env,
   }).pipe(Effect.mapError((cause) => new PiRpcError({ operation: "spawn", cause })));
+  const superviseProviderProcess = yield* (yield* ProviderProcessSupervisor).reserve;
   const child = yield* spawner
     .spawn(
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
@@ -232,6 +234,7 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
       }),
     )
     .pipe(Effect.mapError((cause) => new PiRpcError({ operation: "spawn", cause })));
+  yield* superviseProviderProcess(Number(child.pid));
 
   let childExited = false;
   let diagnosingStdoutClose = false;

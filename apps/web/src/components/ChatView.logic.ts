@@ -63,6 +63,14 @@ import type { DraftThreadEnvMode } from "../composerDraftStore";
 import { collapseExpandedComposerCursor, type ComposerSubmissionIntent } from "../composer-logic";
 import type { ReviewCommentContext } from "../reviewCommentContext";
 import { derivePhase, type TimelineEntry } from "../session-logic";
+import {
+  isThisMachineCatchingUp,
+  machineStatus,
+  machineUnavailableTitle,
+  THIS_MACHINE_BUSY_TITLE,
+  type MachineStatus,
+} from "../lib/machineStatus";
+import type { EnvironmentConnectionPresentation } from "@specweave-studio/client-runtime/connection";
 import type { PreviewMiniPlayerSource } from "../previewMiniPlayerStore";
 import type { DesktopPreviewOverlay } from "../previewStateStore";
 import type { RightPanelSurface } from "../rightPanelStore";
@@ -467,6 +475,63 @@ export function scheduleEnvironmentReconnectWarning(showWarning: () => void): ()
   const timeoutId = globalThis.setTimeout(showWarning, ENVIRONMENT_RECONNECT_WARNING_GRACE_MS);
   return () => globalThis.clearTimeout(timeoutId);
 }
+
+/**
+ * The chat banner for a machine that is not connected. Another machine keeps
+ * today's warning ("Can't reach M1", the reason, Retry). The app's own machine
+ * is only busy while its server catches up, so it gets one calm line and no
+ * failure, reason or retry; "Connection failed" is kept for a stopped
+ * connection there.
+ */
+export function environmentUnavailableBanner(input: {
+  readonly label: string;
+  readonly connection: Pick<EnvironmentConnectionPresentation, "phase" | "error">;
+  readonly isThisMachine: boolean;
+}): {
+  readonly calm: boolean;
+  readonly variant: "error" | "warning" | "info";
+  readonly title: string;
+  readonly status: MachineStatus;
+  /** The banner waits out the reconnect grace before it shows. */
+  readonly waitsForGrace: boolean;
+} {
+  const { label, connection, isThisMachine } = input;
+  const status = machineStatus(connection, true, isThisMachine);
+  if (isThisMachine && isThisMachineCatchingUp(connection.phase)) {
+    return {
+      calm: true,
+      variant: "info",
+      title: THIS_MACHINE_BUSY_TITLE,
+      status,
+      waitsForGrace: environmentWaitsForReconnectGrace(connection.phase, isThisMachine),
+    };
+  }
+  return {
+    calm: false,
+    variant: connection.phase === "error" ? "error" : "warning",
+    title: machineUnavailableTitle(label, connection, isThisMachine),
+    status,
+    waitsForGrace: environmentWaitsForReconnectGrace(connection.phase, isThisMachine),
+  };
+}
+
+/**
+ * Whether a machine's unavailable banner waits out the reconnect grace, which
+ * is also when the grace timer must run. Another machine waits only while it
+ * is connecting or reconnecting. The app's own machine waits in every phase
+ * where it is catching up (including "available"), so the calm banner always
+ * shows once the grace passes instead of staying hidden.
+ */
+export function environmentWaitsForReconnectGrace(
+  phase: EnvironmentConnectionPresentation["phase"],
+  isThisMachine: boolean,
+): boolean {
+  if (isThisMachine && isThisMachineCatchingUp(phase)) return true;
+  return phase === "connecting" || phase === "reconnecting";
+}
+
+/** What the calm banner for the app's own machine says under its title. */
+export const THIS_MACHINE_BUSY_DESCRIPTION = "Messages send when it catches up.";
 
 export function hasEnvironmentReconnectWarningGraceElapsed(
   activeEnvironmentId: EnvironmentId | null,

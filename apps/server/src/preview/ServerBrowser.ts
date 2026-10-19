@@ -46,8 +46,14 @@ import { resolvePreviewViewport } from "@specweave-studio/shared/previewViewport
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import {
+  agentProtectedPathsForConfig,
+  makeAgentPathGuard,
+  resolveAgentPath,
+} from "../provider/AgentProtectedPaths.ts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import { constVoid } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -446,6 +452,41 @@ const CLIPBOARD_SCRIPT = `(() => {
 
 const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
+  const fileSystem = yield* FileSystem.FileSystem;
+  // Uploads hand host files to a page the agent can read back, so the app's
+  // credential stores (and folders, which could hold them) are refused here,
+  // whatever rules the agent runs under.
+  const agentPathGuard = makeAgentPathGuard(
+    fileSystem,
+    NodePath,
+    agentProtectedPathsForConfig(config, NodePath),
+  );
+  const runProtectedPathCheck = Effect.runPromiseWith(yield* Effect.context<never>());
+  /**
+   * The link-resolved paths to hand Playwright, or why the upload is refused.
+   * The resolved paths are the ones checked, so a link retargeted after the
+   * check does not change what is uploaded.
+   */
+  const checkUpload = Effect.fn("ServerBrowser.checkUpload")(function* (
+    paths: ReadonlyArray<string>,
+  ) {
+    const resolved: Array<string> = [];
+    for (const path of paths) {
+      const real = yield* resolveAgentPath(fileSystem, NodePath, path);
+      // Playwright uploads a whole folder to a webkitdirectory input; agents
+      // have no need to, and a folder such as the data home holds the stores.
+      const info = yield* fileSystem.stat(real).pipe(Effect.option);
+      if (info._tag === "Some" && info.value.type === "Directory")
+        return { refusal: `${path} is a folder; upload the files themselves.` } as const;
+      resolved.push(real);
+    }
+    const exposing = yield* agentPathGuard.firstExposing([...paths, ...resolved]);
+    if (exposing === undefined) return { paths: resolved } as const;
+    const named = paths[resolved.indexOf(exposing)] ?? exposing;
+    return {
+      refusal: `${named} is in the app's credential store and cannot be uploaded.`,
+    } as const;
+  });
   const manager = yield* PreviewManager.PreviewManager;
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
   const environment = yield* ServerEnvironment.ServerEnvironment;
@@ -990,20 +1031,27 @@ const make = Effect.gen(function* () {
         "PreviewAutomationExecutionError",
         `Upload paths must be absolute: ${relative}`,
       );
-    if (await ServerBrowserPage.setInputFiles(tab.page, input)) return undefined;
+    const checked = await runProtectedPathCheck(checkUpload(input.paths));
+    if ("refusal" in checked)
+      throw new ServerBrowserPage.ServerBrowserOperationError(
+        "PreviewAutomationExecutionError",
+        checked.refusal,
+      );
+    const paths = checked.paths;
+    if (await ServerBrowserPage.setInputFiles(tab.page, { ...input, paths })) return undefined;
     const open = tab.fileChooser;
     if (!open)
       throw new ServerBrowserPage.ServerBrowserOperationError(
         "PreviewAutomationExecutionError",
         "No file picker is open. Click the page's upload control first, or pass the file input's locator.",
       );
-    if (input.paths.length > 1 && !open.chooser.isMultiple())
+    if (paths.length > 1 && !open.chooser.isMultiple())
       throw new ServerBrowserPage.ServerBrowserOperationError(
         "PreviewAutomationExecutionError",
         "This file picker accepts one file.",
       );
-    if (input.paths.length > 0)
-      await open.chooser.setFiles([...input.paths], {
+    if (paths.length > 0)
+      await open.chooser.setFiles(paths, {
         timeout: input.timeoutMs ?? NAVIGATION_TIMEOUT_MS,
       });
     if (tab.fileChooser === open) closeFileChooser(tab);

@@ -30,6 +30,7 @@ import { resolveSpawnCommand } from "@specweave-studio/shared/shell";
 import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 
 import { signalProcessGroup } from "../../process/processGroup.ts";
+import { ProviderProcessSupervisor } from "../../process/ProviderProcessSupervisor.ts";
 import { appendAcpStderrTail, sanitizeAcpStderrExcerpt } from "./AcpStderr.ts";
 import { normalizeAcpTerminalAuthMethod } from "./AcpTerminalAuthentication.ts";
 import { headlessChildProcessEnvironment } from "../RuntimeInstructions.ts";
@@ -1596,6 +1597,11 @@ export const make = (
             ELECTRON_RUN_AS_NODE: "1",
             STUDIO_ACP_CGROUP_WRAPPER: "1",
           };
+    // Lowered priority and a ledger of the tool processes the agent starts, reaped after
+    // its own teardown (Copilot starts each shell tool in a process group of its own).
+    const superviseProviderProcess = yield* (yield* ProviderProcessSupervisor).reserve.pipe(
+      Effect.provideService(Scope.Scope, runtimeScope),
+    );
     const child = yield* spawner
       .spawn(
         ChildProcess.make(containedSpawnCommand.command, containedSpawnCommand.args, {
@@ -1620,6 +1626,8 @@ export const make = (
             }),
         ),
       );
+
+    yield* superviseProviderProcess(Number(child.pid));
 
     const posixOwnershipLedger = new Map<string, AcpOwnedPosixProcess>();
     const posixOwnershipFrontier = new Map<number, AcpOwnedPosixProcess>();

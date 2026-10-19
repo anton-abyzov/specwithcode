@@ -60,6 +60,7 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as RunLiveness from "./RunLiveness.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import { awaitGateOpen, makeGatedHold } from "../serviceUpdate/UpdateInstallGate.testkit.ts";
 
@@ -509,7 +510,10 @@ function layerTest(input: {
   readonly capacityLayer?: Layer.Layer<StudioCapacity.Capacity>;
   /** More provider instances served by the same fake adapter. */
   readonly extraInstanceIds?: ReadonlyArray<ProviderInstanceId>;
+  /** Shares one live run registry between the manager and the test. */
+  readonly runLiveness?: boolean;
 }) {
+  const layerRunLiveness = input.runLiveness === true ? RunLiveness.layer : Layer.empty;
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
       ? layerFlakyReleaseEventSink(input.flakyReleaseWrites)
@@ -557,6 +561,7 @@ function layerTest(input: {
     ),
   );
   return Layer.mergeAll(
+    layerRunLiveness,
     layerTestStores,
     layerConfiguredEventSink,
     IdAllocator.layer,
@@ -576,6 +581,7 @@ function layerTest(input: {
           ...(input.serverSettingsLayer === undefined ? [] : [input.serverSettingsLayer]),
           ...(input.projectServiceLayer === undefined ? [] : [input.projectServiceLayer]),
           ...(input.capacityLayer === undefined ? [] : [input.capacityLayer]),
+          layerRunLiveness,
         ),
       ),
     ),
@@ -856,6 +862,79 @@ function makePendingRuntimeRequestEvents(input: {
     return { events, providerEvents, requestId, nodeId };
   });
 }
+
+it.effect(
+  "ProviderSessionManagerV2 reports a released session so the runs it left are settled",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const liveness = yield* RunLiveness.RunLiveness;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-release-signal");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        yield* manager.release({ providerSessionId, reason: "idle_timeout" });
+        const released = yield* liveness.takeReleasedSession.pipe(Effect.timeoutOption("1 second"));
+        assert.deepEqual(Option.getOrNull(released), {
+          providerSessionId,
+          threadIds: [threadId],
+          reason: "idle_timeout",
+        });
+      }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, runLiveness: true })));
+    }),
+);
+
+it.effect("ProviderSessionManagerV2 leaves a service update's released sessions to the drain", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    yield* Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const liveness = yield* RunLiveness.RunLiveness;
+      const now = yield* DateTime.now;
+      const openSession = (threadId: ThreadId) =>
+        Effect.gen(function* () {
+          const providerSessionId = yield* idAllocator.allocate.providerSession({
+            providerInstanceId: modelSelection.instanceId,
+            threadId,
+          });
+          yield* eventSink.write({
+            events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+          });
+          yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+          return providerSessionId;
+        });
+      yield* openSession(ThreadId.make("thread-provider-session-manager-update-release"));
+      // A service update releases every session, busy or not, keeping MCP credentials.
+      yield* manager.releaseIdle({
+        detail: "service update",
+        includeBusy: true,
+        keepMcpCredentials: true,
+      });
+      const idleThreadId = ThreadId.make("thread-provider-session-manager-idle-release");
+      const idleSessionId = yield* openSession(idleThreadId);
+      yield* manager.release({ providerSessionId: idleSessionId, reason: "idle_timeout" });
+      // The first signal is the idle release: the update's release sent none.
+      const released = yield* liveness.takeReleasedSession.pipe(Effect.timeoutOption("1 second"));
+      assert.deepEqual(Option.getOrNull(released), {
+        providerSessionId: idleSessionId,
+        threadIds: [idleThreadId],
+        reason: "idle_timeout",
+      });
+    }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, runLiveness: true })));
+  }),
+);
 
 it.effect("ProviderSessionManagerV2 opens independent sessions concurrently", () =>
   Effect.gen(function* () {

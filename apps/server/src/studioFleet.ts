@@ -44,6 +44,7 @@ export class FleetError extends Error {
     | "unreachable"
     | "identity-mismatch"
     | "pairing-unavailable"
+    | "invitation-limited"
     | "forbidden";
   constructor(kind: FleetError["kind"]) {
     super(
@@ -55,6 +56,8 @@ export class FleetError extends Error {
           "This address belongs to a different machine. Ask the server owner to check its configuration.",
         "pairing-unavailable":
           "Pairing is unavailable. Ask the server owner to renew this machine's connection permission.",
+        "invitation-limited":
+          "This machine's invitation can manage access but cannot open sessions there, so this machine cannot connect to it. On that machine, update SpecWithCode, choose Invite this machine in Settings > Connections (or run `specwithcode fleet invite`), and add the new line here.",
         forbidden: "This connection cannot pair with that machine.",
       }[kind],
     );
@@ -249,6 +252,54 @@ export async function checkIdentity(
     throw new FleetError("identity-mismatch");
   return decoded.value;
 }
+/**
+ * The scopes a machine's management token holds there, read from its own
+ * session endpoint. Pairing there can only hand out scopes the token holds,
+ * so a token without them adds a machine nothing can connect to. Null when
+ * the machine does not say (an older server); a rejected token fails.
+ */
+export async function readManagementScopes(
+  fetcher: FleetFetch,
+  target: Pick<FleetTarget, "url"> & { readonly managementToken: string },
+): Promise<ReadonlySet<string> | null> {
+  let response: Response;
+  try {
+    response = await fetcher(`${target.url}/api/auth/session`, {
+      headers: { authorization: `Bearer ${target.managementToken}` },
+      redirect: "error",
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch {
+    throw new FleetError("unreachable");
+  }
+  if (response.status === 401 || response.status === 403) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new FleetError("pairing-unavailable");
+  }
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => undefined);
+    return null;
+  }
+  const body = await readBoundedJson(response).catch(() => null);
+  if (!record(body) || body.authenticated !== true) throw new FleetError("pairing-unavailable");
+  // `scopes` is the legacy vocabulary and leaves out most of a grant, so only
+  // `permissions` says what the token can hand out.
+  const granted = body.permissions;
+  if (!Array.isArray(granted) || !granted.every((scope) => typeof scope === "string")) return null;
+  return new Set(granted);
+}
+
+/** Throws when the token cannot hand out every scope a connection asks for. */
+export async function assertManagementTokenCanPair(
+  fetcher: FleetFetch,
+  target: Pick<FleetTarget, "url"> & { readonly managementToken: string },
+  scopes: ReadonlyArray<AuthEnvironmentScope>,
+): Promise<void> {
+  const granted = await readManagementScopes(fetcher, target);
+  if (granted !== null && !scopes.every((scope) => granted.has(scope)))
+    throw new FleetError("invitation-limited");
+}
+
 export async function discoverFleet(
   config: FleetConfig | null,
   host: string | undefined,
@@ -314,6 +365,13 @@ export async function connectFleet(
       body: JSON.stringify({ label: "Private fleet browser", scopes }),
     });
   } catch {
+    // Name the cause when the token itself is too narrow: re-adding the
+    // same line will never work, a new invitation will.
+    await assertManagementTokenCanPair(
+      fetcher,
+      { url: target.url, managementToken: target.managementToken },
+      scopes,
+    );
     throw new FleetError("pairing-unavailable");
   }
   if (

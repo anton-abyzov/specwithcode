@@ -13,6 +13,7 @@ import {
   AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthStandardClientScopes,
   type AuthEnvironmentScope,
 } from "@specweave-studio/contracts";
 import * as Duration from "effect/Duration";
@@ -334,9 +335,14 @@ describe("adding a machine over HTTP", () => {
   });
   it("moves a relayed machine to the address its invitation names once it answers there", async () => {
     const outbound = vi.fn<typeof fetch>(async (url) =>
-      new URL(String(url)).origin === "https://m1.tailnet.ts.net"
-        ? Response.json(descriptor("env-m1"))
-        : Promise.reject(new TypeError("unreachable")),
+      new URL(String(url)).origin !== "https://m1.tailnet.ts.net"
+        ? Promise.reject(new TypeError("unreachable"))
+        : new URL(String(url)).pathname === "/api/auth/session"
+          ? Response.json({
+              authenticated: true,
+              permissions: [...AuthStandardClientScopes, AuthAccessWriteScope],
+            })
+          : Response.json(descriptor("env-m1")),
     );
     vi.stubGlobal("fetch", outbound);
     const owner = await api();
@@ -536,15 +542,33 @@ describe("fleet authenticated HTTP", () => {
   });
 });
 describe("inviting this machine over HTTP", () => {
+  // Making a line needs every scope the line hands out.
+  const INVITE_OWNER_SCOPES = [...AuthStandardClientScopes, AuthAccessWriteScope];
   const status = (dnsName?: string) =>
     JSON.stringify({ Self: { ...(dnsName ? { DNSName: dnsName } : {}), TailscaleIPs: [] } });
   const serveCalls = () => tailscale.spawns.filter((args) => args[0] === "serve");
+  it("refuses a caller who holds less than the line hands out", async () => {
+    tailscale.status = status("m4.tailnet.ts.net.");
+    const outbound = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", outbound);
+    // Access management alone, like a token from an older invitation.
+    const manager = await api([AuthAccessWriteScope]);
+    try {
+      const response = await manager.invite({});
+      expect(response.status).toBe(403);
+      expect(await response.text()).toContain("full access");
+      expect(serveCalls()).toEqual([]);
+      expect(issuedSessions).toEqual([]);
+    } finally {
+      await manager.dispose();
+    }
+  });
   it("needs access management and this app's own origin before Tailscale or a credential", async () => {
     tailscale.status = status("m4.tailnet.ts.net.");
     const outbound = vi.fn<typeof fetch>();
     vi.stubGlobal("fetch", outbound);
     const operator = await api([AuthOrchestrationReadScope, AuthOrchestrationOperateScope]);
-    const owner = await api();
+    const owner = await api(INVITE_OWNER_SCOPES);
     try {
       expect((await operator.invite({})).status).toBe(403);
       expect(
@@ -575,7 +599,7 @@ describe("inviting this machine over HTTP", () => {
         : Promise.reject(new TypeError("unreachable")),
     );
     vi.stubGlobal("fetch", outbound);
-    const owner = await api();
+    const owner = await api(INVITE_OWNER_SCOPES);
     try {
       const response = await owner.invite({ label: "  Studio Mac  ", days: 30 });
       expect(response.status).toBe(200);
@@ -597,7 +621,7 @@ describe("inviting this machine over HTTP", () => {
       expect(serveCalls()).toEqual([["serve", "--bg", "--https=443", "http://127.0.0.1:8319"]]);
       expect(issuedSessions).toHaveLength(1);
       expect(issuedSessions[0]).toMatchObject({
-        scopes: [AuthAccessWriteScope],
+        scopes: [...AuthStandardClientScopes, AuthAccessWriteScope],
         label: "Fleet management (fleet invite)",
       });
       expect(Duration.toDays(issuedSessions[0]!.ttl!)).toBe(30);
@@ -622,7 +646,7 @@ describe("inviting this machine over HTTP", () => {
       "fetch",
       vi.fn<typeof fetch>(async () => answer()),
     );
-    const owner = await api();
+    const owner = await api(INVITE_OWNER_SCOPES);
     try {
       const other = await owner.invite({});
       expect(other.status).toBe(409);
@@ -644,7 +668,7 @@ describe("inviting this machine over HTTP", () => {
   it("says in plain words when Tailscale is missing or has no MagicDNS name", async () => {
     const outbound = vi.fn<typeof fetch>();
     vi.stubGlobal("fetch", outbound);
-    const owner = await api();
+    const owner = await api(INVITE_OWNER_SCOPES);
     try {
       const missing = await owner.invite({});
       expect(missing.status).toBe(409);

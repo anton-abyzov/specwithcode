@@ -20,8 +20,11 @@ export interface MachineStatus {
 export function machineStatus(
   connection: Pick<EnvironmentConnectionPresentation, "phase" | "error">,
   canOperate = true,
+  isThisMachine = false,
 ): MachineStatus {
   const reason = connection.error ?? null;
+  if (isThisMachine && isThisMachineCatchingUp(connection.phase))
+    return { text: THIS_MACHINE_CATCHING_UP, reason: null, retryable: false };
   switch (connection.phase) {
     case "connected":
       return canOperate
@@ -44,6 +47,27 @@ export function machineStatus(
   }
 }
 
+/** What the app says about its own machine while its server is slow to answer. */
+export const THIS_MACHINE_CATCHING_UP = "Catching up…";
+/** The banner title for the app's own machine while its server is slow to answer. */
+export const THIS_MACHINE_BUSY_TITLE = "SpecWithCode on this Mac is busy";
+
+/**
+ * The app's own machine is never offline or unreachable: its server shares this
+ * device, so any phase short of a stopped ("error") or refused ("unsupported")
+ * connection means the server is busy and will catch up on its own.
+ */
+export function isThisMachineCatchingUp(
+  phase: EnvironmentConnectionPresentation["phase"],
+): boolean {
+  return (
+    phase === "connecting" ||
+    phase === "reconnecting" ||
+    phase === "offline" ||
+    phase === "available"
+  );
+}
+
 /** "last seen 2h ago" for a machine that is not connected now, or null when the app never saw it. */
 export function lastSeenLabel(lastSeenAt: number | null, now: number): string | null {
   if (lastSeenAt === null) return null;
@@ -64,7 +88,13 @@ export function machineDetail(lastSeen: string | null, reason: string | null): s
 export function machineUnavailableTitle(
   label: string,
   connection: Pick<EnvironmentConnectionPresentation, "phase" | "error">,
+  isThisMachine = false,
 ): string {
+  if (isThisMachine) {
+    if (isThisMachineCatchingUp(connection.phase)) return THIS_MACHINE_BUSY_TITLE;
+    if (connection.phase === "unsupported") return `${label} needs an app update`;
+    return "Connection to SpecWithCode on this Mac failed";
+  }
   switch (connection.phase) {
     case "connecting":
       return `${label} is connecting`;
@@ -79,5 +109,43 @@ export function machineUnavailableTitle(
     case "error":
     case "connected":
       return `Can't reach ${label}`;
+  }
+}
+
+/**
+ * The one-line status word on a saved machine's row in Settings > Connections:
+ * "Reconnecting: <reason>" rather than the long sentence, since the full text is
+ * one hover away. This machine reads "Catching up" while its server is busy.
+ */
+export function savedMachineStatus(
+  connection: Pick<EnvironmentConnectionPresentation, "phase" | "error">,
+  enabled: boolean,
+  isThisMachine = false,
+): { readonly text: string; readonly tone: "muted" | "error" } {
+  if (!enabled && connection.phase !== "unsupported") return { text: "Off", tone: "muted" };
+  if (isThisMachine && isThisMachineCatchingUp(connection.phase))
+    return { text: "Catching up", tone: "muted" };
+  switch (connection.phase) {
+    case "connected":
+      return { text: "Connected", tone: "muted" };
+    case "connecting":
+      return { text: "Connecting", tone: "muted" };
+    case "reconnecting":
+      return {
+        text: connection.error ? `Can't reach: ${connection.error}` : "Reconnecting",
+        tone: "error",
+      };
+    // Not a failure: the machine is fine, this build just cannot talk to it.
+    case "unsupported":
+      return { text: "Client not supported", tone: "muted" };
+    case "error":
+      return {
+        text: connection.error ? `Connection failed: ${connection.error}` : "Connection failed",
+        tone: "error",
+      };
+    case "offline":
+      return { text: "Offline", tone: "muted" };
+    case "available":
+      return { text: "Not connected", tone: "muted" };
   }
 }

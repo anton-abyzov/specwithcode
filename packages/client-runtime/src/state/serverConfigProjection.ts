@@ -56,6 +56,25 @@ export function applyServerConfigProjection(
   });
 }
 
+/**
+ * The storage status to keep when a snapshot arrives without one. A server
+ * that just restarted sends its first snapshot before its first disk check,
+ * and a full disk is exactly when it restarts, so the last status stays until
+ * the same build reports a new one. A different build may predate the field
+ * and never report one, so its snapshot clears the status.
+ */
+function carriedStorageStatus(
+  current: Option.Option<ServerConfigProjection>,
+  next: ServerConfig,
+): ServerConfig["storage"] {
+  if (Option.isNone(current)) return undefined;
+  const previous = current.value.config;
+  return previous.environment.environmentId === next.environment.environmentId &&
+    previous.environment.serverVersion === next.environment.serverVersion
+    ? previous.storage
+    : undefined;
+}
+
 function applyServerConfigEvent(
   current: Option.Option<ServerConfigProjection>,
   event: ServerConfigStreamEvent,
@@ -74,11 +93,16 @@ function applyServerConfigEvent(
         capabilities.usageLimitSources === true && Option.isSome(current)
           ? current.value.config.usageLimitSources
           : undefined;
+      const carriedStorage =
+        event.config.storage === undefined
+          ? carriedStorageStatus(current, event.config)
+          : undefined;
       return Option.some({
         config: {
           ...event.config,
           ...(carriedThemes === undefined ? {} : { environmentThemes: carriedThemes }),
           ...(carriedSources === undefined ? {} : { usageLimitSources: carriedSources }),
+          ...(carriedStorage === undefined ? {} : { storage: carriedStorage }),
         },
         latestEvent: event,
         source: "live" as const,

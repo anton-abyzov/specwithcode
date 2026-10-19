@@ -62,7 +62,7 @@ Change the settings that matter
 Edit a project's name, goal and instructions, pause its coordinator or archive it. Choose the machine and approval mode for new threads, name your phone, and pick a light or dark look.
 
 Pair in seconds
-On your computer, open SpecWithCode, go to Settings > Connections and choose Create link. Scan the QR code or paste the pairing link. The phone then talks straight to each machine over your local network, a private VPN or an address you set up. A pairing lasts 30 days; pair again to renew it.
+On your computer, open SpecWithCode, go to Settings > Connections and choose Pair a phone. Scan the QR code or paste the pairing link. The phone then talks straight to each machine over your local network, a private VPN or an address you set up. A pairing lasts 30 days; pair again to renew it.
 
 Private by design
 There is no account and no sign-up. The app has no ads, no analytics and no tracking. It talks only to your own machines, which pass your messages to the AI tools you set up there. Pairing tokens stay in the iOS Keychain on this phone.
@@ -136,7 +136,7 @@ The app uses only standard HTTPS/TLS and secure WebSockets through Apple's netwo
 Limit 4000. Count: 1456.
 
 ```text
-No account or sign-in is needed. SpecWithCode for iPhone is a remote control for SpecWithCode, a desktop app people run on their own computers. Real use needs SpecWithCode running on a computer the phone can reach; the phone pairs with it once using a one-time code shown as a QR code or link (on the computer: Settings > Connections > Create link).
+No account or sign-in is needed. SpecWithCode for iPhone is a remote control for SpecWithCode, a desktop app people run on their own computers. Real use needs SpecWithCode running on a computer the phone can reach; the phone pairs with it once using a one-time code shown as a QR code or link (on the computer: Settings > Connections > Pair a phone).
 
 To review without a computer, use the built-in sample data:
 1. Launch the app. The welcome screen opens.
@@ -159,7 +159,7 @@ Limit 4000. Count: 1049.
 This is the first TestFlight build of SpecWithCode for iPhone.
 
 Please try:
-- Pairing: on your computer, open SpecWithCode, go to Settings > Connections, turn on Network access and choose Create link, then scan the QR code or paste the link.
+- Pairing: on your computer, open SpecWithCode, go to Settings > Connections and choose Pair a phone, then scan the QR code or paste the link.
 - Aide: ask what needs you and check that the answer arrives.
 - A project: open it from the drawer, send its coordinator a message, then open Threads.
 - A thread: send a message while it runs (it queues), stop a run, answer an approval, then pin, resolve and reopen it.

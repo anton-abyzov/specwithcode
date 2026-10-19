@@ -21,6 +21,7 @@ import {
   threadTone,
   waitingCount,
 } from "./shellModel";
+import { unreachableEnvironmentIds } from "../state/environments";
 
 type ThreadOverrides = Omit<Partial<EnvironmentThreadShell>, "id"> & { id?: string };
 function thread(overrides: ThreadOverrides = {}): EnvironmentThreadShell {
@@ -475,6 +476,33 @@ describe("blocked threads", () => {
     expect(threadStatusWord({ ...blocked, runtime: running })).toBe("Working");
     expect(threadTone({ ...blocked, settledOverride: "settled" })).toBe("resolved");
     expect(threadStatusWord(thread({ reportedBlocker: null }))).toBeNull();
+  });
+});
+
+describe("threads on this machine while its server catches up", () => {
+  it("are never Host offline and still wait on the person", () => {
+    const blocked = thread({ reportedBlocker: "Commit these changes, or discard them?" });
+    const unreachable = new Set<string>(
+      unreachableEnvironmentIds([
+        {
+          environmentId: blocked.environmentId,
+          entry: {
+            target: { _tag: "PrimaryConnectionTarget", httpBaseUrl: "http://127.0.0.1:8319" },
+          },
+          connection: { phase: "reconnecting" },
+        },
+        {
+          environmentId: "m1",
+          entry: { target: { _tag: "RelayConnectionTarget" } },
+          connection: { phase: "reconnecting" },
+        },
+      ] as never),
+    );
+    expect([...unreachable]).toEqual(["m1"]);
+    const hostOffline = unreachable.has(blocked.environmentId);
+    expect(threadStatusWord(blocked, hostOffline)).toBe("Blocked");
+    expect(threadTone(blocked, hostOffline)).toBe("waiting");
+    expect(waitingCount([blocked], unreachable)).toBe(1);
   });
 });
 

@@ -97,6 +97,33 @@ export function presentEnvironmentConnection(
   return presentConnectionState(state);
 }
 
+function isLoopbackHostname(hostname: string): boolean {
+  return (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "[::1]" ||
+    hostname === "::1"
+  );
+}
+
+/**
+ * True when an http(s) base URL points at this device's loopback interface
+ * (127.0.0.1, ::1 or localhost): a server that runs on the same machine as
+ * the client reading it.
+ */
+export function isLoopbackHttpBaseUrl(httpBaseUrl: string | null | undefined): boolean {
+  if (!httpBaseUrl) return false;
+  let url: URL;
+  try {
+    url = new URL(httpBaseUrl);
+  } catch {
+    return false;
+  }
+  return (
+    (url.protocol === "http:" || url.protocol === "https:") && isLoopbackHostname(url.hostname)
+  );
+}
+
 /**
  * The address an agent outside Studio (Claude Code, Codex) uses to reach this
  * environment's MCP server. Only HTTPS and loopback addresses qualify: MCP
@@ -121,8 +148,7 @@ export function environmentMcpUrl(input: {
   } catch {
     return null;
   }
-  const loopback =
-    url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]";
+  const loopback = isLoopbackHostname(url.hostname);
   if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) return null;
   url.pathname = "/mcp";
   url.search = "";

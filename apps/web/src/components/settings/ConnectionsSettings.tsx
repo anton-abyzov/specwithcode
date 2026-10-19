@@ -71,9 +71,15 @@ import { cn } from "../../lib/utils";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { formatElapsedDurationLabel, formatExpiresInLabel } from "../../timestampFormat";
 import {
+  endpointDefaultPreferenceKey,
+  endpointShareHint,
+  isHostedAppPairingUrl,
   isShareablePairingUrl,
+  isTailscaleHttpsEndpoint,
+  resolveAdvertisedEndpointPairingUrl,
   resolveDesktopPairingUrl,
   resolveHostedPairingUrl,
+  selectPairingEndpoint,
 } from "./pairingUrls";
 import {
   applyWslEnableSelection,
@@ -89,6 +95,7 @@ import {
   SettingsPageContainer,
   SettingsRow,
   SettingsSection,
+  scrollToSettingsTarget,
   useRelativeTimeTick,
 } from "./settingsLayout";
 import { LocalEnvironmentSetting } from "./LocalEnvironmentSetting";
@@ -105,6 +112,7 @@ import {
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { StudioFleetConnections, StudioListenerRow } from "./StudioFleetConnections";
 import { ConnectionsLibrarySettings } from "./ConnectionsLibrarySettings";
+import { PairPhoneSettings } from "./PairPhoneSettings";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
 import { GitHubRoutingSettings } from "./GitHubRoutingSettings";
 import { Input } from "../ui/input";
@@ -164,7 +172,7 @@ import {
   type ServerClientSessionRecord,
   type ServerPairingLinkRecord,
 } from "~/environments/primary";
-import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
+import { isDesktopLocalConnectionTarget, isThisMachineTarget } from "~/connection/desktopLocal";
 import { useUiStateStore } from "~/uiStateStore";
 import {
   resolveServerConfigVersionMismatch,
@@ -200,7 +208,7 @@ import { APP_VERSION } from "~/branding";
 import { requestConfirmDialog } from "~/confirmDialog";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { machineLastSeenAt, useMachineLastSeenVersion } from "../../lib/machineLastSeen";
-import { lastSeenLabel } from "../../lib/machineStatus";
+import { lastSeenLabel, savedMachineStatus } from "../../lib/machineStatus";
 import { primaryServerKeybindingsAtom, serverEnvironment } from "~/state/server";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
 import {
@@ -564,96 +572,9 @@ function toDesktopClientSessionRecord(clientSession: AuthClientSession): ServerC
   };
 }
 
-function selectPairingEndpoint(
-  endpoints: ReadonlyArray<AdvertisedEndpoint>,
-  defaultEndpointKey?: string | null,
-): AdvertisedEndpoint | null {
-  const availableEndpoints = endpoints.filter((endpoint) => endpoint.status !== "unavailable");
-  if (defaultEndpointKey) {
-    const selectedEndpoint = availableEndpoints.find(
-      (endpoint) => endpointDefaultPreferenceKey(endpoint) === defaultEndpointKey,
-    );
-    if (selectedEndpoint) {
-      return selectedEndpoint;
-    }
-  }
-  return (
-    availableEndpoints.find((endpoint) => endpoint.isDefault) ??
-    availableEndpoints.find((endpoint) => endpoint.reachability !== "loopback") ??
-    availableEndpoints.find((endpoint) => endpoint.compatibility.hostedHttpsApp === "compatible") ??
-    null
-  );
-}
-
-function isTailscaleHttpsEndpoint(endpoint: AdvertisedEndpoint): boolean {
-  return endpoint.id.startsWith("tailscale-magicdns:");
-}
-
-function endpointDefaultPreferenceKey(endpoint: AdvertisedEndpoint): string {
-  if (endpoint.id.startsWith("desktop-loopback:")) {
-    return "desktop-core:loopback:http";
-  }
-  if (endpoint.id.startsWith("desktop-lan:")) {
-    return "desktop-core:lan:http";
-  }
-  if (endpoint.id.startsWith("tailscale-ip:")) {
-    return "tailscale:ip:http";
-  }
-  if (isTailscaleHttpsEndpoint(endpoint)) {
-    return "tailscale:magicdns:https";
-  }
-
-  let scheme = "unknown";
-  try {
-    scheme = new URL(endpoint.httpBaseUrl).protocol.replace(/:$/u, "");
-  } catch {
-    // Keep the stored preference stable even if a custom endpoint is malformed.
-  }
-
-  return `${endpoint.provider.id}:${endpoint.reachability}:${scheme}:${endpoint.label}`;
-}
-
-function resolveAdvertisedEndpointPairingUrl(
-  endpoint: AdvertisedEndpoint,
-  credential: string,
-): string {
-  if (endpoint.compatibility.hostedHttpsApp === "compatible") {
-    return (
-      resolveHostedPairingUrl(endpoint.httpBaseUrl, credential) ??
-      resolveDesktopPairingUrl(endpoint.httpBaseUrl, credential)
-    );
-  }
-  return resolveDesktopPairingUrl(endpoint.httpBaseUrl, credential);
-}
-
 function resolveCurrentOriginPairingUrl(credential: string): string {
   const url = new URL("/pair", window.location.href);
   return setPairingTokenOnUrl(url, credential).toString();
-}
-
-function isHostedAppPairingUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.pathname === "/pair" && url.searchParams.has("host");
-  } catch {
-    return false;
-  }
-}
-
-function endpointShareHint(endpoint: AdvertisedEndpoint, url: string): string {
-  if (isHostedAppPairingUrl(url)) {
-    return "Opens the hosted app, no install needed";
-  }
-  switch (endpoint.reachability) {
-    case "lan":
-      return "Devices on the same network";
-    case "private-network":
-      return "Devices on your private network";
-    case "public":
-      return "Reachable from anywhere";
-    case "loopback":
-      return "Clients on this machine";
-  }
 }
 
 type PairingLinkListRowProps = {
@@ -1559,43 +1480,6 @@ type SavedBackendListRowProps = {
 };
 
 /**
- * Status word for a row subtitle: "Reconnecting: <reason>" instead of the
- * long-form sentence, since the row has one line and the full text is one
- * hover away.
- */
-function savedBackendStatus(environment: EnvironmentPresentation): {
-  readonly text: string;
-  readonly tone: "muted" | "error";
-} {
-  if (!environment.entry.enabled && environment.connection.phase !== "unsupported")
-    return { text: "Off", tone: "muted" };
-  const { connection } = environment;
-  switch (connection.phase) {
-    case "connected":
-      return { text: "Connected", tone: "muted" };
-    case "connecting":
-      return { text: "Connecting", tone: "muted" };
-    case "reconnecting":
-      return {
-        text: connection.error ? `Can't reach: ${connection.error}` : "Reconnecting",
-        tone: "error",
-      };
-    // Not a failure: the machine is fine, this build just cannot talk to it.
-    case "unsupported":
-      return { text: "Client not supported", tone: "muted" };
-    case "error":
-      return {
-        text: connection.error ? `Connection failed: ${connection.error}` : "Connection failed",
-        tone: "error",
-      };
-    case "offline":
-      return { text: "Offline", tone: "muted" };
-    case "available":
-      return { text: "Not connected", tone: "muted" };
-  }
-}
-
-/**
  * One added machine in the Environments list. The switch is the main action;
  * the update icon appears only when that machine can take an update; the
  * row menu holds the icon override, trace ID, and removal.
@@ -1662,7 +1546,11 @@ function SavedBackendListRow({
   const serverUpdateState = useAtomValue(serverEnvironment.updateStateAtom(environmentId));
   const resumingServerUpdate =
     serverUpdateState.status === "running" && serverUpdateState.stage === "resuming";
-  const status = savedBackendStatus(environment);
+  const status = savedMachineStatus(
+    environment.connection,
+    environment.entry.enabled,
+    isThisMachineTarget(environment.entry),
+  );
   useMachineLastSeenVersion();
   const lastSeen =
     enabled && !isConnected ? lastSeenLabel(machineLastSeenAt(environmentId), Date.now()) : null;
@@ -2238,6 +2126,9 @@ export function ConnectionsSettings() {
   const [createdPairingCredentials, setCreatedPairingCredentials] = useState<
     ReadonlyMap<string, string>
   >(() => new Map());
+  const [lastHeaderCreatedPairingLinkId, setLastHeaderCreatedPairingLinkId] = useState<
+    string | null
+  >(null);
   const handlePairingLinkCreated = useCallback((created: AuthPairingCredentialResult) => {
     setCreatedPairingCredentials((current) => new Map(current).set(created.id, created.credential));
   }, []);
@@ -3264,7 +3155,12 @@ export function ConnectionsSettings() {
   const renderNetworkAccessToggle = () => (
     <Switch
       checked={desktopServerExposureState?.mode === "network-accessible"}
-      disabled={!desktopServerExposureState || isUpdatingDesktopServerExposure}
+      // The installed service sets its own listener; the app cannot change it.
+      disabled={
+        !desktopServerExposureState ||
+        isUpdatingDesktopServerExposure ||
+        desktopServerExposureState.localServiceAttached === true
+      }
       onCheckedChange={(checked) => {
         setPendingDesktopServerExposureMode(checked ? "network-accessible" : "local-only");
         setIsDesktopServerExposureDialogOpen(true);
@@ -3736,6 +3632,8 @@ export function ConnectionsSettings() {
                   : "Exposed on all interfaces."
             }
           />
+        ) : desktopServerExposureState?.localServiceAttached ? (
+          "Limited to this machine by the SpecWithCode service. Other devices, like your phone, can use Tailscale HTTPS."
         ) : desktopServerExposureState ? (
           "Limited to this machine."
         ) : (
@@ -3867,6 +3765,7 @@ export function ConnectionsSettings() {
             <FoldedSettingsSection
               id="authorized-clients"
               title="Authorized clients"
+              openKey={lastHeaderCreatedPairingLinkId}
               summary={summarizeAuthorizedClients(
                 desktopClientSessions,
                 visibleDesktopPairingLinks,
@@ -3875,7 +3774,11 @@ export function ConnectionsSettings() {
                 canWriteAccess ? (
                   <AuthorizedClientsHeaderAction
                     delegatableScopes={currentSessionScopes ?? []}
-                    onPairingLinkCreated={handlePairingLinkCreated}
+                    onPairingLinkCreated={(created) => {
+                      handlePairingLinkCreated(created);
+                      // Show the new link: the fold starts closed.
+                      setLastHeaderCreatedPairingLinkId(created.id);
+                    }}
                     clientSessions={
                       canReadAccess &&
                       authAccessChanges.error === null &&
@@ -4202,6 +4105,17 @@ export function ConnectionsSettings() {
         <StudioFleetConnections
           environmentId={primaryEnvironmentId}
           savedEnvironmentIds={savedEnvironments.map((environment) => environment.environmentId)}
+        />
+      ) : null}
+      {primaryEnvironmentId !== null ? (
+        <PairPhoneSettings
+          endpoint={defaultDesktopAdvertisedEndpoint}
+          serverEndpoints={primaryServerConfig?.directEndpoints}
+          canCreateLinks={canWriteAccess}
+          delegatableScopes={currentSessionScopes ?? []}
+          onPairingLinkCreated={handlePairingLinkCreated}
+          hasAccessControls={canManageLocalBackend && desktopBridge !== undefined}
+          onShowAccessSettings={() => scrollToSettingsTarget("connections-environment")}
         />
       ) : null}
       <ConnectionsLibrarySettings />

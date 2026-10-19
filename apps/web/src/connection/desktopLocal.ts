@@ -1,9 +1,14 @@
-import type { ConnectionTarget } from "@specweave-studio/client-runtime/connection";
+import {
+  isLoopbackHttpBaseUrl,
+  type ConnectionCatalogEntry,
+  type ConnectionTarget,
+} from "@specweave-studio/client-runtime/connection";
 import {
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   type DesktopBridge,
   type DesktopEnvironmentBootstrap,
 } from "@specweave-studio/contracts";
+import * as Option from "effect/Option";
 
 /**
  * Desktop-local secondary backends (e.g. a parallel WSL backend) are registered
@@ -36,6 +41,28 @@ export function desktopLocalBackendId(target: ConnectionTarget): string | null {
   return isDesktopLocalConnectionTarget(target)
     ? target.connectionId.slice(DESKTOP_LOCAL_CONNECTION_ID_PREFIX.length)
     : null;
+}
+
+/**
+ * True for the app's own machine: the primary environment (the server this UI
+ * was loaded from) or a host-managed desktop-local backend, in both cases only
+ * when served over loopback. Its server shares this device, so a slow answer
+ * from it means the app is busy, never that a machine is offline or
+ * unreachable. A primary reached over Tailscale or the relay (a phone or
+ * another computer opening this Mac) is a remote machine and keeps its
+ * offline states. Every web surface that labels a machine as offline asks
+ * this first.
+ */
+export function isThisMachineTarget(
+  entry: Pick<ConnectionCatalogEntry, "target" | "profile"> | null | undefined,
+): boolean {
+  if (!entry) return false;
+  if (entry.target._tag === "PrimaryConnectionTarget") {
+    return isLoopbackHttpBaseUrl(entry.target.httpBaseUrl);
+  }
+  if (!isDesktopLocalConnectionTarget(entry.target)) return false;
+  const profile = Option.getOrNull(entry.profile);
+  return profile?._tag === "BearerConnectionProfile" && isLoopbackHttpBaseUrl(profile.httpBaseUrl);
 }
 
 export function isWslConnectionTarget(target: ConnectionTarget): boolean {

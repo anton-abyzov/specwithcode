@@ -32,6 +32,8 @@ export interface CursorAuth {
   readonly readApiKey: Effect.Effect<string | undefined, ProviderSetupError>;
   readonly requireApiKey: Effect.Effect<string, ProviderSetupError>;
   readonly usesApiKey: boolean;
+  /** Email of a browser sign-in; undefined for a configured key or when Cursor sent none. */
+  readonly readAccountEmail: Effect.Effect<string | undefined>;
   readonly withAccess: <A, E, R>(
     task: Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E | ProviderSetupError, R | Scope.Scope>;
@@ -91,6 +93,13 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
       ? credentials.apiKey
       : undefined;
   });
+
+  const readAccountEmail = configuredKey
+    ? Effect.succeed(undefined)
+    : Effect.tryPromise(() => options.store.load()).pipe(
+        Effect.map((credentials) => credentials?.email?.trim() || undefined),
+        Effect.orElseSucceed(() => undefined),
+      );
 
   const requireApiKey = Effect.gen(function* () {
     if (operation !== "idle") {
@@ -488,6 +497,7 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
   return {
     controller,
     readApiKey,
+    readAccountEmail,
     requireApiKey,
     withAccess,
     usesApiKey: configuredKey !== undefined,
