@@ -30,27 +30,29 @@ import * as RpcSession from "../rpc/session.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
+import { connectionRouteId, connectionRoutes, entryWithRoutes } from "./routes.ts";
 import {
-  connectionRouteId,
-  connectionRouteKind,
-  connectionRoutes,
-  entryWithRoutes,
-} from "./routes.ts";
+  isThisMachineRoute,
+  LOOPBACK_BACKOFF_RESET_AFTER_MS,
+  LOOPBACK_CONNECTION_ESTABLISHMENT_TIMEOUT,
+  LOOPBACK_RECENT_TRAFFIC_MS,
+  LOOPBACK_RETRY_MAX_DELAY_MS,
+} from "./thisMachine.ts";
+
+export { LOOPBACK_BACKOFF_RESET_AFTER_MS, LOOPBACK_RETRY_MAX_DELAY_MS } from "./thisMachine.ts";
 
 const RETRY_BASE_DELAY_MS = 1_000;
 const RETRY_MAX_DELAY_MS = 300_000;
 const CONNECTION_ESTABLISHMENT_TIMEOUT = "15 seconds";
 const establishmentTimeout = Duration.fromInputUnsafe(CONNECTION_ESTABLISHMENT_TIMEOUT);
+const loopbackEstablishmentTimeout = Duration.fromInputUnsafe(
+  LOOPBACK_CONNECTION_ESTABLISHMENT_TIMEOUT,
+);
 const CONNECTION_PROBE_TIMEOUT = "15 seconds";
 // Mobile resumes, explicit retries, and offline events want a fast answer:
 // the user is waiting, or the network may be gone.
 const QUICK_CONNECTION_PROBE_TIMEOUT = "3 seconds";
 const BACKOFF_RESET_AFTER_MS = 30_000;
-// The desktop app's own server on this machine (see `thisMachine`) does not
-// depend on the network and only stops answering while it restarts or stalls,
-// so it is retried on a short ladder and a session counts as stable sooner.
-export const LOOPBACK_RETRY_MAX_DELAY_MS = 3_000;
-export const LOOPBACK_BACKOFF_RESET_AFTER_MS = 5_000;
 // While connected over a fallback route, how often to look for a better one.
 // Network changes and returning to the app also trigger a check.
 const BETTER_ROUTE_CHECK_INTERVAL = "60 seconds";
@@ -124,12 +126,12 @@ function exitUnlessInterrupted<A, E, R>(
 export interface EnvironmentSupervisorOptions {
   readonly initiallyDesired?: boolean;
   /**
-   * The desktop app's own server on this machine. Its primary loopback route
-   * then rides out stalls: it is never parked offline, its probes get the full
-   * timeout, and it retries on a short ladder. A loopback address alone does
-   * not mean this machine: an SSH port forward or a browser tab opened at a
-   * forwarded port reaches a remote machine over loopback too, so those keep
-   * the remote policy.
+   * The primary environment is the server on this machine. Its primary
+   * loopback route then rides out stalls (see `thisMachine.ts`): it is never
+   * parked offline, setup and probes get long budgets, any recent traffic
+   * answers a probe, the socket tolerates a long silence, and it retries on a
+   * short ladder. Bearer and SSH routes at a loopback address are port
+   * forwards to another machine, so those keep the remote policy.
    */
   readonly thisMachine?: boolean;
   /**
@@ -161,20 +163,6 @@ export function retryDelayMs(
 ): number {
   const ceiling = Math.min(maxDelayMs, RETRY_BASE_DELAY_MS * 2 ** (failureCount + 1));
   return Math.round(ceiling / 2 + (ceiling / 2) * random);
-}
-
-/**
- * A route to the desktop app's own server on this machine, which needs no
- * network to reach: the primary route at a loopback address, on a supervisor
- * told it is this machine.
- */
-function isThisMachineRoute(thisMachine: boolean, route: ConnectionRoute | undefined): boolean {
-  return (
-    thisMachine &&
-    route !== undefined &&
-    route.target._tag === "PrimaryConnectionTarget" &&
-    connectionRouteKind(route) === "loopback"
-  );
 }
 
 function annotateTarget(target: ConnectionTarget) {
@@ -480,8 +468,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     generation: number,
     lastFailure: ConnectionAttemptError | null,
   ) {
-    return yield* driver.connect(yield* attemptEntry, (progress) =>
-      reportProgress(attempt, generation, lastFailure, progress),
+    return yield* driver.connect(
+      yield* attemptEntry,
+      (progress) => reportProgress(attempt, generation, lastFailure, progress),
+      { thisMachine },
     );
   });
 
@@ -655,6 +645,14 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     }
   };
 
+  // Whether the session saw a frame within the recent-traffic window.
+  const sawRecentTraffic = Effect.fnUntraced(function* (live: RpcSession.RpcSession) {
+    if (live.lastInboundAt === undefined) return false;
+    const lastInboundAt = yield* live.lastInboundAt;
+    if (lastInboundAt === undefined) return false;
+    return (yield* Clock.currentTimeMillis) - lastInboundAt <= LOOPBACK_RECENT_TRAFFIC_MS;
+  });
+
   // Holds a connected lease until it must end, and returns whether to restart
   // the retry ladder. Returning to the app, an explicit retry, and the network
   // reporting offline all probe the live session instead of replacing it, so a
@@ -697,6 +695,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       if (probeTimeout === undefined) {
         continue;
       }
+      // Traffic from the server on this machine proves the socket works, so a
+      // health check it has just answered that way needs no reply of its own.
+      if (loopback && (yield* sawRecentTraffic(lease.session))) {
+        continue;
+      }
       yield* Ref.set(probeUnanswered, true);
       const probe = yield* Effect.forkChild(lease.session.probe);
       // Monotonic nanoseconds, so a wall-clock correction cannot move the deadline.
@@ -707,6 +710,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           Fiber.await(probe).pipe(
             Effect.map((exit) => ({ _tag: "ProbeCompleted" as const, exit })),
           ),
+          // A busy server on this machine may answer other requests before
+          // the probe; any frame from it counts as the answer.
+          ...(loopback && lease.session.nextInbound !== undefined
+            ? [lease.session.nextInbound.pipe(Effect.as({ _tag: "TrafficSeen" as const }))]
+            : []),
           takeSignal.pipe(Effect.map((signal) => ({ _tag: "Signal" as const, signal }))),
           Effect.sleep(Duration.nanos(remaining > 0n ? remaining : 0n)).pipe(
             Effect.as({ _tag: "TimedOut" as const }),
@@ -718,6 +726,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
             reason: "timeout",
             detail: `${target.label} did not respond to a connection health check.`,
           });
+        }
+        if (probeEvent._tag === "TrafficSeen") {
+          yield* Fiber.interrupt(probe);
+          yield* Ref.set(probeUnanswered, false);
+          break;
         }
         if (probeEvent._tag === "ProbeCompleted") {
           if (Exit.isSuccess(probeEvent.exit)) {
@@ -768,9 +781,20 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           resetRetry,
         })),
       ),
-      // Each route may use the full setup time before the next is tried.
+      // Each route may use the full setup time before the next is tried. The
+      // route to the server on this machine gets a longer budget: while it is
+      // starved for CPU every setup step queues behind its other work, and
+      // giving up only throws away work it has already started. Its LAN or
+      // Tailscale routes keep the remote budget, as the driver treats them.
       Effect.sleep(
-        Duration.times(establishmentTimeout, connectionRoutes(yield* Ref.get(currentEntry)).length),
+        connectionRoutes(yield* Ref.get(currentEntry)).reduce(
+          (total, route) =>
+            Duration.sum(
+              total,
+              isLoopbackRoute(route) ? loopbackEstablishmentTimeout : establishmentTimeout,
+            ),
+          Duration.zero,
+        ),
       ).pipe(Effect.as<EstablishmentEvent>({ _tag: "TimedOut" })),
     ]);
 

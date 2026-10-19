@@ -23,7 +23,6 @@ import {
   getNewProjectPathPreview,
   normalizePastedCloneUrl,
 } from "@specweave-studio/client-runtime/operations/projects";
-import { connectionStatusText } from "@specweave-studio/client-runtime/connection";
 import { threadSearchMatchKey } from "@specweave-studio/client-runtime/state/thread-search";
 import { resolveThreadReferenceCopyTarget } from "@specweave-studio/shared/threadReference";
 import {
@@ -117,7 +116,8 @@ import {
   ThemePreviewCircle,
 } from "./settings/ThemePreviewCircles";
 import { readLocalApi } from "../localApi";
-import { desktopLocalBackendId } from "../connection/desktopLocal";
+import { desktopLocalBackendId, isThisMachineTarget } from "../connection/desktopLocal";
+import { environmentConnectionStatusText } from "../lib/machineStatus";
 import { filesystemEnvironment, useFilesystemReadAccess } from "../state/filesystem";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
@@ -1102,7 +1102,10 @@ function OpenCommandPaletteDialog(props: {
           canCreateProjectInEnvironment(environment.connection.phase) &&
           readEnvironmentScope(environment.environmentId, AuthOrchestrationOperateScope),
         status: readEnvironmentScope(environment.environmentId, AuthOrchestrationOperateScope)
-          ? connectionStatusText(environment.connection)
+          ? environmentConnectionStatusText(
+              environment.connection,
+              isThisMachineTarget(environment.entry),
+            )
           : "Read-only connection",
       };
     });

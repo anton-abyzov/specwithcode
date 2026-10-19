@@ -38,6 +38,16 @@ export class RotatingFileSinkError extends Schema.TaggedError<RotatingFileSinkEr
 
 const isRotatingFileSinkError = Schema.is(RotatingFileSinkError);
 
+/** The errno code (ENOSPC, EIO, ...) behind a failed rotating-file write, if any. */
+export function rotatingFileSinkErrorCode(error: unknown): string | undefined {
+  const cause = isRotatingFileSinkError(error) ? error.cause : error;
+  if (typeof cause === "object" && cause !== null && "code" in cause) {
+    const code = (cause as { readonly code: unknown }).code;
+    return typeof code === "string" ? code : undefined;
+  }
+  return undefined;
+}
+
 const isFileNotFoundError = (cause: unknown): cause is NodeJS.ErrnoException =>
   cause instanceof Error && "code" in cause && cause.code === "ENOENT";
 

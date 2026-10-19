@@ -38,6 +38,7 @@ import * as ServerConfig from "../config.ts";
 import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import { SWEEP_SHELL_SNAPSHOT_MAX_AGE_MS } from "../orchestration-v2/ShellSnapshotCache.ts";
 import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
 import { forkParked } from "../serverActivation.ts";
 import { discoverFleet, readFleetConfig } from "../studioFleet.ts";
@@ -169,18 +170,20 @@ export const make = Effect.gen(function* () {
     return fromDisk;
   });
 
-  const readThreads = projections.getShellSnapshot({ location: "active" }).pipe(
-    Effect.map((snapshot) =>
-      snapshot.threads.map((thread): ObservedThread & { readonly id: string } => ({
-        id: thread.id,
-        providerInstanceId: thread.providerInstanceId,
-        status: thread.status,
-        lastErrorClass: thread.lastErrorClass ?? null,
-        updatedAtMs: millis(thread.updatedAt),
-      })),
-    ),
-    Effect.orElseSucceed(() => []),
-  );
+  const readThreads = projections
+    .getShellSnapshot({ location: "active", maxAgeMs: SWEEP_SHELL_SNAPSHOT_MAX_AGE_MS })
+    .pipe(
+      Effect.map((snapshot) =>
+        snapshot.threads.map((thread): ObservedThread & { readonly id: string } => ({
+          id: thread.id,
+          providerInstanceId: thread.providerInstanceId,
+          status: thread.status,
+          lastErrorClass: thread.lastErrorClass ?? null,
+          updatedAtMs: millis(thread.updatedAt),
+        })),
+      ),
+      Effect.orElseSucceed(() => []),
+    );
 
   const readCoordinators = (threads: ReadonlyArray<ObservedThread & { readonly id: string }>) =>
     projects.list().pipe(

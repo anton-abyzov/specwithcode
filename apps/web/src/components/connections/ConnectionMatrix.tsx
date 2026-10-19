@@ -318,11 +318,22 @@ export function ConnectionMatrix({
     selected?.plugin !== undefined
       ? plugins.find((p) => p.provider === selected.provider && p.label === selected.plugin)
       : undefined;
+  /** An account plugin's switch reaches only its skills, so its state names them. */
+  const pluginState = (plugin: (typeof plugins)[number]) =>
+    plugin.account && plugin.switchable !== false
+      ? `Skills ${plugin.enabled ? "on" : "off"}`
+      : plugin.enabled
+        ? "On"
+        : "Off";
   function pluginButton(plugin: (typeof plugins)[number]) {
     if (!onApply || !manage) return null;
     if (plugin.overridden)
       return <span className="text-xs text-muted-foreground">Set by this project's settings</span>;
-    const label = plugin.enabled ? "Turn off plugin" : "Turn on plugin";
+    if (plugin.switchable === false)
+      return <span className="text-xs text-muted-foreground">Managed in your ChatGPT account</span>;
+    // Codex loads an account plugin's apps whatever config.toml says; only its skills switch.
+    const what = plugin.account ? "skills" : "plugin";
+    const label = plugin.enabled ? `Turn off ${what}` : `Turn on ${what}`;
     return (
       <Button
         variant="outline"
@@ -522,7 +533,8 @@ export function ConnectionMatrix({
               >
                 <span className="font-medium">{plugin.label}</span>
                 <span className="text-xs text-muted-foreground">
-                  {toolName(plugin.provider)} · {plugin.enabled ? "On" : "Off"}
+                  {toolName(plugin.provider)} · {pluginState(plugin)}
+                  {plugin.account ? " · From your ChatGPT account" : ""}
                 </span>
                 {pluginButton(plugin)}
               </li>

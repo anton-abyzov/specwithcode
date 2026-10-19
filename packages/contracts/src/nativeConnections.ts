@@ -74,6 +74,10 @@ export const NativePlugin = Schema.Struct({
   enabled: Schema.Boolean,
   /** A project or local settings file decides it, so the user toggle would not take effect. */
   overridden: Schema.optionalKey(Schema.Boolean),
+  /** Installed by the user's ChatGPT account: Codex loads it whatever config.toml says. */
+  account: Schema.optionalKey(Schema.Boolean),
+  /** False when nothing SpecWithCode writes would change it, such as an account plugin without skills. */
+  switchable: Schema.optionalKey(Schema.Boolean),
 });
 export type NativePlugin = typeof NativePlugin.Type;
 /** One file a change writes, with the entries it adds or removes; values are masked. */

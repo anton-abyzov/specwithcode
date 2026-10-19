@@ -7,6 +7,7 @@
 import * as NodeSqlite from "node:sqlite";
 
 import * as Cache from "effect/Cache";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -36,6 +37,8 @@ export interface SqliteClientConfig {
   readonly spanAttributes?: Record<string, unknown> | undefined;
   readonly transformResultNames?: ((str: string) => string) | undefined;
   readonly transformQueryNames?: ((str: string) => string) | undefined;
+  /** Statements running at least this long are logged; defaults to SLOW_STATEMENT_THRESHOLD_MS. */
+  readonly slowStatementThresholdMs?: number | undefined;
 }
 
 export class UnsupportedNodeSqliteVersionError extends Schema.TaggedError<UnsupportedNodeSqliteVersionError>()(
@@ -103,7 +106,54 @@ const classifyError = (cause: unknown, message: string, operation: string) => {
 // accepts SQLite scalar inputs, so bind booleans as 0/1 on every execution path.
 // Other values stay unchanged; unsupported inputs still produce typed SqlError.
 const sqliteBindings = (params: ReadonlyArray<unknown>): ReadonlyArray<unknown> =>
-  params.map((value) => typeof value === "boolean" ? Number(value) : value);
+  params.map((value) => (typeof value === "boolean" ? Number(value) : value));
+
+/** A statement that holds the event loop this long is logged as slow. */
+export const SLOW_STATEMENT_THRESHOLD_MS = 250;
+const SLOW_STATEMENT_SQL_MAX_CHARS = 200;
+
+const truncateStatementSql = (sql: string): string => {
+  const singleLine = sql.replace(/\s+/g, " ").trim();
+  return singleLine.length > SLOW_STATEMENT_SQL_MAX_CHARS
+    ? `${singleLine.slice(0, SLOW_STATEMENT_SQL_MAX_CHARS)}...`
+    : singleLine;
+};
+
+/**
+ * node:sqlite runs statements synchronously on the event loop, so a slow one
+ * stalls every request in the process. Name it: a warning with the statement
+ * text (parameters are bound separately and never included) and its duration,
+ * and the same as an event on the current span.
+ */
+const reportStatementDuration = (
+  sql: string,
+  durationMs: number,
+  thresholdMs: number,
+  failed = false,
+): Effect.Effect<void> => {
+  if (durationMs < thresholdMs) return Effect.void;
+  const statement = truncateStatementSql(sql);
+  const roundedMs = Math.round(durationMs);
+  // A statement that waited out busy_timeout and then failed held the event
+  // loop just as long, so it is reported too, marked as failed.
+  const failedFlag = failed ? { failed: true } : {};
+  return Effect.gen(function* () {
+    const span = yield* Effect.option(Effect.currentSpan);
+    if (span._tag === "Some") {
+      const nowNanos = yield* Clock.currentTimeNanos;
+      span.value.event("sqlite.slow_statement", nowNanos, {
+        "db.query.text": statement,
+        "db.statement.duration_ms": roundedMs,
+        ...(failed ? { "db.statement.failed": true } : {}),
+      });
+    }
+    yield* Effect.logWarning("slow SQLite statement", {
+      sql: statement,
+      durationMs: roundedMs,
+      ...failedFlag,
+    });
+  });
+};
 
 const make = Effect.fn("makeWithDatabase")(function* (
   options: SqliteClientConfig,
@@ -111,6 +161,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
   yield* checkNodeSqliteCompat();
 
   const compiler = Statement.makeCompilerSqlite(options.transformQueryNames);
+  const slowThresholdMs = options.slowStatementThresholdMs ?? SLOW_STATEMENT_THRESHOLD_MS;
   const transformRows = options.transformResultNames
     ? Statement.defaultTransforms(options.transformResultNames).array
     : undefined;
@@ -172,19 +223,36 @@ const make = Effect.fn("makeWithDatabase")(function* (
       raw: boolean,
     ) =>
       Effect.withFiber<ReadonlyArray<any>, SqlError>((fiber) => {
+        const startedAt = performance.now();
         try {
           statement.setReadBigInts(Boolean(Context.get(fiber.context, Client.SafeIntegers)));
-          if (hasRows(statement)) {
-            return Effect.succeed(statement.all(...(sqliteBindings(params) as any)));
-          }
-          const result = statement.run(...(sqliteBindings(params) as any));
-          return Effect.succeed(raw ? (result as unknown as ReadonlyArray<any>) : []);
+          const rows = hasRows(statement)
+            ? statement.all(...(sqliteBindings(params) as any))
+            : raw
+              ? (statement.run(...(sqliteBindings(params) as any)) as unknown as ReadonlyArray<any>)
+              : (statement.run(...(sqliteBindings(params) as any)), []);
+          const durationMs = performance.now() - startedAt;
+          // Fast statements keep the original single-step result so fiber
+          // scheduling is unchanged; only slow ones pay for the report.
+          return durationMs < slowThresholdMs
+            ? Effect.succeed(rows)
+            : Effect.as(
+                reportStatementDuration(statement.sourceSQL, durationMs, slowThresholdMs),
+                rows,
+              );
         } catch (cause) {
-          return Effect.fail(
+          const failure = Effect.fail(
             new SqlError({
               reason: classifyError(cause, "Failed to execute statement", "execute"),
             }),
           );
+          const durationMs = performance.now() - startedAt;
+          return durationMs < slowThresholdMs
+            ? failure
+            : Effect.andThen(
+                reportStatementDuration(statement.sourceSQL, durationMs, slowThresholdMs, true),
+                failure,
+              );
         }
       });
 
@@ -198,22 +266,41 @@ const make = Effect.fn("makeWithDatabase")(function* (
       Effect.acquireUseRelease(
         Effect.succeed(statement),
         (statement) =>
-          Effect.try({
-            try: () => {
+          Effect.suspend(() => {
+            const startedAt = performance.now();
+            let rows: ReadonlyArray<ReadonlyArray<unknown>>;
+            try {
               if (hasRows(statement)) {
                 statement.setReturnArrays(true);
                 // Safe to cast to array after we've setReturnArrays(true)
-                return statement.all(...(sqliteBindings(params) as any)) as unknown as ReadonlyArray<
-                  ReadonlyArray<unknown>
-                >;
+                rows = statement.all(
+                  ...(sqliteBindings(params) as any),
+                ) as unknown as ReadonlyArray<ReadonlyArray<unknown>>;
+              } else {
+                statement.run(...(sqliteBindings(params) as any));
+                rows = [];
               }
-              statement.run(...(sqliteBindings(params) as any));
-              return [];
-            },
-            catch: (cause) =>
-              new SqlError({
-                reason: classifyError(cause, "Failed to execute statement", "execute"),
-              }),
+            } catch (cause) {
+              const failure = Effect.fail(
+                new SqlError({
+                  reason: classifyError(cause, "Failed to execute statement", "execute"),
+                }),
+              );
+              const durationMs = performance.now() - startedAt;
+              return durationMs < slowThresholdMs
+                ? failure
+                : Effect.andThen(
+                    reportStatementDuration(statement.sourceSQL, durationMs, slowThresholdMs, true),
+                    failure,
+                  );
+            }
+            const durationMs = performance.now() - startedAt;
+            return durationMs < slowThresholdMs
+              ? Effect.succeed(rows)
+              : Effect.as(
+                  reportStatementDuration(statement.sourceSQL, durationMs, slowThresholdMs),
+                  rows,
+                );
           }),
         (statement) =>
           Effect.try({

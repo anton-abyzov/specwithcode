@@ -8,6 +8,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
+import * as TestClock from "effect/testing/TestClock";
 
 import { DEFAULT_SIGNAL_EXPORT } from "@specweave-studio/shared/observability";
 import {
@@ -94,7 +97,9 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       const baseDir = yield* fs.realPath(yield* fs.makeTempDirectoryScoped());
       const prefix = `${baseDir}/node`;
       const entry = `${prefix}/lib/node_modules/specweave-studio/dist/bin.mjs`;
-      yield* fs.makeDirectory(`${prefix}/lib/node_modules/specweave-studio/dist`, { recursive: true });
+      yield* fs.makeDirectory(`${prefix}/lib/node_modules/specweave-studio/dist`, {
+        recursive: true,
+      });
       yield* fs.makeDirectory(`${prefix}/bin`, { recursive: true });
       yield* fs.writeFileString(entry, "");
       yield* fs.writeFileString(
@@ -249,6 +254,11 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         const secrets = yield* ServerSecretStore.ServerSecretStore;
         const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
         const encode = (value: string) => new TextEncoder().encode(value);
+        // The capability is cached for a few seconds so the environment probe
+        // never waits on disk; each flip is observed once that window passes.
+        const afterCacheWindow = TestClock.adjust(
+          `${ServerEnvironment.AGENT_ACTIVITY_PUBLISHING_CACHE_TTL_MS} millis`,
+        );
 
         const unlinked = yield* serverEnvironment.getDescriptor;
         expect(unlinked.capabilities.agentActivityPublishing).toBe(false);
@@ -256,6 +266,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         // The opt-in alone is not enough: without relay link credentials no
         // publish would leave this environment.
         yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, encode("true"));
+        yield* afterCacheWindow;
         const withoutLink = yield* serverEnvironment.getDescriptor;
         expect(withoutLink.capabilities.agentActivityPublishing).toBe(false);
 
@@ -264,19 +275,101 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         // advertise publishing.
         yield* secrets.set(RELAY_URL_SECRET, encode(""));
         yield* secrets.set(RELAY_ENVIRONMENT_CREDENTIAL_SECRET, encode("credential"));
+        yield* afterCacheWindow;
         const emptyUrl = yield* serverEnvironment.getDescriptor;
         expect(emptyUrl.capabilities.agentActivityPublishing).toBe(false);
 
         yield* secrets.set(RELAY_URL_SECRET, encode("https://relay.example"));
+        yield* afterCacheWindow;
         const linked = yield* serverEnvironment.getDescriptor;
         expect(linked.capabilities.agentActivityPublishing).toBe(true);
 
         // The toggle changes at runtime, so the same service instance must
         // reflect a flip without a restart.
         yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, encode("false"));
+        yield* afterCacheWindow;
         const disabled = yield* serverEnvironment.getDescriptor;
         expect(disabled.capabilities.agentActivityPublishing).toBe(false);
       }).pipe(Effect.provide(layerTest));
+    }),
+  );
+
+  it.effect("answers descriptor requests from memory while the secret store is slow", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "studio-server-environment-publish-cache-test-",
+      });
+      const serverConfig = yield* makeServerConfig(baseDir);
+      yield* fileSystem.makeDirectory(serverConfig.stateDir, { recursive: true });
+      const values = new Map<string, string>([
+        [PUBLISH_AGENT_ACTIVITY_SECRET, "true"],
+        [RELAY_URL_SECRET, "https://relay.example"],
+        [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "credential"],
+      ]);
+      let reads = 0;
+      let stall: Deferred.Deferred<void> | undefined;
+      const layerCountingSecretStore = Layer.succeed(
+        ServerSecretStore.ServerSecretStore,
+        ServerSecretStore.ServerSecretStore.of({
+          get: (name) =>
+            Effect.gen(function* () {
+              reads += 1;
+              if (stall !== undefined) yield* Deferred.await(stall);
+              const value = values.get(name);
+              return value === undefined
+                ? Option.none()
+                : Option.some(new TextEncoder().encode(value));
+            }),
+          set: () => Effect.void,
+          create: () => Effect.void,
+          getOrCreateRandom: () => Effect.succeed(new Uint8Array()),
+          remove: () => Effect.void,
+        }),
+      );
+
+      yield* Effect.gen(function* () {
+        const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+        // Startup reads the three secrets once.
+        expect(reads).toBe(3);
+        for (let index = 0; index < 5; index += 1) {
+          const descriptor = yield* serverEnvironment.getDescriptor;
+          expect(descriptor.capabilities.agentActivityPublishing).toBe(true);
+        }
+        expect(reads).toBe(3);
+
+        // Once the window passes, a stalled store does not hold the request:
+        // it answers from the last value after a short wait, and the shared
+        // refresh lands when the store responds.
+        values.set(PUBLISH_AGENT_ACTIVITY_SECRET, "false");
+        stall = yield* Deferred.make<void>();
+        yield* TestClock.adjust(
+          `${ServerEnvironment.AGENT_ACTIVITY_PUBLISHING_CACHE_TTL_MS} millis`,
+        );
+        const pending = yield* serverEnvironment.getDescriptor.pipe(Effect.forkChild);
+        yield* TestClock.adjust("250 millis");
+        const stale = yield* Fiber.join(pending);
+        expect(stale.capabilities.agentActivityPublishing).toBe(true);
+        // A second request during the same refresh shares it instead of reading again.
+        const second = yield* serverEnvironment.getDescriptor.pipe(Effect.forkChild);
+        yield* TestClock.adjust("250 millis");
+        expect((yield* Fiber.join(second)).capabilities.agentActivityPublishing).toBe(true);
+        expect(reads).toBe(6);
+
+        yield* Deferred.succeed(stall, undefined);
+        stall = undefined;
+        // The next request joins the same in-flight refresh and sees its result.
+        const refreshed = yield* serverEnvironment.getDescriptor;
+        expect(refreshed.capabilities.agentActivityPublishing).toBe(false);
+        expect(reads).toBe(6);
+      }).pipe(
+        Effect.provide(
+          ServerEnvironment.layer.pipe(
+            Layer.provide(layerCountingSecretStore),
+            Layer.provide(ServerConfig.layer(serverConfig)),
+          ),
+        ),
+      );
     }),
   );
 

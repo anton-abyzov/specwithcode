@@ -6,10 +6,11 @@
  * they cannot race while appending to the same thread-scoped file.
  */
 import * as NodeFS from "node:fs";
+import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import type { ThreadId } from "@specweave-studio/contracts";
-import { RotatingFileSink } from "@specweave-studio/shared/logging";
+import { RotatingFileSink, rotatingFileSinkErrorCode } from "@specweave-studio/shared/logging";
 import { errorTag } from "@specweave-studio/shared/observability";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -32,6 +33,9 @@ const DEFAULT_MAX_AGE_MS = 14 * DAY_MS;
 const DEFAULT_RETENTION_CHECK_INTERVAL_MS = 5 * 60 * 1_000;
 const DEFAULT_MAX_BUFFERED_BYTES = MEBIBYTE;
 const DEFAULT_MAX_BUFFERED_RECORDS = 512;
+/** After a write fails because the disk is full or erroring, no write is
+    attempted for this long; records are dropped before serialization. */
+export const EVENT_LOG_DISK_FAILURE_BACKOFF_MS = 60_000;
 const MAX_RECORD_CHARACTERS = 64 * 1024;
 const MAX_RECORD_FIELDS = 1_024;
 const MAX_RECORD_DEPTH = 16;
@@ -140,6 +144,20 @@ export interface PendingRecord {
   readonly bytes: number;
 }
 
+/** A run of failing writes, from the first failure to the next successful write. */
+interface WriteFailureEpisode {
+  readonly filePath: string;
+  readonly errorCode: string | undefined;
+  /** Records dropped from failed batches (pre-serialization drops are counted separately). */
+  readonly droppedCount: number;
+}
+
+/** A disk-wide failure (full, over quota or erroring): it suspends the whole store. */
+interface DiskFailureEpisode extends WriteFailureEpisode {
+  /** Until this time records are dropped before serialization and nothing is written. */
+  readonly retryAt: number;
+}
+
 interface StoreState {
   readonly pending: Array<PendingRecord>;
   readonly pendingBytes: number;
@@ -147,6 +165,10 @@ interface StoreState {
   readonly flushScheduled: boolean;
   readonly closed: boolean;
   readonly lastRetentionAt: number;
+  /** Set while the disk itself fails; suspends every stream and thread. */
+  readonly diskFailure: DiskFailureEpisode | undefined;
+  /** Failures confined to one thread's file (for example EACCES), by thread segment. */
+  readonly segmentFailures: ReadonlyMap<string, WriteFailureEpisode>;
 }
 
 interface AttributionSummary {
@@ -166,8 +188,23 @@ interface RetentionResult {
 
 interface DrainResult {
   readonly attributions: ReadonlyArray<AttributionSummary>;
-  readonly failures: ReadonlyArray<FileOperationFailure>;
+  /** Set when this drain started a disk-wide failure episode. */
+  readonly diskFailureStarted: DiskFailureEpisode | undefined;
+  /** Set when this drain ended a disk-wide failure episode with a successful write. */
+  readonly diskFailureRecovered: DiskFailureEpisode | undefined;
+  /** Per-file failure episodes this drain started. */
+  readonly segmentFailuresStarted: ReadonlyArray<WriteFailureEpisode>;
+  /** Per-file failure episodes this drain ended with a successful write to that file. */
+  readonly segmentFailuresRecovered: ReadonlyArray<WriteFailureEpisode>;
+  /** The paths of active sinks when retention is due (not while the disk fails). */
+  readonly retentionActivePaths: ReadonlySet<string> | undefined;
 }
+
+const isDiskFullCode = (code: string | undefined): boolean =>
+  code === "ENOSPC" || code === "EDQUOT";
+
+const isDiskFailureCode = (code: string | undefined): boolean =>
+  isDiskFullCode(code) || code === "EIO";
 
 function logWarning(message: string, context: Record<string, unknown>): Effect.Effect<void> {
   return Effect.logWarning(message, context).pipe(Effect.annotateLogs({ scope: LOG_SCOPE }));
@@ -405,34 +442,41 @@ export function writeBatchedMessages(
   flush();
 }
 
-function isProviderLogFile(filePath: string, fileName: string, filePrefix: string): boolean {
+async function isProviderLogFile(
+  filePath: string,
+  fileName: string,
+  filePrefix: string,
+): Promise<boolean> {
   if (!/\.log(?:\.\d+)?$/u.test(fileName)) return false;
   if (fileName.startsWith(filePrefix)) return true;
 
-  const descriptor = NodeFS.openSync(filePath, "r");
+  const handle = await NodeFSP.open(filePath, "r");
   try {
     const header = Buffer.alloc(256);
-    const bytesRead = NodeFS.readSync(descriptor, header, 0, header.byteLength, 0);
+    const { bytesRead } = await handle.read(header, 0, header.byteLength, 0);
     return /^\[[^\]\r\n]+\] (?:NTIVE|CANON|ORCH): /u.test(header.toString("utf8", 0, bytesRead));
   } finally {
-    NodeFS.closeSync(descriptor);
+    await handle.close();
   }
 }
 
-function enforceRetention(input: {
+/** Ages out and size-caps provider logs with async fs, so a slow or full
+    disk delays only this scan, never the event loop. `isActive` is asked
+    right before each removal, so a sink opened during the scan is kept. */
+async function enforceRetentionAsync(input: {
   readonly directory: string;
   readonly maxTotalBytes: number;
   readonly maxAgeMs: number;
-  readonly activeFilePaths: ReadonlySet<string>;
+  readonly isActive: (filePath: string) => boolean;
   readonly filePrefix: string;
   readonly now: number;
-}): RetentionResult {
+}): Promise<RetentionResult> {
   const failures: Array<FileOperationFailure> = [];
   const files: Array<{ filePath: string; mtimeMs: number; size: number }> = [];
 
   let entries: ReadonlyArray<NodeFS.Dirent>;
   try {
-    entries = NodeFS.readdirSync(input.directory, { withFileTypes: true });
+    entries = await NodeFSP.readdir(input.directory, { withFileTypes: true });
   } catch (cause) {
     return { failures: [{ filePath: input.directory, cause }] };
   }
@@ -441,8 +485,8 @@ function enforceRetention(input: {
     if (!entry.isFile()) continue;
     const filePath = NodePath.join(input.directory, entry.name);
     try {
-      if (!isProviderLogFile(filePath, entry.name, input.filePrefix)) continue;
-      const stat = NodeFS.statSync(filePath);
+      if (!(await isProviderLogFile(filePath, entry.name, input.filePrefix))) continue;
+      const stat = await NodeFSP.stat(filePath);
       files.push({ filePath, mtimeMs: stat.mtimeMs, size: stat.size });
     } catch (cause) {
       failures.push({ filePath, cause });
@@ -450,10 +494,10 @@ function enforceRetention(input: {
   }
 
   let totalBytes = files.reduce((total, file) => total + file.size, 0);
-  const remove = (file: (typeof files)[number]) => {
-    if (input.activeFilePaths.has(file.filePath)) return false;
+  const remove = async (file: (typeof files)[number]) => {
+    if (input.isActive(file.filePath)) return false;
     try {
-      NodeFS.rmSync(file.filePath, { force: true });
+      await NodeFSP.rm(file.filePath, { force: true });
       totalBytes -= file.size;
       return true;
     } catch (cause) {
@@ -462,20 +506,29 @@ function enforceRetention(input: {
     }
   };
 
-  const retained = files.filter((file) => {
-    if (input.now - file.mtimeMs <= input.maxAgeMs) return true;
-    return !remove(file);
-  });
+  const retained: typeof files = [];
+  for (const file of files) {
+    if (input.now - file.mtimeMs <= input.maxAgeMs || !(await remove(file))) {
+      retained.push(file);
+    }
+  }
 
   for (const file of retained.toSorted(
     (left, right) => left.mtimeMs - right.mtimeMs || left.filePath.localeCompare(right.filePath),
   )) {
     if (totalBytes <= input.maxTotalBytes) break;
-    remove(file);
+    await remove(file);
   }
 
   return { failures };
 }
+
+const enforceRetention = (input: Parameters<typeof enforceRetentionAsync>[0]) =>
+  Effect.promise(() =>
+    enforceRetentionAsync(input).catch((cause: unknown): RetentionResult => ({
+      failures: [{ filePath: input.directory, cause }],
+    })),
+  );
 
 function validateOption(input: {
   readonly filePath: string;
@@ -532,16 +585,56 @@ function drainPending(input: {
   readonly close: boolean;
 }): readonly [DrainResult, StoreState] {
   if (input.state.closed) {
-    return [{ attributions: [], failures: [] }, input.state];
+    return [
+      {
+        attributions: [],
+        diskFailureStarted: undefined,
+        diskFailureRecovered: undefined,
+        segmentFailuresStarted: [],
+        segmentFailuresRecovered: [],
+        retentionActivePaths: undefined,
+      },
+      input.state,
+    ];
   }
 
   const sinks = new Map(input.state.sinks);
-  const failures: Array<FileOperationFailure> = [];
   const attributionByStream = new Map<
     EventNdjsonStream,
     { count: number; logicalWriteBytes: number }
   >();
   const recordsBySegment = new Map<string, Array<PendingRecord>>();
+  const segmentFailures = new Map(input.state.segmentFailures);
+  const segmentFailuresStarted: Array<WriteFailureEpisode> = [];
+  const segmentFailuresRecovered: Array<WriteFailureEpisode> = [];
+  let diskFailure: { filePath: string; errorCode: string | undefined } | undefined;
+  let diskFailedRecords = 0;
+  let writtenRecordCount = 0;
+
+  // A disk-wide code suspends the whole store; any other code (EACCES,
+  // EISDIR, ENAMETOOLONG, ...) belongs to this one file, so only its records
+  // are dropped and the other threads keep writing.
+  const recordFailure = (
+    threadSegment: string,
+    filePath: string,
+    cause: unknown,
+    failedCount: number,
+  ) => {
+    const errorCode = rotatingFileSinkErrorCode(cause);
+    if (isDiskFailureCode(errorCode)) {
+      diskFailure ??= { filePath, errorCode };
+      diskFailedRecords += failedCount;
+      return;
+    }
+    const previous = segmentFailures.get(threadSegment);
+    const episode = {
+      filePath,
+      errorCode: previous?.errorCode ?? errorCode,
+      droppedCount: (previous?.droppedCount ?? 0) + failedCount,
+    };
+    segmentFailures.set(threadSegment, episode);
+    if (previous === undefined) segmentFailuresStarted.push(episode);
+  };
 
   for (const record of input.state.pending) {
     const records = recordsBySegment.get(record.threadSegment) ?? [];
@@ -562,13 +655,15 @@ function drainPending(input: {
         });
         sinks.set(threadSegment, sink);
       } catch (cause) {
-        failures.push({ filePath, cause });
+        recordFailure(threadSegment, filePath, cause, records.length);
         continue;
       }
     }
 
+    let writtenInSegment = 0;
     try {
       writeBatchedMessages(sink, records, input.options.maxBytes, (writtenRecords) => {
+        writtenInSegment += writtenRecords.length;
         for (const record of writtenRecords) {
           const current = attributionByStream.get(record.stream) ?? {
             count: 0,
@@ -582,26 +677,43 @@ function drainPending(input: {
       });
     } catch (cause) {
       sinks.delete(threadSegment);
-      failures.push({ filePath, cause });
+      recordFailure(threadSegment, filePath, cause, records.length - writtenInSegment);
+      writtenRecordCount += writtenInSegment;
+      continue;
+    }
+    writtenRecordCount += writtenInSegment;
+    const recovered = segmentFailures.get(threadSegment);
+    if (recovered !== undefined) {
+      segmentFailures.delete(threadSegment);
+      segmentFailuresRecovered.push(recovered);
     }
   }
 
+  const previousDiskFailure = input.state.diskFailure;
+  let nextDiskFailure = previousDiskFailure;
+  let diskFailureStarted: DiskFailureEpisode | undefined;
+  let diskFailureRecovered: DiskFailureEpisode | undefined;
+  if (diskFailure !== undefined) {
+    // A full or erroring disk is left alone for a minute: every attempt is a
+    // blocking syscall, and the records would only be dropped again.
+    nextDiskFailure = {
+      retryAt: input.now + EVENT_LOG_DISK_FAILURE_BACKOFF_MS,
+      filePath: previousDiskFailure?.filePath ?? diskFailure.filePath,
+      errorCode: previousDiskFailure?.errorCode ?? diskFailure.errorCode,
+      droppedCount: (previousDiskFailure?.droppedCount ?? 0) + diskFailedRecords,
+    };
+    if (previousDiskFailure === undefined) diskFailureStarted = nextDiskFailure;
+  } else if (previousDiskFailure !== undefined && writtenRecordCount > 0) {
+    diskFailureRecovered = previousDiskFailure;
+    nextDiskFailure = undefined;
+  }
+
+  // The retention scan is skipped while the disk fails; it would only add
+  // I/O to a disk that is already failing. A failure in one thread's file
+  // does not stop it.
   const retentionDue =
+    nextDiskFailure === undefined &&
     input.now - input.state.lastRetentionAt >= input.options.retentionCheckIntervalMs;
-  const retention = retentionDue
-    ? enforceRetention({
-        directory: input.directory,
-        maxTotalBytes: input.options.maxTotalBytes,
-        maxAgeMs: input.options.maxAgeMs,
-        activeFilePaths: new Set(
-          Array.from(sinks.keys(), (threadSegment) =>
-            providerLogPath(input.directory, input.filePrefix, threadSegment),
-          ),
-        ),
-        filePrefix: input.filePrefix,
-        now: input.now,
-      })
-    : { failures: [] };
 
   return [
     {
@@ -609,7 +721,17 @@ function drainPending(input: {
         stream,
         ...value,
       })),
-      failures: [...failures, ...retention.failures],
+      diskFailureStarted,
+      diskFailureRecovered,
+      segmentFailuresStarted,
+      segmentFailuresRecovered,
+      retentionActivePaths: retentionDue
+        ? new Set(
+            Array.from(sinks.keys(), (threadSegment) =>
+              providerLogPath(input.directory, input.filePrefix, threadSegment),
+            ),
+          )
+        : undefined,
     },
     {
       pending: [],
@@ -618,6 +740,8 @@ function drainPending(input: {
       flushScheduled: input.timerFired ? false : input.state.flushScheduled,
       closed: input.close,
       lastRetentionAt: retentionDue ? input.now : input.state.lastRetentionAt,
+      diskFailure: nextDiskFailure,
+      segmentFailures,
     },
   ];
 }
@@ -646,16 +770,14 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
   });
 
   const initializedAt = yield* Clock.currentTimeMillis;
-  const initialRetention = yield* Effect.sync(() =>
-    enforceRetention({
-      directory,
-      maxTotalBytes: resolved.maxTotalBytes,
-      maxAgeMs: resolved.maxAgeMs,
-      activeFilePaths: new Set(),
-      filePrefix,
-      now: initializedAt,
-    }),
-  );
+  const initialRetention = yield* enforceRetention({
+    directory,
+    maxTotalBytes: resolved.maxTotalBytes,
+    maxAgeMs: resolved.maxAgeMs,
+    isActive: () => false,
+    filePrefix,
+    now: initializedAt,
+  });
   for (const failure of initialRetention.failures) {
     yield* logWarning("provider event log retention failed", {
       filePath: failure.filePath,
@@ -670,8 +792,16 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
     flushScheduled: false,
     closed: false,
     lastRetentionAt: initializedAt,
+    diskFailure: undefined,
+    segmentFailures: new Map(),
   });
   const timerScope = yield* Scope.make();
+  // Records dropped before serialization while writes are suspended.
+  let droppedBeforeSerialization = 0;
+  const isActiveLogPath = (filePath: string) =>
+    Array.from(SynchronizedRef.getUnsafe(stateRef).sinks.keys()).some(
+      (threadSegment) => providerLogPath(directory, filePrefix, threadSegment) === filePath,
+    );
 
   const flush = Effect.fnUntraced(function* (timerFired: boolean, close: boolean) {
     const startedAt = yield* Clock.currentTimeMillis;
@@ -689,11 +819,56 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
       ),
     );
 
-    for (const failure of result.failures) {
-      yield* logWarning("provider event log write or retention failed", {
-        filePath: failure.filePath,
-        errorTag: errorTag(failure.cause),
+    // One line when writes start failing and one when they recover, so a
+    // full disk costs two log lines, not one per batch.
+    const failureContext = (episode: WriteFailureEpisode) => ({
+      filePath: episode.filePath,
+      ...(episode.errorCode === undefined ? {} : { errorCode: episode.errorCode }),
+    });
+    if (result.diskFailureStarted !== undefined) {
+      yield* logWarning(
+        isDiskFullCode(result.diskFailureStarted.errorCode)
+          ? "provider event log writes are failing because the disk is out of space, dropping records until space is freed"
+          : "provider event log writes are failing because the disk is erroring, dropping records until it recovers",
+        failureContext(result.diskFailureStarted),
+      );
+    }
+    for (const episode of result.segmentFailuresStarted) {
+      yield* logWarning(
+        "provider event log writes to this file are failing, dropping its records until they recover",
+        failureContext(episode),
+      );
+    }
+    if (result.diskFailureRecovered !== undefined) {
+      const droppedCount = result.diskFailureRecovered.droppedCount + droppedBeforeSerialization;
+      droppedBeforeSerialization = 0;
+      yield* Effect.logInfo("provider event log writes recovered", {
+        filePath: result.diskFailureRecovered.filePath,
+        droppedCount,
+      }).pipe(Effect.annotateLogs({ scope: LOG_SCOPE }));
+    }
+    for (const episode of result.segmentFailuresRecovered) {
+      yield* Effect.logInfo("provider event log writes recovered", {
+        filePath: episode.filePath,
+        droppedCount: episode.droppedCount,
+      }).pipe(Effect.annotateLogs({ scope: LOG_SCOPE }));
+    }
+    if (result.retentionActivePaths !== undefined) {
+      const activePaths = result.retentionActivePaths;
+      const retention = yield* enforceRetention({
+        directory,
+        maxTotalBytes: resolved.maxTotalBytes,
+        maxAgeMs: resolved.maxAgeMs,
+        isActive: (candidate) => activePaths.has(candidate) || isActiveLogPath(candidate),
+        filePrefix,
+        now: startedAt,
       });
+      for (const failure of retention.failures) {
+        yield* logWarning("provider event log retention failed", {
+          filePath: failure.filePath,
+          errorTag: errorTag(failure.cause),
+        });
+      }
     }
 
     if (resolved.attribution && result.attributions.length > 0) {
@@ -741,6 +916,12 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
 
     const write = Effect.fnUntraced(function* (event: unknown, threadId: ThreadId | null) {
       if (!shouldPersistProviderEvent(stream, event)) return;
+      const diskFailure = SynchronizedRef.getUnsafe(stateRef).diskFailure;
+      if (diskFailure !== undefined && (yield* Clock.currentTimeMillis) < diskFailure.retryAt) {
+        // Serializing a record that cannot be written only costs the event loop.
+        droppedBeforeSerialization += 1;
+        return;
+      }
       let payload = yield* serializeEvent(boundProviderEventForLogging(event));
       if (payload === undefined) return;
       // Escaping can expand strings beyond their input size. Keep that bounded

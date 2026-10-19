@@ -25,6 +25,7 @@ import { deriveProviderInstanceConfigMap } from "../provider/ProviderInstanceReg
 import { forkParked } from "../serverActivation.ts";
 import * as ServerSettingsModule from "../serverSettings.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
+import { SWEEP_SHELL_SNAPSHOT_MAX_AGE_MS } from "./ShellSnapshotCache.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 
 /**
@@ -191,7 +192,10 @@ export const make = Effect.gen(function* () {
   const sweep: ClaudeIdleCompactionReactor["Service"]["sweep"] = Effect.gen(function* () {
     const settings = yield* serverSettings.getSettings;
     const now = yield* Clock.currentTimeMillis;
-    const snapshot = yield* threads.getShellSnapshot({ location: "active" });
+    const snapshot = yield* threads.getShellSnapshot({
+      location: "active",
+      maxAgeMs: SWEEP_SHELL_SNAPSHOT_MAX_AGE_MS,
+    });
     const live = new Set(snapshot.threads.map((thread) => thread.id as string));
     for (const id of compactedAfterRun.keys()) if (!live.has(id)) compactedAfterRun.delete(id);
     const policies = new Map<ProviderInstanceId, { readonly minTokens: number } | null>();

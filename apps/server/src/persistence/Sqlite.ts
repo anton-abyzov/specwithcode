@@ -13,6 +13,9 @@ import * as ServerConfig from "../config.ts";
 // Size the -wal file is cut back to on the first commit after a WAL reset.
 export const WAL_SIZE_LIMIT_BYTES = 32 * 1024 * 1024;
 
+// SQLite page cache for the server connection: 64 MiB.
+export const PAGE_CACHE_KIB = 64 * 1024;
+
 const layerSetup = Layer.effectDiscard(
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -20,9 +23,16 @@ const layerSetup = Layer.effectDiscard(
     yield* sql`PRAGMA busy_timeout = 5000;`;
     yield* sql`PRAGMA foreign_keys = ON;`;
     yield* sql`PRAGMA journal_mode = WAL;`;
+    // In WAL mode NORMAL is still crash-safe (a power loss can drop only the
+    // last commits, never corrupt the database) and skips the fsync on every
+    // commit, which on a slow or nearly full disk held the event loop.
+    yield* sql`PRAGMA synchronous = NORMAL;`;
     // PASSIVE checkpoints never shrink the -wal file, so it otherwise keeps its
     // largest size until the last connection closes.
     yield* sql.unsafe(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES};`);
+    // The default 2 MiB page cache cannot hold one full shell scan, so every
+    // scan read its pages back from the file. A negative value is in KiB.
+    yield* sql.unsafe(`PRAGMA cache_size = -${PAGE_CACHE_KIB};`);
     yield* runMigrations();
   }),
 );

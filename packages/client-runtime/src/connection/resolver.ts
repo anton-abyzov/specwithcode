@@ -46,12 +46,14 @@ import {
 } from "./compatibility.ts";
 import { credentialConnectionId } from "./routes.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
+import { LOOPBACK_SETUP_REQUEST_TIMEOUT_MS } from "./thisMachine.ts";
 
 export class ConnectionResolver extends Context.Service<
   ConnectionResolver,
   {
     readonly prepare: (
       entry: ConnectionCatalogEntry,
+      options?: PrepareOptions,
     ) => Effect.Effect<PreparedConnection, ConnectionAttemptError>;
     /**
      * Authorizes a socket without the orchestration protocol gate, for hosts
@@ -66,6 +68,15 @@ export class ConnectionResolver extends Context.Service<
     >;
   }
 >()("@specweave-studio/client-runtime/connection/resolver/ConnectionResolver") {}
+
+export interface PrepareOptions {
+  /**
+   * The entry is the server on this machine, so each setup request gets the
+   * longer this-machine budget: a starved local server answers late, and
+   * giving up throws away work it has already started.
+   */
+  readonly thisMachine?: boolean;
+}
 
 /**
  * What a broker hands back: the prepared connection, and the environment
@@ -117,6 +128,7 @@ const makePrimaryBroker = Effect.fn("clientRuntime.connection.broker.makePrimary
 
   return Effect.fn("clientRuntime.connection.broker.primary")(function* (
     target: PrimaryConnectionTarget,
+    requestTimeoutMs: number | undefined,
   ) {
     const bearerToken = yield* auth.bearerToken;
     if (Option.isNone(bearerToken)) {
@@ -139,6 +151,7 @@ const makePrimaryBroker = Effect.fn("clientRuntime.connection.broker.makePrimary
       wsBaseUrl: target.wsBaseUrl,
       bearerToken: bearerToken.value,
       connectionMethod: "direct",
+      ...(requestTimeoutMs === undefined ? {} : { requestTimeoutMs }),
     });
     return brokered(authorized, target);
   });
@@ -276,8 +289,11 @@ export const make = Effect.gen(function* () {
 
   const authorize = Effect.fn("clientRuntime.connection.broker.authorize")(function* (
     entry: ConnectionCatalogEntry,
+    options: PrepareOptions = {},
   ) {
     const target: ConnectionTarget = entry.target;
+    const requestTimeoutMs =
+      options.thisMachine === true ? LOOPBACK_SETUP_REQUEST_TIMEOUT_MS : undefined;
     yield* Effect.annotateCurrentSpan({
       "connection.environment.id": target.environmentId,
       "connection.target.kind": target._tag,
@@ -285,7 +301,7 @@ export const make = Effect.gen(function* () {
     const brokeredConnection: BrokeredConnection = yield* (() => {
       switch (target._tag) {
         case "PrimaryConnectionTarget":
-          return primary(target);
+          return primary(target, requestTimeoutMs);
         case "BearerConnectionTarget":
           return bearer({ ...entry, target });
         case "RelayConnectionTarget":
@@ -303,6 +319,7 @@ export const make = Effect.gen(function* () {
       brokeredConnection.descriptor ??
       (yield* fetchRemoteEnvironmentDescriptor({
         httpBaseUrl: prepared.httpBaseUrl,
+        ...(requestTimeoutMs === undefined ? {} : { timeoutMs: requestTimeoutMs }),
       }).pipe(
         Effect.mapError(mapRemoteEnvironmentError),
         Effect.provideService(HttpClient.HttpClient, httpClient),
@@ -318,8 +335,9 @@ export const make = Effect.gen(function* () {
 
   const prepare = Effect.fn("clientRuntime.connection.broker.prepare")(function* (
     entry: ConnectionCatalogEntry,
+    options?: PrepareOptions,
   ) {
-    const { prepared, descriptor } = yield* authorize(entry);
+    const { prepared, descriptor } = yield* authorize(entry, options);
     const compatibilityError = orchestrationProtocolCompatibilityError(descriptor);
     if (compatibilityError !== null) {
       return yield* compatibilityError;
@@ -330,7 +348,7 @@ export const make = Effect.gen(function* () {
     };
   });
 
-  return ConnectionResolver.of({ prepare, prepareForUpdate: authorize });
+  return ConnectionResolver.of({ prepare, prepareForUpdate: (entry) => authorize(entry) });
 });
 
 export const layer = Layer.effect(ConnectionResolver, make);

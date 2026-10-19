@@ -11,7 +11,9 @@ import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings
 import { limitStopWaitsForReset } from "@specweave-studio/shared/providerFallback";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -133,6 +135,13 @@ export function waitRuleArmsResume(
   );
 }
 
+/**
+ * With no projection write since a read found no candidate, only the clock can
+ * make one (a snooze running out), so the read is repeated this often instead
+ * of on every five-second tick.
+ */
+export const LIMIT_RECOVERY_QUIET_RECHECK_MS = 30_000;
+
 export const makeSweep = Effect.gen(function* () {
   const admission = yield* ProjectAdmission.ProjectAdmission;
   const projects = yield* ProjectStore.ProjectStoreV2;
@@ -140,15 +149,42 @@ export const makeSweep = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const settings = yield* ServerSettings.ServerSettingsService;
   const availability = yield* Availability.UsageLimitAvailability;
+  // The last read that found no candidate, and what it was read against.
+  const quiet = yield* Ref.make<{
+    readonly writeCount: number;
+    readonly snooze: boolean;
+    readonly readAtMs: number;
+  } | null>(null);
   return Effect.fn("UsageLimitRecoveryWorker.sweep")(function* () {
     const preferences = yield* settings.getSettings;
     const now = yield* DateTime.now;
+    const nowMs = DateTime.toEpochMillis(now);
+    // Taken before the read, so a write that lands during it forces the next
+    // one. A store that cannot count its writes is read on every tick.
+    const counted =
+      projections.writeCount === undefined ? undefined : yield* Effect.exit(projections.writeCount);
+    const writeCount = counted !== undefined && Exit.isSuccess(counted) ? counted.value : undefined;
+    const last = yield* Ref.get(quiet);
+    if (
+      writeCount !== undefined &&
+      last !== null &&
+      last.writeCount === writeCount &&
+      last.snooze === preferences.snoozeLimitedThreads &&
+      nowMs - last.readAtMs >= 0 &&
+      nowMs - last.readAtMs < LIMIT_RECOVERY_QUIET_RECHECK_MS
+    )
+      return;
     const candidates = yield* projections.getLimitRecoveryCandidates({
       now,
       autoResume: true,
       snooze: preferences.snoozeLimitedThreads,
     });
-    const nowMs = DateTime.toEpochMillis(now);
+    yield* Ref.set(
+      quiet,
+      writeCount !== undefined && candidates.length === 0
+        ? { writeCount, snooze: preferences.snoozeLimitedThreads, readAtMs: nowMs }
+        : null,
+    );
     for (const candidate of candidates) {
       yield* Effect.gen(function* () {
         let thread = candidate;
