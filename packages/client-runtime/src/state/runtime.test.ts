@@ -10,9 +10,11 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Socket from "effect/socket/Socket";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+import { RpcClientError } from "effect/rpc";
 
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -377,6 +379,136 @@ describe("environment query lifecycle", () => {
           ).toBe("recovered");
         }),
       ),
+  );
+
+  it.effect("waits when a connected query finds its session already gone", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const unavailable = new EnvironmentRpcUnavailableError({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          message: "Query environment is not connected.",
+        });
+        let dropSession: Effect.Effect<void> = Effect.void;
+        let executions = 0;
+        const execute = Effect.suspend(() => {
+          executions += 1;
+          if (executions > 1) {
+            return Effect.succeed("recovered");
+          }
+          // The session drops and the request fails before the connection
+          // change reaches the query.
+          return dropSession.pipe(Effect.andThen(Effect.fail(unavailable)));
+        });
+        const harness = yield* makeEnvironmentQueryHarness(execute);
+        dropSession = SubscriptionRef.set(harness.supervisorSession, Option.none());
+        const registry = AtomRegistry.make();
+        const observed: Array<AsyncResult.AsyncResult<string, unknown>> = [];
+        const unsubscribe = registry.subscribe(
+          harness.atom,
+          (result) => {
+            observed.push(result);
+          },
+          { immediate: true },
+        );
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            unsubscribe();
+            registry.dispose();
+          }),
+        );
+        for (let index = 0; index < 10 && executions < 1; index += 1) {
+          yield* Effect.yieldNow;
+        }
+        for (let index = 0; index < 10; index += 1) {
+          yield* Effect.yieldNow;
+        }
+
+        expect(executions).toBe(1);
+        expect(observed.some(AsyncResult.isFailure)).toBe(false);
+
+        yield* SubscriptionRef.set(harness.supervisorSession, Option.some(QUERY_RPC_SESSION));
+        yield* SubscriptionRef.set(
+          harness.supervisorState,
+          queryConnectionState({ generation: 2 }),
+        );
+        expect(
+          yield* AtomRegistry.getResult(registry, harness.atom, {
+            suspendOnWaiting: true,
+          }),
+        ).toBe("recovered");
+      }),
+    ),
+  );
+
+  it.effect("still fails an unavailable error while the session is there", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const timedOut = new EnvironmentRpcUnavailableError({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          message: "The environment did not respond to the PR request.",
+        });
+        const harness = yield* makeEnvironmentQueryHarness(Effect.fail(timedOut));
+        const registry = yield* mountEnvironmentQuery(harness.atom);
+        const exit = yield* AtomRegistry.getResult(registry, harness.atom, {
+          suspendOnWaiting: true,
+        }).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.squash(exit.cause)).toBe(timedOut);
+        }
+      }),
+    ),
+  );
+
+  it.effect("waits for the next session when a connected query loses its socket", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const firstSettled = Latch.makeUnsafe();
+        const pingTimeout = new RpcClientError.RpcClientError({
+          reason: new Socket.SocketReadError({ cause: new Error("ping timeout") }),
+        });
+        let executions = 0;
+        const execute = Effect.suspend(() => {
+          executions += 1;
+          if (executions > 1) {
+            return Effect.succeed("recovered");
+          }
+          return Effect.fail(pingTimeout).pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                firstSettled.openUnsafe();
+              }),
+            ),
+          );
+        });
+        const harness = yield* makeEnvironmentQueryHarness(execute);
+        const registry = yield* mountEnvironmentQuery(harness.atom);
+
+        yield* firstSettled.await;
+        for (let index = 0; index < 10; index += 1) {
+          yield* Effect.yieldNow;
+        }
+
+        // Still connected: the request lost its socket, so it keeps waiting
+        // instead of settling to "SocketReadError: An error occurred during Read".
+        const waiting = registry.get(harness.atom);
+        expect(AsyncResult.isFailure(waiting)).toBe(false);
+        expect(waiting.waiting).toBe(true);
+        expect(executions).toBe(1);
+
+        yield* SubscriptionRef.set(harness.supervisorSession, Option.some(QUERY_RPC_SESSION));
+        yield* SubscriptionRef.set(
+          harness.supervisorState,
+          queryConnectionState({ generation: 2 }),
+        );
+        expect(
+          yield* AtomRegistry.getResult(registry, harness.atom, {
+            suspendOnWaiting: true,
+          }),
+        ).toBe("recovered");
+        expect(executions).toBe(2);
+      }),
+    ),
   );
 
   it.effect.each([

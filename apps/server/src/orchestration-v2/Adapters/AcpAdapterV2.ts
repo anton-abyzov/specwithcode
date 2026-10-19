@@ -112,6 +112,10 @@ import {
   type StudioAcpInstructionState,
 } from "../../provider/StudioOrchestrationInstructions.ts";
 import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
+import {
+  agentProtectedPathsForConfig,
+  makeAgentPathGuard,
+} from "../../provider/AgentProtectedPaths.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import { type ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
 import {
@@ -1515,6 +1519,25 @@ export function makeAcpAdapterV2(
   options: AcpAdapterV2Options,
 ): ProviderAdapter.ProviderAdapterV2Shape {
   const { flavor, fileSystem, idAllocator, serverConfig, selfInvocation: self } = options;
+  const agentPathGuard = makeAgentPathGuard(
+    fileSystem,
+    NodePath,
+    agentProtectedPathsForConfig(serverConfig, NodePath),
+  );
+  const refuseProtectedClientPath = (requestPath: string, cwd: string | null) =>
+    agentPathGuard
+      .isProtected(requestPath, cwd)
+      .pipe(
+        Effect.flatMap((isProtected) =>
+          isProtected
+            ? Effect.fail(
+                EffectAcpErrors.AcpRequestError.invalidParams(
+                  `Path '${requestPath}' is in the app's credential store and cannot be opened.`,
+                ),
+              )
+            : Effect.void,
+        ),
+      );
   const driver = flavor.driver;
   const continuationRequests = options.continuationRequests;
   const postSettleContinuationEnabled =
@@ -5666,15 +5689,19 @@ export function makeAcpAdapterV2(
           // method-not-found and cannot touch the disk. A flavor that opts in
           // serves requests itself, confined to the workspace of the policy
           // active when the request arrives; the agent asks before its edits.
+          // Whatever a flavor allows, the server's credential stores stay
+          // closed, also when the workspace contains them or a link points in.
           const clientFileSystem = flavor.clientFileSystem;
           if (clientFileSystem !== undefined) {
             yield* targetRuntime.handleReadTextFile((request) =>
               clientPolicyContext.pipe(
+                Effect.tap(({ policy }) => refuseProtectedClientPath(request.path, policy.cwd)),
                 Effect.flatMap(({ policy }) => clientFileSystem.readTextFile(request, policy.cwd)),
               ),
             );
             yield* targetRuntime.handleWriteTextFile((request) =>
               clientPolicyContext.pipe(
+                Effect.tap(({ policy }) => refuseProtectedClientPath(request.path, policy.cwd)),
                 Effect.flatMap(({ policy }) => clientFileSystem.writeTextFile(request, policy.cwd)),
               ),
             );

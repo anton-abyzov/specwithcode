@@ -1,6 +1,11 @@
-import { AuthStandardClientScopes, EnvironmentId, type ServerConfig } from "@specweave-studio/contracts";
+import {
+  AuthStandardClientScopes,
+  EnvironmentId,
+  type ServerConfig,
+} from "@specweave-studio/contracts";
 import { RelayClientTracer } from "@specweave-studio/shared/relayTracing";
 import { describe, expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -98,6 +103,51 @@ const LAN_THEN_RELAY_ENTRY: ConnectionCatalogEntry = {
   target: LAN_ROUTE.target,
   profile: LAN_ROUTE.profile,
   alternateRoutes: [{ target: RELAY_TARGET, profile: Option.none() }],
+  enabled: true,
+};
+
+// The app's own server on this machine, as the desktop app reaches it.
+const LOOPBACK_TARGET = new PrimaryConnectionTarget({
+  environmentId: TARGET.environmentId,
+  label: TARGET.label,
+  httpBaseUrl: "http://127.0.0.1:8319/",
+  wsBaseUrl: "ws://127.0.0.1:8319/",
+});
+const LOOPBACK_ENTRY: ConnectionCatalogEntry = {
+  target: LOOPBACK_TARGET,
+  profile: Option.none(),
+  enabled: true,
+};
+// A remote machine opened at an SSH port forward on this machine, as a
+// browser tab at http://127.0.0.1:18319 sees it.
+const FORWARDED_PRIMARY_TARGET = new PrimaryConnectionTarget({
+  environmentId: TARGET.environmentId,
+  label: TARGET.label,
+  httpBaseUrl: "http://127.0.0.1:18319/",
+  wsBaseUrl: "ws://127.0.0.1:18319/",
+});
+const FORWARDED_PRIMARY_ENTRY: ConnectionCatalogEntry = {
+  target: FORWARDED_PRIMARY_TARGET,
+  profile: Option.none(),
+  enabled: true,
+};
+// A bearer route saved at 127.0.0.1, which can be a port forward.
+const LOOPBACK_BEARER_TARGET = new BearerConnectionTarget({
+  environmentId: TARGET.environmentId,
+  label: TARGET.label,
+  connectionId: "bearer:loopback",
+});
+const LOOPBACK_BEARER_ENTRY: ConnectionCatalogEntry = {
+  target: LOOPBACK_BEARER_TARGET,
+  profile: Option.some(
+    new BearerConnectionProfile({
+      connectionId: LOOPBACK_BEARER_TARGET.connectionId,
+      environmentId: TARGET.environmentId,
+      label: TARGET.label,
+      httpBaseUrl: "http://127.0.0.1:8319/",
+      wsBaseUrl: "ws://127.0.0.1:8319/",
+    }),
+  ),
   enabled: true,
 };
 
@@ -291,6 +341,17 @@ describe("retryDelayMs", () => {
       expect(EnvironmentSupervisor.retryDelayMs(failureCount, 0.5)).toBe((ceiling * 3) / 4);
       expect(EnvironmentSupervisor.retryDelayMs(failureCount, 1 - Number.EPSILON)).toBe(ceiling);
     }
+  });
+
+  it("caps the ladder at a given maximum", () => {
+    const max = EnvironmentSupervisor.LOOPBACK_RETRY_MAX_DELAY_MS;
+    for (const [failureCount, ceiling] of [2_000, 3_000, 3_000, 3_000, 3_000].entries()) {
+      expect(EnvironmentSupervisor.retryDelayMs(failureCount, 0, max)).toBe(ceiling / 2);
+      expect(EnvironmentSupervisor.retryDelayMs(failureCount, 1 - Number.EPSILON, max)).toBe(
+        ceiling,
+      );
+    }
+    expect(EnvironmentSupervisor.retryDelayMs(40, 1 - Number.EPSILON, max)).toBe(3_000);
   });
 });
 
@@ -2047,5 +2108,309 @@ describe("EnvironmentSupervisor routes", () => {
         `learned:${TARGET.environmentId}:http://192.168.1.10:8319`,
       ]);
     }),
+  );
+});
+
+describe("EnvironmentSupervisor for a server on this machine", () => {
+  const preparedForTarget = (_attempt: number, target: ConnectionTarget) =>
+    Effect.succeed(preparedFor(target));
+
+  it.effect("connects to the desktop primary while the network reports offline", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        networkStatus: "offline",
+        prepare: preparedForTarget,
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LOOPBACK_ENTRY, {
+        initiallyDesired: true,
+        thisMachine: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      expect((yield* SubscriptionRef.get(supervisor.state)).phase).not.toBe("offline");
+      const ready = yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+
+      expect(ready).toMatchObject({
+        desired: true,
+        network: "offline",
+        phase: "connected",
+        attempt: 1,
+        generation: 1,
+      });
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+    }),
+  );
+
+  it.effect("reconnects after a close while the network reports offline", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ prepare: preparedForTarget });
+      const supervisor = yield* EnvironmentSupervisor.make(LOOPBACK_ENTRY, {
+        initiallyDesired: true,
+        thisMachine: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* harness.setNetworkStatus("offline");
+      yield* harness.closeLatestSession();
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "backoff" && state.attempt === 1,
+      );
+      yield* TestClock.adjust("2 seconds");
+      const reconnected = yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+
+      expect(reconnected.network).toBe("offline");
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("keeps a session without probing when the network reports offline", () =>
+    Effect.gen(function* () {
+      const probeCount = yield* Ref.make(0);
+      const harness = yield* makeHarness({
+        prepare: preparedForTarget,
+        probe: () => Ref.update(probeCount, (count) => count + 1),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LOOPBACK_ENTRY, {
+        initiallyDesired: true,
+        thisMachine: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* harness.setNetworkStatus("offline");
+      for (let attempt = 0; attempt < 100; attempt += 1) yield* Effect.yieldNow;
+
+      expect(yield* Ref.get(probeCount)).toBe(0);
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+      expect((yield* SubscriptionRef.get(supervisor.state)).phase).toBe("connected");
+    }),
+  );
+
+  it.effect("retries forever on a ladder capped at three seconds", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        prepare: () => Effect.fail(transient()),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LOOPBACK_ENTRY, {
+        initiallyDesired: true,
+        thisMachine: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "backoff" && state.attempt === 1,
+      );
+      const delays = [2_000, 3_000, 3_000, 3_000, 3_000, 3_000];
+      for (const [index, delay] of delays.entries()) {
+        yield* TestClock.adjust(delay - 1);
+        expect(yield* Ref.get(harness.prepareCount)).toBe(index + 1);
+        yield* TestClock.adjust(1);
+        yield* eventuallyState(
+          supervisor.state,
+          (state) => state.phase === "backoff" && state.attempt === index + 2,
+        );
+      }
+
+      expect(yield* Ref.get(harness.prepareCount)).toBe(delays.length + 1);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("never waits more than three seconds while a session keeps flapping", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ prepare: preparedForTarget });
+      const supervisor = yield* EnvironmentSupervisor.make(LOOPBACK_ENTRY, {
+        initiallyDesired: true,
+        thisMachine: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      for (let flap = 1; flap <= 6; flap += 1) {
+        yield* harness.closeLatestSession();
+        const backoff = yield* awaitState(
+          supervisor.state,
+          (state) => state.phase === "backoff" && state.attempt === flap,
+        );
+        const waitMs = (backoff.retryAt ?? 0) - (yield* Clock.currentTimeMillis);
+        expect(waitMs).toBeGreaterThan(0);
+        expect(waitMs).toBeLessThanOrEqual(EnvironmentSupervisor.LOOPBACK_RETRY_MAX_DELAY_MS);
+        yield* TestClock.adjust(EnvironmentSupervisor.LOOPBACK_RETRY_MAX_DELAY_MS);
+        yield* awaitState(
+          supervisor.state,
+          (state) => state.phase === "connected" && state.generation === flap + 1,
+        );
+      }
+      expect(yield* Ref.get(harness.sessionCount)).toBe(7);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("treats a session as stable after five seconds", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ prepare: preparedForTarget });
+      const supervisor = yield* EnvironmentSupervisor.make(LOOPBACK_ENTRY, {
+        initiallyDesired: true,
+        thisMachine: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* harness.closeLatestSession();
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "backoff" && state.attempt === 1,
+      );
+      yield* TestClock.adjust("2 seconds");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+
+      // Five seconds connected restarts the ladder: the next close waits the
+      // first rung (2 seconds) again instead of climbing to the 3 second cap.
+      yield* TestClock.adjust(EnvironmentSupervisor.LOOPBACK_BACKOFF_RESET_AFTER_MS);
+      yield* harness.closeLatestSession();
+      const backoff = yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "backoff" && state.generation === 2,
+      );
+      expect((backoff.retryAt ?? 0) - (yield* Clock.currentTimeMillis)).toBe(2_000);
+      yield* TestClock.adjust("2 seconds");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 3,
+      );
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("keeps a session that answers an explicit retry after a long stall", () =>
+    Effect.gen(function* () {
+      const probeCount = yield* Ref.make(0);
+      const harness = yield* makeHarness({
+        prepare: preparedForTarget,
+        // The server's event loop stalls for 10 seconds, then answers.
+        probe: () =>
+          Ref.update(probeCount, (count) => count + 1).pipe(
+            Effect.andThen(Effect.sleep("10 seconds")),
+          ),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LOOPBACK_ENTRY, {
+        initiallyDesired: true,
+        thisMachine: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* supervisor.retryNow;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((yield* Ref.get(probeCount)) > 0) break;
+        yield* Effect.yieldNow;
+      }
+      // A remote host would be replaced here, after 3 seconds without an answer.
+      yield* TestClock.adjust("3 seconds");
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+
+      yield* TestClock.adjust("7 seconds");
+      yield* TestClock.adjust("20 seconds");
+      expect(yield* Ref.get(probeCount)).toBe(1);
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+      expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
+        phase: "connected",
+        generation: 1,
+      });
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("replaces a session that stays silent for the full probe timeout", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        prepare: preparedForTarget,
+        probe: (attempt) => (attempt === 1 ? Effect.never : Effect.void),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LOOPBACK_ENTRY, {
+        initiallyDesired: true,
+        thisMachine: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* supervisor.retryNow;
+      yield* TestClock.adjust("14999 millis");
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+      yield* TestClock.adjust("1 milli");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2 && state.attempt === 1,
+      );
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  // A remote machine reached over loopback: an SSH port forward opened in a
+  // browser, or a bearer route saved at a forwarded port. These keep the
+  // remote policy.
+  it.effect.each([
+    ["a forwarded primary without the this-machine flag", FORWARDED_PRIMARY_ENTRY, false],
+    ["a bearer route to 127.0.0.1 on the desktop", LOOPBACK_BEARER_ENTRY, true],
+  ] as const)("parks %s while the network reports offline", ([, entry, thisMachine]) =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        networkStatus: "offline",
+        prepare: preparedForTarget,
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(entry, {
+        initiallyDesired: true,
+        thisMachine,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "offline");
+      expect(yield* Ref.get(harness.prepareCount)).toBe(0);
+    }),
+  );
+
+  it.effect("gives a forwarded primary the quick retry probe", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        prepare: preparedForTarget,
+        probe: (attempt) => (attempt === 1 ? Effect.never : Effect.void),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(FORWARDED_PRIMARY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* supervisor.retryNow;
+      yield* TestClock.adjust("3 seconds");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("climbs the remote ladder for a forwarded primary", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        prepare: () => Effect.fail(transient()),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(FORWARDED_PRIMARY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "backoff" && state.attempt === 1,
+      );
+      for (const [index, delay] of [2_000, 4_000, 8_000].entries()) {
+        yield* TestClock.adjust(delay - 1);
+        expect(yield* Ref.get(harness.prepareCount)).toBe(index + 1);
+        yield* TestClock.adjust(1);
+        yield* eventuallyState(
+          supervisor.state,
+          (state) => state.phase === "backoff" && state.attempt === index + 2,
+        );
+      }
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 });

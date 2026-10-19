@@ -260,12 +260,47 @@ describe("RemoteEnvironmentAuthorization", () => {
 
       expect(first.socketUrl).toContain("wsTicket=first-ticket");
       expect(second.socketUrl).toContain("wsTicket=second-ticket");
+      // Only the call that fetched the descriptor hands it back; a cached one
+      // can predate a restart, so the caller must fetch its own.
+      expect(first.descriptor).toMatchObject({ environmentId: ENVIRONMENT_ID });
+      expect(second).not.toHaveProperty("descriptor");
       expect(
-        harness.fetch.calls.filter(([url]) => String(url).endsWith("/.well-known/studio/environment")),
+        harness.fetch.calls.filter(([url]) =>
+          String(url).endsWith("/.well-known/studio/environment"),
+        ),
       ).toHaveLength(1);
       expect(
         harness.fetch.calls.filter(([url]) => String(url).endsWith("/api/auth/websocket-ticket")),
       ).toHaveLength(2);
+    }),
+  );
+
+  it.effect("returns the descriptor it checked so the caller need not fetch it again", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        responses: [Response.json(DESCRIPTOR), websocketTicket("first-ticket")],
+      });
+
+      const authorized = yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        return yield* remote.authorizeBearer({
+          expectedEnvironmentId: ENVIRONMENT_ID,
+          httpBaseUrl: ENDPOINT.httpBaseUrl,
+          wsBaseUrl: ENDPOINT.wsBaseUrl,
+          bearerToken: "bearer-token",
+          connectionMethod: "direct",
+        });
+      }).pipe(Effect.provide(harness.layer));
+
+      expect(authorized.descriptor).toMatchObject({
+        environmentId: ENVIRONMENT_ID,
+        label: DESCRIPTOR.label,
+      });
+      expect(
+        harness.fetch.calls.filter(([url]) =>
+          String(url).endsWith("/.well-known/studio/environment"),
+        ),
+      ).toHaveLength(1);
     }),
   );
 
@@ -307,7 +342,9 @@ describe("RemoteEnvironmentAuthorization", () => {
         }),
       );
       expect(
-        harness.fetch.calls.filter(([url]) => String(url).endsWith("/.well-known/studio/environment")),
+        harness.fetch.calls.filter(([url]) =>
+          String(url).endsWith("/.well-known/studio/environment"),
+        ),
       ).toHaveLength(2);
     }),
   );

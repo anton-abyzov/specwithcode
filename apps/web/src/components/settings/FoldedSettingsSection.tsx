@@ -9,7 +9,8 @@ import { useSettingsSearchTarget, useSettingsSearchTargetId } from "./settingsLa
 /**
  * A grouped settings section that starts closed. The header carries the title,
  * a one line summary of what is set inside, and an optional control such as
- * the section's own switch. A settings search that targets the section opens it.
+ * the section's own switch. A settings search that targets the section opens it,
+ * and so does a new `openKey` (for example the id of something just added inside).
  */
 export function FoldedSettingsSection({
   id,
@@ -17,6 +18,7 @@ export function FoldedSettingsSection({
   summary,
   control,
   headerPlacement = "inside",
+  openKey = null,
   children,
 }: {
   readonly id: string;
@@ -24,6 +26,7 @@ export function FoldedSettingsSection({
   readonly summary?: string | null;
   readonly control?: ReactNode;
   readonly headerPlacement?: "inside" | "outside";
+  readonly openKey?: string | null;
   readonly children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -33,6 +36,11 @@ export function FoldedSettingsSection({
   const [openedForTarget, setOpenedForTarget] = useState<string | null>(null);
   if (searchTargetId === id && openedForTarget !== id) {
     setOpenedForTarget(id);
+    if (!open) setOpen(true);
+  }
+  const [openedForKey, setOpenedForKey] = useState<string | null>(openKey);
+  if (openKey !== null && openKey !== openedForKey) {
+    setOpenedForKey(openKey);
     if (!open) setOpen(true);
   }
 

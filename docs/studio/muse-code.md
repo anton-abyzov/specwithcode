@@ -27,6 +27,8 @@ Explicitly configured fallback models must also exist in account discovery. Cust
 
 Grok Build and Cursor remain distinct execution providers; selecting one does not infer a subscription or credits for the other.
 
+On The X Subscription, Cursor's Grok usage draws from the same weekly pool as the Grok apps and X. A Cursor fallback can therefore find that pool already spent by Grok use outside SpecWithCode. Check its **Included usage** bar (shown when the Cursor CLI login is the same account) before relying on it.
+
 ## Verification boundary
 
 Tests drive the pinned SDK against an isolated local MSP process, including live streaming, model readback, approvals, resume replay, questions, cancellation and failure. The browser fixture uses the real model picker at 320px and 1440px in light/dark themes. These tests neither authenticate a real Muse account nor consume paid model usage.

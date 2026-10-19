@@ -1100,6 +1100,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     cloudOnly: true,
   },
   {
+    id: "pair-phone",
+    title: "Pair a phone",
+    to: "/settings/connections",
+    searchTerms: ["phone iphone ios mobile app pair pairing qr code scan link connect"],
+  },
+  {
     id: "connections-environment",
     title: "This machine",
     to: "/settings/connections",

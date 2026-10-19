@@ -47,6 +47,7 @@ struct DeepLinkTests {
   @Test func pairWithoutLinkStillOpensPairing() throws {
     #expect(DeepLink(url: try #require(URL(string: "specwithcode://pair"))) == .pair(link: nil))
     #expect(DeepLink(url: try #require(URL(string: "specwithcode://pair?link="))) == .pair(link: nil))
+    #expect(DeepLink(url: try #require(URL(string: "specwithcode://pair?pairingUrl=https%3A%2F%2Fm4.ts.net%2Fpair%23token%3Dx"))) == .pair(link: "https://m4.ts.net/pair#token=x"))
   }
 
   @Test func threadLink() throws {

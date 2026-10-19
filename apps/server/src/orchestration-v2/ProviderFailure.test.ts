@@ -48,6 +48,19 @@ it("redacts credentials and URL secrets from provider failures", () => {
   assert.notInclude(failure.message, "sk-abcdefghijklmnop");
 });
 
+it("redacts bare Cursor and xAI keys from provider failures", () => {
+  const failure = makeProviderFailure({
+    message:
+      "Key crsr_abcdefghijklmnop1234 was rejected; grok_ABCDEFGHIJKLMNOP-5678 and xai_abcdefgh_ijklmnop9 too, also xai-AbCdEfGhIjKlMnOpQr12. grok_short and grok-code-fast-1-preview-0825 stay.",
+    class: "provider_error",
+  });
+
+  assert.equal(
+    failure.message,
+    "Key [REDACTED] was rejected; [REDACTED] and [REDACTED] too, also [REDACTED]. grok_short and grok-code-fast-1-preview-0825 stay.",
+  );
+});
+
 it("replaces unsafe control characters without stripping whitespace", () => {
   const failure = makeProviderFailure({ message: "before\u0000\u0007\t\nafter\u007f" });
 

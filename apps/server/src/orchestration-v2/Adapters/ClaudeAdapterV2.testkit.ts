@@ -25,6 +25,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../../config.ts";
+import { claudeRulePath } from "../../provider/AgentProtectedPaths.ts";
 import {
   isWindowsClaudeLauncherShimPath,
   resolveClaudeSdkExecutablePath,
@@ -336,6 +337,77 @@ function withoutDefaultWorkflowSettings(expected: unknown, actual: unknown): unk
   return {
     ...(actual as Record<string, unknown>),
     options: Object.keys(settings).length === 0 ? options : { ...options, settings },
+  };
+}
+
+function stringArray(value: unknown): ReadonlyArray<string> | undefined {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string")
+    ? value
+    : undefined;
+}
+
+/** True when `rule` is one the adapter emits for a protected path in `paths`. */
+function isAgentSecretDenyRule(rule: string, paths: ReadonlyArray<string>): boolean {
+  return paths.some((entry) => {
+    const rulePath = claudeRulePath(entry);
+    if (
+      rule === `Read(${rulePath})` ||
+      rule === `Read(${rulePath}/**)` ||
+      rule === `Edit(${rulePath})` ||
+      rule === `Edit(${rulePath}/**)` ||
+      rule === `Bash(*${entry}*)` ||
+      rule === `Bash(*${entry}/*)` ||
+      rule === `Bash(*${entry}\\*)` ||
+      rule === `Bash(*${entry})`
+    ) {
+      return true;
+    }
+    const home = /^Bash\(\*(?:~|\$HOME|\$\{HOME\})\/(.+?)(?:\/\*|\\\*|\*)?\)$/u.exec(rule);
+    return home !== null && (entry.endsWith(`/${home[1]!}`) || entry.endsWith(`\\${home[1]!}`));
+  });
+}
+
+/**
+ * Recordings are made without the credential-store deny settings the adapter
+ * adds from the replay server's temp folders (`AgentProtectedPaths.ts`), so
+ * their paths differ on every run. Only that exact shape is tolerated against a
+ * recording that has no `permissions` or `sandbox`: `permissions.deny` alone,
+ * every rule built from one of the `sandbox.filesystem.denyRead` paths, each
+ * path with its `Read` rule, and `denyWrite` equal to `denyRead`. Anything
+ * else, or a recording that has either key, compares in full.
+ */
+function withoutAgentSecretDenySettings(expected: unknown, actual: unknown): unknown {
+  const actualSettings = queryOpenSettings(actual);
+  if (actualSettings === undefined) return actual;
+  const expectedSettings = queryOpenSettings(expected) ?? {};
+  if (Object.hasOwn(expectedSettings, "permissions")) return actual;
+  if (Object.hasOwn(expectedSettings, "sandbox")) return actual;
+  const { permissions, sandbox, ...settings } = actualSettings;
+  if (typeof permissions !== "object" || permissions === null) return actual;
+  if (typeof sandbox !== "object" || sandbox === null) return actual;
+  if (Object.keys(permissions).join() !== "deny" || Object.keys(sandbox).join() !== "filesystem") {
+    return actual;
+  }
+  const filesystem = Reflect.get(sandbox, "filesystem");
+  if (typeof filesystem !== "object" || filesystem === null) return actual;
+  if (Object.keys(filesystem).toSorted().join() !== "denyRead,denyWrite") return actual;
+  const denyRead = stringArray(Reflect.get(filesystem, "denyRead"));
+  const denyWrite = stringArray(Reflect.get(filesystem, "denyWrite"));
+  const deny = stringArray(Reflect.get(permissions, "deny"));
+  if (denyRead === undefined || denyWrite === undefined || deny === undefined) return actual;
+  if (denyRead.length === 0 || denyRead.join("\0") !== denyWrite.join("\0")) return actual;
+  if (!deny.every((rule) => isAgentSecretDenyRule(rule, denyRead))) return actual;
+  if (!denyRead.every((entry) => deny.includes(`Read(${claudeRulePath(entry)})`))) return actual;
+  const { settings: _settings, ...options } = Reflect.get(actual as object, "options") as Record<
+    string,
+    unknown
+  >;
+  return {
+    ...(actual as Record<string, unknown>),
+    options:
+      Object.keys(settings).length === 0 && queryOpenSettings(expected) === undefined
+        ? options
+        : { ...options, settings },
   };
 }
 
@@ -796,7 +868,10 @@ function makeReplayQueryRunner(
         withoutPromptOfferUuid(expected),
         withoutHumanOrigin(
           expected,
-          withoutDefaultWorkflowSettings(expected, withoutPromptOfferUuid(actual)),
+          withoutDefaultWorkflowSettings(
+            expected,
+            withoutAgentSecretDenySettings(expected, withoutPromptOfferUuid(actual)),
+          ),
         ),
       ) ||
       (expectedUuid !== undefined && actualUuid === undefined)

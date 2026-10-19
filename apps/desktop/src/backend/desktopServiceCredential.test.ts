@@ -4,6 +4,7 @@ import * as NodeOS from "node:os";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Native fixtures independently verify Electron and installed operating-system behavior.
 import * as NodePath from "node:path";
 
+import { AuthAdministrativeScopes, AuthStandardClientScopes } from "@specweave-studio/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import * as DateTime from "effect/DateTime";
@@ -224,6 +225,33 @@ describe("isStoredBearerReusable", () => {
     assert.isFalse(
       isStoredBearerReusable(
         { authenticated: true, sessionMethod: "bearer-access-token", expiresAt: hours(23) },
+        now,
+      ),
+    );
+  });
+
+  it("replaces a bearer paired without the access scopes and keeps one that has them", () => {
+    assert.isFalse(
+      isStoredBearerReusable(
+        {
+          authenticated: true,
+          sessionMethod: "bearer-access-token",
+          expiresAt: hours(100),
+          scopes: ["orchestration:operate"],
+          permissions: [...AuthStandardClientScopes],
+        },
+        now,
+      ),
+    );
+    assert.isTrue(
+      isStoredBearerReusable(
+        {
+          authenticated: true,
+          sessionMethod: "bearer-access-token",
+          expiresAt: hours(100),
+          scopes: ["orchestration:operate", "access:read", "access:write"],
+          permissions: [...AuthAdministrativeScopes],
+        },
         now,
       ),
     );

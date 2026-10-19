@@ -1,3 +1,6 @@
+import * as Schema from "effect/Schema";
+import { RpcClientError } from "effect/rpc";
+
 import { NETWORK_BLOCKING_HINT } from "./network.ts";
 
 const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -5,6 +8,8 @@ const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&
 const TRANSPORT_ERROR_PATTERNS = [
   /\bSocketCloseError\b/i,
   /\bSocketOpenError\b/i,
+  /\bSocketReadError\b/,
+  /\bSocketWriteError\b/,
   /\bSocket is not connected\b/i,
   /Unable to connect to the Studio server WebSocket\./i,
   // The RPC session appends the network hint for relay connections. Any other
@@ -43,4 +48,45 @@ export function isTransportConnectionErrorMessage(message: string | null | undef
  */
 export function sanitizeThreadErrorMessage(message: string | null | undefined): string | null {
   return isTransportConnectionErrorMessage(message) ? null : (message ?? null);
+}
+
+const isRpcClientError = Schema.is(RpcClientError.RpcClientError);
+
+export type RpcClientErrorReasonTag = RpcClientError.RpcClientError["reason"]["_tag"];
+
+/** Whether `error` is an `RpcClientError` whose reason is one of `reasons`. */
+export function isRpcClientErrorWithReason(
+  error: unknown,
+  reasons: ReadonlySet<RpcClientErrorReasonTag>,
+): boolean {
+  return isRpcClientError(error) && reasons.has(error.reason._tag);
+}
+
+const RPC_TRANSPORT_REASONS: ReadonlySet<RpcClientErrorReasonTag> = new Set([
+  "SocketReadError",
+  "SocketWriteError",
+  "SocketCloseError",
+  "SocketOpenError",
+  "SocketUpgradeError",
+]);
+
+/**
+ * Whether `error` means the RPC socket itself went away (read, write, open or
+ * close failure, including a ping timeout) rather than the request failing.
+ * The RPC client also reports these wrapped in a `ClientProtocolError`
+ * message, which counts too. A replacement session retries such a request, so
+ * callers should wait for it instead of showing the failure.
+ */
+export function isRpcTransportError(error: unknown): boolean {
+  if (isRpcClientErrorWithReason(error, RPC_TRANSPORT_REASONS)) {
+    return true;
+  }
+  if (typeof error !== "object" || error === null) {
+    return false;
+  }
+  const message = error as { readonly _tag?: unknown; readonly error?: unknown };
+  return (
+    message._tag === "ClientProtocolError" &&
+    isRpcClientErrorWithReason(message.error, RPC_TRANSPORT_REASONS)
+  );
 }

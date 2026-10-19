@@ -40,6 +40,7 @@ import LegacyThreadSidebar from "./LegacySidebar";
 import { useThreadVisitedMigration } from "../hooks/useThreadVisitedMigration";
 import ThreadSidebar from "./Sidebar";
 import { ViewerOverlayHost } from "./ViewerOverlayHost";
+import { LowDiskSpaceBanner } from "./LowDiskSpaceBanner";
 import StudioSidebar from "./studio/shell/StudioSidebar";
 import { UnreachableHostsProvider } from "../studio/unreachableHosts";
 import { SidebarBrandWidthProbe } from "./sidebar/SidebarChrome";
@@ -344,6 +345,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           </Sidebar>
           {children}
           <SidebarControl />
+          <LowDiskSpaceBanner />
           <ViewerOverlayHost />
           <NavigationHistoryShortcuts />
           <MainAppLocationTracker />

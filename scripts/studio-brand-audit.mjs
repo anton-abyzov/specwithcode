@@ -161,6 +161,17 @@ check("legal pages name the owner and state the telemetry default truthfully", (
   assert.match(privacy, /Product usage data is off by default/);
   assert.doesNotMatch(privacy, /By default, (?:SpecWeave Studio|SpecWithCode) sends/);
 });
+check("security policy reaches a real inbox", () => {
+  // A reserved .invalid address or link delivers nothing, so a report sent there is lost.
+  const policy = read(".github/SECURITY.md");
+  assert.doesNotMatch(
+    policy,
+    /[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.invalid\b/i,
+    ".github/SECURITY.md address",
+  );
+  assert.doesNotMatch(policy, /https?:\/\/[^\s)>\]]*\.invalid\b/i, ".github/SECURITY.md link");
+  assert.match(policy, /mailto:[^\s)]+@[^\s)]+/, ".github/SECURITY.md names a contact address");
+});
 check("self update only from an owned feed and original update endpoints absent", () => {
   assert.match(
     read("apps/desktop/src/updates/DesktopUpdates.ts"),

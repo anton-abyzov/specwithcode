@@ -24,8 +24,10 @@ import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { ConfigurationError, RateLimitError } from "../../provider/cursorSdk.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
+import { makeProviderFailure } from "../ProviderFailure.ts";
 import {
   cursorMcpServers,
   cursorRuntimeAgentPolicy,
@@ -34,9 +36,102 @@ import {
   makeCursorAdapterV2,
   nestedToolCallFromEnvelope,
 } from "./CursorAdapterV2.ts";
-import { isCursorCancellationError, loggedCursorAgentOptions } from "./CursorAgentSdk.ts";
+import {
+  CursorAgentSdkRunnerError,
+  type CursorAgentSdkSession,
+  isCursorCancellationError,
+  loggedCursorAgentOptions,
+} from "./CursorAgentSdk.ts";
 
 const decodeCursorSettings = Schema.decodeEffect(CursorSettings);
+
+/** One Cursor session whose SDK send is scripted, for failure-path tests. */
+const makeFailureRuntime = Effect.fnUntraced(function* (input: {
+  readonly send: CursorAgentSdkSession["send"];
+}) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-failure-" });
+  const instanceId = ProviderInstanceId.make("cursor");
+  const threadId = ThreadId.make("cursor-failure-thread");
+  const modelSelection = { instanceId, model: "claude-opus-4-6" };
+  const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    cwd: workspace,
+  });
+  const adapter = makeCursorAdapterV2({
+    instanceId,
+    settings: yield* decodeCursorSettings({}),
+    environment: { HOME: workspace },
+    fileSystem,
+    path,
+    idAllocator: yield* IdAllocator.IdAllocatorV2,
+    serverConfig: yield* ServerConfig.ServerConfig.pipe(
+      Effect.provide(ServerConfig.layerTest(workspace, { prefix: "cursor-v2-failure-config-" })),
+    ),
+    runner: {
+      assertComplete: Effect.void,
+      open: () =>
+        Effect.succeed({
+          agentId: "native-cursor-failure",
+          listMessages: Effect.succeed([]),
+          close: Effect.void,
+          send: input.send,
+        }),
+    },
+  });
+  const runtime = yield* adapter.openSession({
+    threadId,
+    providerSessionId: ProviderSessionId.make("cursor-failure-session"),
+    modelSelection,
+    runtimePolicy,
+  });
+  const providerThread = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
+  const now = yield* DateTime.now;
+  const startTurn = runtime.startTurn({
+    threadId,
+    providerThread,
+    modelSelection,
+    runtimePolicy,
+    runId: RunId.make("cursor-failure-run"),
+    runOrdinal: 1,
+    providerTurnOrdinal: 1,
+    attemptId: RunAttemptId.make("cursor-failure-attempt"),
+    rootNodeId: NodeId.make("cursor-failure-root"),
+    appThread: {
+      id: threadId,
+      projectId: ProjectId.make("cursor-failure-project"),
+      createdBy: "user",
+      creationSource: "web",
+      title: "Cursor failure",
+      providerInstanceId: instanceId,
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: providerThread.id,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+      deletedAt: null,
+    },
+    message: {
+      messageId: MessageId.make("cursor-failure-message"),
+      createdBy: "user",
+      creationSource: "web",
+      text: "continue",
+      attachments: [],
+    },
+  });
+  return { runtime, startTurn };
+});
 
 describe("CursorAdapterV2", () => {
   it.effect.each([
@@ -361,6 +456,84 @@ describe("CursorAdapterV2", () => {
         Stream.runHead,
       );
       assert.equal(sentMessages[1], "/compress");
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, IdAllocator.layer))),
+  );
+
+  it.effect.each([
+    {
+      name: "a run error shows Cursor's usage-limit text",
+      wait: Effect.succeed({
+        id: "native-cursor-run",
+        status: "error" as const,
+        error: { message: "Usage limit exceeded", code: "resource_exhausted" },
+      }),
+      expected: {
+        class: "usage_limit",
+        message: "Usage limit exceeded",
+        code: "resource_exhausted",
+        retryable: null,
+      },
+    },
+    {
+      name: "a RateLimitError thrown from wait is a usage limit",
+      wait: Effect.fail(
+        new CursorAgentSdkRunnerError({
+          method: "run.wait",
+          cause: new RateLimitError("You've used your weekly pool.", {
+            code: "PRO_USER_USAGE_LIMIT",
+            isRetryable: false,
+          }),
+        }),
+      ),
+      expected: {
+        class: "usage_limit",
+        message: "You've used your weekly pool.",
+        code: "PRO_USER_USAGE_LIMIT",
+        retryable: false,
+      },
+    },
+  ] as const)("fails Cursor turns with Cursor's own reason: $name", ({ wait, expected }) =>
+    Effect.gen(function* () {
+      const { runtime, startTurn } = yield* makeFailureRuntime({
+        send: () =>
+          Effect.succeed({
+            agentId: "native-cursor-failure",
+            runId: "native-cursor-run",
+            wait,
+            cancel: Effect.void,
+          }),
+      });
+      yield* startTurn;
+      const terminal = yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+      assert.isTrue(Option.isSome(terminal));
+      if (Option.isSome(terminal)) {
+        assert.equal(terminal.value.status, "failed");
+        assert.deepEqual(terminal.value.failure, expected);
+      }
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, IdAllocator.layer))),
+  );
+
+  it.effect("names the model when Cursor rejects it at turn start", () =>
+    Effect.gen(function* () {
+      const { startTurn } = yield* makeFailureRuntime({
+        send: () =>
+          Effect.fail(
+            new CursorAgentSdkRunnerError({
+              method: "run.start",
+              cause: new ConfigurationError("Model not available", { code: "BAD_MODEL_NAME" }),
+            }),
+          ),
+      });
+      const error = yield* Effect.flip(startTurn);
+      const failure = makeProviderFailure({ cause: error });
+      assert.equal(
+        failure.message,
+        'Cursor can\'t use model "claude-opus-4-6" on this account. Pick another model; Auto or a Composer or Grok model works on every Cursor plan.',
+      );
+      assert.notInclude(failure.message, "Retry the turn");
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, IdAllocator.layer))),
   );
 

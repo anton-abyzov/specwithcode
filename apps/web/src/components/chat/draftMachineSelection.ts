@@ -11,7 +11,11 @@ export interface DraftMachineTarget {
 export function draftMachineUnavailableReason(
   phase: EnvironmentConnectionPhase,
   canOperate: boolean,
+  /** The app's own machine: a slow server there is busy, never unreachable. */
+  isThisMachine = false,
 ): string | null {
+  if (isThisMachine && phase !== "connected" && phase !== "error" && phase !== "unsupported")
+    return "Catching up…";
   if (phase === "connecting") return "Connecting…";
   if (phase === "reconnecting") return "Can't reach this machine right now";
   if (phase !== "connected") return "Not connected";

@@ -61,7 +61,7 @@ extension PairingLinkError: LocalizedError {
 }
 
 public enum PairingLink {
-  /// App schemes that wrap a pairing link in `?pairingUrl=`.
+  /// App schemes that wrap a pairing link in `?pairingUrl=` or `?link=`.
   public static let wrapperSchemes: Set<String> = ["studio", "studio-dev", "specwithcode"]
 
   static let backendSchemes: Set<String> = ["http", "https", "ws", "wss"]
@@ -87,7 +87,8 @@ public enum PairingLink {
     let trimmed = payload.trimmingCharacters(in: .whitespacesAndNewlines)
     guard let components = URLComponents(string: trimmed, encodingInvalidCharacters: false),
           let scheme = components.scheme?.lowercased(), wrapperSchemes.contains(scheme) else { return trimmed }
-    let inner = FormQuery(components.percentEncodedQuery)["pairingUrl"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let query = FormQuery(components.percentEncodedQuery)
+    let inner = (query["pairingUrl"] ?? query["link"])?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     return inner.isEmpty ? trimmed : inner
   }
 
@@ -131,7 +132,8 @@ public enum PairingLink {
   private static func parseWrapper(_ text: String, scheme: String, depth: Int) throws(PairingLinkError) -> PairingTarget {
     guard depth == 0, let components = URLComponents(string: text, encodingInvalidCharacters: false) else { throw .invalidLink(scheme: scheme) }
     let query = FormQuery(components.percentEncodedQuery)
-    if let inner = query["pairingUrl"]?.trimmingCharacters(in: .whitespacesAndNewlines), !inner.isEmpty {
+    // `link` is what specwithcode://pair deep links use; `pairingUrl` is the older name.
+    if let inner = (query["pairingUrl"] ?? query["link"])?.trimmingCharacters(in: .whitespacesAndNewlines), !inner.isEmpty {
       return try parse(inner, depth: depth + 1)
     }
     let host = query["host"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

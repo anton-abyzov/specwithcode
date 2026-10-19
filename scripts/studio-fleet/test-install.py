@@ -304,6 +304,16 @@ runpy.run_path(install, run_name='__main__')
         self.assertEqual(receipt['service']['domain'], 'gui/' + str(os.getuid()))
         self.assertEqual(result.stderr.count('MOCK_LAUNCHCTL:bootstrap'), 1)
 
+    def test_service_is_written_as_an_interactive_launchd_job(self):
+        # Without ProcessType launchd throttles the service as a background daemon.
+        import plistlib
+        (self.home / 'Library/LaunchAgents').mkdir(parents=True)
+        result = self.install(self.bundle(), ('--service',), mock_service=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        content = plistlib.loads((self.home / 'Library/LaunchAgents/com.specweave.studio.m4.plist').read_bytes())
+        self.assertEqual(content['ProcessType'], 'Interactive')
+        self.assertEqual(content['ProgramArguments'][:2], ['/usr/bin/caffeinate', '-s'])
+
     def test_fresh_install_uses_isolated_settings_and_clean_launcher(self):
         result = self.install(self.bundle())
         self.assertEqual(result.returncode, 0, result.stderr)

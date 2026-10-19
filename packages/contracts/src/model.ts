@@ -189,7 +189,7 @@ export const DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   [CODEX_DRIVER_KIND]: DEFAULT_TEXT_GENERATION_MODEL,
   [ProviderDriverKind.make("antigravity")]: ANTIGRAVITY_DEFAULT_MODEL,
   [CLAUDE_DRIVER_KIND]: "claude-haiku-4-5",
-  [CURSOR_DRIVER_KIND]: "composer-2",
+  [CURSOR_DRIVER_KIND]: "composer-2.5",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
 };
 
@@ -206,7 +206,7 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
   },
   [CLAUDE_DRIVER_KIND]: {},
   [CURSOR_DRIVER_KIND]: {
-    composer: "composer-2",
+    composer: "composer-2.5",
     "composer-1.5": "composer-1.5",
     "composer-1": "composer-1.5",
     "opus-4.6-thinking": "claude-opus-4-6",

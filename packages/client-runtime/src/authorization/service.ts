@@ -50,6 +50,12 @@ export interface AuthorizedRemoteEnvironment {
   readonly httpBaseUrl: string;
   readonly socketUrl: string;
   readonly httpAuthorization: PreparedHttpAuthorization;
+  /**
+   * The descriptor this authorization fetched and checked against the expected
+   * environment during this call, so the caller does not fetch it again.
+   * Absent when the check reused a cached descriptor, which can be stale.
+   */
+  readonly descriptor?: ExecutionEnvironmentDescriptor;
 }
 
 export interface AuthorizedRemoteHttpEnvironment {
@@ -177,7 +183,9 @@ export const make = Effect.gen(function* () {
           return next;
         });
       }
-      return descriptor;
+      // `fresh` says this call fetched the descriptor rather than reusing the
+      // cached one, which can be up to the cache TTL old.
+      return { descriptor, fresh: !canReuseDescriptor };
     },
   );
 
@@ -191,7 +199,7 @@ export const make = Effect.gen(function* () {
       readonly bearerToken: string;
       readonly connectionMethod: ClientConnectionMethod;
     }) {
-      const descriptor = yield* verifyDirectEndpoint(input);
+      const { descriptor, fresh } = yield* verifyDirectEndpoint(input);
       const socketUrl = yield* resolveRemoteWebSocketConnectionUrl({
         wsBaseUrl: input.wsBaseUrl,
         httpBaseUrl: input.httpBaseUrl,
@@ -211,6 +219,9 @@ export const make = Effect.gen(function* () {
           _tag: "Bearer" as const,
           token: input.bearerToken,
         },
+        // Only a descriptor fetched by this call: a cached one may predate a
+        // restart onto another protocol, which the caller must see.
+        ...(fresh ? { descriptor } : {}),
       };
     },
   );

@@ -296,6 +296,16 @@ try {
   receipt.checks.push({ personalProjectCreated: project.projectId });
 
   const page = await context.newPage();
+  // A provider update notice can appear at any point and cover the controls
+  // this check clicks; it is not what this check is about, so dismiss it.
+  await page.addLocatorHandler(
+    page.getByRole("button", { name: "Dismiss notification", exact: true }),
+    async (dismissNotification) => {
+      // Stacked toasts keep moving, so a normal click never sees the button
+      // as stable; dispatch the click straight to each close button instead.
+      for (const button of await dismissNotification.all()) await button.dispatchEvent("click");
+    },
+  );
   activePage = page;
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));

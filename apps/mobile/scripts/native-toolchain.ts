@@ -76,8 +76,12 @@ export const threadSanitizerUnavailable = (compiler: keyof typeof probes): strin
         `${compiler} from ${developerDirectory()} can't build and run a ` +
         `ThreadSanitizer program on this Mac (${describeFailure(error)}). Select a toolchain that ` +
         "supports this macOS release with xcode-select or DEVELOPER_DIR.";
-      if (process.env.CI)
-        throw new Error(`${reason} CI runs these regressions, so it can't skip them.`, { cause: error });
+      // GitHub's macOS runners carry a toolchain for their macOS, so a skip there hides a real gap.
+      // A local release gate (CI=1 too) on a Mac whose macOS is newer than its Xcode skips with the reason.
+      if (process.env.GITHUB_ACTIONS)
+        throw new Error(`${reason} CI runs these regressions, so it can't skip them.`, {
+          cause: error,
+        });
       return reason;
     }
   } finally {

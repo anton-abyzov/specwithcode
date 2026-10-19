@@ -81,6 +81,7 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
   readonly primaryBearerToken?: string;
   readonly prepareSsh?: ClientCapabilities.SshEnvironmentGateway["Service"]["prepare"];
   readonly descriptorProtocolVersion?: number | null | undefined;
+  readonly descriptorFetches?: Ref.Ref<number>;
 }) => {
   const profiles = new Map(
     (options?.profiles ?? []).map((profile) => [profile.connectionId, profile]),
@@ -146,8 +147,11 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
   });
 
   const layerDependencies = Layer.mergeAll(
-    RpcHttp.layerRemoteHttpClient((() =>
-      Promise.resolve(
+    RpcHttp.layerRemoteHttpClient((() => {
+      if (options?.descriptorFetches !== undefined) {
+        Effect.runSync(Ref.update(options.descriptorFetches, (count) => count + 1));
+      }
+      return Promise.resolve(
         Response.json({
           environmentId: ENVIRONMENT_ID,
           label: "Compatible environment",
@@ -160,7 +164,8 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
               : { orchestrationProtocolVersion: options.descriptorProtocolVersion }),
           capabilities: { repositoryIdentity: true },
         }),
-      )) satisfies typeof fetch),
+      );
+    }) satisfies typeof fetch),
     Layer.succeed(
       ConnectionProfileStore.ConnectionProfileStore,
       options?.profileStore ?? profileStore,
@@ -328,6 +333,165 @@ describe("ConnectionResolver", () => {
       expect(yield* Ref.get(bearerInputs)).toEqual([{ token: "secret-bearer", method: "direct" }]);
     }),
   );
+
+  describe("reuses the descriptor bearer authorization already checked", () => {
+    const authorizedDescriptor = (overrides?: { readonly environmentId?: EnvironmentId }) => ({
+      environmentId: overrides?.environmentId ?? ENVIRONMENT_ID,
+      label: "This machine",
+      platform: { os: "darwin" as const, arch: "arm64" as const },
+      serverVersion: "0.0.0-test",
+      orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+      capabilities: { repositoryIdentity: true },
+    });
+    const authorizeWith =
+      (
+        descriptor: ReturnType<typeof authorizedDescriptor> | undefined,
+      ): RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]["authorizeBearer"] =>
+      (input) =>
+        Effect.succeed({
+          environmentId: input.expectedEnvironmentId,
+          label: "This machine",
+          httpBaseUrl: input.httpBaseUrl,
+          socketUrl: "ws://127.0.0.1:8319/ws?wsTicket=ticket",
+          httpAuthorization: { _tag: "Bearer" as const, token: input.bearerToken },
+          ...(descriptor === undefined ? {} : { descriptor }),
+        });
+    const loopbackPrimary = new PrimaryConnectionTarget({
+      environmentId: ENVIRONMENT_ID,
+      label: "This machine",
+      httpBaseUrl: "http://127.0.0.1:8319",
+      wsBaseUrl: "ws://127.0.0.1:8319",
+    });
+    const loopbackBearer = new BearerConnectionTarget({
+      environmentId: ENVIRONMENT_ID,
+      label: "This machine",
+      connectionId: "loopback-1",
+    });
+    const loopbackProfile = new BearerConnectionProfile({
+      connectionId: "loopback-1",
+      environmentId: ENVIRONMENT_ID,
+      label: "This machine",
+      httpBaseUrl: "http://127.0.0.1:8319",
+      wsBaseUrl: "ws://127.0.0.1:8319",
+    });
+
+    it.effect("for a desktop primary with a bearer token", () =>
+      Effect.gen(function* () {
+        const descriptorFetches = yield* Ref.make(0);
+        const layerBroker = yield* makeDependencies({
+          primaryBearerToken: "desktop-bearer",
+          authorizeBearer: authorizeWith(authorizedDescriptor()),
+          descriptorFetches,
+        });
+        const broker = yield* ConnectionResolver.ConnectionResolver.pipe(
+          Effect.provide(layerBroker),
+        );
+
+        const prepared = yield* broker.prepare(catalogEntry(loopbackPrimary));
+
+        expect(prepared.socketUrl).toContain("orchestrationProtocol=");
+        expect(prepared).not.toHaveProperty("descriptor");
+        expect(yield* Ref.get(descriptorFetches)).toBe(0);
+      }),
+    );
+
+    it.effect("for a saved bearer route", () =>
+      Effect.gen(function* () {
+        const descriptorFetches = yield* Ref.make(0);
+        const layerBroker = yield* makeDependencies({
+          credentials: [["loopback-1", new BearerConnectionCredential({ token: "saved-bearer" })]],
+          authorizeBearer: authorizeWith(authorizedDescriptor()),
+          descriptorFetches,
+        });
+        const broker = yield* ConnectionResolver.ConnectionResolver.pipe(
+          Effect.provide(layerBroker),
+        );
+
+        const { descriptor } = yield* broker.prepareForUpdate(
+          catalogEntry(loopbackBearer, Option.some(loopbackProfile)),
+        );
+
+        expect(descriptor.label).toBe("This machine");
+        expect(yield* Ref.get(descriptorFetches)).toBe(0);
+      }),
+    );
+
+    it.effect("still rejects a descriptor for another environment", () =>
+      Effect.gen(function* () {
+        const descriptorFetches = yield* Ref.make(0);
+        const layerBroker = yield* makeDependencies({
+          primaryBearerToken: "desktop-bearer",
+          authorizeBearer: authorizeWith(
+            authorizedDescriptor({ environmentId: EnvironmentId.make("environment-2") }),
+          ),
+          descriptorFetches,
+        });
+        const broker = yield* ConnectionResolver.ConnectionResolver.pipe(
+          Effect.provide(layerBroker),
+        );
+
+        const error = yield* Effect.flip(broker.prepare(catalogEntry(loopbackPrimary)));
+
+        expect(error).toMatchObject({ _tag: "ConnectionBlockedError", reason: "configuration" });
+        expect(yield* Ref.get(descriptorFetches)).toBe(0);
+      }),
+    );
+
+    // Authorization reused its cached descriptor, which can be up to the
+    // cache TTL old (a host that just restarted onto another protocol), so it
+    // returned none and the resolver checks a fresh one.
+    it.effect("fetches the descriptor once when authorization reused a cached one", () =>
+      Effect.gen(function* () {
+        const descriptorFetches = yield* Ref.make(0);
+        const layerBroker = yield* makeDependencies({
+          primaryBearerToken: "desktop-bearer",
+          authorizeBearer: authorizeWith(undefined),
+          descriptorFetches,
+        });
+        const broker = yield* ConnectionResolver.ConnectionResolver.pipe(
+          Effect.provide(layerBroker),
+        );
+
+        yield* broker.prepare(catalogEntry(loopbackPrimary));
+
+        expect(yield* Ref.get(descriptorFetches)).toBe(1);
+      }),
+    );
+
+    it.effect("blocks on a fresh incompatible descriptor after a cached check", () =>
+      Effect.gen(function* () {
+        const descriptorFetches = yield* Ref.make(0);
+        const layerBroker = yield* makeDependencies({
+          primaryBearerToken: "desktop-bearer",
+          authorizeBearer: authorizeWith(undefined),
+          descriptorFetches,
+          descriptorProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION + 1,
+        });
+        const broker = yield* ConnectionResolver.ConnectionResolver.pipe(
+          Effect.provide(layerBroker),
+        );
+
+        const error = yield* Effect.flip(broker.prepare(catalogEntry(loopbackPrimary)));
+
+        expect(error).toMatchObject({ _tag: "ConnectionBlockedError", reason: "unsupported" });
+        expect(yield* Ref.get(descriptorFetches)).toBe(1);
+      }),
+    );
+
+    it.effect("fetches the descriptor once for a primary without a bearer token", () =>
+      Effect.gen(function* () {
+        const descriptorFetches = yield* Ref.make(0);
+        const layerBroker = yield* makeDependencies({ descriptorFetches });
+        const broker = yield* ConnectionResolver.ConnectionResolver.pipe(
+          Effect.provide(layerBroker),
+        );
+
+        yield* broker.prepare(catalogEntry(loopbackPrimary));
+
+        expect(yield* Ref.get(descriptorFetches)).toBe(1);
+      }),
+    );
+  });
 
   it.effect("prepares relay connections with the authorized endpoint and credentials", () =>
     Effect.gen(function* () {

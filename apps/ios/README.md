@@ -76,7 +76,7 @@ Environment variables: `ROUTES` (the routes to shoot), `WAIT` (seconds after eac
 
 ## Pair with a machine
 
-1. On your computer, open SpecWithCode and go to Settings > Connections. Turn on Network access or Tailscale HTTPS so the phone has an address to reach, then choose Create link under Authorized clients. A pairing link works once and expires after 5 minutes.
+1. On your computer, open SpecWithCode, go to Settings > Connections and choose Pair a phone. It shows a QR code for the address the phone can reach: the machine's Tailscale HTTPS name (the phone needs the Tailscale app) or, with Network access on, its address on your Wi-Fi. If no address is offered, turn on Tailscale HTTPS or Network access first. A pairing link works once and expires after 5 minutes.
 2. On the phone, tap Pair a machine. Then either scan the QR code, or paste the pairing link (it looks like `https://host:port/pair#token=…`) and tap Connect.
 
 The phone must be able to reach the machine on your local network, over Tailscale or at a public address. Before it uses the pairing code, the app checks that the machine speaks orchestration protocol 2. It then exchanges the code for a 30-day token and stores the token in the Keychain. There is no refresh: when the token expires, pair again. Removing a machine in the app deletes its token from the phone but does not tell the machine; revoke the phone under Settings > Connections > Authorized clients on the computer to end its access sooner.

@@ -71,6 +71,11 @@ describe("buildStarterSuggestions", () => {
     expect(increment?.title).toBe("Continue increment 0888");
     expect(increment?.detail).toBe("Studio projects. 1 other increment is open too.");
     expect(increment?.prompt).toContain(".specweave/increments/0888-studio-projects/spec.md");
+    // The thread that works the increment also closes it, without asking.
+    expect(increment?.prompt).toContain("specweave task done");
+    expect(increment?.prompt).toContain("close the increment in the same thread without asking");
+    expect(increment?.prompt).toContain("`specweave verify`");
+    expect(increment?.prompt).toContain("`specweave complete`");
   });
 
   it("skips an increment whose folder name is not a plain increment id", () => {
@@ -193,6 +198,7 @@ describe("buildStarterSuggestions", () => {
     expect(built[0]?.title).toBe("Pick up the handoff for 0887");
     expect(built[0]?.prompt).toContain("specweave pickup 0887-studio-cleanup");
     expect(built[0]?.prompt).toContain(".specweave/increments/0887-studio-cleanup/handoff.md");
+    expect(built[0]?.prompt).toContain("`specweave complete`");
     expect(built[1]?.title).toBe("Continue increment 0885");
     // A name that is not a plain increment id falls back to the general pickup.
     const odd = buildStarterSuggestions(

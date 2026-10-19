@@ -1,5 +1,9 @@
 import type { RunResult } from "@cursor/sdk";
-import { CursorSettings, ProviderInstanceId, TextGenerationError } from "@specweave-studio/contracts";
+import {
+  CursorSettings,
+  ProviderInstanceId,
+  TextGenerationError,
+} from "@specweave-studio/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -24,7 +28,15 @@ const cursorSdkMock = vi.hoisted(() => ({
   })),
 }));
 
-vi.mock("../provider/cursorSdk.ts", () => ({ Agent: { create: cursorSdkMock.create } }));
+vi.mock("../provider/cursorSdk.ts", async () => {
+  const sdk = await vi.importActual<typeof import("@cursor/sdk")>("@cursor/sdk");
+  return {
+    Agent: { create: cursorSdkMock.create },
+    ConfigurationError: sdk.ConfigurationError,
+    CursorSdkError: sdk.CursorSdkError,
+    RateLimitError: sdk.RateLimitError,
+  };
+});
 
 let hasCustomPolicy = false;
 const layerFs = FileSystem.layerNoop({
@@ -285,6 +297,52 @@ describe("CursorTextGeneration", () => {
         );
         expect(cursorSdkMock.close).toHaveBeenCalledOnce();
       }).pipe(Effect.provide(layerFs)),
+  );
+
+  it.effect("keeps Cursor's redacted error text when a run fails", () =>
+    Effect.gen(function* () {
+      cursorSdkMock.prompt.mockResolvedValueOnce({
+        id: "run-cursor-error-text-test",
+        status: "error",
+        error: { message: "Usage limit exceeded for sk-abcdefghijklmnopqrstuvwxyz123456" },
+      } satisfies RunResult);
+      const generation = yield* makeCursorTextGeneration(cursorSettings, {
+        CURSOR_API_KEY: "test-cursor-key",
+      });
+      const failure = yield* Effect.flip(
+        generation.generateThreadTitle({
+          cwd: process.cwd(),
+          message: "Title",
+          modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "composer-2.5" },
+        }),
+      );
+      expect(failure.detail).toContain("Usage limit exceeded");
+      expect(failure.detail).not.toContain("abcdefghijklmnopqrstuvwxyz123456");
+    }).pipe(Effect.provide(layerFs)),
+  );
+
+  it.effect("keeps Cursor's redacted error text when the SDK throws", () =>
+    Effect.gen(function* () {
+      const { ConfigurationError } = yield* Effect.promise(() => import("@cursor/sdk"));
+      cursorSdkMock.create.mockImplementationOnce(async () => {
+        throw new ConfigurationError(
+          "Cannot use this model: composer-2. Available models: composer-2.5 (key xai-abcdefghijklmnopqrst)",
+          {},
+        );
+      });
+      const generation = yield* makeCursorTextGeneration(cursorSettings, {
+        CURSOR_API_KEY: "test-cursor-key",
+      });
+      const failure = yield* Effect.flip(
+        generation.generateThreadTitle({
+          cwd: process.cwd(),
+          message: "Title",
+          modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "composer-2" },
+        }),
+      );
+      expect(failure.detail).toContain("Cannot use this model: composer-2");
+      expect(failure.detail).not.toContain("abcdefghijklmnopqrst");
+    }).pipe(Effect.provide(layerFs)),
   );
 
   it.effect("fails closed when ambient sandbox policy can expand write access", () =>

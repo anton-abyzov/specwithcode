@@ -3,7 +3,11 @@ import * as NodeFS from "node:fs";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Electron credential bootstrap must preserve synchronous atomic encrypted-file operations.
 import * as NodePath from "node:path";
 
-import type { AuthSessionState } from "@specweave-studio/contracts";
+import {
+  AuthAccessReadScope,
+  AuthAccessWriteScope,
+  type AuthSessionState,
+} from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -22,13 +26,25 @@ export const DESKTOP_SERVICE_CREDENTIAL_FILE = "desktop-service-credentials.json
 /** A stored bearer is reused only with at least this long left before it expires. */
 export const STORED_BEARER_MIN_REMAINING_MS = 24 * 60 * 60 * 1000;
 
-/** True when the service's session state for a stored bearer allows reusing it. */
+const hasAccessScopes = (granted: ReadonlyArray<string> | undefined): boolean =>
+  granted === undefined ||
+  (granted.includes(AuthAccessReadScope) && granted.includes(AuthAccessWriteScope));
+
+/**
+ * True when the service's session state for a stored bearer allows reusing it.
+ * A bearer from a build that paired with the standard client scopes lacks the
+ * access scopes, so it is replaced once by one with the administrative set.
+ */
 export const isStoredBearerReusable = (
-  state: Pick<AuthSessionState, "authenticated" | "sessionMethod" | "expiresAt">,
+  state: Pick<
+    AuthSessionState,
+    "authenticated" | "sessionMethod" | "expiresAt" | "scopes" | "permissions"
+  >,
   nowMs: number,
 ): boolean =>
   state.authenticated &&
   state.sessionMethod === "bearer-access-token" &&
+  hasAccessScopes(state.permissions ?? state.scopes) &&
   (state.expiresAt === undefined ||
     DateTime.toEpochMillis(state.expiresAt) - nowMs > STORED_BEARER_MIN_REMAINING_MS);
 

@@ -15,6 +15,7 @@ import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
@@ -107,8 +108,14 @@ const layerFor = (
     readonly httpClient: HttpClient.HttpClient;
     readonly crypto: ElectronSafeStorage.ElectronSafeStorage["Service"];
   },
+  readFreeDiskBytes?: DesktopLocalService.FreeDiskBytesReader,
 ) =>
   DesktopLocalService.layer.pipe(
+    Layer.provide(
+      readFreeDiskBytes === undefined
+        ? Layer.empty
+        : Layer.succeed(DesktopLocalService.FreeDiskBytes, readFreeDiskBytes),
+    ),
     Layer.provide(
       DesktopEnvironment.layer({
         dirname: "/repo/apps/desktop/src",
@@ -751,6 +758,94 @@ describe("DesktopLocalService.discover", () => {
         Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
       );
     }),
+  );
+
+  // The own home's server runs and holds the store but never answers, as a
+  // service stalled on a full disk does.
+  const withUnresponsiveOwnHome = <A, E, R>(
+    use: (input: {
+      readonly home: string;
+      readonly env: Record<string, string>;
+    }) => Effect.Effect<A, E, R>,
+  ) =>
+    Effect.acquireUseRelease(
+      Effect.promise(
+        () =>
+          new Promise<NodeHttp.Server>((resolve) => {
+            const server = NodeHttp.createServer((_request, response) => {
+              response.statusCode = 503;
+              response.end();
+            });
+            server.listen(0, "127.0.0.1", () => resolve(server));
+          }),
+      ),
+      (server) => {
+        const address = server.address();
+        const port = typeof address === "object" && address !== null ? address.port : 0;
+        const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-local-service-"));
+        const studioHome = NodePath.join(home, "own");
+        writeJson(NodePath.join(studioHome, "userdata", "server-runtime.json"), {
+          version: 1,
+          pid: process.ppid,
+          port,
+          origin: `http://127.0.0.1:${port}`,
+          startedAt: "2026-10-18T18:00:00.000Z",
+        });
+        return use({ home, env: { STUDIO_HOME: studioHome } }).pipe(
+          Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
+        );
+      },
+      (server) =>
+        Effect.promise(() => new Promise<void>((resolve) => server.close(() => resolve()))),
+    );
+
+  const discoverUnresponsive = (home: string, env: Record<string, string>, freeBytes: number) => {
+    const readPaths: Array<string> = [];
+    return Effect.gen(function* () {
+      const service = yield* DesktopLocalService.DesktopLocalService;
+      const discovering = yield* Effect.forkChild(service.discover());
+      // Each probe is a real request, so let it land before the grace sleep
+      // it is followed by can be advanced.
+      for (let second = 0; second < 6; second += 1) {
+        yield* TestClock.withLive(Effect.sleep("100 millis"));
+        yield* TestClock.adjust("1 second");
+      }
+      return { discovery: yield* Fiber.join(discovering), readPaths };
+    }).pipe(
+      Effect.provide(
+        layerFor(home, env, undefined, (path) =>
+          Effect.sync(() => {
+            readPaths.push(path);
+            return Option.some(freeBytes);
+          }),
+        ),
+      ),
+    );
+  };
+
+  it.effect("names a nearly full disk when its own service does not answer", () =>
+    withUnresponsiveOwnHome(({ home, env }) =>
+      Effect.gen(function* () {
+        const { discovery, readPaths } = yield* discoverUnresponsive(home, env, 412_000_000);
+        assert.equal(discovery._tag, "unresponsive");
+        if (discovery._tag !== "unresponsive") return;
+        assert.equal(discovery.lowDiskFreeBytes, 412_000_000);
+        // The disk the stalled service writes to, not the home folder's.
+        assert.deepEqual(readPaths, [discovery.stateDir]);
+        assert.equal(discovery.stateDir, NodePath.join(env.STUDIO_HOME!, "userdata"));
+      }),
+    ),
+  );
+
+  it.effect("leaves disk space out when the disk has room", () =>
+    withUnresponsiveOwnHome(({ home, env }) =>
+      Effect.gen(function* () {
+        const { discovery } = yield* discoverUnresponsive(home, env, 40_000_000_000);
+        assert.equal(discovery._tag, "unresponsive");
+        if (discovery._tag !== "unresponsive") return;
+        assert.isUndefined(discovery.lowDiskFreeBytes);
+      }),
+    ),
   );
 
   it.effect("keeps an explicit STUDIO_HOME to itself", () =>

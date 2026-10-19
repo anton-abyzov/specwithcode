@@ -67,6 +67,8 @@ import {
 } from "../provider/Drivers/ClaudeTranscriptTransfer.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as RunLiveness from "./RunLiveness.ts";
+import { sessionScopedRuntimeRequestThreadId } from "./SessionScopedRuntimeRequests.ts";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
@@ -292,29 +294,6 @@ function sessionKey(providerSessionId: ProviderSessionId): string {
   return String(providerSessionId);
 }
 
-/**
- * Runtime requests with no provider turn belong to the live session itself.
- * Their node and transcript item are runless too, so they bypass the normal
- * per-run subscriber and are persisted by the session event pump.
- */
-function sessionScopedRuntimeRequestThreadId(event: ProviderAdapterV2Event): ThreadId | undefined {
-  switch (event.type) {
-    case "runtime_request.updated":
-      return event.runtimeRequest.providerTurnId === null ? event.threadId : undefined;
-    case "node.updated":
-      return event.node.runId === null && event.node.runtimeRequestId !== null
-        ? event.node.threadId
-        : undefined;
-    case "turn_item.updated":
-      return event.turnItem.runId === null &&
-        (event.turnItem.type === "approval_request" || event.turnItem.type === "user_input_request")
-        ? event.turnItem.threadId
-        : undefined;
-    default:
-      return undefined;
-  }
-}
-
 export const layerWithOptions = (
   options: ProviderSessionManagerV2LayerOptions = {},
 ): Layer.Layer<
@@ -451,6 +430,7 @@ export const layerWithOptions = (
             process.off("SIGTERM", onShutdownSignal);
           }),
       );
+      const liveness = yield* RunLiveness.RunLiveness;
       const sessions = yield* Ref.make(new Map<string, LiveSessionEntry>());
       // One retry per released entry, so a later release with the same id
       // cannot drop cleanup for threads only the earlier session served.
@@ -1030,6 +1010,17 @@ export const layerWithOptions = (
                   const recorded = yield* Effect.exit(
                     writeReleaseRecords({ ...records, replaced: false }),
                   );
+                  // A run left on this session with nobody reading its events
+                  // can no longer finish; the liveness watchdog settles it. A
+                  // shutdown or a service update's release leaves its runs to
+                  // the drain and to restart recovery, which may continue them.
+                  if (input.reason !== "server_shutdown" && input.keepMcpCredentials !== true) {
+                    yield* liveness.sessionReleased({
+                      providerSessionId: input.providerSessionId,
+                      threadIds: [...entry.attachedThreadIds],
+                      reason: input.reason,
+                    });
+                  }
                   if (Exit.isFailure(recorded)) {
                     yield* retryReleaseRecords(records);
                     return yield* recorded;

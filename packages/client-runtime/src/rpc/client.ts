@@ -233,8 +233,26 @@ export function runStreamGuarded<TTag extends EnvironmentStreamCommandRpcTag>(
   );
 }
 
+/** A die, or a protocol defect the RPC client reports as a failure. */
+function isDefectReason(reason: Cause.Reason<unknown>): boolean {
+  return (
+    reason._tag === "Die" ||
+    (reason._tag === "Fail" &&
+      isRpcClientError(reason.error) &&
+      reason.error.reason._tag === "RpcClientDefect")
+  );
+}
+
 interface SubscriptionOptions<TTag extends EnvironmentSubscriptionRpcTag> {
-  /** Reports protocol or programming defects without changing their recovery policy. */
+  /**
+   * Reports protocol or programming defects, including a failed
+   * `RpcClientDefect` such as a frame that fails to decode. A subscription
+   * that reports its defects also recovers from them: it retries on the same
+   * session with the `retryExpectedFailureAfter` backoff when that is set, and
+   * otherwise waits for the next session or `resubscribe` signal. Without this
+   * handler a die still ends the stream and an `RpcClientDefect` waits for the
+   * next session like a lost transport.
+   */
   readonly onDefect?: (
     cause: Cause.Cause<EnvironmentRpcStreamFailure<TTag>>,
   ) => Effect.Effect<void, never, never>;
@@ -317,18 +335,58 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                     }),
                   ).pipe(
                     Stream.tapCause((cause) =>
-                      options?.onDefect !== undefined &&
-                      cause.reasons.some(
-                        (reason) =>
-                          reason._tag === "Die" ||
-                          (reason._tag === "Fail" &&
-                            isRpcClientError(reason.error) &&
-                            reason.error.reason._tag === "RpcClientDefect"),
-                      )
+                      options?.onDefect !== undefined && cause.reasons.some(isDefectReason)
                         ? options.onDefect(cause)
                         : Effect.void,
                     ),
                     Stream.catchCause((cause) => {
+                      const retryOnSessionAfterBackoff = (
+                        handled: Stream.Stream<A, EnvironmentRpcStreamFailure<TTag>>,
+                        retryAfter: Duration.Input,
+                      ) => {
+                        const retryDelay = Duration.millis(
+                          Math.min(
+                            Duration.toMillis(retryAfter) * 2 ** expectedFailureRetries,
+                            MAX_EXPECTED_FAILURE_RETRY_DELAY_MS,
+                          ),
+                        );
+                        expectedFailureRetries += 1;
+                        return handled.pipe(
+                          Stream.concat(
+                            Stream.fromEffect(Effect.sleep(retryDelay)).pipe(Stream.drain),
+                          ),
+                          Stream.concat(subscribeToSession()),
+                        );
+                      };
+                      // A protocol defect (such as a frame that fails to
+                      // decode) arrives as a failed RpcClientDefect while the
+                      // socket stays up, so no next session comes: recover it
+                      // on this session like a die.
+                      const isReportedDefect =
+                        options?.onDefect !== undefined &&
+                        cause.reasons.some(isDefectReason) &&
+                        cause.reasons.every(
+                          (reason) => reason._tag === "Die" || reason._tag === "Fail",
+                        );
+                      if (isReportedDefect) {
+                        // Already reported through onDefect. Ending the stream
+                        // here would leave a forked subscription dead for good,
+                        // so recover the way a lost transport does.
+                        const logged = Stream.fromEffect(
+                          Effect.logWarning(
+                            "Durable RPC subscription hit a defect; subscribing again.",
+                            {
+                              cause: Cause.pretty(cause),
+                              method: tag,
+                              environmentId: supervisor.target.environmentId,
+                            },
+                          ),
+                        ).pipe(Stream.drain);
+                        const retryAfter = options?.retryExpectedFailureAfter;
+                        return retryAfter === undefined
+                          ? logged
+                          : retryOnSessionAfterBackoff(logged, retryAfter);
+                      }
                       const hasOnlyExpectedFailures =
                         cause.reasons.length > 0 &&
                         cause.reasons.every((reason) => reason._tag === "Fail");
@@ -363,19 +421,9 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                         ) {
                           return handled;
                         }
-                        const retryDelay = Duration.millis(
-                          Math.min(
-                            Duration.toMillis(options.retryExpectedFailureAfter) *
-                              2 ** expectedFailureRetries,
-                            MAX_EXPECTED_FAILURE_RETRY_DELAY_MS,
-                          ),
-                        );
-                        expectedFailureRetries += 1;
-                        return handled.pipe(
-                          Stream.concat(
-                            Stream.fromEffect(Effect.sleep(retryDelay)).pipe(Stream.drain),
-                          ),
-                          Stream.concat(subscribeToSession()),
+                        return retryOnSessionAfterBackoff(
+                          handled,
+                          options.retryExpectedFailureAfter,
                         );
                       }
                       return Stream.failCause(cause);

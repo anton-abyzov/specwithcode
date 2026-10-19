@@ -70,6 +70,11 @@ export function hasHostedPairingRequest(url: URL = new URL(window.location.href)
   return readHostedPairingRequest(url) !== null;
 }
 
+/** Whether this build knows a hosted web app to send pairing links through. */
+export function hasHostedAppUrl(): boolean {
+  return originFromUrl(configuredHostedAppUrl()) !== null;
+}
+
 export function buildHostedPairingUrl(input: {
   readonly host: string;
   readonly token: string;
