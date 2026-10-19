@@ -2,6 +2,7 @@ import { act } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
+  BROWSER_EXTENSION_STORE_URL,
   type BrowserExtensionCheck,
   type BrowserExtensionStatus,
   EnvironmentId,
@@ -30,7 +31,6 @@ vi.mock("../../studio/projectWorkspace", () => ({
     browserExtensionTest: "test",
     browserExtensionReconnect: "reconnect",
     browserExtensionStop: "stop",
-    browserExtensionInstallFolder: "folder",
     browserExtensionPeer: "peer",
   },
 }));
@@ -142,6 +142,14 @@ const button = (label: string) =>
       node.props.onClick &&
       [node.props.children].flat(2).includes(label),
   )[0]!;
+/** The store link the "Add to Chrome" button opens. */
+const storeLink = () =>
+  renderer.root.findAll(
+    (node) =>
+      typeof node.type !== "string" &&
+      node.props.render &&
+      [node.props.children].flat(2).includes("Add to Chrome"),
+  )[0]!.props.render.props.href;
 const render = () =>
   act(() => {
     renderer = create(<BrowserExtensionCard environmentId={m4} machine="M4 Max" />);
@@ -155,10 +163,12 @@ describe("BrowserExtensionCard", () => {
     expect(text()).toContain("offline");
   });
 
-  it("explains store review and lists profiles, Stop only where an agent holds one", async () => {
+  it("lists profiles, Stop only where an agent holds one", async () => {
     await render();
     expect(state.request).toHaveBeenCalledWith({ environmentId: m4, input: {} });
-    expect(text()).toContain("Chrome Web Store review");
+    expect(text()).toContain("Add to Chrome");
+    // Servers that predate fromStore send no flag: no hand-loaded warning.
+    expect(text()).not.toContain("Loaded by hand");
     expect(text()).toContain("Every chat, project thread and Aide");
     expect(text()).toContain("Ready · 2 Chrome profiles paired");
     expect(text()).toContain("Marketing");
@@ -285,11 +295,30 @@ describe("BrowserExtensionCard", () => {
     });
   });
 
-  it("links the store listing when it is public", async () => {
-    state.query.data = { ...status, storeUrl: "https://chromewebstore.google.com/detail/x" };
+  it("links the store listing, even from a server that predates it", async () => {
+    state.query.data = {
+      ...status,
+      profiles: [],
+      storeUrl: "https://chromewebstore.google.com/detail/x",
+    };
     await render();
-    expect(text()).toContain("Add to Chrome");
-    expect(text()).not.toContain("Chrome Web Store review");
+    expect(storeLink()).toBe("https://chromewebstore.google.com/detail/x");
+    expect(text()).not.toContain("Load unpacked");
+    expect(text()).not.toContain("Developer mode");
+
+    state.query.data = { ...status, profiles: [], storeUrl: null };
+    await render();
+    expect(storeLink()).toBe(BROWSER_EXTENSION_STORE_URL);
+  });
+
+  it("asks a hand-loaded profile to switch to the store install", async () => {
+    state.query.data = {
+      ...status,
+      profiles: status.profiles.map((profile, index) => ({ ...profile, fromStore: index !== 0 })),
+    };
+    await render();
+    expect(text()).toContain("Loaded by hand, so it does not update itself.");
+    expect(text().match(/browser-extension-hand-loaded/g)).toHaveLength(1);
   });
 
   it("shows an empty state with no profiles", async () => {
@@ -369,18 +398,6 @@ describe("BrowserExtensionCard", () => {
     await act(() => button("Show pairing code").props.onClick());
     expect(state.confirm).toHaveBeenCalledWith(expect.stringContaining("Chrome on MacBookPro.lan"));
     expect(state.command).not.toHaveBeenCalled();
-  });
-
-  it("prepares the Load unpacked folder with steps", async () => {
-    state.command.mockResolvedValue({
-      _tag: "Success",
-      value: { path: "/tmp/swc-extension", version: "0.1.0" },
-    });
-    await render();
-    await act(() => button("Load unpacked").props.onClick());
-    expect(state.command).toHaveBeenCalledWith("folder", { environmentId: m4, input: {} });
-    expect(text()).toContain("/tmp/swc-extension");
-    expect(text()).toContain("Developer mode");
   });
 
   it("tests the connection and shows per-profile results", async () => {

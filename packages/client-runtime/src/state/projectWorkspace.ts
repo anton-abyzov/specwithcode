@@ -59,10 +59,6 @@ export function createProjectWorkspaceAtoms<R, E>(
       label: "browser-extension:peer",
       tag: WS_METHODS.browserExtensionPeer,
     }),
-    browserExtensionInstallFolder: createEnvironmentRpcCommand(runtime, {
-      label: "browser-extension:install-folder",
-      tag: WS_METHODS.browserExtensionInstallFolder,
-    }),
     nativeConnectionApply: createEnvironmentRpcCommand(runtime, {
       label: "native-connections:apply",
       tag: WS_METHODS.nativeConnectionApply,

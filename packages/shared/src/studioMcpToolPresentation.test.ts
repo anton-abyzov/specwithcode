@@ -80,6 +80,17 @@ describe("resolveStudioMcpToolPresentation", () => {
     });
   });
 
+  it("pretty prints the Chrome extension tools", () => {
+    expect(resolveStudioMcpToolPresentation("studio-code.chrome_open")).toEqual({
+      displayName: "Open a tab in Chrome",
+      logo: "studio-code",
+    });
+    expect(resolveStudioMcpToolPresentation("mcp__studio-code__chrome_snapshot")).toEqual({
+      displayName: "Read a Chrome tab",
+      logo: "studio-code",
+    });
+  });
+
   it("matches the separator variants ACP registry agents emit", () => {
     for (const name of [
       "mcp_studio-code_delegate_task",

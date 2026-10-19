@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Synthetic service homes only: never reads a live ~/.specwithcode home."""
+import collections
 import contextlib
 import datetime
 import hashlib
@@ -12,6 +13,7 @@ import socket
 import tempfile
 import threading
 import unittest
+from unittest import mock
 import fleet_health
 
 NOW = datetime.datetime(2026, 10, 17, 0, 56, tzinfo=datetime.timezone.utc)
@@ -159,6 +161,13 @@ def snapshot(root):
     return files
 
 
+DiskUsage = collections.namedtuple('DiskUsage', 'total used free')
+
+
+def usage(free):
+    return DiskUsage(500 << 30, (500 << 30) - free, free)
+
+
 def run_main(argv):
     buffer = io.StringIO()
     with contextlib.redirect_stdout(buffer):
@@ -170,6 +179,10 @@ class FleetHealth(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.root = self.directory.name
+        # Every report reads free space; a fixed reading keeps these independent of this disk.
+        plenty = mock.patch.object(fleet_health.shutil, 'disk_usage', return_value=usage(200 << 30))
+        plenty.start()
+        self.addCleanup(plenty.stop)
 
     def tearDown(self):
         self.directory.cleanup()
@@ -415,6 +428,62 @@ class FleetHealth(unittest.TestCase):
         flood = fleet_health.check_log_flood(base, now)
         self.assertEqual(flood['level'], 'degraded', flood)
         self.assertEqual(flood['floods'][0]['count'], 21)
+
+    def test_a_rotated_stdout_still_counts_the_flood_that_spans_the_rotation(self):
+        base = make_home(self.root, closed_port())
+        lines = [log_line(NOW - datetime.timedelta(seconds=10 * index), 'Scheduled task run failed')
+                 for index in reversed(range(21))]
+        write(base / 'stdout.log.1', ''.join(lines[:15]))
+        write(base / 'stdout.log', ''.join(lines[15:]))
+        rotated = (NOW - datetime.timedelta(seconds=55)).timestamp()  # Between lines[14] and lines[15].
+        os.utime(base / 'stdout.log.1', (rotated, rotated))
+        os.utime(base / 'stdout.log', (NOW.timestamp(), NOW.timestamp()))
+        flood = fleet_health.check_log_flood(base, NOW)
+        self.assertEqual(flood['level'], 'degraded', flood)
+        self.assertEqual(flood['floods'][0]['count'], 21)
+        (base / 'stdout.log.1').unlink()
+        (base / 'stdout.log.1').symlink_to(base / 'stdout.log')  # Never followed.
+        self.assertEqual(fleet_health.check_log_flood(base, NOW)['level'], 'ok')
+
+    def test_an_old_rotated_flood_is_not_dated_today(self):
+        base = make_home(self.root, closed_port())
+        days_ago = NOW - datetime.timedelta(days=3)
+        # The flood that filled the log, rotated days ago; its clock times match this window.
+        write(base / 'stdout.log.1', ''.join(log_line(NOW - datetime.timedelta(seconds=10 * index), 'Old flood')
+                                             for index in reversed(range(30))))
+        os.utime(base / 'stdout.log.1', (days_ago.timestamp(), days_ago.timestamp()))
+        write(base / 'stdout.log', log_line(NOW, 'Fresh line'))
+        os.utime(base / 'stdout.log', (NOW.timestamp(), NOW.timestamp()))
+        flood = fleet_health.check_log_flood(base, NOW)
+        self.assertEqual(flood['level'], 'ok', flood)
+        self.assertEqual(flood['byLevel'], {'WARN': 1}, flood)
+
+    def test_low_disk_space_is_one_finding_that_names_the_backups_and_releases(self):
+        base = make_home(self.root, closed_port())
+        backups = base.parent / 'backups'
+        for index in range(3):
+            write(backups / ('pre-abc123def456-2026100%dT000000Z' % index) / 'statev2.sqlite', 'x' * 1000)
+        write(backups / 'home-migration-20261016T135351Z' / 'statev2.sqlite', 'x' * 5000)  # Not a pre- copy.
+        for name in ('a' * 20, 'b' * 20):
+            (base.parent / 'install' / 'releases' / name).mkdir(parents=True)
+        cases = [(200 << 30, 'ok'), (4 << 30, 'degraded'), (512 << 20, 'down')]
+        for free, level in cases:
+            disk = fleet_health.check_disk(base, usage=lambda path, free=free: usage(free))
+            self.assertEqual(disk['level'], level, disk)
+            self.assertEqual(disk['backups']['copies'], 3)
+            self.assertEqual(disk['backups']['bytes'], 3000)
+            self.assertEqual(disk['install']['releases'], 2)
+            self.assertIn('backups/ holds 3 database copies', disk['summary'])
+            self.assertIn('install/ 2 releases', disk['summary'])
+        self.assertTrue(disk['summary'].startswith('Disk almost full: 0.5 GB free'), disk['summary'])
+        with EnvironmentServer() as server:
+            base = make_home(self.root, server.port)
+            with mock.patch.object(fleet_health.shutil, 'disk_usage', return_value=usage(512 << 20)):
+                code, out = run_main(['--base-dir', str(base), '--now', iso(NOW), '--json'])
+        result = json.loads(out)
+        self.assertEqual((code, result['status']), (2, 'down'))
+        self.assertEqual(len(result['problems']), 1, result['problems'])
+        self.assertTrue(result['problems'][0].startswith('Disk almost full'), result['problems'])
 
     def test_check_never_writes_inside_the_base_dir(self):
         with EnvironmentServer() as server:

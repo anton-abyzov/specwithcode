@@ -354,7 +354,7 @@ export function ProviderLimitSettings() {
         mixed={mixedApiCredits}
         id="provider-limit-use-api-credits"
         title="Use API credits first"
-        description="When a Claude subscription turn stops on the limit and a new usage read confirms it, continue that turn on the same model on a Claude instance with its own Anthropic API key, before any fallback. With several API accounts, a turn that one refuses for lack of credits moves on to the next. The thread goes back to the subscription when the limit resets, or as soon as this is turned off. Never while limits are simulated. Without this, the limit banner still offers each account as a button."
+        description="When a Claude subscription turn stops on the limit and a new usage read confirms it, continue that turn on the same model on a Claude instance billed to Anthropic API credits (its own API key or a Claude Console sign-in), before any fallback. With several API accounts, a turn that one refuses for lack of credits moves on to the next. The thread goes back to the subscription when the limit resets, or as soon as this is turned off. Never while limits are simulated. Without this, the limit banner still offers each account as a button."
         status={
           mixedApiCredits
             ? undefined

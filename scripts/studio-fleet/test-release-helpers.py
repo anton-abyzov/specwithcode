@@ -7,6 +7,7 @@ how it was called. No live Studio database, service or host is touched.
 
 Run: cd scripts/studio-fleet && python3 -B test-release-helpers.py
 """
+import collections
 import contextlib
 import hashlib
 import io
@@ -19,6 +20,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from unittest import mock
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -250,6 +252,33 @@ class RemoteUpdate(unittest.TestCase):
         self.pack({'scripts/studio-fleet/update.py': FAKE_UPDATE, 'scripts/studio-fleet/apply-exit': '3'})
         code, calls, _lines = self.run_update()
         self.assertEqual((code, len(calls)), (3, 2))
+
+    def test_a_disk_too_full_for_both_copies_refuses_before_copying(self):
+        userdata = self.home / '.specwithcode' / 'm9' / 'userdata'
+        size = sum(os.stat(str(userdata / name)).st_size for name in ('statev2.sqlite', 'statev2.sqlite-wal')
+                   if (userdata / name).exists())
+        needed = 2 * size + remote_update.BACKUP_SPACE_MARGIN
+        measured = []
+
+        def usage(free):
+            def disk_usage(path):
+                measured.append(path)
+                return collections.namedtuple('DiskUsage', 'total used free')(1 << 40, (1 << 40) - free, free)
+            return disk_usage
+
+        with mock.patch.object(remote_update.shutil, 'disk_usage', side_effect=usage(needed - 1)):
+            with self.assertRaises(remote_update.UpdateError) as caught:
+                remote_update.update(self.home, 'm9', '1.2.3', self.runtime, self.helpers, python=sys.executable,
+                                     say=lambda _line: None)
+        self.assertTrue(str(caught.exception).startswith('Not enough free disk space for the pre-update backup'),
+                        caught.exception)
+        self.assertIn('nothing was copied or applied', str(caught.exception))
+        self.assertEqual(measured, [str(self.home / '.specwithcode')])  # backups/ does not exist yet.
+        self.assertFalse((self.home / '.specwithcode' / 'backups').exists())
+        self.assertFalse((self.staging / 'helpers' / 'calls.jsonl').exists())
+        with mock.patch.object(remote_update.shutil, 'disk_usage', side_effect=usage(needed)):
+            code, calls, _lines = self.run_update()
+        self.assertEqual((code, len(calls)), (0, 2))
 
     def test_tampered_or_unsafe_staging_runs_nothing(self):
         (self.staging / self.runtime).write_bytes(b'changed runtime')

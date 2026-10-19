@@ -146,6 +146,8 @@ export interface AcpSessionRuntimeOptions {
     result: EffectAcpSchema.InitializeResponse,
   ) => Effect.Effect<void, never>;
   readonly acpMcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
+  /** Used instead of `mcpServers` for agents that reject client stdio servers. */
+  readonly httpMcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
   readonly protocolLogging?: {
     readonly logIncoming?: boolean;
@@ -1127,7 +1129,16 @@ export interface AcpSessionRuntimeStartResult {
 export interface AcpSessionActivationOptions {
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly acpMcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
+  readonly httpMcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
 }
+
+/**
+ * Copilot CLI 1.0.98 logs "Rejecting non-http/sse MCP server" for every stdio
+ * server a client sends, so its sessions would start without Studio's tools.
+ */
+const rejectsClientStdioMcpServers = (initializeResult: EffectAcpSchema.InitializeResponse) =>
+  initializeResult.agentInfo?.name === "Copilot" &&
+  initializeResult.agentCapabilities?.mcpCapabilities?.http === true;
 
 export class AcpSessionRuntime extends Context.Service<
   AcpSessionRuntime,
@@ -2227,6 +2238,10 @@ export const make = (
         acpServers.length > 0
       ) {
         return acpServers;
+      }
+      const httpServers = activationOptions?.httpMcpServers ?? options.httpMcpServers ?? [];
+      if (rejectsClientStdioMcpServers(initializeResult) && httpServers.length > 0) {
+        return httpServers;
       }
       return activationOptions?.mcpServers ?? options.mcpServers ?? [];
     };

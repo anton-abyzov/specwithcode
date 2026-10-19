@@ -35,7 +35,7 @@ from auth_heartbeat import (bind_auth, encoded, prove_restart_heartbeat,
                             utc_timestamp, verify_restart_witness)
 from quiescence import (VANISHED_READS, capture_quiescence, assert_quiescence, quiescence_core, read_processes,
                         reap_descendants)
-from release_retention import prune_releases
+from release_retention import prune_releases, prune_state_backups
 import database_continuity as continuity
 import live_database
 import settings_continuity
@@ -902,6 +902,10 @@ def backup_state(own, commit):
             source.backup(copy)
         finally:
             copy.close()
+    except BaseException:
+        # A copy cut short (a full disk) would otherwise stay behind and keep the disk full.
+        discard_unused_backup(target)
+        raise
     finally:
         source.close()
     target.chmod(0o600)
@@ -909,6 +913,26 @@ def backup_state(own, commit):
     if settings.is_file() and not settings.is_symlink():
         _write_private(target_dir / 'settings.json', settings.read_bytes())
     return target
+
+BACKUP_SPACE_MARGIN = 2 * 1024 ** 3
+
+def assert_backup_space(own, home):
+    """Refuses an update whose pre-update copy of the database cannot fit. The copy is
+    about the database and its write-ahead log; the margin covers the release staged
+    beside it and leaves the Mac room to run. Sizes come from stat alone: the live
+    database is never opened here."""
+    needed = BACKUP_SPACE_MARGIN
+    for name in ('statev2.sqlite', 'statev2.sqlite-wal'):
+        try:
+            needed += os.stat(str(own / 'userdata' / name)).st_size
+        except FileNotFoundError:
+            pass
+    root = studio_paths.backups_root(home)
+    while not root.exists() and root != root.parent:
+        root = root.parent  # The first update makes the backups folder; measure its disk.
+    free = shutil.disk_usage(str(root)).free
+    assert free >= needed, 'Not enough free disk space for the pre-update backup: needs %.1f GB, %.1f GB free' % (
+        needed / 1e9, free / 1e9)
 
 def discard_unused_backup(backup):
     """Removes a backup_state copy that no restart used (a copy of a 2.5 GB database each
@@ -1141,6 +1165,15 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         'Restart heartbeat proof requires the auth sessions table'
     home = pathlib.Path.home().resolve()
     own = studio_paths.identity_home(home, identity)
+    # Each copy is the size of the database (2.5 GB on a long-used Mac): keep the newest one
+    # beside the copy made below, so updates never pile them up and fill the disk. Pruned
+    # first, so the space it frees counts in the free-space check that follows.
+    try:
+        pruned_state_backups, prune_error = prune_state_backups(home, keep_newest=1), None
+    except Exception as error:  # Pruning never fails an update.
+        pruned_state_backups, prune_error = [], type(error).__name__
+    # A disk too full for the copy refuses here, before staging, a pointer or a stop.
+    assert_backup_space(own, home)
     old_bytes = {name: (own / name).read_bytes() for name in ['installation.json', 'launch.sh']}
     receipt = json.loads(old_bytes['installation.json'])
     port = before.get('port', receipt.get('port', 8319))
@@ -1222,7 +1255,10 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
                 'cliAlias': 'not-written-yet' if alias_planned else 'foreign-left-untouched',
                 'readinessDeadlineSeconds': READINESS_DEADLINE_SECONDS,
                 'readyBySecondsFromStart': READY_BY_SECONDS_FROM_START,
-                'expectedNewHashes': {name: digest(value) for name, value in new_bytes.items()}}
+                'expectedNewHashes': {name: digest(value) for name, value in new_bytes.items()},
+                'prunedStateBackups': pruned_state_backups}
+    if prune_error:
+        progress['stateBackupPruneError'] = prune_error
     output.write_text(json.dumps(progress, indent=2) + '\n')
     restart_requested = False
     state_backup = None
@@ -1409,7 +1445,8 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
                                      else 'verified-existing-browser-heartbeat' if heartbeat
                                      else 'verified-appended-activity' if before['rows'] != after['rows'] else 'byte-identical',
                   'completeDatabaseContinuity': database_continuity,
-                  'settingsContinuity': settings_continuity_report}
+                  'settingsContinuity': settings_continuity_report,
+                  'prunedStateBackups': progress['prunedStateBackups']}
         if migration_cells is not None:
             result['migrationProtectedCells'] = migration_cells
         if widenings:

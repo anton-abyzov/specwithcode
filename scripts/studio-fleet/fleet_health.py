@@ -5,9 +5,10 @@ For a base dir (~/.specwithcode/<identity>) it checks that the server answers on
 and runs the installed release, that no update hold outlived its request
 (updates/hold.json), that the update agent is not in error and its last install was not
 held or rolled back (updates/state.json), which spans failed in the last minutes
-(userdata/logs/server.trace.ndjson and its rotations), and whether one warning floods
-stdout.log. It prints a one-screen summary, or JSON with --json, and exits 0 when healthy,
-1 when degraded and 2 when the server does not answer.
+(userdata/logs/server.trace.ndjson and its rotations), whether one warning floods
+stdout.log (and the stdout.log.1 the update agent rotates it to), and how much disk is
+free. It prints a one-screen summary, or JSON with --json, and exits 0 when healthy, 1 when
+degraded and 2 when the server does not answer or the disk is almost full.
 
 It writes nothing unless --write names a file for the JSON report. The Status page shows a
 "Health watch" component for <baseDir>/health/latest.json, so a watch every 5 minutes is:
@@ -27,6 +28,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import sys
 import tempfile
 import urllib.error
@@ -48,6 +50,10 @@ FLOOD_MINUTES = 10
 FLOOD_COUNT = 20
 # Only the end of stdout.log is read; at the fleet's Warn level 8 MiB is hours of output.
 STDOUT_TAIL_BYTES = 8 << 20
+# A full disk stalls the server for seconds at a time (its database writes wait), and every
+# client then reports the machine as offline; one finding names the cause instead.
+DISK_WARN_BYTES = 5 * 10 ** 9  # Decimal GB, as the summaries print them.
+DISK_FAIL_BYTES = 10 ** 9
 USER_FACING_PREFIXES = ('ws.rpc.', 'RpcClient.')
 LOG_LINE = re.compile(r'^\[(\d\d):(\d\d):(\d\d)\.(\d{3})\] (WARN|ERROR|FATAL) \(#\d+\): (.*)$')
 LOG_CLOCK = re.compile(r'^\[(\d\d):(\d\d):(\d\d)\.(\d{3})\] [A-Z]+ \(#\d+\):')
@@ -335,6 +341,70 @@ def read_tail(path, size):
     return text.split('\n', 1)[1] if end > size and '\n' in text else text
 
 
+def read_rotated_tail(path, size, cutoff):
+    """(text, modified) for the end of <name>.1 when the live log was just rotated and holds
+    less than the tail read, so the window still spans the rotation; ('', None) when there
+    is none or it was last written before `cutoff`. The rotation writes .1 at that moment,
+    so its mtime bounds its clock-only stamps: a weeks-old .1 is never dated from today."""
+    older = path.with_name(path.name + '.1')
+    if size <= 0 or older.is_symlink() or not older.is_file():
+        return '', None
+    try:
+        modified = older.stat().st_mtime
+        if modified < cutoff.timestamp():
+            return '', None
+        text = read_tail(older, size)
+    except OSError:
+        return '', None
+    return text, modified
+
+
+def folder_bytes(folder):
+    """Sizes of the files directly in `folder`: a state backup holds nothing deeper."""
+    total = 0
+    try:
+        with os.scandir(str(folder)) as entries:
+            for entry in entries:
+                if entry.is_file(follow_symlinks=False):
+                    total += entry.stat(follow_symlinks=False).st_size
+    except OSError:
+        pass
+    return total
+
+
+def check_disk(base, warn=DISK_WARN_BYTES, fail=DISK_FAIL_BYTES, usage=None):
+    """(f) Free space on the disk holding the service home, with what the app keeps there:
+    its pre-update database copies (backups/pre-*, one level of stat) and unpacked releases
+    (install/releases, counted, not walked)."""
+    free = (usage or shutil.disk_usage)(str(base)).free
+    root = base.parent
+    backups = root / 'backups'
+    copies = []
+    if backups.is_dir() and not backups.is_symlink():
+        try:
+            copies = [entry for entry in backups.iterdir()
+                      if entry.name.startswith('pre-') and entry.is_dir() and not entry.is_symlink()]
+        except OSError:
+            copies = []
+    backup_bytes = sum(folder_bytes(entry) for entry in copies)
+    releases = root / 'install' / 'releases'
+    try:
+        release_count = sum(1 for entry in releases.iterdir() if entry.is_dir() and not entry.is_symlink()) \
+            if releases.is_dir() and not releases.is_symlink() else 0
+    except OSError:
+        release_count = 0
+    details = {'freeBytes': free, 'warnBelowBytes': warn, 'failBelowBytes': fail,
+               'backups': {'path': str(backups), 'copies': len(copies), 'bytes': backup_bytes},
+               'install': {'path': str(releases), 'releases': release_count}}
+    holds = 'backups/ holds %d database cop%s (%.1f GB), install/ %d release%s' % (
+        len(copies), 'y' if len(copies) == 1 else 'ies', backup_bytes / 1e9,
+        release_count, '' if release_count == 1 else 's')
+    if free < warn:
+        return finding('disk', DOWN if free < fail else DEGRADED,
+                       'Disk almost full: %.1f GB free; %s' % (free / 1e9, holds), **details)
+    return finding('disk', OK, '%.1f GB free; %s' % (free / 1e9, holds), **details)
+
+
 def log_time(now_local, hours, minutes, seconds, millis):
     """stdout.log stamps carry local time of day only; the latest such moment not after now."""
     stamp = now_local.replace(hour=hours, minute=minutes, second=seconds, microsecond=millis * 1000)
@@ -392,17 +462,22 @@ def check_log_flood(base, now, minutes=FLOOD_MINUTES, limit=FLOOD_COUNT):
         text = read_tail(path, STDOUT_TAIL_BYTES)
     except OSError:
         return finding('log', OK, 'No stdout.log')
+    older, older_modified = read_rotated_tail(path, STDOUT_TAIL_BYTES - len(text), cutoff)
+    # Each file is dated from its own last write: the stamps carry a time of day only.
+    parts = [(older, older_modified)] if older else []
+    parts.append((text, modified))
     counts = collections.Counter()
     levels = collections.Counter()
-    latest = datetime.datetime.fromtimestamp(modified).astimezone()
-    for stamp, line in dated_log_lines(text, latest):
-        match = LOG_LINE.match(line)
-        if not match:
-            continue
-        if stamp < cutoff or stamp > now_local + datetime.timedelta(minutes=1):
-            continue
-        counts[(match.group(5), match.group(6).strip())] += 1
-        levels[match.group(5)] += 1
+    for part, written in parts:
+        latest = datetime.datetime.fromtimestamp(written).astimezone()
+        for stamp, line in dated_log_lines(part, latest):
+            match = LOG_LINE.match(line)
+            if not match:
+                continue
+            if stamp < cutoff or stamp > now_local + datetime.timedelta(minutes=1):
+                continue
+            counts[(match.group(5), match.group(6).strip())] += 1
+            levels[match.group(5)] += 1
     floods = [{'level': level, 'message': message, 'count': count}
               for (level, message), count in counts.most_common() if count > limit]
     details = {'minutes': minutes, 'limit': limit, 'byLevel': dict(levels), 'floods': floods,
@@ -422,7 +497,7 @@ def report(base, now=None, trace_minutes=TRACE_MINUTES, timeout=5, fetch=fetch_e
     now = now or utcnow()
     checks = [('server', lambda: check_server(base, timeout, fetch)), ('hold', lambda: check_hold(base, now)),
               ('updates', lambda: check_updates(base)), ('traces', lambda: check_traces(base, now, trace_minutes)),
-              ('log', lambda: check_log_flood(base, now))]
+              ('log', lambda: check_log_flood(base, now)), ('disk', lambda: check_disk(base))]
     findings = []
     for name, run in checks:
         try:

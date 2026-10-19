@@ -9,6 +9,11 @@ After a verified update this keeps:
   installation.json, so another identity's service is never broken;
 - anything unpacked in the last hour, which may belong to an update in flight;
 - anything that is not a plain <sha20> directory.
+
+Each update also copies the state database (2.5 GB on a long-used Mac) to
+~/.specwithcode/backups/pre-<commit>-<stamp>-<uuid> before the new release can
+migrate it, and nothing removed those either: 73 copies filled 47 GB of one Mac's
+disk. prune_state_backups keeps the newest few of them.
 """
 import os
 import pathlib
@@ -21,6 +26,10 @@ import studio_paths
 RELEASE_NAME = re.compile(r'[a-f0-9]{20}')
 RELEASE_REFERENCE = re.compile(r'(?:specweave-studio|install)/releases/([a-f0-9]{20})(?![a-f0-9])')
 RECENT_SECONDS = 3600
+# pre-<commit>-<stamp>-<uuid> now; older updaters wrote pre-<commit>-<stamp>, some without the Z.
+STATE_BACKUP_NAME = re.compile(r'pre-(?:[a-f0-9]{1,12}|unknown)-\d{8}T\d{6}Z?(?:-[a-f0-9]{32})?')
+STATE_BACKUP_FILES = {'statev2.sqlite', 'statev2.sqlite-wal', 'statev2.sqlite-shm', 'settings.json'}
+STATE_BACKUPS_KEPT = 2
 
 
 def releases_root(home):
@@ -83,3 +92,57 @@ def prune_releases(home, keep, now=None, recent_seconds=RECENT_SECONDS):
             continue
         removed.append(child.name)
     return removed
+
+
+def prune_state_backups(home, keep=(), keep_newest=STATE_BACKUPS_KEPT, now=None, recent_seconds=RECENT_SECONDS):
+    """Deletes old pre-update state database copies; returns the folder names removed.
+
+    Keeps the `keep_newest` newest copies, any folder in `keep`, anything written in the
+    last hour (another identity's update may be using it) and any folder that holds a file
+    backup_state never writes. Only plain pre-<commit>-<stamp>[-<uuid>] folders directly in
+    the backups root are candidates; symlinks are never followed. Never raises.
+    """
+    try:
+        root = studio_paths.backups_root(home)
+        ancestor = pathlib.Path(home)
+        for part in root.relative_to(home).parts:
+            ancestor = ancestor / part
+            if ancestor.is_symlink():
+                return []
+        if not root.is_dir():
+            return []
+        protected = {pathlib.Path(str(item)).name for item in keep if item}
+        protected |= {pathlib.Path(str(item)).parent.name for item in keep if item}
+        moment = time.time() if now is None else now
+        backups = []
+        for child in root.iterdir():
+            if not STATE_BACKUP_NAME.fullmatch(child.name):
+                continue
+            try:
+                info = os.lstat(str(child))
+            except OSError:
+                continue
+            if child.is_symlink() or not child.is_dir():
+                continue
+            try:
+                entries = list(child.iterdir())
+            except OSError:
+                continue
+            if any(entry.is_symlink() or not entry.is_file() or entry.name not in STATE_BACKUP_FILES for entry in entries):
+                continue  # Not only what backup_state writes: someone put it there by hand.
+            backups.append((child.name.split('-')[2], info.st_mtime, child, entries))
+    except OSError:
+        return []
+    backups.sort(key=lambda entry: (entry[0], entry[1]), reverse=True)
+    removed = []
+    for stamp, mtime, child, entries in backups[max(0, keep_newest):]:
+        if child.name in protected or moment - mtime < recent_seconds:
+            continue
+        try:
+            for entry in entries:
+                entry.unlink()
+            child.rmdir()
+        except OSError:
+            continue
+        removed.append(child.name)
+    return sorted(removed)

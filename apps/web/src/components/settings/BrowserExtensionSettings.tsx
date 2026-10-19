@@ -1,12 +1,11 @@
 import { useEffect, useState } from "react";
 import {
   AuthAccessWriteScope,
+  BROWSER_EXTENSION_STORE_URL,
   AuthFilesystemReadScope,
-  AuthFilesystemWriteScope,
   AuthTerminalOperateScope,
   type BrowserExtensionAction,
   type BrowserExtensionCheck,
-  type BrowserExtensionInstallFolder,
   type BrowserExtensionPeer,
   type BrowserExtensionProfile,
   type BrowserExtensionThreadUse,
@@ -20,7 +19,6 @@ import {
   CopyIcon,
   ExternalLinkIcon,
   EyeOffIcon,
-  FolderOpenIcon,
   KeyRoundIcon,
   PlugZapIcon,
   PuzzleIcon,
@@ -107,7 +105,6 @@ export function BrowserExtensionCard({
   const otherComputer = thisComputer !== null;
   const permitted = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
   const canOperate = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
-  const canWrite = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
   const canGrant = useEnvironmentScope(environmentId, AuthAccessWriteScope);
   const environment = useEnvironment(environmentId);
   const connected = environment?.connection.phase === "connected";
@@ -120,13 +117,11 @@ export function BrowserExtensionCard({
   const test = useAtomCommand(projectWorkspace.browserExtensionTest);
   const reconnect = useAtomCommand(projectWorkspace.browserExtensionReconnect);
   const stop = useAtomCommand(projectWorkspace.browserExtensionStop);
-  const installFolder = useAtomCommand(projectWorkspace.browserExtensionInstallFolder);
   const answerPeer = useAtomCommand(projectWorkspace.browserExtensionPeer);
 
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [code, setCode] = useState<string | null>(null);
-  const [folder, setFolder] = useState<BrowserExtensionInstallFolder | null>(null);
   const [check, setCheck] = useState<BrowserExtensionCheck | null>(null);
   useRelativeTimeTick(30_000);
 
@@ -210,12 +205,6 @@ export function BrowserExtensionCard({
       () => answerPeer({ environmentId, input: { id, allow } }),
       () => refresh(),
     );
-  const prepareFolder = () =>
-    run(
-      "folder",
-      () => installFolder({ environmentId, input: {} }),
-      (value) => setFolder(value),
-    );
 
   const title = `Chrome on ${machine}`;
   if (!connected || !permitted)
@@ -235,6 +224,7 @@ export function BrowserExtensionCard({
 
   const status = query.data;
   const profiles = status?.profiles ?? [];
+  const storeUrl = status?.storeUrl ?? BROWSER_EXTENSION_STORE_URL;
   const pill =
     profiles.length > 0
       ? {
@@ -253,55 +243,24 @@ export function BrowserExtensionCard({
       <div className="space-y-2">
         <p className="text-sm font-medium">1. Install the SpecWithCode Browser extension</p>
         <div className="flex flex-wrap items-center gap-2">
-          {status.storeUrl ? (
-            <Button
-              size="sm"
-              render={<a href={status.storeUrl} target="_blank" rel="noreferrer" />}
-            >
-              <ExternalLinkIcon />
-              Add to Chrome
-            </Button>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              The extension is in Chrome Web Store review. Until it is listed, load it unpacked.
-            </p>
-          )}
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={!canWrite || busy !== null}
-            onClick={() => void prepareFolder()}
-          >
-            {busy === "folder" ? <Spinner /> : <FolderOpenIcon />}
-            Load unpacked
+          <Button size="sm" render={<a href={storeUrl} target="_blank" rel="noreferrer" />}>
+            <ExternalLinkIcon />
+            Add to Chrome
+            <span className="sr-only"> (opens the Chrome Web Store)</span>
           </Button>
+          <CopyButton value={storeUrl} label="Chrome Web Store link" />
         </div>
-        {folder && (
-          <div className="space-y-2 rounded-md border border-border/60 px-3 py-2">
-            <div className="flex items-center gap-2">
-              <Input
-                nativeInput
-                readOnly
-                font="mono"
-                size="compact"
-                aria-label="Extension folder"
-                value={folder.path}
-              />
-              <CopyButton value={folder.path} label="extension folder" />
-            </div>
-            <p className="text-xs text-muted-foreground">Version {folder.version}</p>
-            <Steps
-              items={[
-                <>
-                  Open <code className="text-xs">chrome://extensions</code> in the Chrome profile
-                  agents should use.
-                </>,
-                "Turn on Developer mode (top right).",
-                "Click Load unpacked.",
-                "Pick the folder above.",
-              ]}
-            />
-          </div>
+        {otherComputer ? (
+          <p className="flex items-start gap-1.5 text-xs text-warning-foreground">
+            <CircleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
+            Install it in Chrome on {machine}: copy the link and open it there, in the profile
+            agents should use.
+          </p>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            Open the link in the Chrome profile agents should use. Chrome keeps the extension up to
+            date.
+          </p>
         )}
       </div>
 
@@ -468,11 +427,15 @@ export function BrowserExtensionCard({
               <ConnectedProfiles
                 environmentId={environmentId}
                 profiles={profiles}
+                storeUrl={storeUrl}
                 canOperate={canOperate}
                 busy={busy}
                 onStop={(id, threadId) => void stopProfile(id, threadId)}
               />
-              <details className="rounded-md border border-border/60 px-3 py-2 text-sm">
+              <details
+                className="rounded-md border border-border/60 px-3 py-2 text-sm"
+                open={profiles.some((profile) => profile.fromStore === false) || undefined}
+              >
                 <summary className="cursor-pointer">Pair another Chrome profile</summary>
                 <div className="mt-3">{setup}</div>
               </details>
@@ -638,12 +601,14 @@ function ThreadLabel({
 function ConnectedProfiles({
   environmentId,
   profiles,
+  storeUrl,
   canOperate,
   busy,
   onStop,
 }: {
   environmentId: EnvironmentId;
   profiles: ReadonlyArray<BrowserExtensionProfile>;
+  storeUrl: string;
   canOperate: boolean;
   busy: string | null;
   onStop: (profileId: string, threadId?: string) => void;
@@ -682,6 +647,24 @@ function ConnectedProfiles({
                       ? "idle"
                       : `in use by ${threads.length} thread${threads.length === 1 ? "" : "s"}`}
                   </p>
+                  {profile.fromStore === false && (
+                    <p
+                      data-testid="browser-extension-hand-loaded"
+                      className="flex items-start gap-1.5 text-xs text-warning-foreground"
+                    >
+                      <CircleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
+                      <span>
+                        Loaded by hand, so it does not update itself. Remove it in{" "}
+                        <code className="text-xs">chrome://extensions</code>, then{" "}
+                        <a href={storeUrl} target="_blank" rel="noreferrer" className="underline">
+                          add it from the Chrome Web Store
+                          <ExternalLinkIcon className="ml-0.5 inline size-3" />
+                          <span className="sr-only"> (opens the Chrome Web Store)</span>
+                        </a>{" "}
+                        and pair it under Pair another Chrome profile, with the same name.
+                      </span>
+                    </p>
+                  )}
                 </div>
                 {active &&
                   threads.length !== 1 &&

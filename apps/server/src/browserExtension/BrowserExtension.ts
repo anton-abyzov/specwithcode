@@ -6,6 +6,8 @@
  */
 import * as NodeHttpServerRequest from "@effect/platform-node/NodeHttpServerRequest";
 import {
+  BROWSER_EXTENSION_STORE_ID,
+  BROWSER_EXTENSION_STORE_URL,
   type BrowserExtensionCheck,
   type BrowserExtensionPairing,
   type BrowserExtensionPeer,
@@ -27,13 +29,11 @@ import * as NodePath from "node:path";
 
 import * as ServerConfig from "../config.ts";
 import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
-import { EXTENSION_FILES, EXTENSION_VERSION } from "./extensionFiles.generated.ts";
+import { EXTENSION_VERSION } from "./extensionVersion.generated.ts";
 import { BrowserRelayHub, type RelaySocket } from "./relayHub.ts";
 
 export const BROWSER_RELAY_PATH = "/api/browser-relay";
 export const PAIRING_PREFIX = "swc-chrome:1:";
-/** Set once the listing is public on the Chrome Web Store. */
-export const CHROME_WEB_STORE_URL: string | null = null;
 
 const LOOPBACK_ADDRESSES = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
 
@@ -171,7 +171,6 @@ export interface BrowserExtensionShape {
   readonly hub: BrowserRelayHub;
   readonly relayUrl: string;
   readonly pairing: (reset: boolean) => BrowserExtensionPairing;
-  readonly installFolder: () => { readonly path: string; readonly version: string };
   readonly status: () => BrowserExtensionStatus;
   readonly check: () => Promise<BrowserExtensionCheck>;
   /**
@@ -267,22 +266,14 @@ export function makeBrowserExtension(options: {
       if (reset) hub.disconnectAll("pairing code reset");
       return { pairingCode: encodePairingCode(relayUrl, token, machine), relayUrl };
     },
-    installFolder: () => {
-      // One stable folder, so Chrome's Load unpacked keeps pointing at it after updates.
-      const target = NodePath.join(dir, "chrome");
-      NodeFS.rmSync(target, { recursive: true, force: true });
-      for (const file of EXTENSION_FILES) {
-        const out = NodePath.join(target, file.path);
-        NodeFS.mkdirSync(NodePath.dirname(out), { recursive: true });
-        NodeFS.writeFileSync(out, Buffer.from(file.base64, "base64"));
-      }
-      return { path: target, version: EXTENSION_VERSION };
-    },
     status: () => ({
       relayUrl,
       bundledVersion: EXTENSION_VERSION,
-      storeUrl: CHROME_WEB_STORE_URL,
-      profiles: hub.profileSummaries(),
+      storeUrl: BROWSER_EXTENSION_STORE_URL,
+      profiles: hub.profileSummaries().map(({ extensionId, ...profile }) => ({
+        ...profile,
+        fromStore: extensionId === BROWSER_EXTENSION_STORE_ID,
+      })),
       recentActions: [...hub.recentActions()],
       peers: peerStore.list().map(([id, record]) => ({
         id,
@@ -427,8 +418,6 @@ export const layerRpcHandlers = WsBrowserExtensionRpcGroup.middleware(RpcInstrum
           await extension.hub.stop(payload.profileId, payload.threadId);
           return extension.status();
         }),
-      [WS_METHODS.browserExtensionInstallFolder]: () =>
-        Effect.sync(() => extension.installFolder()),
       [WS_METHODS.browserExtensionPeer]: (payload) =>
         Effect.promise(async () => {
           await extension.answerPeer(payload.id, payload.allow);

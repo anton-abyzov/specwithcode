@@ -70,8 +70,9 @@ export const ServerProviderAuth = Schema.Struct({
   subscriptionSharing: Schema.optional(Schema.Boolean),
   profileId: Schema.optional(TrimmedNonEmptyString),
   /**
-   * The instance's own environment holds an Anthropic API key and no custom
-   * endpoint, so its turns are billed to that key's API organization.
+   * The instance's turns go straight to Anthropic's API and are billed to an
+   * API organization's credits: its own environment holds an Anthropic API key
+   * and no custom endpoint, or its CLI is signed in to the Claude Console.
    */
   apiKeyBilling: Schema.optional(Schema.Boolean),
 });

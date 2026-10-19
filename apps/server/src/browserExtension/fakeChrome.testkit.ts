@@ -14,6 +14,8 @@ export interface FakeChrome {
   readonly calls: Array<{ method: string; params: unknown[] }>;
   readonly closed: Array<{ code: number; reason: string }>;
   readonly session: { receive: (text: string) => void; closed: () => void };
+  /** CDP method -> error the next call to it fails with, once. */
+  readonly failNext: Map<string, string>;
 }
 
 /** A paired profile that answers chrome.* calls the way the extension would. */
@@ -25,6 +27,7 @@ export function connectFake(
 ): FakeChrome {
   const calls: FakeChrome["calls"] = [];
   const closed: FakeChrome["closed"] = [];
+  const failNext: FakeChrome["failNext"] = new Map();
   let nextTab = 100;
   const tabs = new Map<number, { id: number; url: string; title: string; active: boolean }>([
     [1, { id: 1, url: "https://mail.example.com/", title: "Mail", active: true }],
@@ -58,6 +61,11 @@ export function connectFake(
           return reply(message.id, { result: {} });
         case "chrome.debugger.sendCommand": {
           const [, method, args] = params as [unknown, string, Record<string, unknown>];
+          const failure = failNext.get(method);
+          if (failure !== undefined) {
+            failNext.delete(method);
+            return reply(message.id, { error: failure });
+          }
           if (method === "Runtime.evaluate") {
             const expression = String(args.expression);
             if (expression === "document.readyState")
@@ -114,7 +122,7 @@ export function connectFake(
       },
     }),
   );
-  return { calls, closed, session };
+  return { calls, closed, session, failNext };
 }
 
 export function setup() {

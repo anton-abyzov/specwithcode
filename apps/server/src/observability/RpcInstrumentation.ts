@@ -28,7 +28,6 @@ const RPC_AGGREGATES = {
   [WS_METHODS.browserExtensionTest]: "preview",
   [WS_METHODS.browserExtensionReconnect]: "preview",
   [WS_METHODS.browserExtensionStop]: "preview",
-  [WS_METHODS.browserExtensionInstallFolder]: "preview",
   [WS_METHODS.browserExtensionPeer]: "preview",
   [WS_METHODS.computerUseHost]: "computerUse",
   [WS_METHODS.computerUseRespond]: "computerUse",

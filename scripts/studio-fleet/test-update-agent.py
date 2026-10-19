@@ -1199,6 +1199,20 @@ class PassBehaviour(AgentCase):
         self.assertEqual(receipt.stat().st_mode & 0o777, 0o600)
         self.assertNotIn('Protected rows', self.log)
 
+    def test_a_disk_too_full_for_the_backup_is_the_message_not_see_the_receipt(self):
+        self.fake.add_release()
+        self.config(installAutomatically=False, installRequestedAt='2026-10-10T10:00:00Z', quietMinutes=60)
+        refusal = 'Not enough free disk space for the pre-update backup: needs 4.6 GB, 1.2 GB free'
+        self.control(applyRefusals=1, applyRefusal={'phase': 'preflight', 'pointers': 'unchanged',
+                                                     'error': 'AssertionError: ' + refusal})
+        self.assertEqual(self.run_agent(), 1)
+        state = self.state()
+        installed = json.loads((self.own / 'installation.json').read_text())['version']
+        self.assertEqual((state['status'], state['message']),
+                         ('error', '%s; SpecWithCode stayed on %s.' % (refusal, installed)))
+        self.assertEqual(state['lastInstall']['result'], 'failed')
+        self.assertEqual(len([c for c in self.calls() if '--prestate' in c['argv']]), 1)  # Not retried.
+
     def test_helper_output_is_kept_beside_its_own_receipt_not_in_agent_log(self):
         self.fake.add_release()
         self.config(installAutomatically=False, installRequestedAt='2026-10-10T10:00:00Z', quietMinutes=60)
@@ -1277,6 +1291,76 @@ class PassBehaviour(AgentCase):
                                  '--home', str(self.home), '--status'], capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0)
         self.assertEqual(json.loads(result.stdout)['status'], 'manual-required')
+
+
+class ServiceLogRotation(AgentCase):
+    def test_a_pass_bounds_the_service_logs_and_keeps_their_newest_lines(self):
+        stdout, stderr = self.own / 'stdout.log', self.own / 'stderr.log'
+        line = b'[12:00:00.000] WARN (#101): Scheduled task run failed %08d\n'
+        lines = [line % index for index in range(400000)]  # About 21 MB.
+        stdout.write_bytes(b''.join(lines))
+        stderr.write_bytes(b'small\n')
+        older = self.own / 'stdout.log.1'
+        outside = self.home / 'outside.log'
+        outside.write_bytes(b'not the app\'s')
+        older.symlink_to(outside)
+        launchd = os.open(str(stdout), os.O_WRONLY | os.O_APPEND)  # How launchd holds it.
+        self.addCleanup(os.close, launchd)
+        self.config()
+        self.run_agent()
+        self.assertEqual(stdout.stat().st_size, 0, self.log)
+        kept = older.read_bytes()
+        self.assertFalse(older.is_symlink())
+        self.assertEqual(outside.read_bytes(), b'not the app\'s')
+        self.assertEqual(older.stat().st_mode & 0o777, 0o600)
+        self.assertLessEqual(len(kept), update_agent.SERVICE_LOG_KEPT)
+        self.assertGreater(len(kept), update_agent.SERVICE_LOG_KEPT - len(lines[0]) * 2)
+        self.assertTrue(kept.startswith(b'[12:00:00.000] WARN'), kept[:60])
+        self.assertTrue(kept.endswith(lines[-1]))
+        self.assertEqual(stderr.read_bytes(), b'small\n')
+        os.write(launchd, b'after rotation\n')
+        self.assertEqual(stdout.read_bytes(), b'after rotation\n')
+        self.assertEqual(sorted(path.name for path in self.own.glob('stdout.log*')), ['stdout.log', 'stdout.log.1'])
+
+    def test_a_log_under_the_limit_or_behind_a_link_is_left_alone(self):
+        outside = self.home / 'outside.log'
+        outside.write_bytes(b'x' * 64)
+        link = self.own / 'stdout.log'
+        link.symlink_to(outside)
+        self.assertFalse(update_agent.rotate_service_log(link, limit=16, kept=8))
+        self.assertEqual(outside.read_bytes(), b'x' * 64)
+        self.assertFalse((self.own / 'stdout.log.1').exists())
+        small = self.own / 'stderr.log'
+        small.write_bytes(b'line\n' * 3)
+        self.assertFalse(update_agent.rotate_service_log(small, limit=16, kept=8))
+        self.assertEqual(small.read_bytes(), b'line\n' * 3)
+        self.assertFalse(update_agent.rotate_service_log(self.own / 'missing.log'))
+        small.write_bytes(b'one\ntwo\nthree\n')
+        (self.own / 'stderr.log.1').write_bytes(b'previous rotation')
+        self.assertTrue(update_agent.rotate_service_log(small, limit=8, kept=8))
+        self.assertEqual((self.own / 'stderr.log.1').read_bytes(), b'three\n')
+        self.assertEqual(small.read_bytes(), b'')
+
+    def test_a_full_disk_still_truncates_the_live_log(self):
+        log = self.own / 'stdout.log'
+        log.write_bytes(b'line\n' * 10)
+        (self.own / 'stdout.log.1').write_bytes(b'previous rotation')
+        real_fdopen = os.fdopen
+
+        def full(fd, *args, **kwargs):
+            handle = real_fdopen(fd, *args, **kwargs)
+            handle.write = mock.Mock(side_effect=OSError(update_agent.errno.ENOSPC, 'No space left on device'))
+            return handle
+
+        with mock.patch.object(update_agent.os, 'fdopen', side_effect=full):
+            self.assertTrue(update_agent.rotate_service_log(log, limit=16, kept=8))
+        self.assertEqual(log.read_bytes(), b'')
+        self.assertEqual((self.own / 'stdout.log.1').read_bytes(), b'previous rotation')
+        self.assertEqual(sorted(path.name for path in self.own.glob('stdout.log*')), ['stdout.log', 'stdout.log.1'])
+        log.write_bytes(b'line\n' * 10)
+        with mock.patch.object(update_agent.os, 'fdopen', side_effect=OSError(update_agent.errno.EACCES, 'denied')):
+            self.assertFalse(update_agent.rotate_service_log(log, limit=16, kept=8))
+        self.assertEqual(log.read_bytes(), b'line\n' * 10)  # Any other failure leaves the log whole.
 
 
 class LaunchAgent(AgentCase):

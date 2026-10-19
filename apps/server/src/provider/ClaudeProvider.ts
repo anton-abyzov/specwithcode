@@ -76,6 +76,38 @@ const decodeNativeSubscriptionAuthStatus = Schema.decodeUnknownOption(
     }),
   ),
 );
+const decodeConsoleProfileAuthStatus = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      loggedIn: Schema.Literals([true]),
+      authMethod: Schema.Literals(["oauth_token"]),
+      apiProvider: Schema.Literals(["firstParty"]),
+    }),
+  ),
+);
+/** `claude auth status --text` names a Claude Console sign-in as an OAuth profile. */
+const CONSOLE_PROFILE_STATUS_LINE = /^Profile:\s*credentials-file\s*\u00b7\s*user_oauth\s*\u00b7/m;
+/** Each of these supplies or redirects the token, so "oauth_token" would not mean the profile. */
+const CLAUDE_TOKEN_OVERRIDE_ENV = [
+  "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_BASE_URL",
+  "CLAUDE_CODE_OAUTH_TOKEN",
+  "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR",
+  "CLAUDE_CODE_USE_BEDROCK",
+  "CLAUDE_CODE_USE_VERTEX",
+  "CLAUDE_CODE_USE_FOUNDRY",
+] as const;
+function overridesClaudeToken(environment: NodeJS.ProcessEnv): boolean {
+  return CLAUDE_TOKEN_OVERRIDE_ENV.some((name) => {
+    const value = environment[name]?.trim() ?? "";
+    return value.length > 0 && value !== "0" && value !== "false";
+  });
+}
+export const CLAUDE_CONSOLE_AUTH = {
+  type: "apiKey",
+  label: "Claude Console (API Usage Billing)",
+} as const;
+
 function toTitleCaseWords(value: string): string {
   const parts: Array<string> = [];
   for (const part of value.split(/[\s_-]+/g)) {
@@ -674,12 +706,46 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       }
     }
   }
-  const resolvedAuthMetadata =
-    apiProviderAuthMetadata(capabilities.apiProvider) ??
-    claudeAuthMetadata({
-      subscriptionType: capabilities.subscriptionType,
-      authMethod,
-    });
+  // A Claude Console sign-in ("API Usage Billing") is a profile under
+  // ~/.config/anthropic that the CLI prefers over a claude.ai login in any
+  // Claude home. Initialization reports no plan, token or key source for it,
+  // so only the CLI's own status for this home can name it.
+  let consoleBilling = false;
+  if (
+    (authMethod === undefined || authMethod === "profile") &&
+    !capabilities.subscriptionType &&
+    capabilities.apiProvider === "firstParty" &&
+    !overridesClaudeToken(resolvedEnvironment)
+  ) {
+    const readStatus = (args: ReadonlyArray<string>) =>
+      runClaudeCommand(claudeSettings, args, resolvedEnvironment, cwd).pipe(
+        Effect.timeoutOption(AUTH_PROBE_TIMEOUT_MS),
+        Effect.result,
+      );
+    const json = yield* readStatus(["auth", "status"]);
+    authStatusCheckFailed = Result.isFailure(json) || Option.isNone(json.success);
+    if (
+      Result.isSuccess(json) &&
+      Option.isSome(json.success) &&
+      json.success.value.code === 0 &&
+      Option.isSome(decodeConsoleProfileAuthStatus(json.success.value.stdout))
+    ) {
+      const text = yield* readStatus(["auth", "status", "--text"]);
+      authStatusCheckFailed = Result.isFailure(text) || Option.isNone(text.success);
+      consoleBilling =
+        Result.isSuccess(text) &&
+        Option.isSome(text.success) &&
+        text.success.value.code === 0 &&
+        CONSOLE_PROFILE_STATUS_LINE.test(text.success.value.stdout);
+    }
+  }
+  const resolvedAuthMetadata = consoleBilling
+    ? CLAUDE_CONSOLE_AUTH
+    : (apiProviderAuthMetadata(capabilities.apiProvider) ??
+      claudeAuthMetadata({
+        subscriptionType: capabilities.subscriptionType,
+        authMethod,
+      }));
   const authMetadata =
     authStatusCheckFailed && resolvedAuthMetadata?.type === "subscription-auth-unverified"
       ? statusCheckFailedAuth
@@ -717,6 +783,8 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         status: authUnverified ? "unknown" : "authenticated",
         ...(capabilities.email ? { email: capabilities.email } : {}),
         ...(authMetadata ? authMetadata : {}),
+        // Turns go straight to Anthropic's API and draw the organization's credits.
+        ...(consoleBilling ? { apiKeyBilling: true } : {}),
       },
       ...(versionUpgradeMessage ? { message: versionUpgradeMessage } : {}),
       usageLimits: resetCredits ? { ...usageLimits, resetCredits } : usageLimits,

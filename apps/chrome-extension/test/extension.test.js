@@ -3,7 +3,7 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { describe, expect, it } from "vitest";
 
-import { packageFiles, validateManifest } from "../scripts/build.mjs";
+import { generatedModule, packageFiles, validateManifest } from "../scripts/build.mjs";
 import { parsePairingCode } from "../src/pairing.js";
 import { RelayConnection, isNonDebuggableUrl } from "../src/relayConnection.js";
 import { AgentTabGroups, groupTitle } from "../src/tabGroup.js";
@@ -186,5 +186,16 @@ describe("store package", () => {
     ])
       expect(files).toContain(name);
     expect(files.some((name) => name.includes("test"))).toBe(false);
+  });
+});
+
+describe("extensionVersion.generated.ts", () => {
+  it("matches manifest.json, so the server reports the version the store gets", () => {
+    const manifest = JSON.parse(NodeFS.readFileSync(NodePath.join(root, "manifest.json"), "utf8"));
+    const generated = NodeFS.readFileSync(
+      NodePath.join(root, "../server/src/browserExtension/extensionVersion.generated.ts"),
+      "utf8",
+    );
+    expect(generated).toBe(generatedModule(manifest.version));
   });
 });
