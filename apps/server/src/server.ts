@@ -112,6 +112,7 @@ import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolve
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
+import * as WorkspaceSensitivePaths from "./workspace/WorkspaceSensitivePaths.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
@@ -230,6 +231,15 @@ const layerServerSettings = ServerSettings.layer.pipe(
   Layer.provideMerge(SqlitePersistence.layerConfig),
 );
 
+// One guard for file reads, writes, search and review diffs, following the
+// provider homes named in settings.
+const layerSensitivePaths = WorkspaceSensitivePaths.layer.pipe(Layer.provide(layerServerSettings));
+
+const layerGitVcsDriver = GitVcsDriver.layer.pipe(
+  Layer.provide(layerSensitivePaths),
+  Layer.provide(layerServerSettings),
+);
+
 const layerNativeTelemetry = NativeTelemetryClient.layer.pipe(
   Layer.provide(ResourceMonitorBinary.layer),
 );
@@ -307,7 +317,7 @@ const layerSourceControlProviderRegistry = SourceControlProviderRegistry.layer.p
       ForgejoCli.layer,
     ),
   ),
-  Layer.provideMerge(GitVcsDriver.layer),
+  Layer.provideMerge(layerGitVcsDriver),
   Layer.provideMerge(layerVcsDriverRegistry),
 );
 
@@ -370,14 +380,14 @@ const layerGitManager = GitManager.layer.pipe(
   Layer.provide(Layer.merge(ProjectionStoreV2.layer, ProjectStore.layer)),
   Layer.provideMerge(RuntimeLayer.layerProjectSetupScriptRunner),
   Layer.provideMerge(WorktreeSetupTracker.layer),
-  Layer.provideMerge(GitVcsDriver.layer),
+  Layer.provideMerge(layerGitVcsDriver),
   Layer.provideMerge(layerSourceControlProviderRegistry),
   Layer.provideMerge(TextGeneration.layer.pipe(Layer.provide(layerSourceControlProviderRegistry))),
 );
 
 const layerGit = Layer.empty.pipe(
   Layer.provideMerge(layerGitManager),
-  Layer.provideMerge(GitVcsDriver.layer),
+  Layer.provideMerge(layerGitVcsDriver),
 );
 
 const layerGitWorkflow = GitWorkflowService.layer.pipe(
@@ -386,7 +396,7 @@ const layerGitWorkflow = GitWorkflowService.layer.pipe(
 );
 
 const layerSourceControlRepositoryService = SourceControlRepositoryService.layer.pipe(
-  Layer.provideMerge(GitVcsDriver.layer),
+  Layer.provideMerge(layerGitVcsDriver),
   Layer.provideMerge(layerSourceControlProviderRegistry),
 );
 
@@ -397,7 +407,7 @@ const layerProjectCloneTracker = ProjectCloneTracker.layer.pipe(
 const layerReview = ReviewService.layer.pipe(
   // Registered project roots bound which folders a review diff may read.
   Layer.provide(ProjectStore.layer),
-  Layer.provideMerge(GitVcsDriver.layer),
+  Layer.provideMerge(layerGitVcsDriver),
   Layer.provideMerge(layerVcsDriverRegistry),
 );
 
@@ -433,18 +443,24 @@ const layerDevice = DeviceService.layer.pipe(
   Layer.provide(NetService.layer),
 );
 
-const layerWorkspaceEntries = WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer));
+const layerWorkspaceEntries = WorkspaceEntries.layer.pipe(
+  Layer.provide(WorkspacePaths.layer),
+  Layer.provide(layerSensitivePaths),
+);
 
 const layerWorkspaceFileSystem = WorkspaceFileSystem.layer.pipe(
   Layer.provide(WorkspacePaths.layer),
   Layer.provide(layerWorkspaceEntries),
+  Layer.provide(layerSensitivePaths),
 );
 
+// The guard is also exposed to the runtime, so a git driver built later (one per
+// connection) shares it instead of resolving the protected paths again.
 const layerWorkspace = Layer.mergeAll(
   WorkspacePaths.layer,
   layerWorkspaceEntries,
   layerWorkspaceFileSystem,
-);
+).pipe(Layer.provideMerge(layerSensitivePaths));
 
 const layerProjectFaviconResolver = ProjectFaviconResolver.layer.pipe(
   Layer.provide(WorkspacePaths.layer),

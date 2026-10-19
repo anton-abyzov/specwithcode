@@ -129,11 +129,13 @@ Why: the app sends data only to the user's own machines, which the developer doe
 
 ## Export compliance
 
-The app uses only standard HTTPS/TLS and secure WebSockets through Apple's networking APIs, plus the iOS Keychain. That is exempt encryption, so `ITSAppUsesNonExemptEncryption` is `NO`. It is set in `project.yml` (`INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO`) and present in the built Release `Info.plist`, so App Store Connect will not ask the export compliance questions for each build.
+The app uses only standard HTTP, HTTPS/TLS and WebSocket connections through Apple's networking APIs (plain HTTP and WebSocket only on the user's local network), plus the iOS Keychain. That is exempt encryption, so `ITSAppUsesNonExemptEncryption` is `NO`. It is set in `project.yml` (`INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO`) and present in the built Release `Info.plist`, so App Store Connect will not ask the export compliance questions for each build.
 
 ## App Review notes
 
-Limit 4000. Count: 1456.
+Limit 4000. Count: 2086.
+
+The VPN paragraph answers App Review's automated VPN check, which rejected 0.1.0 (2) under 2.1.0 on 19 October 2026 because the app recognizes Tailscale addresses. Keep it in the notes for every submission.
 
 ```text
 No account or sign-in is needed. SpecWithCode for iPhone is a remote control for SpecWithCode, a desktop app people run on their own computers. Real use needs SpecWithCode running on a computer the phone can reach; the phone pairs with it once using a one-time code shown as a QR code or link (on the computer: Settings > Connections > Pair a phone).
@@ -149,6 +151,8 @@ To review without a computer, use the built-in sample data:
 The sample data is made up and stays on the device; nothing is sent anywhere in that mode.
 
 Permissions: the camera is used only to scan the pairing QR code, and local network access only to reach the user's own computers. The app has no ads, analytics, tracking or in-app purchases.
+
+VPN: the app has no VPN functionality. It does not use the NetworkExtension framework, has no VPN or packet tunnel entitlement, and never creates, configures or routes traffic through a VPN. It only opens standard web connections (HTTP, HTTPS and WebSocket) to the SpecWithCode desktop app on the user's own computers. Some users reach those computers over a private network they already run with a separate app, such as Tailscale; SpecWithCode then connects to the address that network provides, as a browser would. The app collects no user information through a VPN or in any other way, and shares no data with third parties.
 ```
 
 ## What to Test (TestFlight)

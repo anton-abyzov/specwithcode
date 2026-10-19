@@ -98,7 +98,8 @@ export interface ReportFrontmatterField {
   readonly value: string | ReadonlyArray<string>;
 }
 
-const FRONTMATTER = /^---[ \t]*\n([\s\S]*?)\n---[ \t]*(?:\n|$)/;
+/** A leading `---` block, whatever it holds. */
+export const FRONTMATTER = /^---[ \t]*\n([\s\S]*?)\n---[ \t]*(?:\n|$)/;
 const FRONTMATTER_KEY = /^([A-Za-z][\w -]{0,40}):(?:[ \t]+(.*))?$/;
 
 function unquoted(value: string): string {

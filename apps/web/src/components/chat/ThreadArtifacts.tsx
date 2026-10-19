@@ -52,6 +52,7 @@ import { Button } from "../ui/button";
 import { MenuItem } from "../ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { ArtifactShelfList } from "./ArtifactShelfList";
+import { MarkdownDocumentView } from "./ReportReader";
 import { useArtifactShelfState } from "./useArtifactShelfState";
 import { useMissingArtifactFiles } from "./useMissingArtifactFiles";
 import { ViewerFileActions } from "./ViewerFileActions";
@@ -651,12 +652,17 @@ function ArtifactText(props: {
     const baseDir = meta.filePath.slice(0, meta.filePath.lastIndexOf("/"));
     return (
       <div className="report-reader-body">
-        <article className="report-document report-document-page report-document-prose">
-          <ChatMarkdown
+        <article className="report-document report-document-page">
+          <MarkdownDocumentView
             text={contents}
-            cwd={props.cwd}
-            imageBaseDir={baseDir}
-            threadRef={props.threadRef}
+            renderMarkdown={(markdown) => (
+              <ChatMarkdown
+                text={markdown}
+                cwd={props.cwd}
+                imageBaseDir={baseDir}
+                threadRef={props.threadRef}
+              />
+            )}
           />
         </article>
       </div>

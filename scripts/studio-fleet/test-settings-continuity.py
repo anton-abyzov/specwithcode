@@ -247,8 +247,10 @@ class SourceOfTruth(unittest.TestCase):
         self.assertIn('projectSettingsSimplified:', text)
 
     def test_secret_and_legacy_names_match_the_server(self):
+        contracts = self.source('packages/contracts/src/settings.ts')
+        self.assertIn('export const REDACTED_SECRET_MARKER = "%s";' % continuity.SECRET_REDACTED, contracts)
         server = self.source('apps/server/src/serverSettings.ts')
-        self.assertIn('const SECRET_REDACTED = "\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022";', server)
+        self.assertIn('const SECRET_REDACTED = REDACTED_SECRET_MARKER;', server)
         self.assertIn('const BITBUCKET_SECRET_FIELDS = ["accessToken", "apiToken"] as const;', server)
         shared = self.source('packages/shared/src/serverSettings.ts')
         for legacy, key in continuity.LEGACY_PROJECT_MAPS.items():

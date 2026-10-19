@@ -38,7 +38,10 @@ export function AddClaudeAccountDialog({
   const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const settings = useEnvironmentSettings(environmentId);
   const providers = useAtomValue(serverEnvironment.providersValueAtom(environmentId));
-  const update = useAtomCommand(serverEnvironment.updateSettings, "Add Claude account");
+  const createInstance = useAtomCommand(
+    serverEnvironment.mutateProviderInstance,
+    "Add Claude account",
+  );
   const refresh = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
     reportDefect: false,
@@ -80,18 +83,20 @@ export function AddClaudeAccountDialog({
     setPending(true);
     const plan = claudeAccountPlan(name, settings.providerInstances ?? {});
     const instanceId = ProviderInstanceId.make(plan.instanceId);
-    const result = await update({
+    // One create, not the whole map: a map from this window could drop an
+    // instance another window just added.
+    const result = await createInstance({
       environmentId,
       input: {
-        patch: {
-          providerInstances: {
-            ...settings.providerInstances,
-            [instanceId]: {
-              driver: ProviderDriverKind.make("claudeAgent"),
-              displayName: plan.displayName,
-              enabled: true,
-              config: { enabled: true, homePath: plan.homePath },
-            },
+        patch: {},
+        providerInstanceMutation: {
+          operation: "create",
+          instanceId,
+          instance: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            displayName: plan.displayName,
+            enabled: true,
+            config: { enabled: true, homePath: plan.homePath },
           },
         },
       },

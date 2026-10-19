@@ -3635,7 +3635,7 @@ export function ConnectionsSettings() {
         ) : desktopServerExposureState?.localServiceAttached ? (
           "Limited to this machine by the SpecWithCode service. Other devices, like your phone, can use Tailscale HTTPS."
         ) : desktopServerExposureState ? (
-          "Limited to this machine."
+          "Limited to this machine. Turning this on serves the app over unencrypted HTTP."
         ) : (
           "Loading…"
         )
@@ -3643,6 +3643,11 @@ export function ConnectionsSettings() {
       status={
         desktopServerExposureError ? (
           <span className="block text-destructive-foreground">{desktopServerExposureError}</span>
+        ) : isLocalBackendNetworkAccessible ? (
+          <span className="block text-warning-foreground">
+            Not encrypted: anyone on the same network can capture the sign-in. For remote access,
+            use Tailscale HTTPS.
+          </span>
         ) : null
       }
       control={renderNetworkAccessToggle()}
@@ -3827,7 +3832,7 @@ export function ConnectionsSettings() {
                 </AlertDialogTitle>
                 <AlertDialogDescription>
                   {pendingDesktopServerExposureMode === "network-accessible"
-                    ? "Let your other devices connect to SpecWithCode over the network. Pair devices to give them access. SpecWithCode will restart."
+                    ? "Let your other devices connect to SpecWithCode over your local network. This mode uses plain HTTP, so its traffic is not encrypted: anyone on the same network can capture the sign-in and use it to control the app. Turn it on only on a network you trust, and use Tailscale HTTPS for remote access. Pair devices to give them access. The app will restart."
                     : "Devices connected over your local network will disconnect. Existing tunnels, such as SpecWithCode Connect or Tailscale HTTPS, keep working. SpecWithCode will restart."}
                 </AlertDialogDescription>
               </AlertDialogHeader>

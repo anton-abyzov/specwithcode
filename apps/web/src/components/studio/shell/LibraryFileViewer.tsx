@@ -6,6 +6,7 @@ import { createPortal } from "react-dom";
 import { formatViewerDate } from "~/viewerDate";
 import { useViewerOverlay } from "~/viewerOverlayStore";
 import ChatMarkdown from "../../ChatMarkdown";
+import { MarkdownDocumentView } from "../../chat/ReportReader";
 import { ViewerFileActions } from "../../chat/ViewerFileActions";
 import { ReadOnlySourcePreview } from "../../files/AttachmentFilePreview";
 import { useProjectFileQuery } from "../../files/projectFilesQueryState";
@@ -145,8 +146,13 @@ function LibraryFileBody(props: {
       <>
         {truncated}
         <div className="report-reader-body">
-          <article className="report-document report-document-page report-document-prose">
-            <ChatMarkdown text={file.data.contents} cwd={props.workspaceRoot} />
+          <article className="report-document report-document-page">
+            <MarkdownDocumentView
+              text={file.data.contents}
+              renderMarkdown={(markdown) => (
+                <ChatMarkdown text={markdown} cwd={props.workspaceRoot} />
+              )}
+            />
           </article>
         </div>
       </>

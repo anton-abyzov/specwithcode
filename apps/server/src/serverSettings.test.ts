@@ -6,6 +6,8 @@ import {
   ProjectScript,
   ProviderDriverKind,
   ProviderInstanceId,
+  providerSettingsPasswordKeys,
+  REDACTED_SECRET_MARKER,
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
@@ -22,11 +24,17 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import { BUILT_IN_DRIVERS } from "./provider/builtInDrivers.ts";
+import * as ProviderInstanceRegistryHydration from "./provider/ProviderInstanceRegistryHydration.ts";
+import * as ProviderInstanceRegistryMutator from "./provider/ProviderInstanceRegistryMutator.ts";
+import * as ProviderCredentialStore from "./provider/ProviderCredentialStore.ts";
+import { resolveAntigravityInstanceDirectories } from "./provider/antigravityAuthSupport.ts";
 import * as ServerConfig from "./config.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import { writeFileStringAtomically } from "./atomicWrite.ts";
@@ -79,6 +87,63 @@ const layerServerSettingsWithSecrets = () =>
     ),
   );
 
+/** Like `layerServerSettingsWithSecrets`, with sign-in removal failing while `failing` is set. */
+const layerServerSettingsWithFlakySecretRemoval = () => {
+  const removal = { failing: false };
+  const secretStore = Layer.effect(
+    ServerSecretStore.ServerSecretStore,
+    Effect.map(ServerSecretStore.make, (store) =>
+      ServerSecretStore.ServerSecretStore.of({
+        ...store,
+        remove: (name) =>
+          removal.failing && name.startsWith("provider-auth-")
+            ? Effect.fail(
+                new ServerSecretStore.SecretStoreRemoveError({
+                  resource: "provider sign-in",
+                  cause: new Error("Secret backend unavailable."),
+                }),
+              )
+            : store.remove(name),
+      }),
+    ),
+  );
+  const layer = ServerSettingsModule.layer.pipe(
+    Layer.provideMerge(secretStore),
+    Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
+    Layer.provideMerge(
+      Layer.fresh(
+        ServerConfig.layerTest(process.cwd(), {
+          prefix: "studio-server-settings-test-",
+        }),
+      ),
+    ),
+  );
+  return { layer, removal };
+};
+
+const SIGN_IN_TOMBSTONES_FILE = "provider-sign-in-tombstones.json";
+
+/** Writes (or, with `undefined`, deletes) a file until the watcher reports a matching change. */
+const changeFileUntil = <A>(
+  changes: Stream.Stream<A>,
+  filePath: string,
+  contents: string | undefined,
+  matches: (change: A) => boolean,
+) =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    for (let attempt = 0; attempt < 6; attempt++) {
+      if (contents === undefined) yield* fileSystem.remove(filePath, { force: true });
+      else yield* writeFileStringAtomically({ filePath, contents });
+      for (;;) {
+        const change = yield* changes.pipe(Stream.runHead, Effect.timeoutOption("5 seconds"));
+        if (Option.isNone(change) || Option.isNone(change.value)) break;
+        if (matches(change.value.value)) return true;
+      }
+    }
+    return false;
+  });
+
 const layerFailingSecretStore = (cause: ServerSecretStore.SecretStoreError) =>
   Layer.succeed(
     ServerSecretStore.ServerSecretStore,
@@ -90,6 +155,9 @@ const layerFailingSecretStore = (cause: ServerSecretStore.SecretStoreError) =>
       remove: () => Effect.void,
     }),
   );
+
+const readApiKey = (config: unknown) =>
+  (config as { readonly apiKey?: string } | undefined)?.apiKey;
 
 const recordProviderUsage = (provider: string, instanceId: string | null = provider) =>
   Effect.gen(function* () {
@@ -2286,5 +2354,1495 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       // The user's file is still there to repair; nothing was written over it.
       assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), broken);
     }).pipe(Effect.provide(layerServerSettings())),
+  );
+  it.effect("redacts every provider password field the settings form knows about", () =>
+    Effect.sync(() => {
+      for (const driver of BUILT_IN_DRIVERS) {
+        const schema = driver.configSchema as unknown as { readonly fields?: Schema.Struct.Fields };
+        const expected = schema.fields
+          ? providerSettingsPasswordKeys({ fields: schema.fields })
+          : [];
+        assert.deepEqual(
+          ServerSettingsModule.PROVIDER_SETTINGS_SECRET_KEYS[driver.driverKind] ?? [],
+          expected,
+          driver.driverKind,
+        );
+      }
+      assert.deepEqual(ServerSettingsModule.PROVIDER_SETTINGS_SECRET_KEYS.antigravity, ["apiKey"]);
+      assert.deepEqual(ServerSettingsModule.PROVIDER_SETTINGS_SECRET_KEYS.opencode, [
+        "serverPassword",
+      ]);
+    }),
+  );
+
+  it.effect("never sends provider API keys or passwords to clients and keeps them on echo", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const geminiId = ProviderInstanceId.make("antigravity_work");
+      const opencodeId = ProviderInstanceId.make("opencode_remote");
+      const saved = yield* serverSettings.updateSettings({
+        providers: {
+          antigravity: { apiKey: "legacy-gemini-key", gcpProject: "legacy-project" },
+          opencode: { serverPassword: "legacy-oc-pass" },
+        },
+        providerInstances: {
+          [geminiId]: {
+            driver: ProviderDriverKind.make("antigravity"),
+            config: { apiKey: "instance-gemini-key", gcpProject: "work-project" },
+          },
+          [opencodeId]: {
+            driver: ProviderDriverKind.make("opencode"),
+            config: { serverUrl: "http://127.0.0.1:4096", serverPassword: "instance-oc-pass" },
+          },
+        },
+      });
+
+      const forClient = ServerSettingsModule.redactServerSettingsForClient(saved);
+      const wire = JSON.stringify(forClient);
+      for (const secret of [
+        "legacy-gemini-key",
+        "legacy-oc-pass",
+        "instance-gemini-key",
+        "instance-oc-pass",
+      ]) {
+        assert.notInclude(wire, secret);
+      }
+      assert.equal(forClient.providers.antigravity.apiKey, REDACTED_SECRET_MARKER);
+      assert.equal(forClient.providers.antigravity.gcpProject, "legacy-project");
+      assert.equal(forClient.providers.opencode.serverPassword, REDACTED_SECRET_MARKER);
+      assert.deepEqual(forClient.providerInstances[geminiId]?.config, {
+        apiKey: REDACTED_SECRET_MARKER,
+        gcpProject: "work-project",
+      });
+      assert.deepEqual(forClient.providerInstances[opencodeId]?.config, {
+        serverUrl: "http://127.0.0.1:4096",
+        serverPassword: REDACTED_SECRET_MARKER,
+      });
+      // An empty secret stays empty, so clients can tell "not set" from "set".
+      assert.equal(
+        ServerSettingsModule.redactServerSettingsForClient(DEFAULT_SERVER_SETTINGS).providers
+          .antigravity.apiKey,
+        "",
+      );
+
+      // A client saving from its redacted copy keeps every stored secret.
+      yield* serverSettings.updateSettings({
+        providers: forClient.providers,
+        providerInstances: {
+          ...forClient.providerInstances,
+          [geminiId]: {
+            ...forClient.providerInstances[geminiId]!,
+            config: { apiKey: REDACTED_SECRET_MARKER, gcpProject: "renamed-project" },
+          },
+        },
+      });
+      const kept = yield* serverSettings.getSettings;
+      assert.equal(kept.providers.antigravity.apiKey, "legacy-gemini-key");
+      assert.equal(kept.providers.opencode.serverPassword, "legacy-oc-pass");
+      assert.deepEqual(kept.providerInstances[geminiId]?.config, {
+        apiKey: "instance-gemini-key",
+        gcpProject: "renamed-project",
+      });
+      assert.deepEqual(kept.providerInstances[opencodeId]?.config, {
+        serverUrl: "http://127.0.0.1:4096",
+        serverPassword: "instance-oc-pass",
+      });
+
+      // A new value replaces the stored one; an omitted or empty one clears it.
+      yield* serverSettings.updateProviderInstance({
+        operation: "upsert",
+        instanceId: geminiId,
+        instance: {
+          driver: ProviderDriverKind.make("antigravity"),
+          config: { apiKey: "rotated-gemini-key", gcpProject: "renamed-project" },
+        },
+      });
+      assert.equal(
+        readApiKey((yield* serverSettings.getSettings).providerInstances[geminiId]?.config),
+        "rotated-gemini-key",
+      );
+      const cleared = yield* serverSettings.updateSettings({
+        providers: { opencode: { serverPassword: "" } },
+        providerInstances: {
+          ...forClient.providerInstances,
+          [opencodeId]: {
+            driver: ProviderDriverKind.make("opencode"),
+            config: { serverUrl: "http://127.0.0.1:4096" },
+          },
+        },
+      });
+      assert.equal(cleared.providers.opencode.serverPassword, "");
+      assert.deepEqual(cleared.providerInstances[opencodeId]?.config, {
+        serverUrl: "http://127.0.0.1:4096",
+      });
+      // The marker restores the current stored key, not the one the client last saw.
+      assert.equal(readApiKey(cleared.providerInstances[geminiId]?.config), "rotated-gemini-key");
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("keeps a legacy provider key when its default instance is first edited", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const saved = yield* serverSettings.updateSettings({
+        providers: { antigravity: { apiKey: "legacy-gemini-key", gcpProject: "p" } },
+      });
+      const forClient = ServerSettingsModule.redactServerSettingsForClient(saved);
+      const defaultId = ProviderInstanceId.make("antigravity");
+      // The web moves the default instance's config into `providerInstances`
+      // and resets the legacy entry in the same save.
+      const next = yield* serverSettings.updateProviderInstance(
+        {
+          operation: "upsert",
+          instanceId: defaultId,
+          instance: {
+            driver: ProviderDriverKind.make("antigravity"),
+            config: { ...forClient.providers.antigravity, gcpProject: "edited" },
+          },
+        },
+        {
+          providers: {
+            ...forClient.providers,
+            antigravity: DEFAULT_SERVER_SETTINGS.providers.antigravity,
+          },
+        },
+      );
+      const config = next.providerInstances[defaultId]?.config as {
+        readonly apiKey?: string;
+        readonly gcpProject?: string;
+      };
+      assert.equal(config.apiKey, "legacy-gemini-key");
+      assert.equal(config.gcpProject, "edited");
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("removes the stored sign-in of a deleted Cursor or Codex instance", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const signIn = new TextEncoder().encode("{}");
+      const cursorId = ProviderInstanceId.make("cursor_work");
+      const codexId = ProviderInstanceId.make("codex_personal");
+      for (const [driver, instanceId] of [
+        ["cursor", cursorId],
+        ["codex", codexId],
+        ["codex", ProviderInstanceId.make("codex")],
+      ] as const) {
+        yield* serverSettings.updateProviderInstance({
+          operation: "create",
+          instanceId,
+          instance: { driver: ProviderDriverKind.make(driver), config: {} },
+        });
+      }
+      const cursorStore = yield* ProviderCredentialStore.make("cursor", cursorId);
+      const codexStore = yield* ProviderCredentialStore.make("codex-chatgpt", codexId);
+      const codexRegistration = yield* ProviderCredentialStore.make(
+        "codex-chatgpt-registration",
+        codexId,
+      );
+      const defaultCodexStore = yield* ProviderCredentialStore.make("codex-chatgpt", "codex");
+      for (const store of [cursorStore, codexStore, codexRegistration, defaultCodexStore]) {
+        yield* store.set(signIn);
+      }
+
+      yield* serverSettings.updateProviderInstance({ operation: "remove", instanceId: cursorId });
+      yield* serverSettings.updateProviderInstance({ operation: "remove", instanceId: codexId });
+      // Resetting the built-in default removes its entry but not the provider.
+      yield* serverSettings.updateProviderInstance({
+        operation: "remove",
+        instanceId: ProviderInstanceId.make("codex"),
+      });
+
+      assert.isTrue(Option.isNone(yield* cursorStore.get));
+      assert.isTrue(Option.isNone(yield* codexStore.get));
+      assert.isTrue(Option.isNone(yield* codexRegistration.get));
+      assert.isTrue(Option.isSome(yield* defaultCodexStore.get));
+    }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+  it.effect("drops a stored provider password when its server moves to another origin", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const instanceId = ProviderInstanceId.make("opencode_remote");
+      const opencode = ProviderDriverKind.make("opencode");
+      const readPassword = (config: unknown) =>
+        (config as { readonly serverPassword?: string } | undefined)?.serverPassword;
+      assert.deepEqual(ServerSettingsModule.PROVIDER_SETTINGS_SECRET_DESTINATION_KEYS.opencode, [
+        "serverUrl",
+      ]);
+      yield* serverSettings.updateSettings({
+        providers: {
+          opencode: { serverUrl: "http://127.0.0.1:4096", serverPassword: "legacy-oc-pass" },
+        },
+        providerInstances: {
+          [instanceId]: {
+            driver: opencode,
+            config: { serverUrl: "http://127.0.0.1:4096", serverPassword: "instance-oc-pass" },
+          },
+        },
+      });
+
+      // Same origin, different path: the marker keeps the stored password.
+      const samePlace = yield* serverSettings.updateSettings({
+        providers: {
+          opencode: { serverUrl: "http://127.0.0.1:4096/", serverPassword: REDACTED_SECRET_MARKER },
+        },
+        providerInstances: {
+          [instanceId]: {
+            driver: opencode,
+            config: {
+              serverUrl: "http://127.0.0.1:4096/api",
+              serverPassword: REDACTED_SECRET_MARKER,
+            },
+          },
+        },
+      });
+      assert.equal(samePlace.providers.opencode.serverPassword, "legacy-oc-pass");
+      assert.equal(
+        readPassword(samePlace.providerInstances[instanceId]?.config),
+        "instance-oc-pass",
+      );
+
+      // A new origin with the marker, or with the password left out of a
+      // partial `providers` patch, never carries the stored password along.
+      const moved = yield* serverSettings.updateSettings({
+        providers: { opencode: { serverUrl: "https://attacker.example" } },
+        providerInstances: {
+          [instanceId]: {
+            driver: opencode,
+            config: {
+              serverUrl: "https://attacker.example",
+              serverPassword: REDACTED_SECRET_MARKER,
+            },
+          },
+        },
+      });
+      assert.equal(moved.providers.opencode.serverPassword, "");
+      assert.isUndefined(readPassword(moved.providerInstances[instanceId]?.config));
+
+      // A password typed together with the new address is saved.
+      const retyped = yield* serverSettings.updateProviderInstance({
+        operation: "upsert",
+        instanceId,
+        instance: {
+          driver: opencode,
+          config: { serverUrl: "https://other.example", serverPassword: "new-oc-pass" },
+        },
+      });
+      assert.equal(readPassword(retyped.providerInstances[instanceId]?.config), "new-oc-pass");
+
+      // Typing the same password again with a new address keeps it: only the
+      // marker or a value the caller left out is dropped.
+      const sameTyped = yield* serverSettings.updateSettings({
+        providers: {
+          opencode: { serverUrl: "https://typed.example", serverPassword: "typed-oc-pass" },
+        },
+      });
+      assert.equal(sameTyped.providers.opencode.serverPassword, "typed-oc-pass");
+      const movedTyped = yield* serverSettings.updateSettings({
+        providers: {
+          opencode: { serverUrl: "https://typed-again.example", serverPassword: "typed-oc-pass" },
+        },
+        providerInstances: {
+          [instanceId]: {
+            driver: opencode,
+            config: { serverUrl: "https://third.example", serverPassword: "new-oc-pass" },
+          },
+        },
+      });
+      assert.equal(movedTyped.providers.opencode.serverPassword, "typed-oc-pass");
+      assert.equal(readPassword(movedTyped.providerInstances[instanceId]?.config), "new-oc-pass");
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("keeps a sign-in when a stale whole-map save drops its instance", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const codexId = ProviderInstanceId.make("codex_other_window");
+      const cursorId = ProviderInstanceId.make("cursor_kept");
+      const saved = yield* serverSettings.updateSettings({
+        providerInstances: {
+          [codexId]: { driver: ProviderDriverKind.make("codex"), config: {} },
+          [cursorId]: { driver: ProviderDriverKind.make("cursor"), config: {} },
+        },
+      });
+      const signIn = new TextEncoder().encode("{}");
+      const dropped = yield* ProviderCredentialStore.make("codex-chatgpt", codexId);
+      const kept = yield* ProviderCredentialStore.make("cursor", cursorId);
+      for (const store of [dropped, kept]) yield* store.set(signIn);
+
+      // A window that never saw `codexId` saves its full map without it.
+      yield* serverSettings.updateSettings({
+        providerInstances: { [cursorId]: saved.providerInstances[cursorId]! },
+      });
+      assert.isTrue(Option.isSome(yield* dropped.get));
+      assert.isTrue(Option.isSome(yield* kept.get));
+
+      // Restoring the dropped instance finds its sign-in where it was.
+      yield* serverSettings.updateSettings({ providerInstances: saved.providerInstances });
+      yield* serverSettings.updateProviderInstance({
+        operation: "upsert",
+        instanceId: codexId,
+        instance: saved.providerInstances[codexId]!,
+      });
+      assert.isTrue(Option.isSome(yield* dropped.get));
+      assert.isTrue(Option.isSome(yield* kept.get));
+    }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
+  it.effect("keeps every sign-in when settings.json is briefly malformed or missing", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const config = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const codexId = ProviderInstanceId.make("codex_watched");
+        const cursorId = ProviderInstanceId.make("cursor_watched");
+        const geminiId = ProviderInstanceId.make("antigravity_watched");
+        yield* serverSettings.updateSettings({
+          providerInstances: {
+            [codexId]: { driver: ProviderDriverKind.make("codex"), config: {} },
+            [cursorId]: { driver: ProviderDriverKind.make("cursor"), config: {} },
+            [geminiId]: { driver: ProviderDriverKind.make("antigravity"), config: {} },
+          },
+        });
+        const signIn = new TextEncoder().encode("{}");
+        const codexStore = yield* ProviderCredentialStore.make("codex-chatgpt", codexId);
+        const cursorStore = yield* ProviderCredentialStore.make("cursor", cursorId);
+        for (const store of [codexStore, cursorStore]) yield* store.set(signIn);
+        const { profile } = yield* resolveAntigravityInstanceDirectories(config.stateDir, geminiId);
+        yield* fileSystem.makeDirectory(profile, { recursive: true });
+        const geminiCreds = path.join(profile, "oauth_creds.json");
+        yield* fileSystem.writeFileString(geminiCreds, "{}");
+        const valid = yield* fileSystem.readFileString(config.settingsPath);
+
+        yield* serverSettings.start;
+        const changes = yield* serverSettings.subscribeChanges;
+        const hasInstances = (settings: ServerSettings) =>
+          [codexId, cursorId, geminiId].every((id) => settings.providerInstances[id] !== undefined);
+        const lacksInstances = (settings: ServerSettings) =>
+          [codexId, cursorId, geminiId].every((id) => settings.providerInstances[id] === undefined);
+        const expectSignedIn = Effect.gen(function* () {
+          assert.isTrue(Option.isSome(yield* codexStore.get));
+          assert.isTrue(Option.isSome(yield* cursorStore.get));
+          assert.isTrue(yield* fileSystem.exists(geminiCreds));
+        });
+
+        // A typo makes the file unreadable, then the user fixes it.
+        assert.isTrue(
+          yield* changeFileUntil(changes, config.settingsPath, "{ broken", lacksInstances),
+        );
+        assert.isTrue(yield* changeFileUntil(changes, config.settingsPath, valid, hasInstances));
+        yield* expectSignedIn;
+
+        // A non-atomic replace or a restore from backup.
+        assert.isTrue(
+          yield* changeFileUntil(changes, config.settingsPath, undefined, lacksInstances),
+        );
+        assert.isTrue(yield* changeFileUntil(changes, config.settingsPath, valid, hasInstances));
+        yield* expectSignedIn;
+
+        // Saving again through the app keeps them too.
+        yield* serverSettings.updateSettings({
+          providerInstances: (yield* serverSettings.getSettings).providerInstances,
+        });
+        yield* expectSignedIn;
+      }),
+    ).pipe(TestClock.withLive, Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
+  it.effect("starts an explicitly removed and re-created instance signed out", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const signIn = new TextEncoder().encode("{}");
+      const instances = {
+        [ProviderInstanceId.make("codex_again")]: { driver: ProviderDriverKind.make("codex") },
+        [ProviderInstanceId.make("cursor_again")]: { driver: ProviderDriverKind.make("cursor") },
+        [ProviderInstanceId.make("antigravity_again")]: {
+          driver: ProviderDriverKind.make("antigravity"),
+        },
+      };
+      const codexStore = yield* ProviderCredentialStore.make(
+        "codex-chatgpt",
+        ProviderInstanceId.make("codex_again"),
+      );
+      const cursorStore = yield* ProviderCredentialStore.make(
+        "cursor",
+        ProviderInstanceId.make("cursor_again"),
+      );
+      const { profile } = yield* resolveAntigravityInstanceDirectories(
+        stateDir,
+        ProviderInstanceId.make("antigravity_again"),
+      );
+      for (const [id, instance] of Object.entries(instances)) {
+        yield* serverSettings.updateProviderInstance({
+          operation: "create",
+          instanceId: ProviderInstanceId.make(id),
+          instance: { ...instance, config: {} },
+        });
+      }
+      for (const store of [codexStore, cursorStore]) yield* store.set(signIn);
+      yield* fileSystem.makeDirectory(profile, { recursive: true });
+      yield* fileSystem.writeFileString(path.join(profile, "oauth_creds.json"), "{}");
+
+      for (const id of Object.keys(instances)) {
+        yield* serverSettings.updateProviderInstance({
+          operation: "remove",
+          instanceId: ProviderInstanceId.make(id),
+        });
+      }
+      for (const [id, instance] of Object.entries(instances)) {
+        yield* serverSettings.updateProviderInstance({
+          operation: "create",
+          instanceId: ProviderInstanceId.make(id),
+          instance: { ...instance, config: {} },
+        });
+      }
+
+      assert.isTrue(Option.isNone(yield* codexStore.get));
+      assert.isTrue(Option.isNone(yield* cursorStore.get));
+      assert.isFalse(yield* fileSystem.exists(profile));
+      // The registry clears once more just before it starts them.
+      const blocked = yield* serverSettings.clearSignInsBeforeStart!(Object.keys(instances));
+      assert.equal(blocked.size, 0);
+      assert.isFalse(yield* fileSystem.exists(path.join(stateDir, SIGN_IN_TOMBSTONES_FILE)));
+    }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
+  it.effect("clears a sign-in whose removal failed before its id is used again", () => {
+    const { layer, removal } = layerServerSettingsWithFlakySecretRemoval();
+    return Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tombstones = path.join(stateDir, SIGN_IN_TOMBSTONES_FILE);
+      const signIn = new TextEncoder().encode("{}");
+      const codexId = ProviderInstanceId.make("codex_flaky");
+      const cursorId = ProviderInstanceId.make("cursor_flaky");
+      const codex = { driver: ProviderDriverKind.make("codex"), config: {} };
+      const cursor = { driver: ProviderDriverKind.make("cursor"), config: {} };
+      yield* serverSettings.updateSettings({
+        providerInstances: { [codexId]: codex, [cursorId]: cursor },
+      });
+      const codexStore = yield* ProviderCredentialStore.make("codex-chatgpt", codexId);
+      const cursorStore = yield* ProviderCredentialStore.make("cursor", cursorId);
+      for (const store of [codexStore, cursorStore]) yield* store.set(signIn);
+
+      removal.failing = true;
+      yield* serverSettings.updateProviderInstance({ operation: "remove", instanceId: codexId });
+      yield* serverSettings.updateProviderInstance({ operation: "remove", instanceId: cursorId });
+      assert.isTrue(Option.isSome(yield* codexStore.get));
+      assert.isTrue(Option.isSome(yield* cursorStore.get));
+      assert.include(yield* fileSystem.readFileString(tombstones), "codex_flaky");
+
+      // While the leftover cannot be cleared, the id cannot be used again.
+      const blocked = yield* serverSettings
+        .updateProviderInstance({ operation: "create", instanceId: cursorId, instance: cursor })
+        .pipe(Effect.flip);
+      assert.equal(blocked.operation, "remove-secret");
+      assert.isUndefined((yield* serverSettings.getSettings).providerInstances[cursorId]);
+
+      removal.failing = false;
+      yield* serverSettings.updateProviderInstance({
+        operation: "create",
+        instanceId: cursorId,
+        instance: cursor,
+      });
+      // A whole-map write that adds the id clears it the same way.
+      yield* serverSettings.updateSettings({
+        providerInstances: {
+          ...(yield* serverSettings.getSettings).providerInstances,
+          [codexId]: codex,
+        },
+      });
+      assert.isTrue(Option.isNone(yield* codexStore.get));
+      assert.isTrue(Option.isNone(yield* cursorStore.get));
+      yield* serverSettings.clearSignInsBeforeStart!([codexId, cursorId]);
+      assert.isFalse(yield* fileSystem.exists(tombstones));
+
+      // A sign-in made after the instance is back survives later saves.
+      for (const store of [codexStore, cursorStore]) yield* store.set(signIn);
+      yield* serverSettings.updateProviderInstance({
+        operation: "upsert",
+        instanceId: codexId,
+        instance: { ...codex, displayName: "Renamed" },
+      });
+      assert.isTrue(Option.isSome(yield* codexStore.get));
+      assert.isTrue(Option.isSome(yield* cursorStore.get));
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("never restores a password into an instance that did not hold it", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const readSecret = (config: unknown, key: string) =>
+        (config as Record<string, unknown> | undefined)?.[key];
+      const switchedId = ProviderInstanceId.make("switching_driver");
+      yield* serverSettings.updateSettings({
+        providers: {
+          antigravity: { apiKey: "legacy-gemini-key" },
+          opencode: { serverPassword: "legacy-oc-pass" },
+        },
+        providerInstances: {
+          [switchedId]: {
+            driver: ProviderDriverKind.make("antigravity"),
+            config: { apiKey: "instance-gemini-key" },
+          },
+        },
+      });
+      const saved = yield* serverSettings.updateSettings({
+        providerInstances: {
+          // A brand-new id has nothing stored to keep.
+          [ProviderInstanceId.make("opencode_new")]: {
+            driver: ProviderDriverKind.make("opencode"),
+            config: { serverPassword: REDACTED_SECRET_MARKER },
+          },
+          // Changing driver starts from nothing, even when the marker comes back.
+          [switchedId]: {
+            driver: ProviderDriverKind.make("opencode"),
+            config: { serverPassword: REDACTED_SECRET_MARKER, apiKey: REDACTED_SECRET_MARKER },
+          },
+          // Only an id equal to its own driver reads the legacy entry.
+          [ProviderInstanceId.make("antigravity")]: {
+            driver: ProviderDriverKind.make("opencode"),
+            config: { serverPassword: REDACTED_SECRET_MARKER },
+          },
+        },
+      });
+      for (const id of ["opencode_new", "switching_driver", "antigravity"]) {
+        const config = saved.providerInstances[ProviderInstanceId.make(id)]?.config;
+        assert.isUndefined(readSecret(config, "serverPassword"), id);
+        assert.notInclude(JSON.stringify(config), "legacy-");
+        assert.notInclude(JSON.stringify(config), "instance-gemini-key");
+      }
+      assert.equal(saved.providers.antigravity.apiKey, "legacy-gemini-key");
+      assert.equal(saved.providers.opencode.serverPassword, "legacy-oc-pass");
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("removes a deleted Antigravity instance's Google sign-in profile", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workId = ProviderInstanceId.make("antigravity_work");
+      const defaultId = ProviderInstanceId.make("antigravity");
+      const driver = ProviderDriverKind.make("antigravity");
+      yield* serverSettings.updateSettings({
+        providerInstances: {
+          [workId]: { driver, config: {} },
+          [defaultId]: { driver, config: {} },
+        },
+      });
+      const profiles = [];
+      for (const id of [workId, defaultId]) {
+        const { profile } = yield* resolveAntigravityInstanceDirectories(stateDir, id);
+        yield* fileSystem.makeDirectory(profile, { recursive: true });
+        yield* fileSystem.writeFileString(path.join(profile, "oauth_creds.json"), "{}");
+        profiles.push(profile);
+      }
+
+      yield* serverSettings.updateProviderInstance({ operation: "remove", instanceId: workId });
+      yield* serverSettings.updateProviderInstance({ operation: "remove", instanceId: defaultId });
+
+      assert.isFalse(yield* fileSystem.exists(profiles[0]!));
+      assert.isTrue(yield* fileSystem.exists(path.join(profiles[1]!, "oauth_creds.json")));
+    }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
+  it.effect("keeps a live instance's sign-in when a leftover tombstone names it", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tombstones = path.join(stateDir, SIGN_IN_TOMBSTONES_FILE);
+      const signIn = new TextEncoder().encode("{}");
+      const cursorId = ProviderInstanceId.make("cursor_live");
+      const codexId = ProviderInstanceId.make("codex_live");
+      const cursor = { driver: ProviderDriverKind.make("cursor"), config: {} };
+      const codex = { driver: ProviderDriverKind.make("codex"), config: {} };
+      yield* serverSettings.updateSettings({
+        providerInstances: { [cursorId]: cursor, [codexId]: codex },
+      });
+      const cursorStore = yield* ProviderCredentialStore.make("cursor", cursorId);
+      const codexStore = yield* ProviderCredentialStore.make("codex-chatgpt", codexId);
+      for (const store of [cursorStore, codexStore]) yield* store.set(signIn);
+      const leftover = JSON.stringify({
+        [cursorId]: [{ driver: "cursor" }],
+        [codexId]: [{ driver: "codex" }],
+      });
+
+      // A remove interrupted after recording its tombstone, or a failed save
+      // that could not drop it, leaves a tombstone beside the live instance.
+      yield* fileSystem.writeFileString(tombstones, leftover);
+      // An ordinary edit naming the instance keeps its sign-in.
+      yield* serverSettings.updateProviderInstance({
+        operation: "upsert",
+        instanceId: cursorId,
+        instance: { ...cursor, displayName: "Renamed" },
+      });
+      assert.isTrue(Option.isSome(yield* cursorStore.get));
+      assert.isTrue(Option.isSome(yield* codexStore.get));
+      assert.isFalse(yield* fileSystem.exists(tombstones));
+
+      // The cleanup after a registry reconcile drops it the same way.
+      yield* fileSystem.writeFileString(tombstones, leftover);
+      yield* serverSettings.clearRemovedInstanceSignIns!([]);
+      assert.isTrue(Option.isSome(yield* cursorStore.get));
+      assert.isTrue(Option.isSome(yield* codexStore.get));
+      assert.isFalse(yield* fileSystem.exists(tombstones));
+    }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
+  it.effect("handles drivers and ids named like Object.prototype members", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tombstones = path.join(stateDir, SIGN_IN_TOMBSTONES_FILE);
+      const signIn = new TextEncoder().encode("{}");
+      const instances = [
+        ["constructor_agent", "constructor"],
+        ["to_string_agent", "toString"],
+        ["has_own_agent", "hasOwnProperty"],
+        // Ids too: tombstones are keyed by instance id.
+        ["constructor", "cursor"],
+        ["toString", "codex"],
+      ] as const;
+      for (const [id, driver] of instances) {
+        yield* serverSettings.updateProviderInstance({
+          operation: "create",
+          instanceId: ProviderInstanceId.make(id),
+          instance: {
+            driver: ProviderDriverKind.make(driver),
+            config: { token: `${id}-secret`, count: 1 },
+          },
+        });
+      }
+      const cursorStore = yield* ProviderCredentialStore.make(
+        "cursor",
+        ProviderInstanceId.make("constructor"),
+      );
+      const codexStore = yield* ProviderCredentialStore.make(
+        "codex-chatgpt",
+        ProviderInstanceId.make("toString"),
+      );
+      for (const store of [cursorStore, codexStore]) yield* store.set(signIn);
+
+      // A driver this build does not know has every string field withheld.
+      const forClient = ServerSettingsModule.redactServerSettingsForClient(
+        yield* serverSettings.getSettings,
+      );
+      for (const [id] of instances.slice(0, 3)) {
+        assert.deepEqual(forClient.providerInstances[ProviderInstanceId.make(id)]?.config, {
+          token: REDACTED_SECRET_MARKER,
+          count: 1,
+        });
+        assert.notInclude(JSON.stringify(forClient), `${id}-secret`);
+      }
+      // Saving the client copy restores each withheld value.
+      yield* serverSettings.updateSettings({ providerInstances: forClient.providerInstances });
+      const restored = yield* serverSettings.getSettings;
+      for (const [id] of instances) {
+        assert.deepEqual(restored.providerInstances[ProviderInstanceId.make(id)]?.config, {
+          token: `${id}-secret`,
+          count: 1,
+        });
+      }
+
+      for (const [id] of instances) {
+        yield* serverSettings.updateProviderInstance({
+          operation: "remove",
+          instanceId: ProviderInstanceId.make(id),
+        });
+      }
+      assert.isTrue(Option.isNone(yield* cursorStore.get));
+      assert.isTrue(Option.isNone(yield* codexStore.get));
+      yield* serverSettings.clearRemovedInstanceSignIns!([]);
+      assert.isFalse(yield* fileSystem.exists(tombstones));
+      assert.deepEqual((yield* serverSettings.getSettings).providerInstances, {});
+    }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
+  it.effect("serves settings.json entries whose driver is named like a prototype member", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        JSON.stringify({
+          providerInstances: {
+            odd_one: { driver: "toString", config: { apiKey: "hand-edited-key" } },
+            odd_two: { driver: "constructor", config: { serverUrl: "http://127.0.0.1:1" } },
+          },
+        }),
+      );
+      const settings = yield* serverSettings.getSettings;
+      const forClient = ServerSettingsModule.redactServerSettingsForClient(settings);
+      assert.notInclude(JSON.stringify(forClient), "hand-edited-key");
+      assert.deepEqual(forClient.providerInstances[ProviderInstanceId.make("odd_one")]?.config, {
+        apiKey: REDACTED_SECRET_MARKER,
+      });
+      // An unrelated save through the app keeps them as they are on disk.
+      yield* serverSettings.updateSettings({ providerInstances: forClient.providerInstances });
+      assert.deepEqual(
+        (yield* serverSettings.getSettings).providerInstances[ProviderInstanceId.make("odd_two")]
+          ?.config,
+        { serverUrl: "http://127.0.0.1:1" },
+      );
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("deletes a removed instance's sign-in again once its driver is disposed", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tombstones = path.join(stateDir, SIGN_IN_TOMBSTONES_FILE);
+      const signIn = new TextEncoder().encode("{}");
+      const cursorId = ProviderInstanceId.make("cursor_late");
+      const codexId = ProviderInstanceId.make("codex_late");
+      const cursor = { driver: ProviderDriverKind.make("cursor"), config: {} };
+      const codex = { driver: ProviderDriverKind.make("codex"), config: {} };
+      yield* serverSettings.updateSettings({
+        providerInstances: { [cursorId]: cursor, [codexId]: codex },
+      });
+      const cursorStore = yield* ProviderCredentialStore.make("cursor", cursorId);
+      const codexStore = yield* ProviderCredentialStore.make("codex-chatgpt", codexId);
+      for (const store of [cursorStore, codexStore]) yield* store.set(signIn);
+
+      for (const instanceId of [cursorId, codexId]) {
+        yield* serverSettings.updateProviderInstance({ operation: "remove", instanceId });
+      }
+      assert.isTrue(Option.isNone(yield* cursorStore.get));
+      assert.isTrue(Option.isNone(yield* codexStore.get));
+      // Their drivers still run, so the tombstones stay.
+      const kept = yield* fileSystem.readFileString(tombstones);
+      assert.include(kept, "cursor_late");
+      assert.include(kept, "codex_late");
+
+      // Before disposal a driver writes back: a token refresh or OAuth completion.
+      for (const store of [cursorStore, codexStore]) yield* store.set(signIn);
+      // The registry has disposed Codex but still runs Cursor.
+      yield* serverSettings.clearRemovedInstanceSignIns!([cursorId]);
+      assert.isTrue(Option.isNone(yield* codexStore.get));
+      assert.isTrue(Option.isSome(yield* cursorStore.get));
+      const pending = yield* fileSystem.readFileString(tombstones);
+      assert.include(pending, "cursor_late");
+      assert.notInclude(pending, "codex_late");
+
+      // Creating the id again before that disposal still starts signed out.
+      yield* serverSettings.updateProviderInstance({
+        operation: "create",
+        instanceId: cursorId,
+        instance: cursor,
+      });
+      assert.isTrue(Option.isNone(yield* cursorStore.get));
+      // The old driver, disposed only now, writes once more; the registry
+      // clears it before starting the new instance.
+      yield* cursorStore.set(signIn);
+      yield* serverSettings.clearRemovedInstanceSignIns!([]);
+      assert.isTrue(Option.isSome(yield* cursorStore.get));
+      yield* serverSettings.clearSignInsBeforeStart!([cursorId]);
+      assert.isTrue(Option.isNone(yield* cursorStore.get));
+      assert.isFalse(yield* fileSystem.exists(tombstones));
+    }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
+  it.effect("clears a sign-in the registry's driver writes while it is disposed", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tombstones = path.join(stateDir, SIGN_IN_TOMBSTONES_FILE);
+        const signIn = new TextEncoder().encode("{}");
+        const cursorId = ProviderInstanceId.make("cursor_disposing");
+        const cursorStore = yield* ProviderCredentialStore.make("cursor", cursorId);
+        const lateWrite = yield* Deferred.make<void>();
+        // Stands in for the registry: disposing the removed instance's driver
+        // writes its token back, as a refresh finishing during shutdown would.
+        const mutator = ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator.of({
+          reconcile: (configMap) =>
+            Object.hasOwn(configMap, cursorId)
+              ? Effect.void
+              : Effect.gen(function* () {
+                  if (yield* Deferred.isDone(lateWrite)) return;
+                  yield* cursorStore.set(signIn).pipe(Effect.orDie);
+                  yield* Deferred.succeed(lateWrite, undefined);
+                }),
+        });
+        yield* Layer.build(
+          ProviderInstanceRegistryHydration.layerSettingsWatcher({}).pipe(
+            Layer.provide(
+              Layer.succeed(
+                ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator,
+                mutator,
+              ),
+            ),
+            Layer.provide(
+              Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
+            ),
+          ),
+        );
+
+        yield* serverSettings.updateProviderInstance({
+          operation: "create",
+          instanceId: cursorId,
+          instance: { driver: ProviderDriverKind.make("cursor"), config: {} },
+        });
+        yield* cursorStore.set(signIn);
+        yield* serverSettings.updateProviderInstance({ operation: "remove", instanceId: cursorId });
+        yield* Deferred.await(lateWrite).pipe(Effect.timeout("10 seconds"));
+        for (let attempt = 0; attempt < 100; attempt++) {
+          if (!(yield* fileSystem.exists(tombstones))) break;
+          yield* Effect.sleep("50 millis");
+        }
+        assert.isFalse(yield* fileSystem.exists(tombstones));
+        assert.isTrue(Option.isNone(yield* cursorStore.get));
+      }),
+    ).pipe(TestClock.withLive, Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
+  it.effect("starts a re-created instance signed out when it was re-added during disposal", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tombstones = path.join(stateDir, SIGN_IN_TOMBSTONES_FILE);
+        const oldAccount = new TextEncoder().encode("old");
+        const newAccount = new TextEncoder().encode("new");
+        const cursorId = ProviderInstanceId.make("cursor_work");
+        const cursor = { driver: ProviderDriverKind.make("cursor"), config: {} };
+        const cursorStore = yield* ProviderCredentialStore.make("cursor", cursorId);
+        const recreated = yield* Deferred.make<void>();
+        const disposing = yield* Deferred.make<void>();
+        const started = yield* Deferred.make<Option.Option<Uint8Array>>();
+        const reconciles = yield* Ref.make(0);
+        let running = false;
+        // Stands in for the registry: disposing the removed instance takes
+        // until after the user re-creates it, then writes its token back.
+        const mutator = ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator.of({
+          reconcile: (configMap) =>
+            Effect.gen(function* () {
+              yield* Ref.update(reconciles, (count) => count + 1);
+              const wanted = Object.hasOwn(configMap, cursorId);
+              if (running && !wanted) {
+                yield* Deferred.succeed(disposing, undefined);
+                yield* Deferred.await(recreated);
+                yield* cursorStore.set(oldAccount).pipe(Effect.orDie);
+              } else if (!running && wanted && (yield* Deferred.isDone(recreated))) {
+                // What the new instance finds when it starts.
+                yield* Deferred.succeed(started, yield* cursorStore.get.pipe(Effect.orDie));
+              }
+              running = wanted;
+            }),
+        });
+        yield* Layer.build(
+          ProviderInstanceRegistryHydration.layerSettingsWatcher({}).pipe(
+            Layer.provide(
+              Layer.succeed(
+                ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator,
+                mutator,
+              ),
+            ),
+            Layer.provide(
+              Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
+            ),
+          ),
+        );
+
+        yield* serverSettings.updateProviderInstance({
+          operation: "create",
+          instanceId: cursorId,
+          instance: cursor,
+        });
+        yield* cursorStore.set(oldAccount);
+        yield* serverSettings.updateProviderInstance({ operation: "remove", instanceId: cursorId });
+        yield* Deferred.await(disposing).pipe(Effect.timeout("10 seconds"));
+        yield* serverSettings.updateProviderInstance({
+          operation: "create",
+          instanceId: cursorId,
+          instance: cursor,
+        });
+        yield* Deferred.succeed(recreated, undefined);
+
+        const found = yield* Deferred.await(started).pipe(Effect.timeout("10 seconds"));
+        assert.isTrue(Option.isNone(found));
+        assert.isTrue(Option.isNone(yield* cursorStore.get));
+        assert.isFalse(yield* fileSystem.exists(tombstones));
+
+        // A sign-in made on the new instance survives later saves and cleanups.
+        yield* cursorStore.set(newAccount);
+        const seen = yield* Ref.get(reconciles);
+        yield* serverSettings.updateProviderInstance({
+          operation: "upsert",
+          instanceId: cursorId,
+          instance: { ...cursor, displayName: "Renamed" },
+        });
+        for (let attempt = 0; attempt < 100 && (yield* Ref.get(reconciles)) === seen; attempt++) {
+          yield* Effect.sleep("20 millis");
+        }
+        yield* serverSettings.clearRemovedInstanceSignIns!([cursorId]);
+        yield* serverSettings.clearSignInsBeforeStart!([cursorId]);
+        assert.deepEqual(
+          Option.map(yield* cursorStore.get, (bytes) => new TextDecoder().decode(bytes)),
+          Option.some("new"),
+        );
+      }),
+    ).pipe(TestClock.withLive, Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
+  it.effect("stops a re-added instance still running from before and clears it once", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tombstones = path.join(stateDir, SIGN_IN_TOMBSTONES_FILE);
+        const oldAccount = new TextEncoder().encode("old");
+        const newAccount = new TextEncoder().encode("new");
+        const cursorId = ProviderInstanceId.make("cursor_failed_stop");
+        const cursor = { driver: ProviderDriverKind.make("cursor"), config: {} };
+        const cursorStore = yield* ProviderCredentialStore.make("cursor", cursorId);
+        const events = yield* Ref.make<ReadonlyArray<string>>([]);
+        const started = yield* Deferred.make<Option.Option<Uint8Array>>();
+        let running = false;
+        let failNextStop = true;
+        // Stands in for the registry: the reconcile that should stop the
+        // removed instance fails, so it keeps running under its id.
+        const mutator = ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator.of({
+          reconcile: (configMap) =>
+            Effect.gen(function* () {
+              const wanted = Object.hasOwn(configMap, cursorId);
+              if (running && !wanted) {
+                if (failNextStop) {
+                  failNextStop = false;
+                  return yield* Effect.die(new Error("dispose failed"));
+                }
+                // The old driver writes its token back as it stops.
+                yield* cursorStore.set(oldAccount).pipe(Effect.orDie);
+                yield* Ref.update(events, (all) => [...all, "stop"]);
+              } else if (!running && wanted) {
+                yield* Ref.update(events, (all) => [...all, "start"]);
+                if (!failNextStop) {
+                  yield* Deferred.succeed(started, yield* cursorStore.get.pipe(Effect.orDie));
+                }
+              }
+              running = wanted;
+            }),
+        });
+        yield* Layer.build(
+          ProviderInstanceRegistryHydration.layerSettingsWatcher({}).pipe(
+            Layer.provide(
+              Layer.succeed(
+                ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator,
+                mutator,
+              ),
+            ),
+            Layer.provide(
+              Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
+            ),
+          ),
+        );
+        const settle = (count: number) =>
+          Effect.gen(function* () {
+            for (let attempt = 0; attempt < 200; attempt++) {
+              if ((yield* Ref.get(events)).length >= count) return;
+              yield* Effect.sleep("20 millis");
+            }
+          });
+
+        yield* serverSettings.updateProviderInstance({
+          operation: "create",
+          instanceId: cursorId,
+          instance: cursor,
+        });
+        yield* settle(1);
+        yield* cursorStore.set(oldAccount);
+        yield* serverSettings.updateProviderInstance({ operation: "remove", instanceId: cursorId });
+        // Give the failing reconcile time to run.
+        for (let attempt = 0; attempt < 200 && failNextStop; attempt++) {
+          yield* Effect.sleep("20 millis");
+        }
+        assert.isFalse(failNextStop);
+        yield* serverSettings.updateProviderInstance({
+          operation: "create",
+          instanceId: cursorId,
+          instance: cursor,
+        });
+
+        // The old generation is stopped, its token cleared, then the new one starts.
+        const found = yield* Deferred.await(started).pipe(Effect.timeout("10 seconds"));
+        assert.isTrue(Option.isNone(found));
+        assert.deepEqual(yield* Ref.get(events), ["start", "stop", "start"]);
+        assert.isFalse(yield* fileSystem.exists(tombstones));
+
+        // A sign-in made in the new instance survives the next boot's clear.
+        yield* cursorStore.set(newAccount);
+        yield* serverSettings.clearSignInsBeforeStart!([cursorId]);
+        assert.deepEqual(
+          Option.map(yield* cursorStore.get, (bytes) => new TextDecoder().decode(bytes)),
+          Option.some("new"),
+        );
+      }),
+    ).pipe(TestClock.withLive, Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
+  it.effect(
+    "starts a not-yet-running re-added id only after its clear while restarting another",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+          const { stateDir } = yield* ServerConfig.ServerConfig;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const tombstones = path.join(stateDir, SIGN_IN_TOMBSTONES_FILE);
+          const oldAccount = new TextEncoder().encode("old");
+          const runningId = ProviderInstanceId.make("cursor_still_running");
+          const newId = ProviderInstanceId.make("cursor_not_running");
+          const cursor = { driver: ProviderDriverKind.make("cursor"), config: {} };
+          const stores = {
+            [runningId]: yield* ProviderCredentialStore.make("cursor", runningId),
+            [newId]: yield* ProviderCredentialStore.make("cursor", newId),
+          };
+          const events = yield* Ref.make<ReadonlyArray<string>>([]);
+          const running = new Set<string>([runningId]);
+          // Stands in for the registry; records what each instance finds when it starts.
+          const mutator = ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator.of({
+            reconcile: (configMap) =>
+              Effect.gen(function* () {
+                for (const id of [runningId, newId]) {
+                  const wanted = Object.hasOwn(configMap, id);
+                  if (running.has(id) && !wanted) {
+                    yield* Ref.update(events, (all) => [...all, `stop ${id}`]);
+                  } else if (!running.has(id) && wanted) {
+                    const found = yield* stores[id]!.get.pipe(Effect.orDie);
+                    const state = Option.isSome(found) ? "signed in" : "signed out";
+                    yield* Ref.update(events, (all) => [...all, `start ${id} ${state}`]);
+                  }
+                  if (wanted) running.add(id);
+                  else running.delete(id);
+                }
+              }),
+          });
+          yield* serverSettings.updateSettings({ providerInstances: { [runningId]: cursor } });
+          yield* Layer.build(
+            ProviderInstanceRegistryHydration.layerSettingsWatcher({ [runningId]: cursor }).pipe(
+              Layer.provide(
+                Layer.succeed(
+                  ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator,
+                  mutator,
+                ),
+              ),
+              Layer.provide(
+                Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
+              ),
+            ),
+          );
+
+          // Both ids re-added with an old sign-in still to delete; one still runs.
+          yield* fileSystem.writeFileString(
+            tombstones,
+            JSON.stringify({
+              [runningId]: [{ driver: "cursor", readded: true }],
+              [newId]: [{ driver: "cursor", readded: true }],
+            }),
+          );
+          for (const store of Object.values(stores)) yield* store.set(oldAccount);
+          yield* serverSettings.updateSettings({
+            providerInstances: { [runningId]: cursor, [newId]: cursor },
+          });
+          for (let attempt = 0; attempt < 200; attempt++) {
+            if ((yield* Ref.get(events)).length >= 3) break;
+            yield* Effect.sleep("20 millis");
+          }
+          assert.deepEqual(yield* Ref.get(events), [
+            `stop ${runningId}`,
+            `start ${runningId} signed out`,
+            `start ${newId} signed out`,
+          ]);
+          assert.isFalse(yield* fileSystem.exists(tombstones));
+        }),
+      ).pipe(TestClock.withLive, Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
+  it.effect("retries a start held back by a failed sign-in delete", () => {
+    const { layer, removal } = layerServerSettingsWithFlakySecretRemoval();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tombstones = path.join(stateDir, SIGN_IN_TOMBSTONES_FILE);
+        const cursorId = ProviderInstanceId.make("cursor_retry");
+        const cursor = { driver: ProviderDriverKind.make("cursor"), config: {} };
+        const cursorStore = yield* ProviderCredentialStore.make("cursor", cursorId);
+        const reconciles = yield* Ref.make<ReadonlyArray<ReadonlyArray<string>>>([]);
+        const started = yield* Deferred.make<void>();
+        const mutator = ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator.of({
+          reconcile: (configMap) =>
+            Effect.gen(function* () {
+              yield* Ref.update(reconciles, (all) => [...all, Object.keys(configMap)]);
+              if (Object.hasOwn(configMap, cursorId)) yield* Deferred.succeed(started, undefined);
+            }),
+        });
+        yield* Layer.build(
+          ProviderInstanceRegistryHydration.layerSettingsWatcher({}, new Set(), ["50 millis"]).pipe(
+            Layer.provide(
+              Layer.succeed(
+                ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator,
+                mutator,
+              ),
+            ),
+            Layer.provide(
+              Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
+            ),
+          ),
+        );
+
+        // A re-added id whose old sign-in is still to be deleted, and the
+        // secret store refuses that delete once.
+        yield* fileSystem.writeFileString(
+          tombstones,
+          JSON.stringify({ [cursorId]: [{ driver: "cursor", readded: true }] }),
+        );
+        yield* cursorStore.set(new TextEncoder().encode("old"));
+        removal.failing = true;
+        yield* serverSettings.updateProviderInstance({
+          operation: "create",
+          instanceId: cursorId,
+          instance: cursor,
+        });
+        for (let attempt = 0; attempt < 200; attempt++) {
+          if ((yield* Ref.get(reconciles)).length > 0) break;
+          yield* Effect.sleep("20 millis");
+        }
+        const first = yield* Ref.get(reconciles);
+        assert.equal(first.length, 1);
+        assert.isFalse(first[0]!.includes(cursorId));
+        removal.failing = false;
+
+        // No further settings write: the retry starts it.
+        yield* Deferred.await(started).pipe(Effect.timeout("10 seconds"));
+        assert.isTrue(Option.isNone(yield* cursorStore.get));
+        assert.isFalse(yield* fileSystem.exists(tombstones));
+      }),
+    ).pipe(TestClock.withLive, Effect.provide(layer));
+  });
+
+  it.effect("saves settings while the tombstone file cannot be read", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tombstones = path.join(stateDir, SIGN_IN_TOMBSTONES_FILE);
+      const cursorId = ProviderInstanceId.make("cursor_unreadable");
+      const cursor = { driver: ProviderDriverKind.make("cursor"), config: {} };
+      // Reading a directory fails with EISDIR, like an unreadable file.
+      yield* fileSystem.makeDirectory(tombstones, { recursive: true });
+
+      yield* serverSettings.updateProviderInstance({
+        operation: "create",
+        instanceId: cursorId,
+        instance: cursor,
+      });
+      yield* serverSettings.updateProviderInstance({
+        operation: "upsert",
+        instanceId: cursorId,
+        instance: { ...cursor, displayName: "Renamed" },
+      });
+      assert.equal(
+        (yield* serverSettings.getSettings).providerInstances[cursorId]?.displayName,
+        "Renamed",
+      );
+
+      // An explicit remove still works: the tombstone cannot be recorded in
+      // place of a directory, so the sign-in is deleted at once instead.
+      const cursorStore = yield* ProviderCredentialStore.make("cursor", cursorId);
+      yield* cursorStore.set(new TextEncoder().encode("{}"));
+      yield* serverSettings.updateProviderInstance({ operation: "remove", instanceId: cursorId });
+      assert.isUndefined((yield* serverSettings.getSettings).providerInstances[cursorId]);
+      assert.isTrue(Option.isNone(yield* cursorStore.get));
+    }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
+  it.effect("replaces an unreadable tombstone file when an instance is removed", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tombstones = path.join(stateDir, SIGN_IN_TOMBSTONES_FILE);
+      const cursorId = ProviderInstanceId.make("cursor_replaced");
+      const cursor = { driver: ProviderDriverKind.make("cursor"), config: {} };
+      yield* serverSettings.updateProviderInstance({
+        operation: "create",
+        instanceId: cursorId,
+        instance: cursor,
+      });
+      const cursorStore = yield* ProviderCredentialStore.make("cursor", cursorId);
+      yield* cursorStore.set(new TextEncoder().encode("{}"));
+      yield* fileSystem.makeDirectory(stateDir, { recursive: true });
+      yield* fileSystem.writeFileString(tombstones, "{}");
+      yield* fileSystem.chmod(tombstones, 0o000);
+
+      yield* serverSettings.updateProviderInstance({ operation: "remove", instanceId: cursorId });
+      assert.isUndefined((yield* serverSettings.getSettings).providerInstances[cursorId]);
+      assert.isTrue(Option.isNone(yield* cursorStore.get));
+      // Replaced by a readable file holding this remove, so cleanup goes on as usual.
+      assert.include(yield* fileSystem.readFileString(tombstones), "cursor_replaced");
+      yield* serverSettings.clearRemovedInstanceSignIns!([]);
+      assert.isFalse(yield* fileSystem.exists(tombstones));
+    }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
+  it.effect("withholds every string a driver or field this build does not know", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const futureId = ProviderInstanceId.make("future_agent");
+      const opencodeId = ProviderInstanceId.make("opencode_newer");
+      const future = {
+        driver: ProviderDriverKind.make("futureAgent"),
+        config: {
+          serverUrl: "https://agent.example",
+          auth: { token: "nested-token", scopes: ["scope-secret"], retries: 2 },
+          headers: [{ name: "Authorization", value: "Bearer array-token" }],
+        },
+      };
+      const opencode = {
+        driver: ProviderDriverKind.make("opencode"),
+        config: {
+          serverUrl: "http://127.0.0.1:4096",
+          // A field a newer build added, unknown here.
+          apiToken: "newer-build-token",
+          extra: { refresh: "nested-newer-token" },
+        },
+      };
+      yield* serverSettings.updateSettings({
+        providerInstances: { [futureId]: future, [opencodeId]: opencode },
+      });
+
+      const forClient = ServerSettingsModule.redactServerSettingsForClient(
+        yield* serverSettings.getSettings,
+      );
+      const wire = JSON.stringify(forClient);
+      for (const secret of [
+        "nested-token",
+        "scope-secret",
+        "array-token",
+        "agent.example",
+        "newer-build-token",
+        "nested-newer-token",
+      ]) {
+        assert.notInclude(wire, secret);
+      }
+      const M = REDACTED_SECRET_MARKER;
+      assert.deepEqual(forClient.providerInstances[futureId]?.config, {
+        serverUrl: M,
+        auth: { token: M, scopes: [M], retries: 2 },
+        headers: [{ name: M, value: M }],
+      });
+      assert.deepEqual(forClient.providerInstances[opencodeId]?.config, {
+        serverUrl: "http://127.0.0.1:4096",
+        apiToken: M,
+        extra: { refresh: M },
+      });
+
+      // Saving the client copy back restores every stored value in place.
+      yield* serverSettings.updateSettings({ providerInstances: forClient.providerInstances });
+      const kept = yield* serverSettings.getSettings;
+      assert.deepEqual(kept.providerInstances[futureId]?.config, future.config);
+      assert.deepEqual(kept.providerInstances[opencodeId]?.config, opencode.config);
+
+      // An edited string the server cannot interpret (here the address the
+      // token goes to) drops the markers rather than send old secrets along.
+      const moved = yield* serverSettings.updateSettings({
+        providerInstances: {
+          ...forClient.providerInstances,
+          [futureId]: {
+            ...future,
+            config: {
+              ...(forClient.providerInstances[futureId]!.config as Record<string, unknown>),
+              serverUrl: "https://attacker.example",
+            },
+          },
+          [opencodeId]: {
+            ...opencode,
+            config: {
+              ...(forClient.providerInstances[opencodeId]!.config as Record<string, unknown>),
+              serverUrl: "https://attacker.example",
+            },
+          },
+        },
+      });
+      assert.deepEqual(moved.providerInstances[futureId]?.config, {
+        serverUrl: "https://attacker.example",
+        auth: { scopes: [""], retries: 2 },
+        headers: [{}],
+      });
+      assert.deepEqual(moved.providerInstances[opencodeId]?.config, {
+        serverUrl: "https://attacker.example",
+        extra: {},
+      });
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+  it.effect("withholds a config that is not an object, such as an array", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const arrayId = ProviderInstanceId.make("future_array");
+      const stringId = ProviderInstanceId.make("future_string");
+      const driver = ProviderDriverKind.make("futureAgent");
+      const arrayConfig = ["Bearer array-config-token", { refresh: "nested-array-token" }, 3];
+      yield* serverSettings.updateSettings({
+        providerInstances: {
+          [arrayId]: { driver, config: arrayConfig },
+          [stringId]: { driver, config: "string-config-token" },
+        },
+      });
+
+      const forClient = ServerSettingsModule.redactServerSettingsForClient(
+        yield* serverSettings.getSettings,
+      );
+      const wire = JSON.stringify(forClient);
+      for (const secret of ["array-config-token", "nested-array-token", "string-config-token"]) {
+        assert.notInclude(wire, secret);
+      }
+      const M = REDACTED_SECRET_MARKER;
+      assert.deepEqual(forClient.providerInstances[arrayId]?.config, [M, { refresh: M }, 3]);
+      assert.equal(forClient.providerInstances[stringId]?.config, M);
+
+      // Saved back unchanged, the stored values return.
+      yield* serverSettings.updateSettings({ providerInstances: forClient.providerInstances });
+      const kept = yield* serverSettings.getSettings;
+      assert.deepEqual(kept.providerInstances[arrayId]?.config, arrayConfig);
+      assert.equal(kept.providerInstances[stringId]?.config, "string-config-token");
+
+      // An edited element drops the rest instead.
+      const edited = yield* serverSettings.updateSettings({
+        providerInstances: {
+          ...forClient.providerInstances,
+          [arrayId]: { driver, config: ["https://attacker.example", { refresh: M }, 3] },
+        },
+      });
+      assert.deepEqual(edited.providerInstances[arrayId]?.config, [
+        "https://attacker.example",
+        {},
+        3,
+      ]);
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("keeps Muse custom models readable and saves added ones", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const museId = ProviderInstanceId.make("muse_custom");
+      const muse = {
+        driver: ProviderDriverKind.make("muse"),
+        config: { customModels: [{ slug: "muse-large", name: "Muse Large" }] },
+      };
+      yield* serverSettings.updateSettings({ providerInstances: { [museId]: muse } });
+      const forClient = ServerSettingsModule.redactServerSettingsForClient(
+        yield* serverSettings.getSettings,
+      );
+      const clientConfig = forClient.providerInstances[museId]!.config as {
+        readonly customModels: ReadonlyArray<unknown>;
+      };
+      assert.deepEqual(clientConfig, muse.config);
+
+      // The instance card adds one and saves the whole list back.
+      const added = [...clientConfig.customModels, { slug: "muse-small", name: "Muse Small" }];
+      const saved = yield* serverSettings.updateSettings({
+        providerInstances: {
+          ...forClient.providerInstances,
+          [museId]: { ...muse, config: { ...clientConfig, customModels: added } },
+        },
+      });
+      assert.deepEqual(saved.providerInstances[museId]?.config, { customModels: added });
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect(
+    "sends the Registry icon to clients and drops withheld values when any address moves",
+    () =>
+      Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const acpId = ProviderInstanceId.make("acp_kilo");
+        const cursorId = ProviderInstanceId.make("cursor_work");
+        const iconUrl = "https://cdn.agentclientprotocol.com/registry/v1/latest/kilo.svg";
+        const acp = {
+          driver: ProviderDriverKind.make("acpRegistry"),
+          config: { agentId: "kilo", distribution: "auto", registryIconUrl: iconUrl },
+        };
+        const cursor = {
+          driver: ProviderDriverKind.make("cursor"),
+          config: {
+            binaryPath: "cursor-agent",
+            apiEndpoint: "https://api.cursor.example",
+            // A field a newer build added, unknown here.
+            sessionToken: "cursor-newer-token",
+          },
+        };
+        // Cursor has no password field, yet its address still guards opaque keys.
+        assert.deepEqual(ServerSettingsModule.PROVIDER_SETTINGS_SECRET_DESTINATION_KEYS.cursor, [
+          "apiEndpoint",
+        ]);
+        yield* serverSettings.updateSettings({
+          providerInstances: { [acpId]: acp, [cursorId]: cursor },
+        });
+
+        const forClient = ServerSettingsModule.redactServerSettingsForClient(
+          yield* serverSettings.getSettings,
+        );
+        assert.deepEqual(forClient.providerInstances[acpId]?.config, acp.config);
+        assert.notInclude(JSON.stringify(forClient), "cursor-newer-token");
+        const clientCursor = forClient.providerInstances[cursorId]!.config as Record<
+          string,
+          unknown
+        >;
+        assert.equal(clientCursor.sessionToken, REDACTED_SECRET_MARKER);
+
+        // A changed binary path is an ordinary edit: the withheld value stays.
+        const rebinned = yield* serverSettings.updateSettings({
+          providerInstances: {
+            ...forClient.providerInstances,
+            [cursorId]: { ...cursor, config: { ...clientCursor, binaryPath: "/opt/cursor-agent" } },
+          },
+        });
+        assert.deepEqual(rebinned.providerInstances[cursorId]?.config, {
+          ...cursor.config,
+          binaryPath: "/opt/cursor-agent",
+        });
+
+        // A moved known address drops it.
+        const moved = yield* serverSettings.updateSettings({
+          providerInstances: {
+            ...forClient.providerInstances,
+            [cursorId]: {
+              ...cursor,
+              config: { ...clientCursor, apiEndpoint: "https://attacker.example" },
+            },
+          },
+        });
+        assert.deepEqual(moved.providerInstances[cursorId]?.config, {
+          binaryPath: "cursor-agent",
+          apiEndpoint: "https://attacker.example",
+        });
+        assert.deepEqual(moved.providerInstances[acpId]?.config, acp.config);
+      }).pipe(Effect.provide(layerServerSettings())),
   );
 });

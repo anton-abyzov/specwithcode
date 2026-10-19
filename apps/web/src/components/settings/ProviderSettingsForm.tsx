@@ -3,11 +3,12 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import type {
-  ProviderSettingsFormAnnotation,
-  ProviderSettingsFormControl,
-  ProviderSettingsFormOption,
-  ProviderSettingsFormSchemaAnnotation,
+import {
+  REDACTED_SECRET_MARKER,
+  type ProviderSettingsFormAnnotation,
+  type ProviderSettingsFormControl,
+  type ProviderSettingsFormOption,
+  type ProviderSettingsFormSchemaAnnotation,
 } from "@specweave-studio/contracts";
 import { PlusIcon, XIcon } from "lucide-react";
 
@@ -351,6 +352,65 @@ interface ProviderSettingsFieldRowProps {
   readonly onChange: ProviderSettingsFormProps["onChange"];
 }
 
+/** Origin of an address, or its trimmed text when it does not parse (as the server compares). */
+function addressOrigin(value: string): string {
+  const trimmed = value.trim();
+  try {
+    return new URL(trimmed).origin;
+  } catch {
+    return trimmed;
+  }
+}
+
+/** Where a provider password is sent: the origins of the config's address fields. */
+function providerSecretDestination(config: unknown): string {
+  if (config === null || typeof config !== "object") return "";
+  return Object.entries(config as Record<string, unknown>)
+    .flatMap(([key, field]) =>
+      /(url|endpoint)$/i.test(key) && typeof field === "string"
+        ? [`${key}=${addressOrigin(field)}`]
+        : [],
+    )
+    .toSorted()
+    .join("\n");
+}
+
+/**
+ * True once a saved password disappears while its address field moved to
+ * another origin: the server drops it then rather than send it to the new
+ * server. The second value forgets the saved state, for a deliberate clear.
+ */
+function useSecretClearedByAddressChange(
+  isPassword: boolean,
+  rawText: string,
+  config: unknown,
+): readonly [boolean, () => void] {
+  // Destination the saved password was first seen with; kept while the
+  // marker stays, so an edited address before the save still counts.
+  const savedForRef = useRef<string | undefined>(undefined);
+  const [cleared, setCleared] = useState(false);
+  useEffect(() => {
+    if (!isPassword) return;
+    if (rawText === REDACTED_SECRET_MARKER) {
+      savedForRef.current ??= providerSecretDestination(config);
+      setCleared(false);
+      return;
+    }
+    const savedFor = savedForRef.current;
+    savedForRef.current = undefined;
+    setCleared(
+      rawText.length === 0 &&
+        savedFor !== undefined &&
+        savedFor !== providerSecretDestination(config),
+    );
+  }, [isPassword, rawText, config]);
+  const forget = () => {
+    savedForRef.current = undefined;
+    setCleared(false);
+  };
+  return [cleared, forget] as const;
+}
+
 function ProviderSettingsFieldRow({
   field,
   value,
@@ -364,12 +424,53 @@ function ProviderSettingsFieldRow({
       ? "text-2xs text-muted-foreground"
       : "mt-1 block text-xs text-muted-foreground";
   const label = <span className="text-xs font-medium text-foreground">{field.label}</span>;
-  const description = field.description ? (
-    <span className={descriptionClassName}>{field.description}</span>
+  // The server sends a marker instead of a saved password; echoing the
+  // marker back keeps it, so the input stays empty until a new value is typed.
+  const rawText = readProviderConfigString(value, field.key);
+  const hasStoredSecret = field.control === "password" && rawText === REDACTED_SECRET_MARKER;
+  const [clearedByAddressChange, forgetStoredSecret] = useSecretClearedByAddressChange(
+    field.control === "password",
+    rawText,
+    value,
+  );
+  const clearedNote = clearedByAddressChange
+    ? `${field.label} cleared because the server address changed. Enter it again to use it there.`
+    : undefined;
+  const descriptionText =
+    field.description || clearedNote ? (
+      <>
+        {field.description}
+        {clearedNote ? (
+          <span className="block text-warning-foreground" role="status">
+            {clearedNote}
+          </span>
+        ) : null}
+      </>
+    ) : null;
+  const description = descriptionText ? (
+    <span className={descriptionClassName}>{descriptionText}</span>
+  ) : null;
+  const textValue = hasStoredSecret ? "" : rawText;
+  const textPlaceholder = hasStoredSecret
+    ? "Stored secret - enter a new value to replace"
+    : field.placeholder;
+  const clearStoredSecret = hasStoredSecret ? (
+    <Button
+      type="button"
+      size="icon-sm"
+      variant="ghost-destructive"
+      onClick={() => {
+        forgetStoredSecret();
+        onChange(nextProviderConfigWithFieldValue(value, field, ""));
+      }}
+      aria-label={`Clear ${field.label}`}
+    >
+      <XIcon className="size-3.5" />
+    </Button>
   ) : null;
 
   if (variant === "settings") {
-    const descriptionId = field.description ? `${inputId}-description` : undefined;
+    const descriptionId = descriptionText ? `${inputId}-description` : undefined;
     const control =
       field.control === "switch" ? (
         <Switch
@@ -401,6 +502,22 @@ function ProviderSettingsFieldRow({
           placeholder={field.placeholder}
           spellCheck={false}
         />
+      ) : hasStoredSecret ? (
+        <div className="flex w-full min-w-0 items-center gap-2 @min-[32rem]/settings-row:w-56">
+          <DraftInput
+            id={inputId}
+            aria-describedby={descriptionId}
+            size="sm"
+            className="min-w-0 flex-1"
+            type="password"
+            autoComplete="off"
+            value={textValue}
+            onCommit={(next) => onChange(nextProviderConfigWithFieldValue(value, field, next))}
+            placeholder={textPlaceholder}
+            spellCheck={false}
+          />
+          {clearStoredSecret}
+        </div>
       ) : (
         <DraftInput
           id={inputId}
@@ -409,9 +526,9 @@ function ProviderSettingsFieldRow({
           className="w-full max-w-full @min-[32rem]/settings-row:w-56"
           type={field.control === "password" ? "password" : undefined}
           autoComplete={field.control === "password" ? "off" : undefined}
-          value={readProviderConfigString(value, field.key)}
+          value={textValue}
           onCommit={(next) => onChange(nextProviderConfigWithFieldValue(value, field, next))}
-          placeholder={field.placeholder}
+          placeholder={textPlaceholder}
           spellCheck={false}
         />
       );
@@ -422,7 +539,7 @@ function ProviderSettingsFieldRow({
           field.control === "switch" ? field.label : <label htmlFor={inputId}>{field.label}</label>
         }
         description={
-          field.description ? <span id={descriptionId}>{field.description}</span> : undefined
+          descriptionText ? <span id={descriptionId}>{descriptionText}</span> : undefined
         }
         control={control}
       />
@@ -495,29 +612,36 @@ function ProviderSettingsFieldRow({
       <label htmlFor={inputId} className={cn(variant === "card" && "block")}>
         {label}
         {variant === "card" ? (
-          <DraftInput
-            id={inputId}
-            size="sm"
-            className="mt-1.5"
-            type={type}
-            autoComplete={field.control === "password" ? "off" : undefined}
-            value={readProviderConfigString(value, field.key)}
-            onCommit={(next) => onChange(nextProviderConfigWithFieldValue(value, field, next))}
-            placeholder={field.placeholder}
-            spellCheck={false}
-          />
+          <div className="mt-1.5 flex min-w-0 items-center gap-2">
+            <DraftInput
+              id={inputId}
+              size="sm"
+              className="min-w-0 flex-1"
+              type={type}
+              autoComplete={field.control === "password" ? "off" : undefined}
+              value={textValue}
+              onCommit={(next) => onChange(nextProviderConfigWithFieldValue(value, field, next))}
+              placeholder={textPlaceholder}
+              spellCheck={false}
+            />
+            {clearStoredSecret}
+          </div>
         ) : (
-          <Input
-            id={inputId}
-            type={type}
-            autoComplete={field.control === "password" ? "off" : undefined}
-            value={readProviderConfigString(value, field.key)}
-            onChange={(event) =>
-              onChange(nextProviderConfigWithFieldValue(value, field, event.target.value))
-            }
-            placeholder={field.placeholder}
-            spellCheck={false}
-          />
+          <div className="flex min-w-0 items-center gap-2">
+            <Input
+              id={inputId}
+              className="min-w-0 flex-1"
+              type={type}
+              autoComplete={field.control === "password" ? "off" : undefined}
+              value={textValue}
+              onChange={(event) =>
+                onChange(nextProviderConfigWithFieldValue(value, field, event.target.value))
+              }
+              placeholder={textPlaceholder}
+              spellCheck={false}
+            />
+            {clearStoredSecret}
+          </div>
         )}
         {description}
       </label>

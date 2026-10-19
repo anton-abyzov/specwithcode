@@ -1,10 +1,15 @@
+// @vitest-environment jsdom
+import { act, createElement } from "react";
+import { createRoot } from "react-dom/client";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
-import { ProviderDriverKind } from "@specweave-studio/contracts";
+import { ProviderDriverKind, REDACTED_SECRET_MARKER } from "@specweave-studio/contracts";
 
 import { DRIVER_OPTION_BY_VALUE } from "./providerDriverMeta";
 import {
   deriveProviderSettingsFields,
   nextProviderConfigWithFieldValue,
+  ProviderSettingsForm,
 } from "./ProviderSettingsForm";
 
 describe("ProviderSettingsForm helpers", () => {
@@ -200,5 +205,69 @@ describe("ProviderSettingsForm helpers", () => {
     );
 
     expect(next).toEqual({ experimental: false });
+  });
+
+  it("shows a saved provider password as stored instead of echoing the marker", () => {
+    const antigravity = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("antigravity")]!;
+    const render = (value: unknown, variant: "card" | "settings") =>
+      renderToStaticMarkup(
+        createElement(ProviderSettingsForm, {
+          definition: antigravity,
+          value,
+          idPrefix: "gemini",
+          variant,
+          onChange: () => {},
+        }),
+      );
+    for (const variant of ["card", "settings"] as const) {
+      const stored = render({ apiKey: REDACTED_SECRET_MARKER }, variant);
+      expect(stored).not.toContain(REDACTED_SECRET_MARKER);
+      expect(stored).toContain("Stored secret - enter a new value to replace");
+      expect(stored).toContain('aria-label="Clear API key"');
+      const empty = render({}, variant);
+      expect(empty).not.toContain("Stored secret");
+      expect(empty).not.toContain("Clear API key");
+    }
+  });
+
+  it("says why a saved password disappeared when its server moved to another origin", async () => {
+    (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
+    const opencode = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("opencode")]!;
+    const password = deriveProviderSettingsFields(opencode).find(
+      (field) => field.control === "password",
+    )!;
+    const host = document.createElement("div");
+    const root = createRoot(host);
+    const show = (value: unknown) =>
+      act(async () =>
+        root.render(
+          createElement(ProviderSettingsForm, {
+            definition: opencode,
+            value,
+            idPrefix: "oc",
+            variant: "settings",
+            onChange: () => {},
+          }),
+        ),
+      );
+    const note = `${password.label} cleared because the server address changed`;
+    const saved = { serverUrl: "http://127.0.0.1:4096", serverPassword: REDACTED_SECRET_MARKER };
+
+    // Cleared on the same server (by hand or elsewhere): no note.
+    await show(saved);
+    await show({ serverUrl: "http://127.0.0.1:4096/api" });
+    expect(host.textContent).not.toContain(note);
+
+    // The address moves while the password is saved; the server drops it.
+    await show(saved);
+    await show({ ...saved, serverUrl: "https://other.example" });
+    expect(host.textContent).not.toContain(note);
+    await show({ serverUrl: "https://other.example" });
+    expect(host.textContent).toContain(note);
+
+    // Typing a new password removes the note.
+    await show({ serverUrl: "https://other.example", serverPassword: "typed" });
+    expect(host.textContent).not.toContain(note);
+    await act(async () => root.unmount());
   });
 });

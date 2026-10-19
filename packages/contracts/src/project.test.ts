@@ -53,6 +53,33 @@ describe("project search inputs", () => {
 });
 
 describe("project RPC errors", () => {
+  it("marks a protected file refusal so clients can say why", () => {
+    const writeError = new ProjectWriteFileError({
+      cwd: "/workspace",
+      relativePath: ".zshrc",
+      failure: "operation_failed",
+      operation: "write-file",
+      reason: "protected",
+    });
+    expect(writeError.reason).toBe("protected");
+    expect(writeError.message).toBe(
+      "Workspace file '.zshrc' is a protected credential or app state file and cannot be written here.",
+    );
+    const encoded = Schema.encodeSync(ProjectWriteFileError)(writeError);
+    expect(encoded).toMatchObject({ reason: "protected" });
+    expect(Schema.decodeSync(ProjectWriteFileError)(encoded).reason).toBe("protected");
+    // Fields a schema does not know are dropped on decode, which is how a client
+    // older than `reason` still reads the error (with its message).
+    const decodedRead = Schema.decodeUnknownSync(ProjectReadFileError)({
+      _tag: "ProjectReadFileError",
+      message: "Workspace file 'a' is protected.",
+      reason: "protected",
+      fieldFromANewerServer: 1,
+    });
+    expect(decodedRead.reason).toBe("protected");
+    expect(decodedRead.message).toBe("Workspace file 'a' is protected.");
+  });
+
   it("derives stable messages from structured request context while retaining causes", () => {
     const cause = new Error("sensitive platform detail");
     const searchError = new ProjectSearchEntriesError({
@@ -82,6 +109,7 @@ describe("project RPC errors", () => {
     expect(searchError.message).not.toMatch(/Bearer|secret-token/);
     expect(searchError.cause).toBe(cause);
     expect(readError.message).toBe("Failed to read workspace file 'src/index.ts' in '/workspace'.");
+    expect(readError.reason).toBeUndefined();
     expect(readError.message).not.toContain(cause.message);
     expect(readError.cause).toBe(cause);
 

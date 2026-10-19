@@ -553,6 +553,7 @@ function projectFileFailureContext(
   readonly resolvedWorkspaceRoot?: string;
   readonly operation?: ProjectFileOperation;
   readonly operationPath?: string;
+  readonly reason?: "protected";
 } {
   switch (error._tag) {
     case "WorkspacePathOutsideRootError":
@@ -563,6 +564,7 @@ function projectFileFailureContext(
         resolvedPath: error.resolvedPath,
         operation: error.operation,
         operationPath: error.operationPath,
+        ...(error.reason === undefined ? {} : { reason: error.reason }),
       };
     case "WorkspaceFilePathEscapeError":
       return {
