@@ -2,6 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import { ProviderInstanceId } from "@specweave-studio/contracts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ProviderCredentialStore from "./ProviderCredentialStore.ts";
 
@@ -51,5 +52,33 @@ it.effect("isolates provider bindings and preserves opaque credentials", () =>
     assert.notStrictEqual(delimiter.binding.key, a.binding.key);
     yield* a.remove;
     assert.isTrue(Option.isNone(yield* a.get));
+  }).pipe(Effect.provide(NodeCrypto.layer)),
+);
+
+it.effect("removes no sign-in for drivers named like Object.prototype members", () =>
+  Effect.gen(function* () {
+    const removed: Array<string> = [];
+    const secretStore = ServerSecretStore.ServerSecretStore.of({
+      get: () => Effect.succeed(Option.none()),
+      set: () => Effect.void,
+      remove: (name) =>
+        Effect.sync(() => {
+          removed.push(name);
+        }),
+      create: () => Effect.die("unused"),
+      getOrCreateRandom: () => Effect.die("unused"),
+    });
+    for (const driver of ["constructor", "toString", "hasOwnProperty", "__proto__"]) {
+      yield* ProviderCredentialStore.removeInstanceCredentials(
+        driver,
+        ProviderInstanceId.make("work"),
+      ).pipe(Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore));
+    }
+    assert.deepEqual(removed, []);
+    yield* ProviderCredentialStore.removeInstanceCredentials(
+      "cursor",
+      ProviderInstanceId.make("work"),
+    ).pipe(Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore));
+    assert.lengthOf(removed, 1);
   }).pipe(Effect.provide(NodeCrypto.layer)),
 );

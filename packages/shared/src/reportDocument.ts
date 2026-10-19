@@ -7,7 +7,7 @@
  * tested and shared.
  */
 
-import { reportFrontmatter } from "./threadReport.ts";
+import { FRONTMATTER, reportFrontmatter } from "./threadReport.ts";
 
 export interface ReportDocumentPart {
   readonly label: string;
@@ -178,6 +178,83 @@ export function reportDocument(text: string): ReportDocument | null {
     sections.push({ label: part.label, markdown: asList(body) });
   });
   return { lead, properties, sections };
+}
+
+/** A Markdown file laid out as a page: its title, its facts, then its body as written. */
+export interface MarkdownDocument {
+  /** Plain text; null when the file names itself nowhere. */
+  readonly title: string | null;
+  readonly properties: ReadonlyArray<ReportDocumentPart>;
+  /** Markdown, everything after the frontmatter and the opening `# title`. */
+  readonly body: string;
+}
+
+// CommonMark: a closing `#` run counts only after a space, so `# Learn C#` keeps its `#`.
+const OPENING_TITLE = /^#[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*(?:\n|$)/;
+const YAML_KEY_LINE = /^[A-Za-z_][\w -]{0,40}:(?:[ \t]|$)/;
+
+/**
+ * A heading's text as written, minus the Markdown around it: emphasis that
+ * wraps words, code spans, links and escapes. `my_module`, `Vec<T>` and
+ * `C#` stay as they are.
+ */
+function headingText(markdown: string): string {
+  return markdown
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/(^|[\s(])(\*\*|__)(?=\S)(.+?)(?<=\S)\2(?=$|[\s).,:;!?])/g, "$1$3")
+    .replace(/(^|[\s(])([*_])(?=\S)(.+?)(?<=\S)\2(?=$|[\s).,:;!?])/g, "$1$3")
+    .replace(/\\([\\`*_{}[\]()#+\-.!<>])/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Drops the blank lines a body opens with, never the indentation of its first line. */
+function withoutLeadingBlankLines(markdown: string): string {
+  return markdown.replace(/^(?:[ \t]*\n)+/, "");
+}
+
+/**
+ * A Markdown file as a document viewer shows it: flat frontmatter becomes the
+ * property table under the title instead of a paragraph of `key: value` text,
+ * and the opening `# heading` becomes the title instead of a second one. The
+ * body is never restructured. Frontmatter too rich for a table stays visible,
+ * as a YAML block, rather than turning into a rule and a heading. A file with
+ * no frontmatter, or one that opens with a `---` rule around prose, comes
+ * back as written.
+ */
+export function markdownDocument(text: string): MarkdownDocument {
+  const source = text.replace(/\r\n?/g, "\n").trim();
+  const match = FRONTMATTER.exec(source);
+  // Frontmatter starts with a key on the line after `---`; anything else is a rule.
+  if (!match || !YAML_KEY_LINE.test(match[1]!.split("\n")[0]!)) {
+    return { title: null, properties: [], body: text };
+  }
+  const rest = withoutLeadingBlankLines(source.slice(match[0].length));
+  const { fields } = reportFrontmatter(source);
+  if (fields.length === 0) {
+    return { title: null, properties: [], body: `~~~~yaml\n${match[1]!}\n~~~~\n\n${rest}` };
+  }
+  let body = rest;
+  const named = fields.find((field) => field.label === "Title")?.value;
+  let title =
+    typeof named === "string" && headingText(named).length > 0 ? headingText(named) : null;
+  const opening = OPENING_TITLE.exec(body);
+  if (opening) {
+    const heading = headingText(opening[1]!);
+    if (title === null || heading.toLowerCase() === title.toLowerCase()) {
+      title = heading;
+      body = withoutLeadingBlankLines(body.slice(opening[0].length));
+    }
+  }
+  const properties: ReportDocumentPart[] = fields
+    .filter((field) => field.label !== "Title" || typeof field.value !== "string")
+    .map((field) =>
+      typeof field.value === "string"
+        ? { label: field.label, markdown: field.value }
+        : { label: field.label, markdown: "", chips: field.value },
+    );
+  return { title, properties, body };
 }
 
 /** Parts that say what stops the work, whatever a model calls them. */

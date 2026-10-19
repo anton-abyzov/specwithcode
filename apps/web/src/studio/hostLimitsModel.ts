@@ -31,6 +31,8 @@ export interface HostLimitWindow {
   readonly resetsAt: number | null;
   /** Its reset has passed since the reading: the bar no longer describes the window. */
   readonly stale: boolean;
+  /** The window's length as the provider reports it (300 for Claude's 5-hour). */
+  readonly durationMins?: number;
   /** The model family the window limits, when it is not account-wide. */
   readonly modelScope?: string;
   /**
@@ -119,6 +121,7 @@ function windowsOf(limits: ServerProviderUsageLimits, now: number): HostLimitWin
         usedPercent: Math.round(Math.max(0, Math.min(100, window.usedPercent))),
         resetsAt: Number.isFinite(at) && at > now ? at : null,
         stale: Number.isFinite(at) && at <= now,
+        ...(window.windowDurationMins ? { durationMins: window.windowDurationMins } : {}),
         ...(scope === null ? {} : { modelScope: scope }),
       };
     }),
@@ -146,9 +149,45 @@ export function withBlockers(windows: readonly HostLimitWindow[], now: number): 
       ? rest
       : {
           ...rest,
-          blockedBy: { label: blocker.label, resetsAt: blocker.source.resetsAt },
+          blockedBy: {
+            label: windowDisplayLabel(blocker.source),
+            resetsAt: blocker.source.resetsAt,
+          },
         };
   });
+}
+
+/**
+ * The name people use for a window: a session the provider says lasts whole
+ * hours is "5-hour"; weekly, model and unreported windows keep their label.
+ */
+export function windowDisplayLabel(window: HostLimitWindow): string {
+  // Readings saved before the length was kept: Claude's id names it.
+  const mins = window.durationMins ?? (window.id === "five_hour" ? 300 : undefined);
+  if (window.kind !== "session" || !mins || mins >= 1440 || mins % 60 !== 0) return window.label;
+  return window.label.replace(/\bSession\b/, `${mins / 60}-hour`);
+}
+
+/**
+ * The window that stops the provider first: the fullest current
+ * account-wide one (model windows count only when nothing else reports), the
+ * one that resets last on a tie. Null when no window is current. Windows are
+ * compared, never averaged.
+ */
+export function bindingWindowId(windows: readonly HostLimitWindow[]): string | null {
+  const current = windows.filter((window) => !window.stale);
+  const wide = current.filter((window) => window.modelScope === undefined);
+  let binding: HostLimitWindow | null = null;
+  for (const window of wide.length > 0 ? wide : current) {
+    if (
+      binding === null ||
+      window.usedPercent > binding.usedPercent ||
+      (window.usedPercent === binding.usedPercent &&
+        (window.resetsAt ?? Infinity) > (binding.resetsAt ?? Infinity))
+    )
+      binding = window;
+  }
+  return binding === null ? null : `${binding.kind}:${binding.id}`;
 }
 
 /**

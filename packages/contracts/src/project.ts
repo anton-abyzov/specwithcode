@@ -549,6 +549,14 @@ export const ProjectFileOperation = Schema.Literals([
 ]);
 export type ProjectFileOperation = typeof ProjectFileOperation.Type;
 
+/**
+ * Why an `operation_failed` file request failed, when the server knows: `protected`
+ * is a credential or app state file the server never reads or writes for a client.
+ * A separate field, so older clients that do not know it still decode the error.
+ */
+export const ProjectFileFailureReason = Schema.Literals(["protected"]);
+export type ProjectFileFailureReason = typeof ProjectFileFailureReason.Type;
+
 type ProjectFileFailureContext = {
   readonly cwd: string;
   readonly relativePath: string;
@@ -557,6 +565,7 @@ type ProjectFileFailureContext = {
   readonly resolvedWorkspaceRoot?: string;
   readonly operation?: ProjectFileOperation;
   readonly operationPath?: string;
+  readonly reason?: ProjectFileFailureReason;
   readonly cause?: unknown;
 };
 
@@ -570,6 +579,7 @@ export class ProjectReadFileError extends Schema.TaggedError<ProjectReadFileErro
     resolvedWorkspaceRoot: Schema.optional(TrimmedNonEmptyString),
     operation: Schema.optional(ProjectFileOperation),
     operationPath: Schema.optional(TrimmedNonEmptyString),
+    reason: Schema.optional(ProjectFileFailureReason),
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
   },
@@ -580,7 +590,9 @@ export class ProjectReadFileError extends Schema.TaggedError<ProjectReadFileErro
       ...props,
       message:
         decodedProjectErrorMessage(props) ??
-        `Failed to read workspace file '${props.relativePath}' in '${props.cwd}'.`,
+        (props.reason === "protected"
+          ? `Workspace file '${props.relativePath}' is a protected credential or app state file and cannot be read here.`
+          : `Failed to read workspace file '${props.relativePath}' in '${props.cwd}'.`),
     } as any);
   }
 }
@@ -635,6 +647,7 @@ export class ProjectWriteFileError extends Schema.TaggedError<ProjectWriteFileEr
     resolvedWorkspaceRoot: Schema.optional(TrimmedNonEmptyString),
     operation: Schema.optional(ProjectFileOperation),
     operationPath: Schema.optional(TrimmedNonEmptyString),
+    reason: Schema.optional(ProjectFileFailureReason),
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
   },
@@ -645,7 +658,9 @@ export class ProjectWriteFileError extends Schema.TaggedError<ProjectWriteFileEr
       ...props,
       message:
         decodedProjectErrorMessage(props) ??
-        `Failed to write workspace file '${props.relativePath}' in '${props.cwd}'.`,
+        (props.reason === "protected"
+          ? `Workspace file '${props.relativePath}' is a protected credential or app state file and cannot be written here.`
+          : `Failed to write workspace file '${props.relativePath}' in '${props.cwd}'.`),
     } as any);
   }
 }

@@ -30,6 +30,7 @@ import {
   type WorktreeSubmodules,
 } from "@specweave-studio/contracts";
 import * as ServerConfig from "../config.ts";
+import * as WorkspaceSensitivePaths from "../workspace/WorkspaceSensitivePaths.ts";
 import { gitCommandDuration } from "../observability/Metrics.ts";
 import {
   makeGitVcsDriverCore,
@@ -1992,6 +1993,380 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
 
         assert.strictEqual(contents.oldContents, "# test\n");
         assert.strictEqual(contents.newContents, "# changed\nunchanged context\n");
+      }),
+    );
+
+    it.effect("refuses diff expansion inside an app state folder", () =>
+      Effect.gen(function* () {
+        const pathService = yield* Path.Path;
+        // A repository in an instance home's state folder, as a worker might make in
+        // a checkout: neither side of the diff may be read back.
+        const cwd = pathService.join(yield* makeTmpDir(), ".specwithcode", "userdata", "repo");
+        yield* writeTextFile(cwd, ".keep", "");
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "README.md", "sk-test-working-tree\n");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const error = yield* driver
+          .getReviewDiffFileContents(makeReviewDiffFileContentsInput(cwd))
+          .pipe(Effect.flip);
+
+        assert.strictEqual(error._tag, "GitCommandError");
+        assert.strictEqual(error.detail, "Could not read diff file 'README.md'.");
+        assert.notInclude(JSON.stringify(error), "sk-test-working-tree");
+      }),
+    );
+
+    it.effect("keeps protected files out of review diff previews", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        // A repository can track app state (or a dotfiles repository the home).
+        yield* writeTextFile(cwd, ".specwithcode/userdata/settings.json", "{}\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "track state"]);
+        yield* writeTextFile(
+          cwd,
+          ".specwithcode/userdata/settings.json",
+          '{"k":"sk-test-tracked"}\n',
+        );
+        yield* writeTextFile(cwd, ".specwithcode/userdata/secrets/k.txt", "sk-test-untracked\n");
+        yield* writeTextFile(cwd, "README.md", "# changed\n");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd });
+        for (const source of preview.sources) {
+          assert.notInclude(source.diff, "sk-test-");
+          assert.notInclude(source.diff, ".specwithcode/userdata");
+          assert.deepStrictEqual(
+            (source.files ?? []).map((file) => file.path),
+            ["README.md"],
+          );
+        }
+
+        for (const filePath of [
+          ".specwithcode/userdata/settings.json",
+          ".specwithcode/userdata/secrets/k.txt",
+        ]) {
+          const request = yield* Schema.decodeEffect(ReviewDiffPreviewInput)({
+            cwd,
+            file: { path: filePath, previousPath: null, sourceKind: "working-tree" },
+          });
+          const error = yield* driver.getReviewDiffPreview(request).pipe(Effect.flip);
+          assert.strictEqual(error._tag, "GitCommandError");
+          assert.notInclude(JSON.stringify(error), "sk-test-");
+        }
+      }),
+    );
+
+    it.effect("leaves out both sides of a rename that touches a protected file", () =>
+      Effect.gen(function* () {
+        const pathService = yield* Path.Path;
+        const protectedPath = ".specwithcode/userdata/settings.json";
+        const contents = Array.from({ length: 12 }, (_, line) => `"k${line}": "sk-test-${line}"`);
+        for (const [from, to] of [
+          [protectedPath, "notes.json"],
+          ["plain.json", protectedPath],
+        ] as const) {
+          const cwd = yield* makeTmpDir();
+          yield* initRepoWithCommit(cwd);
+          yield* writeTextFile(cwd, from, `${contents.join("\n")}\n`);
+          yield* git(cwd, ["add", "."]);
+          yield* git(cwd, ["commit", "-m", "track"]);
+          NodeFS.mkdirSync(pathService.dirname(pathService.join(cwd, to)), { recursive: true });
+          yield* git(cwd, ["mv", from, to]);
+          yield* writeTextFile(cwd, "README.md", "# changed\n");
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+
+          const preview = yield* driver.getReviewDiffPreview({ cwd });
+          for (const source of preview.sources) {
+            // The patch and the file list agree: neither side of the rename appears.
+            assert.deepStrictEqual(
+              (source.files ?? []).map((file) => file.path),
+              ["README.md"],
+            );
+            assert.notInclude(source.diff, "sk-test-");
+            assert.notInclude(source.diff, from);
+            assert.notInclude(source.diff, to);
+            assert.include(source.diff, "README.md");
+          }
+        }
+      }),
+    );
+
+    it.effect("reads the old side from the repository top, never git's working folder", () =>
+      Effect.gen(function* () {
+        const pathService = yield* Path.Path;
+        const repo = yield* makeTmpDir();
+        yield* initRepoWithCommit(repo);
+        yield* writeTextFile(repo, ".specwithcode/userdata/settings.json", '{"k":"sk-test-top"}\n');
+        yield* writeTextFile(repo, ".specwithcode/userdata/sub/.keep", "");
+        yield* git(repo, ["add", "."]);
+        yield* git(repo, ["commit", "-m", "track state"]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const state = pathService.join(repo, ".specwithcode", "userdata");
+
+        for (const [cwd, oldPath] of [
+          [state, "./settings.json"],
+          [pathService.join(state, "sub"), "../settings.json"],
+          [repo, "./.specwithcode/userdata/settings.json"],
+          [repo, ".specwithcode//userdata/settings.json"],
+          [repo, "docs/../.specwithcode/userdata/settings.json"],
+        ] as const) {
+          const error = yield* driver
+            .getReviewDiffFileContents(
+              makeReviewDiffFileContentsInput(cwd, {
+                sourceKind: "working-tree",
+                baseRef: null,
+                changeType: "deleted",
+                oldPath,
+                newPath: oldPath,
+              }),
+            )
+            .pipe(Effect.flip);
+          assert.strictEqual(error._tag, "GitCommandError");
+          assert.notInclude(JSON.stringify(error), "sk-test-top");
+        }
+
+        // A plain path still reads from the top, whatever folder the request names.
+        const readme = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(pathService.join(state, "sub"), {
+            baseRef: null,
+            changeType: "deleted",
+          }),
+        );
+        assert.strictEqual(readme.oldContents, "# test\n");
+
+        // A per-file preview refuses the same shapes.
+        for (const filePath of ["./README.md", "../README.md", "a/./README.md"]) {
+          const request = yield* Schema.decodeEffect(ReviewDiffPreviewInput)({
+            cwd: repo,
+            file: { path: filePath, previousPath: null, sourceKind: "working-tree" },
+          });
+          const error = yield* driver.getReviewDiffPreview(request).pipe(Effect.flip);
+          assert.strictEqual(error._tag, "GitCommandError");
+        }
+      }),
+    );
+
+    it.effect("leaves protected files out of the Changes totals", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, ".specwithcode/userdata/settings.json", "{}\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "track state"]);
+        yield* writeTextFile(cwd, ".specwithcode/userdata/settings.json", "a\nb\nc\nd\n");
+        yield* writeTextFile(cwd, "README.md", "# test\nmore\n");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
+        assert.deepStrictEqual(status.branchChanges, {
+          baseRef: null,
+          insertions: 1,
+          deletions: 0,
+        });
+        const preview = yield* driver.getReviewDiffPreview({ cwd });
+        const changes = preview.sources.find((source) => source.kind === "branch-range")!;
+        assert.deepStrictEqual(
+          (changes.files ?? []).map((file) => [file.path, file.additions, file.deletions]),
+          [["README.md", 1, 0]],
+        );
+      }),
+    );
+
+    it.effect("shows a patch with more protected files than one command line holds", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const state = Array.from(
+          { length: 210 },
+          (_, index) => `.specwithcode/userdata/s${index}.txt`,
+        );
+        const allowed = Array.from({ length: 250 }, (_, index) => `src/a${index}.txt`);
+        for (const filePath of [...state, ...allowed]) yield* writeTextFile(cwd, filePath, "one\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "many"]);
+        for (const filePath of state) yield* writeTextFile(cwd, filePath, "sk-test-state\n");
+        for (const filePath of allowed) yield* writeTextFile(cwd, filePath, "two\n");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd });
+        const dirty = preview.sources.find((source) => source.kind === "working-tree")!;
+        assert.notInclude(dirty.diff, "sk-test-state");
+        assert.strictEqual(dirty.truncated, false);
+        assert.strictEqual(dirty.diff.match(/^diff --git /gm)?.length, allowed.length);
+        assert.deepStrictEqual(
+          (dirty.files ?? []).map((file) => file.path).toSorted(),
+          allowed.toSorted(),
+        );
+        const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
+        assert.deepStrictEqual(status.branchChanges, {
+          baseRef: null,
+          insertions: allowed.length,
+          deletions: allowed.length,
+        });
+      }),
+    );
+
+    it.effect("fails closed on review paths that cannot be resolved", () =>
+      Effect.gen(function* () {
+        const pathService = yield* Path.Path;
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "gone.txt", "deleted\n");
+        NodeFS.mkdirSync(pathService.join(cwd, "locked"));
+        yield* writeTextFile(cwd, "locked/secret.txt", "before\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "more"]);
+        NodeFS.rmSync(pathService.join(cwd, "gone.txt"));
+        yield* writeTextFile(cwd, "locked/secret.txt", "sk-test-locked\n");
+        yield* writeTextFile(cwd, "README.md", "# changed\n");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const failing =
+          (fails: (target: string) => boolean) =>
+          (target: string): Promise<string> =>
+            fails(target)
+              ? Promise.reject(Object.assign(new Error("denied"), { code: "EACCES" }))
+              : WorkspaceSensitivePaths.realpathNative(target);
+        const filesOf = (preview: {
+          readonly sources: ReadonlyArray<{
+            readonly files?: ReadonlyArray<{ readonly path: string }>;
+          }>;
+        }) =>
+          preview.sources.map((source) => (source.files ?? []).map((file) => file.path).toSorted());
+
+        // A deleted file still resolves through its folder; a file whose folder
+        // cannot be resolved is left out.
+        const preview = yield* driver.getReviewDiffPreview({ cwd }).pipe(
+          Effect.provideService(
+            WorkspaceSensitivePaths.SensitivePathsRealpath,
+            failing((target) => pathService.basename(target) === "locked"),
+          ),
+        );
+        assert.deepStrictEqual(filesOf(preview), [
+          ["README.md", "gone.txt"],
+          ["README.md", "gone.txt"],
+        ]);
+        for (const source of preview.sources) assert.notInclude(source.diff, "sk-test-locked");
+
+        // A root that cannot be resolved shows nothing.
+        const rootName = pathService.basename(cwd);
+        const unresolvedRoot = yield* driver.getReviewDiffPreview({ cwd }).pipe(
+          Effect.provideService(
+            WorkspaceSensitivePaths.SensitivePathsRealpath,
+            failing((target) => pathService.basename(target) === rootName),
+          ),
+        );
+        assert.deepStrictEqual(filesOf(unresolvedRoot), [[], []]);
+        for (const source of unresolvedRoot.sources) assert.strictEqual(source.diff, "");
+      }),
+    );
+
+    it.effect("never runs a repository's fsmonitor program", () =>
+      Effect.gen(function* () {
+        const pathService = yield* Path.Path;
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        if ((yield* HostProcessPlatform) === "win32") return;
+        const marker = pathService.join(yield* makeTmpDir(), "fsmonitor-ran");
+        const hook = pathService.join(yield* makeTmpDir(), "fsmonitor.sh");
+        NodeFS.writeFileSync(hook, `#!/bin/sh\ntouch '${marker}'\nexit 1\n`, { mode: 0o755 });
+        // A planted .git/config names a program that git status and git diff run.
+        yield* git(cwd, ["config", "core.fsmonitor", hook]);
+        yield* writeTextFile(cwd, "README.md", "# changed\n");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        yield* driver.getReviewDiffPreview({ cwd });
+        yield* driver.status({ cwd }).pipe(Effect.ignore);
+
+        assert.isFalse(NodeFS.existsSync(marker));
+      }),
+    );
+
+    it.effect("refuses diff expansion when the state folder is spelled another way", () =>
+      Effect.gen(function* () {
+        const pathService = yield* Path.Path;
+        const tmp = yield* makeTmpDir();
+        const cwd = pathService.join(tmp, ".specwithcode", "userdata", "repo");
+        yield* writeTextFile(cwd, ".keep", "");
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "README.md", "sk-test-spelled-tree\n");
+        // APFS treats `S` and `\u017f` (long s) as `s`; skip where the file system does not.
+        const spelled = pathService.join(tmp, ".\u017fpecwithcode", "USERDATA", "repo");
+        if (!NodeFS.existsSync(spelled)) return;
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const error = yield* driver
+          .getReviewDiffFileContents(makeReviewDiffFileContentsInput(spelled))
+          .pipe(Effect.flip);
+
+        assert.strictEqual(error._tag, "GitCommandError");
+        assert.strictEqual(error.detail, "Could not read diff file 'README.md'.");
+        assert.notInclude(JSON.stringify(error), "sk-test-spelled-tree");
+      }),
+    );
+
+    it.effect("refuses a diff path naming an app home in another spelling", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, ".specwithcode/userdata/settings.json", '{"k":"sk-test-home"}');
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        // `\u017f` (long s) and upper case name the same folder on APFS; the
+        // guard folds them on macOS and Windows whatever the file system.
+        for (const newPath of [
+          ".\u017fpecwithcode/userdata/settings.json",
+          ".SPECWITHCODE/USERDATA/settings.json",
+        ]) {
+          const error = yield* driver
+            .getReviewDiffFileContents(
+              makeReviewDiffFileContentsInput(cwd, {
+                changeType: "new",
+                oldPath: newPath,
+                newPath,
+              }),
+            )
+            .pipe(Effect.flip);
+          assert.strictEqual(error._tag, "GitCommandError");
+          assert.notInclude(JSON.stringify(error), "sk-test-home");
+        }
+      }),
+    );
+
+    it.effect("never passes a client ref to git as an option", () =>
+      Effect.gen(function* () {
+        const pathService = yield* Path.Path;
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const outside = pathService.join(yield* makeTmpDir(), "written-by-git-show");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        for (const sourceKind of ["working-tree", "branch-range"] as const) {
+          const error = yield* driver
+            .getReviewDiffFileContents(
+              makeReviewDiffFileContentsInput(cwd, { sourceKind, baseRef: `--output=${outside}` }),
+            )
+            .pipe(Effect.flip);
+          assert.strictEqual(error._tag, "GitCommandError");
+          assert.include(error.detail, "is not a branch or commit");
+        }
+        // The review base goes to git merge-base, which gets no --end-of-options
+        // (older git lacks it): the leading dash alone refuses it.
+        for (const baseRef of [`--output=${outside}`, "-p", "--all"]) {
+          const error = yield* driver.getReviewDiffPreview({ cwd, baseRef }).pipe(Effect.flip);
+          assert.strictEqual(error._tag, "GitCommandError");
+          assert.include(error.detail, "is not a branch or commit");
+        }
+        assert.isFalse(NodeFS.existsSync(outside));
+
+        // A ref that names no commit is refused before git show reads it.
+        const missing = yield* driver
+          .getReviewDiffFileContents(
+            makeReviewDiffFileContentsInput(cwd, { baseRef: "no-such-branch" }),
+          )
+          .pipe(Effect.flip);
+        assert.include(missing.detail, "'no-such-branch' is not a branch or commit.");
       }),
     );
 

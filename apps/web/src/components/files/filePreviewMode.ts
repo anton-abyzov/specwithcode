@@ -10,8 +10,33 @@ export function resolveFilePreviewPath(path: string | null, cwd: string): string
 
 export const isMarkdownPreviewFile = (path: string): boolean => /\.(?:md|mdx)$/i.test(path);
 
+export const PROTECTED_FILE_READ_MESSAGE =
+  "This file is protected from viewing inside SpecWithCode. Use another editor to open it.";
+export const PROTECTED_FILE_SAVE_MESSAGE =
+  "This file is protected from edits inside SpecWithCode. Use another editor to change it.";
+
+/** A file request the server refused because the file holds credentials or app state. */
+const isProtectedFileError = (error: unknown): boolean =>
+  typeof error === "object" &&
+  error !== null &&
+  "reason" in error &&
+  (error as { readonly reason?: unknown }).reason === "protected";
+
+/** One toast per file, however many saves the server refuses. */
+export const protectedFileSaveToastId = (
+  environmentId: string,
+  cwd: string,
+  relativePath: string,
+): string => `protected-file-save:${JSON.stringify([environmentId, cwd, relativePath])}`;
+
+/** What to tell the person when a save failed, or null for the generic handling. */
+export function fileSaveErrorMessage(error: unknown): string | null {
+  return isProtectedFileError(error) ? PROTECTED_FILE_SAVE_MESSAGE : null;
+}
+
 /** Describe existing failure codes without exposing the underlying platform cause. */
 export function filePreviewReadErrorMessage(error: ProjectReadFileError): string {
+  if (isProtectedFileError(error)) return PROTECTED_FILE_READ_MESSAGE;
   switch (error.failure) {
     case "path_not_file":
       return "The path is a directory or special file, not a regular file.";

@@ -30,6 +30,7 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as StudioProjectFileLoader from "../project/StudioProjectFileLoader.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import * as WorkspaceSensitivePaths from "../workspace/WorkspaceSensitivePaths.ts";
 import { assetFileResponse } from "../http.ts";
 import { ASSET_ROUTE_PREFIX, issueAssetUrl, resolveAsset } from "./AssetAccess.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
@@ -698,6 +699,81 @@ describe("AssetAccess", () => {
       });
       expect(error.cause).toBeInstanceOf(WorkspacePaths.WorkspacePathOutsideRootError);
     }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("never issues or serves credential and app state files, also through links", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* ServerConfig.ServerConfig;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-asset-guard-" });
+      yield* fileSystem.makeDirectory(config.secretsDir, { recursive: true });
+      const secretPng = path.join(config.secretsDir, "shot.png");
+      const secretCss = path.join(config.secretsDir, "theme.css");
+      yield* fileSystem.writeFileString(secretPng, "sk-test-png");
+      yield* fileSystem.writeFileString(secretCss, "sk-test-css");
+      yield* fileSystem.link(secretPng, path.join(root, "linked.png"));
+      yield* fileSystem.writeFileString(path.join(root, "report.html"), "<p>report</p>");
+      yield* fileSystem.writeFileString(path.join(root, "report.css"), "p { color: red; }");
+      const threadId = ThreadId.make("thread-1");
+
+      // Issuing: the protected file itself, or a hard link to it, is reported missing.
+      for (const resource of [
+        { _tag: "media-file", threadId, path: secretPng },
+        { _tag: "media-file", threadId, path: path.join(root, "linked.png") },
+        { _tag: "workspace-file", threadId, path: "linked.png" },
+        { _tag: "draft-workspace-file", cwd: root, path: "linked.png" },
+      ] as const) {
+        const error = yield* issueAssetUrl({ resource, workspaceRoot: root }).pipe(Effect.flip);
+        expect(error._tag).toBe("AssetWorkspaceAssetNotFoundError");
+      }
+
+      // Serving: a sibling linked to a protected file after the URL was issued.
+      const result = yield* issueAssetUrl({
+        resource: { _tag: "workspace-file", threadId, path: "report.html" },
+        workspaceRoot: root,
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const token = suffix.slice(0, suffix.indexOf("/"));
+      yield* fileSystem.link(secretCss, path.join(root, "theme.css"));
+      expect(yield* resolveAsset(token, "report.css")).toMatchObject({ kind: "file" });
+      expect(yield* resolveAsset(token, "theme.css")).toBeNull();
+    }).pipe(
+      Effect.provide(layerTest),
+      // A private home, so the guard never looks at the real one.
+      Effect.provideService(WorkspaceSensitivePaths.SensitivePathsHomeDirectory, NodeOS.tmpdir()),
+    ),
+  );
+
+  it.effect("issues links to Antigravity's plans and screenshots but not its sign-ins", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* ServerConfig.ServerConfig;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-asset-brain-" });
+      const profile = path.join(config.stateDir, "providers", "antigravity", "ab12cd");
+      const brain = path.join(profile, "antigravity-acp", "brain", "s1");
+      yield* fileSystem.makeDirectory(brain, { recursive: true });
+      const screenshot = path.join(brain, "screenshot.png");
+      const credentials = path.join(profile, "oauth_creds.json");
+      yield* fileSystem.writeFileString(screenshot, "png");
+      yield* fileSystem.writeFileString(credentials, '{"token":"sk-test-google"}');
+      const threadId = ThreadId.make("thread-1");
+
+      const issued = yield* issueAssetUrl({
+        resource: { _tag: "media-file", threadId, path: screenshot },
+        workspaceRoot: root,
+      });
+      expect(issued.relativeUrl.startsWith(`${ASSET_ROUTE_PREFIX}/`)).toBe(true);
+      const error = yield* issueAssetUrl({
+        resource: { _tag: "media-file", threadId, path: credentials },
+        workspaceRoot: root,
+      }).pipe(Effect.flip);
+      expect(error._tag).toBe("AssetWorkspaceAssetNotFoundError");
+    }).pipe(
+      Effect.provide(layerTest),
+      Effect.provideService(WorkspaceSensitivePaths.SensitivePathsHomeDirectory, NodeOS.tmpdir()),
+    ),
   );
 
   it.effect("issues draft workspace URLs without a thread", () =>

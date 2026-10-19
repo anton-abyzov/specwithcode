@@ -16,7 +16,7 @@ vi.mock("@effect/atom-react", async (importOriginal) => ({
 vi.mock("../../state/server", () => ({
   serverEnvironment: {
     providersValueAtom: () => "providers",
-    updateSettings: "update",
+    mutateProviderInstance: "update",
     refreshProviders: "refresh",
   },
 }));
@@ -85,7 +85,7 @@ async function render() {
 }
 
 describe("AddClaudeAccountDialog", () => {
-  it("adds a Claude instance in its own home, keeping the other providers", async () => {
+  it("adds a Claude instance in its own home with one create, not the whole map", async () => {
     await render();
     const input = container.querySelector("input")!;
     await act(async () => {
@@ -97,15 +97,15 @@ describe("AddClaudeAccountDialog", () => {
     expect(state.update).toHaveBeenCalledWith({
       environmentId: "m4",
       input: {
-        patch: {
-          providerInstances: {
-            codex_personal: { driver: "codex", config: {} },
-            claudeAgent_marketing: {
-              driver: "claudeAgent",
-              displayName: "Claude - Marketing",
-              enabled: true,
-              config: { enabled: true, homePath: "~/.claude-marketing" },
-            },
+        patch: {},
+        providerInstanceMutation: {
+          operation: "create",
+          instanceId: "claudeAgent_marketing",
+          instance: {
+            driver: "claudeAgent",
+            displayName: "Claude - Marketing",
+            enabled: true,
+            config: { enabled: true, homePath: "~/.claude-marketing" },
           },
         },
       },

@@ -237,13 +237,19 @@ class ShardFailures(Temporary):
         path.write_text(json.dumps({'shards': shards}))
         return str(path)
 
-    def shard(self, index, failed=(), exit_code=None, timed_out=False, signal=None, times=None):
+    def shard(self, index, failed=(), exit_code=None, timed_out=False, signal=None, times=None, log=None):
         report = self.root / ('server-%d.json' % index)
         report.write_text(json.dumps({'testResults': [
             {'name': '/tree/apps/server/' + name, 'startTime': 1000, 'endTime': 1000 + int(1000 * seconds)}
             for name, seconds in (times or {}).items()]}))
+        path = self.root / ('server-%d.log' % index)
+        if log is None:  # What vitest prints when only test files failed.
+            log = (' Test Files  %d failed | 9 passed (%d)\n      Tests  %d failed | 90 passed\n'
+                   % (len(failed), len(failed) + 9, len(failed)) if failed else ' Test Files  9 passed (9)\n')
+        path.write_text(log)
         return {'index': index, 'exitCode': (1 if failed else 0) if exit_code is None else exit_code,
-                'timedOut': timed_out, 'signal': signal, 'failedFiles': list(failed), 'report': str(report)}
+                'timedOut': timed_out, 'signal': signal, 'failedFiles': list(failed), 'report': str(report),
+                'log': str(path)}
 
     def test_failed_files_with_their_seconds(self):
         path = self.summary([self.shard(1, ['src/a.test.ts'], times={'src/a.test.ts': 17.2}),
@@ -259,6 +265,29 @@ class ShardFailures(Temporary):
         many = self.summary([self.shard(1, ['src/%d.test.ts' % n for n in range(6)])])
         self.assertEqual(release_tools.shard_failures(many, 5), [])
         self.assertEqual(release_tools.shard_failures(self.summary([self.shard(1)]), 5), [])
+
+    def test_nothing_to_retry_when_the_shard_failed_for_more_than_its_files(self):
+        # Vitest's JSON report marks the file an unhandled rejection came from as passed; a retry
+        # of the failed file alone would pass and hide the error.
+        unhandled = ('\u23af\u23af Unhandled Errors \u23af\u23af\nVitest caught 1 unhandled error during the test run.\n'
+                     '\x1b[2m Test Files \x1b[22m 1 failed | 1 passed (2)\n      Tests  1 failed | 1 passed (2)\n'
+                     '     Errors  1 error\n')
+        self.assertEqual(release_tools.shard_failures(
+            self.summary([self.shard(1, ['src/a.test.ts'], log=unhandled)]), 5), [])
+        errors_only = ' Test Files  1 failed | 1 passed (2)\n     Errors  2 errors\n'
+        self.assertEqual(release_tools.shard_failures(
+            self.summary([self.shard(1, ['src/a.test.ts'], log=errors_only)]), 5), [])
+        mismatch = ' Test Files  2 failed | 7 passed (9)\n'
+        self.assertEqual(release_tools.shard_failures(
+            self.summary([self.shard(1, ['src/a.test.ts'], log=mismatch)]), 5), [])
+        no_summary = self.shard(1, ['src/a.test.ts'], log='killed before the summary\n')
+        self.assertEqual(release_tools.shard_failures(self.summary([no_summary]), 5), [])
+        missing = self.shard(1, ['src/a.test.ts'])
+        missing['log'] = str(self.root / 'none.log')
+        self.assertEqual(release_tools.shard_failures(self.summary([missing]), 5), [])
+        colored = '\x1b[2m Test Files \x1b[22m \x1b[1m\x1b[31m1 failed\x1b[39m\x1b[22m | 8 passed (9)\n'
+        self.assertEqual(release_tools.shard_failures(
+            self.summary([self.shard(1, ['src/a.test.ts'], log=colored)]), 5), [('src/a.test.ts', 0)])
 
 
 class StageOneOrder(Temporary):

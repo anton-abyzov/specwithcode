@@ -57,6 +57,7 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import { expandHomePathWith } from "../pathExpansion.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import * as WorkspaceSensitivePaths from "../workspace/WorkspaceSensitivePaths.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { openMediaFile, readMediaFileHeader, type OpenMediaFile } from "./MediaFile.ts";
 
@@ -248,6 +249,32 @@ const resolveCanonicalFile = Effect.fn("AssetAccess.resolveCanonicalFile")(funct
   return Option.isSome(info) && info.value.type === "File" ? canonicalFile.value : null;
 });
 
+/**
+ * True for a credential or app state file (see WorkspaceSensitivePaths): the
+ * path as named, where it really leads, and its device and inode, so a link or
+ * another spelling of a protected file is caught. Callers answer as if the file
+ * were missing. A path that no longer resolves counts as protected.
+ */
+const isProtectedAssetFile = Effect.fn("AssetAccess.isProtectedAssetFile")(function* (
+  requestedPath: string,
+  canonicalFile: string,
+) {
+  const guard = yield* WorkspaceSensitivePaths.sensitivePathGuardSnapshot;
+  if (guard.isDenied(requestedPath) || guard.isDenied(canonicalFile)) return true;
+  const realpath = yield* WorkspaceSensitivePaths.SensitivePathsRealpath;
+  const nativeFile = yield* Effect.promise(() => realpath(canonicalFile).catch(() => null));
+  if (nativeFile === null || guard.isDenied(nativeFile)) return true;
+  return yield* Effect.promise(() => guard.matchesProtectedIdentity(nativeFile));
+});
+
+/** The canonical file, or null when it is protected. */
+const unlessProtected = (requestedPath: string, canonicalFile: string | null) =>
+  canonicalFile === null
+    ? Effect.succeed(null)
+    : isProtectedAssetFile(requestedPath, canonicalFile).pipe(
+        Effect.map((isProtected) => (isProtected ? null : canonicalFile)),
+      );
+
 const resolveCanonicalWorkspaceFile = Effect.fn("AssetAccess.resolveCanonicalWorkspaceFile")(
   function* (input: { readonly workspaceRoot: string; readonly relativePath: string }) {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -330,7 +357,7 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
         (cause) => new AssetWorkspaceAssetInspectionError({ resource: input.resource, cause }),
       ),
     );
-    if (!canonicalFile) {
+    if (!canonicalFile || (yield* isProtectedAssetFile(input.requestedPath, canonicalFile))) {
       return yield* new AssetWorkspaceAssetNotFoundError({ resource: input.resource });
     }
     if (hostPreviewMimeTypeFromExtension(path.extname(canonicalFile)) === null) {
@@ -414,7 +441,7 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
           }),
       ),
     );
-    if (!canonicalFile) {
+    if (!canonicalFile || (yield* isProtectedAssetFile(resolved.absolutePath, canonicalFile))) {
       return yield* new AssetWorkspaceAssetNotFoundError({
         resource: input.resource,
       });
@@ -804,6 +831,7 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
 
   const claims = decodeClaims(encodedPayload);
   if (!claims || claims.expiresAt <= (yield* Clock.currentTimeMillis)) return null;
+  const path = yield* Path.Path;
 
   if (claims.kind === "attachment") {
     const config = yield* ServerConfig.ServerConfig;
@@ -839,7 +867,11 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
     const faviconPath = yield* resolveCanonicalWorkspaceFileForRequest({
       workspaceRoot: claims.workspaceRoot,
       relativePath: claims.relativePath,
-    });
+    }).pipe(
+      Effect.flatMap((file) =>
+        unlessProtected(path.resolve(claims.workspaceRoot, claims.relativePath!), file),
+      ),
+    );
     return faviconPath ? ({ kind: "file", path: faviconPath } satisfies ResolvedAsset) : null;
   }
 
@@ -852,6 +884,7 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
         }),
       ),
       Effect.orElseSucceed(() => null),
+      Effect.flatMap((file) => unlessProtected(claims.filePath, file)),
     );
     return faviconPath === claims.filePath
       ? ({ kind: "file", path: faviconPath } satisfies ResolvedAsset)
@@ -889,7 +922,6 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
 
   const decodedPath = decodeRelativePath(relativePath);
   if (decodedPath === null) return null;
-  const path = yield* Path.Path;
   if (claims.kind === "media-file-exact") {
     if (decodedPath !== path.basename(claims.filePath)) return null;
     const canonicalFile = yield* resolveCanonicalFile(claims.filePath).pipe(
@@ -902,6 +934,7 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       Effect.orElseSucceed(() => null),
     );
     if (canonicalFile !== claims.filePath) return null;
+    if (yield* isProtectedAssetFile(claims.filePath, canonicalFile)) return null;
     const mimeType = hostPreviewMimeTypeFromExtension(path.extname(canonicalFile));
     if (!mimeType) return null;
     const file = yield* openMediaFile(canonicalFile, claims).pipe(
@@ -919,7 +952,11 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
     const exactWorkspaceFile = yield* resolveCanonicalWorkspaceFileForRequest({
       workspaceRoot: claims.workspaceRoot,
       relativePath: claims.relativePath,
-    });
+    }).pipe(
+      Effect.flatMap((file) =>
+        unlessProtected(path.resolve(claims.workspaceRoot, claims.relativePath), file),
+      ),
+    );
     return exactWorkspaceFile
       ? ({ kind: "file", path: exactWorkspaceFile } satisfies ResolvedAsset)
       : null;
@@ -938,6 +975,10 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
   const workspaceFile = yield* resolveCanonicalWorkspaceFileForRequest({
     workspaceRoot: claims.workspaceRoot,
     relativePath: joinedRelativePath,
-  });
+  }).pipe(
+    Effect.flatMap((file) =>
+      unlessProtected(path.resolve(claims.workspaceRoot, joinedRelativePath), file),
+    ),
+  );
   return workspaceFile ? ({ kind: "file", path: workspaceFile } satisfies ResolvedAsset) : null;
 });

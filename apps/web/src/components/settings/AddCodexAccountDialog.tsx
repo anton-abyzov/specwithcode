@@ -10,7 +10,6 @@ import {
 import { useEffect, useEffectEvent, useState, type ReactNode } from "react";
 import { usesChatGptSharing } from "@specweave-studio/shared/usageLimits";
 
-import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { randomUUID } from "../../lib/utils";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -34,9 +33,11 @@ export function AddCodexAccountDialog({
   readonly renderSetup: (instanceId: ProviderInstanceId, provider: ServerProvider) => ReactNode;
 }) {
   const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
-  const settings = useEnvironmentSettings(environmentId);
   const providers = useAtomValue(serverEnvironment.providersValueAtom(environmentId));
-  const update = useAtomCommand(serverEnvironment.updateSettings, "Add ChatGPT account");
+  const createInstance = useAtomCommand(
+    serverEnvironment.mutateProviderInstance,
+    "Add ChatGPT account",
+  );
   const [name, setName] = useState("Personal");
   const displayName = `ChatGPT - ${name.trim()}`;
   const [instanceId, setInstanceId] = useState<ProviderInstanceId | null>(null);
@@ -55,18 +56,20 @@ export function AddCodexAccountDialog({
     setPending(true);
     // The ID is routing identity; the name is editable and need not be unique.
     const id = ProviderInstanceId.make(`codex_${randomUUID()}`);
-    const result = await update({
+    // One create, not the whole map: a map from this window could drop an
+    // instance another window just added.
+    const result = await createInstance({
       environmentId,
       input: {
-        patch: {
-          providerInstances: {
-            ...settings.providerInstances,
-            [id]: {
-              driver: ProviderDriverKind.make("codex"),
-              displayName,
-              enabled: true,
-              config: { enabled: true, setupMode: "managed" },
-            },
+        patch: {},
+        providerInstanceMutation: {
+          operation: "create",
+          instanceId: id,
+          instance: {
+            driver: ProviderDriverKind.make("codex"),
+            displayName,
+            enabled: true,
+            config: { enabled: true, setupMode: "managed" },
           },
         },
       },

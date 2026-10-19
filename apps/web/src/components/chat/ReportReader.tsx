@@ -1,4 +1,8 @@
-import type { ReportDocument } from "@specweave-studio/shared/reportDocument";
+import {
+  markdownDocument,
+  type ReportDocument,
+  type ReportDocumentPart,
+} from "@specweave-studio/shared/reportDocument";
 import {
   CheckIcon,
   ChevronDownIcon,
@@ -56,6 +60,47 @@ function Chip({ children }: { children: ReactNode }) {
   );
 }
 
+function PropertyRows(props: {
+  readonly properties: ReadonlyArray<ReportDocumentPart>;
+  readonly renderMarkdown: (markdown: string) => ReactNode;
+}) {
+  return props.properties.map((property) => (
+    <PropertyRow key={property.label} label={property.label}>
+      {property.chips ? (
+        property.chips.map((chip) => <Chip key={chip}>{chip}</Chip>)
+      ) : (
+        <div className="report-document-property-value">
+          {props.renderMarkdown(property.markdown)}
+        </div>
+      )}
+    </PropertyRow>
+  ));
+}
+
+/**
+ * A Markdown file on the page: its title, its frontmatter as a property table,
+ * then the body as written. Goes inside a `.report-document` page.
+ */
+export function MarkdownDocumentView(props: {
+  readonly text: string;
+  readonly renderMarkdown: (markdown: string) => ReactNode;
+}) {
+  const document = useMemo(() => markdownDocument(props.text), [props.text]);
+  return (
+    <>
+      {document.title ? <h1 className="report-document-title">{document.title}</h1> : null}
+      {document.properties.length > 0 ? (
+        <dl className="report-document-properties" data-report-properties="true">
+          <PropertyRows properties={document.properties} renderMarkdown={props.renderMarkdown} />
+        </dl>
+      ) : null}
+      <div className="report-document-prose" data-markdown-body="true">
+        {props.renderMarkdown(document.body)}
+      </div>
+    </>
+  );
+}
+
 /**
  * The reader's page for a report with labeled parts or frontmatter: its
  * facts, a serif title, the outcome as the lead, then each section.
@@ -84,17 +129,7 @@ export function ReportDocumentView(props: {
               <Chip>{save.increment}</Chip>
             </PropertyRow>
           ) : null}
-          {document.properties.map((property) => (
-            <PropertyRow key={property.label} label={property.label}>
-              {property.chips ? (
-                property.chips.map((chip) => <Chip key={chip}>{chip}</Chip>)
-              ) : (
-                <div className="report-document-property-value">
-                  {props.renderMarkdown(property.markdown)}
-                </div>
-              )}
-            </PropertyRow>
-          ))}
+          <PropertyRows properties={document.properties} renderMarkdown={props.renderMarkdown} />
           {save?.savedPath ? (
             <PropertyRow label="Saved">
               <Chip>{save.savedPath}</Chip>
@@ -208,9 +243,9 @@ function ReportFilePane(props: {
         ) : contents === null ? (
           <p className="p-4 text-muted-foreground text-sm">Loading…</p>
         ) : MARKDOWN_FILE.test(name) && props.renderMarkdown ? (
-          <div className="report-document report-document-page report-document-prose">
-            {props.renderMarkdown(contents)}
-          </div>
+          <article className="report-document report-document-page">
+            <MarkdownDocumentView text={contents} renderMarkdown={props.renderMarkdown} />
+          </article>
         ) : (
           <ReadOnlySourcePreview name={name} text={contents} revealLine={target.line} />
         )}

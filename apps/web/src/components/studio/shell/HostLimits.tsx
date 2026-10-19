@@ -12,10 +12,12 @@ import { useEffect, useMemo, useState } from "react";
 
 import { environmentPresentations } from "../../../state/presentation";
 import {
+  bindingWindowId,
   collectHostLimitBlocks,
   formatAgo,
   savableReadings,
   usageToneOf,
+  windowDisplayLabel,
   type HostLimitBlock,
   type HostLimitWindow,
   type HostProviderRow,
@@ -88,6 +90,7 @@ function ProviderIcon({ row, size }: { row: HostProviderRow; size: "sm" | "md" }
 }
 
 function ProviderRow({ row, now, dim }: { row: HostProviderRow; now: number; dim: boolean }) {
+  const binding = bindingWindowId(row.windows);
   return (
     <li className="sws-hl-provider" data-dim={dim || undefined}>
       <div className="sws-hl-provider-name">
@@ -117,8 +120,16 @@ function ProviderRow({ row, now, dim }: { row: HostProviderRow; now: number; dim
               key={`${window.kind}:${window.id}`}
               className="sws-hl-window"
               data-blocked={window.blockedBy ? "" : undefined}
+              data-binding={
+                row.windows.length > 1 && `${window.kind}:${window.id}` === binding ? "" : undefined
+              }
             >
-              <span className="sws-hl-window-label">{window.label}</span>
+              <span className="sws-hl-window-label">
+                {windowDisplayLabel(window)}
+                {row.windows.length > 1 && `${window.kind}:${window.id}` === binding ? (
+                  <span className="sr-only">, runs out first</span>
+                ) : null}
+              </span>
               <span
                 className="sws-hl-bar"
                 data-tone={
@@ -312,12 +323,6 @@ export function MachineLimitBlocksView({
   );
 }
 
-/** When the fullest window resets: shown once a provider runs low, when it matters. */
-function peakResetsAt(row: HostProviderRow): number | null {
-  const peak = row.windows.find((window) => !window.stale && window.usedPercent === row.peak);
-  return peak?.blockedBy?.resetsAt ?? peak?.resetsAt ?? null;
-}
-
 function compactStatus(block: HostLimitBlock, now: number): string {
   if (block.status === "online") return "Online";
   if (block.status === "connecting") return "Connecting";
@@ -330,11 +335,29 @@ function accountLine(row: HostProviderRow): string {
   return row.sharedWith.length > 0 ? `${who} · also on ${row.sharedWith.join(", ")}` : who;
 }
 
-function CompactWindowRow({ window, now }: { window: HostLimitWindow; now: number }) {
+/**
+ * One window of a provider: its name, what is left and when it resets. With
+ * several windows, the one that stops the provider first keeps full contrast
+ * and the others recede; a warning or spent tone always shows. A blocked row
+ * names its blocker, whose own row shows the reset.
+ */
+function CompactWindowRow({
+  window,
+  now,
+  rank,
+}: {
+  window: HostLimitWindow;
+  now: number;
+  rank: "binding" | "other" | null;
+}) {
   const tone = window.stale || window.blockedBy ? "stale" : usageToneOf(window.usedPercent);
+  const label = windowDisplayLabel(window);
   return (
-    <div className="sws-hl-compact-window" data-tone={tone}>
-      <span className="sws-hl-compact-window-label">{window.label}</span>
+    <div className="sws-hl-compact-window" data-tone={tone} data-rank={rank ?? undefined}>
+      <span className="sws-hl-compact-window-label">
+        {label}
+        {rank === "binding" ? <span className="sr-only">, runs out first</span> : null}
+      </span>
       <span className="sws-hl-bar" data-tone={tone} aria-hidden>
         <span style={{ width: `${leftPercent(window.usedPercent)}%` }} />
       </span>
@@ -344,9 +367,12 @@ function CompactWindowRow({ window, now }: { window: HostLimitWindow; now: numbe
             <span className="sws-hl-compact-value">Blocked</span>
           </Tip>
           <span className="sws-hl-compact-aside">
-            {window.blockedBy.resetsAt === null || window.blockedBy.resetsAt <= now
-              ? ""
-              : `in ${formatDuration(window.blockedBy.resetsAt - now)}`}
+            by {window.blockedBy.label}
+            {window.blockedBy.resetsAt !== null && window.blockedBy.resetsAt > now ? (
+              <span className="sr-only">
+                {`, usable again in ${formatDuration(window.blockedBy.resetsAt - now)}`}
+              </span>
+            ) : null}
           </span>
         </>
       ) : (
@@ -364,9 +390,9 @@ function CompactWindowRow({ window, now }: { window: HostLimitWindow; now: numbe
 }
 
 /**
- * A provider on a host: its fullest window on the first line, the account
- * under it. The account the project's coordinator uses opens up to every
- * window instead, so the popover needs no separate section for it.
+ * A provider on a host: its name and account on one line, then every window
+ * it reports on aligned rows, so a 5-hour and a weekly limit read side by side
+ * and the one that binds stands out. The coordinator's account adds its plan.
  */
 function CompactProviderEntry({
   row,
@@ -377,49 +403,37 @@ function CompactProviderEntry({
   now: number;
   coordinator: boolean;
 }) {
-  const tone = usageToneOf(row.peak);
-  const resetsAt = tone === "ok" ? null : peakResetsAt(row);
+  const binding = row.windows.length > 1 ? bindingWindowId(row.windows) : null;
   const account = [accountLine(row), coordinator ? row.plan : null].filter(Boolean).join(" · ");
   return (
     <li
       className="sws-hl-compact-entry"
-      data-tone={tone}
+      data-tone={usageToneOf(row.peak)}
       data-coordinator={coordinator || undefined}
     >
       <div className="sws-hl-compact-row">
         <ProviderIcon row={row} size="sm" />
-        {coordinator ? (
-          <span className="sws-hl-compact-provider" data-wide="">
-            {row.label}
-            <span className="sws-hl-tag">Coordinator</span>
-          </span>
-        ) : (
-          <>
-            <span className="sws-hl-compact-provider">{row.label}</span>
-            <span className="sws-hl-bar" data-tone={tone} aria-hidden>
-              <span style={{ width: `${row.peak === null ? 0 : leftPercent(row.peak)}%` }} />
-            </span>
-            <span className="sws-hl-compact-value">
-              {row.peak === null ? "–" : usageLeftLabel(row.peak)}
-            </span>
-            <span className="sws-hl-compact-aside">
-              {resetsAt !== null && resetsAt > now ? `in ${formatDuration(resetsAt - now)}` : null}
-            </span>
-          </>
-        )}
+        <span className="sws-hl-compact-provider" data-wide="">
+          <span className="sws-hl-compact-name">{row.label}</span>
+          {coordinator ? <span className="sws-hl-tag">Coordinator</span> : null}
+          <Tip label={account} side="left">
+            <span className="sws-hl-compact-account">{account}</span>
+          </Tip>
+        </span>
       </div>
-      <Tip label={account} side="left">
-        <span className="sws-hl-compact-account">{account}</span>
-      </Tip>
-      {coordinator
-        ? row.windows.map((window) => (
-            <CompactWindowRow key={`${window.kind}:${window.id}`} window={window} now={now} />
-          ))
-        : null}
-      {coordinator && row.notice !== null ? (
-        <span className="sws-hl-compact-account">{row.notice}</span>
-      ) : null}
-      {coordinator && row.bankedResets > 0 ? (
+      {row.windows.map((window) => {
+        const key = `${window.kind}:${window.id}`;
+        return (
+          <CompactWindowRow
+            key={key}
+            window={window}
+            now={now}
+            rank={binding === null ? null : key === binding ? "binding" : "other"}
+          />
+        );
+      })}
+      {row.notice !== null ? <span className="sws-hl-compact-account">{row.notice}</span> : null}
+      {row.bankedResets > 0 ? (
         <span className="sws-hl-compact-account sws-hl-banked">
           <TicketIcon aria-hidden />
           {row.bankedResets} {row.bankedResets === 1 ? "reset" : "resets"} banked
