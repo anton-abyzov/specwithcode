@@ -20,10 +20,11 @@ OpenCode reads its SQLite database and older JSON history. Antigravity reads loc
 databases, including SpecWithCode-managed profiles. Set `OPENCODE_DATA_DIR` or `ANTIGRAVITY_DATA_DIR` on the
 server to read a different data directory; comma-separated paths read multiple directories.
 
-Cursor reads account usage from Cursor's dashboard API using the CLI login saved on the server.
-This includes headless SpecWithCode sessions and desktop usage across machines; the same account counts
-once across connected environments. Without an accessible CLI login, SpecWithCode shows a
-notice instead of incomplete local totals. SpecWithCode does not estimate missing tokens from conversation text.
+Cursor reads account usage from Cursor's dashboard API using the Cursor CLI login (`agent login`)
+saved on the server. This includes headless SpecWithCode sessions and desktop usage across machines;
+the same account counts once across connected environments. Without an accessible CLI login,
+SpecWithCode shows a notice instead of incomplete local totals. Signing in to Cursor inside
+SpecWithCode, or setting `CURSOR_API_KEY`, runs Cursor but does not feed this history. SpecWithCode does not estimate missing tokens from conversation text.
 On macOS, choose **Enable Cursor usage** on Usage to allow SpecWithCode to read your existing CLI login
 from Keychain. You can turn it off in **Settings → Providers → Usage providers**. macOS may ask
 you to allow access on the server Mac.
@@ -102,9 +103,14 @@ anything. The command is offered only for providers that appear under **Usage �
 OpenCode Go reports its session, weekly, and monthly allowance when OpenCode runs locally in
 the environment. SpecWithCode cannot report limits for external OpenCode servers because their credentials
 belong to the remote server. Cursor reports
-its monthly allowance, including separate Auto and API usage, using the CLI login or
-`CURSOR_AUTH_TOKEN`. On macOS, this includes the default Keychain login after you enable Cursor
-usage. Keychain login is used for limits only with Cursor's default API endpoint. If you configure
+its allowance using the Cursor CLI login (`agent login`) or `CURSOR_AUTH_TOKEN`; signing in inside
+SpecWithCode does not provide it. For an instance signed in inside SpecWithCode, limits appear only
+when the CLI login is the same Cursor account. On macOS, the CLI login is read from Keychain once you
+enable Cursor account usage. An explicit `CURSOR_API_KEY` does not report limits.
+X Subscription accounts show one weekly **Included usage** bar; that Grok pool is shared with the
+Grok apps and X. Earlier Cursor plans show monthly **Overall**, **Cursor Models** and **Other
+Models** bars, and so does any account whose plan details Cursor does not return.
+Keychain login is used for limits only with Cursor's default API endpoint. If you configure
 a custom Cursor endpoint, use an explicit token or file-based CLI login for limits.
 
 Grok reports the remaining subscription allowance and reset time for its current billing period

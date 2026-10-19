@@ -869,6 +869,49 @@ class ApplyRecovery(unittest.TestCase):
   self.snapshot_since=late_start
   self.execute();result=json.loads(self.output.read_text())
   self.assertEqual(result['phase'],'verified');self.assertGreater(len(readings),60)
+ def daemon_band_service(self,refuse_rewritten=False):
+  # A real LaunchAgent as install.py wrote it before ProcessType: launchd runs it as a throttled daemon.
+  import plistlib
+  self.plist.write_bytes(plistlib.dumps({'Label':'com.specweave.studio.m4','ProgramArguments':['/usr/bin/caffeinate','-s',str(self.own/'launch.sh')],'RunAtLoad':True,'KeepAlive':True,'ThrottleInterval':10}))
+  self.plist.chmod(0o644);original=self.plist.read_bytes();self.before['fileHashes']['plist']=update.digest(original)
+  self.after_mutation=lambda after:after['fileHashes'].update(plist=update.digest(self.plist.read_bytes()))
+  served=self.transport;loaded=[]
+  def transport(command,**kwargs):
+   if command[:2]==['/bin/launchctl','bootstrap'] and not self.restarted:
+    loaded.append(plistlib.loads(self.plist.read_bytes()))
+    if refuse_rewritten and len(loaded)==1:raise AssertionError('Owned operation failed; arbitrary command output withheld')
+    self.restart_calls.append(command);self.restarted=True
+    (self.own/'userdata/server-runtime.json').write_text(json.dumps({'pid':101,'host':'127.0.0.1','port':8319}))
+   return served(command,**kwargs)
+  self.transport=transport
+  return original,loaded
+ def test_a_daemon_band_service_is_reloaded_as_an_interactive_job(self):
+  import plistlib
+  original,loaded=self.daemon_band_service()
+  self.execute();result=json.loads(self.output.read_text())
+  self.assertEqual(result['phase'],'verified');self.assertEqual(result['serviceLaunchAgent'],'process-type-interactive-added')
+  # kickstart would restart the job launchd already loaded; only bootout and bootstrap read the new key.
+  self.assertEqual(self.launchd,['bootout','bootstrap']);self.assertEqual(self.stops,[100])
+  self.assertTrue(all(call[1]!='kickstart' for call in self.restart_calls))
+  self.assertEqual(loaded[0]['ProcessType'],'Interactive')
+  self.assertEqual(plistlib.loads(self.plist.read_bytes()),{**plistlib.loads(original),'ProcessType':'Interactive'})
+  self.assertEqual(self.plist.stat().st_mode&0o777,0o644)
+  self.assertEqual((pathlib.Path(result['backup'])/'service.plist').read_bytes(),original)
+ def test_an_interactive_service_keeps_its_launch_agent_and_kickstart(self):
+  import plistlib
+  self.plist.write_bytes(plistlib.dumps({'Label':'com.specweave.studio.m4','ProcessType':'Interactive'}))
+  self.before['fileHashes']['plist']=update.digest(self.plist.read_bytes());unchanged=self.plist.read_bytes()
+  self.execute();result=json.loads(self.output.read_text())
+  self.assertEqual(result['phase'],'verified');self.assertNotIn('serviceLaunchAgent',result)
+  self.assertEqual([call[1] for call in self.restart_calls],['kickstart']);self.assertEqual(self.launchd,[])
+  self.assertEqual(self.plist.read_bytes(),unchanged)
+ def test_a_refused_rewritten_launch_agent_loads_the_original_again(self):
+  original,loaded=self.daemon_band_service(refuse_rewritten=True)
+  with self.assertRaisesRegex(AssertionError,'Owned operation failed'):self.execute()
+  # The job is never left unloaded: the original file is back and bootstrapped.
+  self.assertEqual(self.plist.read_bytes(),original);self.assertEqual(len(loaded),2)
+  self.assertNotIn('ProcessType',loaded[1])
+  self.assertEqual(json.loads(self.output.read_text())['result'],'update-failed')
  def test_a_foreign_launcher_kept_aside_is_reported_and_never_fails_the_update(self):
   alias=self.home/'.local/bin/specwithcode';kept=self.home/'.local/bin/.specwithcode.studio-old-fixture'
   def kept_aside(path,content,owned,report=None,**kwargs):

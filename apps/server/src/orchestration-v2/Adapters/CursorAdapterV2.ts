@@ -75,6 +75,11 @@ import {
   subagentThreadTitle,
 } from "../SubagentProjection.ts";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
+import {
+  cursorRunErrorFailure,
+  cursorThrownFailure,
+  cursorTurnStartCause,
+} from "./cursorFailure.ts";
 export { cursorSdkModelSelection } from "../../provider/cursorSdkModel.ts";
 
 export const CURSOR_DRIVER_KIND = CursorAgentSdk.CURSOR_PROVIDER;
@@ -2304,14 +2309,15 @@ export function makeCursorAdapterV2(
                       status,
                       ...(status === "failed"
                         ? {
-                            failure: makeProviderFailure({
-                              cause:
-                                transportFailure ?? (result as { readonly error?: unknown }).error,
-                              class:
-                                transportFailure === undefined
-                                  ? "provider_error"
-                                  : "transport_error",
-                            }),
+                            // Cursor's RunError is a plain {message, code}; its text
+                            // names the real reason, such as a used-up weekly pool.
+                            failure:
+                              transportFailure === undefined
+                                ? cursorRunErrorFailure(result.error)
+                                : makeProviderFailure({
+                                    cause: transportFailure,
+                                    class: "transport_error",
+                                  }),
                           }
                         : {}),
                     });
@@ -2327,7 +2333,7 @@ export function makeCursorAdapterV2(
                       ...(context.interrupted
                         ? {}
                         : {
-                            failure: makeProviderFailure({ cause, class: "transport_error" }),
+                            failure: cursorThrownFailure(cause),
                           }),
                     });
                   }
@@ -2351,7 +2357,10 @@ export function makeCursorAdapterV2(
                     threadId: turnInput.threadId,
                     providerThreadId: turnInput.providerThread.id,
                     runId: turnInput.runId,
-                    cause,
+                    cause: cursorTurnStartCause(cause, {
+                      instanceId: adapterOptions.instanceId,
+                      model: turnInput.modelSelection.model,
+                    }),
                   }),
               ),
             ),

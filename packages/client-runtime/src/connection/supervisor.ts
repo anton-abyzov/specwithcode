@@ -30,7 +30,12 @@ import * as RpcSession from "../rpc/session.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
-import { connectionRouteId, connectionRoutes, entryWithRoutes } from "./routes.ts";
+import {
+  connectionRouteId,
+  connectionRouteKind,
+  connectionRoutes,
+  entryWithRoutes,
+} from "./routes.ts";
 
 const RETRY_BASE_DELAY_MS = 1_000;
 const RETRY_MAX_DELAY_MS = 300_000;
@@ -41,6 +46,11 @@ const CONNECTION_PROBE_TIMEOUT = "15 seconds";
 // the user is waiting, or the network may be gone.
 const QUICK_CONNECTION_PROBE_TIMEOUT = "3 seconds";
 const BACKOFF_RESET_AFTER_MS = 30_000;
+// The desktop app's own server on this machine (see `thisMachine`) does not
+// depend on the network and only stops answering while it restarts or stalls,
+// so it is retried on a short ladder and a session counts as stable sooner.
+export const LOOPBACK_RETRY_MAX_DELAY_MS = 3_000;
+export const LOOPBACK_BACKOFF_RESET_AFTER_MS = 5_000;
 // While connected over a fallback route, how often to look for a better one.
 // Network changes and returning to the app also trigger a check.
 const BETTER_ROUTE_CHECK_INTERVAL = "60 seconds";
@@ -114,6 +124,15 @@ function exitUnlessInterrupted<A, E, R>(
 export interface EnvironmentSupervisorOptions {
   readonly initiallyDesired?: boolean;
   /**
+   * The desktop app's own server on this machine. Its primary loopback route
+   * then rides out stalls: it is never parked offline, its probes get the full
+   * timeout, and it retries on a short ladder. A loopback address alone does
+   * not mean this machine: an SSH port forward or a browser tab opened at a
+   * forwarded port reaches a remote machine over loopback too, so those keep
+   * the remote policy.
+   */
+  readonly thisMachine?: boolean;
+  /**
    * Saves the direct addresses the server reports once a session is ready and
    * returns the entry with its updated routes, which later attempts use. The
    * live session is left alone: it already works.
@@ -126,17 +145,36 @@ export interface EnvironmentSupervisorOptions {
 
 /**
  * Delay before the next attempt after `failureCount` consecutive failures
- * (0 for the first retry). The ceiling doubles from 2s up to 5 minutes, and
- * the delay is a random point in its upper half: never quicker than half the
- * ceiling, and spread out so clients that lost the same server do not all
- * reconnect in the same second. `random` is in [0, 1).
+ * (0 for the first retry). The ceiling doubles from 2s up to `maxDelayMs`
+ * (5 minutes unless given), and the delay is a random point in its upper
+ * half: never quicker than half the ceiling, and spread out so clients that
+ * lost the same server do not all reconnect in the same second. `random` is
+ * in [0, 1).
  *
  * The long cap only applies to a connection that keeps failing. Returning to
  * the app, the network coming back, and an explicit retry all skip the wait.
  */
-export function retryDelayMs(failureCount: number, random: number): number {
-  const ceiling = Math.min(RETRY_MAX_DELAY_MS, RETRY_BASE_DELAY_MS * 2 ** (failureCount + 1));
+export function retryDelayMs(
+  failureCount: number,
+  random: number,
+  maxDelayMs: number = RETRY_MAX_DELAY_MS,
+): number {
+  const ceiling = Math.min(maxDelayMs, RETRY_BASE_DELAY_MS * 2 ** (failureCount + 1));
   return Math.round(ceiling / 2 + (ceiling / 2) * random);
+}
+
+/**
+ * A route to the desktop app's own server on this machine, which needs no
+ * network to reach: the primary route at a loopback address, on a supervisor
+ * told it is this machine.
+ */
+function isThisMachineRoute(thisMachine: boolean, route: ConnectionRoute | undefined): boolean {
+  return (
+    thisMachine &&
+    route !== undefined &&
+    route.target._tag === "PrimaryConnectionTarget" &&
+    connectionRouteKind(route) === "loopback"
+  );
 }
 
 function annotateTarget(target: ConnectionTarget) {
@@ -272,6 +310,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     network: yield* connectivity.status,
   };
   const intent = yield* Ref.make(initialIntent);
+  const thisMachine = options?.thisMachine ?? false;
+  const isLoopbackRoute = (route: ConnectionRoute | undefined) =>
+    isThisMachineRoute(thisMachine, route);
+  const initiallyLoopback = isLoopbackRoute(connectionRoutes(entry)[0]);
   const signals = yield* Queue.unbounded<SupervisorSignal>();
   const resetRetryState = yield* Ref.make(false);
   // Set while a probe of the live session is running, and kept when it fails
@@ -282,7 +324,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const state = yield* SubscriptionRef.make<SupervisorConnectionState>(
     !initialIntent.desired
       ? availableState(initialIntent, 0)
-      : initialIntent.network === "offline"
+      : initialIntent.network === "offline" && !initiallyLoopback
         ? offlineState(initialIntent, 0, 0, null)
         : connectingState(initialIntent, 0, 1, null),
   );
@@ -292,6 +334,20 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   // fresh by each attempt and check instead of being fixed at creation.
   const currentEntry = yield* Ref.make(entry);
   const currentRoutes = Ref.get(currentEntry).pipe(Effect.map(connectionRoutes));
+  // Whether the next attempt starts on a route to this machine. Routes are
+  // ranked loopback first, so that route answers whenever the server does.
+  const prefersLoopback = currentRoutes.pipe(Effect.map((routes) => isLoopbackRoute(routes[0])));
+  // Whether a live session runs over a route to this machine.
+  const leaseIsLoopback = (lease: ConnectionDriver.EnvironmentConnectionLease) =>
+    currentRoutes.pipe(
+      Effect.map((routes) =>
+        isLoopbackRoute(
+          routes.find(
+            (route) => connectionRouteId(route.target) === connectionRouteId(lease.prepared.target),
+          ),
+        ),
+      ),
+    );
   // Set when a better route answered while connected over a worse one; the
   // replacement attempt tries it first. Cleared once an attempt starts.
   const preferredRouteId = yield* Ref.make(Option.none<string>());
@@ -497,7 +553,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     );
   });
 
-  const waitForEstablishmentInterrupt = Effect.fnUntraced(function* () {
+  const waitForEstablishmentInterrupt = Effect.fnUntraced(function* (loopback: boolean) {
     for (;;) {
       const next = yield* Queue.take(signals);
       switch (next._tag) {
@@ -505,7 +561,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         case "RetryRequested":
           return false;
         case "NetworkChanged":
-          if (next.network === "offline") {
+          // Reaching this machine does not need the network.
+          if (next.network === "offline" && !loopback) {
             return false;
           }
           break;
@@ -561,8 +618,23 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   });
 
   // How long a signal waits for the live session to answer a probe, or
-  // undefined when the signal does not question the connection.
-  const probeTimeoutFor = (next: SupervisorSignal): Duration.Input | undefined => {
+  // undefined when the signal does not question the connection. A session to
+  // this machine is never questioned by an offline report, and its probes get
+  // the full timeout: its server can stall for seconds (a full disk, a busy
+  // event loop) while the socket stays healthy, and a quick probe would tear
+  // that session down.
+  const probeTimeoutFor = (
+    next: SupervisorSignal,
+    loopback: boolean,
+  ): Duration.Input | undefined => {
+    if (loopback) {
+      if (next._tag === "NetworkChanged") return undefined;
+      return remoteProbeTimeoutFor(next) === undefined ? undefined : CONNECTION_PROBE_TIMEOUT;
+    }
+    return remoteProbeTimeoutFor(next);
+  };
+
+  const remoteProbeTimeoutFor = (next: SupervisorSignal): Duration.Input | undefined => {
     switch (next._tag) {
       case "RetryRequested":
         return QUICK_CONNECTION_PROBE_TIMEOUT;
@@ -586,8 +658,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   // Holds a connected lease until it must end, and returns whether to restart
   // the retry ladder. Returning to the app, an explicit retry, and the network
   // reporting offline all probe the live session instead of replacing it, so a
-  // healthy socket is not torn down (the offline report is often wrong, for
-  // example for a loopback server). Only a long mobile resume replaces the
+  // healthy socket is not torn down (the offline report is often wrong; a
+  // session to this machine ignores it). Only a long mobile resume replaces the
   // session without a probe. A failed probe fails this effect, and the
   // supervisor reconnects.
   const monitorConnectedLease = Effect.fnUntraced(function* (
@@ -600,6 +672,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         next._tag === "RetryRequested" ? Ref.set(resetRetryState, false) : Effect.void,
       ),
     );
+    const loopback = yield* leaseIsLoopback(lease);
     // Ticks always run: the check skips the preferred route itself, and the
     // route list can grow while connected (learned routes).
     yield* Stream.tick(BETTER_ROUTE_CHECK_INTERVAL).pipe(
@@ -620,7 +693,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       ) {
         yield* requestBetterRouteCheck(lease);
       }
-      const probeTimeout = probeTimeoutFor(next);
+      const probeTimeout = probeTimeoutFor(next, loopback);
       if (probeTimeout === undefined) {
         continue;
       }
@@ -660,7 +733,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         }
         // A retry or an offline report during a desktop foreground probe wants
         // its quicker answer, so it shortens the running probe.
-        const signalTimeout = probeTimeoutFor(probeEvent.signal);
+        const signalTimeout = probeTimeoutFor(probeEvent.signal, loopback);
         if (signalTimeout !== undefined) {
           const signalDeadline =
             (yield* Clock.monotonicTimeNanos) + Duration.toNanosUnsafe(signalTimeout);
@@ -678,6 +751,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     ignoreOffline: boolean,
   ) {
     const switchingTo = yield* Ref.get(preferredRouteId);
+    const attemptLoopback = yield* prefersLoopback;
     yield* SubscriptionRef.set(prepared, Option.none());
     const establishment = yield* Effect.raceAllFirst([
       exitUnlessInterrupted(
@@ -688,7 +762,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           exit,
         })),
       ),
-      waitForEstablishmentInterrupt().pipe(
+      waitForEstablishmentInterrupt(attemptLoopback).pipe(
         Effect.map((resetRetry): EstablishmentEvent => ({
           _tag: "Interrupted",
           resetRetry,
@@ -753,7 +827,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       }
     }
     const currentIntent = yield* Ref.get(intent);
-    if (!currentIntent.desired || (currentIntent.network === "offline" && !ignoreOffline)) {
+    const loopback = yield* leaseIsLoopback(active.lease);
+    if (
+      !currentIntent.desired ||
+      (currentIntent.network === "offline" && !ignoreOffline && !loopback)
+    ) {
       return {
         _tag: "Interrupted",
         established: false,
@@ -762,6 +840,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       } satisfies AttemptOutcome;
     }
 
+    const stableAfterMs = loopback ? LOOPBACK_BACKOFF_RESET_AFTER_MS : BACKOFF_RESET_AFTER_MS;
     const connectedAt = yield* Clock.currentTimeMillis;
     yield* SubscriptionRef.set(prepared, Option.some(active.lease.prepared));
     yield* SubscriptionRef.set(session, Option.some(active.lease.session));
@@ -798,16 +877,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       return {
         _tag: "Interrupted",
         established: true,
-        stable: connectedForMs >= BACKOFF_RESET_AFTER_MS,
+        stable: connectedForMs >= stableAfterMs,
         resetRetry: connectedExit.value,
       } satisfies AttemptOutcome;
     }
-    const outcome = failureFromExit(
-      target,
-      connectedExit,
-      true,
-      connectedForMs >= BACKOFF_RESET_AFTER_MS,
-    );
+    const outcome = failureFromExit(target, connectedExit, true, connectedForMs >= stableAfterMs);
     if (outcome._tag === "Failure") {
       // A live session ending is otherwise invisible in the client trace, so
       // record why, and how long it lasted, as its own root span.
@@ -888,7 +962,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         yield* waitForSignal;
         continue;
       }
-      if (currentIntent.network === "offline" && !replacing) {
+      // A server on this machine needs no network, so an offline report does
+      // not park its connection.
+      if (currentIntent.network === "offline" && !replacing && !(yield* prefersLoopback)) {
         yield* clearLease;
         yield* setState(offlineState(currentIntent, generation, failureCount + 1, latestFailure));
         const applicationActivated = yield* waitForSignal;
@@ -956,7 +1032,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       }
 
       failureCount += 1;
-      const delayMs = retryDelayMs(failureCount - 1, yield* Random.next);
+      const delayMs = retryDelayMs(
+        failureCount - 1,
+        yield* Random.next,
+        (yield* prefersLoopback) ? LOOPBACK_RETRY_MAX_DELAY_MS : RETRY_MAX_DELAY_MS,
+      );
       pendingRetry = Option.map(attemptSpan, (previousAttempt) => ({
         previousAttempt,
         failureCount,

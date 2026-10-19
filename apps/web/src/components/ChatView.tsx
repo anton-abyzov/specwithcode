@@ -382,6 +382,7 @@ import {
   GitBranchIcon,
   LaptopIcon,
   TargetIcon,
+  HourglassIcon,
   WifiOffIcon,
 } from "lucide-react";
 import { cn, randomUUID } from "~/lib/utils";
@@ -485,13 +486,8 @@ import {
   recordChatContinuation,
   useChatContinuationsVersion,
 } from "../lib/chatContinuations";
-import {
-  lastSeenLabel,
-  machineDetail,
-  machineStatus,
-  machineUnavailableTitle,
-} from "../lib/machineStatus";
-import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
+import { isThisMachineCatchingUp, lastSeenLabel, machineDetail } from "../lib/machineStatus";
+import { isDesktopLocalConnectionTarget, isThisMachineTarget } from "../connection/desktopLocal";
 import { useEnvironmentDisconnectDelay } from "../hooks/useEnvironmentDisconnectDelay";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
@@ -518,6 +514,7 @@ import {
   useEnvironmentSupportsServerBrowser,
   useProject,
   useProjects,
+  useThreadError,
   useThreadProjection,
   useThreadStatus,
   useThreadHistory,
@@ -655,6 +652,9 @@ import {
   codexArtifactTemplatePromptToAppend,
   waitForStartedServerThread,
   shouldRefocusComposerOnWindowFocus,
+  environmentUnavailableBanner,
+  environmentWaitsForReconnectGrace,
+  THIS_MACHINE_BUSY_DESCRIPTION,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
@@ -853,6 +853,7 @@ type EnvironmentUnavailableState = {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly connection: EnvironmentConnectionPresentation;
+  readonly isThisMachine: boolean;
 };
 
 function eventPathContainsSelector(event: Event, selector: string): boolean {
@@ -1944,11 +1945,39 @@ function useChatViewState(props: ChatViewProps) {
     ? deriveReportedModelSelection(serverProjection)
     : null;
   const threadStatus = useThreadStatus(routeThreadDetailTarget);
-  const threadSyncPhase = resolveThreadSyncPhase({
+  const threadSyncError = useThreadError(routeThreadDetailTarget);
+  // The thread last shown as stale. Kept until it goes live so a retry, which
+  // clears the error while it runs, does not blink the row off and on.
+  const [threadSyncStaleKey, setThreadSyncStaleKey] = useState<string | null>(null);
+  const threadSyncInput = {
     detailExists: serverProjection !== null,
     shellExists: serverThread !== null,
     status: threadStatus,
+    error: threadSyncError,
+    staleHeld: routeThreadKey !== null && threadSyncStaleKey === routeThreadKey,
+  };
+  // Catching up after a reconnect usually takes well under a second; show the
+  // syncing row only once it outlasts the same grace as the reconnect warning.
+  const threadSyncPendingKey =
+    resolveThreadSyncPhase({ ...threadSyncInput, syncGraceElapsed: true }) === "syncing"
+      ? routeThreadKey
+      : null;
+  const [threadSyncGraceElapsedKey, setThreadSyncGraceElapsedKey] = useState<string | null>(null);
+  useEffect(() => {
+    setThreadSyncGraceElapsedKey(null);
+    if (threadSyncPendingKey === null) return;
+    return scheduleEnvironmentReconnectWarning(() =>
+      setThreadSyncGraceElapsedKey(threadSyncPendingKey),
+    );
+  }, [threadSyncPendingKey]);
+  const threadSyncPhase = resolveThreadSyncPhase({
+    ...threadSyncInput,
+    syncGraceElapsed:
+      threadSyncPendingKey !== null && threadSyncGraceElapsedKey === threadSyncPendingKey,
   });
+  useEffect(() => {
+    setThreadSyncStaleKey(threadSyncPhase === "stale" ? routeThreadKey : null);
+  }, [threadSyncPhase, routeThreadKey]);
   const threadDetailLoading = threadSyncPhase === "loading";
   // Latest provider-reported context usage (#8144): the newest turn that has
   // a report wins; stale turns keep the meter alive between turns.
@@ -3017,11 +3046,14 @@ function useChatViewState(props: ChatViewProps) {
   const activeEnvironmentConnectionPhase = activeEnvironment?.connection.phase ?? "available";
   const activeEnvironmentUnavailable =
     activeEnvironment !== null && activeEnvironmentConnectionPhase !== "connected";
-  const activeReconnectingEnvironmentId =
-    activeEnvironmentConnectionPhase === "connecting" ||
-    activeEnvironmentConnectionPhase === "reconnecting"
-      ? (activeEnvironment?.environmentId ?? null)
-      : null;
+  // The app's own machine is never offline: a slow answer from it means busy.
+  const activeEnvironmentIsThisMachine = isThisMachineTarget(activeEnvironment?.entry);
+  const activeReconnectingEnvironmentId = environmentWaitsForReconnectGrace(
+    activeEnvironmentConnectionPhase,
+    activeEnvironmentIsThisMachine,
+  )
+    ? (activeEnvironment?.environmentId ?? null)
+    : null;
   const [reconnectWarningGraceElapsedEnvironmentId, setReconnectWarningGraceElapsedEnvironmentId] =
     useState<EnvironmentId | null>(null);
   const reconnectWarningGraceElapsed = hasEnvironmentReconnectWarningGraceElapsed(
@@ -3045,8 +3077,14 @@ function useChatViewState(props: ChatViewProps) {
       environmentId: activeEnvironment.environmentId,
       label: activeEnvironmentUnavailableLabel,
       connection: activeEnvironment.connection,
+      isThisMachine: activeEnvironmentIsThisMachine,
     };
-  }, [activeEnvironment, activeEnvironmentUnavailable, activeEnvironmentUnavailableLabel]);
+  }, [
+    activeEnvironment,
+    activeEnvironmentIsThisMachine,
+    activeEnvironmentUnavailable,
+    activeEnvironmentUnavailableLabel,
+  ]);
   const handleReconnectActiveEnvironment = useCallback(
     async (environmentId: EnvironmentId) => {
       const result = await retryEnvironment(environmentId);
@@ -3378,6 +3416,14 @@ function useChatViewState(props: ChatViewProps) {
   // chat without a project.
   const continueElsewhereTarget = useMemo<ContinueTarget | null>(() => {
     if (!isServerThread || !activeThread || !activeEnvironmentUnavailableState) return null;
+    // This machine catching up is not "could not be reached": forking the chat
+    // over a few-second stall would say exactly that, so offer no fork.
+    if (
+      activeEnvironmentUnavailableState.isThisMachine &&
+      isThisMachineCatchingUp(activeEnvironmentUnavailableState.connection.phase)
+    ) {
+      return null;
+    }
     const machineCandidate = (
       id: EnvironmentId,
       projectId: ProjectId | null,
@@ -3469,33 +3515,42 @@ function useChatViewState(props: ChatViewProps) {
           Disconnect server
         </Button>
       ) : undefined;
-    const unavailableStatus = unavailableConnection ? machineStatus(unavailableConnection) : null;
+    const unavailableBanner =
+      activeEnvironmentUnavailableState && unavailableConnection
+        ? environmentUnavailableBanner({
+            label: activeEnvironmentUnavailableState.label,
+            connection: unavailableConnection,
+            isThisMachine: activeEnvironmentUnavailableState.isThisMachine,
+          })
+        : null;
+    const unavailableStatus = unavailableBanner?.status ?? null;
     // Why it is unreachable and when it was last connected, so the banner says
-    // more than "offline".
-    const unavailableDetail = activeEnvironmentUnavailableState
-      ? machineDetail(
-          lastSeenLabel(activeMachineLastSeenAt, Date.now()),
-          unavailableStatus?.reason ?? null,
-        )
-      : "";
-    const environmentReconnecting =
-      unavailableConnection !== null &&
-      (unavailableConnection.phase === "connecting" ||
-        unavailableConnection.phase === "reconnecting");
+    // more than "offline". This machine is only busy: one calm line instead.
+    const unavailableDetail = unavailableBanner?.calm
+      ? THIS_MACHINE_BUSY_DESCRIPTION
+      : activeEnvironmentUnavailableState
+        ? machineDetail(
+            lastSeenLabel(activeMachineLastSeenAt, Date.now()),
+            unavailableStatus?.reason ?? null,
+          )
+        : "";
+    const environmentReconnecting = unavailableBanner?.waitsForGrace === true;
     // While an update runs, transient connect blips are expected (the server
     // restarts) and the update banner already shows progress. Hard failure
     // phases still surface so the Reconnect action stays reachable.
     const suppressUnavailableBanner =
       environmentReconnecting && (updateRunning || !reconnectWarningGraceElapsed);
-    if (activeEnvironmentUnavailableState && unavailableConnection && !suppressUnavailableBanner) {
+    if (
+      activeEnvironmentUnavailableState &&
+      unavailableConnection &&
+      unavailableBanner &&
+      !suppressUnavailableBanner
+    ) {
       items.push({
         id: `environment-unavailable:${activeEnvironmentUnavailableState.environmentId}`,
-        variant: unavailableConnection.phase === "error" ? "error" : "warning",
-        icon: <WifiOffIcon />,
-        title: machineUnavailableTitle(
-          activeEnvironmentUnavailableState.label,
-          unavailableConnection,
-        ),
+        variant: unavailableBanner.variant,
+        icon: unavailableBanner.calm ? <HourglassIcon /> : <WifiOffIcon />,
+        title: unavailableBanner.title,
         description:
           [
             unavailableDetail,

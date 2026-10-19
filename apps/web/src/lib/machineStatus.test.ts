@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { lastSeenLabel, machineDetail, machineStatus } from "./machineStatus";
+import {
+  lastSeenLabel,
+  machineDetail,
+  machineStatus,
+  machineUnavailableTitle,
+  savedMachineStatus,
+} from "./machineStatus";
 
 describe("machineStatus", () => {
   it("calls a machine unreachable once an attempt has failed, with the reason", () => {
@@ -30,6 +36,79 @@ describe("machineStatus", () => {
   });
 });
 
+describe("machineStatus for this machine", () => {
+  const STALL =
+    "Environment endpoint http://127.0.0.1:8319/.well-known/studio/environment timed out after 10000ms.";
+
+  it("says it is catching up, without a reason or a failure retry, while its server is busy", () => {
+    for (const phase of ["connecting", "reconnecting", "offline"] as const) {
+      expect(machineStatus({ phase, error: STALL }, true, true)).toEqual({
+        text: "Catching up…",
+        reason: null,
+        retryable: false,
+      });
+    }
+  });
+
+  it("keeps Connection failed only for a stopped connection", () => {
+    expect(machineStatus({ phase: "error", error: "Sign in again." }, true, true)).toEqual({
+      text: "Connection failed",
+      reason: "Sign in again.",
+      retryable: true,
+    });
+    expect(machineStatus({ phase: "connected", error: null }, true, true).text).toBe("Connected");
+  });
+
+  it("still calls another machine unreachable", () => {
+    expect(machineStatus({ phase: "reconnecting", error: STALL }, true, false).text).toBe(
+      "Can't reach. Retrying automatically",
+    );
+  });
+});
+
+describe("machineUnavailableTitle", () => {
+  it("never says this machine can't be reached or is offline", () => {
+    for (const phase of ["connecting", "reconnecting", "offline", "available"] as const) {
+      const title = machineUnavailableTitle("Anton's MacBook M4MAX", { phase, error: "x" }, true);
+      expect(title).toBe("SpecWithCode on this Mac is busy");
+    }
+    const failed = machineUnavailableTitle("M4", { phase: "error", error: null }, true);
+    expect(failed).toMatch(/failed/);
+    expect(failed).not.toMatch(/Can't reach|offline/);
+  });
+
+  it("keeps today's titles for another machine", () => {
+    expect(machineUnavailableTitle("M1", { phase: "reconnecting", error: "x" })).toBe(
+      "Can't reach M1",
+    );
+    expect(machineUnavailableTitle("M1", { phase: "offline", error: null })).toBe(
+      "This device is offline",
+    );
+  });
+});
+
+describe("savedMachineStatus", () => {
+  it("reads Catching up for this machine and Can't reach for another", () => {
+    const connection = { phase: "reconnecting", error: "timed out" } as const;
+    expect(savedMachineStatus(connection, true, true)).toEqual({
+      text: "Catching up",
+      tone: "muted",
+    });
+    expect(savedMachineStatus(connection, true, false)).toEqual({
+      text: "Can't reach: timed out",
+      tone: "error",
+    });
+    expect(savedMachineStatus({ phase: "offline", error: null }, true, true).text).toBe(
+      "Catching up",
+    );
+    expect(savedMachineStatus({ phase: "error", error: null }, true, true)).toEqual({
+      text: "Connection failed",
+      tone: "error",
+    });
+    expect(savedMachineStatus(connection, false, true).text).toBe("Off");
+  });
+});
+
 describe("lastSeenLabel", () => {
   it("says how long ago a machine was last connected", () => {
     const now = Date.parse("2026-10-17T18:00:00Z");
@@ -41,8 +120,8 @@ describe("lastSeenLabel", () => {
 
 describe("machineDetail", () => {
   it("puts last seen before a long reason so truncation keeps it", () => {
-    expect(machineDetail("last seen 1m ago", "Failed to fetch remote environment endpoint")).toBe(
-      "last seen 1m ago · Failed to fetch remote environment endpoint",
+    expect(machineDetail("last seen 1m ago", "Failed to fetch environment endpoint")).toBe(
+      "last seen 1m ago · Failed to fetch environment endpoint",
     );
     expect(machineDetail(null, "Sign in again.")).toBe("Sign in again.");
     expect(machineDetail("last seen 2h ago", null)).toBe("last seen 2h ago");

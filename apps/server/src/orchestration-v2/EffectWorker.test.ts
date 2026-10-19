@@ -26,6 +26,7 @@ import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
 import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
+import * as RunLiveness from "./RunLiveness.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
@@ -82,6 +83,8 @@ function layerExecutorFor(input: {
   readonly threads?: Partial<ThreadManagementService.ThreadManagementService["Service"]>;
   readonly continueAfterRestart?: boolean;
   readonly interrupt?: ProviderTurnControlService.ProviderTurnControlServiceV2Shape["interrupt"];
+  /** Records whether the run was held live while its turn started. */
+  readonly recordHeld?: boolean;
 }) {
   const record = (event: string) => Ref.update(input.events, (events) => [...events, event]);
   const layerDependencies = Layer.mergeAll(
@@ -116,7 +119,12 @@ function layerExecutorFor(input: {
       ProviderTurnStartService.ProviderTurnStartServiceV2.of({
         start: () =>
           Effect.gen(function* () {
-            yield* record("start");
+            if (input.recordHeld === true) {
+              const liveness = yield* RunLiveness.RunLiveness;
+              yield* record((yield* liveness.isLive(runId)) ? "start:held" : "start:free");
+            } else {
+              yield* record("start");
+            }
             if (
               input.failFirstStart !== undefined &&
               (yield* Ref.getAndSet(input.failFirstStart, false))
@@ -158,6 +166,8 @@ function layerExecutorFor(input: {
         ),
       ),
     ),
+    // Shared with the test, which reads it through the start above.
+    Layer.provideMerge(RunLiveness.layer),
   );
 }
 
@@ -793,6 +803,21 @@ it.effect("safely retries after replacement cleanup succeeds and start fails", (
       "detach",
       "start",
     ]);
+  }),
+);
+
+it.effect("holds a restarted run live while its turn starts", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const events = yield* Ref.make<ReadonlyArray<string>>([]);
+    const layer = layerExecutorFor({ events, recordHeld: true });
+    yield* Effect.gen(function* () {
+      const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+      yield* executor.execute(restartEffect(now, { type: "detach" }));
+      // Released once the start returns.
+      assert.isFalse(yield* (yield* RunLiveness.RunLiveness).isLive(runId));
+    }).pipe(Effect.provide(layer));
+    assert.deepEqual(yield* Ref.get(events), ["interrupt", "detach", "start:held"]);
   }),
 );
 

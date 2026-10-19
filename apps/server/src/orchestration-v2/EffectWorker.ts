@@ -23,6 +23,7 @@ import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
 import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
+import * as RunLiveness from "./RunLiveness.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
@@ -105,6 +106,7 @@ export const layerExecutor: Layer.Layer<
       yield* ThreadTitleRegenerationService.ThreadTitleRegenerationService;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const settings = yield* ServerSettings.ServerSettingsService;
+    const liveness = yield* RunLiveness.RunLiveness;
     return OrchestrationEffectExecutorV2.of({
       execute: (effect, options) => {
         const willRetry = options?.willRetry ?? false;
@@ -168,8 +170,17 @@ export const layerExecutor: Layer.Layer<
                 ),
               );
           case "provider-turn.start":
-            return providerTurnStart
-              .start({ threadId: effect.threadId, runId: effect.request.runId, willRetry })
+            // The run turns running before its ingestion starts; hold it live
+            // so the liveness watchdog never mistakes a slow start for an orphan.
+            return liveness
+              .hold(
+                effect.request.runId,
+                providerTurnStart.start({
+                  threadId: effect.threadId,
+                  runId: effect.request.runId,
+                  willRetry,
+                }),
+              )
               .pipe(
                 Effect.mapError(
                   (cause) =>
@@ -346,12 +357,17 @@ export const layerExecutor: Layer.Layer<
                         })
                       : Effect.void,
                 ),
+                // The restarted turn turns running inside this start, as a
+                // first start does, so it is held the same way.
                 Effect.andThen(
-                  providerTurnStart.start({
-                    threadId: effect.threadId,
-                    runId: effect.request.runId,
-                    willRetry,
-                  }),
+                  liveness.hold(
+                    effect.request.runId,
+                    providerTurnStart.start({
+                      threadId: effect.threadId,
+                      runId: effect.request.runId,
+                      willRetry,
+                    }),
+                  ),
                 ),
                 Effect.mapError(
                   (cause) =>

@@ -477,6 +477,18 @@ prepared_ok() {
   [ -f "$STAGE/markers/publish-private" ] && [ ! -f "$STAGE/markers/publish-public" ]
 }
 check 'Electron repaired by its install.js, noreply identity set, plan in the sums before drafts' prepared_ok
+tokenless_ok() {  # reads the run above: installs and stage-1 suites never see the release's GitHub token
+  local label line
+  for label in bump:install candidate:install-build candidate:install-test candidate:electron-install \
+    stage1:contrast stage1:test:apps/web stage1:typecheck-gate stage1:fleet-tests; do
+    line="$(stage_line "${label%%:*}" "${label#*:}")"
+    case "$line" in
+      "env -u GH_TOKEN -u GITHUB_TOKEN -u GH_ENTERPRISE_TOKEN -u GITHUB_ENTERPRISE_TOKEN "*) ;;
+      *) printf '     %s: %s\n' "$label" "${line:-not run}" >&2 && return 1 ;;
+    esac
+  done
+}
+check 'dependency installs and stage-1 suites run with every GitHub token unset' tokenless_ok
 
 # Today's main ran fleet-m4 before publish-public: a folder it left after M4 resumes with public
 # next, then M1 and M3; a fleet stage never asks a host for a release the public feed lacks.
@@ -596,6 +608,45 @@ ci_release_ok() {
     [ ! -f "$STAGE/markers/fleet-m4" ] && [ ! -f "$STAGE/markers/desktop" ]
 }
 check 'a --ci release publishes both feeds and merges without fleet files' ci_release_ok
+
+# Stage-1 jobs run without a GitHub token, so a --ci release fetches what they read first.
+PROBE=f0b6d13fb273ae3285861878c43b822731926023
+ci_jobs_after() {  # ci_jobs_after LABEL: LABEL is logged in stage 1 and before every test job
+  case " $(labels_of stage1)" in *" $1 "*contrast*) return 0 ;; esac
+  return 1
+}
+rm -rf "$STAGE"
+stub_set "RELEASE_STUB_OUTPUT=pinned-objects=$PROBE" RELEASE_STUB_STATUS=pinned-complete=1
+ci_pinned_fetched() {
+  run 0 1.6.0 --ci --stop-after stage1 || return 1
+  ci_jobs_after fetch-pinned && stage_line stage1 fetch-pinned | grep -q -- "--no-filter .*--negotiation-tip=.* $PROBE$" &&
+    has "cannot read: $PROBE" && [ -z "$(stage_line stage1 backfill-objects)" ]
+}
+check 'a --ci release fetches the commits the stage-1 audits pin, with full history, before the tests' ci_pinned_fetched
+rm -rf "$STAGE"
+stub_set RELEASE_STUB_STATUS=candidate-complete=1
+ci_backfill_refused() {
+  run 1 1.6.0 --ci --stop-after stage1 || return 1
+  stage_line stage1 backfill-objects | grep -q -- '--refetch --no-filter' &&
+    has 'still lacks objects' && [ -z "$(stage_line stage1 contrast)" ]
+}
+check '... backfills a partial clone, and stops before the tests if objects are still missing' ci_backfill_refused
+rm -rf "$STAGE"
+stub_set RELEASE_STUB_STATUS=no-lazy-fetch=1
+ci_lazy_fetch_refused() {
+  run 1 1.6.0 --ci --stop-after stage1 || return 1
+  has "$PROBE:pnpm-lock.yaml needs a fetch" && [ -z "$(stage_line stage1 contrast)" ]
+}
+check "... and stops before the tests when GIT_NO_LAZY_FETCH=1 git show $PROBE:pnpm-lock.yaml fails" ci_lazy_fetch_refused
+rm -rf "$STAGE"
+stub_set RELEASE_STUB_STATUS= RELEASE_STUB_OUTPUT=pinned-objects=0123456789abcdef0123456789abcdef01234567
+ci_probe_unpinned() {
+  run 1 1.6.0 --ci --stop-after stage1 || return 1
+  has "$PROBE is no longer pinned under scripts/studio-toolchain" && [ -z "$(stage_line stage1 contrast)" ]
+}
+check '... and when the audits no longer pin the probe commit' ci_probe_unpinned
+rm -rf "$STAGE"
+stub_set RELEASE_STUB_STATUS= RELEASE_STUB_OUTPUT=
 
 rm -rf "$STAGE"
 stub_set RELEASE_STUB_OUTPUT=remote-branch=86c4653fe

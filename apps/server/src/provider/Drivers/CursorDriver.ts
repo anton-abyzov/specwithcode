@@ -6,7 +6,11 @@
  *
  * @module provider/Drivers/CursorDriver
  */
-import { CursorSettings, ProviderDriverKind, ProviderSetupError } from "@specweave-studio/contracts";
+import {
+  CursorSettings,
+  ProviderDriverKind,
+  ProviderSetupError,
+} from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import * as Crypto from "effect/Crypto";
 import * as FileSystem from "effect/FileSystem";
@@ -56,6 +60,19 @@ const MAINTENANCE_CAPABILITIES = makeManualOnlyProviderMaintenanceCapabilities({
   provider: DRIVER_KIND,
   packageName: null,
 });
+
+/**
+ * Only a configured key blocks the usage login. A browser sign-in's own key would otherwise
+ * disable the opt-in Keychain and CLI login paths; the reader then checks that login is the
+ * same account as the sign-in.
+ */
+export function cursorUsageEnvironment(
+  processEnv: NodeJS.ProcessEnv,
+  apiKey: string | undefined,
+  usesApiKey: boolean,
+): NodeJS.ProcessEnv {
+  return usesApiKey ? { ...processEnv, CURSOR_API_KEY: apiKey } : processEnv;
+}
 
 export type CursorDriverEnv =
   | CursorAdapterV2DriverEnv
@@ -213,12 +230,14 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
               effectiveConfig.enabled &&
               snapshot.installed &&
               snapshot.auth.status === "authenticated"
-                ? serverSettings.getSettings.pipe(
-                    Effect.flatMap((settings) =>
+                ? Effect.all([serverSettings.getSettings, auth.readAccountEmail]).pipe(
+                    Effect.flatMap(([settings, email]) =>
                       readCursorUsageLimits(
                         effectiveConfig,
-                        { ...processEnv, CURSOR_API_KEY: apiKey },
+                        cursorUsageEnvironment(processEnv, apiKey, auth.usesApiKey),
                         settings.cursorKeychainUsageEnabled,
+                        undefined,
+                        auth.usesApiKey ? undefined : { email },
                       ),
                     ),
                     Effect.map((usageLimits) => ({ ...snapshot, usageLimits })),

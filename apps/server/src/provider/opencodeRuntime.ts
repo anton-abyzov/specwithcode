@@ -35,6 +35,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { signalProcessGroup } from "../process/processGroup.ts";
+import { ProviderProcessSupervisor } from "../process/ProviderProcessSupervisor.ts";
 import { isWindowsCommandNotFound } from "../processRunner.ts";
 import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
 import { withHeadlessBrowserEnvironment } from "./RuntimeInstructions.ts";
@@ -702,6 +703,9 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       // Scopes close in reverse order. Forking this before the group kill is
       // registered forgets the ledger entry only once the group is stopped.
       const ledgerScope = yield* Scope.fork(runtimeScope);
+      const superviseProviderProcess = yield* (yield* ProviderProcessSupervisor).reserve.pipe(
+        Effect.provideService(Scope.Scope, runtimeScope),
+      );
       const child = yield* spawner
         .spawn(
           ChildProcess.make(spawnCommand.command, spawnCommand.args, {
@@ -751,6 +755,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
         Effect.andThen(killOpenCodeProcessGroup("SIGKILL")),
         Effect.ignore,
       );
+      yield* superviseProviderProcess(Number(child.pid));
       // Registered before recording, so an interrupt while the ledger writes
       // still stops the group.
       yield* Scope.addFinalizer(runtimeScope, terminateChild);

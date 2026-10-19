@@ -12,6 +12,7 @@ import {
 import {
   connectionCatalogDisplayUrl,
   environmentMcpUrl,
+  isLoopbackHttpBaseUrl,
   connectionStatusText,
   connectionStatusTitle,
   presentEnvironmentConnection,
@@ -231,5 +232,23 @@ describe("connection presentation", () => {
       error: null,
       traceId: null,
     });
+  });
+});
+
+describe("isLoopbackHttpBaseUrl", () => {
+  it("recognises this device's own loopback server", () => {
+    expect(isLoopbackHttpBaseUrl("http://127.0.0.1:8319")).toBe(true);
+    expect(isLoopbackHttpBaseUrl("http://localhost:8319/")).toBe(true);
+    expect(isLoopbackHttpBaseUrl("http://[::1]:8319")).toBe(true);
+    expect(isLoopbackHttpBaseUrl("https://127.0.0.1:8443")).toBe(true);
+  });
+
+  it("treats every other address, and no address, as another machine", () => {
+    expect(isLoopbackHttpBaseUrl("https://m4.tailnet.example.test")).toBe(false);
+    expect(isLoopbackHttpBaseUrl("http://192.168.1.20:8319")).toBe(false);
+    expect(isLoopbackHttpBaseUrl("ws://127.0.0.1:8319")).toBe(false);
+    expect(isLoopbackHttpBaseUrl("not a url")).toBe(false);
+    expect(isLoopbackHttpBaseUrl(null)).toBe(false);
+    expect(isLoopbackHttpBaseUrl(undefined)).toBe(false);
   });
 });

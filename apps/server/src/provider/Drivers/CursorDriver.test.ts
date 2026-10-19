@@ -15,7 +15,7 @@ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ProviderEventLoggers from "../ProviderEventLoggers.ts";
-import { CursorDriver } from "./CursorDriver.ts";
+import { CursorDriver, cursorUsageEnvironment } from "./CursorDriver.ts";
 import * as CursorAgentSdk from "../../orchestration-v2/Adapters/CursorAgentSdk.ts";
 import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
 import { ProviderAdapterV2RuntimePolicy } from "../../orchestration-v2/ProviderAdapter.ts";
@@ -180,4 +180,13 @@ it.layer(layerTest)("CursorDriver", (it) => {
       Effect.scoped,
     ),
   );
+});
+
+it("lets a browser sign-in read account usage but keeps a configured key isolated", () => {
+  const processEnv = { HOME: "/home/user" };
+  expect(cursorUsageEnvironment(processEnv, "browser-key", false)).toEqual(processEnv);
+  expect(cursorUsageEnvironment(processEnv, "configured-key", true)).toEqual({
+    HOME: "/home/user",
+    CURSOR_API_KEY: "configured-key",
+  });
 });

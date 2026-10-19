@@ -74,6 +74,11 @@ POLICY_RE='^1\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
 STUB_SHA_DEFAULT=1111111111111111111111111111111111111111
 # Run first in stage 1: a contrast offender fails in seconds, not after the web suite.
 CONTRAST_TESTS="src/themeContrastClasses.test.ts src/appearanceContrast.test.ts"
+# The release's GitHub token (GH_TOKEN; RELEASE_GH_TOKEN in CI) can write to both repositories.
+# Dependency installs and test suites never need it, so they run with every GitHub token unset.
+# Defence in depth only: this script and the build stage still hold it, a same-user process can
+# read it from them, and where gh is signed in `gh auth token` still prints it.
+NO_GH_TOKEN=(env -u GH_TOKEN -u GITHUB_TOKEN -u GH_ENTERPRISE_TOKEN -u GITHUB_ENTERPRISE_TOKEN)
 
 VERSION="" MODE=real RESUME=0 SELF_TEST=0 STATUS=0 INTERNAL_SERVER=0 PREV_OVERRIDE="" MIGRATIONS=1 CI_MODE=0
 STOP_AFTER="" JOBS="${RELEASE_JOBS:-4}" SHA="" SHA12="" PREV="" CURRENT_STAGE=main LOCKED=0 STATE_READY=0
@@ -170,6 +175,7 @@ stub_value() {
     tag-sha) printf '%s\n' "$SHA" ;;
     app-version) printf '%s\n' "$VERSION" ;;
     pr-required-buckets) printf 'skipping\n' ;;
+    pinned-objects) printf '%s\n' "$LAZY_FETCH_PROBE" ;;
     packages) printf 'apps/web\t@specweave-studio/web\npackages/shared\t@specweave-studio/shared\n' ;;
     *) printf '' ;;
   esac
@@ -661,7 +667,7 @@ $extra
 EOF
   x release-branch -C "$BUILD" -- git checkout -q -B "release/$VERSION" FETCH_HEAD
   x clean -C "$BUILD" -- git clean -fdxq -e node_modules
-  x install -C "$BUILD" -- pnpm install --frozen-lockfile
+  x install -C "$BUILD" -- "${NO_GH_TOKEN[@]}" pnpm install --frozen-lockfile
   x bump -C "$BUILD" -- node scripts/update-release-package-versions.ts "$VERSION"
   if ! t bump-unchanged -C "$BUILD" -- git diff --quiet; then
     x commit -C "$BUILD" -- git commit -qam "Prepare SpecWithCode $VERSION release"
@@ -698,7 +704,7 @@ stage_candidate() {
   local tree
   for tree in "$TEST" "$BUILD"; do
     x "clean-$(basename "$tree")" -C "$tree" -- git clean -fdxq -e node_modules
-    x "install-$(basename "$tree")" -C "$tree" -- pnpm install --frozen-lockfile
+    x "install-$(basename "$tree")" -C "$tree" -- "${NO_GH_TOKEN[@]}" pnpm install --frozen-lockfile
   done
   t lockfile-unchanged -C "$TEST" -- git diff --quiet -- pnpm-lock.yaml ||
     die "pnpm install changed pnpm-lock.yaml at $SHA12; commit the lockfile fix"
@@ -724,7 +730,7 @@ electron_runtime() {
   say "$CURRENT_STAGE: electron's runtime is missing or incomplete in $electron; running its install.js"
   need_file "$electron/install.js" "electron's install script (pnpm install did not link electron)"
   x electron-reset -- rm -rf "$electron/dist" "$electron/path.txt"
-  x electron-install -C "$electron" -- node install.js
+  x electron-install -C "$electron" -- "${NO_GH_TOKEN[@]}" node install.js
   t electron-recheck -C "$desktop" -- "${check[@]}" ||
     die "electron's dist is still missing or incomplete in $electron after install.js; see the paths above, check that ELECTRON_SKIP_BINARY_DOWNLOAD and npm ignore-scripts are unset, then --resume"
 }
@@ -742,20 +748,20 @@ $2
 EOF
   if [ "$MODE" = dry ]; then
     case "$kind" in
-      pkg) x "test:$dir" -C "$TEST/$dir" -- env CI=1 node --run test ;;
-      typecheck) x typecheck-gate -C "$TEST" -- bash scripts/studio-verify/typecheck-gate.sh --jobs 3 --out "$out/typecheck" ;;
-      fleet) x fleet-tests -C "$TEST" -- bash scripts/studio-fleet/run-tests.sh --out "$out/fleet" --history "<the last fleet results>" ;;
-      contrast) x contrast -C "$TEST/apps/web" -- env CI=1 node --run test -- $CONTRAST_TESTS ;;
+      pkg) x "test:$dir" -C "$TEST/$dir" -- "${NO_GH_TOKEN[@]}" CI=1 node --run test ;;
+      typecheck) x typecheck-gate -C "$TEST" -- "${NO_GH_TOKEN[@]}" bash scripts/studio-verify/typecheck-gate.sh --jobs 3 --out "$out/typecheck" ;;
+      fleet) x fleet-tests -C "$TEST" -- "${NO_GH_TOKEN[@]}" bash scripts/studio-fleet/run-tests.sh --out "$out/fleet" --history "<the last fleet results>" ;;
+      contrast) x contrast -C "$TEST/apps/web" -- "${NO_GH_TOKEN[@]}" CI=1 node --run test -- $CONTRAST_TESTS ;;
     esac
     return 0
   fi
   started=$(date +%s)
   set +e
   case "$kind" in
-    pkg) x "test:$dir" -C "$TEST/$dir" -- env CI=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 node --run test > "$out/$name.log" 2>&1 ;;
-    typecheck) x typecheck-gate -C "$TEST" -- env CI=1 bash scripts/studio-verify/typecheck-gate.sh --jobs 3 --out "$out/typecheck" > "$out/$name.log" 2>&1 ;;
-    fleet) x fleet-tests -C "$TEST" -- bash scripts/studio-fleet/run-tests.sh --out "$out/fleet" ${FLEET_HISTORY[@]+"${FLEET_HISTORY[@]}"} > "$out/$name.log" 2>&1 ;;
-    contrast) x contrast -C "$TEST/apps/web" -- env CI=1 node --run test -- $CONTRAST_TESTS > "$out/$name.log" 2>&1 ;;
+    pkg) x "test:$dir" -C "$TEST/$dir" -- "${NO_GH_TOKEN[@]}" CI=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 node --run test > "$out/$name.log" 2>&1 ;;
+    typecheck) x typecheck-gate -C "$TEST" -- "${NO_GH_TOKEN[@]}" CI=1 bash scripts/studio-verify/typecheck-gate.sh --jobs 3 --out "$out/typecheck" > "$out/$name.log" 2>&1 ;;
+    fleet) x fleet-tests -C "$TEST" -- "${NO_GH_TOKEN[@]}" bash scripts/studio-fleet/run-tests.sh --out "$out/fleet" ${FLEET_HISTORY[@]+"${FLEET_HISTORY[@]}"} > "$out/$name.log" 2>&1 ;;
+    contrast) x contrast -C "$TEST/apps/web" -- "${NO_GH_TOKEN[@]}" CI=1 node --run test -- $CONTRAST_TESTS > "$out/$name.log" 2>&1 ;;
   esac
   code=$?
   set -e
@@ -786,12 +792,59 @@ pool() {  # pool OUT SPEC...: at most $JOBS jobs at once
   done
 }
 
+# --ci only. Stage-1 jobs run with every GitHub token unset (NO_GH_TOKEN), so git cannot fetch a
+# missing object from there: on a hosted runner its credential helper is `gh auth git-credential`,
+# which needs GH_TOKEN. A partial clone lacks blobs, and the preservation audits read commits that
+# main does not reach (pinned by id under scripts/studio-toolchain). Fetch all of it now, while the
+# token is set (stage 1 runs this on --resume too), and prove the audit's lockfile needs no fetch.
+LAZY_FETCH_PROBE=f0b6d13fb273ae3285861878c43b822731926023  # its pnpm-lock.yaml: preservation-audit.test.mjs
+objects_complete() {  # objects_complete ID: ID and everything it reaches are here, with no lazy fetch
+  local out
+  out="$(GIT_NO_LAZY_FETCH=1 git rev-list --objects --missing=print "$1" 2> /dev/null)" || return 1
+  ! grep -q '^?' <<< "$out"
+}
+prefetch_test_objects() {
+  local pinned=() absent=() tips=() sha probe=0 listed
+  listed="$(q pinned-objects -- python3 -B "$TOOLS" pinned-objects "$TEST/scripts/studio-toolchain")" ||
+    die "stage1: could not list the commits pinned under $TEST/scripts/studio-toolchain"
+  while read -r sha; do
+    if [ -n "$sha" ]; then pinned+=("$sha"); fi
+    if [ "$sha" = "$LAZY_FETCH_PROBE" ]; then probe=1; fi
+  done <<< "$listed"
+  # The probe below is this check's proof; if the audits stop pinning it, pick a new probe here.
+  [ $probe -eq 1 ] ||
+    die "stage1: $LAZY_FETCH_PROBE is no longer pinned under scripts/studio-toolchain; update LAZY_FETCH_PROBE in release.sh"
+  if ! t candidate-complete -C "$TEST" -- objects_complete "$SHA"; then
+    # A partial clone: fetch the candidate's objects afresh, as a full clone holds them.
+    x backfill-objects -C "$TEST" -- git fetch -q --refetch --no-filter --no-tags --no-write-fetch-head "$PRIVATE_URL" "$SHA"
+    t candidate-complete -C "$TEST" -- objects_complete "$SHA" ||
+      die "stage1: $TEST still lacks objects of $SHA12 after the backfill; stage-1 tests cannot fetch them"
+  fi
+  # One id at a time, with full history (the audits diff a commit against its parent). The haves
+  # sent are only trees known to be complete, so a partial clone's gaps are filled too. Some ids
+  # are only recorded, never read, and exist nowhere on GitHub: those are reported, not fatal.
+  tips=(--negotiation-tip="$SHA")
+  for sha in ${pinned[@]+"${pinned[@]}"}; do
+    if ! t pinned-complete -C "$TEST" -- objects_complete "$sha"; then
+      if ! x fetch-pinned -C "$TEST" -- git fetch -q --no-filter --no-tags --no-write-fetch-head "${tips[@]}" \
+        "$PRIVATE_URL" "$sha" 2> /dev/null || ! t pinned-complete -C "$TEST" -- objects_complete "$sha"; then
+        absent+=("$sha")
+        continue
+      fi
+    fi
+    tips+=(--negotiation-tip="$sha")
+  done
+  if [ ${#absent[@]} -gt 0 ]; then say "stage1: not on $PRIVATE_REPO, so stage-1 tests cannot read: ${absent[*]}"; fi
+  t no-lazy-fetch -C "$TEST" -- env GIT_NO_LAZY_FETCH=1 git show "$LAZY_FETCH_PROBE:pnpm-lock.yaml" > /dev/null ||
+    die "stage1: $LAZY_FETCH_PROBE:pnpm-lock.yaml needs a fetch, and stage-1 tests run without a GitHub token"
+}
 stage_stage1() {
   local out="$STAGE/stage1/$SHA12-$(date +%s)" failed_file="$STAGE/stage1/failed.txt" line dir name spec listing=""
   local specs=() ordered=() first=() rest=() failed=() secs retried=0
   FLEET_HISTORY=()
   need_file "$TEST/scripts/studio-verify/typecheck-gate.sh" "the typecheck gate from the release-gates branch"
   need_file "$TEST/scripts/studio-fleet/run-tests.sh" "the fleet test runner from the release-gates branch"
+  if [ "$CI_MODE" -eq 1 ]; then prefetch_test_objects; fi
   if [ "$MODE" = dry ]; then
     # Listed from this checkout; a real run lists the candidate's packages.
     if ! listing="$(python3 -B "$TOOLS" packages "$REPO_ROOT" 2> /dev/null)"; then listing=""; fi

@@ -1448,7 +1448,12 @@ export const StorageCleanupSettings = Schema.Struct({
   browserArtifactsAfterDays: StorageRetentionDays.pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
-  logsAfterDays: StorageRetentionDays.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  /**
+   * Rotated logs are swept after two weeks by default: they are the one store
+   * that grows on its own, and a full disk stalls the whole app. An explicit
+   * null still keeps them forever.
+   */
+  logsAfterDays: StorageRetentionDays.pipe(Schema.withDecodingDefault(Effect.succeed(14))),
 });
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 

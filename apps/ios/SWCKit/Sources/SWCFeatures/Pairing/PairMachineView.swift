@@ -22,7 +22,7 @@ struct PairMachineView: View {
   private var trimmed: String { link.trimmingCharacters(in: .whitespacesAndNewlines) }
 
   private var instructions: String {
-    let steps = "open SpecWithCode, go to Settings > Connections and choose Create link under Authorized clients. Then scan the code or copy the link."
+    let steps = "open SpecWithCode, go to Settings > Connections and choose Pair a phone. Then scan the code or copy the link."
     if let id = expectedMachineId, let machine = model.machine(id) {
       return "On \(machine.label), \(steps)"
     }

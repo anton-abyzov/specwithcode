@@ -1,4 +1,5 @@
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
+import { isRpcTransportError } from "@specweave-studio/client-runtime/errors";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -17,8 +18,18 @@ export interface EnvironmentQueryView<A, E = unknown> {
   readonly refresh: () => void;
 }
 
-export function formatEnvironmentQueryError(cause: Cause.Cause<unknown>): string {
+/**
+ * The message to show for a failed query, or `null` when the socket under it
+ * dropped. A lost socket is the machine's connection state, which the app
+ * already shows once; repeating it on every query as a raw socket error (with a
+ * Retry that cannot help) is noise. A machine that is not connected or offline
+ * keeps its message, as it did before. `failure` still carries the error.
+ */
+export function formatEnvironmentQueryError(cause: Cause.Cause<unknown>): string | null {
   const error = Cause.squash(cause);
+  if (isRpcTransportError(error)) {
+    return null;
+  }
   return error instanceof Error && error.message.trim().length > 0
     ? error.message
     : "The environment request failed.";

@@ -217,6 +217,11 @@ describe("draft machine selection", () => {
     expect(draftMachineUnavailableReason("connected", true)).toBeNull();
     expect(draftMachineUnavailableReason("connected", false)).toMatch(/Permission/);
     expect(draftMachineUnavailableReason("connecting", true)).toBe("Connecting…");
+    // This machine's server shares the device: a slow answer means it is busy.
+    for (const phase of ["connecting", "reconnecting", "offline", "available"] as const)
+      expect(draftMachineUnavailableReason(phase, true, true)).toBe("Catching up…");
+    expect(draftMachineUnavailableReason("connected", true, true)).toBeNull();
+    expect(draftMachineUnavailableReason("error", true, true)).toBe("Not connected");
     expect(draftMachineUnavailableReason("reconnecting", true)).toBe(
       "Can't reach this machine right now",
     );

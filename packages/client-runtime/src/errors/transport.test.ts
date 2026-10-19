@@ -1,7 +1,13 @@
+import { RpcClientError } from "effect/rpc";
+import * as Socket from "effect/socket/Socket";
 import { describe, expect, it } from "vite-plus/test";
 
 import { NETWORK_BLOCKING_HINT } from "./network.ts";
-import { isTransportConnectionErrorMessage, sanitizeThreadErrorMessage } from "./transport.ts";
+import {
+  isRpcTransportError,
+  isTransportConnectionErrorMessage,
+  sanitizeThreadErrorMessage,
+} from "./transport.ts";
 
 describe("isTransportConnectionErrorMessage", () => {
   it("returns true for SocketCloseError", () => {
@@ -10,6 +16,17 @@ describe("isTransportConnectionErrorMessage", () => {
 
   it("returns true for SocketOpenError", () => {
     expect(isTransportConnectionErrorMessage("SocketOpenError: ECONNREFUSED")).toBe(true);
+  });
+
+  it("returns true for socket read and write failures", () => {
+    expect(
+      isTransportConnectionErrorMessage("SocketReadError: An error occurred during Read"),
+    ).toBe(true);
+    expect(
+      isTransportConnectionErrorMessage("SocketWriteError: An error occurred during Write"),
+    ).toBe(true);
+    // Case-sensitive: an ordinary sentence mentioning a read error is not a socket tag.
+    expect(isTransportConnectionErrorMessage("socketreaderror in config")).toBe(false);
   });
 
   it("returns true for React Native disconnected socket errors", () => {
@@ -48,9 +65,9 @@ describe("isTransportConnectionErrorMessage", () => {
   });
 
   it("returns true for the Studio server WebSocket message", () => {
-    expect(isTransportConnectionErrorMessage("Unable to connect to the Studio server WebSocket.")).toBe(
-      true,
-    );
+    expect(
+      isTransportConnectionErrorMessage("Unable to connect to the Studio server WebSocket."),
+    ).toBe(true);
   });
 
   it("returns true for ping timeout", () => {
@@ -85,5 +102,45 @@ describe("sanitizeThreadErrorMessage", () => {
   it("returns null for null/undefined", () => {
     expect(sanitizeThreadErrorMessage(null)).toBeNull();
     expect(sanitizeThreadErrorMessage(undefined)).toBeNull();
+  });
+});
+
+describe("isRpcTransportError", () => {
+  const rpcError = (reason: RpcClientError.RpcClientError["reason"]) =>
+    new RpcClientError.RpcClientError({ reason });
+
+  it("matches every socket failure, including a ping timeout", () => {
+    for (const reason of [
+      new Socket.SocketReadError({ cause: new Error("ping timeout") }),
+      new Socket.SocketWriteError({ cause: new Error("Broken pipe") }),
+      new Socket.SocketCloseError({ code: 1006 }),
+      new Socket.SocketOpenError({ kind: "Timeout", cause: new Error("timeout") }),
+    ]) {
+      expect(isRpcTransportError(rpcError(reason))).toBe(true);
+    }
+  });
+
+  it("matches a socket failure wrapped in a ClientProtocolError message", () => {
+    expect(
+      isRpcTransportError({
+        _tag: "ClientProtocolError",
+        error: rpcError(new Socket.SocketReadError({ cause: new Error("lost") })),
+      }),
+    ).toBe(true);
+  });
+
+  it("does not match protocol defects or ordinary failures", () => {
+    expect(
+      isRpcTransportError(
+        rpcError(
+          new RpcClientError.RpcClientDefect({ message: "bad frame", cause: new Error("bad") }),
+        ),
+      ),
+    ).toBe(false);
+    expect(isRpcTransportError(new Error("SocketReadError: An error occurred during Read"))).toBe(
+      false,
+    );
+    expect(isRpcTransportError({ _tag: "ClientProtocolError", error: new Error("x") })).toBe(false);
+    expect(isRpcTransportError(null)).toBe(false);
   });
 });

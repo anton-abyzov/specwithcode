@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   DesktopBackendPortUnavailableError,
   DesktopDevelopmentBackendPortRequiredError,
+  DesktopLocalServiceUnresponsiveError,
 } from "./DesktopApp.ts";
 
 describe("DesktopApp errors", () => {
@@ -19,6 +20,25 @@ describe("DesktopApp errors", () => {
     assert.equal(
       error.message,
       "No desktop backend port is available on hosts 127.0.0.1, 0.0.0.0, :: between 8319 and 65535.",
+    );
+  });
+
+  it("names a nearly full disk as the likely reason the service does not answer", () => {
+    const owner = { pid: 4_242, origin: "http://127.0.0.1:8319", stateDir: "/Users/a/userdata" };
+    const lowDisk = (onMac: boolean) =>
+      new DesktopLocalServiceUnresponsiveError({
+        ...owner,
+        lowDisk: { freeBytes: 412_000_000, onMac },
+      }).message;
+
+    assert.equal(
+      lowDisk(true),
+      "This Mac is almost out of disk space (412 MB free), which is the likely reason SpecWithCode does not respond. Another SpecWithCode process (pid 4242) owns /Users/a/userdata but does not answer at http://127.0.0.1:8319. Free some space, then open the app again. Starting a second server on the same data could damage it.",
+    );
+    assert.isTrue(lowDisk(false).startsWith("This computer is almost out of disk space"));
+    assert.equal(
+      new DesktopLocalServiceUnresponsiveError(owner).message,
+      "Another SpecWithCode process (pid 4242) owns /Users/a/userdata but does not answer at http://127.0.0.1:8319. Wait for it to finish starting or stop it, then open the app again. Starting a second server on the same data could damage it.",
     );
   });
 

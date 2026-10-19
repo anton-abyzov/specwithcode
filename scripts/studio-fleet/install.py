@@ -21,6 +21,7 @@ import studio_paths
 from installation_descriptor import InstallationDescriptor, WEB_SESSION_POLICIES, installation_lock
 from launcher import render_cli, runtime_path
 from release_policy import validate_manifest, validate_package
+from service_launch_agent import with_service_priority
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--archive', required=True)
@@ -247,9 +248,10 @@ with installation_lock(home, create=True):
     service = {'installed': False, 'domain': None}
     if args.service:
         plist.parent.mkdir(parents=True, exist_ok=True)
-        content = {'Label': label, 'ProgramArguments': ['/usr/bin/caffeinate', '-s', str(launcher)],
+        # Interactive, not the throttled daemon band a LaunchAgent gets by default.
+        content = with_service_priority({'Label': label, 'ProgramArguments': ['/usr/bin/caffeinate', '-s', str(launcher)],
                    'RunAtLoad': True, 'KeepAlive': True, 'WorkingDirectory': str(studio_home),
-                   'StandardOutPath': str(stdout), 'StandardErrorPath': str(stderr), 'ThrottleInterval': 10}
+                   'StandardOutPath': str(stdout), 'StandardErrorPath': str(stderr), 'ThrottleInterval': 10})
         plist.write_bytes(plistlib.dumps(content))
         domain = owner.domain
         subprocess.run(['/bin/launchctl', 'bootstrap', domain, str(plist)], check=True,

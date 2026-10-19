@@ -57,7 +57,12 @@ describe("DesktopLocalEnvironmentAuth", () => {
               DesktopLocalService.layerTest({
                 attached: {
                   baseDir: "/Users/a/.specweave-studio/m4",
-                  runtime: { pid: 7, port: 8319, origin: "http://127.0.0.1:8319", serviceManaged: true },
+                  runtime: {
+                    pid: 7,
+                    port: 8319,
+                    origin: "http://127.0.0.1:8319",
+                    serviceManaged: true,
+                  },
                   descriptor: {
                     environmentId: "env-mac" as never,
                     label: "Mac",
@@ -175,7 +180,9 @@ describe("DesktopLocalEnvironmentAuth", () => {
         }).pipe(
           Effect.provide(
             DesktopLocalEnvironmentAuth.layer.pipe(
-              Layer.provide(Layer.mergeAll(poolLayer, httpClientLayer, DesktopLocalService.layerTest())),
+              Layer.provide(
+                Layer.mergeAll(poolLayer, httpClientLayer, DesktopLocalService.layerTest()),
+              ),
             ),
           ),
         );
@@ -229,7 +236,9 @@ describe("DesktopLocalEnvironmentAuth", () => {
       const auth = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth.pipe(
         Effect.provide(
           DesktopLocalEnvironmentAuth.layer.pipe(
-            Layer.provide(Layer.mergeAll(layerPool, layerHttpClient, DesktopLocalService.layerTest())),
+            Layer.provide(
+              Layer.mergeAll(layerPool, layerHttpClient, DesktopLocalService.layerTest()),
+            ),
           ),
         ),
       );
