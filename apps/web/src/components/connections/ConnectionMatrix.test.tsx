@@ -301,7 +301,18 @@ describe("connection matrix", () => {
           parked: true,
         },
       ],
-      plugins: [{ provider: "claude", key: "web@market", label: "Web", enabled: false }],
+      plugins: [
+        { provider: "claude", key: "web@market", label: "Web", enabled: false },
+        { provider: "codex", key: "pay@x-remote", label: "Pay", enabled: true, account: true },
+        {
+          provider: "codex",
+          key: "notes@x-remote",
+          label: "Notes",
+          enabled: true,
+          account: true,
+          switchable: false,
+        },
+      ],
     };
     await act(() => {
       renderer = create(<ConnectionMatrix snapshot={managed} onApply={onApply} />);
@@ -329,5 +340,10 @@ describe("connection matrix", () => {
       pluginKey: "web@market",
       enabled: true,
     });
+    // An account plugin switches only its skills; one without skills has no switch at all.
+    expect(text()).toContain("Skills on");
+    expect(byLabel("Turn off skills: Pay")).toHaveLength(1);
+    expect(text()).toContain("Managed in your ChatGPT account");
+    expect(byLabel("Turn off skills: Notes")).toHaveLength(0);
   });
 });

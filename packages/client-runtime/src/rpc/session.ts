@@ -4,7 +4,9 @@ import {
   WsSubscribeServerConfigRpc,
   WS_METHODS,
 } from "@specweave-studio/contracts";
+import type * as Arr from "effect/Array";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -13,6 +15,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -21,6 +24,7 @@ import * as Stream from "effect/Stream";
 import type * as Rpc from "effect/rpc/Rpc";
 import * as RpcClient from "effect/rpc/RpcClient";
 import * as RpcClientError from "effect/rpc/RpcClientError";
+import { constPing, constPong } from "effect/rpc/RpcMessage";
 import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as Socket from "effect/socket/Socket";
 
@@ -41,6 +45,10 @@ import {
   withoutEnvironmentThemes,
 } from "../state/serverConfigProjection.ts";
 import { environmentMismatchError } from "../connection/errors.ts";
+import {
+  LOOPBACK_ANSWERED_SILENCE_MS,
+  LOOPBACK_SOCKET_OPEN_TIMEOUT,
+} from "../connection/thisMachine.ts";
 
 const SOCKET_OPEN_TIMEOUT = "15 seconds";
 
@@ -53,6 +61,19 @@ export interface RpcSession {
   readonly ready: Effect.Effect<void, ConnectionAttemptError>;
   readonly probe: Effect.Effect<void, ConnectionAttemptError>;
   readonly closed: Effect.Effect<never, ConnectionAttemptError>;
+  /** When the last frame arrived from the server (Clock millis), if any did. */
+  readonly lastInboundAt?: Effect.Effect<number | undefined>;
+  /** Completes when the next frame arrives from the server. */
+  readonly nextInbound?: Effect.Effect<void>;
+}
+
+export interface RpcSessionConnectOptions {
+  /**
+   * The socket reaches the server on this machine (see `thisMachine.ts`), so
+   * it may take longer to open and tolerates a long silence before it counts
+   * as dead: a starved local server holds the socket open and answers late.
+   */
+  readonly thisMachine?: boolean;
 }
 
 export interface RpcSessionOptions {
@@ -67,6 +88,7 @@ export class RpcSessionFactory extends Context.Service<
   {
     readonly connect: (
       connection: PreparedConnection,
+      options?: RpcSessionConnectOptions,
     ) => Effect.Effect<RpcSession, ConnectionAttemptError, Scope.Scope>;
   }
 >()("@specweave-studio/client-runtime/rpc/session/RpcSessionFactory") {}
@@ -124,6 +146,112 @@ function serverConfigReplayEvents(
 
 const isSocketErrorReason = Schema.is(Socket.SocketErrorReason);
 
+/** The same socket, running `onFrames` each time a batch of frames arrives. */
+function observeInbound(socket: Socket.Socket, onFrames: Effect.Effect<void>): Socket.Socket {
+  return Socket.make({
+    reader: Effect.map(socket.reader, (reader) => ({
+      pull: Effect.tap(reader.pull, () => onFrames),
+      upgrade: (options?: Socket.TlsUpgradeOptions) => reader.upgrade(options),
+    })),
+    writer: socket.writer,
+  });
+}
+
+type SocketFrame = Uint8Array | string;
+
+function sameFrame(left: SocketFrame | Socket.CloseEvent, right: SocketFrame): boolean {
+  if (typeof left === "string" || typeof right === "string") return left === right;
+  if (!(left instanceof Uint8Array) || left.byteLength !== right.byteLength) return false;
+  return left.every((byte, index) => byte === right[index]);
+}
+
+/**
+ * The same socket, for the server on this machine: the RPC client's pinger
+ * only counts a decoded Pong as proof of life and gives up after three
+ * unanswered 5 second windows, which drops a working connection to a starved
+ * local server that is still streaming replies with its Pong queued behind
+ * them. So a Pong the server never sent is added (a) after every batch of
+ * frames that does arrive, and (b) in answer to each outbound Ping while the
+ * last real frame is at most `answeredSilenceMs` old. Past that the pinger
+ * times out as usual. A loopback server that has gone away closes the socket
+ * at once, so this delays nothing but the verdict on a slow one.
+ *
+ * Real frames are pulled by a pump fiber into a one-slot mailbox (keeping
+ * backpressure), so a synthetic Pong never races a real pull for its frames.
+ */
+const answerPingsWhileHeard = Effect.fnUntraced(function* (
+  socket: Socket.Socket,
+  answeredSilenceMs: number,
+) {
+  const serialization = yield* RpcSerialization.RpcSerialization;
+  const parser = serialization.makeUnsafe();
+  const pingFrame = parser.encode(constPing);
+  const pongFrame = parser.encode(constPong);
+  if (pingFrame === undefined || pongFrame === undefined) return socket;
+  const pongBatch: Arr.NonEmptyReadonlyArray<SocketFrame> = [pongFrame];
+  const current = yield* Ref.make(
+    Option.none<{
+      readonly mailbox: Queue.Queue<Arr.NonEmptyReadonlyArray<SocketFrame>, Socket.SocketError>;
+      readonly lastFrameAt: Ref.Ref<number>;
+    }>(),
+  );
+
+  const reader = Effect.gen(function* () {
+    const real = yield* socket.reader;
+    const mailbox = yield* Queue.bounded<
+      Arr.NonEmptyReadonlyArray<SocketFrame>,
+      Socket.SocketError
+    >(1);
+    const lastFrameAt = yield* Ref.make(yield* Clock.currentTimeMillis);
+    yield* real.pull.pipe(
+      Effect.flatMap((frames) =>
+        Effect.gen(function* () {
+          yield* Ref.set(lastFrameAt, yield* Clock.currentTimeMillis);
+          yield* Queue.offer(mailbox, [...frames, pongFrame]);
+        }),
+      ),
+      Effect.forever,
+      Effect.catchCause((cause) => Queue.failCause(mailbox, cause)),
+      Effect.forkScoped,
+    );
+    // Closing the connection scope must fail a pull that is waiting.
+    yield* Effect.addFinalizer(() =>
+      Effect.all([
+        Ref.set(current, Option.none()),
+        Queue.fail(
+          mailbox,
+          new Socket.SocketError({ reason: new Socket.SocketCloseError({ code: 1006 }) }),
+        ),
+      ]),
+    );
+    yield* Ref.set(current, Option.some({ mailbox, lastFrameAt }));
+    return {
+      pull: Queue.take(mailbox),
+      upgrade: (options?: Socket.TlsUpgradeOptions) => real.upgrade(options),
+    } satisfies Socket.Reader;
+  });
+
+  const answerPing = Effect.gen(function* () {
+    const connection = yield* Ref.get(current);
+    if (Option.isNone(connection)) return;
+    const silentMs =
+      (yield* Clock.currentTimeMillis) - (yield* Ref.get(connection.value.lastFrameAt));
+    if (silentMs > answeredSilenceMs) return;
+    // A full mailbox already holds a batch that ends in a Pong.
+    yield* Effect.sync(() => Queue.offerUnsafe(connection.value.mailbox, pongBatch));
+  });
+
+  const writer = Effect.map(socket.writer, (real) => ({
+    write: (chunk: SocketFrame | Socket.CloseEvent) =>
+      sameFrame(chunk, pingFrame)
+        ? Effect.andThen(real.write(chunk), answerPing)
+        : real.write(chunk),
+    writeAll: real.writeAll,
+  }));
+
+  return Socket.make({ reader, writer });
+});
+
 function mapSessionRpcError(
   error: InitialConfigError | ProbeError | ServerConfigSubscriptionError,
   networkHint: string,
@@ -159,7 +287,11 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
   };
 
-  const connect = Effect.fnUntraced(function* (connection: PreparedConnection) {
+  const connect = Effect.fnUntraced(function* (
+    connection: PreparedConnection,
+    connectOptions: RpcSessionConnectOptions = {},
+  ) {
+    const thisMachine = connectOptions.thisMachine === true;
     const networkHint =
       connection.target._tag === "RelayConnectionTarget" ? ` ${NETWORK_BLOCKING_HINT}` : "";
     const mapRpcError = (error: Parameters<typeof mapSessionRpcError>[0]) =>
@@ -173,6 +305,14 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     // Set when the socket closes because pongs stopped, so the failure says so
     // instead of looking like the server closed the connection.
     const pingTimedOut = yield* Ref.make(false);
+    // Inbound traffic, so a health check can count any frame as an answer.
+    const lastInboundAt = yield* Ref.make<number | undefined>(undefined);
+    const inboundSignal = yield* Ref.make(yield* Deferred.make<void>());
+    const recordInbound = Effect.gen(function* () {
+      yield* Ref.set(lastInboundAt, yield* Clock.currentTimeMillis);
+      const previous = yield* Ref.getAndSet(inboundSignal, yield* Deferred.make<void>());
+      yield* Deferred.succeed(previous, undefined);
+    });
     const hooks = RpcClient.ConnectionHooks.of({
       onConnect: Deferred.succeed(connected, undefined).pipe(Effect.asVoid),
       onPingTimeout: Ref.set(pingTimedOut, true),
@@ -195,9 +335,26 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
         Effect.asVoid,
       ),
     });
-    const layerSocket = Socket.layerWebSocket(connection.socketUrl, {
-      openTimeout: SOCKET_OPEN_TIMEOUT,
-    }).pipe(Layer.provide(Layer.succeed(Socket.WebSocketConstructor, webSocketConstructor)));
+    // One serialization for the protocol and the Pongs this machine adds.
+    const layerSerialization = RpcSerialization.layerJson;
+    const layerSocket = Layer.effect(
+      Socket.Socket,
+      Effect.gen(function* () {
+        const observed = observeInbound(yield* Socket.Socket, recordInbound);
+        return thisMachine
+          ? yield* answerPingsWhileHeard(observed, LOOPBACK_ANSWERED_SILENCE_MS)
+          : observed;
+      }),
+    ).pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Socket.layerWebSocket(connection.socketUrl, {
+            openTimeout: thisMachine ? LOOPBACK_SOCKET_OPEN_TIMEOUT : SOCKET_OPEN_TIMEOUT,
+          }).pipe(Layer.provide(Layer.succeed(Socket.WebSocketConstructor, webSocketConstructor))),
+          layerSerialization,
+        ),
+      ),
+    );
     const layerProtocol = Layer.effect(
       RpcClient.Protocol,
       RpcClient.makeProtocolSocket({
@@ -208,7 +365,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
       Layer.provide(
         Layer.mergeAll(
           layerSocket,
-          RpcSerialization.layerJson,
+          layerSerialization,
           Layer.succeed(RpcClient.ConnectionHooks, hooks),
         ),
       ),
@@ -395,6 +552,8 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
         Deferred.await(disconnected),
         Deferred.await(configSubscriptionClosed),
       ),
+      lastInboundAt: Ref.get(lastInboundAt),
+      nextInbound: Ref.get(inboundSignal).pipe(Effect.flatMap(Deferred.await)),
     } satisfies RpcSession;
   });
 

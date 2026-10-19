@@ -348,6 +348,8 @@ export interface OrchestratorV2Shape {
     readonly location?: "active" | "archive";
     /** Background sweeps only: skips settled threads. */
     readonly unsettledOnly?: boolean;
+    /** Background sweeps only: accept a shared snapshot this recent. */
+    readonly maxAgeMs?: number;
   }) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, OrchestratorV2Error>;
   readonly getThreadShell: (
     threadId: ThreadId,
@@ -2262,11 +2264,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       "orchestration_v2.driver": command.modelSelection.instanceId,
     });
 
-    const runtimeMode = yield* creationRuntimeMode(
-      command,
-      command.projectId,
-      command.runtimeMode,
-    );
+    const runtimeMode = yield* creationRuntimeMode(command, command.projectId, command.runtimeMode);
     yield* refuseAboveDispatchModeLimit(command, command.threadId, {
       runtimeMode,
       interactionMode: command.interactionMode,

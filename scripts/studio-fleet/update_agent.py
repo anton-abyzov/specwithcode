@@ -90,6 +90,9 @@ WAITING_REASONS = (
     ('has unexpected descendants', 'Waiting for open SpecWithCode terminals and agent processes to close'),
     ('unexpected or missing descendants', 'Waiting for open SpecWithCode terminals and agent processes to close'),
 )
+# update.py idle_agent_refusal: only the service's own idle provider servers are open (idle_agents.py).
+IDLE_AGENTS = ('Waiting for a quiet moment, then closing idle agent processes so the update can install',
+               'Closed idle agent processes; installing after a quiet moment')
 # `REFUSAL <code> <detail>`, the helper's structured reason; details are counts and names only.
 REFUSAL_LINE = re.compile(r'^REFUSAL ([a-z][a-z-]{0,31})(?: ([ -~]{0,400}))?$', re.M)
 WORK_NOUNS = (('runs', 'running task'), ('queued', 'queued message'), ('requests', 'open request'),
@@ -626,10 +629,12 @@ def refusal_reason(refusal, outcome):
         parts = ['%d %s%s' % (counts[key], noun, '' if counts[key] == 1 else 's')
                  for key, noun in WORK_NOUNS if counts.get(key)]
         return 'waiting-for-quiet', WAITING_REASONS[0][1] + (' (%s)' % ', '.join(parts) if parts else '')
-    if code == 'descendants':
+    if code in ('descendants', 'idle-agents'):
+        pairs = re.findall(r'([A-Za-z0-9._+-]{1,40})=(\d{1,4})', detail)
         names = ['%s%s' % (name, '' if count == '1' else ' x' + count)
-                 for name, count in re.findall(r'([A-Za-z0-9._+-]{1,40})=(\d{1,4})', detail)][:6]
-        return 'waiting-for-quiet', WAITING_REASONS[1][1] + (' (%s)' % ', '.join(names) if names else '')
+                 for name, count in pairs if name not in ('wait', 'stopped')][:6]
+        message = WAITING_REASONS[1][1] if code == 'descendants' else IDLE_AGENTS['stopped' in dict(pairs)]
+        return 'waiting-for-quiet', message + (' (%s)' % ', '.join(names) if names else '')
     return 'waiting-for-quiet', next((message for phrase, message in WAITING_REASONS if phrase in refusal), WAITING)
 
 def helper_log_path(receipt):

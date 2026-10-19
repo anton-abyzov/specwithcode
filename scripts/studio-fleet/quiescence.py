@@ -7,7 +7,10 @@ The one process an update may stop is the service's own headless server browser:
 chrome-headless-shell from the service's own tools directory, started directly by
 the owned service on one of its own profiles, plus that browser's helpers.
 `assert_quiescence` stops it gracefully right before the restart and reports it.
-Anything else beneath the service still refuses the update.
+Anything else beneath the service still refuses the update. Two fallbacks stop more,
+each between snapshots and never as part of one: `reap_descendants` for a held service
+(Update now), and, with `select=idle_provider_trees`, the provider servers an idle
+service keeps open between turns (a normal update, update.py idle_agent_refusal).
 """
 if not __debug__:
     raise RuntimeError('Optimized Python is unsupported for owned-service safety checks')
@@ -469,40 +472,10 @@ def _spared_browsers(processes, root_pid, uid, home, others):
     return spared
 
 
-def reap_descendants(pid, uid, executable, supervisor_argv, *, process_reader=None, argv_reader=None,
-                     executable_reader=None, single_reader=None, signaler=None, clock=None, sleeper=None,
-                     report=None, guard=None):
-    """Stop what keeps a held service from updating: a provider that never answered its
-    interrupt, or a command left running beneath a closed terminal.
-
-    The service and its supervisor are verified as for a snapshot; the supervisor is the
-    caffeinate the service started with the LaunchAgent's arguments, and any other caffeinate
-    is work. Every other process beneath the service, except its own server browser, is
-    recorded by pid, owner, start time and the executable the kernel resolves; one whose
-    executable cannot be read is never signalled. SIGTERM, then SIGKILL for what is still
-    there. Each round takes one inventory; each signal goes to one pid, right after that pid
-    alone is read again, and only while it still matches its record and is still beneath its
-    recorded parent (or was adopted by launchd as that parent exited). `guard` (update.py:
-    the service is still held for this request) runs before every signal and stops the reap
-    by raising. The service, its parent and supervisor, and every process outside its tree are
-    never signalled. The whole reap ends within REAP_BUDGET_SECONDS. `report` (optional) holds
-    the record as it is built, so a failed reap still records what it sent. Returns the record:
-    identities (no argv), signals sent and survivors."""
-    process_reader = process_reader or read_processes
-    argv_reader = argv_reader or read_argv
-    executable_reader = executable_reader or read_executable
-    single_reader = single_reader or (read_process if process_reader is read_processes
-                                      else lambda target: process_reader().get(target))
-    signaler = signaler or os.kill
-    clock = clock or time.monotonic
-    sleeper = sleeper or time.sleep
-    guard = guard or (lambda: None)
-    assert type(uid) is int and uid > 0 and isinstance(pid, int) and not isinstance(pid, bool) and pid > 1
+def _reap_inventory(pid, uid, executable, supervisor_argv, process_reader, argv_reader):
+    """One inventory of the verified service for a reap: (processes, root, others, spared pids).
+    The supervisor is the caffeinate the service started with the LaunchAgent's arguments."""
     home = studio_home_of(supervisor_argv)
-    started = clock()
-    report = {} if report is None else report
-    report.update(processCount=0, sparedBrowserCount=0, unverifiedCount=0, processes=[], signals=[],
-                  survivors=[], budgetExceeded=False)
 
     def supervisor_of(candidates):
         chosen = []
@@ -518,10 +491,115 @@ def reap_descendants(pid, uid, executable, supervisor_argv, *, process_reader=No
     root, _, supervisor, _, others = _owned_tree(processes, pid, uid, executable, home, check_browsers=False,
                                                  supervisor_of=supervisor_of)
     assert argv_reader(supervisor['pid']) == supervisor_argv, 'Supervisor arguments differ from the verified LaunchAgent'
-    spared = _spared_browsers(processes, pid, uid, home, others)
+    return processes, root, others, _spared_browsers(processes, pid, uid, home, others)
+
+
+# A normal update's fallback (update.py idle_agent_refusal): the provider servers the service
+# keeps open between turns, by the name they run as and the subcommand that starts them. Studio
+# starts Codex as `codex app-server [launch args]` (apps/server/src/provider/codexLaunchArgs.ts),
+# the native binary or the npm script run by node. Only a direct child of the service running one
+# of these, and the processes beneath it, may be stopped this way. A terminal is a shell the
+# service starts itself (node-pty), so a terminal, and anything a person runs in one, never
+# qualifies, nor does any process this table does not name: those keep the update waiting.
+IDLE_PROVIDER_SERVERS = {'codex': 'app-server'}
+IDLE_PROVIDER_MAX_SERVERS = 8
+IDLE_PROVIDER_MAX_PROCESSES = 256
+UNEXPECTED_DESCENDANTS = 'Owned service has unexpected descendants'
+
+
+def idle_provider_server(arguments, kernel):
+    """The provider whose server a process runs, from its kernel argv and the executable the
+    kernel resolves for it; None for anything else."""
+    if not isinstance(arguments, list) or len(arguments) < 2:
+        return None
+    rest = list(arguments[1:])
+    if posixpath.basename(kernel) == 'node':
+        name = re.sub(r'\.(?:c|m)?js$', '', posixpath.basename(rest.pop(0)))  # node <provider script> ...
+    else:
+        name, program = posixpath.basename(arguments[0]), posixpath.basename(kernel)
+        if program != name and not program.startswith(name + '-'):  # Homebrew: codex -> codex-aarch64-apple-darwin
+            return None
+    return name if rest and IDLE_PROVIDER_SERVERS.get(name) == rest[0] else None
+
+
+def idle_provider_trees(processes, root_pid, uid, others, spared, argv_reader, executable_reader):
+    """{pid: provider} for every process beneath the service's own idle provider servers (its
+    server browser aside). Raises when anything else runs beneath the service: a terminal, what
+    a person started in one, or a process this module cannot name."""
+    servers, found = {}, {}
+    for item in others:
+        if item['pid'] in spared or _exited(item):
+            continue
+        top = item
+        while top['parent'] != root_pid:
+            top = processes[top['parent']]
+        if top['pid'] not in servers:
+            assert top['uid'] == uid, UNEXPECTED_DESCENDANTS
+            servers[top['pid']] = idle_provider_server(argv_reader(top['pid']), executable_reader(top['pid']))
+        assert servers[top['pid']] is not None and item['uid'] == uid, UNEXPECTED_DESCENDANTS
+        found[item['pid']] = servers[top['pid']]
+    assert len(servers) <= IDLE_PROVIDER_MAX_SERVERS and len(found) <= IDLE_PROVIDER_MAX_PROCESSES, \
+        UNEXPECTED_DESCENDANTS
+    return found
+
+
+def idle_providers(pid, uid, executable, supervisor_argv, *, process_reader=None, argv_reader=None,
+                   executable_reader=None):
+    """The idle provider servers beneath a verified service, as {provider: servers}; raises as
+    idle_provider_trees does. Read-only: nothing is signalled."""
+    argv_reader = argv_reader or read_argv
+    processes, _, others, spared = _reap_inventory(pid, uid, executable, supervisor_argv,
+                                                   process_reader or read_processes, argv_reader)
+    found = idle_provider_trees(processes, pid, uid, others, spared, argv_reader, executable_reader or read_executable)
+    names = {}
+    for item_pid, name in found.items():
+        if processes[item_pid]['parent'] == pid:
+            names[name] = names.get(name, 0) + 1
+    return names
+
+
+def reap_descendants(pid, uid, executable, supervisor_argv, *, process_reader=None, argv_reader=None,
+                     executable_reader=None, single_reader=None, signaler=None, clock=None, sleeper=None,
+                     report=None, guard=None, select=None):
+    """Stop what keeps a held service from updating: a provider that never answered its
+    interrupt, or a command left running beneath a closed terminal.
+
+    The service and its supervisor are verified as for a snapshot; the supervisor is the
+    caffeinate the service started with the LaunchAgent's arguments, and any other caffeinate
+    is work. Every other process beneath the service, except its own server browser, is
+    recorded by pid, owner, start time and the executable the kernel resolves; one whose
+    executable cannot be read is never signalled. SIGTERM, then SIGKILL for what is still
+    there. Each round takes one inventory; each signal goes to one pid, right after that pid
+    alone is read again, and only while it still matches its record and is still beneath its
+    recorded parent (or was adopted by launchd as that parent exited). `guard` (update.py:
+    the service is still held for this request) runs before every signal and stops the reap
+    by raising. The service, its parent and supervisor, and every process outside its tree are
+    never signalled. The whole reap ends within REAP_BUDGET_SECONDS. `report` (optional) holds
+    the record as it is built, so a failed reap still records what it sent. `select` (a normal
+    update: idle_provider_trees) narrows the targets to the pids it returns, from the same
+    inventory, and stops the reap by raising. Returns the record: identities (no argv), signals
+    sent and survivors."""
+    process_reader = process_reader or read_processes
+    argv_reader = argv_reader or read_argv
+    executable_reader = executable_reader or read_executable
+    single_reader = single_reader or (read_process if process_reader is read_processes
+                                      else lambda target: process_reader().get(target))
+    signaler = signaler or os.kill
+    clock = clock or time.monotonic
+    sleeper = sleeper or time.sleep
+    guard = guard or (lambda: None)
+    assert type(uid) is int and uid > 0 and isinstance(pid, int) and not isinstance(pid, bool) and pid > 1
+    started = clock()
+    report = {} if report is None else report
+    report.update(processCount=0, sparedBrowserCount=0, unverifiedCount=0, processes=[], signals=[],
+                  survivors=[], budgetExceeded=False)
+    processes, root, others, spared = _reap_inventory(pid, uid, executable, supervisor_argv, process_reader, argv_reader)
+    chosen = select(processes, pid, uid, others, spared, argv_reader, executable_reader) if select else None
     targets, unverified = [], 0
     for item in others:
         if item['pid'] in spared or _exited(item) or item['pid'] == os.getpid():
+            continue
+        if chosen is not None and item['pid'] not in chosen:
             continue
         try:
             kernel = executable_reader(item['pid']) if item['uid'] == uid else None

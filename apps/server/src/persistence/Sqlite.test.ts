@@ -117,3 +117,24 @@ it.effect("applies busy_timeout in the shared persistence setup", () =>
     assert.equal(rows[0]?.timeout, 5000);
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
+
+it.effect("opens the server database in WAL mode with synchronous = NORMAL", () => {
+  const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-sqlite-sync-"));
+  const dbPath = NodePath.join(tempDir, "state.sqlite");
+
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const journal = yield* sql<{ readonly journal_mode: string }>`PRAGMA journal_mode`;
+    assert.equal(journal[0]?.journal_mode, "wal");
+    // 1 is NORMAL: crash-safe in WAL mode without an fsync on every commit.
+    const synchronous = yield* sql<{ readonly synchronous: number }>`PRAGMA synchronous`;
+    assert.equal(synchronous[0]?.synchronous, 1);
+    const busy = yield* sql<{ readonly timeout: number }>`PRAGMA busy_timeout`;
+    assert.equal(busy[0]?.timeout, 5000);
+    const cache = yield* sql<{ readonly cache_size: number }>`PRAGMA cache_size`;
+    assert.equal(cache[0]?.cache_size, -SqlitePersistence.PAGE_CACHE_KIB);
+  }).pipe(
+    Effect.provide(SqlitePersistence.layerFromPath(dbPath).pipe(Layer.provide(NodeServices.layer))),
+    Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
+  );
+});

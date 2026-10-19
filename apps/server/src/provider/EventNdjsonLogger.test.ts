@@ -11,9 +11,12 @@ import * as Fiber from "effect/Fiber";
 import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
+import { RotatingFileSink, RotatingFileSinkError } from "@specweave-studio/shared/logging";
+import { vi } from "vite-plus/test";
 
 import * as ResourceAttribution from "../resourceTelemetry/ResourceAttribution.ts";
 import {
+  EVENT_LOG_DISK_FAILURE_BACKOFF_MS,
   makeEventNdjsonLogger,
   makeEventNdjsonLogStore,
   type PendingRecord,
@@ -787,6 +790,175 @@ describe("EventNdjsonLogger", () => {
       }
     }),
   );
+
+  it.effect("stops writing and scanning for a minute when the disk is full", () => {
+    const logs: Array<{ readonly logLevel: string; readonly message: unknown }> = [];
+    const captureLogs = Logger.make(({ logLevel, message }) => {
+      logs.push({ logLevel, message });
+    });
+    return Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-provider-log-"));
+      const basePath = NodePath.join(tempDir, "events.log");
+      const threadPath = ownedLogPath(basePath, "thread-full");
+      const expiredPath = ownedLogPath(basePath, "expired");
+      let diskFull = true;
+      const realWrite = RotatingFileSink.prototype.write;
+      const write = vi.spyOn(RotatingFileSink.prototype, "write").mockImplementation(function (
+        this: RotatingFileSink,
+        chunk,
+      ) {
+        if (diskFull) {
+          throw new RotatingFileSinkError({
+            operation: "write",
+            filePath: threadPath,
+            cause: Object.assign(new Error("no space left on device"), { code: "ENOSPC" }),
+          });
+        }
+        realWrite.call(this, chunk);
+      });
+
+      try {
+        yield* TestClock.setTime(1_800_000_000_000);
+        const store = yield* makeEventNdjsonLogStore(basePath, {
+          batchWindowMs: 0,
+          maxAgeMs: 10_000,
+          retentionCheckIntervalMs: 1,
+        });
+        const logger = store.logger("native");
+        const now = yield* Clock.currentTimeMillis;
+        NodeFS.writeFileSync(expiredPath, "x");
+        NodeFS.utimesSync(expiredPath, (now - 20_000) / 1_000, (now - 20_000) / 1_000);
+
+        yield* logger.write({ id: "first" }, ThreadId.make("thread-full"));
+        assert.equal(write.mock.calls.length, 1);
+        assert.deepEqual(logs, [
+          {
+            logLevel: "Warn",
+            message: [
+              "provider event log writes are failing because the disk is out of space, dropping records until space is freed",
+              { filePath: threadPath, errorCode: "ENOSPC" },
+            ],
+          },
+        ]);
+
+        // While suspended, events are not serialized, not written, and the
+        // retention scan does not run.
+        let serialized = 0;
+        yield* TestClock.adjust("2 millis");
+        for (let index = 0; index < 100; index += 1) {
+          yield* logger.write(
+            {
+              get id() {
+                serialized += 1;
+                return "dropped";
+              },
+            },
+            ThreadId.make("thread-full"),
+          );
+        }
+        assert.equal(serialized, 0);
+        assert.equal(write.mock.calls.length, 1);
+        assert.equal(NodeFS.existsSync(expiredPath), true);
+        assert.equal(logs.length, 1);
+
+        diskFull = false;
+        yield* TestClock.adjust(EVENT_LOG_DISK_FAILURE_BACKOFF_MS);
+        yield* logger.write({ id: "recovered" }, ThreadId.make("thread-full"));
+        assert.include(NodeFS.readFileSync(threadPath, "utf8"), '{"id":"recovered"}');
+        assert.deepEqual(logs[1], {
+          logLevel: "Info",
+          message: [
+            "provider event log writes recovered",
+            { filePath: threadPath, droppedCount: 101 },
+          ],
+        });
+        // Retention resumes once writes succeed.
+        assert.equal(NodeFS.existsSync(expiredPath), false);
+        yield* store.close();
+      } finally {
+        write.mockRestore();
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }).pipe(Effect.provide(Logger.layer([captureLogs], { mergeWithExisting: false })));
+  });
+
+  it.effect("drops only the failing thread's records when one file cannot be written", () => {
+    const logs: Array<{ readonly logLevel: string; readonly message: unknown }> = [];
+    const captureLogs = Logger.make(({ logLevel, message }) => {
+      logs.push({ logLevel, message });
+    });
+    return Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-provider-log-"));
+      const basePath = NodePath.join(tempDir, "events.log");
+      const brokenPath = ownedLogPath(basePath, "thread-broken");
+      const healthyPath = ownedLogPath(basePath, "thread-healthy");
+      const expiredPath = ownedLogPath(basePath, "expired");
+      let broken = true;
+      const realWrite = RotatingFileSink.prototype.write;
+      const write = vi.spyOn(RotatingFileSink.prototype, "write").mockImplementation(function (
+        this: RotatingFileSink,
+        chunk,
+      ) {
+        const sinkPath = (this as unknown as { readonly filePath: string }).filePath;
+        if (broken && sinkPath === brokenPath) {
+          throw new RotatingFileSinkError({
+            operation: "write",
+            filePath: brokenPath,
+            cause: Object.assign(new Error("permission denied"), { code: "EACCES" }),
+          });
+        }
+        realWrite.call(this, chunk);
+      });
+
+      try {
+        yield* TestClock.setTime(1_800_000_000_000);
+        const store = yield* makeEventNdjsonLogStore(basePath, {
+          batchWindowMs: 0,
+          maxAgeMs: 10_000,
+          retentionCheckIntervalMs: 1,
+        });
+        const logger = store.logger("native");
+        const now = yield* Clock.currentTimeMillis;
+        NodeFS.writeFileSync(expiredPath, "x");
+        NodeFS.utimesSync(expiredPath, (now - 20_000) / 1_000, (now - 20_000) / 1_000);
+
+        yield* logger.write({ id: "broken-1" }, ThreadId.make("thread-broken"));
+        yield* TestClock.adjust("2 millis");
+        yield* logger.write({ id: "broken-2" }, ThreadId.make("thread-broken"));
+        yield* logger.write({ id: "healthy" }, ThreadId.make("thread-healthy"));
+
+        // The other thread keeps writing and the retention scan still runs.
+        assert.include(NodeFS.readFileSync(healthyPath, "utf8"), '{"id":"healthy"}');
+        assert.equal(NodeFS.existsSync(expiredPath), false);
+        // One warning for the failing file, not one per batch.
+        assert.deepEqual(logs, [
+          {
+            logLevel: "Warn",
+            message: [
+              "provider event log writes to this file are failing, dropping its records until they recover",
+              { filePath: brokenPath, errorCode: "EACCES" },
+            ],
+          },
+        ]);
+
+        broken = false;
+        yield* logger.write({ id: "broken-3" }, ThreadId.make("thread-broken"));
+        assert.include(NodeFS.readFileSync(brokenPath, "utf8"), '{"id":"broken-3"}');
+        assert.deepEqual(logs[1], {
+          logLevel: "Info",
+          message: [
+            "provider event log writes recovered",
+            { filePath: brokenPath, droppedCount: 2 },
+          ],
+        });
+        assert.equal(logs.length, 2);
+        yield* store.close();
+      } finally {
+        write.mockRestore();
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }).pipe(Effect.provide(Logger.layer([captureLogs], { mergeWithExisting: false })));
+  });
 
   it("attributes batches that were written before a later chunk fails", () => {
     const records: ReadonlyArray<PendingRecord> = [

@@ -2,6 +2,7 @@ import type { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
 import { useState } from "react";
 
 import { machineStatus } from "../../lib/machineStatus";
+import { isThisMachineTarget } from "../../connection/desktopLocal";
 import { useEnvironments } from "../../state/environments";
 import { NativeConnectionsPanel } from "../connections/NativeConnectionsPanel";
 import {
@@ -62,8 +63,10 @@ export function ConnectionsLibrarySettings() {
     choices.find((c) => c.key === selection) ?? (selection === null ? choices[0] : undefined);
   // The same status text the machine picker, sidebar and chats show.
   const statusText = (environmentId: EnvironmentId) => {
-    const connection = presentations.find((e) => e.environmentId === environmentId)?.connection;
-    return connection ? machineStatus(connection).text : null;
+    const environment = presentations.find((e) => e.environmentId === environmentId);
+    return environment?.connection
+      ? machineStatus(environment.connection, true, isThisMachineTarget(environment.entry)).text
+      : null;
   };
   const groups = projectScope
     ? [...new Set(choices.map((choice) => choice.environmentId))].map((environmentId) => {

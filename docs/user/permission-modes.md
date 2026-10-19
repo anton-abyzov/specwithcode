@@ -18,11 +18,22 @@ and modes you choose in a draft keep their permissions.
 Approve or reject requests in the conversation to let the agent continue. Permission modes do
 not prevent the agent from asking questions about the task.
 
-Providers take a new mode on their next turn. When you raise a thread or project to **Full access**
-while a turn is running, SpecWithCode approves the command, file and permission requests that turn
-still sends, including ones already waiting, so a thread on Full access never waits on them.
-Questions and MCP server requests still come to you. The project permission picker next to the
-coordinator shows the mode the coordinator runs in.
+Providers take a new mode on their next turn. On **Full access**, SpecWithCode approves the
+command, file and permission requests a turn still sends, including ones left from before the
+thread was raised, and MCP server requests that only ask you to confirm. It checks again every two
+minutes and retries an answer that failed. Questions, sign-ins and MCP requests that ask you to fill
+in fields still come to you. The project permission picker next to the coordinator shows the mode
+the coordinator runs in.
+
+Workers that a **Full access** coordinator starts, delegates, forks or launches on another machine
+run on Full access too, even when the project default is lower. A coordinator never gives a worker
+more access than it has, and a machine's access setting still caps workers there. A machine
+handoff carries the coordinator's mode to the project it moves to.
+
+A thread that waits on you shows **Waiting on you** and is listed in **Needs you**. A thread with
+nothing in progress that stays quiet for 30 minutes is listed as stalled. An approval left for 30
+minutes without activity no longer holds back an automatic update: the update stops that turn so
+it can continue later. Questions and sign-ins still hold updates until you answer them.
 
 ## Provider differences
 

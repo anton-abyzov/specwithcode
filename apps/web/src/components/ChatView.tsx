@@ -486,7 +486,12 @@ import {
   recordChatContinuation,
   useChatContinuationsVersion,
 } from "../lib/chatContinuations";
-import { isThisMachineCatchingUp, lastSeenLabel, machineDetail } from "../lib/machineStatus";
+import {
+  environmentUnavailableSendToast,
+  isThisMachineCatchingUp,
+  lastSeenLabel,
+  machineDetail,
+} from "../lib/machineStatus";
 import { isDesktopLocalConnectionTarget, isThisMachineTarget } from "../connection/desktopLocal";
 import { useEnvironmentDisconnectDelay } from "../hooks/useEnvironmentDisconnectDelay";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
@@ -11374,10 +11379,13 @@ export default function ChatView(props: ChatViewProps) {
       toastManager.add({
         ...stackedThreadToast({
           type: "warning",
-          title: activeEnvironmentUnavailableLabel
-            ? `Waiting for ${activeEnvironmentUnavailableLabel}: not sent yet`
-            : "Not connected: message not sent",
-          description: `Your message stays in the composer. Send it once ${activeEnvironmentUnavailableLabel ?? "the machine"} is back${continueElsewhereTarget ? `, or continue on ${continueElsewhereTarget.label}` : ""}.`,
+          ...environmentUnavailableSendToast({
+            label: activeEnvironmentUnavailableLabel,
+            isThisMachineCatchingUp:
+              activeEnvironmentUnavailableState?.isThisMachine === true &&
+              isThisMachineCatchingUp(activeEnvironmentUnavailableState.connection.phase),
+            continueOn: continueElsewhereTarget?.label ?? null,
+          }),
         }),
         id: `chat-send-environment-unavailable:${toastSlot}`,
       });

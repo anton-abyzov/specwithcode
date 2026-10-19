@@ -29,6 +29,7 @@ import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolv
 import { forkParked } from "../serverActivation.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import { SWEEP_SHELL_SNAPSHOT_MAX_AGE_MS } from "./ShellSnapshotCache.ts";
 
 class ThreadPullRequestServiceV2 extends Context.Service<
   ThreadPullRequestServiceV2,
@@ -132,6 +133,8 @@ export const make = Effect.gen(function* () {
       ? orchestrator.getShellSnapshot({
           location: "active",
           unsettledOnly: !(backfill || pendingBackfill.size > 0),
+          // The snapshot's own sequence guards each sync, so a shared copy is safe.
+          maxAgeMs: SWEEP_SHELL_SNAPSHOT_MAX_AGE_MS,
         })
       : Effect.gen(function* () {
           // Read the sequence first. The thread is then at least this new, so a

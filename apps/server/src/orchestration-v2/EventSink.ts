@@ -1,5 +1,6 @@
 import {
   CommandId,
+  EventId,
   type OrchestrationV2Run,
   OrchestrationV2DomainEvent,
   OrchestrationV2StoredEvent,
@@ -66,6 +67,14 @@ export class EventSinkStreamError extends Schema.TaggedError<EventSinkStreamErro
 
 export const EventSinkV2Error = Schema.Union([EventSinkWriteError, EventSinkStreamError]);
 export type EventSinkV2Error = typeof EventSinkV2Error.Type;
+
+/** Statuses a provider may still report for an approval or question it asked. */
+const OPEN_REQUEST_ARTIFACT_STATUSES: ReadonlySet<string> = new Set([
+  "idle",
+  "pending",
+  "running",
+  "waiting",
+]);
 
 /**
  * SERVICE DEFINITION
@@ -306,6 +315,141 @@ const layerBase: Layer.Layer<
         });
       });
 
+    const settledRequestOutcome = (
+      request: Extract<OrchestrationV2DomainEvent, { type: "runtime-request.updated" }>["payload"],
+      fallbackAt: DateTime.Utc,
+    ) => ({
+      status:
+        request.status === "resolved" &&
+        request.decision !== "decline" &&
+        request.decision !== "cancel"
+          ? ("completed" as const)
+          : ("cancelled" as const),
+      completedAt: request.resolvedAt ?? fallbackAt,
+    });
+
+    // A provider publishes a request before its node and turn item, each in
+    // its own write, and an answer commits on its own. Whichever of the two
+    // commits second must settle the request's node and item, so both sides
+    // recheck inside their write transaction. This is the provider side: a
+    // node or item that arrives for a request that is already settled takes
+    // the request's outcome instead of staying open forever.
+    const settleArtifactsOfSettledRequests = (events: ReadonlyArray<OrchestrationV2DomainEvent>) =>
+      Effect.forEach(
+        events,
+        (event): Effect.Effect<OrchestrationV2DomainEvent, unknown> =>
+          Effect.gen(function* () {
+            const requestId =
+              event.type === "turn-item.updated" &&
+              (event.payload.type === "approval_request" ||
+                event.payload.type === "user_input_request")
+                ? event.payload.requestId
+                : event.type === "node.updated" &&
+                    (event.payload.kind === "approval_request" ||
+                      event.payload.kind === "user_input_request")
+                  ? event.payload.runtimeRequestId
+                  : null;
+            if (
+              requestId === null ||
+              (event.type !== "turn-item.updated" && event.type !== "node.updated") ||
+              !OPEN_REQUEST_ARTIFACT_STATUSES.has(event.payload.status)
+            ) {
+              return event;
+            }
+            const request = yield* projectionStore.getRuntimeRequest(event.threadId, requestId);
+            if (request === undefined || request.status === "pending") return event;
+            const { status, completedAt } = settledRequestOutcome(request, event.occurredAt);
+            return event.type === "node.updated"
+              ? { ...event, payload: { ...event.payload, status, completedAt } }
+              : {
+                  ...event,
+                  payload: { ...event.payload, status, completedAt, updatedAt: completedAt },
+                };
+          }),
+        { concurrency: 1 },
+      );
+
+    // The answer side. A command reads the request's node and item before its
+    // transaction, so a provider write can add the item in between, while the
+    // request still reads as pending. Settle any node or item of a request
+    // this command settles that is still open now and that the command does
+    // not already update.
+    const settleArtifactsLeftOpenBySettledRequests = (
+      events: ReadonlyArray<OrchestrationV2DomainEvent>,
+    ) =>
+      Effect.gen(function* () {
+        const settlements: Array<OrchestrationV2DomainEvent> = [];
+        for (const event of events) {
+          if (event.type !== "runtime-request.updated" || event.payload.status === "pending") {
+            continue;
+          }
+          const context = yield* projectionStore
+            .getRuntimeResponseContext(event.threadId, event.payload.id)
+            .pipe(
+              Effect.catchTags({
+                ProjectionStoreThreadNotFoundError: () =>
+                  Effect.succeed({ request: undefined, node: undefined, item: undefined }),
+              }),
+            );
+          if (context.request === undefined) continue;
+          const { status, completedAt } = settledRequestOutcome(event.payload, event.occurredAt);
+          const base = {
+            threadId: event.threadId,
+            ...(event.driver === undefined ? {} : { driver: event.driver }),
+            ...(event.providerInstanceId === undefined
+              ? {}
+              : { providerInstanceId: event.providerInstanceId }),
+            occurredAt: event.occurredAt,
+          };
+          const node = context.node;
+          if (
+            node !== undefined &&
+            OPEN_REQUEST_ARTIFACT_STATUSES.has(node.status) &&
+            !events.some(
+              (candidate) => candidate.type === "node.updated" && candidate.payload.id === node.id,
+            )
+          ) {
+            settlements.push({
+              ...base,
+              id: EventId.make(`${event.id}:settle-node`),
+              type: "node.updated",
+              ...(node.runId === null ? {} : { runId: node.runId }),
+              nodeId: node.id,
+              payload: { ...node, status, completedAt },
+            });
+          }
+          const item = context.item;
+          if (
+            item !== undefined &&
+            OPEN_REQUEST_ARTIFACT_STATUSES.has(item.status) &&
+            !events.some(
+              (candidate) =>
+                candidate.type === "turn-item.updated" && candidate.payload.id === item.id,
+            )
+          ) {
+            settlements.push({
+              ...base,
+              id: EventId.make(`${event.id}:settle-turn-item`),
+              type: "turn-item.updated",
+              ...(item.runId === null ? {} : { runId: item.runId }),
+              ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
+              payload: { ...item, status, completedAt, updatedAt: completedAt },
+            });
+          }
+        }
+        return settlements.length === 0 ? events : [...events, ...settlements];
+      });
+
+    const guardProviderEvents = (input: {
+      readonly guardPendingUserInputCancellations?: boolean;
+      readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
+    }) =>
+      input.guardPendingUserInputCancellations === true
+        ? guardUserInputCancellations(input.events).pipe(
+            Effect.flatMap(settleArtifactsOfSettledRequests),
+          )
+        : Effect.succeed(input.events);
+
     const normalizeEvents = (events: ReadonlyArray<OrchestrationV2DomainEvent>) => {
       const runOrdinals = new Map(
         events.flatMap((event) =>
@@ -370,11 +514,7 @@ const layerBase: Layer.Layer<
 
       return yield* commitThenPublish(
         Effect.gen(function* () {
-          const normalized = yield* normalizeEvents(
-            input.guardPendingUserInputCancellations === true
-              ? yield* guardUserInputCancellations(input.events)
-              : input.events,
-          );
+          const normalized = yield* normalizeEvents(yield* guardProviderEvents(input));
           const committed = yield* eventStore.append({
             ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
             events: normalized,
@@ -428,11 +568,7 @@ const layerBase: Layer.Layer<
               };
             }
 
-            const normalized = yield* normalizeEvents(
-              input.guardPendingUserInputCancellations === true
-                ? yield* guardUserInputCancellations(input.events)
-                : input.events,
-            );
+            const normalized = yield* normalizeEvents(yield* guardProviderEvents(input));
             const storedEvents = yield* eventStore.append({
               ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
               events: normalized,
@@ -493,11 +629,7 @@ const layerBase: Layer.Layer<
             };
           }
 
-          const normalized = yield* normalizeEvents(
-            input.guardPendingUserInputCancellations === true
-              ? yield* guardUserInputCancellations(input.events)
-              : input.events,
-          );
+          const normalized = yield* normalizeEvents(yield* guardProviderEvents(input));
           const storedEvents = yield* eventStore.append({
             ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
             events: normalized,
@@ -543,7 +675,9 @@ const layerBase: Layer.Layer<
             return { ...existing, committed: false as const, cancelledEffectIds: [] };
           }
 
-          const normalized = yield* normalizeEvents(input.events);
+          const normalized = yield* normalizeEvents(
+            yield* settleArtifactsLeftOpenBySettledRequests(input.events),
+          );
           const storedEvents = yield* eventStore.append({
             commandId: input.commandId,
             events: normalized,

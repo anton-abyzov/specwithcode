@@ -1,4 +1,8 @@
-import type { EnvironmentConnectionPresentation } from "@specweave-studio/client-runtime/connection";
+import {
+  connectionStatusText,
+  connectionStatusTitle,
+  type EnvironmentConnectionPresentation,
+} from "@specweave-studio/client-runtime/connection";
 
 import { compactAge } from "~/components/sidebar/SidebarProjectTree.logic";
 
@@ -148,4 +152,51 @@ export function savedMachineStatus(
     case "available":
       return { text: "Not connected", tone: "muted" };
   }
+}
+
+/**
+ * The client runtime's status sentence ("Failed to connect. Reconnecting...
+ * Reason: ...") for pickers and settings panels that show it, except that this
+ * machine reads "Catching up…" while its server is busy.
+ */
+export function environmentConnectionStatusText(
+  connection: EnvironmentConnectionPresentation,
+  isThisMachine: boolean,
+): string {
+  return isThisMachine && isThisMachineCatchingUp(connection.phase)
+    ? THIS_MACHINE_CATCHING_UP
+    : connectionStatusText(connection);
+}
+
+/** The short form of environmentConnectionStatusText, without the reason. */
+export function environmentConnectionStatusTitle(
+  connection: EnvironmentConnectionPresentation,
+  isThisMachine: boolean,
+): string {
+  return isThisMachine && isThisMachineCatchingUp(connection.phase)
+    ? THIS_MACHINE_CATCHING_UP
+    : connectionStatusTitle(connection);
+}
+
+/**
+ * The toast for a send refused while the chat's machine is not connected. The
+ * app's own machine is busy, not gone, so it is not "back" later: it catches up.
+ */
+export function environmentUnavailableSendToast(input: {
+  readonly label: string | null;
+  readonly isThisMachineCatchingUp: boolean;
+  readonly continueOn: string | null;
+}): { readonly title: string; readonly description: string } {
+  if (input.isThisMachineCatchingUp) {
+    return {
+      title: `${THIS_MACHINE_BUSY_TITLE}: not sent yet`,
+      description: "Your message stays in the composer. Send it once it catches up.",
+    };
+  }
+  return {
+    title: input.label
+      ? `Waiting for ${input.label}: not sent yet`
+      : "Not connected: message not sent",
+    description: `Your message stays in the composer. Send it once ${input.label ?? "the machine"} is back${input.continueOn ? `, or continue on ${input.continueOn}` : ""}.`,
+  };
 }

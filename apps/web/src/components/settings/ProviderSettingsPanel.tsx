@@ -7,7 +7,6 @@ import {
 } from "@specweave-studio/contracts";
 import { useEnvironmentScope, readEnvironmentScope } from "../../state/session";
 import { useAtomValue } from "@effect/atom-react";
-import { connectionStatusTitle } from "@specweave-studio/client-runtime/connection";
 import { safeErrorLogAttributes } from "@specweave-studio/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
@@ -37,7 +36,8 @@ import * as Result from "effect/Result";
 import { PlusIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
+import { isDesktopLocalConnectionTarget, isThisMachineTarget } from "../../connection/desktopLocal";
+import { environmentConnectionStatusTitle } from "../../lib/machineStatus";
 import {
   useEnvironmentSettings,
   usePersistEnvironmentProviderInstanceMutation,
@@ -318,7 +318,10 @@ function EnvironmentUnavailablePlaceholder({
     ? access.reason === "permissions"
       ? "Checking what this session is allowed to change."
       : `Waiting for ${environment.label}'s configuration.`
-    : connectionStatusTitle(environment.connection);
+    : environmentConnectionStatusTitle(
+        environment.connection,
+        isThisMachineTarget(environment.entry),
+      );
   const error = isLoading ? null : environment.connection.error;
   // No spinner: this state can persist indefinitely for a wedged device, and a
   // continuously repainting animation would run the whole time.
@@ -451,7 +454,10 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
           {options.map((environment) => {
             const machine = resolveEnvironmentMachineKind(environment.serverConfig);
             const detail = providerEnvironmentDetail(environment);
-            const statusText = connectionStatusTitle(environment.connection);
+            const statusText = environmentConnectionStatusTitle(
+              environment.connection,
+              isThisMachineTarget(environment.entry),
+            );
             return (
               <Tooltip key={environment.environmentId}>
                 <TooltipTrigger

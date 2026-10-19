@@ -21,7 +21,9 @@ import * as Option from "effect/Option";
 import { parse } from "smol-toml";
 import { ServerConfig } from "../../config.ts";
 import {
+  codexPluginName,
   codexPluginProvides,
+  disabledCodexSkills,
   portableDeclaration,
   toolDeclaration,
 } from "./NativeConnectionEdit.ts";
@@ -166,6 +168,23 @@ export function codexPluginDirectory(codexHome: string, key: string): string | n
   return NodePath.join(codexHome, "plugins", "cache", marketplace, name);
 }
 
+/** Codex marks the cache folder of a plugin the user's ChatGPT account installed with this file. */
+const ACCOUNT_MARKER = ".codex-remote-plugin-install.json";
+
+/** The `name` of a SKILL.md frontmatter block, when it is a plain skill name. */
+export function skillFrontmatterName(text: string): string | null {
+  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/);
+  if (lines[0]?.trim() !== "---") return null;
+  for (const line of lines.slice(1)) {
+    if (line.trim() === "---") return null;
+    const match = /^name:\s*(.*?)\s*$/.exec(line);
+    if (!match) continue;
+    const name = match[1]!.replace(/^"(.*)"$|^'(.*)'$/, "$1$2");
+    return segment(name) ? name : null;
+  }
+  return null;
+}
+
 /** Enabled Codex plugin keys, in configuration order. */
 export const enabledCodexPlugins = (config: ObjectValue): string[] =>
   Object.entries(object(config.plugins))
@@ -270,6 +289,94 @@ const make = Effect.gen(function* () {
         }),
       ),
     );
+  const cacheRoot = NodePath.join(paths.codexHome, "plugins", "cache");
+  /** Folder names safe to join under `directory`, sorted and capped; none when it is unreadable. */
+  const folders = (directory: string, limit: number) =>
+    fs.readDirectory(directory).pipe(
+      Effect.map((names) => names.filter(segment).toSorted().slice(0, limit)),
+      Effect.orElseSucceed(() => [] as string[]),
+    );
+  /** Codex keeps the active version beside older ones; the newest folder is current. */
+  const newestVersion = (directory: string) =>
+    fs.readDirectory(directory).pipe(
+      Effect.flatMap((names) =>
+        Effect.forEach(names.slice(0, 50), (name) =>
+          fs.stat(NodePath.join(directory, name)).pipe(
+            Effect.map((info) =>
+              info.type === "Directory"
+                ? [
+                    {
+                      name,
+                      time: Option.match(info.mtime, {
+                        onNone: () => 0,
+                        onSome: (d) => d.getTime(),
+                      }),
+                    },
+                  ]
+                : [],
+            ),
+            Effect.orElseSucceed(() => []),
+          ),
+        ),
+      ),
+      Effect.map((found) => found.flat().toSorted((a, b) => b.time - a.time)[0]?.name),
+      // Not downloaded yet: Codex fetches the plugin before it can run it.
+      Effect.orElseSucceed(() => undefined),
+    );
+  /** Keys of the plugins the user's ChatGPT account installed, from their marked cache folders. */
+  const accountPlugins = Effect.gen(function* () {
+    const keys: string[] = [];
+    for (const marketplace of yield* folders(cacheRoot, 50))
+      for (const name of yield* folders(NodePath.join(cacheRoot, marketplace), MAX_ENTRIES + 1)) {
+        const marked = yield* fs
+          .exists(NodePath.join(cacheRoot, marketplace, name, ACCOUNT_MARKER))
+          .pipe(Effect.orElseSucceed(() => false));
+        if (marked) keys.push(`${name}@${marketplace}`);
+      }
+    return keys;
+  });
+  /** A skill's name from the start of its SKILL.md, else its folder; null without one. */
+  const skillName = (folder: string) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const path = NodePath.join(folder, "SKILL.md");
+        if ((yield* fs.stat(path)).type !== "File") return null;
+        const handle = yield* fs.open(path, { flag: "r" });
+        const head = yield* handle.readAlloc(16384);
+        const text = Option.isSome(head) ? Buffer.from(head.value).toString("utf8") : "";
+        return skillFrontmatterName(text) ?? NodePath.basename(folder);
+      }),
+    ).pipe(Effect.orElseSucceed(() => null));
+  /**
+   * The skills each Codex plugin name ships, from the newest version of every
+   * cached install of that name, local or account: Codex names them
+   * `<plugin>:<skill>` whichever install it loads.
+   */
+  const pluginSkills = (names: Iterable<string>) =>
+    Effect.gen(function* () {
+      const result = new Map<string, string[]>();
+      const marketplaces = yield* folders(cacheRoot, 50);
+      for (const name of [...new Set(names)].filter(segment).slice(0, MAX_ENTRIES)) {
+        const skills = new Set<string>();
+        for (const marketplace of marketplaces) {
+          const directory = NodePath.join(cacheRoot, marketplace, name);
+          const version = yield* newestVersion(directory);
+          if (version === undefined) continue;
+          const root = NodePath.join(directory, version);
+          const manifest = yield* bounded(NodePath.join(root, ".codex-plugin", "plugin.json"));
+          const declared = manifest.data.skills;
+          const folder = NodePath.resolve(root, typeof declared === "string" ? declared : "skills");
+          const relative = NodePath.relative(root, folder);
+          if (relative.startsWith("..") || NodePath.isAbsolute(relative)) continue;
+          for (const skill of yield* folders(folder, MAX_ENTRIES)) {
+            const found = yield* skillName(NodePath.join(folder, skill));
+            if (found !== null) skills.add(found);
+          }
+        }
+        if (skills.size > 0) result.set(name, [...skills]);
+      }
+      return result;
+    });
   const read = (workspaceRoot?: string) =>
     Effect.gen(function* () {
       const sources: Source[] = [];
@@ -545,37 +652,39 @@ const make = Effect.gen(function* () {
           worse("codex", "invalid");
           continue;
         }
-        // Codex keeps the active version beside older ones; the newest folder is current.
-        const versions = yield* fs.readDirectory(directory).pipe(
-          Effect.flatMap((names) =>
-            Effect.forEach(names.slice(0, 50), (name) =>
-              fs.stat(NodePath.join(directory, name)).pipe(
-                Effect.map((info) =>
-                  info.type === "Directory"
-                    ? [
-                        {
-                          name,
-                          time: Option.match(info.mtime, {
-                            onNone: () => 0,
-                            onSome: (d) => d.getTime(),
-                          }),
-                        },
-                      ]
-                    : [],
-                ),
-                Effect.orElseSucceed(() => []),
-              ),
-            ),
-          ),
-          Effect.map((found) => found.flat().toSorted((a, b) => b.time - a.time)),
-          // Not downloaded yet: Codex fetches the plugin before it can run it.
-          Effect.orElseSucceed(() => [] as Array<{ name: string; time: number }>),
-        );
-        const version = versions[0];
-        if (!version) continue;
-        const root = NodePath.join(directory, version.name);
+        const version = yield* newestVersion(directory);
+        if (version === undefined) continue;
+        const root = NodePath.join(directory, version);
         yield* plugin("codex", key, root, NodePath.join(root, ".codex-plugin", "plugin.json"));
       }
+      // Account plugins load whatever config.toml says, so they are listed from the cache.
+      const accountKeys = yield* accountPlugins;
+      if (accountKeys.length > MAX_ENTRIES) truncated = true;
+      const account = new Set(accountKeys.slice(0, MAX_ENTRIES));
+      for (const key of account) {
+        if (labels.has(`codex:${key}`)) continue;
+        const directory = codexPluginDirectory(paths.codexHome, key);
+        const version = directory === null ? undefined : yield* newestVersion(directory);
+        if (directory === null || version === undefined) continue;
+        const manifest = yield* bounded(
+          NodePath.join(directory, version, ".codex-plugin", "plugin.json"),
+        );
+        worse("codex", manifest.status);
+        labels.set(`codex:${key}`, pluginLabel(key, manifest.data));
+      }
+      const tables = object(codex.plugins);
+      const codexKeys = [
+        ...Object.keys(tables).filter((key) => isObject(tables[key])),
+        ...[...account].filter((key) => !isObject(tables[key])),
+      ].slice(0, MAX_ENTRIES);
+      // A plugin is off once every skill it ships is turned off by name.
+      const skillsOf = yield* pluginSkills(codexKeys.map(codexPluginName));
+      const skillsOff = disabledCodexSkills(codex);
+      const skillsOn = (key: string) => {
+        const name = codexPluginName(key);
+        const skills = skillsOf.get(name) ?? [];
+        return skills.length === 0 || skills.some((skill) => !skillsOff.has(`${name}:${skill}`));
+      };
       const pluginsRoot = NodePath.join(NodePath.dirname(paths.claudeSettings), "plugins");
       const index = yield* bounded(NodePath.join(pluginsRoot, "installed_plugins.json"));
       worse("claude", index.status);
@@ -593,13 +702,14 @@ const make = Effect.gen(function* () {
         ...claudeSettings.map((s) => object(s.enabledPlugins)),
       );
       const plugins: NativePlugin[] = [
-        ...Object.entries(object(codex.plugins))
-          .filter(([, value]) => isObject(value))
-          .map(([key, value]) => ({
-            provider: "codex" as const,
-            key,
-            enabled: object(value).enabled === true,
-          })),
+        ...codexKeys.map((key) => ({
+          provider: "codex" as const,
+          key,
+          enabled: (account.has(key) || object(tables[key]).enabled === true) && skillsOn(key),
+          ...(account.has(key) ? { account: true } : {}),
+          // An account plugin with no skills has nothing config.toml can switch.
+          ...(account.has(key) && !skillsOf.has(codexPluginName(key)) ? { switchable: false } : {}),
+        })),
         ...Object.keys(object(index.data.plugins)).map((key) => ({
           provider: "claude" as const,
           key,
@@ -852,9 +962,19 @@ const make = Effect.gen(function* () {
           (p) => p.provider === input.provider && p.key === input.pluginKey,
         );
         if (!plugin) return yield* failure("not_found");
-        if (plugin.overridden) return yield* failure("unsupported");
+        if (plugin.overridden || plugin.switchable === false) return yield* failure("unsupported");
       }
-      const planned = plan(input, { tools, claudeSettings: settings.file, parked, digest });
+      const codexPluginSkills =
+        input.action === "plugin" && input.provider === "codex" && input.pluginKey
+          ? yield* pluginSkills([codexPluginName(input.pluginKey)])
+          : new Map<string, string[]>();
+      const planned = plan(input, {
+        tools,
+        claudeSettings: settings.file,
+        parked,
+        digest,
+        codexPluginSkills,
+      });
       if ("error" in planned) return yield* failure(planned.error);
       const summary = planned.files.map((f) => ({
         tool: f.label,

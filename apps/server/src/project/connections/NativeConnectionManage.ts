@@ -9,8 +9,10 @@ import type {
 } from "@specweave-studio/contracts";
 import {
   appendCodexTable,
+  codexPluginName,
   disableCodexServer,
   type EditableTool,
+  editableCodexSkills,
   enableCodexServer,
   maskedEntry,
   parseNativeConfig,
@@ -18,6 +20,7 @@ import {
   removeCodexServer,
   setClaudePlugin,
   setCodexPlugin,
+  setCodexSkills,
   setJsonServer,
   toolDeclaration,
   toolEntry,
@@ -68,6 +71,8 @@ export interface ManageContext {
   /** SpecWithCode's store of turned-off entries; null when this host has no state folder. */
   readonly parked: FileState | null;
   readonly digest: (name: string) => string;
+  /** Skills each Codex plugin name ships across its cached installs, local or account. */
+  readonly codexPluginSkills: ReadonlyMap<string, ReadonlyArray<string>>;
 }
 export interface PlannedFile {
   readonly label: string;
@@ -250,9 +255,37 @@ export function plan(input: NativeConnectionApplyInput, context: ManageContext):
     if (input.provider === "codex") {
       const state = context.tools.codex;
       if (state?.unreadable) return { error: "write_failed" };
-      if (!state || state.text === null) return { error: "not_found" };
-      const next = setCodexPlugin(state.text, key, input.enabled);
-      return next === null ? { error: "not_found" } : done(file("codex", next, [line]));
+      // An account plugin ignores its table, so its skills are switched by name, for every install.
+      const name = codexPluginName(key);
+      const skills = (context.codexPluginSkills.get(name) ?? []).map((s) => `${name}:${s}`);
+      const config = parseNativeConfig("codex", state?.text ?? "");
+      if (config === null) return { error: "write_failed" };
+      const plugins = config.plugins;
+      const table = isObject(plugins) && isObject(plugins[key]) ? plugins[key] : null;
+      if (!state || (table === null && skills.length === 0)) return { error: "not_found" };
+      // Without a config file there is nothing to turn on, and a missing folder means no Codex.
+      if (state.text === null && (input.enabled || !state.creatable)) return { error: "not_found" };
+      const text = state.text ?? "";
+      if (skills.length > 0 && !editableCodexSkills(text)) return { error: "unsupported" };
+      const switched = table === null ? null : setCodexPlugin(text, key, input.enabled);
+      // A table written inline stays as it is when the skills alone reach the asked-for state.
+      if (
+        table !== null &&
+        switched === null &&
+        (skills.length === 0 || (input.enabled && table.enabled !== true))
+      )
+        return { error: "unsupported" };
+      const next =
+        skills.length > 0 ? setCodexSkills(switched ?? text, skills, input.enabled) : switched;
+      const count = skills.length === 1 ? "1 skill" : `${skills.length} skills`;
+      // Without its table only the skills change, and the plugin's apps and servers still load.
+      const change =
+        switched === null
+          ? `Turn ${input.enabled ? "on" : "off"} the skills of plugin ${key} (${count})`
+          : skills.length > 0
+            ? `${line} (${count})`
+            : line;
+      return done(file("codex", next, [change]));
     }
     const settings = context.claudeSettings;
     if (settings.unreadable) return { error: "write_failed" };

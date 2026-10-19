@@ -165,7 +165,9 @@ it.effect.each(["on time", "after restart"])(
           yield* TestClock.adjust("55 seconds");
           assert.deepEqual(yield* Ref.get(commands), []);
         }
-        yield* TestClock.adjust("5 seconds");
+        // The two sources take turns 2.5 seconds apart within each five-second
+        // tick, so the one whose turn falls before the due time runs at its next.
+        yield* TestClock.adjust("7500 millis");
         assert.deepEqual([yield* Queue.take(receipts), yield* Queue.take(receipts)].sort(), [
           "retry",
           "task",

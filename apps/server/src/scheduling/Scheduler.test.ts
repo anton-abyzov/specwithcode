@@ -150,3 +150,36 @@ it.effect("records how long it sat out an update hold", () =>
     );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it.effect("spreads the sources across each tick instead of starting them together", () =>
+  Effect.gen(function* () {
+    const ranAt = yield* Queue.unbounded<readonly [string, number]>();
+    yield* Effect.gen(function* () {
+      const scheduler = yield* Scheduler.Scheduler;
+      const record = (name: string) =>
+        Effect.flatMap(Clock.currentTimeMillis, (now) =>
+          Queue.offer(ranAt, [name, now] as const),
+        ).pipe(Effect.asVoid);
+      const startMs = yield* Clock.currentTimeMillis;
+      for (const name of ["provider-fallback", "usage-limit-recovery", "scheduled-tasks"]) {
+        yield* scheduler.register(name, record(name));
+      }
+      // Registration runs each source once, straight away, and the tick that
+      // was already counting when they registered runs them all at its end.
+      for (let index = 0; index < 6; index += 1) {
+        if (index === 3) yield* TestClock.adjust("5 seconds");
+        yield* Queue.take(ranAt);
+      }
+      for (let tick = 1; tick <= 2; tick += 1) {
+        yield* TestClock.adjust("5 seconds");
+        const runs = [yield* Queue.take(ranAt), yield* Queue.take(ranAt), yield* Queue.take(ranAt)];
+        const offsets = runs.map(([, at]) => at - startMs - tick * 5_000);
+        assert.deepEqual(
+          runs.map(([name]) => name),
+          ["provider-fallback", "usage-limit-recovery", "scheduled-tasks"],
+        );
+        assert.deepEqual(offsets, [1_666, 3_332, 4_998]);
+      }
+    }).pipe(Effect.provide(Scheduler.layer));
+  }),
+);

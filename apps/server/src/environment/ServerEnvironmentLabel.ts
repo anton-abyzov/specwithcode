@@ -12,6 +12,7 @@ interface ResolveServerEnvironmentLabelInput {
 
 const ServerEnvironmentLabelCommandProbe = Schema.Literals([
   "macos-computer-name",
+  "macos-local-host-name",
   "linux-pretty-hostname",
 ]);
 type ServerEnvironmentLabelCommandProbe = typeof ServerEnvironmentLabelCommandProbe.Type;
@@ -150,14 +151,43 @@ const runFriendlyLabelCommand = Effect.fn("runFriendlyLabelCommand")(function* (
   return normalizeLabel(result.value.stdout);
 });
 
+// macOS appends " (2)", " (3)", ... to the ComputerName when another device
+// on the network answers to the same name, and the counter keeps growing.
+const MACOS_NAME_CONFLICT_SUFFIX = /^(.*\S)\s+\((\d+)\)$/u;
+
+/**
+ * The macOS ComputerName without a name-conflict counter macOS added, so this
+ * machine reads "Anton's MacBook" rather than "Anton's MacBook (149)". macOS
+ * renames the LocalHostName to "Name-149" alongside; a ComputerName whose
+ * LocalHostName carries the same "-N" suffix is a name the user chose, and
+ * stays as it is.
+ */
+const resolveMacOSComputerName = Effect.fn("resolveMacOSComputerName")(function* () {
+  const computerName = yield* runFriendlyLabelCommand({
+    probe: "macos-computer-name",
+    command: "scutil",
+    args: ["--get", "ComputerName"],
+  });
+  const conflict = computerName === null ? null : MACOS_NAME_CONFLICT_SUFFIX.exec(computerName);
+  if (computerName === null || conflict === null) {
+    return computerName;
+  }
+  const [, baseName, counter] = conflict;
+  const localHostName = yield* runFriendlyLabelCommand({
+    probe: "macos-local-host-name",
+    command: "scutil",
+    args: ["--get", "LocalHostName"],
+  });
+  if (localHostName !== null && localHostName.endsWith(`-${counter}`)) {
+    return computerName;
+  }
+  return baseName ?? computerName;
+});
+
 const resolveFriendlyHostLabel = Effect.fn("resolveFriendlyHostLabel")(function* () {
   const platform = yield* HostProcessPlatform;
   if (platform === "darwin") {
-    return yield* runFriendlyLabelCommand({
-      probe: "macos-computer-name",
-      command: "scutil",
-      args: ["--get", "ComputerName"],
-    });
+    return yield* resolveMacOSComputerName();
   }
 
   if (platform === "linux") {

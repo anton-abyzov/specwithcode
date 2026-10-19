@@ -530,8 +530,13 @@ export function environmentWaitsForReconnectGrace(
   return phase === "connecting" || phase === "reconnecting";
 }
 
-/** What the calm banner for the app's own machine says under its title. */
-export const THIS_MACHINE_BUSY_DESCRIPTION = "Messages send when it catches up.";
+/**
+ * What the calm banner for the app's own machine says under its title. Sends
+ * are refused until it catches up (nothing queues them), so it says that and
+ * that the draft is kept.
+ */
+export const THIS_MACHINE_BUSY_DESCRIPTION =
+  "You can send once it catches up; your draft stays in the composer.";
 
 export function hasEnvironmentReconnectWarningGraceElapsed(
   activeEnvironmentId: EnvironmentId | null,

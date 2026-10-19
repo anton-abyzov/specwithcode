@@ -59,6 +59,8 @@ export interface RelayHello {
   readonly label: string;
   readonly extensionVersion: string;
   readonly extensionId: string;
+  /** One id per Chrome profile install (1.0.3+); empty from older versions. */
+  readonly instanceId: string;
   readonly userAgent: string;
 }
 
@@ -96,6 +98,7 @@ export interface RelayProfile {
   readonly label: string;
   readonly extensionVersion: string;
   readonly extensionId: string;
+  readonly instanceId: string;
   readonly browser: string;
   readonly connectedAt: number;
   readonly attachedTabs: Set<number>;
@@ -163,6 +166,7 @@ export function parseHello(text: string): RelayHello | null {
     label: str(p.label, 60) || "Chrome",
     extensionVersion: str(p.extensionVersion, 20) || "unknown",
     extensionId: str(p.extensionId, 64),
+    instanceId: str(p.instanceId, 64),
     userAgent: str(p.userAgent, 400),
   };
 }
@@ -220,21 +224,23 @@ export class BrowserRelayHub {
         return this.reject(connection, CLOSE_REJECTED, "pairing code rejected");
       if (connection.helloTimer) clearTimeout(connection.helloTimer);
       connection.helloTimer = null;
-      // The same profile reconnecting replaces its stale socket.
+      // The same profile reconnecting replaces its stale socket. Store installs share one
+      // extension id across Chrome profiles, so the install's own id decides when both sent one.
       for (const other of this.connections) {
-        if (
-          other !== connection &&
-          other.profile !== null &&
-          other.profile.extensionId === hello.extensionId &&
-          other.profile.label === hello.label
-        )
-          this.reject(other, CLOSE_REPLACED, "replaced by a newer connection");
+        if (other === connection || other.profile === null) continue;
+        const sameProfile =
+          hello.instanceId && other.profile.instanceId
+            ? other.profile.instanceId === hello.instanceId
+            : other.profile.extensionId === hello.extensionId &&
+              other.profile.label === hello.label;
+        if (sameProfile) this.reject(other, CLOSE_REPLACED, "replaced by a newer connection");
       }
       connection.profile = {
         id: `p${++this.profileSeq}`,
         label: this.uniqueLabel(hello.label),
         extensionVersion: hello.extensionVersion,
         extensionId: hello.extensionId,
+        instanceId: hello.instanceId,
         browser: browserFromUserAgent(hello.userAgent),
         connectedAt: this.now(),
         attachedTabs: new Set(),

@@ -77,6 +77,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type * as Statement from "effect/sql/Statement";
 
 import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
+import * as ShellSnapshotCache from "./ShellSnapshotCache.ts";
 import { summarizeTodoPlanPayload } from "@specweave-studio/shared/planProgress";
 import {
   isThreadHistoryUserTurn,
@@ -349,11 +350,18 @@ export interface ProjectionStoreV2Shape {
   /**
    * `unsettledOnly` is for background sweeps, not clients: it skips settled
    * threads before any of their run, item or session rows are read.
+   * `maxAgeMs` is for background sweeps too: they share one recent snapshot
+   * (see ShellSnapshotCache.ts) instead of each scanning every thread.
    */
-  readonly getShellSnapshot: (options?: {
-    readonly location?: "active" | "archive";
-    readonly unsettledOnly?: boolean;
-  }) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, ProjectionStoreV2Error>;
+  readonly getShellSnapshot: (
+    options?: ShellSnapshotCache.ShellSnapshotCacheOptions,
+  ) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, ProjectionStoreV2Error>;
+  /**
+   * Projection writes applied so far in this process. A sweep that found
+   * nothing compares it to skip the same read until something changes.
+   * Test doubles may leave it out: every sweep then reads.
+   */
+  readonly writeCount?: Effect.Effect<number>;
   readonly getThreadShell: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadShell | null, ProjectionStoreV2Error>;
@@ -1886,10 +1894,23 @@ function shellFromState(input: {
   };
 }
 
+/**
+ * A type-filtered read of a thread's items, with no run filter, seeks the
+ * (thread, type) index: the planner otherwise walks every item of the thread
+ * in ordinal order and checks each one's type, which on a thread of thousands
+ * of items held the event loop for seconds. Sorting the few matches is cheap.
+ */
+const turnItemsByType = (filter: ProjectionRecordFilter | undefined): boolean =>
+  filter?.turnItemTypes !== undefined &&
+  filter.turnItemTypes.length > 0 &&
+  filter.turnItemRunId === undefined &&
+  filter.turnItemRunIds === undefined;
+
 export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> = Layer.effect(
   ProjectionStoreV2,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    const shellSnapshots = yield* ShellSnapshotCache.make((options) => readShellSnapshot(options));
 
     // For run upserts: a snapshot without `path` keeps the value another event recorded there.
     const keepRecordedRunField = (payload: Statement.Fragment, path: string) => sql`
@@ -2821,6 +2842,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ? yield* sql<PayloadRow>`
                 SELECT payload_json
                 FROM orchestration_v2_projection_turn_items
+                ${turnItemsByType(filter) ? sql`INDEXED BY project_context_compaction_lookup` : sql``}
                 WHERE thread_id = ${threadId}
                   ${filter?.turnItemTypes === undefined ? sql`` : sql`AND type IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemTypes)}))`}
                   ${filter?.turnItemStatuses === undefined ? sql`` : sql`AND status IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemStatuses)}))`}
@@ -5815,7 +5837,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         } satisfies ShellThreadState;
       });
 
-    const getShellSnapshot: ProjectionStoreV2Shape["getShellSnapshot"] = (options) =>
+    const readShellSnapshot = (options: ShellSnapshotCache.ShellSnapshotReadOptions) =>
       sql
         .withTransaction(
           Effect.gen(function* () {
@@ -5984,8 +6006,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         .pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })));
 
     return {
-      apply,
-      getShellSnapshot,
+      // Counted after the write, so a snapshot read during it is not trusted as current.
+      apply: (event) => apply(event).pipe(Effect.ensuring(shellSnapshots.invalidate)),
+      getShellSnapshot: shellSnapshots.get,
+      writeCount: shellSnapshots.writeCount,
       getThreadShell,
       getThread,
       getSettlementCandidates,
@@ -6049,6 +6073,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
           }
           yield* Ref.update(sequence, (current) => current + 1);
         }),
+      writeCount: Ref.get(sequence),
       getShellSnapshot: (options) =>
         Effect.gen(function* () {
           const existing = (yield* Ref.get(replayState)).projections;

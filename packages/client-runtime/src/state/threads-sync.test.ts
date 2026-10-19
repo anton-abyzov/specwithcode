@@ -41,6 +41,7 @@ import * as ThreadHistoryController from "./threadHistoryController.ts";
 import {
   EMPTY_ENVIRONMENT_THREAD_STATE,
   THREAD_RESUME_COMPLETION_TIMEOUT,
+  THREAD_RESUME_UNCONFIRMED_ERROR,
   makeEnvironmentThreadState,
   type EnvironmentThreadState,
   type ThreadSnapshotLoadResult,
@@ -1860,48 +1861,55 @@ describe("EnvironmentThreads", () => {
       yield* settleFibers;
     });
 
-  it.effect(
-    "resubscribes a resume that never confirms synchronization on a connected session",
-    () =>
-      Effect.gen(function* () {
-        const harness = yield* makeHarness({ cached: BASE_PROJECTION, completionMarker: true });
-        yield* awaitSubscriptionCount(harness.subscriptionCount, 1);
+  it.effect("resubscribes a resume that goes quiet without confirming synchronization", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_PROJECTION, completionMarker: true });
+      yield* awaitSubscriptionCount(harness.subscriptionCount, 1);
+      // A busy server replays one event every 5 seconds for 25 seconds: the
+      // watchdog counts silence, so it leaves that replay alone.
+      for (let index = 1; index <= 5; index += 1) {
+        yield* TestClock.adjust("5 seconds");
         yield* Queue.offer(
           harness.inputs,
-          titleUpdated("Caught-up title", CACHED_SNAPSHOT_SEQUENCE + 1),
+          titleUpdated(
+            index === 5 ? "Caught-up title" : `Title ${index}`,
+            CACHED_SNAPSHOT_SEQUENCE + index,
+          ),
         );
-        yield* awaitThreadState(
-          harness.observed,
-          (value) =>
-            value.status === "synchronizing" &&
-            Option.isSome(value.data) &&
-            value.data.value.thread.title === "Caught-up title",
-        );
+      }
+      yield* awaitThreadState(
+        harness.observed,
+        (value) =>
+          value.status === "synchronizing" &&
+          Option.isSome(value.data) &&
+          value.data.value.thread.title === "Caught-up title",
+      );
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(1);
 
-        yield* TestClock.adjust("14 seconds");
-        yield* settleFibers;
-        expect(yield* Ref.get(harness.subscriptionCount)).toBe(1);
+      yield* TestClock.adjust("14 seconds");
+      yield* settleFibers;
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(1);
 
-        yield* TestClock.adjust("1 second");
-        yield* awaitSubscriptionCount(harness.subscriptionCount, 2);
-        expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
-        expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(
-          CACHED_SNAPSHOT_SEQUENCE + 1,
-        );
-        expect(yield* Ref.get(harness.lastRequestCompletionMarker)).toBe(true);
-        expect(yield* Ref.get(harness.retryCount)).toBe(0);
-        expect((yield* Ref.get(harness.latest)).status).toBe("synchronizing");
+      yield* TestClock.adjust("1 second");
+      yield* awaitSubscriptionCount(harness.subscriptionCount, 2);
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+      expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(CACHED_SNAPSHOT_SEQUENCE + 5);
+      expect(yield* Ref.get(harness.lastRequestCompletionMarker)).toBe(true);
+      expect(yield* Ref.get(harness.retryCount)).toBe(0);
+      expect((yield* Ref.get(harness.latest)).status).toBe("synchronizing");
 
-        yield* Queue.offer(harness.inputs, synchronized());
-        const live = yield* awaitThreadState(
-          harness.observed,
-          (value) => value.status === "live" && Option.isSome(value.data),
-        );
-        expect(Option.getOrThrow(live.data).thread.title).toBe("Caught-up title");
-      }),
+      yield* Queue.offer(harness.inputs, synchronized());
+      const live = yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "live" && Option.isSome(value.data),
+      );
+      expect(Option.getOrThrow(live.data).thread.title).toBe("Caught-up title");
+    }),
   );
 
-  it.effect("goes live with applied events when a resubscribed resume also never confirms", () =>
+  // Only the server's marker proves the thread caught up, so a resume that
+  // never confirms is shown as possibly out of date, never as live.
+  it.effect("marks a resume stale, not live, when a resubscribe also never confirms", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ cached: BASE_PROJECTION, completionMarker: true });
       yield* awaitSubscriptionCount(harness.subscriptionCount, 1);
@@ -1911,17 +1919,20 @@ describe("EnvironmentThreads", () => {
       expect((yield* Ref.get(harness.latest)).status).toBe("synchronizing");
 
       yield* TestClock.adjust(THREAD_RESUME_COMPLETION_TIMEOUT);
-      const live = yield* awaitThreadState(
-        harness.observed,
-        (value) => value.status === "live" && Option.isSome(value.data),
+      const stale = yield* awaitThreadState(harness.observed, (value) =>
+        Option.isSome(value.error),
       );
-      expect(Option.isNone(live.error)).toBe(true);
-      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+      expect(stale.status).toBe("synchronizing");
+      expect(Option.getOrThrow(stale.error)).toBe(THREAD_RESUME_UNCONFIRMED_ERROR);
+      expect(Option.getOrThrow(stale.data)).toEqual(BASE_PROJECTION);
 
-      // Going live disarms the watchdog: no further resubscriptions.
+      // No further resubscriptions; a late marker still turns it live.
       yield* TestClock.adjust("1 minute");
       yield* settleFibers;
       expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+      yield* Queue.offer(harness.inputs, synchronized());
+      const live = yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+      expect(Option.isNone(live.error)).toBe(true);
     }),
   );
 
@@ -1957,7 +1968,7 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
-  it.effect("gives a replacement session its own resubscribe before going live", () =>
+  it.effect("gives a replacement session its own resubscribe before marking it stale", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ cached: BASE_PROJECTION, completionMarker: true });
       yield* awaitSubscriptionCount(harness.subscriptionCount, 1);
@@ -1977,12 +1988,15 @@ describe("EnvironmentThreads", () => {
       expect((yield* Ref.get(harness.latest)).status).toBe("synchronizing");
 
       yield* TestClock.adjust(THREAD_RESUME_COMPLETION_TIMEOUT);
-      yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+      const stale = yield* awaitThreadState(harness.observed, (value) =>
+        Option.isSome(value.error),
+      );
+      expect(stale.status).not.toBe("live");
       expect(yield* Ref.get(harness.subscriptionCount)).toBe(4);
     }),
   );
 
-  it.effect("gives a retry after a stream error its own resubscribe before going live", () =>
+  it.effect("gives a retry after a stream error its own resubscribe before marking it stale", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ cached: BASE_PROJECTION, completionMarker: true });
       yield* awaitSubscriptionCount(harness.subscriptionCount, 1);

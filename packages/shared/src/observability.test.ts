@@ -16,7 +16,7 @@ import * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
-import { RotatingFileSink } from "./logging.ts";
+import { RotatingFileSink, RotatingFileSinkError } from "./logging.ts";
 import {
   causeErrorTag,
   compactTraceAttributes,
@@ -336,7 +336,9 @@ describe("observability", () => {
         Effect.gen(function* () {
           const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-trace-sink-" });
+          const tempDir = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "studio-trace-sink-",
+          });
           const tracePath = path.join(tempDir, "shared.trace.ndjson");
 
           const sink = yield* makeTraceSink({
@@ -364,7 +366,9 @@ describe("observability", () => {
         Effect.gen(function* () {
           const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-trace-sink-" });
+          const tempDir = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "studio-trace-sink-",
+          });
           const tracePath = path.join(tempDir, "shared.trace.ndjson");
           const reported = yield* Ref.make<ReadonlyArray<TraceSinkFlushStats>>([]);
 
@@ -392,7 +396,9 @@ describe("observability", () => {
         Effect.gen(function* () {
           const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-trace-sink-" });
+          const tempDir = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "studio-trace-sink-",
+          });
           const tracePath = path.join(tempDir, "shared.trace.ndjson");
 
           const sink = yield* makeTraceSink({
@@ -433,7 +439,9 @@ describe("observability", () => {
         Effect.gen(function* () {
           const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-trace-sink-" });
+          const tempDir = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "studio-trace-sink-",
+          });
           const tracePath = path.join(tempDir, "shared.trace.ndjson");
           const maxBytes = 1_024;
 
@@ -466,7 +474,9 @@ describe("observability", () => {
         Effect.gen(function* () {
           const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-trace-sink-" });
+          const tempDir = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "studio-trace-sink-",
+          });
           const tracePath = path.join(tempDir, "shared.trace.ndjson");
           const maxBytes = 1_024;
 
@@ -497,7 +507,9 @@ describe("observability", () => {
         Effect.gen(function* () {
           const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-trace-sink-" });
+          const tempDir = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "studio-trace-sink-",
+          });
           const tracePath = path.join(tempDir, "shared.trace.ndjson");
 
           const sink = yield* makeTraceSink({
@@ -570,13 +582,21 @@ describe("observability", () => {
           yield* TestClock.adjust("1 second");
         }
 
-        // One write per batch, never a growing backlog.
+        // One write per batch, never a growing backlog. While writes fail,
+        // records are dropped without serializing them until the next window,
+        // when one record probes whether the path is writable again.
         assert.deepStrictEqual(
           write.mock.calls.map(([chunk]) => String(chunk).split("\n").length - 1),
-          [256, 256, 256, 256, 1, 1, 1, 1, 1],
+          [256, 1, 1],
         );
         expect(logs).toEqual([
-          { logLevel: "Warn", message: [expect.any(String), { filePath: tracePath }] },
+          {
+            logLevel: "Warn",
+            message: [
+              "Trace writes are failing, dropping records until they recover",
+              { filePath: tracePath, errorCode: "EISDIR" },
+            ],
+          },
         ]);
 
         // Once the disk recovers, new records are written and the loss is reported.
@@ -622,12 +642,105 @@ describe("observability", () => {
       );
     });
 
+    it.effect("stops writing for a minute when the disk is full and names disk space", () => {
+      const logs: Array<{ readonly logLevel: string; readonly message: unknown }> = [];
+      const captureLogs = Logger.make(({ logLevel, message }) => {
+        logs.push({ logLevel, message });
+      });
+
+      return Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-trace-sink-" });
+        const tracePath = path.join(tempDir, "shared.trace.ndjson");
+        let diskFull = true;
+        const realWrite = RotatingFileSink.prototype.write;
+        const write = vi.spyOn(RotatingFileSink.prototype, "write").mockImplementation(function (
+          this: RotatingFileSink,
+          chunk,
+        ) {
+          if (diskFull) {
+            throw new RotatingFileSinkError({
+              operation: "write",
+              filePath: tracePath,
+              cause: Object.assign(new Error("no space left on device"), { code: "ENOSPC" }),
+            });
+          }
+          realWrite.call(this, chunk);
+        });
+        yield* Effect.addFinalizer(() => Effect.sync(() => write.mockRestore()));
+        let serialized = 0;
+        const countedRecord = (name: string): TraceRecord => ({
+          ...makeRecord(name),
+          attributes: {
+            payload: {
+              toJSON: () => {
+                serialized += 1;
+                return name;
+              },
+            },
+          },
+        });
+
+        const sink = yield* makeTraceSink({
+          filePath: tracePath,
+          maxBytes: 1024 * 1024,
+          maxFiles: 2,
+          batchWindowMs: 200,
+        });
+
+        sink.push(countedRecord("first"));
+        yield* TestClock.adjust("200 millis");
+        expect(write).toHaveBeenCalledTimes(1);
+        expect(logs).toEqual([
+          {
+            logLevel: "Warn",
+            message: [
+              "Trace writes are failing because the disk is out of space, dropping records until space is freed",
+              { filePath: tracePath, errorCode: "ENOSPC" },
+            ],
+          },
+        ]);
+
+        // For the next minute nothing is serialized or written.
+        serialized = 0;
+        for (let second = 1; second < 60; second += 1) {
+          for (let index = 0; index < 300; index += 1) sink.push(countedRecord("dropped"));
+          yield* TestClock.adjust("1 second");
+        }
+        expect(serialized).toBe(0);
+        expect(write).toHaveBeenCalledTimes(1);
+
+        // After the backoff one batch probes the disk again; once space is
+        // freed the probe lands and the loss is reported.
+        diskFull = false;
+        yield* TestClock.adjust("1 second");
+        sink.push(countedRecord("probe"));
+        yield* TestClock.adjust("200 millis");
+        expect(write).toHaveBeenCalledTimes(2);
+        const records = yield* readTraceRecords(tracePath);
+        assert.deepStrictEqual(
+          records.map((record) => record.name),
+          ["probe"],
+        );
+        expect(logs[1]).toEqual({
+          logLevel: "Info",
+          message: [expect.any(String), { filePath: tracePath, droppedCount: 1 + 59 * 300 }],
+        });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(Logger.layer([captureLogs], { mergeWithExisting: false })),
+      );
+    });
+
     it.effect("writes nested spans to disk and captures log messages as span events", () =>
       Effect.scoped(
         Effect.gen(function* () {
           const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-local-tracer-" });
+          const tempDir = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "studio-local-tracer-",
+          });
           const tracePath = path.join(tempDir, "shared.trace.ndjson");
 
           yield* Effect.scoped(
@@ -685,7 +798,9 @@ describe("observability", () => {
         Effect.gen(function* () {
           const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-local-tracer-" });
+          const tempDir = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "studio-local-tracer-",
+          });
           const tracePath = path.join(tempDir, "shared.trace.ndjson");
 
           yield* Effect.scoped(

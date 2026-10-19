@@ -35,12 +35,21 @@ let keepalive = null;
 let retryTimer = null;
 let retryIndex = 0;
 let connecting = false;
+/** Bumped by every teardown; an attempt from an older generation gives up quietly. */
+let generation = 0;
 
 const cleanup = cleanupStaleGroups();
 
 async function readSettings() {
-  const stored = await chrome.storage.local.get(["pairing", "label", "paused"]);
+  const stored = await chrome.storage.local.get(["pairing", "label", "paused", "instanceId"]);
+  // Store installs share one extension id across Chrome profiles; this id tells them apart.
+  let instanceId = stored.instanceId;
+  if (typeof instanceId !== "string" || !instanceId) {
+    instanceId = crypto.randomUUID();
+    await chrome.storage.local.set({ instanceId });
+  }
   return {
+    instanceId,
     pairing: stored.pairing ?? null,
     label: typeof stored.label === "string" && stored.label.trim() ? stored.label.trim() : "Chrome",
     paused: stored.paused === true,
@@ -75,6 +84,8 @@ function stopKeepalive() {
 
 function teardown(reason) {
   stopKeepalive();
+  generation += 1;
+  connecting = false;
   const current = socket;
   socket = null;
   relay?.close(reason);
@@ -103,15 +114,31 @@ function scheduleRetry() {
 }
 
 async function connect() {
+  // Startup, the watchdog and the popup can all call this at once. Claim the attempt before the
+  // first await, or each caller opens its own socket and the service replaces one with another.
   if (connecting || socket) return;
-  const settings = await readSettings();
-  state.label = settings.label;
-  if (!settings.pairing) return setPhase("not_paired");
-  if (settings.paused) return setPhase("paused", "Paused. Agents cannot use this profile.");
-  state.machine = settings.pairing.machine ?? "";
   connecting = true;
+  const run = generation;
+  const settings = await readSettings().catch(() => null);
+  if (run !== generation) return;
+  if (!settings) {
+    connecting = false;
+    setPhase("disconnected", "Could not read this profile's settings.");
+    return scheduleRetry();
+  }
+  state.label = settings.label;
+  if (!settings.pairing) {
+    connecting = false;
+    return setPhase("not_paired");
+  }
+  if (settings.paused) {
+    connecting = false;
+    return setPhase("paused", "Paused. Agents cannot use this profile.");
+  }
+  state.machine = settings.pairing.machine ?? "";
   setPhase("connecting");
   await cleanup;
+  if (run !== generation) return;
   let ws;
   try {
     ws = new WebSocket(settings.pairing.relayUrl);
@@ -122,11 +149,14 @@ async function connect() {
   }
   socket = ws;
   let welcomed = false;
+  /** A socket a teardown replaced must not touch the state of the one that followed it. */
+  const stale = () => socket !== ws;
   const handshakeTimer = setTimeout(() => {
     if (!welcomed) ws.close(1000, "handshake timeout");
   }, HANDSHAKE_TIMEOUT_MS);
 
   ws.addEventListener("open", () => {
+    if (stale()) return;
     ws.send(
       JSON.stringify({
         method: "hello",
@@ -136,6 +166,7 @@ async function connect() {
           label: settings.label,
           extensionVersion: chrome.runtime.getManifest().version,
           extensionId: chrome.runtime.id,
+          instanceId: settings.instanceId,
           userAgent: navigator.userAgent,
         },
       }),
@@ -143,6 +174,7 @@ async function connect() {
   });
 
   ws.addEventListener("message", (event) => {
+    if (stale()) return;
     let message;
     try {
       message = JSON.parse(String(event.data));
@@ -187,8 +219,8 @@ async function connect() {
 
   ws.addEventListener("close", (event) => {
     clearTimeout(handshakeTimer);
-    connecting = false;
-    if (socket === ws) teardown("socket closed");
+    if (stale()) return;
+    teardown("socket closed");
     if (event.code === CLOSE_REJECTED) {
       setPhase(
         "rejected",
@@ -196,7 +228,10 @@ async function connect() {
       );
       return;
     }
+    const run = generation;
     void readSettings().then((current) => {
+      // A reconnect, pair or pause started while settings were read; it owns the state now.
+      if (run !== generation || socket || connecting) return;
       if (!current.pairing) return setPhase("not_paired");
       if (current.paused) return setPhase("paused", "Paused. Agents cannot use this profile.");
       setPhase(

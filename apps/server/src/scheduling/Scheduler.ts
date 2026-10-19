@@ -1,6 +1,7 @@
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
@@ -26,6 +27,9 @@ export class Scheduler extends Context.Service<
     readonly heldMsBetween?: (fromMs: number, toMs: number) => Effect.Effect<number>;
   }
 >()("specweave-studio/scheduling/Scheduler") {}
+
+/** How often every due-work source runs. */
+const TICK_MS = 5_000;
 
 const make = Effect.gen(function* () {
   const sources = yield* Ref.make(new Map<symbol, Effect.Effect<void>>());
@@ -88,13 +92,25 @@ const make = Effect.gen(function* () {
     // process started by an update install waits for the helper's gate too.
     yield* forkParked(skipWhileHeld(run));
   });
-  const tick = Ref.get(sources).pipe(
-    Effect.flatMap((current) => Effect.forEach(current.values(), (run) => run, { discard: true })),
-    skipWhileHeld,
-  );
+  // Each source still runs once per tick, but at its own offset within it:
+  // started together, their database reads queued behind one another and
+  // stalled the server for the sum of them.
+  // The list is read again at each slot, so a source registered or closed
+  // mid-tick is seen at once; any beyond the slots counted run in the last one.
+  const tick = Effect.gen(function* () {
+    const slots = Math.max(1, (yield* Ref.get(sources)).size);
+    const spacingMs = Math.floor(TICK_MS / slots);
+    for (let slot = 0; slot < slots; slot += 1) {
+      yield* Effect.sleep(Duration.millis(spacingMs));
+      const runs = [...(yield* Ref.get(sources)).values()];
+      const due = slot === slots - 1 ? runs.slice(slot) : runs.slice(slot, slot + 1);
+      yield* skipWhileHeld(Effect.forEach(due, (run) => run, { discard: true }));
+    }
+    yield* Effect.sleep(Duration.millis(TICK_MS - spacingMs * slots));
+  });
   // One clock for all due-work sources. A slow source cannot block another
   // source or overlap itself, and no extra missed-tick backlog is queued.
-  yield* forkParked(Effect.sleep("5 seconds").pipe(Effect.andThen(tick), Effect.forever));
+  yield* forkParked(Effect.forever(tick));
   return Scheduler.of({ register, heldMsBetween });
 });
 

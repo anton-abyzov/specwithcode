@@ -1254,3 +1254,50 @@ it.effect("does not arm a new stop with policy captured before an availability c
     }).pipe(Effect.provide(deps));
   }).pipe(Effect.scoped),
 );
+
+it.effect("skips the candidate read while nothing has changed since one found none", () =>
+  Effect.gen(function* () {
+    const state = { queries: 0, writes: 0, found: false };
+    const deps = Layer.mergeAll(
+      ProjectAdmission.layer,
+      Settings.layerTest({ autoResumeLimitedThreads: true, snoozeLimitedThreads: false }),
+      Layer.mock(ProjectStore.ProjectStoreV2)({}),
+      Layer.mock(ProjectionStore.ProjectionStoreV2)({
+        writeCount: Effect.sync(() => state.writes),
+        getLimitRecoveryCandidates: () =>
+          Effect.sync(() => {
+            state.queries += 1;
+            return state.found ? [candidate()] : [];
+          }),
+        getThreadShell: () => Effect.succeed(null),
+      }),
+      Layer.mock(Availability.UsageLimitAvailability)({}),
+      Layer.mock(ThreadManagement.ThreadManagementService)({}),
+    );
+    yield* Effect.gen(function* () {
+      const settings = yield* Settings.ServerSettingsService;
+      const sweep = yield* makeSweep;
+      const tick = Effect.andThen(sweep(), TestClock.adjust("5 seconds"));
+      // Before: one read per five-second tick. After: one until something changes.
+      for (let index = 0; index < 5; index += 1) yield* tick;
+      assert.equal(state.queries, 1);
+      // A projection write is a change.
+      state.writes += 1;
+      yield* tick;
+      assert.equal(state.queries, 2);
+      // So is the snooze setting, which the read is made against.
+      yield* settings.updateSettings({ snoozeLimitedThreads: true });
+      yield* tick;
+      assert.equal(state.queries, 3);
+      // Only the clock can then make a candidate (a snooze ending): read now and then.
+      for (let index = 0; index < 6; index += 1) yield* tick;
+      assert.equal(state.queries, 4);
+      // A read that finds candidates is never skipped after.
+      state.writes += 1;
+      state.found = true;
+      yield* tick;
+      yield* tick;
+      assert.equal(state.queries, 6);
+    }).pipe(Effect.provide(deps));
+  }),
+);

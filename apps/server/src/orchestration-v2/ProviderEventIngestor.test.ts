@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  CommandId,
   MessageId,
   type ModelSelection,
   NodeId,
@@ -1091,6 +1092,263 @@ layer("ProviderEventIngestorV2", (it) => {
           );
         }),
       ),
+  );
+
+  it.effect.each([
+    { decision: "accept", status: "completed" },
+    { decision: "decline", status: "cancelled" },
+  ] as const)(
+    "settles an approval item that arrives after its request was answered ($decision)",
+    ({ decision, status }) =>
+      Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const now = yield* DateTime.now;
+        const threadEvent = yield* threadCreatedEvent(now);
+        const threadId = threadEvent.threadId;
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const providerThreadId = idAllocator.derive.providerThread({
+          driver: CODEX_DRIVER,
+          nativeThreadId: `${threadId}:late-approval`,
+        });
+        const providerTurnId = idAllocator.derive.providerTurn({
+          driver: CODEX_DRIVER,
+          nativeTurnId: `${threadId}:late-approval`,
+        });
+        const nodeId = NodeId.make(`${threadId}:approval:${decision}`);
+        const request: OrchestrationV2RuntimeRequest = {
+          id: RuntimeRequestId.make(`${threadId}:approval:${decision}`),
+          nodeId,
+          providerTurnId,
+          nativeRequestRef: null,
+          kind: "command",
+          status: "pending",
+          responseCapability: { type: "live", providerSessionId },
+          createdAt: now,
+          resolvedAt: null,
+        };
+        const node: OrchestrationV2ExecutionNode = {
+          id: nodeId,
+          threadId,
+          runId: null,
+          parentNodeId: null,
+          rootNodeId: nodeId,
+          kind: "approval_request",
+          status: "waiting",
+          countsForRun: false,
+          providerThreadId,
+          providerTurnId,
+          nativeItemRef: null,
+          runtimeRequestId: request.id,
+          checkpointScopeId: null,
+          startedAt: now,
+          completedAt: null,
+        };
+        const item: OrchestrationV2TurnItem = {
+          id: TurnItemId.make(`${threadId}:approval:${decision}`),
+          threadId,
+          runId: null,
+          nodeId,
+          providerThreadId,
+          providerTurnId,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          status: "waiting",
+          title: null,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+          type: "approval_request",
+          requestId: request.id,
+          requestKind: "command",
+        };
+        // The provider published the node and request; the answer lands
+        // before the provider's turn item, so it has no item to settle.
+        yield* TestClock.adjust("1 second");
+        const answeredAt = yield* DateTime.now;
+        const seedEvents: Array<OrchestrationV2DomainEvent> = [threadEvent];
+        for (const payload of [
+          { type: "node.updated" as const, payload: node },
+          { type: "runtime-request.updated" as const, payload: request },
+          {
+            type: "runtime-request.updated" as const,
+            payload: { ...request, status: "resolved" as const, decision, resolvedAt: answeredAt },
+          },
+          {
+            type: "node.updated" as const,
+            payload: { ...node, status, completedAt: answeredAt },
+          },
+        ])
+          seedEvents.push({
+            id: yield* idAllocator.allocate.event({ threadId }),
+            threadId,
+            occurredAt: now,
+            ...payload,
+          });
+        yield* eventSink.write({ events: seedEvents });
+
+        const ingestLate = (event: Parameters<typeof ingestor.ingestNormalized>[0]["event"]) =>
+          ingestor.ingestNormalized({
+            providerSessionId,
+            providerInstanceId: modelSelection.instanceId,
+            threadId,
+            event,
+          });
+        yield* ingestLate({ type: "turn_item.updated", driver: CODEX_DRIVER, turnItem: item });
+        // A repeated provider node update cannot reopen it either.
+        yield* ingestLate({ type: "node.updated", driver: CODEX_DRIVER, node });
+
+        const projection = yield* projections.getThreadProjection(threadId);
+        const settledItem = projection.turnItems.find((entry) => entry.id === item.id);
+        assert.equal(settledItem?.status, status);
+        assert.deepEqual(settledItem?.completedAt, answeredAt);
+        const settledNode = projection.nodes.find((entry) => entry.id === nodeId);
+        assert.equal(settledNode?.status, status);
+        assert.deepEqual(settledNode?.completedAt, answeredAt);
+        assert.equal(
+          projection.runtimeRequests.find((entry) => entry.id === request.id)?.status,
+          "resolved",
+        );
+      }),
+  );
+
+  it.effect.each([
+    { decision: "accept", status: "completed" },
+    { decision: "decline", status: "cancelled" },
+  ] as const)(
+    "settles an approval item written between an answer's read and its commit ($decision)",
+    ({ decision, status }) =>
+      Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const now = yield* DateTime.now;
+        const threadEvent = yield* threadCreatedEvent(now);
+        const threadId = threadEvent.threadId;
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const providerThreadId = idAllocator.derive.providerThread({
+          driver: CODEX_DRIVER,
+          nativeThreadId: `${threadId}:answer-window`,
+        });
+        const providerTurnId = idAllocator.derive.providerTurn({
+          driver: CODEX_DRIVER,
+          nativeTurnId: `${threadId}:answer-window`,
+        });
+        const nodeId = NodeId.make(`${threadId}:answer-window:${decision}`);
+        const request: OrchestrationV2RuntimeRequest = {
+          id: RuntimeRequestId.make(`${threadId}:answer-window:${decision}`),
+          nodeId,
+          providerTurnId,
+          nativeRequestRef: null,
+          kind: "command",
+          status: "pending",
+          responseCapability: { type: "live", providerSessionId },
+          createdAt: now,
+          resolvedAt: null,
+        };
+        const node: OrchestrationV2ExecutionNode = {
+          id: nodeId,
+          threadId,
+          runId: null,
+          parentNodeId: null,
+          rootNodeId: nodeId,
+          kind: "approval_request",
+          status: "waiting",
+          countsForRun: false,
+          providerThreadId,
+          providerTurnId,
+          nativeItemRef: null,
+          runtimeRequestId: request.id,
+          checkpointScopeId: null,
+          startedAt: now,
+          completedAt: null,
+        };
+        const item: OrchestrationV2TurnItem = {
+          id: TurnItemId.make(`${threadId}:answer-window:${decision}`),
+          threadId,
+          runId: null,
+          nodeId,
+          providerThreadId,
+          providerTurnId,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          status: "waiting",
+          title: null,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+          type: "approval_request",
+          requestId: request.id,
+          requestKind: "command",
+        };
+        const seedEvents: Array<OrchestrationV2DomainEvent> = [threadEvent];
+        for (const payload of [
+          { type: "node.updated" as const, payload: node },
+          { type: "runtime-request.updated" as const, payload: request },
+        ])
+          seedEvents.push({
+            id: yield* idAllocator.allocate.event({ threadId }),
+            threadId,
+            occurredAt: now,
+            ...payload,
+          });
+        yield* eventSink.write({ events: seedEvents });
+
+        // The answer read the request before the provider's turn item existed,
+        // so its events settle only the request and node. The provider's item
+        // commits first, while the request still reads as pending.
+        yield* ingestor.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+          event: { type: "turn_item.updated", driver: CODEX_DRIVER, turnItem: item },
+        });
+        yield* TestClock.adjust("1 second");
+        const answeredAt = yield* DateTime.now;
+        const answerEvents: Array<OrchestrationV2DomainEvent> = [];
+        for (const payload of [
+          {
+            type: "runtime-request.updated" as const,
+            payload: { ...request, status: "resolved" as const, decision, resolvedAt: answeredAt },
+          },
+          {
+            type: "node.updated" as const,
+            payload: { ...node, status, completedAt: answeredAt },
+          },
+        ])
+          answerEvents.push({
+            id: yield* idAllocator.allocate.event({ threadId }),
+            threadId,
+            nodeId,
+            occurredAt: answeredAt,
+            ...payload,
+          });
+        yield* eventSink.commitCommand({
+          commandId: CommandId.make(`${threadId}:answer-window:${decision}`),
+          threadId,
+          commandType: "runtime-request.respond",
+          acceptedAt: answeredAt,
+          events: answerEvents,
+          effects: [],
+        });
+
+        const projection = yield* projections.getThreadProjection(threadId);
+        const settledItem = projection.turnItems.find((entry) => entry.id === item.id);
+        assert.equal(settledItem?.status, status);
+        assert.deepEqual(settledItem?.completedAt, answeredAt);
+        assert.equal(projection.nodes.find((entry) => entry.id === nodeId)?.status, status);
+      }),
   );
 
   it.effect("persists a failed provider terminal as one expected error item", () =>

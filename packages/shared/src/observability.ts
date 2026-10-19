@@ -1,4 +1,5 @@
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import type * as Exit from "effect/Exit";
@@ -10,7 +11,7 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Tracer from "effect/Tracer";
 import { OtlpResource, OtlpTracer, OtlpSerialization } from "effect/observability";
 
-import { RotatingFileSink } from "./logging.ts";
+import { RotatingFileSink, rotatingFileSinkErrorCode } from "./logging.ts";
 
 export const OtlpProtocol = Schema.Literals(["http/json", "http/protobuf"]);
 export type OtlpProtocol = typeof OtlpProtocol.Type;
@@ -37,6 +38,9 @@ export const DEFAULT_SIGNAL_EXPORT: SignalExport = {
 };
 
 const FLUSH_BUFFER_THRESHOLD = 256;
+/** After a write fails because the disk is full or erroring, the trace sink
+    stops attempting writes for this long instead of retrying every window. */
+export const TRACE_SINK_DISK_FAILURE_BACKOFF_MS = 60_000;
 const textEncoder = new TextEncoder();
 
 export type TraceAttributes = Readonly<Record<string, unknown>>;
@@ -132,6 +136,14 @@ export function causeErrorTag(cause: Cause.Cause<unknown>): string {
   }
   return cause.reasons[0]?._tag ?? "Empty";
 }
+
+/** Error codes for a disk that is full (or over quota). */
+const isDiskFullCode = (code: string | undefined): boolean =>
+  code === "ENOSPC" || code === "EDQUOT";
+
+/** Error codes for which retrying soon only repeats a blocking failure. */
+const isDiskFailureCode = (code: string | undefined): boolean =>
+  isDiskFullCode(code) || code === "EIO";
 
 export interface TraceSinkOptions {
   readonly filePath: string;
@@ -371,11 +383,16 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     throwOnError: true,
   });
 
+  const clock = yield* Clock.Clock;
   let buffer: Array<string> = [];
   // A failure episode starts at the first dropped record and ends when a flush
   // sees that the latest write succeeded. Flush checks once per window, so a
   // disk that flaps inside one window stays one episode.
   let writeFailing = false;
+  let failureCode: string | undefined;
+  // While failing, records are dropped before they are serialized until this
+  // time; then one batch is buffered again to probe whether the disk recovered.
+  let retryAtMs = 0;
   let droppedCount = 0;
   let failureReported = false;
   let pendingFlushStats: TraceSinkFlushStats = {
@@ -384,8 +401,15 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     durationMs: 0,
   };
 
+  const suspended = () => writeFailing && clock.currentTimeMillisUnsafe() < retryAtMs;
+
   const flushUnsafe = () => {
     if (buffer.length === 0) {
+      return;
+    }
+    if (suspended()) {
+      droppedCount += buffer.length;
+      buffer = [];
       return;
     }
 
@@ -413,15 +437,23 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
       const startedAt = performance.now();
       try {
         sink.write(chunk);
-      } catch {
+      } catch (cause) {
         // A failing disk (ENOSPC, EACCES, EIO) drops the rest of the batch.
         // Retrying it would grow the backlog, and every later push would
-        // retry all of it.
+        // retry all of it. A full or erroring disk is not retried for a
+        // minute: each attempt is a blocking syscall on the event loop.
         writeFailing = true;
+        failureCode = rotatingFileSinkErrorCode(cause);
+        retryAtMs =
+          clock.currentTimeMillisUnsafe() +
+          (isDiskFailureCode(failureCode)
+            ? TRACE_SINK_DISK_FAILURE_BACKOFF_MS
+            : options.batchWindowMs);
         droppedCount += records.length - persistedCount;
         return;
       }
       writeFailing = false;
+      failureCode = undefined;
       pendingFlushStats = {
         logicalWriteBytes: pendingFlushStats.logicalWriteBytes + chunkBytes,
         count: pendingFlushStats.count + nextIndex - persistedCount,
@@ -446,9 +478,15 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     }
     if (droppedCount > 0 && !failureReported) {
       failureReported = true;
-      yield* Effect.logWarning("Trace writes are failing, dropping records until they recover", {
-        filePath: options.filePath,
-      });
+      yield* Effect.logWarning(
+        isDiskFullCode(failureCode)
+          ? "Trace writes are failing because the disk is out of space, dropping records until space is freed"
+          : "Trace writes are failing, dropping records until they recover",
+        {
+          filePath: options.filePath,
+          ...(failureCode === undefined ? {} : { errorCode: failureCode }),
+        },
+      );
     }
     if (failureReported && !writeFailing) {
       yield* Effect.logInfo("Trace writes recovered", {
@@ -473,6 +511,11 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
   return {
     filePath: options.filePath,
     push(record) {
+      if (suspended()) {
+        // Serializing a record that cannot be written only costs the event loop.
+        droppedCount += 1;
+        return;
+      }
       try {
         buffer.push(`${JSON.stringify(record)}\n`);
         if (buffer.length >= FLUSH_BUFFER_THRESHOLD) {

@@ -15,6 +15,7 @@ import type {
 import { ConnectionTransientError } from "./model.ts";
 import * as ConnectionResolver from "./resolver.ts";
 import { connectionRoutes, routeEntry, routeHttpBaseUrl } from "./routes.ts";
+import { isThisMachineRoute } from "./thisMachine.ts";
 import * as RpcSession from "../rpc/session.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 
@@ -26,6 +27,14 @@ export type ConnectionDriverProgress =
       readonly stage: Exclude<ConnectionAttemptStage, "preparing">;
       readonly prepared: PreparedConnection;
     };
+
+export interface ConnectionDriverConnectOptions {
+  /**
+   * The entry's primary is the server on this machine, so its loopback route
+   * gets the this-machine budgets (see `thisMachine.ts`).
+   */
+  readonly thisMachine?: boolean;
+}
 
 export interface EnvironmentConnectionLease {
   readonly prepared: PreparedConnection;
@@ -47,6 +56,7 @@ export class ConnectionDriver extends Context.Service<
     readonly connect: (
       entry: ConnectionCatalogEntry,
       reportProgress: (progress: ConnectionDriverProgress) => Effect.Effect<void>,
+      options?: ConnectionDriverConnectOptions,
     ) => Effect.Effect<EnvironmentConnectionLease, ConnectionAttemptError, Scope.Scope>;
     /** Whether a direct route answers as the entry's environment, without credentials. */
     readonly checkRoute: (
@@ -164,6 +174,7 @@ export const make = Effect.gen(function* () {
   const connect = Effect.fn("ConnectionDriver.connect")(function* (
     entry: ConnectionCatalogEntry,
     reportProgress: (progress: ConnectionDriverProgress) => Effect.Effect<void>,
+    options: ConnectionDriverConnectOptions = {},
   ) {
     const target = entry.target;
     yield* Effect.annotateCurrentSpan({
@@ -176,9 +187,10 @@ export const make = Effect.gen(function* () {
       entry,
       (route) => checkRoute(entry, route),
       Effect.fnUntraced(function* (route) {
-        const prepared = yield* resolver.prepare(routeEntry(entry, route));
+        const thisMachine = isThisMachineRoute(options.thisMachine === true, route);
+        const prepared = yield* resolver.prepare(routeEntry(entry, route), { thisMachine });
         yield* reportProgress({ stage: "opening", prepared });
-        const session = yield* sessions.connect(prepared);
+        const session = yield* sessions.connect(prepared, { thisMachine });
         yield* reportProgress({ stage: "synchronizing", prepared });
         yield* session.ready;
         return { prepared, session } satisfies EnvironmentConnectionLease;

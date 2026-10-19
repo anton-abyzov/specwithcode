@@ -59,11 +59,14 @@ export const readAgentActivityPublishingActive = (
             Option.isSome(bytes) ? new TextDecoder().decode(bytes.value) : null,
           ),
         );
-    const [enabled, url, environmentCredential] = yield* Effect.all([
-      readSecretString(PUBLISH_AGENT_ACTIVITY_SECRET),
-      readSecretString(RELAY_URL_SECRET),
-      readSecretString(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
-    ]);
+    const [enabled, url, environmentCredential] = yield* Effect.all(
+      [
+        readSecretString(PUBLISH_AGENT_ACTIVITY_SECRET),
+        readSecretString(RELAY_URL_SECRET),
+        readSecretString(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
+      ],
+      { concurrency: "unbounded" },
+    );
     // Empty strings are as unconfigured as missing files: the publisher's
     // truthiness gate skips them, so the capability must too.
     return (
@@ -86,10 +89,10 @@ const readSecretString = (name: string) =>
   );
 
 /** The relay URL and environment credential, or null when not linked to Studio Connect. */
-export const readRelayConnection = Effect.all([
-  readSecretString(RELAY_URL_SECRET),
-  readSecretString(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
-]).pipe(
+export const readRelayConnection = Effect.all(
+  [readSecretString(RELAY_URL_SECRET), readSecretString(RELAY_ENVIRONMENT_CREDENTIAL_SECRET)],
+  { concurrency: "unbounded" },
+).pipe(
   Effect.map(([url, environmentCredential]) =>
     url && environmentCredential ? { url, environmentCredential } : null,
   ),

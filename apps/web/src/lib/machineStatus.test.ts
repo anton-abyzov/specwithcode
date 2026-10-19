@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import type { EnvironmentConnectionPresentation } from "@specweave-studio/client-runtime/connection";
+
+import { THIS_MACHINE_BUSY_DESCRIPTION } from "../components/ChatView.logic";
 import {
+  environmentConnectionStatusText,
+  environmentConnectionStatusTitle,
+  environmentUnavailableSendToast,
   lastSeenLabel,
   machineDetail,
   machineStatus,
@@ -126,5 +132,59 @@ describe("machineDetail", () => {
     expect(machineDetail(null, "Sign in again.")).toBe("Sign in again.");
     expect(machineDetail("last seen 2h ago", null)).toBe("last seen 2h ago");
     expect(machineDetail(null, null)).toBe("");
+  });
+});
+
+describe("this Mac in pickers and settings panels", () => {
+  const reconnecting = {
+    phase: "reconnecting",
+    error: "Test environment stopped responding.",
+  } as EnvironmentConnectionPresentation;
+
+  it("reads Catching up instead of a failure while its server is busy", () => {
+    expect(environmentConnectionStatusText(reconnecting, true)).toBe("Catching up…");
+    expect(environmentConnectionStatusTitle(reconnecting, true)).toBe("Catching up…");
+    expect(machineStatus(reconnecting, true, true).text).toBe("Catching up…");
+  });
+
+  it("keeps the failure text for another machine", () => {
+    expect(environmentConnectionStatusText(reconnecting, false)).toBe(
+      "Failed to connect. Reconnecting... Reason: Test environment stopped responding.",
+    );
+    expect(environmentConnectionStatusTitle(reconnecting, false)).toBe(
+      "Failed to connect. Reconnecting...",
+    );
+  });
+});
+
+describe("a send refused while the machine is not connected", () => {
+  it("tells this Mac's user the draft is kept, without promising a queue", () => {
+    const toast = environmentUnavailableSendToast({
+      label: "Anton's MacBook",
+      isThisMachineCatchingUp: true,
+      continueOn: null,
+    });
+    expect(toast.title).toBe("SpecWithCode on this Mac is busy: not sent yet");
+    expect(toast.description).toBe(
+      "Your message stays in the composer. Send it once it catches up.",
+    );
+    // Nothing queues a refused send, and this Mac is never "back" from anywhere.
+    for (const text of [toast.description, THIS_MACHINE_BUSY_DESCRIPTION]) {
+      expect(text).not.toMatch(/messages send|is back/i);
+    }
+  });
+
+  it("keeps the waiting text for another machine", () => {
+    expect(
+      environmentUnavailableSendToast({
+        label: "M1",
+        isThisMachineCatchingUp: false,
+        continueOn: "M3",
+      }),
+    ).toEqual({
+      title: "Waiting for M1: not sent yet",
+      description:
+        "Your message stays in the composer. Send it once M1 is back, or continue on M3.",
+    });
   });
 });
