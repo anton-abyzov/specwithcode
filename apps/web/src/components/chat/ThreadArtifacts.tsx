@@ -33,7 +33,12 @@ import {
 // Relative, so the headless fixture (tests/project-workspace) can stand in for it.
 import { useThreadProjection, useThreadShell } from "../../state/entities";
 import { formatViewerDate, viewerIso } from "~/viewerDate";
-import { useKeepViewerFocus, useViewerContentKeys, useViewerOverlay } from "~/viewerOverlayStore";
+import {
+  InViewerOverlay,
+  useKeepViewerFocus,
+  useViewerContentKeys,
+  useViewerOverlay,
+} from "~/viewerOverlayStore";
 import {
   collectThreadArtifacts,
   isViewableArtifact,
@@ -489,19 +494,22 @@ export function ArtifactViewer(props: {
       }}
     >
       {slots.actions ? createPortal(actions, slots.actions) : null}
-      <div className="artifact-viewer-stage" data-artifact-stage="true">
-        <ArtifactBody
-          key={artifact.key}
-          artifact={artifact}
-          environmentId={props.threadRef.environmentId}
-          threadRef={props.threadRef}
-          cwd={props.cwd}
-          url={url}
-          failed={asset._tag === "Failure"}
-          revealLine={props.reveal?.key === artifact.key ? props.reveal.line : undefined}
-          imageRef={imageRef}
-        />
-      </div>
+      {/* Links in what is open here open in the overlay, never behind it. */}
+      <InViewerOverlay value>
+        <div className="artifact-viewer-stage" data-artifact-stage="true">
+          <ArtifactBody
+            key={artifact.key}
+            artifact={artifact}
+            environmentId={props.threadRef.environmentId}
+            threadRef={props.threadRef}
+            cwd={props.cwd}
+            url={url}
+            failed={asset._tag === "Failure"}
+            revealLine={props.reveal?.key === artifact.key ? props.reveal.line : undefined}
+            imageRef={imageRef}
+          />
+        </div>
+      </InViewerOverlay>
     </div>,
     slots.content,
   );

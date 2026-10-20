@@ -137,6 +137,7 @@ import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ThreadManagementService from "./orchestration-v2/ThreadManagementService.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
+import * as ThreadMoveService from "./orchestration-v2/ThreadMoveService.ts";
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
 import * as IdAllocator from "./orchestration-v2/IdAllocator.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
@@ -1269,6 +1270,7 @@ const layerWsRpc = (
         }
       };
       const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
+      const threadMove = yield* ThreadMoveService.ThreadMoveService;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const secretRequests = yield* SecretRequests.SecretRequests;
@@ -1907,18 +1909,37 @@ const layerWsRpc = (
                   // A retry also restarts the preparation work the launch owns.
                   (command.type === "prepared-run.retry"
                     ? threadLaunch.retryPreparation(command)
-                    : // The user's answer to a project approval card: the server applies
-                      // the change outside the project's admission lock, then resolves it.
-                      command.type === "runtime-request.respond" &&
-                        ProjectActionRequests.isProjectActionRequestId(command.requestId)
-                      ? projectActions.answer(command)
-                      : ThreadMessageIntake.dispatchCommand(
-                          ThreadManagementService.withCreationProvenance(command, {
-                            createdBy: "user",
-                            creationSource:
-                              "creationSource" in command ? command.creationSource : "web",
-                          }),
+                    : command.type === "thread.move-to-project"
+                      ? threadMove.move({ ...command, createdBy: "user" }).pipe(
+                          Effect.map(({ sequence }): Orchestrator.OrchestratorV2DispatchResult => ({
+                            sequence,
+                            storedEvents: [],
+                          })),
+                          Effect.tapError((error) =>
+                            Effect.logWarning("Thread move failed", { error }),
+                          ),
+                          // Its own message is the one the user reads, not the step's internal cause.
+                          Effect.mapError(
+                            (error) =>
+                              new Orchestrator.OrchestratorDispatchError({
+                                commandId: command.commandId,
+                                commandType: command.type,
+                                cause: error.message,
+                              }),
+                          ),
                         )
+                      : // The user's answer to a project approval card: the server applies
+                        // the change outside the project's admission lock, then resolves it.
+                        command.type === "runtime-request.respond" &&
+                          ProjectActionRequests.isProjectActionRequestId(command.requestId)
+                        ? projectActions.answer(command)
+                        : ThreadMessageIntake.dispatchCommand(
+                            ThreadManagementService.withCreationProvenance(command, {
+                              createdBy: "user",
+                              creationSource:
+                                "creationSource" in command ? command.creationSource : "web",
+                            }),
+                          )
                   ).pipe(Effect.provide(intakeContext)),
                 )
                 .pipe(

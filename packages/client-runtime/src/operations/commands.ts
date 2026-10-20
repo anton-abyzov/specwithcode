@@ -14,6 +14,7 @@ import {
   type ModelSelection,
   type ManualCodexCreditIntent,
   type OrchestrationV2Command,
+  type OrchestrationV2ConversationMessage,
   type OrchestrationV2CreationSource,
   type PlanId,
   type ProjectId,
@@ -235,6 +236,14 @@ export interface ForkThreadFromRunInput extends CommandMetadata {
   readonly targetThreadId: ThreadId;
   readonly runId: RunId;
   readonly title?: string;
+}
+
+export interface MoveThreadToProjectInput extends CommandMetadata {
+  readonly threadId: ThreadId;
+  readonly targetProjectId: ProjectId;
+  readonly targetThreadId: ThreadId;
+  /** The new thread's opening request; omitted leaves it waiting for the user. */
+  readonly start?: { readonly messageId: MessageId; readonly text: string };
 }
 
 export interface MergeThreadBackInput extends CommandMetadata {
@@ -1029,6 +1038,59 @@ export const forkThreadFromRun = Effect.fn("EnvironmentCommands.forkThreadFromRu
     ...(input.title === undefined ? {} : { title: input.title }),
   });
 });
+
+export const moveThreadToProject = Effect.fn("EnvironmentCommands.moveThreadToProject")(function* (
+  input: MoveThreadToProjectInput,
+) {
+  const text = input.start?.text.trim() ?? "";
+  return yield* dispatch({
+    type: "thread.move-to-project",
+    commandId: yield* allocateCommandId(input),
+    createdBy: "user",
+    creationSource: input.creationSource ?? "web",
+    threadId: input.threadId,
+    targetProjectId: input.targetProjectId,
+    targetThreadId: input.targetThreadId,
+    ...(input.start === undefined || text.length === 0
+      ? {}
+      : { start: { messageId: input.start.messageId, text } }),
+  });
+});
+
+export interface ThreadOpeningRequest {
+  readonly text: string;
+  readonly attachmentCount: number;
+}
+
+/**
+ * The request a thread was started with: its first user-role message that is
+ * not a wake. A move offers it as the new thread's opening request.
+ */
+export function threadOpeningRequest(
+  messages: ReadonlyArray<
+    Pick<OrchestrationV2ConversationMessage, "role" | "text" | "attachments"> & {
+      readonly notification?: unknown;
+      readonly delegatedCompletion?: unknown;
+    }
+  >,
+): ThreadOpeningRequest | null {
+  const message = messages.find(
+    (candidate) =>
+      candidate.role === "user" &&
+      candidate.notification === undefined &&
+      candidate.delegatedCompletion === undefined &&
+      candidate.text.trim().length > 0,
+  );
+  return message === undefined
+    ? null
+    : { text: message.text.trim(), attachmentCount: message.attachments.length };
+}
+
+export const readThreadOpeningRequest = Effect.fn("EnvironmentCommands.readThreadOpeningRequest")(
+  function* (input: ThreadCommandInput) {
+    return threadOpeningRequest((yield* getProjection(input.threadId)).messages);
+  },
+);
 
 export const mergeThreadBack = Effect.fn("EnvironmentCommands.mergeThreadBack")(function* (
   input: MergeThreadBackInput,

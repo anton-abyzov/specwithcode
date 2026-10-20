@@ -11,6 +11,8 @@ import {
 } from "./chat/threadContextDrag";
 import { discardComposerDraft } from "../lib/discardComposerDraft";
 import { requestCustomSnooze } from "./CustomSnoozeDialog";
+import { requestThreadMove } from "./ThreadMoveDialog";
+import { threadMoveBlockedReason } from "./threadMove.logic";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@specweave-studio/shared/threadPullRequests";
 import { useAtomValue } from "@effect/atom-react";
@@ -4639,6 +4641,10 @@ export default function Sidebar() {
         const supportsTitleRegeneration =
           serverConfigs.get(thread.environmentId)?.environment.capabilities
             .threadTitleRegeneration === true;
+        const supportsProjectMove =
+          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadProjectMove ===
+          true;
+        const threadShell = readThreadShell(threadRef);
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const isSettled = settledThreadKeysRef.current.has(threadKey);
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
@@ -4678,12 +4684,20 @@ export default function Sidebar() {
               canOpenProjectWindow:
                 threadProjectGroup !== null &&
                 canOpenProjectWindowFor(threadProjectGroup.projectKey),
+              moveToProjectBlockedReason:
+                threadShell === null
+                  ? undefined
+                  : threadMoveBlockedReason(
+                      threadShell,
+                      projectByKey.get(`${thread.environmentId}:${thread.projectId}`),
+                    ),
               supports: {
                 settlement: supportsSettlement,
                 autoSettleOptOut: supportsAutoSettleOptOut,
                 snooze: supportsSnooze,
                 pinning: supportsPinning,
                 titleRegeneration: supportsTitleRegeneration,
+                projectMove: supportsProjectMove,
               },
               snoozePresets,
             }),
@@ -4823,6 +4837,9 @@ export default function Sidebar() {
             return;
           case "copy-thread-id":
             copyThreadIdToClipboard(thread.id, { threadId: thread.id });
+            return;
+          case "move-to-project":
+            await requestThreadMove(threadRef);
             return;
           case "archive": {
             if (confirmThreadArchive) {

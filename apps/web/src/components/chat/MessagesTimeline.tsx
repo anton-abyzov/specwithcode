@@ -37,7 +37,7 @@ import {
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import type { TimelineDetail, WorktreeSetupSnapshot } from "@specweave-studio/contracts";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
-import { useRightPanelStore } from "~/rightPanelStore";
+import { openFileInFront } from "~/lib/openInFront";
 import {
   getQuestionAnswerPreview,
   getQuestionAnswerText,
@@ -4714,7 +4714,12 @@ function UserMessageMentionChip(props: {
             data-markdown-copy={props.copyMarkdown}
             onClick={() => {
               if (ctx.threadRef)
-                useRightPanelStore.getState().openFile(ctx.threadRef, props.record.path);
+                openFileInFront({
+                  threadRef: ctx.threadRef,
+                  cwd: ctx.markdownCwd ?? ctx.workspaceRoot ?? "",
+                  path: props.record.path,
+                  line: undefined,
+                });
             }}
           >
             <PierreEntryIcon

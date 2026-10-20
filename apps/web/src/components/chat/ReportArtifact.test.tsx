@@ -3,7 +3,8 @@ import { act, create } from "react-test-renderer";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 const overlay = vi.hoisted(() => ({ last: null as Record<string, unknown> | null }));
-vi.mock("~/viewerOverlayStore", () => ({
+vi.mock("~/viewerOverlayStore", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/viewerOverlayStore")>()),
   // The overlay's header is the host's; the viewer's actions portal into it.
   useViewerOverlay: (options: Record<string, unknown> & { open: boolean }) => {
     overlay.last = options;
@@ -56,7 +57,7 @@ vi.mock("../../rightPanelStore", () => ({
 
 import { use } from "react";
 import { ReportArtifactCard, type ReportSaveState } from "./ReportArtifact";
-import { ReportFileHostContext } from "./reportFileHost";
+import { InViewerOverlay } from "~/viewerOverlayStore";
 
 const REPORT = [
   "# Review cycle 2",
@@ -228,19 +229,11 @@ describe("ReportArtifactCard", () => {
       "- Commit `d7c074f0b` on `feat/x`.\\n- Screenshots at `a.png`.",
     );
   });
-  it("opens a linked file in the report's place, never beside or behind it", () => {
-    const threadRef = { environmentId: "host-1", threadId: "thread-1" } as never;
-    function FileLink(props: { path: string }) {
-      const host = use(ReportFileHostContext);
-      return (
-        <button
-          type="button"
-          data-file-link={props.path}
-          onClick={() => host?.open({ threadRef, cwd: "/repo", path: props.path, line: 3 })}
-        >
-          {props.path}
-        </button>
-      );
+  it("marks what it shows as inside the overlay, so links in it open there", () => {
+    let inside: boolean | null = null;
+    function Probe() {
+      inside = use(InViewerOverlay);
+      return null;
     }
     let renderer!: ReturnType<typeof create>;
     act(() => {
@@ -249,7 +242,7 @@ describe("ReportArtifactCard", () => {
           text={"**Outcome:** done.\n\n**Evidence:** see the findings. They are long. Read all."}
           fallbackTitle="Findings"
           save={null}
-          renderMarkdown={() => <FileLink path="/tmp/rea/cds.css" />}
+          renderMarkdown={() => <Probe />}
         >
           <p />
         </ReportArtifactCard>,
@@ -259,42 +252,9 @@ describe("ReportArtifactCard", () => {
       (node) => node.type === "button" && node.props["aria-label"]?.startsWith("Open report"),
     )[0]!;
     act(() => open.props.onClick());
-    const link = renderer.root.findAll(
-      (node) => node.props["data-file-link"] === "/tmp/rea/cds.css",
-    )[0]!;
-    act(() => link.props.onClick());
-    const pane = renderer.root.findAll((node) => node.props["data-report-file-pane"] === "true");
-    expect(pane).toHaveLength(1);
-    expect(JSON.stringify(renderer.toJSON())).toContain("contents of /tmp/rea/cds.css");
-    expect(openFileInPanel).not.toHaveBeenCalled();
-    const body = () =>
-      renderer.root.findAll((node) => node.props["data-report-reader-body"] === "true")[0]!;
-    // One view at a time: the report stays mounted, hidden, so Back returns to it.
-    expect(body().props.hidden).toBe(true);
-    // The overlay header names where you are and offers Back to the report.
-    expect(overlay.last).toMatchObject({
-      title: "cds.css",
-      kind: "File",
-      badge: "CSS",
-      detail: "line 3",
-      trail: [{ kind: "Report", title: "Findings" }],
-    });
-    act(() => (overlay.last!.onBack as () => void)());
-    expect(body().props.hidden).toBe(false);
-    expect(
-      renderer.root.findAll((node) => node.props["data-report-file-pane"] === "true"),
-    ).toHaveLength(0);
-    act(() => link.props.onClick());
-
-    const toPanel = renderer.root.findAll(
-      (node) =>
-        node.type === "button" &&
-        node.findAll((child) => child.children.includes("Open in panel")).length > 0,
-    )[0]!;
-    act(() => toPanel.props.onClick());
-    expect(openFileInPanel).toHaveBeenCalledWith(threadRef, "/tmp/rea/cds.css", 3);
-    expect(renderer.root.findAll((node) => node.props["data-report-reader"] === "true")).toEqual(
-      [],
-    );
+    expect(inside).toBe(true);
+    // The header is the report's own: links no longer swap it for a file.
+    expect(overlay.last).toMatchObject({ title: "Findings", kind: "Report", badge: "MD" });
+    expect(overlay.last).not.toHaveProperty("trail");
   });
 });

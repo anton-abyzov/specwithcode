@@ -230,6 +230,37 @@ export function waitForThreadShell(ref: ScopedThreadRef, timeoutMs = 5_000): Pro
   });
 }
 
+/**
+ * What a project move did, read from what landed: the source thread now in the target
+ * project (kept in place) or the new thread (restarted). Null when neither shows in time.
+ */
+export function waitForThreadMoveOutcome(input: {
+  readonly source: ScopedThreadRef;
+  readonly moved: ScopedThreadRef;
+  readonly projectId: string;
+  readonly timeoutMs?: number;
+}): Promise<"kept" | "restarted" | null> {
+  const timeoutMs = input.timeoutMs ?? 5_000;
+  const kept = waitForAtomValue({
+    registry: appAtomRegistry,
+    atom: environmentThreadShells.threadShellAtom(input.source),
+    predicate: (thread) => thread !== null && thread.projectId === input.projectId,
+    timeoutMs,
+  }).then((ok) => (ok ? ("kept" as const) : null));
+  const restarted = waitForThreadShell(input.moved, timeoutMs).then((ok) =>
+    ok ? ("restarted" as const) : null,
+  );
+  return new Promise((resolve) => {
+    let pending = 2;
+    for (const outcome of [kept, restarted]) {
+      void outcome.then((value) => {
+        pending -= 1;
+        if (value !== null || pending === 0) resolve(value);
+      });
+    }
+  });
+}
+
 /** Whether the environment hosts preview tabs in its own browser (`runtime: "server"`),
     so clients without Electron can still use the Browser panel. */
 export function useEnvironmentSupportsServerBrowser(environmentId: EnvironmentId | null): boolean {
@@ -244,6 +275,14 @@ export function readEnvironmentSupportsServerBrowser(environmentId: EnvironmentI
   return (
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
       .serverBrowser === true
+  );
+}
+
+/** Whether the environment's server accepts thread.move-to-project. */
+export function readEnvironmentSupportsProjectMove(environmentId: EnvironmentId): boolean {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .threadProjectMove === true
   );
 }
 

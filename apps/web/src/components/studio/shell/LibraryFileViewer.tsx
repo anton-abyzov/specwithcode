@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 import { formatViewerDate } from "~/viewerDate";
-import { useViewerOverlay } from "~/viewerOverlayStore";
+import { InViewerOverlay, useViewerOverlay } from "~/viewerOverlayStore";
 import ChatMarkdown from "../../ChatMarkdown";
 import { MarkdownDocumentView } from "../../chat/ReportReader";
 import { ViewerFileActions } from "../../chat/ViewerFileActions";
@@ -105,15 +105,18 @@ export function LibraryFileViewer(props: {
       }}
     >
       {slots.actions ? createPortal(actions, slots.actions) : null}
-      <div className="artifact-viewer-stage">
-        <LibraryFileBody
-          key={file.path}
-          environmentId={props.environmentId}
-          workspaceRoot={props.workspaceRoot}
-          path={file.path}
-          name={file.name}
-        />
-      </div>
+      {/* Links in what is open here open in the overlay, never behind it. */}
+      <InViewerOverlay value>
+        <div className="artifact-viewer-stage">
+          <LibraryFileBody
+            key={file.path}
+            environmentId={props.environmentId}
+            workspaceRoot={props.workspaceRoot}
+            path={file.path}
+            name={file.name}
+          />
+        </div>
+      </InViewerOverlay>
     </div>,
     slots.content,
   );
