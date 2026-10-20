@@ -36,6 +36,25 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.managedUpdatesCheck]: AuthEnvironmentMaintainScope,
   [WS_METHODS.machineHandoffPrepare]: AuthOrchestrationOperateScope,
   [WS_METHODS.machineHandoffReceive]: AuthSourceControlWriteScope,
+  // Reading a folder's repositories and a copy's notes before linking.
+  [WS_METHODS.projectsFingerprint]: AuthFilesystemReadScope,
+  [WS_METHODS.projectLinkPreview]: AuthOrchestrationReadScope,
+  // Linking rewrites who coordinates a project, like a handoff.
+  [WS_METHODS.projectLinkPrepare]: AuthSettingsWriteScope,
+  [WS_METHODS.projectLinkAccept]: AuthSettingsWriteScope,
+  [WS_METHODS.projectLinkCommit]: AuthSettingsWriteScope,
+  [WS_METHODS.projectUnlink]: AuthSettingsWriteScope,
+  [WS_METHODS.machineHandoffCopyOffer]: AuthOrchestrationOperateScope,
+  [WS_METHODS.machineHandoffCopySourceStatus]: AuthFilesystemReadScope,
+  [WS_METHODS.machineHandoffCopySourceCancel]: AuthOrchestrationOperateScope,
+  [WS_METHODS.machineHandoffCopyRelease]: AuthOrchestrationOperateScope,
+  [WS_METHODS.machineHandoffCopyStart]: AuthOrchestrationOperateScope,
+  [WS_METHODS.machineHandoffCopyStatus]: AuthFilesystemReadScope,
+  [WS_METHODS.machineHandoffCopyDecide]: AuthOrchestrationOperateScope,
+  [WS_METHODS.machineHandoffCopyApprove]: AuthFilesystemWriteScope,
+  [WS_METHODS.machineHandoffCopyRetry]: AuthFilesystemWriteScope,
+  [WS_METHODS.machineHandoffCopyUndo]: AuthFilesystemWriteScope,
+  [WS_METHODS.machineHandoffCopyCancel]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsEnvironmentPrepare]: AuthSourceControlWriteScope,
   [WS_METHODS.projectsPlanReplace]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsPlanConfigure]: AuthOrchestrationOperateScope,
@@ -105,6 +124,46 @@ export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 
 const decodePrepareThread = Schema.decodeUnknownSync(GitPreparePullRequestThreadInput);
 
+/**
+ * Folder copy: offering serves the project's files to one machine; Apply writes
+ * a folder, runs Git and registers a project; release returns a coordinator.
+ */
+function folderCopyScopes(method: string, input: unknown): readonly AuthEnvironmentScope[] | null {
+  const read = [AuthOrchestrationReadScope, AuthFilesystemReadScope] as const;
+  switch (method) {
+    case WS_METHODS.machineHandoffCopySourceStatus:
+    case WS_METHODS.machineHandoffCopyStatus:
+      return read;
+    case WS_METHODS.machineHandoffCopyOffer:
+    case WS_METHODS.machineHandoffCopySourceCancel:
+    case WS_METHODS.machineHandoffCopyStart:
+    case WS_METHODS.machineHandoffCopyDecide:
+    case WS_METHODS.machineHandoffCopyCancel:
+      return [...read, AuthOrchestrationOperateScope];
+    case WS_METHODS.machineHandoffCopyRelease:
+      return [...read, AuthOrchestrationOperateScope, AuthSourceControlWriteScope];
+    case WS_METHODS.machineHandoffCopyUndo:
+      if ((input as { preview?: boolean } | undefined)?.preview === true) return read;
+      return [
+        ...read,
+        AuthFilesystemWriteScope,
+        AuthSourceControlWriteScope,
+        AuthOrchestrationOperateScope,
+      ];
+    case WS_METHODS.machineHandoffCopyApprove:
+    case WS_METHODS.machineHandoffCopyRetry:
+      return [
+        ...read,
+        AuthFilesystemWriteScope,
+        AuthSourceControlWriteScope,
+        AuthOrchestrationOperateScope,
+        AuthSettingsWriteScope,
+      ];
+    default:
+      return null;
+  }
+}
+
 export function clientRpcRequiredScopes(
   method: string,
   input: unknown,
@@ -128,6 +187,17 @@ export function clientRpcRequiredScopes(
         ]
       : [AuthOrchestrationReadScope, AuthFilesystemReadScope];
   }
+  if (
+    method === WS_METHODS.projectLinkPrepare ||
+    method === WS_METHODS.projectLinkAccept ||
+    method === WS_METHODS.projectLinkCommit ||
+    method === WS_METHODS.projectUnlink
+  )
+    return [AuthSettingsWriteScope, AuthOrchestrationOperateScope];
+  if (method === WS_METHODS.projectLinkPreview)
+    return [AuthOrchestrationReadScope, AuthFilesystemReadScope];
+  const copyScopes = folderCopyScopes(method, input);
+  if (copyScopes) return copyScopes;
   if (method === WS_METHODS.projectsConnectionSave || method === WS_METHODS.projectsConnectionCheck)
     return [AuthOrchestrationOperateScope, AuthTerminalOperateScope];
   // Writes another tool's configuration, which that tool then runs as commands.

@@ -539,6 +539,8 @@ type MessagesTimelineRowContent =
       runId?: RunId | null;
       groupId: string;
       hiddenCount: number;
+      /** Tool calls the header opens; narration in the group is not counted. */
+      toolCount: number;
       expanded: boolean;
       summary: string;
       summaryKind: ToolGroupSummaryKind;
@@ -1765,6 +1767,7 @@ export function deriveMessagesTimelineRows(input: {
               runId: timelineEntry.entry.runId ?? null,
               groupId,
               hiddenCount: visibleGroupedEntries.length,
+              toolCount: visibleGroupedEntries.filter(workLogEntryIsToolLike).length,
               expanded,
               summary: usesSingleToolCallLabel
                 ? singleToolCallLabel(singleEntry)
@@ -2388,7 +2391,12 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       return a.createdAt === (b as typeof a).createdAt;
     case "thinking": {
       const bt = b as typeof a;
-      return a.createdAt === bt.createdAt && a.groupId === bt.groupId && a.expanded === bt.expanded;
+      return (
+        a.createdAt === bt.createdAt &&
+        a.groupId === bt.groupId &&
+        a.expanded === bt.expanded &&
+        a.groupCount === bt.groupCount
+      );
     }
     case "worktree-setup":
       return a.snapshot === (b as typeof a).snapshot;
@@ -2494,6 +2502,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.runId === bw.runId &&
         a.groupId === bw.groupId &&
         a.hiddenCount === bw.hiddenCount &&
+        a.toolCount === bw.toolCount &&
         a.expanded === bw.expanded &&
         a.summary === bw.summary &&
         a.summaryKind === bw.summaryKind &&

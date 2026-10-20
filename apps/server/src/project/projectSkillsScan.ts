@@ -23,16 +23,26 @@ import { resolveSpawnCommand } from "@specweave-studio/shared/shell";
 import { spawnAndCollect } from "../provider/providerSnapshot.ts";
 import {
   buildProjectSkillRows,
+  comparableSkillContent,
+  isListableSkillPath,
+  lockEntryKey,
+  parsePluginManifestVersion,
   parseVskillDoctorReport,
   parseVskillLock,
+  readSkillFrontmatter,
   vskillContentSha,
   type ProviderSkillSource,
   type SkillFileFact,
+  type VskillDoctorFinding,
   type VskillLockSource,
 } from "./projectSkillsInventory.ts";
 
 const MAX_SKILL_FILE_BYTES = 1_000_000;
 const MAX_LOCK_FILE_BYTES = 4_000_000;
+const MAX_PLUGIN_MANIFEST_BYTES = 256_000;
+/** A plugin skill sits at `<plugin>/skills/<name>/SKILL.md`; look a little higher too. */
+const PLUGIN_MANIFEST_LEVELS = 4;
+const PLUGIN_MANIFESTS = [".claude-plugin/plugin.json", ".codex-plugin/plugin.json", "plugin.json"];
 const DOCTOR_TIMEOUT_MS = 5_000;
 
 const readBounded = Effect.fn("projectSkills.readBounded")(function* (
@@ -96,11 +106,36 @@ export const readVskillLocks = Effect.fn("projectSkills.readVskillLocks")(functi
   return locks;
 });
 
-/** Resolve links and digest each reported SKILL.md once. */
+/**
+ * The version in the manifest of the plugin a SKILL.md sits in, such as
+ * `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/.claude-plugin/plugin.json`.
+ * Only files under a `plugins` folder are plugin skills.
+ */
+const readPluginVersion = Effect.fn("projectSkills.readPluginVersion")(function* (
+  realPath: string,
+) {
+  const path = yield* Path.Path;
+  if (!realPath.split(/[\\/]+/).includes("plugins")) return null;
+  let current = path.dirname(realPath);
+  for (let level = 0; level < PLUGIN_MANIFEST_LEVELS; level += 1) {
+    for (const manifest of PLUGIN_MANIFESTS) {
+      const text = yield* readBounded(path.join(current, manifest), MAX_PLUGIN_MANIFEST_BYTES);
+      if (text === undefined) continue;
+      return parsePluginManifestVersion(text);
+    }
+    const parent = path.dirname(current);
+    if (parent === current || path.basename(current) === "plugins") break;
+    current = parent;
+  }
+  return null;
+});
+
+/** Resolve links, digest and read the frontmatter of each reported SKILL.md once. */
 export const readSkillFileFacts = Effect.fn("projectSkills.readSkillFileFacts")(function* (
   paths: Iterable<string>,
 ) {
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const unique = [...new Set(paths)];
   const facts = yield* Effect.forEach(
     unique,
@@ -108,18 +143,71 @@ export const readSkillFileFacts = Effect.fn("projectSkills.readSkillFileFacts")(
       Effect.gen(function* () {
         const realPath = yield* fs.realPath(skillPath).pipe(Effect.orElseSucceed(() => skillPath));
         const content = yield* readBounded(realPath, MAX_SKILL_FILE_BYTES);
-        return [
-          skillPath,
-          { realPath, digest: content === undefined ? null : vskillContentSha(content) },
-        ] as const;
+        const pluginVersion = yield* readPluginVersion(realPath);
+        if (content === undefined) {
+          return [skillPath, { realPath, digest: null, pluginVersion }] as const;
+        }
+        const frontmatter = readSkillFrontmatter(content);
+        const fact: SkillFileFact = {
+          realPath,
+          digest: vskillContentSha(content),
+          comparableDigest: vskillContentSha(
+            comparableSkillContent(content, path.basename(path.dirname(realPath))),
+          ),
+          frontmatterName: frontmatter.name,
+          fileVersion: frontmatter.version,
+          pluginVersion,
+        };
+        return [skillPath, fact] as const;
       }),
     { concurrency: 16 },
   );
   return new Map<string, SkillFileFact>(facts);
 });
 
+/**
+ * Lock entries that still have a folder on disk: the entry's
+ * `installedPath`, or a folder named after it in the lock's own skills
+ * folder or a usual agent skills folder beside it or in the home folder.
+ */
+export const readLocksOnDisk = Effect.fn("projectSkills.readLocksOnDisk")(function* (input: {
+  readonly locks: ReadonlyArray<VskillLockSource>;
+  readonly homeDir: string;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const skillDirs = (root: string) => [
+    path.join(root, "skills"),
+    path.join(root, ".agents", "skills"),
+    path.join(root, ".claude", "skills"),
+    path.join(root, ".codex", "skills"),
+  ];
+  const checks = input.locks.flatMap((source) =>
+    [...source.entries].map(([key, entry]) => ({ source, key, entry })),
+  );
+  const found = yield* Effect.forEach(
+    checks,
+    ({ source, key, entry }) =>
+      Effect.gen(function* () {
+        const candidates = [
+          ...(entry.installedPath ? [path.resolve(source.root, entry.installedPath)] : []),
+          ...[...new Set([...skillDirs(source.root), ...skillDirs(input.homeDir)])].map((dir) =>
+            path.join(dir, key),
+          ),
+        ];
+        for (const candidate of candidates) {
+          const exists = yield* fs.exists(candidate).pipe(Effect.orElseSucceed(() => false));
+          if (exists) return [lockEntryKey(source.path, key)];
+        }
+        return [];
+      }),
+    { concurrency: 16 },
+  );
+  return new Set(found.flat());
+});
+
 export type VskillDoctorResult =
-  | { readonly state: "ok"; readonly findings: ReadonlyMap<string, ReadonlyArray<string>> }
+  | { readonly state: "ok"; readonly findings: ReadonlyArray<VskillDoctorFinding> }
   | { readonly state: "unavailable" | "failed" };
 
 /**
@@ -169,11 +257,16 @@ export const gatherProjectSkills = Effect.fn("projectSkills.gather")(function* (
 > {
   const environment = input.environment ?? process.env;
   const homeDir = input.homeDir ?? NodeOS.homedir();
+  // Trash folders and plugin command files are not skills an agent loads.
+  const providers = input.providers.map((provider) => ({
+    ...provider,
+    skills: provider.skills.filter((skill) => isListableSkillPath(skill.path)),
+  }));
   const [locks, files, doctor] = yield* Effect.all(
     [
       readVskillLocks({ cwd: input.cwd, homeDir }),
       readSkillFileFacts(
-        input.providers.flatMap((provider) => provider.skills.map((skill) => skill.path)),
+        providers.flatMap((provider) => provider.skills.map((skill) => skill.path)),
       ),
       input.doctor === false
         ? Effect.succeed<VskillDoctorResult>({ state: "unavailable" })
@@ -181,18 +274,27 @@ export const gatherProjectSkills = Effect.fn("projectSkills.gather")(function* (
     ],
     { concurrency: "unbounded" },
   );
+  const lockOnDisk = yield* readLocksOnDisk({ locks, homeDir });
   const rows = buildProjectSkillRows({
     cwd: input.cwd,
-    providers: input.providers,
+    providers,
     locks,
     files,
-    doctor: doctor.state === "ok" ? doctor.findings : new Map(),
+    doctor: doctor.state === "ok" ? doctor.findings : [],
+    lockOnDisk,
   });
+  const listed = new Map(
+    providers.map((provider) => [provider.instanceId, provider.skills.length]),
+  );
   return {
     cwd: input.cwd,
     checkedAt: DateTime.formatIso(yield* DateTime.now),
     rows,
-    providers: input.providerStates,
+    providers: input.providerStates.map((state) =>
+      state.state === "ok" && listed.has(state.instanceId)
+        ? { ...state, skills: listed.get(state.instanceId)! }
+        : state,
+    ),
     locks: locks.map((lock) => ({ path: lock.path, scope: lock.scope, skills: lock.entries.size })),
     doctor: doctor.state,
   };

@@ -34,6 +34,11 @@ export const MachineHandoffDestination = Schema.Struct({
   joinExistingProject: Schema.optional(Schema.Boolean),
   /** Execute in the explicitly selected registered folder; omitted preserves legacy transfers. */
   executionMode: Schema.optional(Schema.Literal("project-folder")),
+  /**
+   * The folder arrived by folder copy (project-folder only): Git publication and
+   * materialization are skipped, and the destination requires its applied copy.
+   */
+  transport: Schema.optional(Schema.Literal("folder-copy")),
 });
 export const MachineHandoffAcknowledgment = Schema.Struct({
   operationId: MachineHandoffOperationId,

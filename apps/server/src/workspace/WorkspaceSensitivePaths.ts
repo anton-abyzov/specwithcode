@@ -277,6 +277,32 @@ const PROVIDER_HOME_CREDENTIAL_FILES = new Set([
   "mcp-oauth-tokens.json",
 ]);
 
+/** Key and keystore names that hold private material wherever they sit in a project. */
+const PROJECT_KEY_FILE =
+  /^(?:id_(?:rsa|dsa|ecdsa|ed25519)|.+\.(?:pem|key|p12|pfx|p8|keystore|jks))$/i;
+
+/**
+ * True when a file inside a project folder looks like a credential: an `.env`
+ * file, a private key, or a file the home lists above refuse (`.npmrc`, `.netrc`,
+ * `.docker/config.json`, provider `auth.json` and the like) at any depth. A folder
+ * copy leaves these out unless the person ticks them one by one.
+ */
+export function isSecretLikeProjectPath(relativePath: string): boolean {
+  const parts = relativePath.split("/");
+  const name = parts.at(-1) ?? "";
+  if (name === ".env" || name.startsWith(".env.")) return true;
+  if (PROJECT_KEY_FILE.test(name) || PROVIDER_HOME_CREDENTIAL_FILES.has(name)) return true;
+  const suffixMatches = (listed: string) =>
+    relativePath === listed || relativePath.endsWith(`/${listed}`);
+  if (HOME_DENIED_FILES.some(suffixMatches)) return true;
+  return HOME_DENIED_DIRECTORIES.some((directory) => {
+    const depth = directory.split("/").length;
+    for (let end = depth; end < parts.length; end += 1)
+      if (parts.slice(end - depth, end).join("/") === directory) return true;
+    return false;
+  });
+}
+
 /** A provider config file in its home that changes what the agent runs (hooks, MCP servers). */
 const isProviderConfigFile = (name: string) =>
   name === "config.toml" ||

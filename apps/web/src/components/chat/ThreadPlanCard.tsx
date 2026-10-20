@@ -24,11 +24,20 @@ import { memo, useId, useState } from "react";
 
 import type { PlanStepState } from "@specweave-studio/shared/planProgress";
 import { cn } from "~/lib/utils";
+import { readLocalApi } from "~/localApi";
 import {
   BINDING_LABELS,
+  isExternalStepLink,
   type ThreadPlanStep,
   type ThreadPlanView,
 } from "../../studio/threadPlanProgress";
+
+/** Opens an https step link in the system browser, like the thread's other link cards. */
+function openStepLinkExternally(url: string) {
+  const api = readLocalApi();
+  if (api) void api.shell.openExternal(url);
+  else window.open(url, "_blank", "noopener,noreferrer");
+}
 
 const STEP_LABEL: Record<PlanStepState, string> = {
   done: "Done",
@@ -54,7 +63,54 @@ export function PlanStepIcon({ state, className }: { state: PlanStepState; class
   }
 }
 
-function StepRow({ step }: { step: ThreadPlanStep }) {
+/** The step's text: a link when it has one the card can open, plain text otherwise. */
+function StepText({
+  step,
+  onOpenPath,
+}: {
+  step: ThreadPlanStep;
+  onOpenPath: ((path: string) => void) | null;
+}) {
+  const { href } = step;
+  if (href && isExternalStepLink(href)) {
+    return (
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="underline decoration-border underline-offset-2 hover:decoration-foreground"
+        data-plan-step-link="external"
+        onClick={(event) => {
+          event.preventDefault();
+          openStepLinkExternally(href);
+        }}
+      >
+        {step.text}
+      </a>
+    );
+  }
+  if (href && onOpenPath) {
+    return (
+      <button
+        type="button"
+        className="text-left underline decoration-border underline-offset-2 hover:decoration-foreground"
+        data-plan-step-link="path"
+        onClick={() => onOpenPath(href)}
+      >
+        {step.text}
+      </button>
+    );
+  }
+  return <>{step.text}</>;
+}
+
+function StepRow({
+  step,
+  onOpenPath = null,
+}: {
+  step: ThreadPlanStep;
+  onOpenPath?: ((path: string) => void) | null;
+}) {
   const finished = step.state === "done" || step.state === "skipped";
   return (
     <li
@@ -69,13 +125,30 @@ function StepRow({ step }: { step: ThreadPlanStep }) {
           className={cn(
             "min-w-0 flex-1 wrap-anywhere",
             finished ? "text-muted-foreground" : "text-foreground/90",
-            step.state === "current" && "font-medium",
+            step.state === "current" && "font-medium text-foreground",
           )}
         >
           {step.id ? (
             <span className="me-1.5 font-mono text-xs text-muted-foreground">{step.id}</span>
           ) : null}
-          {step.text}
+          <StepText step={step} onOpenPath={onOpenPath} />
+          {step.commit ? (
+            <span
+              className="ms-1.5 font-mono text-2xs text-muted-foreground"
+              aria-label={`Commit ${step.commit}`}
+              data-plan-step-commit
+            >
+              {step.commit.slice(0, 7)}
+            </span>
+          ) : null}
+          {step.unverified ? (
+            <span
+              className="ms-1.5 rounded-full border border-border/70 px-1.5 text-2xs font-normal text-muted-foreground"
+              data-plan-step-unverified
+            >
+              unverified
+            </span>
+          ) : null}
           {step.mine ? (
             <span className="ms-1.5 rounded-full border border-border/70 px-1.5 text-2xs font-normal text-muted-foreground">
               this thread
@@ -94,7 +167,7 @@ function StepRow({ step }: { step: ThreadPlanStep }) {
           data-plan-substeps
         >
           {step.children.map((child) => (
-            <StepRow key={child.key} step={child} />
+            <StepRow key={child.key} step={child} onOpenPath={onOpenPath} />
           ))}
         </ul>
       ) : null}
@@ -227,7 +300,7 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
           {plan.steps.length > 0 ? (
             <ul role="list" aria-label="Steps" className="space-y-0.5">
               {plan.steps.map((step) => (
-                <StepRow key={step.key} step={step} />
+                <StepRow key={step.key} step={step} onOpenPath={onOpenPath} />
               ))}
             </ul>
           ) : (

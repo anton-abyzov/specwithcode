@@ -159,6 +159,7 @@ try {
     join(root, "scripts/studio-projects/release-version.test.mjs"),
     join(root, "scripts/studio-projects/release-flags.test.mjs"),
     join(root, "scripts/studio-projects/mac-signature.test.mjs"),
+    join(root, "scripts/studio-projects/mac-upgrade-grant.test.mjs"),
   ]);
   await runNode("native-proof-guards", [
     "--test",

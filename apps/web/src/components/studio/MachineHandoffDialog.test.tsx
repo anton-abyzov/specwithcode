@@ -364,3 +364,41 @@ describe("shared handoff controls", () => {
     expect(document.querySelector('[data-slot="handoff-remember-machine"]')).toBeNull();
   });
 });
+
+describe("handoff file method", () => {
+  const methodRadio = (label: string) => {
+    const element = [
+      ...document.querySelectorAll<HTMLElement>('[data-slot="handoff-method"] [role="radio"]'),
+    ].find((node) => node.closest("label")?.textContent?.includes(label));
+    if (!element) throw new Error(`Missing method ${label}`);
+    return element;
+  };
+
+  it("shows the copy flow by default and only Close while the copy runs", async () => {
+    const onMethodChange = vi.fn();
+    await handoff({
+      method: "copy",
+      onMethodChange,
+      copyFlow: <p data-testid="copy-flow">Copy flow</p>,
+      copyBusy: true,
+    });
+    expect(methodRadio("Copy from MacBook M4").getAttribute("aria-checked")).toBe("true");
+    expect(document.querySelector('[data-testid="copy-flow"]')).not.toBeNull();
+    expect(document.querySelector('[data-slot="handoff-machine"]')).toBeNull();
+    expect(() => button("Review handoff")).toThrow();
+    expect(button("Close").disabled).toBe(true);
+    await escape();
+    expect(props.onOpenChange).not.toHaveBeenCalled();
+    await click(methodRadio("Use the folder as it is"));
+    expect(onMethodChange).not.toHaveBeenCalled();
+  });
+
+  it("switches to the Git handoff, which keeps its destinations and review", async () => {
+    const onMethodChange = vi.fn();
+    await handoff({ method: "copy", onMethodChange, copyFlow: <p>Copy flow</p> });
+    await click(methodRadio("Use the folder as it is"));
+    expect(onMethodChange).toHaveBeenCalledExactlyOnceWith("folder");
+    await handoff({ method: "folder", onMethodChange, copyFlow: undefined });
+    expect(document.querySelector('[data-slot="handoff-method"]')).toBeNull();
+  });
+});

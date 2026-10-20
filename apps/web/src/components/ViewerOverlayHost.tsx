@@ -420,7 +420,11 @@ export function ViewerOverlayHost(props: {
                   threadRef={threadRef}
                   artifacts={artifacts}
                   currentKey={currentKey}
-                  onOpen={setPicked}
+                  onOpen={(key) => {
+                    // The picked artifact replaces whatever a link opened in front.
+                    useViewerOverlayStore.setState({ linked: null, linkedFrom: null });
+                    setPicked(key);
+                  }}
                 />
                 <div className="viewer-overlay-thread-main">
                   {renderThread(threadRef, { transcriptOnly: coordinator })}

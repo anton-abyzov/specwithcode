@@ -163,6 +163,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   threadTitleRegeneration: Schema.optionalKey(Schema.Boolean),
   /** Accepts `thread.move-to-project`; older servers omit it. */
   threadProjectMove: Schema.optionalKey(Schema.Boolean),
+  /** Server removes a private machine from its list (`removeFleetMachine`).
+      Absent on servers from before 1.0.58, which answer 404: clients keep the
+      rest of the private machines list working and say only removal needs an update. */
+  studioFleetRemove: Schema.optionalKey(Schema.Boolean),
   /** Server understands thread.visit / thread.mark-unread commands and
       projects lastVisitedAt on thread shells. Same version-skew contract as
       threadSettlement: clients keep their local visited state against
@@ -238,6 +242,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server connects a Google account for read-only Gmail, Calendar and Drive
       (`googleAccount.*`). Absent on older servers. */
   googleAccount: Schema.optionalKey(Schema.Boolean),
+  /** Server links a project with its copy on another machine (`projectLink.*`,
+      `projects.fingerprint`). Absent on older servers, which reject those calls,
+      so clients ask to update that machine first. */
+  projectLink: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

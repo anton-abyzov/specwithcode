@@ -13,9 +13,14 @@ import * as Path from "effect/Path";
 
 import {
   buildProjectSkillRows,
+  comparableSkillContent,
+  isListableSkillPath,
+  lockEntryKey,
   parseVskillDoctorReport,
   parseVskillLock,
+  readSkillFrontmatter,
   vskillContentSha,
+  type VskillDoctorFinding,
   type ProviderSkillSource,
   type SkillFileFact,
   type VskillLockEntry,
@@ -67,9 +72,23 @@ function lock(
   return { path: `${root}/vskill.lock`, root, scope, entries: new Map(Object.entries(entries)) };
 }
 
-const fact = (realPath: string, content: string | null): SkillFileFact => ({
+const fact = (
+  realPath: string,
+  content: string | null,
+  extra: Partial<SkillFileFact> = {},
+): SkillFileFact => ({
   realPath,
   digest: content === null ? null : vskillContentSha(content),
+  ...extra,
+});
+
+const finding = (skill: string, extra: Partial<VskillDoctorFinding> = {}): VskillDoctorFinding => ({
+  skill,
+  kind: null,
+  message: `${skill} finding`,
+  agents: [],
+  paths: [],
+  ...extra,
 });
 
 describe("vskillContentSha", () => {
@@ -101,7 +120,7 @@ describe("parseVskillLock", () => {
 });
 
 describe("parseVskillDoctorReport", () => {
-  it("groups findings by skill name from several report shapes", () => {
+  it("reads findings with their agents and paths from several report shapes", () => {
     const report = parseVskillDoctorReport(
       JSON.stringify({
         problems: [
@@ -111,17 +130,67 @@ describe("parseVskillDoctorReport", () => {
             code: "redundant-link",
             paths: ["/p/.agents/skills/lint/SKILL.md"],
             detail: "Redundant.",
+            agents: ["cursor"],
           },
         ],
       }),
     );
-    assert.deepEqual(Object.fromEntries(report ?? []), {
-      deploy: ["Two copies differ."],
-      lint: ["broken-link", "Redundant."],
-    });
-    assert.deepEqual(Object.fromEntries(parseVskillDoctorReport("[]") ?? []), {});
+    assert.deepEqual(
+      report?.map((entry) => [entry.skill, entry.kind, entry.message, entry.agents, entry.paths]),
+      [
+        ["deploy", "divergent", "Two copies differ.", [], []],
+        ["lint", "broken-link", "broken-link", [], ["/p/.claude/skills/lint"]],
+        ["lint", "redundant-link", "Redundant.", ["cursor"], ["/p/.agents/skills/lint/SKILL.md"]],
+      ],
+    );
+    assert.deepEqual(parseVskillDoctorReport("[]"), []);
     assert.strictEqual(parseVskillDoctorReport("error: unknown command 'doctor'"), undefined);
     assert.strictEqual(parseVskillDoctorReport('{"ok":true}'), undefined);
+  });
+});
+
+describe("skill file helpers", () => {
+  it("reads name and version from frontmatter, nested under metadata too", () => {
+    assert.deepEqual(readSkillFrontmatter('---\nname: "gws"\nversion: "1.1.0"\n---\nBody'), {
+      name: "gws",
+      version: "1.1.0",
+    });
+    assert.deepEqual(
+      readSkillFrontmatter(
+        "---\nname: cold-email\nmetadata:\n  author: x\n  version: 2.2.0\n---\n",
+      ),
+      { name: "cold-email", version: "2.2.0" },
+    );
+    assert.deepEqual(readSkillFrontmatter("no frontmatter"), { name: null, version: null });
+  });
+
+  it("compares copies the way vskill doctor does, ignoring Claude-only fields", () => {
+    const shared = "---\nname: review\ndescription: Review.\n---\nBody\n";
+    const claude =
+      "---\nname: review\nuser-invocable: false\nallowed-tools: Read\ndescription: Review.\n---\nBody\n";
+    assert.strictEqual(
+      comparableSkillContent(claude, "review"),
+      comparableSkillContent(shared, "review"),
+    );
+    assert.strictEqual(
+      comparableSkillContent("---\ndescription: Review.\n---\nBody\n", "review"),
+      comparableSkillContent("---\nname: review\ndescription: Review.\n---\nBody\n", "review"),
+    );
+    assert.notStrictEqual(
+      comparableSkillContent(shared.replace("Body", "Other"), "review"),
+      comparableSkillContent(shared, "review"),
+    );
+  });
+
+  it("drops trash folders and plugin command files from catalogs", () => {
+    assert.isTrue(isListableSkillPath("/h/.claude/skills/review/SKILL.md"));
+    assert.isTrue(isListableSkillPath("/h/.codex/skills/.system/imagegen/SKILL.md"));
+    assert.isTrue(isListableSkillPath("/h/.claude/plugins/cache/m/sw/3.0.0/skills/do/SKILL.md"));
+    assert.isFalse(isListableSkillPath("/h/.claude/skills/.trash/1-2-x/docs/SKILL.md"));
+    assert.isFalse(isListableSkillPath("/h/.agents/skills/.root-owned-social/SKILL.md"));
+    assert.isFalse(
+      isListableSkillPath("/h/.claude/plugins/marketplaces/o/plugins/codex/commands/setup.md"),
+    );
   });
 });
 
@@ -143,7 +212,7 @@ describe("buildProjectSkillRows", () => {
         [projectPath, fact(sharedPath, content)],
         [sharedPath, fact(sharedPath, content)],
       ]),
-      doctor: new Map(),
+      doctor: [],
     });
     assert.strictEqual(rows.length, 1);
     const row = rows[0]!;
@@ -172,7 +241,7 @@ describe("buildProjectSkillRows", () => {
         providers: [provider("claude", "claudeAgent", "Claude", [skill("lint", path)])],
         locks: [lock("project", { lint: lockEntry({ sha }) })],
         files: new Map([[path, fact(path, content)]]),
-        doctor: new Map(),
+        doctor: [],
       })[0]!;
     const shortSha = vskillContentSha(original).slice(0, 12);
     assert.strictEqual(build(original, shortSha).drift, "match");
@@ -190,7 +259,7 @@ describe("buildProjectSkillRows", () => {
         providers: [provider("claude", "claudeAgent", "Claude", [skill("kit", path)])],
         locks: [lock("project", { kit: entry })],
         files: new Map([[path, fact(path, "x")]]),
-        doctor: new Map(),
+        doctor: [],
       })[0]!.drift;
     assert.strictEqual(build(lockEntry({ sha: null })), "unknown");
     assert.strictEqual(
@@ -215,7 +284,7 @@ describe("buildProjectSkillRows", () => {
           [user, fact(user, userContent)],
           [shared, fact(shared, "same\n")],
         ]),
-        doctor: new Map(),
+        doctor: [],
       })[0]!;
     const divergent = build("other\n");
     assert.strictEqual(divergent.status, "duplicate");
@@ -243,7 +312,7 @@ describe("buildProjectSkillRows", () => {
         lock("user", { ghost: lockEntry({ version: "9.0.0" }) }),
       ],
       files: new Map([[path, fact(path, "x")]]),
-      doctor: new Map(),
+      doctor: [],
     });
     assert.deepEqual(
       rows.map((row) => [row.name, row.status, row.lock?.version ?? null]),
@@ -259,13 +328,14 @@ describe("buildProjectSkillRows", () => {
   it("attaches a plugin install's lock to its namespaced skills", () => {
     const pluginSkill = `${HOME}/.claude/plugins/cache/mkt/frontend/1.0.0/skills/build/SKILL.md`;
     const ownLocked = `${HOME}/.claude/plugins/cache/mkt/frontend/1.0.0/skills/lint/SKILL.md`;
+    const otherSkill = `${HOME}/.claude/plugins/cache/mkt/other/1.0.0/skills/build/SKILL.md`;
     const rows = buildProjectSkillRows({
       cwd: CWD,
       providers: [
         provider("claude", "claudeAgent", "Claude", [
           skill("frontend:build", pluginSkill, { scope: "plugin" }),
           skill("frontend:lint", ownLocked, { scope: "plugin" }),
-          skill("other:build", pluginSkill, { scope: "plugin" }),
+          skill("other:build", otherSkill, { scope: "plugin" }),
         ]),
       ],
       locks: [
@@ -281,8 +351,9 @@ describe("buildProjectSkillRows", () => {
       files: new Map([
         [pluginSkill, fact(pluginSkill, "x")],
         [ownLocked, fact(ownLocked, "y")],
+        [otherSkill, fact(otherSkill, "z")],
       ]),
-      doctor: new Map(),
+      doctor: [],
     });
     assert.deepEqual(
       rows.map((row) => [row.name, row.status, row.drift, row.lock?.version ?? null]),
@@ -306,7 +377,7 @@ describe("buildProjectSkillRows", () => {
         lock("user", { gws: lockEntry({ version: "2.0.0" }) }),
       ],
       files: new Map([[path, fact(path, "x")]]),
-      doctor: new Map(),
+      doctor: [],
     })[0]!;
     assert.strictEqual(row.lock?.version, "2.0.0");
     assert.strictEqual(row.lock?.lockScope, "user");
@@ -326,7 +397,7 @@ describe("buildProjectSkillRows", () => {
       ],
       locks: [],
       files: new Map(),
-      doctor: new Map([["fine", ["Description is too long."]]]),
+      doctor: [finding("fine", { message: "Description is too long." })],
     });
     const [fine, old] = rows;
     assert.strictEqual(old?.status, "disabled");
@@ -336,6 +407,218 @@ describe("buildProjectSkillRows", () => {
     assert.deepEqual(fine?.doctor, ["Description is too long."]);
     assert.strictEqual(summarizeProjectSkills(rows), "2 skills, 2 need attention");
     assert.strictEqual(summarizeProjectSkills([]), "0 skills, all ok");
+  });
+
+  it("joins presences of one file before names, keeping other names as aliases", () => {
+    const store = `${HOME}/.agents/skills/apify-data-gathering/SKILL.md`;
+    const claudeLink = `${HOME}/.claude/skills/apify-data-gathering/SKILL.md`;
+    const content = "---\nname: marketing/apify-data-gathering\n---\nBody\n";
+    const rows = buildProjectSkillRows({
+      cwd: CWD,
+      providers: [
+        provider("claude", "claudeAgent", "Claude", [
+          skill("apify-data-gathering", claudeLink, { scope: "user" }),
+        ]),
+        provider("codex", "codex", "Codex", [
+          skill("marketing/apify-data-gathering", store, { scope: "user" }),
+        ]),
+        provider("grok", "grok", "Grok", [
+          skill("marketing-apify-data-gathering", store, { scope: "user" }),
+        ]),
+      ],
+      locks: [lock("user", { "apify-data-gathering": lockEntry() })],
+      files: new Map([
+        [claudeLink, fact(store, content, { frontmatterName: "marketing/apify-data-gathering" })],
+        [store, fact(store, content, { frontmatterName: "marketing/apify-data-gathering" })],
+      ]),
+      doctor: [],
+    });
+    assert.deepEqual(
+      rows.map((row) => row.name),
+      ["apify-data-gathering"],
+    );
+    assert.deepEqual(rows[0]!.aliases, [
+      "marketing-apify-data-gathering",
+      "marketing/apify-data-gathering",
+    ]);
+    assert.strictEqual(rows[0]!.copies, 1);
+    assert.strictEqual(rows[0]!.lock?.version, "1.0.0");
+    assert.deepEqual(
+      rows[0]!.providers.map((presence) => [presence.label, presence.name ?? null]),
+      [
+        ["Claude", null],
+        ["Codex", "marketing/apify-data-gathering"],
+        ["Grok", "marketing-apify-data-gathering"],
+      ],
+    );
+  });
+
+  it("joins a plugin skill listed bare by one agent and reports version skew", () => {
+    const claudeCopy = `${HOME}/.claude/plugins/cache/specweave/sw/3.0.23/skills/do/SKILL.md`;
+    const codexCopy = `${HOME}/.codex/plugins/cache/specweave/sw/3.0.20/skills/do/SKILL.md`;
+    const rows = buildProjectSkillRows({
+      cwd: CWD,
+      providers: [
+        provider("claude", "claudeAgent", "Claude", [
+          skill("sw:do", claudeCopy, { scope: "plugin" }),
+        ]),
+        provider("grok", "grok", "Grok", [skill("do", claudeCopy, { scope: "plugin" })]),
+        provider("codex", "codex", "Codex", [skill("sw:do", codexCopy, { scope: "user" })]),
+      ],
+      locks: [],
+      files: new Map([
+        [claudeCopy, fact(claudeCopy, "new\n", { fileVersion: "3.0.0", pluginVersion: "3.0.23" })],
+        [codexCopy, fact(codexCopy, "old\n", { fileVersion: "3.0.0", pluginVersion: "3.0.20" })],
+      ]),
+      doctor: [],
+    });
+    assert.strictEqual(rows.length, 1);
+    const row = rows[0]!;
+    assert.strictEqual(row.name, "sw:do");
+    assert.deepEqual(row.aliases, ["do"]);
+    assert.strictEqual(row.status, "duplicate");
+    assert.strictEqual(row.copies, 2);
+    assert.match(row.issues[0] ?? "", /Claude, Grok 3\.0\.23; Codex 3\.0\.20/);
+    assert.deepEqual(
+      row.providers.map((presence) => [presence.label, presence.pluginVersion]),
+      [
+        ["Claude", "3.0.23"],
+        ["Codex", "3.0.20"],
+        ["Grok", "3.0.23"],
+      ],
+    );
+  });
+
+  it("treats copies that differ only in Claude-only frontmatter as identical", () => {
+    const claudeCopy = `${HOME}/.claude/skills/review/SKILL.md`;
+    const shared = `${HOME}/.agents/skills/review/SKILL.md`;
+    const row = buildProjectSkillRows({
+      cwd: CWD,
+      providers: [
+        provider("claude", "claudeAgent", "Claude", [
+          skill("review", claudeCopy, { scope: "user" }),
+        ]),
+        provider("codex", "codex", "Codex", [skill("review", shared, { scope: "user" })]),
+      ],
+      locks: [],
+      files: new Map([
+        [claudeCopy, fact(claudeCopy, "claude\n", { comparableDigest: "same" })],
+        [shared, fact(shared, "shared\n", { comparableDigest: "same" })],
+      ]),
+      doctor: [],
+    })[0]!;
+    assert.strictEqual(row.status, "ok");
+    assert.strictEqual(row.divergent, false);
+    assert.strictEqual(row.attention, false);
+    assert.match(row.issues[0] ?? "", /2 identical copies/);
+  });
+
+  it("counts doctor findings only for agents and folders in the snapshot", () => {
+    const claudeCopy = `${HOME}/.claude/skills/media/SKILL.md`;
+    const shared = `${HOME}/.agents/skills/media/SKILL.md`;
+    const build = (doctor: ReadonlyArray<VskillDoctorFinding>) =>
+      buildProjectSkillRows({
+        cwd: CWD,
+        providers: [
+          provider("claude", "claudeAgent", "Claude", [
+            skill("media", claudeCopy, { scope: "user" }),
+          ]),
+          provider("grok", "grok", "Grok", [skill("media", shared, { scope: "user" })]),
+        ],
+        locks: [],
+        files: new Map([
+          [claudeCopy, fact(shared, "x")],
+          [shared, fact(shared, "x")],
+        ]),
+        doctor,
+      })[0]!;
+    const other = build([
+      finding("media", {
+        kind: "redundant-link",
+        agents: ["cursor"],
+        paths: [`${HOME}/.cursor/skills/media`],
+      }),
+      finding("media", { kind: "redundant-link", agents: ["gemini-cli"] }),
+      finding("media", { kind: "identical-copy", paths: [`${HOME}/.copilot/skills/media`] }),
+    ]);
+    assert.strictEqual(other.attention, false);
+    assert.deepEqual(other.doctor, []);
+    const own = build([
+      finding("media", { message: "claude link", agents: ["claude-code"] }),
+      finding("media", { message: "own folder", paths: [`${HOME}/.agents/skills/media`] }),
+      finding("media", { message: "no detail" }),
+    ]);
+    assert.strictEqual(own.attention, true);
+    assert.deepEqual(own.doctor, ["claude link", "own folder", "no detail"]);
+  });
+
+  it("shows doctor's identical-copy finding in place of the app's own", () => {
+    const claudeCopy = `${HOME}/.claude/skills/media/SKILL.md`;
+    const shared = `${HOME}/.agents/skills/media/SKILL.md`;
+    const row = buildProjectSkillRows({
+      cwd: CWD,
+      providers: [
+        provider("claude", "claudeAgent", "Claude", [
+          skill("media", claudeCopy, { scope: "user" }),
+        ]),
+        provider("codex", "codex", "Codex", [skill("media", shared, { scope: "user" })]),
+      ],
+      locks: [],
+      files: new Map([
+        [claudeCopy, fact(claudeCopy, "x")],
+        [shared, fact(shared, "x")],
+      ]),
+      doctor: [
+        finding("media", {
+          kind: "identical-copy",
+          message: "2 byte-identical copies, keep the shared one",
+          paths: [`${HOME}/.claude/skills/media`, `${HOME}/.agents/skills/media`],
+        }),
+      ],
+    })[0]!;
+    assert.strictEqual(row.status, "ok");
+    assert.strictEqual(row.attention, true);
+    assert.deepEqual(row.issues, ["2 byte-identical copies, keep the shared one"]);
+  });
+
+  it("marks lock entries with nothing on disk as stale, without attention", () => {
+    const userLock = lock("user", {
+      gone: lockEntry(),
+      parked: lockEntry(),
+    });
+    const rows = buildProjectSkillRows({
+      cwd: CWD,
+      providers: [],
+      locks: [userLock],
+      files: new Map(),
+      doctor: [finding("gone", { kind: "lock-missing", message: "nothing on disk" })],
+      lockOnDisk: new Set([lockEntryKey(userLock.path, "parked")]),
+    });
+    const [gone, parked] = rows;
+    assert.strictEqual(gone?.status, "missing");
+    assert.strictEqual(gone?.staleLock, true);
+    assert.strictEqual(gone?.attention, false);
+    assert.match(gone?.issues[0] ?? "", /Stale lock entry/);
+    assert.strictEqual(parked?.staleLock, undefined);
+    assert.strictEqual(parked?.attention, true);
+  });
+
+  it("keeps skills an agent hides from its slash menu enabled", () => {
+    const path = `${HOME}/.grok/bundled/skills/pdf/SKILL.md`;
+    const row = buildProjectSkillRows({
+      cwd: CWD,
+      providers: [
+        provider("grok", "grok", "Grok", [
+          skill("pdf", path, { scope: "bundled", userInvocable: false }),
+        ]),
+      ],
+      locks: [],
+      files: new Map(),
+      doctor: [],
+    })[0]!;
+    assert.strictEqual(row.status, "ok");
+    assert.strictEqual(row.attention, false);
+    assert.strictEqual(row.providers[0]?.userInvocable, false);
   });
 });
 
@@ -453,6 +736,77 @@ it.layer(NodeServices.layer)("gatherProjectSkills", (it) => {
   );
 });
 
+it.layer(NodeServices.layer)("gatherProjectSkills versions and catalogs", (it) => {
+  it.effect("reads file and plugin versions, drops trash, marks stale lock entries", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const temp = yield* fs.makeTempDirectoryScoped({ prefix: "studio-project-skills-v-" });
+      const home = path.join(temp, "home");
+      const project = path.join(temp, "project");
+      yield* fs.makeDirectory(project, { recursive: true });
+      const plugin = path.join(home, ".claude", "plugins", "cache", "specweave", "sw", "3.0.23");
+      const pluginSkill = path.join(plugin, "skills", "do", "SKILL.md");
+      yield* fs.makeDirectory(path.dirname(pluginSkill), { recursive: true });
+      yield* fs.makeDirectory(path.join(plugin, ".claude-plugin"), { recursive: true });
+      yield* fs.writeFileString(pluginSkill, "---\ndescription: Do.\nversion: 3.0.0\n---\nDo.\n");
+      yield* fs.writeFileString(
+        path.join(plugin, ".claude-plugin", "plugin.json"),
+        JSON.stringify({ name: "sw", version: "3.0.23" }),
+      );
+      const trashed = path.join(home, ".claude", "skills", ".trash", "1-x", "docs", "SKILL.md");
+      const parked = path.join(home, ".agents", "skills", "parked");
+      yield* fs.makeDirectory(parked, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(home, ".agents", "vskill.lock"),
+        JSON.stringify({ skills: { gone: { version: "1.0.0" }, parked: { version: "1.0.0" } } }),
+      );
+
+      const snapshot = yield* gatherProjectSkills({
+        cwd: project,
+        homeDir: home,
+        doctor: false,
+        providers: [
+          provider("claude", "claudeAgent", "Claude", [
+            skill("sw:do", pluginSkill, { scope: "plugin" }),
+          ]),
+          provider("grok", "grok", "Grok", [
+            skill("do", pluginSkill, { scope: "plugin" }),
+            skill("docs", trashed, { scope: "user" }),
+          ]),
+        ],
+        providerStates: [
+          {
+            instanceId: ProviderInstanceId.make("grok"),
+            driver: ProviderDriverKind.make("grok"),
+            label: "Grok",
+            state: "ok",
+            skills: 2,
+          },
+        ],
+      });
+      assert.deepEqual(
+        snapshot.rows.map((row) => [row.name, row.status, row.attention, row.staleLock ?? false]),
+        [
+          ["gone", "missing", false, true],
+          ["parked", "missing", true, false],
+          ["sw:do", "ok", false, false],
+        ],
+      );
+      const swDo = snapshot.rows.find((row) => row.name === "sw:do")!;
+      assert.deepEqual(swDo.aliases, ["do"]);
+      assert.deepEqual(
+        swDo.providers.map((presence) => [presence.fileVersion, presence.pluginVersion]),
+        [
+          ["3.0.0", "3.0.23"],
+          ["3.0.0", "3.0.23"],
+        ],
+      );
+      assert.strictEqual(snapshot.providers[0]?.skills, 1);
+    }),
+  );
+});
+
 it.layer(NodeServices.layer)("runVskillDoctor", (it) => {
   const withFakeVskill = (script: string) =>
     Effect.gen(function* () {
@@ -474,9 +828,10 @@ it.layer(NodeServices.layer)("runVskillDoctor", (it) => {
         `echo '{"problems":[{"name":"deploy","message":"Broken link."}]}'; exit 1`,
       );
       assert.strictEqual(result.state, "ok");
-      assert.deepEqual(result.state === "ok" ? Object.fromEntries(result.findings) : null, {
-        deploy: ["Broken link."],
-      });
+      assert.deepEqual(
+        result.state === "ok" ? result.findings.map((entry) => [entry.skill, entry.message]) : null,
+        [["deploy", "Broken link."]],
+      );
     }),
   );
 

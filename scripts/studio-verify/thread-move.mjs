@@ -50,7 +50,8 @@ const origin = `http://127.0.0.1:${port}`;
 const child = spawn(
   process.execPath,
   [
-    join(root, "apps/server/dist/bin.mjs"),
+    // STUDIO_SERVER_ENTRY checks an installed release instead of this checkout's build.
+    process.env.STUDIO_SERVER_ENTRY ?? join(root, "apps/server/dist/bin.mjs"),
     "serve",
     "--host",
     "127.0.0.1",
@@ -315,9 +316,35 @@ try {
   assert.ok(refused && refused.includes("moved to another project"), `Late send: ${refused}`);
   step("late send refused", { error: refused.slice(0, 300) });
 
-  await page.getByRole("button", { name: "Open original" }).first().click();
-  await page.getByText(`Moved to ${titles.target}`).first().waitFor({ timeout: 20000 });
+  // The original is archived: its link leads to the archived list.
+  await page.getByRole("button", { name: "Find original" }).first().click();
+  await page.waitForURL((url) => url.pathname.endsWith("/settings/archived"), { timeout: 20000 });
+  await page.getByText("Audit EasyChamp").first().waitFor({ timeout: 20000 });
+  await shot("3-archived-original");
+  step("original in archived");
+
+  // Restored, it shows where its work went (the banner's own words, not the toast).
+  await rpc(context, "orchestration.dispatchCommand", {
+    type: "thread.unarchive",
+    commandId: randomUUID(),
+    threadId: sourceThreadId,
+  });
+  await page.goto(`${origin}/`, { waitUntil: "load" });
+  const restoredRow = page.locator("a, button, [role=link], [data-thread-id]", {
+    hasText: "Audit EasyChamp",
+  });
+  await restoredRow.first().waitFor({ timeout: 30000 });
+  await page.waitForFunction(
+    () => document.querySelectorAll("a, button, [role=link], [data-thread-id]").length > 0,
+  );
+  await page.goto(`${origin}/${environmentId}/${sourceThreadId}`, { waitUntil: "load" });
+  await page
+    .getByText("This thread was stopped and archived.", { exact: false })
+    .first()
+    .waitFor({ timeout: 30000 });
   await shot("3-original");
+  await page.getByRole("button", { name: "Open new thread" }).first().click();
+  await page.waitForURL((url) => url.pathname.endsWith(`/${targetThreadId}`), { timeout: 20000 });
   step("original banner");
 
   // A chat outside every project moves as it is: same thread, same history.

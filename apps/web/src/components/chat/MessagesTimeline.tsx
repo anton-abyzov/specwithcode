@@ -3667,11 +3667,17 @@ function formatWorkingTimerNow(startIso: string): string {
   return formatWorkingTimer(startIso, new Date().toISOString()) ?? "0s";
 }
 
-function WorkingTimer({ createdAt }: { createdAt: string }) {
+/** Frozen while the host is unreachable: a ticking count would imply progress. */
+function WorkingTimer({ createdAt, frozen = false }: { createdAt: string; frozen?: boolean }) {
   const textRef = useRef<HTMLSpanElement>(null);
-  const initialText = formatWorkingTimerNow(createdAt);
+  const initialText = useMemo(
+    () => formatWorkingTimerNow(createdAt),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-read only when the timer stops or restarts
+    [createdAt, frozen],
+  );
 
   useEffect(() => {
+    if (frozen) return;
     const updateText = () => {
       if (textRef.current) {
         textRef.current.textContent = formatWorkingTimerNow(createdAt);
@@ -3680,10 +3686,10 @@ function WorkingTimer({ createdAt }: { createdAt: string }) {
     updateText();
     const id = setInterval(updateText, 1000);
     return () => clearInterval(id);
-  }, [createdAt]);
+  }, [createdAt, frozen]);
 
   return (
-    <span ref={textRef} className="tabular-nums">
+    <span ref={textRef} className="tabular-nums" data-working-timer={frozen ? "frozen" : "live"}>
       {initialText}
     </span>
   );
@@ -3923,8 +3929,11 @@ function LiveDuration({ sinceMs }: { sinceMs: number }) {
   );
 }
 
-/** fresh: an event arrived in the last minute. quiet: none since. offline: host unreachable. */
-type LiveState = "fresh" | "quiet" | "offline";
+/**
+ * fresh: an event arrived in the last minute. quiet: none since. offline: host
+ * unreachable. pending: no turn item of the run is loaded yet, so nothing to vouch for.
+ */
+type LiveState = "fresh" | "quiet" | "offline" | "pending";
 
 function LiveStateDot({ state }: { state: LiveState }) {
   return (
@@ -3948,6 +3957,10 @@ function LiveStateDot({ state }: { state: LiveState }) {
  * Opens the run of tool calls a group header stands for. Its words join the
  * header's own text, so the button's name keeps the live step and its time.
  */
+export function toolGroupActionLabel(count: number, expanded: boolean): string {
+  return `${expanded ? "hide" : "show"} ${count > 1 ? `these ${count} tool calls` : "tool call details"}`;
+}
+
 function ToolGroupDisclosure({ count, expanded }: { count: number; expanded: boolean }) {
   return (
     <span className="flex shrink-0 items-center gap-0.5 text-xs text-muted-foreground group-hover/live-work:text-foreground">
@@ -3956,9 +3969,7 @@ function ToolGroupDisclosure({ count, expanded }: { count: number; expanded: boo
           {toolCallCountLabel(count)}
         </span>
       ) : null}
-      <span className="sr-only">
-        {`${expanded ? "hide" : "show"} ${count > 1 ? `these ${count} tool calls` : "tool call details"}`}
-      </span>
+      <span className="sr-only">{toolGroupActionLabel(count, expanded)}</span>
       <MorphIcon className="size-3.5" icon={expanded ? ChevronDown : ChevronRight} />
     </span>
   );
@@ -3980,9 +3991,11 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
   const liveState: LiveState =
     activeHost !== null && !activeHost.connected
       ? "offline"
-      : isQuiet(lastActivityMs, nowMs)
-        ? "quiet"
-        : "fresh";
+      : lastActivityMs === null
+        ? "pending"
+        : isQuiet(lastActivityMs, nowMs)
+          ? "quiet"
+          : "fresh";
   const step = isPreparingWorktree || isCompacting ? null : workingStepLabel(workingPlan);
   // One span for every label so the setup-to-working handoff swaps text in
   // place instead of remounting the row.
@@ -3993,7 +4006,7 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
     <CompactingLabel />
   ) : row.createdAt ? (
     <>
-      Working for <WorkingTimer createdAt={row.createdAt} />
+      Working for <WorkingTimer createdAt={row.createdAt} frozen={liveState === "offline"} />
     </>
   ) : (
     "Working..."
@@ -4484,6 +4497,7 @@ function WorkGroupToggleTimelineRow({
       toolIcon={row.toolIcon}
       failed={row.hasFailure}
       expanded={row.expanded}
+      toolCount={row.toolCount}
       createdAt={row.createdAt}
       timestampFormat={ctx.timestampFormat}
       onToggle={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
@@ -4505,7 +4519,7 @@ function ToolActivityTimelineRow({
   ].join(", ");
   return (
     <WorkLogButton
-      aria-label={`${title}: ${details}`}
+      aria-label={`${title}: ${details}, ${toolGroupActionLabel(row.toolCount, row.expanded)}`}
       aria-expanded={row.expanded}
       data-tool-activity={row.groupId}
       onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
@@ -4566,14 +4580,17 @@ function WorkGroupHeader(props: {
   failed?: boolean | undefined;
   active?: boolean | undefined;
   expanded: boolean;
+  toolCount: number;
   createdAt: string;
   timestampFormat: TimestampFormat;
   onToggle: () => void;
 }) {
+  const action = toolGroupActionLabel(props.toolCount, props.expanded);
   return (
     <WorkLogButton
       ref={props.active && !props.failed ? observeVisibleAnimation : undefined}
-      aria-label={props.failed ? `${props.label}, tool call failed` : props.label}
+      aria-label={`${props.label}${props.failed ? ", tool call failed" : ""}, ${action}`}
+      data-tool-group-header="settled"
       aria-expanded={props.expanded}
       onClick={props.onToggle}
       icon={
@@ -4595,6 +4612,11 @@ function WorkGroupHeader(props: {
             createdAt={props.createdAt}
             timestampFormat={props.timestampFormat}
           />
+          {props.toolCount > 1 ? (
+            <span className="text-xs tabular-nums text-muted-foreground" aria-hidden>
+              {toolCallCountLabel(props.toolCount)}
+            </span>
+          ) : null}
           <MorphIcon
             className="size-3.5 text-muted-foreground"
             icon={props.expanded ? ChevronDown : ChevronRight}

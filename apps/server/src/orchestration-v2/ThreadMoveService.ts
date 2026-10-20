@@ -13,8 +13,11 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
+
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
@@ -63,6 +66,7 @@ const make = Effect.gen(function* () {
   const launches = yield* ThreadLaunch.ThreadLaunchService;
   const projects = yield* ProjectService.ProjectService;
   const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
 
   const move = Effect.fn("ThreadMoveService.move")(function* (command: ThreadMoveCommand) {
     const refuse = (message: string) =>
@@ -113,6 +117,14 @@ const make = Effect.gen(function* () {
     if (target.workspaceSettings?.archived || target.workspaceSettings?.paused) {
       return yield* refuse(`Resume or restore ${target.title} before moving threads into it.`);
     }
+    // The target project's own defaults, as any new thread there gets them.
+    const defaults = resolveProjectSettings(
+      yield* serverSettings.getSettings.pipe(
+        Effect.mapError(failed(`${target.title}'s settings could not be read.`)),
+      ),
+      target.id,
+      target,
+    ).settings;
 
     if (yield* folders.isScratch(source.projectId)) {
       const adopted = yield* threads
@@ -124,6 +136,22 @@ const make = Effect.gen(function* () {
           projectId: target.id,
         })
         .pipe(Effect.mapError(failed(`This chat could not be moved to ${target.title}.`)));
+      // From its next turn it works with the project's access, like the project's other chats.
+      if (source.runtimeMode !== defaults.defaultRuntimeMode) {
+        yield* threads
+          .dispatch({
+            type: "thread.runtime-mode.set",
+            commandId: step("runtime-mode"),
+            threadId: command.threadId,
+            runtimeMode: defaults.defaultRuntimeMode,
+            applyOnNextTurn: true,
+          })
+          .pipe(
+            Effect.mapError(
+              failed(`The chat moved to ${target.title}, but its access mode did not change.`),
+            ),
+          );
+      }
       return { sequence: adopted.sequence, targetThreadId: command.threadId, started: false };
     }
 
@@ -134,8 +162,8 @@ const make = Effect.gen(function* () {
         threadId: command.targetThreadId,
         projectId: target.id,
         title: source.title,
-        modelSelection: target.defaultModelSelection ?? source.modelSelection,
-        runtimeMode: source.runtimeMode,
+        modelSelection: defaults.defaultModelSelection ?? source.modelSelection,
+        runtimeMode: defaults.defaultRuntimeMode,
         interactionMode: "default",
         workspaceStrategy: { type: "root" },
         createdBy: "user",

@@ -29,6 +29,10 @@ vi.mock("@tanstack/react-router", () => ({ useNavigate: () => state.navigate }))
 vi.mock("../../studio/machineHandoff", () => ({
   machineHandoff: { prepare: "prepare", receive: "receive" },
 }));
+vi.mock("../../studio/projectLink", () => ({
+  projectLink: {},
+  linkCopyAsWorkers: async () => ({ status: "linked" }),
+}));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (name: "prepare" | "receive") => state[name],
 }));

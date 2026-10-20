@@ -309,7 +309,7 @@ finish_ok() {
   local order
   order="$(awk -F '\t' -v from="$BEFORE" 'NR > from { printf "%s ", $2 }' "$STUB_LOG")"
   case "$order" in
-    *fetch-sums-private*check-sums-private*publish-private*public-untag*mirror-publish*fetch-sums-public*check-sums-public*publish-public*fleet-m4*desktop-install*desktop-open*fleet-workers*pr-merge*) ;;
+    *fetch-sums-private*check-sums-private*publish-private*public-untag*mirror-publish*fetch-sums-public*check-sums-public*publish-public*fleet-m4*desktop-grants-before*desktop-install*desktop-signature*desktop-grants*desktop-open*fleet-workers*pr-merge*) ;;
     *) return 1 ;;
   esac
   grep -q 'fleet_rollout.py --version 1.2.0 --only m4 --hold-minutes 15' "$STUB_LOG" &&
@@ -837,10 +837,23 @@ stub_set RELEASE_STUB_OUTPUT=app-version-before=1.5.7
 desktop_kept_ok() {
   run 0 1.5.7 || return 1
   has 'SpecWithCode 1.5.7 is released.' && has 'is already 1.5.7' && ! logged desktop-install &&
-    ! logged desktop-backup && ! logged desktop-prune && logged desktop-codesign && logged desktop-open
+    ! logged desktop-backup && ! logged desktop-prune && ! logged desktop-grants-before && ! logged desktop-grants &&
+    logged desktop-codesign && logged desktop-signature && logged desktop-open
 }
 check 'a desktop app already on the release is kept, not snapshotted or reinstalled' desktop_kept_ok
 stub_set RELEASE_STUB_OUTPUT=
+
+# The new app fails the installed app's designated requirement, or a grant that was on is now off:
+# users would have to approve computer use again, so the release stops at the desktop stage.
+use_machine "$F" 1.5.8
+stub_set RELEASE_STUB_FAIL=desktop:desktop-grants
+desktop_grants_ok() {
+  run 1 1.5.8 || return 1
+  has 'lost the computer-use grants the previous one had' && logged desktop-grants-before &&
+    logged desktop-install && ! logged desktop-open && ! logged pr-merge
+}
+check 'a desktop app that loses the computer-use grants stops the release' desktop_grants_ok
+stub_set RELEASE_STUB_FAIL=
 
 # ---------------------------------------------------------------- timing comparison
 

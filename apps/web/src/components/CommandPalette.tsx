@@ -4,8 +4,12 @@ import { ProjectCreationAction } from "./studio/ProjectCreationAction";
 
 import {
   findPersonalAssistant,
+  PERSONAL_ASSISTANT_ELSEWHERE_NOTICE,
   personalAssistantCreationEnvironment,
+  personalAssistantSetupStep,
 } from "../studio/personalAssistant";
+import { fleetConnectAction } from "./settings/machinesSettings.logic";
+import { usePrimaryFleet } from "./settings/usePrimaryFleet";
 import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
 import { CloneProjectDestination } from "./studio/CloneProjectDestination";
 import { threadPullRequestLinkMode } from "@specweave-studio/client-runtime/thread-pull-request-compatibility";
@@ -129,7 +133,13 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { useScratchProject } from "../hooks/useScratchProject";
 import { useProjectFolderChoice } from "../hooks/useProjectFolderChoice";
-import { useNewProject } from "../hooks/useNewProject";
+import { useFindFolderCopies, useNewProject } from "../hooks/useNewProject";
+import {
+  FolderLinkSuggestion,
+  type FolderLinkSuggestionRequest,
+  type LinkTarget,
+} from "./studio/FolderLinkSuggestion";
+import { ProjectLinkDialog } from "./studio/ProjectLinkDialog";
 import {
   defaultProjectMachine,
   newProjectDraft,
@@ -143,6 +153,7 @@ import {
   ProjectCreationPreview,
 } from "./studio/ProjectCreation";
 import { isScratchProject } from "@specweave-studio/client-runtime/state/projects";
+import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { projectPickerMembers } from "../studio/projectListVisibility";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useProjects, useServerConfigs, useThreadShells, waitForProject } from "../state/entities";
@@ -532,6 +543,15 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   const openNewAssistant = useCallback(() => dispatch({ _tag: "OpenNewAssistant" }), []);
   const openNewThreadIn = useCallback(() => dispatch({ _tag: "OpenNewThreadIn" }), []);
   const clearOpenIntent = useCallback(() => dispatch({ _tag: "ClearOpenIntent" }), []);
+  // Add folder found copies of the folder on other machines; the palette closes for it.
+  const [folderSuggestion, setFolderSuggestion] = useState<FolderLinkSuggestionRequest | null>(
+    null,
+  );
+  // The added folder and the copy it links with, for the link dialog.
+  const [linkRequest, setLinkRequest] = useState<{
+    readonly project: EnvironmentProject;
+    readonly candidate: LinkTarget;
+  } | null>(null);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { theme, themeHalves, resolvedTheme, appearanceMode, setAppearanceMode } = useTheme();
   useTimelineDetailShortcut();
@@ -688,8 +708,24 @@ export function CommandPalette({ children }: { children: ReactNode }) {
           setOpen={setOpen}
           openOverlayMode={toggleMode}
           clearOpenIntent={clearOpenIntent}
+          onFolderCopies={setFolderSuggestion}
         />
       </CommandDialog>
+      <FolderLinkSuggestion
+        request={folderSuggestion}
+        onClose={() => setFolderSuggestion(null)}
+        onLink={(project, candidate) => setLinkRequest({ project, candidate })}
+      />
+      {linkRequest !== null && (
+        <ProjectLinkDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setLinkRequest(null);
+          }}
+          project={linkRequest.project}
+          initialCandidate={linkRequest.candidate}
+        />
+      )}
     </ComposerHandleContext>
   );
 }
@@ -700,6 +736,7 @@ function CommandPaletteDialog(props: {
   readonly setOpen: (open: boolean) => void;
   readonly openOverlayMode: (mode: SearchOverlayMode) => void;
   readonly clearOpenIntent: () => void;
+  readonly onFolderCopies: (request: FolderLinkSuggestionRequest) => void;
 }) {
   const composerHandleRef = useComposerHandleContext();
 
@@ -737,6 +774,7 @@ function CommandPaletteDialog(props: {
           setOpen={props.setOpen}
           openOverlayMode={props.openOverlayMode}
           clearOpenIntent={props.clearOpenIntent}
+          onFolderCopies={props.onFolderCopies}
         />
       )}
     </CommandDialogPopup>
@@ -748,6 +786,7 @@ function OpenCommandPaletteDialog(props: {
   readonly setOpen: (open: boolean) => void;
   readonly openOverlayMode: (mode: SearchOverlayMode) => void;
   readonly clearOpenIntent: () => void;
+  readonly onFolderCopies: (request: FolderLinkSuggestionRequest) => void;
 }) {
   const navigate = useNavigate();
   const pathname = useLocation({ select: (location) => location.pathname });
@@ -756,7 +795,7 @@ function OpenCommandPaletteDialog(props: {
     strict: false,
     select: (params) => params.projectKey ?? null,
   });
-  const { clearOpenIntent, openIntent, openOverlayMode, setOpen } = props;
+  const { clearOpenIntent, onFolderCopies, openIntent, openOverlayMode, setOpen } = props;
   const [query, setQuery] = useState(openIntent?.kind === "search" ? openIntent.query : "");
   const [linkedThreadSearch, setLinkedThreadSearch] = useState(
     openIntent?.kind === "search" ? openIntent : null,
@@ -806,6 +845,7 @@ function OpenCommandPaletteDialog(props: {
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
   const projects = useProjects();
+  const primaryFleet = usePrimaryFleet();
   const referenceThreadRef =
     pathname === "/pull-requests"
       ? environments.some(
@@ -933,6 +973,9 @@ function OpenCommandPaletteDialog(props: {
     null,
   );
   const [isPickingProjectFolder, setIsPickingProjectFolder] = useState(false);
+  const findFolderCopies = useFindFolderCopies();
+  const [isCheckingFolderCopies, setIsCheckingFolderCopies] = useState(false);
+  const checkingFolderCopiesRef = useRef(false);
   const [addProjectCloneFlow, setAddProjectCloneFlow] = useState<AddProjectCloneFlow | null>(null);
   // The name step of New project: while set, the palette input is the name.
   const [newProjectFlow, setNewProjectFlow] = useState<{
@@ -1920,16 +1963,94 @@ function OpenCommandPaletteDialog(props: {
     startAddProjectSourceSelection,
   ]);
 
-  const openNewProjectFlow = (kind: NewProjectKind = "code") => {
+  const openNewProjectFlow = (
+    kind: NewProjectKind = "code",
+    options: { readonly separateAssistant?: boolean } = {},
+  ) => {
     if (kind === "personal") {
-      const assistant = findPersonalAssistant(projects);
-      if (assistant) {
+      const step = personalAssistantSetupStep({
+        projects,
+        unseenMachines: primaryFleet.unseen,
+        separate: options.separateAssistant === true,
+      });
+      if (step.kind === "open") {
         setOpen(false);
         void navigate({
           to: "/projects/$projectKey",
           params: {
-            projectKey: deriveLogicalProjectKeyFromSettings(assistant, projectGroupingSettings),
+            projectKey: deriveLogicalProjectKeyFromSettings(
+              step.assistant,
+              projectGroupingSettings,
+            ),
           },
+        });
+        return;
+      }
+      // An assistant on a machine this app cannot see stays hidden: offer
+      // Connect first, and a separate assistant only as an explicit choice.
+      if (step.kind === "connect-first") {
+        pushPaletteView({
+          addonIcon: <ConciergeBellIcon className={ADDON_ICON_CLASS} />,
+          groups: [
+            {
+              value: "assistant-connect",
+              label: PERSONAL_ASSISTANT_ELSEWHERE_NOTICE,
+              items: step.machines.map((machine): CommandPaletteActionItem => {
+                const action = fleetConnectAction(machine, primaryFleet.canPair);
+                return {
+                  kind: "action",
+                  value: `action:assistant-connect:${machine.environmentId}`,
+                  searchTerms: ["connect", machine.label, machine.machineName ?? ""],
+                  title: `Connect ${machine.label}`,
+                  description: action.enabled
+                    ? "Its assistant shows here once connected"
+                    : action.label,
+                  disabled: !action.enabled,
+                  icon: <LinkIcon className={ITEM_ICON_CLASS} />,
+                  run: async () => {
+                    try {
+                      await primaryFleet.connect(machine);
+                      toastManager.add(
+                        stackedThreadToast({
+                          type: "success",
+                          title: `Connected ${machine.label}`,
+                          description:
+                            "If it has an assistant, it appears in the sidebar once its projects load.",
+                        }),
+                      );
+                    } catch (failure) {
+                      toastManager.add(
+                        stackedThreadToast({
+                          type: "error",
+                          title: `Could not connect ${machine.label}`,
+                          description:
+                            failure instanceof Error ? failure.message : "Try again in a moment.",
+                        }),
+                      );
+                    }
+                  },
+                };
+              }),
+            },
+            {
+              value: "assistant-separate",
+              label: "Or",
+              items: [
+                {
+                  kind: "action",
+                  value: "action:assistant-create-separate",
+                  searchTerms: ["create", "separate", "new assistant"],
+                  title: "Create a separate assistant",
+                  description: "Only if no other Mac has one",
+                  icon: <ConciergeBellIcon className={ITEM_ICON_CLASS} />,
+                  keepOpen: true,
+                  run: async () => {
+                    openNewProjectFlow("personal", { separateAssistant: true });
+                  },
+                },
+              ],
+            },
+          ],
         });
         return;
       }
@@ -2795,19 +2916,38 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
       const projectId = newProjectId();
-      const createResult = await createProject({
-        environmentId: input.environmentId,
-        input: {
-          projectId,
-          title: inferProjectTitleFromPath(cwd),
-          workspaceRoot: cwd,
-          createWorkspaceRootIfMissing: true,
-          defaultModelSelection: null,
-        },
-      });
-      if (createResult._tag === "Failure") {
-        if (!isAtomCommandInterrupted(createResult)) {
-          const error = squashAtomCommandFailure(createResult);
+      const title = inferProjectTitleFromPath(cwd);
+      // "added": the project exists but its draft did not open (already reported).
+      const addFolder = async (): Promise<"failed" | "added" | "opened"> => {
+        const createResult = await createProject({
+          environmentId: input.environmentId,
+          input: {
+            projectId,
+            title,
+            workspaceRoot: cwd,
+            createWorkspaceRootIfMissing: true,
+            defaultModelSelection: null,
+          },
+        });
+        if (createResult._tag === "Failure") {
+          if (!isAtomCommandInterrupted(createResult)) {
+            const error = squashAtomCommandFailure(createResult);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Failed to add project",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          }
+          return "failed";
+        }
+
+        const navigationResult = await settlePromise(() =>
+          handleNewThread(scopeProjectRef(input.environmentId, projectId)),
+        );
+        if (navigationResult._tag === "Failure") {
+          const error = squashAtomCommandFailure(navigationResult);
           toastManager.add(
             stackedThreadToast({
               type: "error",
@@ -2815,31 +2955,44 @@ function OpenCommandPaletteDialog(props: {
               description: error instanceof Error ? error.message : "An error occurred.",
             }),
           );
+          return "added";
         }
+        return "opened";
+      };
+
+      // A copy of a project on another machine is suggested for linking first.
+      // Without a match, or with no machine that can link, nothing changes.
+      if (checkingFolderCopiesRef.current) return;
+      checkingFolderCopiesRef.current = true;
+      setIsCheckingFolderCopies(true);
+      const folder = { environmentId: input.environmentId, workspaceRoot: cwd, title };
+      const matches = await findFolderCopies(folder).catch(() => []);
+      checkingFolderCopiesRef.current = false;
+      setIsCheckingFolderCopies(false);
+      if (matches.length > 0) {
+        setOpen(false);
+        onFolderCopies({
+          folder,
+          matches,
+          addProject: async () => {
+            if ((await addFolder()) === "failed") return null;
+            return waitForProject(scopeProjectRef(input.environmentId, projectId), 10_000).catch(
+              () => null,
+            );
+          },
+        });
         return;
       }
 
-      const navigationResult = await settlePromise(() =>
-        handleNewThread(scopeProjectRef(input.environmentId, projectId)),
-      );
-      if (navigationResult._tag === "Failure") {
-        const error = squashAtomCommandFailure(navigationResult);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Failed to add project",
-            description: error instanceof Error ? error.message : "An error occurred.",
-          }),
-        );
-        return;
-      }
-      setOpen(false);
+      if ((await addFolder()) === "opened") setOpen(false);
     },
     [
       handleNewThread,
       createProject,
       environments,
+      findFolderCopies,
       navigate,
+      onFolderCopies,
       primaryEnvironmentId,
       projects,
       providers,
@@ -2900,7 +3053,8 @@ function OpenCommandPaletteDialog(props: {
         addProjectEnvironmentOptions.map((option) => option.environmentId),
       );
       if (owner !== newProjectFlow.environmentId) {
-        openNewProjectFlow("personal");
+        // The name step comes after the Connect choice, so do not ask again.
+        openNewProjectFlow("personal", { separateAssistant: true });
         return;
       }
     }
@@ -3862,6 +4016,10 @@ function OpenCommandPaletteDialog(props: {
       {!isCloneDestinationStep && browseAccessError ? (
         <div role="alert" className="px-4 py-3 text-sm text-muted-foreground">
           {browseAccessError}
+        </div>
+      ) : isCheckingFolderCopies ? (
+        <div role="status" className="px-4 py-3 text-sm text-muted-foreground">
+          Looking for copies on other machines...
         </div>
       ) : isBrowsePending && browseResult === null ? (
         <div role="status" className="px-4 py-3 text-sm text-muted-foreground">

@@ -1417,7 +1417,7 @@ desktop_swap_settled() {
 }
 
 stage_desktop() {
-  local zip="$ASSETS/SpecWithCode-$VERSION-arm64.zip" version current=""
+  local zip="$ASSETS/SpecWithCode-$VERSION-arm64.zip" version current="" grants="$STAGE/desktop-grants.json" probed=0
   stage_quit_desktop
   need_output "$zip" "the signed desktop zip from the sign stage"
   desktop_swap_settled
@@ -1430,6 +1430,10 @@ stage_desktop() {
     say "desktop: $APP is already $VERSION (the app's own updater swapped it in); keeping it"
   else
     if [ "$MODE" != real ] || [ -d "$APP" ]; then
+      # Computer use keeps one Accessibility and Screen Recording grant only while each release
+      # satisfies the installed one's designated requirement; record both before the swap.
+      x desktop-grants-before -C "$BUILD" -- node scripts/studio-projects/mac-upgrade-grant.mjs before "$APP" "$grants"
+      probed=1
       x desktop-backup -C "$BUILD" -- python3 -B scripts/studio-fleet/desktop_backup.py snapshot "$APP"
       x desktop-prune -C "$BUILD" -- python3 -B scripts/studio-fleet/desktop_backup.py prune --keep 1
       x desktop-trash -- osascript -e "tell application \"Finder\" to delete POSIX file \"$APP\""
@@ -1437,6 +1441,11 @@ stage_desktop() {
     x desktop-install -- ditto -x -k "$zip" "$(dirname "$APP")"
   fi
   x desktop-codesign -- codesign --verify --deep --strict "$APP"
+  x desktop-signature -C "$BUILD" -- node scripts/studio-projects/mac-signature.mjs "$APP"
+  if [ "$probed" -eq 1 ] || { [ "$MODE" = real ] && [ -f "$grants" ]; }; then
+    x desktop-grants -C "$BUILD" -- node scripts/studio-projects/mac-upgrade-grant.mjs after "$APP" "$grants" ||
+      die "the new desktop app lost the computer-use grants the previous one had; the previous app is in the desktop_backup.py rollback zip"
+  fi
   version="$(q app-version -- /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"
   [ "$version" = "$VERSION" ] || die "$APP reports $version after the swap, not $VERSION"
   x desktop-open -- open "$APP"

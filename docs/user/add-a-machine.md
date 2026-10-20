@@ -233,6 +233,13 @@ specwithcode fleet add swc-machine-…
 machine reaches it now. To take one off the list, see
 [Remove a machine](#remove-a-machine).
 
+**Give the worker the project.** Coordinators start work in a project folder
+on the worker, not in a copy of yours. Add the folder there; if the project is
+shared, or the worker already has its own project for the same work, link the
+two from **Settings > Project > Machines** so the coordinator finds that copy
+([Shared projects](./shared-projects.md)). **Settings > Machines** shows each
+machine, whether this app can see it, its worker grants and its shared projects.
+
 **Keep SpecWithCode running on the worker.** Coordinators can only start work
 there while its app or server is running and Tailscale is connected. With the
 desktop app, leave the app open. A [background

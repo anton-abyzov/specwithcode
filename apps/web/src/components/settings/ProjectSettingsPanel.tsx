@@ -14,7 +14,7 @@ import { type EnvironmentId, type ProjectIconOverride } from "@specweave-studio/
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
 import { SparklesIcon, Trash2Icon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { releaseProjectDraftUploads } from "../../lib/composerDraftUploads";
@@ -27,6 +27,7 @@ import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environmen
 import { readProjects, useThreadShells } from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";
 import { ProjectLocation } from "../studio/ProjectLocation";
+import { ProjectMachinesSettings } from "../studio/ProjectMachinesSettings";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
@@ -42,6 +43,7 @@ import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { ProjectOverrides } from "./ProjectOverrides";
 import { projectGroupTitleNeedsUpdate } from "./ProjectSettingsPanel.logic";
 import { ProjectCheckoutMissing } from "./ProjectCheckoutMissing";
+import { ProjectKeyFollowHold } from "./projectKeyFollow";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
 import { logicalCoordinator } from "../../studio/projectDomain";
 
@@ -51,6 +53,9 @@ function memberKey(member: { environmentId: string; id: string }): string {
 
 /** `project` is the Projects page shortcut: the new-thread defaults people change most. */
 export type ProjectSettingsCategory = "general" | "integrations" | "source-control" | "project";
+
+const memberRef = (member: { environmentId: EnvironmentId; id: string }) =>
+  `${member.environmentId}/${member.id}`;
 
 export function ProjectSettingsPanel({
   projectKey,
@@ -75,7 +80,26 @@ export function ProjectSettingsPanel({
       })),
     [environments],
   );
-  const selected = groups.find((group) => group.projectKey === projectKey) ?? null;
+  // Remember the last rendered selection so a group key change (a grouping-rule change, or a
+  // link that gives the project a shared identity) follows the same projects instead of
+  // parking on the not-found state. Project refs are stable; group and physical keys are not.
+  const lastSelectionRef = useRef<{
+    requestedKey: string;
+    environmentId: EnvironmentId | null;
+    checkoutKey: string | null;
+    memberRefs: string[];
+    detailKey: string;
+  } | null>(null);
+  const last = lastSelectionRef.current;
+  const followsLast =
+    last !== null && last.environmentId === environmentId && last.checkoutKey === checkoutKey;
+  const selected =
+    groups.find((group) => group.projectKey === projectKey) ??
+    (followsLast && last.requestedKey === projectKey
+      ? (groups.find((group) =>
+          group.memberProjects.some((member) => last.memberRefs.includes(memberRef(member))),
+        ) ?? null)
+      : null);
   const members = useMemo(
     () =>
       selected?.memberProjects.filter(
@@ -86,51 +110,43 @@ export function ProjectSettingsPanel({
     [selected, environmentId, checkoutKey],
   );
 
-  // Remember the members of the last rendered group so a grouping-rule change
-  // (which changes the group key) can follow the project to its new group.
-  const lastSelectionRef = useRef<{
-    key: string;
-    environmentId: EnvironmentId | null;
-    checkoutKey: string | null;
-    memberKeys: string[];
-  } | null>(null);
+  const memberRefs = members.map(memberRef);
+  // The same projects under a new key keep the open page, so a dialog on it (the link
+  // dialog's success step) survives the key change.
+  const detailKey =
+    followsLast && memberRefs.some((ref) => last.memberRefs.includes(ref))
+      ? last.detailKey
+      : `${selected?.projectKey}:${environmentId ?? "all"}:${checkoutKey ?? "all"}`;
   useEffect(() => {
     if (!selected || members.length === 0) return;
     lastSelectionRef.current = {
-      key: selected.projectKey,
+      requestedKey: projectKey,
       environmentId,
       checkoutKey,
-      memberKeys: members.map((member) => member.physicalProjectKey),
+      memberRefs: members.map(memberRef),
+      detailKey,
     };
-  }, [selected, members, environmentId, checkoutKey]);
+  }, [selected, members, projectKey, environmentId, checkoutKey, detailKey]);
 
-  // A grouping-rule change replaces the group key mid-visit; follow the
-  // project to its new key instead of parking on the not-found state.
+  const [holds, setHolds] = useState(0);
+  const hold = useCallback(() => {
+    setHolds((count) => count + 1);
+    return () => setHolds((count) => count - 1);
+  }, []);
+  // Point the address at the followed group's new key once no dialog holds the page.
   useEffect(() => {
-    if (members.length > 0) return;
-    const last = lastSelectionRef.current;
-    if (
-      last?.key !== projectKey ||
-      last.environmentId !== environmentId ||
-      last.checkoutKey !== checkoutKey
-    )
-      return;
-    const successor = groups.find((group) =>
-      group.memberProjects.some((member) => last.memberKeys.includes(member.physicalProjectKey)),
-    );
-    if (successor) {
-      void navigate({
-        to: pathname,
-        search: () => ({
-          project: successor.projectKey,
-          machine: environmentId ?? undefined,
-          checkout: checkoutKey ?? undefined,
-        }),
-        replace: true,
-        hashScrollIntoView: false,
-      });
-    }
-  }, [groups, navigate, pathname, projectKey, members.length, environmentId, checkoutKey]);
+    if (holds > 0 || !selected || selected.projectKey === projectKey) return;
+    void navigate({
+      to: pathname,
+      search: () => ({
+        project: selected.projectKey,
+        machine: environmentId ?? undefined,
+        checkout: checkoutKey ?? undefined,
+      }),
+      replace: true,
+      hashScrollIntoView: false,
+    });
+  }, [holds, selected, navigate, pathname, projectKey, environmentId, checkoutKey]);
 
   if (!selected) {
     return (
@@ -171,12 +187,14 @@ export function ProjectSettingsPanel({
     id: members[0]!.id,
   };
   return (
-    <ProjectDetail
-      key={`${selected.projectKey}:${environmentId ?? "all"}:${checkoutKey ?? "all"}`}
-      group={scopedGroup}
-      domainMembers={selected.memberProjects}
-      hasOtherMembers={members.length < selected.memberProjects.length}
-    />
+    <ProjectKeyFollowHold.Provider value={hold}>
+      <ProjectDetail
+        key={detailKey}
+        group={scopedGroup}
+        domainMembers={selected.memberProjects}
+        hasOtherMembers={members.length < selected.memberProjects.length}
+      />
+    </ProjectKeyFollowHold.Provider>
   );
 }
 
@@ -590,6 +608,7 @@ function ProjectDetail({
         <ProjectDefaultsSettings category="source-control" onProjectPage />
         <ProjectDefaultsSettings category="integrations" onProjectPage />
         <ProjectOverrides checkouts={group.memberProjects} />
+        <ProjectMachinesSettings members={domainMembers} />
         <ProjectActionsSettings />
         {hasMultipleCheckouts ? checkoutChoices : null}
         <SettingsSection title="Danger">

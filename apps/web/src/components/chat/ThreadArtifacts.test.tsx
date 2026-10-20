@@ -71,8 +71,8 @@ vi.mock("./useMissingArtifactFiles", () => ({
   useMissingArtifactFiles: () => state.missing,
 }));
 vi.mock("./ViewerFileActions", () => ({
-  ViewerFileActions: (props: { path: string | null }) => (
-    <span data-file-actions={props.path ?? ""} />
+  ViewerFileActions: (props: { path: string | null; menuItems?: unknown }) => (
+    <span data-file-actions={props.path ?? ""}>{props.menuItems as never}</span>
   ),
 }));
 vi.mock("./useExistingFileLinks", () => ({ useExistingFileLinks: (metas: unknown) => metas }));
@@ -118,7 +118,8 @@ vi.mock("../files/AudioPreview", () => ({
   AudioPreview: (props: { src: string }) => <audio src={props.src} />,
 }));
 
-import { ArtifactCards, ThreadArtifactsMenu } from "./ThreadArtifacts";
+import { useViewerOverlayStore } from "~/viewerOverlayStore";
+import { ArtifactCards, MessageFileViewer, ThreadArtifactsMenu } from "./ThreadArtifacts";
 
 const threadRef = {
   environmentId: EnvironmentId.make("artifact-environment"),
@@ -348,4 +349,44 @@ it("shows a report's media and pages as cards that open the viewer", async () =>
       (node) => node.type === "div" && node.props["data-artifact-viewer"] === "video",
     ),
   ).toHaveLength(1);
+});
+
+it("hands a file to the side panel only after the overlay is out of the way", async () => {
+  // A file opened while the overlay is up opens in the overlay, so the panel
+  // must be asked once the overlay has gone, or it opens nowhere visible.
+  useViewerOverlayStore.getState().open({
+    key: "message-file",
+    title: "notes.ts",
+    kind: "File",
+    badge: "TS",
+    detail: null,
+    threadRef,
+    origin: null,
+    trail: [],
+    onBack: null,
+  });
+  const overlayWhenOpened: Array<unknown> = [];
+  const target = {
+    filePath: "/tmp/promo/notes.ts",
+    targetPath: "/tmp/promo/notes.ts",
+    displayPath: "notes.ts",
+    workspaceRelativePath: null,
+    basename: "notes.ts",
+  };
+  const onClose = vi.fn();
+  await act(async () => {
+    renderer = create(
+      <MessageFileViewer
+        threadRef={threadRef}
+        cwd={CWD}
+        target={target}
+        links={[target]}
+        onClose={onClose}
+        onOpenInPanel={() => overlayWhenOpened.push(useViewerOverlayStore.getState().active)}
+      />,
+    );
+  });
+  await act(async () => item("Open in panel").props.onClick());
+  expect(overlayWhenOpened).toEqual([null]);
+  expect(onClose).toHaveBeenCalledOnce();
 });

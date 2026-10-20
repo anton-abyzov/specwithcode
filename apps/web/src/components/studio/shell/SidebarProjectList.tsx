@@ -53,6 +53,7 @@ import type {
   SidebarProjectSnapshot,
 } from "../../../sidebarProjectGrouping";
 import { coordinatorMachineKey } from "../../../studio/projectCoordinatorMachine";
+import { copyRolesSummary } from "../../../studio/projectDomain";
 import type { ArrangedProjects, ProjectDropTarget } from "../../../studio/projectOrder";
 import { Tip } from "./Tip";
 import { requestProjectSettings } from "../../../studio/projectSettingsRequests";
@@ -410,6 +411,7 @@ export function ProjectRow(props: {
   const project = props.displayedProject ?? group;
   const displayName = displayNameOf(group, props.displayedProject);
   const personal = isPersonalGroup(group);
+  const copies = copyRolesSummary(group.memberProjects);
   return (
     <li
       ref={setNodeRef}
@@ -445,7 +447,7 @@ export function ProjectRow(props: {
           label={
             personal
               ? `${displayName} · ${PERSONAL_ASSISTANT_LABEL}: ${PERSONAL_ASSISTANT_DESCRIPTION}`
-              : `${displayName} · ${project.workspaceRoot}${archived ? " · Archived" : ""}`
+              : `${displayName} · ${project.workspaceRoot}${copies ? ` · ${copies}` : ""}${archived ? " · Archived" : ""}`
           }
         >
           <Link
@@ -474,6 +476,7 @@ export function ProjectRow(props: {
           >
             <ProjectFavicon project={project} className="size-[18px] shrink-0" />
             <span className="sws-side-row-label">{displayName}</span>
+            {copies ? <span className="sr-only">, {copies}</span> : null}
             {props.hint ? (
               <span className="sws-side-row-hint sws-side-row-namesake">{props.hint}</span>
             ) : null}

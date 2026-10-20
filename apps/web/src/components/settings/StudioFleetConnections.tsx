@@ -16,6 +16,7 @@ import {
   pairStudioFleet,
   removeStudioFleetMachine,
   stopStudioFleetWorkers,
+  useFleetRemoveSupported,
   useStudioFleet,
 } from "../../studio/fleet";
 import {
@@ -204,6 +205,7 @@ export function StudioFleetConnections({ environmentId, savedEnvironmentIds }: P
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const canManageWorkers = useEnvironmentScope(environmentId, AuthAccessWriteScope);
+  const removeSupported = useFleetRemoveSupported(environmentId);
   const [notice, setNotice] = useState<string | null>(null);
   const [added, setAdded] = useState<string | null>(null);
   const defaultRuntimeMode = useEnvironmentSettings(
@@ -370,7 +372,12 @@ export function StudioFleetConnections({ environmentId, savedEnvironmentIds }: P
         setWorkerDrafts((current) => ({ ...current, [id]: draft }))
       }
       onWorkers={(machine, action) => void changeWorkers(machine, action)}
-      onRemove={(machine) => void remove(machine)}
+      {...(removeSupported
+        ? { onRemove: (machine: StudioFleetMachine) => void remove(machine) }
+        : {
+            removeUnavailable:
+              "Removing a machine from this list needs SpecWithCode 1.0.58 or later on this server. Connecting, workers and everything else here work as is.",
+          })}
       invitation={invitation}
       onInvitationChange={setInvitation}
       onAddMachine={() => void addMachine()}
@@ -432,6 +439,7 @@ export function StudioFleetRoster({
   onWorkerDraftChange,
   onWorkers,
   onRemove,
+  removeUnavailable = null,
   invitation = "",
   onInvitationChange,
   onAddMachine,
@@ -463,6 +471,8 @@ export function StudioFleetRoster({
   onWorkers?: (machine: StudioFleetMachine, action: "allow" | "stop") => void;
   /** Removes a machine and gives up what this server holds on it. */
   onRemove?: (machine: StudioFleetMachine) => void;
+  /** Why Remove machine is not offered, when this server predates it. */
+  removeUnavailable?: string | null;
   /** The pasted `fleet invite` line, cleared once sent. */
   invitation?: string;
   onInvitationChange?: (invitation: string) => void;
@@ -712,6 +722,13 @@ export function StudioFleetRoster({
             ? "Operate threads"
             : "Manage access"}
           , or use Add environment with that machine’s own link.
+        </p>
+      ) : null}
+      {removeUnavailable &&
+      canManageWorkers &&
+      snapshot?.machines.some((machine) => machine.environmentId !== environmentId) ? (
+        <p className="border-t border-border/60 px-3 py-2 text-xs text-muted-foreground sm:px-4">
+          {removeUnavailable}
         </p>
       ) : null}
       {added || notice || error ? (

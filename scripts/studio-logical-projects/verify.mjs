@@ -8,7 +8,7 @@ import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { tmpdir, homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 
 import { openLiveDatabaseReadOnly } from "../lib/live-database.mjs";
@@ -431,6 +431,42 @@ async function verifyWorkGrants() {
 }
 let browser, page;
 try {
+  // Two projects for one repository, on M4 and M3, created independently. M4's identity is
+  // removed while offline below, so it is a legacy project the link must adopt one for (AC-01);
+  // M3 keeps the standalone identity a new project gets.
+  const createLinkFixture = async (host, index) => {
+    host.linkFolder = join(host.dir, "link-fixture");
+    mkdirSync(host.linkFolder);
+    writeFileSync(join(host.linkFolder, "README.md"), "Synthetic link fixture.\n");
+    const git = (...args) =>
+      execFileSync("/usr/bin/git", args, {
+        cwd: host.linkFolder,
+        stdio: "ignore",
+        env: { PATH: "/usr/bin:/bin", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" },
+      });
+    git("init", "-q", "-b", "main");
+    git("remote", "add", "origin", "https://github.com/example/link-fixture.git");
+    host.linkProjectId = randomUUID();
+    await request(host, "/api/projects/mutate", {
+      type: "project.create",
+      commandId: randomUUID(),
+      projectId: host.linkProjectId,
+      title: "Link fixture",
+      workspaceRoot: host.linkFolder,
+    });
+    await rpc(host, "projects.memoryWrite", {
+      projectId: host.linkProjectId,
+      name: "plan.md",
+      content: `${host.label} plan`,
+      expectedRevision: null,
+    });
+    await rpc(host, "projects.memoryWrite", {
+      projectId: host.linkProjectId,
+      name: index === 0 ? "kept-only.md" : "m3-only.md",
+      content: `Only on ${host.label}`,
+      expectedRevision: null,
+    });
+  };
   for (const label of ["M4 fixture", "M1 fixture", "M3 fixture"]) {
     const dir = join(scratch, label.replaceAll(" ", "-"));
     mkdirSync(dir);
@@ -508,6 +544,7 @@ try {
         commandId: randomUUID(),
         threadId: "fixture-archive",
       });
+    if (hosts.length !== 2) await createLinkFixture(host, hosts.length === 1 ? 0 : 1);
     await stop(host);
   }
   const members = hosts.map((host) => ({
@@ -544,6 +581,20 @@ try {
       JSON.stringify(settings),
       host.projectId,
     );
+    if (index === 0) {
+      const linkRow = db
+        .prepare("SELECT workspace_settings_json FROM projection_projects WHERE project_id=?")
+        .get(host.linkProjectId);
+      const {
+        logicalProject: _identity,
+        coordinatorBinding: _binding,
+        ...legacy
+      } = JSON.parse(linkRow.workspace_settings_json);
+      db.prepare("UPDATE projection_projects SET workspace_settings_json=? WHERE project_id=?").run(
+        JSON.stringify(legacy),
+        host.linkProjectId,
+      );
+    }
     // Completed synthetic records prove historical attribution without starting a provider.
     for (const threadId of ["shared-worker-id", members[index].coordinatorThreadId]) {
       const at = "2026-10-13T12:00:00.000Z";
@@ -618,6 +669,21 @@ try {
   }
   receipt.checks.push(
     "Three isolated servers; providers disabled; distinct host IDs and colliding worker IDs seeded",
+  );
+  const linkHosts = [hosts[0], hosts[2]];
+  const [legacyPreview, standalonePreview] = await Promise.all(
+    linkHosts.map((host) => rpc(host, "projectLink.preview", { projectId: host.linkProjectId })),
+  );
+  for (const preview of [legacyPreview, standalonePreview])
+    assert.equal(preview.fingerprint.repositories[0]?.originKey, "github.com/example/link-fixture");
+  assert.equal(legacyPreview.logicalProject, null, "The M4 Link fixture is a legacy project");
+  assert.deepEqual(
+    standalonePreview.logicalProject.members.map((member) => member.projectId),
+    [linkHosts[1].linkProjectId],
+    "The M3 Link fixture has only its own standalone identity",
+  );
+  receipt.checks.push(
+    "Two Link fixture projects with one origin and differing notes: M4 legacy (no identity), M3 standalone",
   );
   const require = createRequire(import.meta.url);
   let playwright;
@@ -733,7 +799,7 @@ try {
     .getByRole("region", { name: "Project coordinator", exact: true })
     .waitFor({ timeout: 45000 });
   await page
-    .locator("[data-request-execution]")
+    .locator("[data-request-execution], [data-request-execution-origin]")
     .filter({ hasText: /fixture.recorded.model/i })
     .first()
     .waitFor();
@@ -812,6 +878,199 @@ try {
     .getByText("M1 fixture historical request", { exact: true })
     .waitFor();
   receipt.checks.push("Previous coordinator conversation remains readable in the same project");
+
+  // Link the two legacy copies through the settings UI, against the real servers.
+  const [linkKept, linkJoining] = linkHosts;
+  // The kept copy is local to the page's server, which labels itself with the real host name.
+  const linkHref = await page
+    .locator(`a[href*="/projects/"][href*="${linkKept.linkProjectId}"]`)
+    .first()
+    .getAttribute("href");
+  const linkKey = decodeURIComponent(linkHref.split("/projects/")[1].split("?")[0]);
+  await page.goto(`${primary.origin}/settings/projects?project=${encodeURIComponent(linkKey)}`);
+  await page.getByText("Link with a project on another machine", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Link…", exact: true }).click();
+  const linkDialog = page.getByRole("dialog");
+  const candidate = linkDialog
+    .locator('[data-slot="link-candidate"]')
+    .filter({ hasText: `Link fixture on ${linkJoining.label}` });
+  await candidate.filter({ hasText: "Same root repository" }).waitFor({ timeout: 30000 });
+  await page.screenshot({ path: join(output, "03-link-candidates.png"), animations: "disabled" });
+  receipt.screenshots.push("03-link-candidates.png");
+  await candidate.getByRole("radio").click();
+  await linkDialog.getByRole("button", { name: "Review link", exact: true }).click();
+  await linkDialog.getByText("Coordinator stays on", { exact: true }).waitFor();
+  // Both coordinators are idle; keep M4's explicitly.
+  await linkDialog
+    .getByRole("radiogroup", { name: "Coordinator stays on" })
+    .locator("label")
+    .filter({ hasNotText: linkJoining.label })
+    .getByRole("radio")
+    .click();
+  const conflict = linkDialog.locator('[data-slot="note-conflict"]').filter({ hasText: "plan.md" });
+  await conflict.waitFor();
+  await linkDialog
+    .getByText(/^Copied to /)
+    .first()
+    .waitFor();
+  await conflict.getByText("Keep both", { exact: true }).click();
+  await linkDialog.getByRole("checkbox").click();
+  await page.screenshot({ path: join(output, "04-link-review.png"), animations: "disabled" });
+  receipt.screenshots.push("04-link-review.png");
+  await linkDialog.getByRole("button", { name: /^Link, keep coordinator on / }).click();
+  await linkDialog.getByText("Projects linked", { exact: true }).waitFor({ timeout: 30000 });
+  await page.screenshot({ path: join(output, "05-linked.png"), animations: "disabled" });
+  receipt.screenshots.push("05-linked.png");
+  await linkDialog.getByRole("button", { name: "Done", exact: true }).click();
+
+  const [keptView, joinedView] = await Promise.all(
+    linkHosts.map((host) => rpc(host, "projectLink.preview", { projectId: host.linkProjectId })),
+  );
+  assert.match(keptView.logicalProject.id, /^logical:/, "The kept copy adopted a logical identity");
+  assert.equal(joinedView.logicalProject.id, keptView.logicalProject.id);
+  assert.deepEqual(keptView.coordinatorBinding, { epoch: 0, state: "active" });
+  assert.equal(joinedView.coordinatorBinding.state, "transferred");
+  assert.equal(joinedView.coordinatorBinding.epoch, 0);
+  assert.deepEqual(joinedView.coordinatorBinding.successor, keptView.member);
+  for (const view of [keptView, joinedView])
+    assert.deepEqual(
+      view.logicalProject.members.map((member) => member.projectId).sort(),
+      [linkKept.linkProjectId, linkJoining.linkProjectId].sort(),
+    );
+  assert.deepEqual(
+    keptView.notes.map((note) => [note.name, note.content]),
+    [
+      ["kept-only.md", "Only on M4 fixture"],
+      ["m3-only.md", "Only on M3 fixture"],
+      ["plan-m3-fixture.md", "M3 fixture plan"],
+      ["plan.md", "M4 fixture plan"],
+    ],
+  );
+  receipt.checks.push(
+    "UI link adopts logical:<uuid> on the kept copy; kept binding unchanged (epoch 0 active); joined copy relinquished at the kept epoch; both list both members; notes merged with keep-both",
+  );
+  // A retry of the same link replays every step without a second change.
+  const retryId = randomUUID();
+  const prepared = await rpc(linkKept, "projectLink.prepare", {
+    operationId: retryId,
+    projectId: linkKept.linkProjectId,
+    joining: joinedView.member,
+  });
+  assert.equal(prepared.adopted, false);
+  const accepted = await rpc(linkJoining, "projectLink.accept", {
+    operationId: retryId,
+    projectId: linkJoining.linkProjectId,
+    kept: prepared.kept,
+    logicalProject: prepared.logicalProject,
+    coordinatorBinding: prepared.coordinatorBinding,
+    keptFingerprint: prepared.fingerprint,
+  });
+  assert.equal(accepted.replayed, true);
+  const committed = await rpc(linkKept, "projectLink.commit", {
+    operationId: retryId,
+    projectId: linkKept.linkProjectId,
+    joining: accepted.member,
+    notes: [],
+  });
+  assert.equal(committed.replayed, true);
+  receipt.checks.push("Retrying the link against the real servers replays without changes");
+
+  // The remote worker path resolves the joined copy by reciprocal membership only.
+  const matching = await import(
+    pathToFileURL(join(root, "apps/server/src/fleet/remoteWorkerMatching.ts")).href
+  );
+  const asProject = (view) => ({
+    id: view.member.projectId,
+    deletedAt: null,
+    title: view.title,
+    workspaceSettings: { logicalProject: view.logicalProject },
+  });
+  const resolved = matching.matchLogicalRemoteProject({
+    logical: keptView.logicalProject,
+    environmentId: linkJoining.environmentId,
+    remote: [asProject(joinedView)],
+  });
+  assert.equal(resolved.match, "configured");
+  assert.equal(resolved.projectId, linkJoining.linkProjectId);
+  assert.ok(
+    matching.isLogicalProjectBinding(
+      asProject(keptView),
+      joinedView.logicalProject,
+      keptView.member,
+    ),
+    "The binding holds from the joined copy's side too",
+  );
+  const stranger = { ...asProject(joinedView), workspaceSettings: {} };
+  assert.equal(
+    matching.matchLogicalRemoteProject({
+      logical: keptView.logicalProject,
+      environmentId: linkJoining.environmentId,
+      remote: [stranger],
+    }).match,
+    "none",
+    "A same-repository project without the identity is never used",
+  );
+  receipt.checks.push(
+    "Remote worker project resolution (matchLogicalRemoteProject, isLogicalProjectBinding) selects the joined copy in both directions from real server state; a same-repository stranger is refused",
+  );
+
+  // Sidebar shows the linked project once, with each copy's role.
+  const linkedRow = page.locator(".sws-project-row").filter({ hasText: "Link fixture" });
+  await linkedRow
+    .filter({ hasText: `${linkJoining.label}: runs workers` })
+    .filter({ hasText: /: coordinator/ })
+    .waitFor({ timeout: 30000 });
+  assert.equal(await linkedRow.count(), 1, "One sidebar entry for the linked project");
+  await page
+    .locator("[data-project-copy]")
+    .filter({ hasText: "Runs workers" })
+    .waitFor({ timeout: 30000 });
+  await page
+    .getByText("Link with a project on another machine", { exact: true })
+    .scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(output, "06-machines.png"), animations: "disabled" });
+  receipt.screenshots.push("06-machines.png");
+  receipt.checks.push(
+    "Sidebar lists the linked project once with each machine's role; Machines shows both copies",
+  );
+
+  // Unlink the joined copy from the kept copy's settings.
+  await page
+    .getByRole("button", { name: `Unlink the copy on ${linkJoining.label}`, exact: true })
+    .click();
+  await page.getByRole("dialog").getByRole("button", { name: "Unlink", exact: true }).click();
+  await page
+    .getByText(`${linkJoining.label} has its own coordinator again`)
+    .waitFor({ timeout: 30000 });
+  await page
+    .getByText("Link with a project on another machine", { exact: true })
+    .scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(output, "07-unlinked.png"), animations: "disabled" });
+  receipt.screenshots.push("07-unlinked.png");
+  const [keptAfter, leftAfter] = await Promise.all(
+    linkHosts.map((host) => rpc(host, "projectLink.preview", { projectId: host.linkProjectId })),
+  );
+  assert.deepEqual(keptAfter.logicalProject.members, [keptView.member]);
+  assert.match(leftAfter.logicalProject.id, /^logical:/);
+  assert.notEqual(leftAfter.logicalProject.id, keptView.logicalProject.id);
+  assert.deepEqual(leftAfter.logicalProject.members, [leftAfter.member]);
+  assert.equal(leftAfter.coordinatorBinding.state, "active");
+  assert.equal(leftAfter.coordinatorBinding.epoch, 0);
+  assert.ok(leftAfter.notes.some((note) => note.name === "kept-only.md"));
+  assert.equal(
+    leftAfter.notes.find((note) => note.name === "plan.md")?.content,
+    "M3 fixture plan",
+    "The unlinked copy keeps its own notes",
+  );
+  receipt.checks.push(
+    "UI unlink gives the member a fresh identity and active epoch-0 coordinator with the kept notes, and removes it from the kept members",
+  );
+  await page.goto(
+    `${primary.origin}/projects/${encodeURIComponent("logical-project:logical-project-fixture")}`,
+  );
+  await page
+    .getByRole("region", { name: "Project coordinator", exact: true })
+    .waitFor({ timeout: 45000 });
   await verifyWorkGrants();
   await stop(hosts[2]);
   await page

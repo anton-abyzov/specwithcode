@@ -146,3 +146,30 @@ export function requestExecutionLabel(
     : "Model not recorded";
   return `${shortMachineName(machine)} · ${model}`;
 }
+
+/**
+ * "M4: coordinator · M3: runs workers" for a project shared across machines;
+ * null for a project with one copy. The sidebar shows the project once and
+ * names each copy here.
+ */
+export function copyRolesSummary<
+  T extends EnvironmentProject & { readonly environmentLabel?: string | null },
+>(members: readonly T[]): string | null {
+  const shared = members.filter((member) => member.workspaceSettings?.logicalProject);
+  if (new Set(shared.map((member) => member.environmentId)).size < 2) return null;
+  const coordinator = logicalCoordinator(shared)?.member;
+  return shared
+    .map((member) => {
+      const state = member.workspaceSettings?.coordinatorBinding?.state;
+      const role =
+        member === coordinator
+          ? "coordinator"
+          : state === "transferring"
+            ? "handoff pending"
+            : state === "transferred"
+              ? "runs workers"
+              : "coordinator unconfirmed";
+      return `${shortMachineName(member.environmentLabel ?? "Machine")}: ${role}`;
+    })
+    .join(" · ");
+}

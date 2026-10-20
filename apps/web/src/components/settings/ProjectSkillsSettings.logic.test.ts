@@ -10,10 +10,13 @@ import {
   filterProjectSkillRows,
   projectSkillAttentionCount,
   projectSkillFacets,
+  projectSkillLevel,
+  projectSkillLevelLabel,
   projectSkillLevels,
   projectSkillProviderBadges,
   projectSkillSourceLinks,
   projectSkillStatusBadge,
+  projectSkillVersions,
 } from "./ProjectSkillsSettings.logic";
 
 function presence(
@@ -121,8 +124,8 @@ describe("projectSkillProviderBadges", () => {
       ["Claude", true],
       ["Codex", false],
     ]);
-    expect(badges[0]!.title).toBe("Claude\nuser: /a/SKILL.md\nuser: /b/SKILL.md");
-    expect(badges[1]!.title).toBe("Codex (switched off)\nuser: /a/SKILL.md (off)");
+    expect(badges[0]!.title).toBe("Claude\nUser: /a/SKILL.md\nUser: /b/SKILL.md");
+    expect(badges[1]!.title).toBe("Codex (switched off)\nUser: /a/SKILL.md (off)");
   });
 });
 
@@ -257,5 +260,142 @@ describe("projectSkillSourceLinks", () => {
       registryUrl: null,
     });
     expect(projectSkillSourceLinks(row("x"))).toBeNull();
+  });
+});
+
+describe("versions, levels and labels", () => {
+  const lock = {
+    lockPath: "/home/me/.agents/vskill.lock",
+    lockScope: "user" as const,
+    version: "1.0.0",
+    tier: "VERIFIED",
+    source: "github:owner/repo",
+    sha: null,
+    installedAt: null,
+  };
+
+  it("shows the file version beside the lock and flags a lock out of date", () => {
+    const current = row("gws", {
+      lock,
+      providers: [
+        { ...presence("Claude", "/home/me/.claude/skills/gws/SKILL.md"), fileVersion: "1.0.0" },
+      ],
+    });
+    expect(projectSkillVersions(current)).toEqual({
+      lock: "1.0.0",
+      files: [{ version: "1.0.0", labels: ["Claude"] }],
+      lockOutOfDate: false,
+      differ: false,
+    });
+    const behind = row("obsidian-brain", {
+      lock,
+      providers: [
+        {
+          ...presence("Claude", "/home/me/.claude/skills/obsidian-brain/SKILL.md"),
+          fileVersion: "1.1.0",
+        },
+        {
+          ...presence("Codex", "/home/me/.agents/skills/obsidian-brain/SKILL.md"),
+          fileVersion: "1.1.0",
+        },
+      ],
+    });
+    expect(projectSkillVersions(behind)).toMatchObject({
+      files: [{ version: "1.1.0", labels: ["Claude", "Codex"] }],
+      lockOutOfDate: true,
+    });
+    expect(filterProjectSkillRows([behind], { query: "1.1.0", problemsOnly: false })).toHaveLength(
+      1,
+    );
+  });
+
+  it("prefers the plugin manifest version and reads different versions on a duplicate", () => {
+    const skew = row("sw:do", {
+      status: "duplicate",
+      attention: true,
+      divergent: true,
+      providers: [
+        {
+          ...presence(
+            "Claude",
+            "/home/me/.claude/plugins/cache/specweave/sw/3.0.23/skills/do/SKILL.md",
+          ),
+          fileVersion: "3.0.0",
+          pluginVersion: "3.0.23",
+        },
+        {
+          ...presence(
+            "Codex",
+            "/home/me/.codex/plugins/cache/specweave/sw/3.0.20/skills/do/SKILL.md",
+          ),
+          fileVersion: "3.0.0",
+          pluginVersion: "3.0.20",
+        },
+      ],
+    });
+    expect(projectSkillVersions(skew).files.map((file) => file.version)).toEqual([
+      "3.0.23",
+      "3.0.20",
+    ]);
+    expect(projectSkillStatusBadge(skew)).toEqual({
+      label: "different versions",
+      variant: "error",
+    });
+    expect(projectSkillStatusBadge({ ...skew, providers: [skew.providers[0]!] })).toEqual({
+      label: "duplicate",
+      variant: "error",
+    });
+  });
+
+  it("normalises the level by path and labels bundled and system skills", () => {
+    expect(
+      projectSkillLevel(
+        "user",
+        "/home/me/.codex/plugins/cache/specweave/sw/3.0.20/skills/do/SKILL.md",
+      ),
+    ).toBe("plugin");
+    expect(projectSkillLevel("user", "/home/me/.agents/skills/gws/SKILL.md")).toBe("user");
+    expect(projectSkillLevel("bundled")).toBe("bundled");
+    expect(projectSkillLevelLabel("bundled")).toBe("Bundled");
+    expect(projectSkillLevelLabel("system")).toBe("System");
+    const pluginCopy = row("sw:do", {
+      providers: [
+        presence("Codex", "/home/me/.codex/plugins/cache/specweave/sw/3.0.20/skills/do/SKILL.md"),
+      ],
+    });
+    expect(projectSkillLevels(pluginCopy)).toEqual(["plugin"]);
+    const facets = projectSkillFacets([
+      pluginCopy,
+      row("pdf", {
+        providers: [
+          presence("Grok", "/home/me/.grok/bundled/skills/pdf/SKILL.md", true, "bundled"),
+        ],
+      }),
+      row("imagegen", {
+        providers: [
+          presence("Codex", "/home/me/.codex/skills/.system/imagegen/SKILL.md", true, "system"),
+        ],
+      }),
+    ]);
+    expect(facets.levels.map((option) => option.label)).toEqual(["Plugin", "Bundled", "System"]);
+  });
+
+  it("labels stale lock entries without attention and marks agent-only copies", () => {
+    expect(
+      projectSkillStatusBadge(
+        row("resume-tailoring-skill", { status: "missing", staleLock: true, providers: [], lock }),
+      ),
+    ).toEqual({ label: "stale lock entry", variant: "secondary" });
+    const hidden = row("pdf", {
+      providers: [
+        {
+          ...presence("Grok", "/home/me/.grok/bundled/skills/pdf/SKILL.md", true, "bundled"),
+          userInvocable: false,
+        },
+      ],
+    });
+    const [badge] = projectSkillProviderBadges(hidden);
+    expect(badge).toMatchObject({ enabled: true, agentOnly: true });
+    expect(badge?.title).toContain("not in its slash menu");
   });
 });

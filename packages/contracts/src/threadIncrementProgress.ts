@@ -39,6 +39,15 @@ export const ThreadIncrementTask = Schema.Struct({
   criteria: Schema.Array(Schema.String),
   /** The block or skip reason the ledger gives. */
   note: Schema.NullOr(Schema.String),
+  /** The card line the ledger gives (`--line`), as written; absent falls back to the title. */
+  line: Schema.optional(Schema.String),
+  /**
+   * What the card links to: an https URL on github.com or claude.ai, or an
+   * absolute path inside the increment folder. Anything else is dropped.
+   */
+  link: Schema.optional(Schema.String),
+  /** The commit the done evidence names (`HEAD <sha>`), when it gives no link. */
+  commit: Schema.optional(Schema.String),
 });
 export type ThreadIncrementTask = typeof ThreadIncrementTask.Type;
 
@@ -50,7 +59,13 @@ export const ThreadIncrementCriterion = Schema.Struct({
 });
 export type ThreadIncrementCriterion = typeof ThreadIncrementCriterion.Type;
 
-export const ThreadIncrementBinding = Schema.Literals(["manual", "claim", "checkpoint", "name"]);
+export const ThreadIncrementBinding = Schema.Literals([
+  "manual",
+  "claim",
+  "branch",
+  "checkpoint",
+  "name",
+]);
 export type ThreadIncrementBinding = typeof ThreadIncrementBinding.Type;
 
 export const ThreadIncrementProgress = Schema.Struct({
@@ -59,7 +74,9 @@ export const ThreadIncrementProgress = Schema.Struct({
   incrementId: TrimmedNonEmptyString,
   /**
    * How the thread is bound: `manual` — someone linked it in Studio; `claim` — the agent appended to this increment's
-   * ledger from the thread (SpecWeave's per-thread binding file); `checkpoint`
+   * ledger from the thread (SpecWeave's per-thread binding file); `branch` —
+   * its worktree branch is the increment's `inc/NNNN-*` branch, or a ledger
+   * event's `by` names that branch; `checkpoint`
    * — SpecWeave's session checkpoint names it; `name` — its number or folder is
    * in the thread's title or branch.
    */

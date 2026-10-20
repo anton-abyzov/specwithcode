@@ -19,6 +19,7 @@ import {
   HardDriveIcon,
   PanelsTopLeftIcon,
   KeyboardIcon,
+  LaptopIcon,
   Link2Icon,
   ChromeIcon,
   MailIcon,
@@ -101,6 +102,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/messaging": MessageCircleIcon,
   "/settings/google": MailIcon,
   "/settings/connections": Link2Icon,
+  "/settings/machines": LaptopIcon,
   "/settings/chrome": ChromeIcon,
   "/settings/archived": ArchiveIcon,
 };

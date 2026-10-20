@@ -18,7 +18,8 @@ export type ProjectSkillsReadInput = typeof ProjectSkillsReadInput.Type;
 /**
  * `drift`: the SKILL.md on disk no longer hashes to the locked sha.
  * `duplicate`: agents load different contents under this name.
- * `missing`: a lockfile lists the skill but no agent loads it.
+ * `missing`: a lockfile lists the skill but no agent loads it (see
+ * `ProjectSkillRow.staleLock` for entries with nothing on disk).
  * `disabled`: every agent that sees it has it switched off.
  */
 export const ProjectSkillStatus = Schema.Literals([
@@ -46,6 +47,17 @@ export const ProjectSkillPresence = Schema.Struct({
   path: TrimmedNonEmptyString,
   scope: Schema.NullOr(TrimmedNonEmptyString),
   enabled: Schema.Boolean,
+  /** The name this provider lists the skill under, when it differs from the row's. */
+  name: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * False when the provider keeps the skill out of its slash commands
+   * (`user-invocable: false`); the agent can still load it, so it is not off.
+   */
+  userInvocable: Schema.optional(Schema.Boolean),
+  /** `version` from this copy's SKILL.md frontmatter. */
+  fileVersion: Schema.optional(Schema.NullOr(Schema.String)),
+  /** For a plugin skill, the version in the plugin's manifest (`plugin.json`). */
+  pluginVersion: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export type ProjectSkillPresence = typeof ProjectSkillPresence.Type;
 
@@ -62,6 +74,8 @@ export type ProjectSkillLock = typeof ProjectSkillLock.Type;
 
 export const ProjectSkillRow = Schema.Struct({
   name: TrimmedNonEmptyString,
+  /** Other names providers list the same SKILL.md under, such as `do` for `sw:do`. */
+  aliases: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   description: Schema.optional(TrimmedNonEmptyString),
   status: ProjectSkillStatus,
   /** True when the row has any problem, including ones only `vskill doctor` reports. */
@@ -78,8 +92,13 @@ export const ProjectSkillRow = Schema.Struct({
   copies: NonNegativeInt,
   /** Copies whose contents differ. */
   divergent: Schema.Boolean,
-  /** Findings `vskill doctor --json` reported for this name. */
+  /**
+   * Findings `vskill doctor --json` reported for this skill about agents
+   * or folders in this snapshot; findings about other agents are left out.
+   */
   doctor: Schema.Array(Schema.String),
+  /** A lock entry with nothing on disk: worth cleaning up, not a problem. */
+  staleLock: Schema.optional(Schema.Boolean),
 });
 export type ProjectSkillRow = typeof ProjectSkillRow.Type;
 

@@ -1,0 +1,316 @@
+import * as Schema from "effect/Schema";
+import { EnvironmentId, ProjectId } from "./baseSchemas.ts";
+import { MachineHandoffOperationId } from "./machineHandoff.ts";
+
+/**
+ * Folder copy: the destination pulls the project folder from the source over
+ * the source's private tailnet address with an operation-scoped grant.
+ */
+const bounded = (max: number) => Schema.String.check(Schema.isMaxLength(max));
+const count = Schema.Number;
+
+export const FolderCopyMode = Schema.Literals(["copy-only", "copy-and-move"]);
+export type FolderCopyMode = typeof FolderCopyMode.Type;
+export const FolderCopyFileClass = Schema.Literals([
+  "repository",
+  "tracked",
+  "untracked",
+  "ignoredData",
+  "rebuildable",
+  "secret",
+]);
+export type FolderCopyFileClass = typeof FolderCopyFileClass.Type;
+export const FolderCopyChoice = Schema.Literals([
+  "keep-mine",
+  "take-theirs",
+  "leave-both",
+  "keep-both",
+]);
+export type FolderCopyChoice = typeof FolderCopyChoice.Type;
+
+const ClassTotal = Schema.Struct({ files: count, bytes: count });
+export const FolderCopyClassTotals = Schema.Struct({
+  repository: ClassTotal,
+  tracked: ClassTotal,
+  untracked: ClassTotal,
+  ignoredData: ClassTotal,
+  rebuildable: ClassTotal,
+  secret: ClassTotal,
+});
+
+export const FolderCopySourceSummary = Schema.Struct({
+  totals: FolderCopyClassTotals,
+  repositories: Schema.Array(
+    Schema.Struct({
+      path: bounded(4096),
+      kind: Schema.Literals(["main", "linked", "gitfile"]),
+      head: Schema.NullOr(bounded(64)),
+      branch: Schema.NullOr(bounded(1024)),
+      branchCount: count,
+      stashCount: count,
+      changedFiles: count,
+    }),
+  ),
+  secretFiles: Schema.Array(Schema.Struct({ path: bounded(4096), size: count })),
+  linksOutside: count,
+  warnings: Schema.Array(bounded(2000)),
+});
+export type FolderCopySourceSummary = typeof FolderCopySourceSummary.Type;
+
+export const FolderCopySourceStatus = Schema.Struct({
+  operationId: MachineHandoffOperationId,
+  projectId: ProjectId,
+  mode: FolderCopyMode,
+  state: Schema.Literals([
+    "scanning",
+    "scanned",
+    "building",
+    "ready",
+    "failed",
+    "committed",
+    "released",
+    "cancelled",
+  ]),
+  summary: Schema.NullOr(FolderCopySourceSummary),
+  error: Schema.NullOr(bounded(2000)),
+  releaseReason: Schema.NullOr(bounded(500)),
+});
+export type FolderCopySourceStatus = typeof FolderCopySourceStatus.Type;
+
+export const FolderCopyOfferInput = Schema.Struct({
+  projectId: ProjectId,
+  operationId: MachineHandoffOperationId,
+  mode: FolderCopyMode,
+  destinationEnvironmentId: EnvironmentId,
+});
+export type FolderCopyOfferInput = typeof FolderCopyOfferInput.Type;
+/** What the destination needs to pull. The browser relays it once; the token expires with the copy. */
+export const FolderCopyOffer = Schema.Struct({
+  operationId: MachineHandoffOperationId,
+  sourceEnvironmentId: EnvironmentId,
+  sourceProjectId: ProjectId,
+  sourceUrl: bounded(2048),
+  sourceMachine: bounded(200),
+  token: bounded(4096),
+  title: bounded(1000),
+  mode: FolderCopyMode,
+  status: FolderCopySourceStatus,
+});
+export type FolderCopyOffer = typeof FolderCopyOffer.Type;
+
+export const FolderCopyOperationInput = Schema.Struct({ operationId: MachineHandoffOperationId });
+export type FolderCopyOperationInput = typeof FolderCopyOperationInput.Type;
+export const FolderCopyCancelInput = Schema.Struct({
+  operationId: MachineHandoffOperationId,
+  reason: bounded(400),
+});
+export type FolderCopyCancelInput = typeof FolderCopyCancelInput.Type;
+/** Returns the coordinator to the source after a copy-and-move that did not finish. */
+export const FolderCopyReleaseInput = Schema.Struct({
+  projectId: ProjectId,
+  operationId: MachineHandoffOperationId,
+  reason: bounded(400),
+});
+export type FolderCopyReleaseInput = typeof FolderCopyReleaseInput.Type;
+export const FolderCopyReleaseResult = Schema.Struct({
+  projectId: ProjectId,
+  released: Schema.Boolean,
+});
+
+export const FolderCopyStartInput = Schema.Struct({
+  operationId: MachineHandoffOperationId,
+  sourceEnvironmentId: EnvironmentId,
+  sourceProjectId: ProjectId,
+  sourceUrl: bounded(2048),
+  sourceMachine: bounded(200),
+  token: bounded(4096),
+  title: bounded(1000),
+  mode: FolderCopyMode,
+  targetFolder: bounded(4096),
+  selection: Schema.optional(Schema.Array(FolderCopyFileClass)),
+  /** Copy-and-move: the project id the moving coordinator expects for this folder. */
+  projectId: Schema.optional(ProjectId),
+});
+export type FolderCopyStartInput = typeof FolderCopyStartInput.Type;
+
+/** A decision key that answers every file conflict in one row, including unlisted ones. */
+export const FOLDER_COPY_ALL_CONFLICTS_PREFIX = "all:";
+export const folderCopyAllConflictsKey = (rowId: string) =>
+  `${FOLDER_COPY_ALL_CONFLICTS_PREFIX}${rowId}`;
+
+export const FolderCopyDecideInput = Schema.Struct({
+  operationId: MachineHandoffOperationId,
+  decisions: Schema.optional(Schema.Record(bounded(4200), FolderCopyChoice)),
+  clone: Schema.optional(Schema.Array(bounded(4200))),
+  mirror: Schema.optional(Schema.Boolean),
+});
+export type FolderCopyDecideInput = typeof FolderCopyDecideInput.Type;
+
+export const FolderCopyUndoInput = Schema.Struct({
+  operationId: MachineHandoffOperationId,
+  /** Preview only: list what Undo would restore and which files changed after Apply. */
+  preview: Schema.Boolean,
+  /** Also move files edited after Apply to the backup folder. */
+  force: Schema.Boolean,
+});
+export type FolderCopyUndoInput = typeof FolderCopyUndoInput.Type;
+
+export const FolderCopyRow = Schema.Struct({
+  id: bounded(4200),
+  kind: Schema.Literals(["repository", "files"]),
+  path: bounded(4096),
+  status: Schema.Literals([
+    "same",
+    "fast-forward",
+    "ahead",
+    "diverged",
+    "dirty",
+    "conflict",
+    "new",
+    "only-here",
+  ]),
+  detail: bounded(4000),
+  filesToMove: count,
+  bytesToMove: count,
+  bytesPresent: count,
+  choices: Schema.Array(FolderCopyChoice),
+  decision: Schema.NullOr(FolderCopyChoice),
+  needsDecision: Schema.Boolean,
+  conflicts: Schema.Array(
+    Schema.Struct({
+      id: bounded(4200),
+      path: bounded(4096),
+      reason: Schema.Literals(["differs", "type-differs"]),
+      choices: Schema.Array(FolderCopyChoice),
+      decision: Schema.NullOr(FolderCopyChoice),
+    }),
+  ),
+  /** Conflicts beyond those listed. */
+  moreConflicts: count,
+  cloneAvailable: Schema.Boolean,
+  clone: Schema.Boolean,
+});
+export type FolderCopyRow = typeof FolderCopyRow.Type;
+
+export const FolderCopyState = Schema.Literals([
+  "planned",
+  "scanning",
+  "previewed",
+  "approved",
+  "transferring",
+  "verifying",
+  "applying",
+  "applied",
+  "undone",
+  "failed",
+  "cancelled",
+]);
+export type FolderCopyState = typeof FolderCopyState.Type;
+
+export const FolderCopyStatus = Schema.Struct({
+  operationId: MachineHandoffOperationId,
+  sourceEnvironmentId: EnvironmentId,
+  sourceProjectId: ProjectId,
+  sourceMachine: bounded(200),
+  mode: FolderCopyMode,
+  targetFolder: bounded(4096),
+  title: bounded(1000),
+  selection: Schema.Array(FolderCopyFileClass),
+  mirror: Schema.Boolean,
+  state: FolderCopyState,
+  failedStep: Schema.NullOr(FolderCopyState),
+  error: Schema.NullOr(Schema.Struct({ code: bounded(64), message: bounded(4000) })),
+  progress: Schema.NullOr(
+    Schema.Struct({
+      phase: Schema.Literals(["manifest", "files", "verify", "apply"]),
+      filesDone: count,
+      filesTotal: count,
+      bytesDone: count,
+      bytesTotal: count,
+      bytesLocal: count,
+    }),
+  ),
+  disk: Schema.NullOr(Schema.Struct({ needed: count, free: count })),
+  rows: Schema.Array(FolderCopyRow),
+  totals: Schema.NullOr(
+    Schema.Struct({
+      filesToMove: count,
+      bytesToMove: count,
+      bytesPresent: count,
+      decisionsNeeded: count,
+    }),
+  ),
+  checks: Schema.Array(
+    Schema.Struct({
+      repo: bounded(4096),
+      ok: Schema.Boolean,
+      problems: Schema.Array(bounded(4000)),
+    }),
+  ),
+  warnings: Schema.Array(bounded(4000)),
+  unstable: Schema.Array(bounded(4096)),
+  committed: Schema.Boolean,
+  projectId: Schema.NullOr(ProjectId),
+  /** Set once the Apply backups were discarded (after 14 days); Undo is gone then. */
+  backupsDiscardedAt: Schema.optional(bounded(64)),
+  createdAt: bounded(64),
+  updatedAt: bounded(64),
+});
+export type FolderCopyStatus = typeof FolderCopyStatus.Type;
+
+export const FolderCopyUndoResult = Schema.Struct({
+  status: FolderCopyStatus,
+  items: Schema.Array(
+    Schema.Struct({
+      path: bounded(4096),
+      kind: Schema.Literals(["file", "ref", "head", "stash", "worktree", "clone"]),
+      state: Schema.Literals(["restore", "edited", "missing"]),
+      detail: bounded(4000),
+    }),
+  ),
+  edited: count,
+  undone: Schema.Boolean,
+  kept: Schema.Array(bounded(4096)),
+  problems: Schema.Array(bounded(4000)),
+});
+export type FolderCopyUndoResult = typeof FolderCopyUndoResult.Type;
+
+export class FolderCopyError extends Schema.TaggedError<FolderCopyError>()("FolderCopyError", {
+  code: Schema.Literals([
+    "not_found",
+    "busy",
+    "invalid",
+    "no_private_url",
+    "unreachable",
+    "outdated_source",
+    "unauthorized",
+    "wrong_machine",
+    "refused",
+    "disk_space",
+    "not_a_folder",
+    "apply_refused",
+    "copy_failed",
+  ]),
+  detail: Schema.optional(bounded(4000)),
+}) {
+  override get message(): string {
+    const base = {
+      not_found: "The copy or its project is no longer available.",
+      busy: "Finish active work in this project before moving it.",
+      invalid: "The copy request is invalid.",
+      no_private_url:
+        "This machine has no private tailnet address yet. Turn on remote access for it in Settings > Connections, then try again.",
+      unreachable: "The source machine stopped answering. Check that both machines are online.",
+      outdated_source:
+        "The source machine runs an older SpecWithCode without folder copy. Update it first.",
+      unauthorized: "The source no longer accepts this copy. Start it again.",
+      wrong_machine: "The source address answered for a different machine.",
+      refused: "The copy was refused.",
+      disk_space: "There is not enough free space here for the copy.",
+      not_a_folder: "The chosen location is not a folder.",
+      apply_refused: "The copy could not be applied safely. Nothing was changed after the refusal.",
+      copy_failed: "The copy failed.",
+    }[this.code];
+    return this.detail ? `${base} ${this.detail}` : base;
+  }
+}

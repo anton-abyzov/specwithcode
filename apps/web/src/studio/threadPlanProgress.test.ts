@@ -7,6 +7,9 @@ import {
   deriveThreadPlanView,
   describeThreadPlan,
   displayFolder,
+  incrementPlanSteps,
+  isExternalStepLink,
+  BINDING_LABELS,
 } from "./threadPlanProgress";
 
 function increment(overrides: Partial<ThreadIncrementProgress> = {}): ThreadIncrementProgress {
@@ -143,5 +146,77 @@ describe("displayFolder", () => {
     expect(displayFolder("/Users/anton/Projects/x")).toBe("~/Projects/x");
     expect(displayFolder("/home/dev")).toBe("~");
     expect(displayFolder("/srv/repo")).toBe("/srv/repo");
+  });
+});
+
+describe("card lines and links", () => {
+  const carded = increment({
+    tasks: [
+      {
+        id: "T-01",
+        title: "Contract",
+        status: "done",
+        criteria: [],
+        note: null,
+        line: "Wrote the contract",
+        link: "https://github.com/o/r/pull/7",
+      },
+      {
+        id: "T-02",
+        title: "Reader",
+        status: "done",
+        criteria: [],
+        note: null,
+        link: "/repo/.specweave/increments/0930-studio-plan-card/reports/task-T-02.txt",
+      },
+      { id: "T-03", title: "Fold", status: "done", criteria: [], note: null, commit: "abc1234" },
+      { id: "T-04", title: "Docs", status: "done", criteria: [], note: null },
+      {
+        id: "T-05",
+        title: "Card",
+        status: "claimed",
+        criteria: [],
+        note: null,
+        line: "Rendering the rows",
+      },
+    ],
+  });
+
+  it("shows the ledger line as written, falling back to the title", () => {
+    expect(incrementPlanSteps(carded).map((step) => step.text)).toEqual([
+      "Wrote the contract",
+      "Reader",
+      "Fold",
+      "Docs",
+      "Rendering the rows",
+    ]);
+  });
+
+  it("carries the link, the commit and marks a done row without either unverified", () => {
+    const steps = incrementPlanSteps(carded);
+    expect(steps[0]).toMatchObject({ href: "https://github.com/o/r/pull/7" });
+    expect(steps[0]).not.toHaveProperty("unverified");
+    expect(steps[1]?.href).toMatch(/reports\/task-T-02\.txt$/u);
+    expect(steps[2]).toMatchObject({ commit: "abc1234" });
+    expect(steps[2]).not.toHaveProperty("unverified");
+    expect(steps[3]).toMatchObject({ unverified: true });
+    expect(steps[3]).not.toHaveProperty("href");
+    // An open or current row is never "unverified".
+    expect(steps[4]).toMatchObject({ state: "current" });
+    expect(steps[4]).not.toHaveProperty("unverified");
+  });
+
+  it("uses the current row's line as the headline", () => {
+    const view = deriveThreadPlanView({ increment: carded, todoSteps: null })!;
+    expect(view.current).toBe("Rendering the rows");
+  });
+
+  it("tells browser links from host paths", () => {
+    expect(isExternalStepLink("https://claude.ai/artifact/abc")).toBe(true);
+    expect(isExternalStepLink("/repo/.specweave/increments/x/reports/a.txt")).toBe(false);
+  });
+
+  it("labels branch binding", () => {
+    expect(BINDING_LABELS.branch).toBe("bound by its increment branch");
   });
 });

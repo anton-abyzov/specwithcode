@@ -193,6 +193,12 @@ try {
         await toggle.waitFor();
         NodeAssert.equal(await toggle.getAttribute("aria-expanded"), "false", label);
         NodeAssert.ok((await toggle.locator("svg").count()) >= 2, `${label}: chevron`);
+        // The name says what a click does, with the count once there is more than one call.
+        NodeAssert.match(
+          (await toggle.getAttribute("aria-label")) ?? "",
+          /, show (these \d+ tool calls|tool call details)$/,
+          `${label}: settled header name`,
+        );
         await page.screenshot({ path: shot("settled-collapsed") });
         row.shots.settledCollapsed = shot("settled-collapsed");
         await toggle.click();
@@ -208,6 +214,14 @@ try {
             .getAttribute("aria-expanded"),
           "true",
           `${label}: open group header`,
+        );
+        NodeAssert.match(
+          (await page
+            .locator('[data-timeline-row-kind="work-toggle"] button')
+            .first()
+            .getAttribute("aria-label")) ?? "",
+          /, hide (these \d+ tool calls|tool call details)$/,
+          `${label}: open header name`,
         );
         // Let the chevrons finish turning before the capture.
         await page.waitForTimeout(500);

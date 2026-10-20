@@ -375,12 +375,69 @@ describe("durable logical coordinator ownership", () => {
         plan(
           {
             ...command,
-            ownership: { expectedRevision: 7, logicalProject, coordinatorBinding, ...patch },
+            ownership: {
+              mode: "handoff",
+              expectedRevision: 7,
+              logicalProject,
+              coordinatorBinding,
+              ...patch,
+            },
           },
           { project: row({ workspaceSettings: settings }) },
         ),
       );
     }
+  });
+  it("releases its own unfinished outgoing copy and nothing else", () => {
+    const released = {
+      ...coordinatorBinding,
+      state: "active" as const,
+      releaseReason: "The copy did not finish.",
+    };
+    const ownership = {
+      mode: "handoff" as const,
+      expectedRevision: 7,
+      logicalProject,
+      coordinatorBinding: released,
+    };
+    const target = { project: row({ workspaceSettings: settings }) };
+    failureOf(plan({ ...command, ownership }, target));
+    // Only the handoff path may return a coordinator.
+    failureOf(
+      plan(
+        {
+          ...command,
+          ownership: { ...ownership, mode: "link-member", releasedHandoffOperationId: "transfer" },
+        },
+        target,
+      ),
+    );
+    failureOf(
+      plan(
+        { ...command, ownership: { ...ownership, releasedHandoffOperationId: "other" } },
+        target,
+      ),
+    );
+    failureOf(
+      plan(
+        {
+          ...command,
+          ownership: {
+            ...ownership,
+            releasedHandoffOperationId: "transfer",
+            coordinatorBinding: { ...released, epoch: 3 },
+          },
+        },
+        target,
+      ),
+    );
+    const event = payloadOf(
+      plan(
+        { ...command, ownership: { ...ownership, releasedHandoffOperationId: "transfer" } },
+        target,
+      ),
+    );
+    assert.deepInclude(event.workspaceSettings, { coordinatorBinding: released });
   });
   it("reactivates a saved folder only for a verified newer incoming transfer", () => {
     const predecessor = {
@@ -389,6 +446,7 @@ describe("durable logical coordinator ownership", () => {
       coordinatorThreadId: "remote-coordinator" as never,
     };
     const incoming = {
+      mode: "handoff" as const,
       expectedRevision: 7,
       logicalProject: { ...logicalProject, members: [predecessor] },
       coordinatorBinding: {
@@ -437,6 +495,7 @@ describe("durable logical coordinator ownership", () => {
   it("requires exact standalone identity consent to join a target project", () => {
     const target = { ...settings, coordinatorBinding: { epoch: 0, state: "active" as const } };
     const ownership = {
+      mode: "handoff" as const,
       expectedRevision: 7,
       logicalProject: { ...logicalProject, id: "logical:new" },
       coordinatorBinding: { epoch: 0, state: "transferred" as const, operationId: "transfer" },
@@ -529,6 +588,308 @@ describe("unique project names", () => {
         projectId,
         title: "specweave",
         sameRepository: () => true,
+      }),
+    );
+  });
+});
+
+describe("explicit link ownership modes", () => {
+  const environmentId = "m4" as never;
+  const self = {
+    environmentId,
+    projectId,
+    coordinatorThreadId: `project-coordinator:${projectId}` as never,
+  };
+  const other = {
+    environmentId: "m3" as never,
+    projectId: ProjectId.make("copy"),
+    coordinatorThreadId: "project-coordinator:copy" as never,
+  };
+  const standalone = {
+    id: "logical:mine",
+    title: "Project",
+    coordinatorId: "coordinator:logical:mine",
+    members: [self],
+  };
+  const shared = {
+    id: "logical:kept",
+    title: "EasyChamp",
+    coordinatorId: "coordinator:logical:kept",
+    members: [other],
+  };
+  const command = {
+    type: "project.meta.update" as const,
+    commandId: CommandId.make("link"),
+    projectId,
+  };
+  const settings = (extra: Record<string, unknown>) => ({
+    ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+    revision: 3,
+    ...extra,
+  });
+  const apply = (
+    current: Record<string, unknown>,
+    ownership: Record<string, unknown> & { mode: string },
+  ) =>
+    plan(
+      {
+        ...command,
+        ownership: { expectedRevision: 3, ...ownership } as never,
+      },
+      { project: row({ workspaceSettings: settings(current) as never }) },
+    );
+  const failureText = (result: ReturnType<typeof plan>) => failureOf(result).message;
+
+  it("adopts a fresh identity only for a project without one, keeping its binding", () => {
+    const adopted = { ...standalone, id: "logical:adopted" };
+    const event = payloadOf(
+      apply(
+        {},
+        {
+          mode: "adopt-identity",
+          logicalProject: adopted,
+          coordinatorBinding: { epoch: 0, state: "active" },
+        },
+      ),
+    );
+    assert.deepInclude(event.workspaceSettings, {
+      logicalProject: adopted,
+      coordinatorBinding: { epoch: 0, state: "active" },
+      revision: 4,
+    });
+    assert.include(
+      failureText(
+        apply(
+          { logicalProject: standalone, coordinatorBinding: { epoch: 0, state: "active" } },
+          {
+            mode: "adopt-identity",
+            logicalProject: adopted,
+            coordinatorBinding: { epoch: 0, state: "active" },
+          },
+        ),
+      ),
+      "already has a shared identity",
+    );
+    for (const ownership of [
+      { logicalProject: { ...adopted, members: [self, other] } },
+      { logicalProject: { ...adopted, id: "forged" } },
+      { coordinatorBinding: { epoch: 1, state: "active" } },
+      { coordinatorBinding: { epoch: 0, state: "transferred" } },
+    ])
+      failureOf(
+        apply(
+          {},
+          {
+            mode: "adopt-identity",
+            logicalProject: adopted,
+            coordinatorBinding: { epoch: 0, state: "active" },
+            ...ownership,
+          },
+        ),
+      );
+  });
+
+  it("adds members to the kept coordinator without touching its binding", () => {
+    const binding = { epoch: 2, state: "active" as const, predecessor: other };
+    const current = { logicalProject: standalone, coordinatorBinding: binding };
+    const linked = { ...standalone, members: [self, other] };
+    const event = payloadOf(
+      apply(current, { mode: "link-member", logicalProject: linked, coordinatorBinding: binding }),
+    );
+    assert.deepInclude(event.workspaceSettings, {
+      logicalProject: linked,
+      coordinatorBinding: binding,
+    });
+    for (const ownership of [
+      // A binding change, an epoch bump or a fence would hide a handoff inside a link.
+      { coordinatorBinding: { ...binding, epoch: 3 } },
+      { coordinatorBinding: { epoch: 2, state: "active" } },
+      // Another identity, a rename or a dropped member is not a link.
+      { logicalProject: { ...linked, id: "logical:other" } },
+      { logicalProject: { ...linked, title: "Renamed" } },
+      { logicalProject: { ...linked, members: [other] } },
+      // Nothing to add.
+      { logicalProject: standalone },
+    ])
+      failureOf(
+        apply(current, {
+          mode: "link-member",
+          logicalProject: linked,
+          coordinatorBinding: binding,
+          ...ownership,
+        }),
+      );
+    assert.include(
+      failureText(
+        apply(
+          { logicalProject: standalone, coordinatorBinding: { ...binding, state: "transferred" } },
+          {
+            mode: "link-member",
+            logicalProject: linked,
+            coordinatorBinding: { ...binding, state: "transferred" },
+          },
+        ),
+      ),
+      "Only the active coordinator can add members",
+    );
+  });
+
+  it("removes members from the kept coordinator and never itself", () => {
+    const binding = { epoch: 0, state: "active" as const };
+    const current = {
+      logicalProject: { ...standalone, members: [self, other] },
+      coordinatorBinding: binding,
+    };
+    payloadOf(
+      apply(current, {
+        mode: "remove-member",
+        logicalProject: standalone,
+        coordinatorBinding: binding,
+      }),
+    );
+    failureOf(
+      apply(current, {
+        mode: "remove-member",
+        logicalProject: { ...standalone, members: [other] },
+        coordinatorBinding: binding,
+      }),
+    );
+    failureOf(
+      apply(current, {
+        mode: "remove-member",
+        logicalProject: current.logicalProject,
+        coordinatorBinding: binding,
+      }),
+    );
+  });
+
+  it("joins a standalone copy as a member whose coordinator is relinquished", () => {
+    const joined = { ...shared, members: [other, self] };
+    const relinquished = {
+      epoch: 4,
+      state: "transferred" as const,
+      operationId: "link-op",
+      successor: other,
+    };
+    const ownership = {
+      mode: "join-as-member",
+      joinExpectedLogicalProjectId: standalone.id,
+      logicalProject: joined,
+      coordinatorBinding: relinquished,
+    };
+    const current = {
+      logicalProject: standalone,
+      coordinatorBinding: { epoch: 0, state: "active" },
+    };
+    const event = payloadOf(apply(current, ownership));
+    assert.deepInclude(event.workspaceSettings, {
+      logicalProject: joined,
+      coordinatorBinding: relinquished,
+    });
+    // A project from before identities joins with explicit null consent.
+    payloadOf(apply({}, { ...ownership, joinExpectedLogicalProjectId: null }));
+    failureOf(apply({}, { ...ownership, joinExpectedLogicalProjectId: undefined }));
+    assert.include(
+      failureText(
+        apply({ ...current, logicalProject: { ...standalone, members: [self, other] } }, ownership),
+      ),
+      "Only an explicitly accepted standalone project",
+    );
+    assert.include(
+      failureText(
+        apply(
+          { ...current, coordinatorBinding: { epoch: 0, state: "transferring", operationId: "h" } },
+          ownership,
+        ),
+      ),
+      "coordinator handoff",
+    );
+    for (const binding of [
+      { ...relinquished, state: "active" },
+      { ...relinquished, operationId: undefined },
+      { ...relinquished, successor: self },
+      { ...relinquished, successor: { ...other, projectId: ProjectId.make("stranger") } },
+      { ...relinquished, predecessor: other },
+    ])
+      failureOf(apply(current, { ...ownership, coordinatorBinding: binding }));
+    failureOf(apply(current, { ...ownership, joinExpectedLogicalProjectId: "logical:wrong" }));
+    failureOf(apply(current, { ...ownership, logicalProject: { ...joined, members: [other] } }));
+  });
+
+  it("unlinks only a relinquished member, to a fresh standalone active coordinator", () => {
+    const member = {
+      logicalProject: { ...shared, members: [other, self] },
+      coordinatorBinding: {
+        epoch: 4,
+        state: "transferred" as const,
+        operationId: "link-op",
+        successor: other,
+      },
+    };
+    const fresh = {
+      id: "logical:fresh",
+      title: "EasyChamp",
+      coordinatorId: "coordinator:logical:fresh",
+      members: [self],
+    };
+    const active = { epoch: 0, state: "active" as const, operationId: "unlink-op" };
+    const event = payloadOf(
+      apply(member, { mode: "unlink", logicalProject: fresh, coordinatorBinding: active }),
+    );
+    assert.deepInclude(event.workspaceSettings, {
+      logicalProject: fresh,
+      coordinatorBinding: active,
+    });
+    assert.include(
+      failureText(
+        apply(
+          { ...member, coordinatorBinding: { epoch: 0, state: "active" } },
+          { mode: "unlink", logicalProject: fresh, coordinatorBinding: active },
+        ),
+      ),
+      "Only a member whose coordinator was relinquished",
+    );
+    for (const ownership of [
+      { logicalProject: { ...fresh, id: shared.id } },
+      { logicalProject: { ...fresh, members: [self, other] } },
+      { coordinatorBinding: { ...active, epoch: 5 } },
+      { coordinatorBinding: { ...active, predecessor: other } },
+    ])
+      failureOf(
+        apply(member, {
+          mode: "unlink",
+          logicalProject: fresh,
+          coordinatorBinding: active,
+          ...ownership,
+        }),
+      );
+  });
+
+  it("keeps a relinquished binding fenced on every path except unlink and verified handoff", () => {
+    const member = {
+      logicalProject: { ...shared, members: [other, self] },
+      coordinatorBinding: {
+        epoch: 4,
+        state: "transferred" as const,
+        operationId: "link-op",
+        successor: other,
+      },
+    };
+    const resumed = { epoch: 4, state: "active" as const, operationId: "link-op" };
+    for (const mode of ["handoff", "adopt-identity", "link-member", "remove-member"])
+      failureOf(
+        apply(member, {
+          mode,
+          logicalProject: { ...shared, members: [other, self] },
+          coordinatorBinding: resumed,
+        }),
+      );
+    failureOf(
+      apply(member, {
+        mode: "link-member",
+        acceptedHandoffOperationId: "link-op",
+        logicalProject: { ...shared, members: [other, self] },
+        coordinatorBinding: resumed,
       }),
     );
   });
