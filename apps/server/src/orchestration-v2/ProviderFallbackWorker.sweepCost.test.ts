@@ -161,7 +161,7 @@ it.effect("a sweep over idle threads takes no lock and re-reads no thread", () =
     yield* sweep();
     // The sweep shares the recent snapshot other sweeps read.
     expect(snapshotOptions).toEqual([
-      { unsettledOnly: true, maxAgeMs: SWEEP_SHELL_SNAPSHOT_MAX_AGE_MS },
+      { location: "active", unsettledOnly: true, maxAgeMs: SWEEP_SHELL_SNAPSHOT_MAX_AGE_MS },
     ]);
     // Before: one admission lock, settings snapshot, project read and shell
     // transaction per thread, every sweep.

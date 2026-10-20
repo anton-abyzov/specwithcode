@@ -46,7 +46,7 @@ PROJECT_SCOPED_KEYS = frozenset((
     'sourceControlWritingStyle', 'removeAgentCreditsOnMerge', 'branchNamingMode', 'branchNamePrefix',
     'branchNameInstructions', 'pullRequestMergeMethod', 'threadFinishAction', 'sidebarAutoSettleOnMerge',
     'sidebarAutoSettleAfterDays', 'continueThreadsAfterServerUpdate', 'responseStreamingMode',
-    'providerLimitAction', 'providerLimitFallbackModelSelection', 'providerLimitSwitchAtPercent',
+    'providerLimitAction', 'providerLimitFallbackModelSelection', 'providerLimitFallbackModels', 'providerLimitSwitchAtPercent',
     'providerLimitWaitUnderMinutes', 'providerLimitRedeemResets', 'providerLimitSpendCredits',
     'providerLimitUseApiCredits'))
 OVERRIDES = 'projectSettingsOverrides'

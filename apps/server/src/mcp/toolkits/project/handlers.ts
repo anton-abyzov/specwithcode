@@ -26,6 +26,14 @@ import * as Repositories from "../../../sourceControl/SourceControlRepositorySer
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
+import { projectInGrant } from "../../../fleet/workGrantPolicy.ts";
+import {
+  admitLaunch,
+  assertAccountInGrant,
+  assertProjectInGrant,
+  recordLaunchOrigin,
+  workGrantOf,
+} from "../../workGrantAccess.ts";
 import { launchRemote, launchTarget } from "./remoteLaunch.ts";
 import { routeTargets, routeToProject } from "./route.ts";
 import { ProjectToolkit } from "./tools.ts";
@@ -175,6 +183,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           });
           return launched;
         }
+        // Work another machine started here stays inside the grant this machine gave it.
+        const work = yield* admitLaunch(context, input.delegation);
         const threadId = ThreadId.make(commandId);
         const messageId = MessageId.make(commandId);
         const attachments = input.attachments ?? [];
@@ -261,6 +271,14 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           );
         }
         const project = yield* readProject;
+        if (work !== undefined) {
+          if (project === undefined)
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: "The project was not found.",
+            });
+          yield* assertProjectInGrant(work, project);
+        }
         const isCoordinator =
           caller !== undefined && project?.workspaceSettings?.coordinatorThreadId === caller.id;
         // A coordinator's thread starts on the project's worker model, moved
@@ -287,6 +305,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             message:
               "Pass modelSelection: the project has no default model. orchestrator_capabilities lists providers and models.",
           });
+        yield* assertAccountInGrant(work, modelSelection.instanceId);
         const launchSelection =
           input.effort === undefined
             ? modelSelection
@@ -324,6 +343,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           ),
         );
         const thread = result.projection.thread;
+        yield* recordLaunchOrigin(work, thread.id);
         const effortValue = modelSelectionEffortValue(thread.modelSelection);
         const run = result.projection.runs.find((run) => run.userMessageId === messageId);
         return {
@@ -334,6 +354,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           ...(effortValue === undefined ? {} : { effort: effortValue }),
           runId: run?.id ?? null,
           status: run?.status ?? null,
+          // Tells a coordinator on another machine that this one applied its grant's checks.
+          delegationChecked: true,
         };
       }),
   ),
@@ -347,7 +369,14 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
     Effect.gen(function* () {
       const projects = yield* access;
       const snapshot = yield* projects.snapshot.pipe(Effect.mapError(unavailable));
-      const rows = snapshot.projects.filter((project) => project.deletedAt === null);
+      // Another machine's work sees only the projects its grant here covers.
+      const work = yield* workGrantOf(yield* readCaller());
+      const rows = snapshot.projects.filter(
+        (project) =>
+          project.deletedAt === null &&
+          (work === undefined ||
+            projectInGrant(work.grant.projects, work.grant.coordinatorEnvironmentId, project)),
+      );
       const start = input.cursor ?? 0,
         end = start + (input.limit ?? 20);
       return { projects: rows.slice(start, end), nextCursor: end < rows.length ? end : null };
@@ -362,6 +391,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           code: "invalid_request",
           message: "The project was not found.",
         });
+      yield* assertProjectInGrant(yield* workGrantOf(yield* readCaller()), result.value);
       return result.value;
     }),
   ),

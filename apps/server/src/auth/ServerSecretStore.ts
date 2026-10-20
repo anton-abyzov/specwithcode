@@ -142,6 +142,12 @@ export class ServerSecretStore extends Context.Service<
     readonly directory?: string;
     /** File-backed stores expose where a named secret lives, for out-of-process readers. */
     readonly pathOf?: (name: string) => string;
+    /**
+     * Changes after every `set`, `create` and `remove` through this store, so a
+     * caller can keep secrets it read until one is written. Absent from stores
+     * that cannot track their writes; callers then read on every use.
+     */
+    readonly generation?: () => number;
     readonly get: (name: string) => Effect.Effect<Option.Option<Uint8Array>, SecretStoreError>;
     readonly set: (name: string, value: Uint8Array) => Effect.Effect<void, SecretStoreError>;
     readonly create: (name: string, value: Uint8Array) => Effect.Effect<void, SecretStoreError>;
@@ -182,10 +188,12 @@ export const make = Effect.gen(function* () {
   const randomSecrets = new Map<string, Uint8Array>();
   const generations = new Map<string, number>();
   const generationOf = (name: string) => generations.get(name) ?? 0;
+  let storeGeneration = 0;
   const forget = (name: string) =>
     Effect.sync(() => {
       randomSecrets.delete(name);
       generations.set(name, generationOf(name) + 1);
+      storeGeneration += 1;
     });
 
   const get: ServerSecretStore["Service"]["get"] = (name) =>
@@ -343,6 +351,7 @@ export const make = Effect.gen(function* () {
   return ServerSecretStore.of({
     directory: serverConfig.secretsDir,
     pathOf: resolveSecretPath,
+    generation: () => storeGeneration,
     get,
     set,
     create,

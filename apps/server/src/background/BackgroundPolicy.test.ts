@@ -3,6 +3,7 @@ import {
   AuthSessionId,
   RpcClientId,
   type HostPowerSnapshot,
+  type ServerSettings as ContractServerSettings,
   type ClientActivityReportInput,
 } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
@@ -10,6 +11,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
@@ -188,6 +190,92 @@ describe("BackgroundPolicy", () => {
 
         assert.equal(updates.at(-1)?.activeForegroundLeaseCount, 0);
         assert.deepStrictEqual(updates.at(-1)?.activeScopeKeys, []);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.live("reads settings outside the publish lock and keeps them until they change", () =>
+    Effect.gen(function* () {
+      const settingsReads = yield* Ref.make(0);
+      const firstReadStarted = yield* Deferred.make<void>();
+      const releaseFirstRead = yield* Deferred.make<void>();
+      const settingsChanges = yield* PubSub.unbounded<ContractServerSettings>();
+      const layerSettings = Layer.effect(
+        ServerSettings.ServerSettingsService,
+        Effect.gen(function* () {
+          const base = yield* ServerSettings.ServerSettingsService;
+          return ServerSettings.ServerSettingsService.of({
+            ...base,
+            getSettings: Ref.updateAndGet(settingsReads, (count) => count + 1).pipe(
+              Effect.tap((count) =>
+                count === 1
+                  ? Deferred.succeed(firstReadStarted, undefined).pipe(
+                      Effect.andThen(Deferred.await(releaseFirstRead)),
+                    )
+                  : Effect.void,
+              ),
+              Effect.andThen(base.getSettings),
+            ),
+            subscribeChanges: PubSub.subscribe(settingsChanges).pipe(
+              Effect.map((subscription) => Stream.fromSubscription(subscription)),
+            ),
+          });
+        }),
+      ).pipe(Layer.provide(ServerSettings.layerTest()));
+      const layerHost = Layer.succeed(
+        HostPowerMonitor.HostPowerMonitor,
+        HostPowerMonitor.HostPowerMonitor.of({
+          snapshot: Effect.succeed(nominalHostPower),
+          report: () => Effect.void,
+          streamChanges: Stream.empty,
+        }),
+      );
+      const layer = BackgroundPolicy.layer.pipe(
+        Layer.provide(Layer.merge(layerHost, layerSettings)),
+      );
+
+      yield* Effect.gen(function* () {
+        const policy = yield* BackgroundPolicy.BackgroundPolicy;
+        const sessionId = AuthSessionId.make("session-1");
+        // The first report waits on a slow settings read without holding the lock,
+        // so a subscriber (which takes the lock) is not stuck behind it.
+        const reportFiber = yield* policy
+          .reportClientActivity(sessionId, RpcClientId.make(1), makeReport())
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(firstReadStarted);
+        const subscribed = yield* Effect.scoped(policy.subscribe).pipe(
+          Effect.timeoutOption("5 seconds"),
+        );
+        assert.isTrue(Option.isSome(subscribed));
+        yield* Deferred.succeed(releaseFirstRead, undefined);
+        yield* Fiber.join(reportFiber);
+        const readsBeforeReports = yield* Ref.get(settingsReads);
+
+        for (let report = 0; report < 50; report++) {
+          yield* policy.reportClientActivity(
+            sessionId,
+            RpcClientId.make(1),
+            makeReport({ focused: false, visible: false, recentlyInteracted: false }),
+          );
+        }
+        assert.equal(yield* Ref.get(settingsReads), readsBeforeReports);
+        assert.equal(yield* policy.shouldRunScopeWork({ type: "vcs-status", cwd: "/repo" }), false);
+
+        // A settings change replaces the kept value without another read.
+        const performance = yield* ServerSettings.ServerSettingsService.pipe(
+          Effect.flatMap((settings) => settings.getSettings),
+          Effect.provide(ServerSettings.layerTest({ backgroundActivityProfile: "performance" })),
+        );
+        const published = yield* policy.streamChanges.pipe(
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        yield* Effect.yieldNow;
+        yield* PubSub.publish(settingsChanges, performance);
+        yield* Fiber.join(published);
+        assert.equal(yield* policy.shouldRunScopeWork({ type: "vcs-status", cwd: "/repo" }), true);
+        assert.equal(yield* Ref.get(settingsReads), readsBeforeReports);
       }).pipe(Effect.provide(layer));
     }),
   );

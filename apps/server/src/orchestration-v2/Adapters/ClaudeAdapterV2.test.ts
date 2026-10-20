@@ -3951,6 +3951,39 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("keeps a bare 429 a provider error, not the plan's usage limit", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-bare-429"),
+            text: "Open github.com.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000429",
+            result: "Rate limited.",
+            isError: true,
+            apiErrorStatus: 429,
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "failed Claude turn");
+        const terminal = harness.terminalEvents()[0];
+        assert.equal(terminal?.status, "failed");
+        if (terminal?.status !== "failed") return;
+        assert.equal(terminal.failure.class, "provider_error");
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
   it.effect("carries exhausted retry progress into the terminal provider error", () =>
     Effect.scoped(
       Effect.gen(function* () {

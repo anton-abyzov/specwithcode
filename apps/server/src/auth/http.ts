@@ -588,6 +588,24 @@ export const layer = HttpApiBuilder.group(
             failEnvironmentInternal("client_session_revoke_failed", error),
           ),
         ),
+      )
+      .handle(
+        "revokeOwnSession",
+        Effect.fn("environment.auth.revokeOwnSession")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            // Any bearer credential may give itself up; it needs no scope to do so.
+            // A browser signs out through its own session, never a cross-site POST.
+            const session = yield* EnvironmentAuthenticatedPrincipal;
+            if (session.method !== "bearer-access-token")
+              return yield* failEnvironmentOperationForbidden("current_session_revoke_not_allowed");
+            const revoked = yield* serverAuth.revokeSession(session.sessionId);
+            return { revoked };
+          },
+          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+            failEnvironmentInternal("client_session_revoke_failed", error),
+          ),
+        ),
       );
   }),
 );

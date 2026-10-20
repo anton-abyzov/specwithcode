@@ -330,4 +330,30 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
       );
     }).pipe(Effect.provide(layerServerSecretStore())),
   );
+
+  it.effect("changes its generation on every write, including a failed one", () =>
+    Effect.gen(function* () {
+      const secretStore = yield* ServerSecretStore.ServerSecretStore;
+      const generation = secretStore.generation!;
+      const bytes = new TextEncoder().encode("value");
+
+      const initial = generation();
+      yield* secretStore.get("missing");
+      yield* secretStore.getOrCreateRandom("signing-key", 32);
+      yield* secretStore.getOrCreateRandom("signing-key", 32);
+      assert.equal(generation(), initial);
+
+      yield* secretStore.set("named", bytes);
+      const afterSet = generation();
+      assert.notEqual(afterSet, initial);
+      yield* secretStore.create("created", bytes);
+      const afterCreate = generation();
+      assert.notEqual(afterCreate, afterSet);
+      yield* Effect.exit(secretStore.create("created", bytes));
+      const afterFailedCreate = generation();
+      assert.notEqual(afterFailedCreate, afterCreate);
+      yield* secretStore.remove("named");
+      assert.notEqual(generation(), afterFailedCreate);
+    }).pipe(Effect.provide(layerServerSecretStore())),
+  );
 });

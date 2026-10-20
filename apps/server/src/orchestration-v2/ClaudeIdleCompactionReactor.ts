@@ -169,6 +169,16 @@ export const make = Effect.gen(function* () {
       );
       if (usedTokens === null || usedTokens < minTokens) return;
       const now = yield* Clock.currentTimeMillis;
+      // The sweep's snapshot can be half a minute old; a message, settle or
+      // archive since then means the thread is no longer idle.
+      const current = yield* threads.getThreadShell(thread.id);
+      if (
+        current === null ||
+        current.latestRunId !== latestRunId ||
+        !isIdleCompactionCandidate(current, now)
+      ) {
+        return;
+      }
       yield* threads.sendToThread({
         ...target,
         commandId: CommandId.make(`server:idle-compact:${thread.id}:${latestRunId}`),

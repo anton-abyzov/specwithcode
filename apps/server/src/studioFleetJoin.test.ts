@@ -17,7 +17,10 @@ import {
   type FleetJoin,
   fleetMachineIdFor,
   removeFleetMachine,
+  removeFleetMachineEverywhere,
+  revokeManagementToken,
 } from "./studioFleetJoin.ts";
+import { fleetRemoveSummary } from "./cli/fleet.ts";
 
 const descriptor = (environmentId: string) => ({
   environmentId,
@@ -268,5 +271,100 @@ describe("adding machines to the fleet file", () => {
     await expect(removeFleetMachine({ baseDir, machine: "m1" })).rejects.toThrow(
       "No configured machine",
     );
+  });
+
+  describe("removing a machine revokes what this machine holds there", () => {
+    const token = `${Buffer.from(JSON.stringify({ sid: "management-session-1" })).toString("base64url")}.signature`;
+    const target = {
+      url: "https://m1.fixture.ts.net",
+      environmentId: "environment-m1" as never,
+      managementToken: token,
+    };
+    /** Answers as `environmentId`; the self-revoke endpoint answers `revokeStatus`. */
+    const machine = (environmentId: string, revokeStatus: number) => {
+      const revokes: Array<string | null> = [];
+      const fetch = vi.fn<typeof globalThis.fetch>(async (url, init) => {
+        const path = new URL(String(url)).pathname;
+        if (path === "/api/auth/session/revoke") {
+          revokes.push(new Headers(init?.headers).get("authorization"));
+          return new Response("{}", { status: revokeStatus });
+        }
+        return Response.json(descriptor(environmentId));
+      });
+      return { fetch, revokes };
+    };
+
+    it("revokes the management token on the machine it was made for", async () => {
+      const { fetch, revokes } = machine("environment-m1", 200);
+      expect(await revokeManagementToken(fetch, target)).toEqual({
+        result: "revoked",
+        sessionId: "management-session-1",
+      });
+      expect(revokes).toEqual([`Bearer ${token}`]);
+    });
+
+    it("keeps it, saying so, when that machine is too old or unreachable", async () => {
+      expect(
+        (await revokeManagementToken(machine("environment-m1", 404).fetch, target)).result,
+      ).toBe("kept");
+      const offline = vi.fn<typeof globalThis.fetch>(async () =>
+        Promise.reject(new TypeError("offline")),
+      );
+      expect(await revokeManagementToken(offline, target)).toEqual({
+        result: "kept",
+        sessionId: "management-session-1",
+      });
+    });
+
+    it("never sends the token to an address that answers as another machine", async () => {
+      const { fetch, revokes } = machine("environment-someone-else", 200);
+      expect((await revokeManagementToken(fetch, target)).result).toBe("kept");
+      expect(revokes).toEqual([]);
+    });
+
+    it("removes the machine either way and reports what is still valid there", async () => {
+      const baseDir = await home();
+      await NodeFSP.writeFile(
+        join(baseDir, "studio-fleet.json"),
+        JSON.stringify({
+          ...relayed,
+          machines: [{ ...relayed.machines[0], url: target.url, managementToken: token }],
+        }),
+        { mode: 0o600 },
+      );
+      const offline = vi.fn<typeof globalThis.fetch>(async () =>
+        Promise.reject(new TypeError("offline")),
+      );
+      const removed = await removeFleetMachineEverywhere({
+        baseDir,
+        machine: "m1",
+        fetcher: offline,
+        revokeWorkerAccess: async () => "kept",
+      });
+      expect(removed).toEqual({
+        id: "m1",
+        label: "Mac M1",
+        managementToken: "kept",
+        workerAccess: "kept",
+        managementSessionId: "management-session-1",
+      });
+      expect((await readFleetConfig(baseDir))?.machines).toEqual([]);
+      const summary = fleetRemoveSummary(removed, "specwithcode");
+      expect(summary).toContain("still valid on Mac M1");
+      expect(summary).toContain("specwithcode auth session revoke management-session-1");
+      expect(
+        fleetRemoveSummary(
+          {
+            ...removed,
+            managementToken: "revoked",
+            workerAccess: "revoked",
+            managementSessionId: null,
+          },
+          "specwithcode",
+        ),
+      ).toBe(
+        "Removed Mac M1.\nRevoked this machine's worker access on Mac M1.\nRevoked this machine's management token on Mac M1.",
+      );
+    });
   });
 });

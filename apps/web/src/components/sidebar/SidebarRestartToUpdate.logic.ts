@@ -37,7 +37,10 @@ export function isAppUpdateReady(state: DesktopUpdateState | null): boolean {
   return state.status === "checking" || resolveDesktopUpdateButtonAction(state) === "install";
 }
 
-/** The service update agent has the release on disk and only waits to install it. */
+/**
+ * The service update agent has the release on disk and only waits to install it,
+ * including while it restarts a service that lost its database locks.
+ */
 export function isServiceUpdateReady(state: StudioServiceUpdateState | null): boolean {
   return state?.status === "downloaded" || state?.status === "waiting-for-quiet";
 }

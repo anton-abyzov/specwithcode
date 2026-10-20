@@ -22,6 +22,8 @@ import { effectiveUsedPercent, isLiveWindow, windowAppliesToModel } from "./usag
 export interface ProviderFallbackRule {
   readonly providerLimitAction: ProviderLimitAction;
   readonly providerLimitFallbackModelSelection: ModelSelection | null;
+  /** The models to continue on, best first; empty uses the single model above. */
+  readonly providerLimitFallbackModels?: ReadonlyArray<ModelSelection> | undefined;
   readonly providerLimitSwitchAtPercent: number | null;
   /**
    * Minutes: a reset this close is waited for instead of switching,
@@ -361,6 +363,90 @@ export function resolveApiCreditSelection(input: {
  * the rule or the project's default model names it, or through
  * `resolveApiCreditSelection` when the rule allows API credits.
  */
+/** The user's fallback order: the list, else the legacy single model, else nothing. */
+export function fallbackModelOrder(
+  rule: Pick<
+    ProviderFallbackRule,
+    "providerLimitFallbackModels" | "providerLimitFallbackModelSelection"
+  >,
+): ReadonlyArray<ModelSelection> {
+  if (rule.providerLimitFallbackModels && rule.providerLimitFallbackModels.length > 0)
+    return rule.providerLimitFallbackModels;
+  return rule.providerLimitFallbackModelSelection ? [rule.providerLimitFallbackModelSelection] : [];
+}
+
+/** A fallback order entry's identity, for sets of entries already tried. */
+export function fallbackSelectionKey(selection: ModelSelection): string {
+  return `${selection.instanceId}\u0000${selection.model}`;
+}
+
+/** Why an entry of the fallback order cannot take the thread now. */
+export type FallbackOrderUnavailable =
+  | "current"
+  | "missing"
+  | "limited"
+  | "signed-out"
+  | "per-token"
+  | "full"
+  | "unverified";
+
+export interface FallbackOrderEntry {
+  readonly selection: ModelSelection;
+  readonly provider: ServerProvider | undefined;
+  /** Null when the entry can take the thread now. */
+  readonly unavailable: FallbackOrderUnavailable | null;
+  /** When a full entry's windows reset, if every one names a time. */
+  readonly resetAt: number | null;
+}
+
+/**
+ * Each entry of the user's fallback order with whether it can take a thread
+ * running on `currentInstanceId` now, in order. The thread's own instance and
+ * limited instances are skipped, so one order serves Claude to Codex and back.
+ */
+export function describeFallbackOrder(input: {
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly currentInstanceId: ProviderInstanceId;
+  readonly rule: Pick<
+    ProviderFallbackRule,
+    "providerLimitFallbackModels" | "providerLimitFallbackModelSelection"
+  >;
+  readonly nowMs: number;
+  readonly belowPercent?: number | null | undefined;
+  readonly limitedInstanceIds?: ReadonlySet<string> | undefined;
+}): ReadonlyArray<FallbackOrderEntry> {
+  return fallbackModelOrder(input.rule).map((selection) => {
+    const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
+    const entry = (
+      unavailable: FallbackOrderUnavailable | null,
+      resetAt: number | null = null,
+    ) => ({
+      selection,
+      provider,
+      unavailable,
+      resetAt,
+    });
+    if (selection.instanceId === input.currentInstanceId) return entry("current");
+    if (
+      provider === undefined ||
+      !provider.models.some((model) => model.slug === selection.model && !model.isCustom)
+    )
+      return entry("missing");
+    if (input.limitedInstanceIds?.has(provider.instanceId)) return entry("limited");
+    if (isPerTokenProvider(provider)) return entry("per-token");
+    if (!canTakeTurn(provider))
+      return entry(provider.auth.status === "unauthenticated" ? "signed-out" : "unverified");
+    if (reportsNoUsage(provider)) return entry(null);
+    const used = providerUsedPercent(provider, input.nowMs, selection.model);
+    const threshold = input.belowPercent ?? 100;
+    if (used !== null && used >= threshold)
+      return entry("full", usageResetAt(provider, threshold, input.nowMs, selection.model));
+    if (!hasUsableFallbackCapacity(provider, input.nowMs, selection.model))
+      return entry("unverified");
+    return entry(null);
+  });
+}
+
 export function resolveProviderFallback(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly currentInstanceId: ProviderInstanceId;
@@ -368,7 +454,10 @@ export function resolveProviderFallback(input: {
   readonly currentModel?: string | undefined;
   readonly rule: Pick<
     ProviderFallbackRule,
-    "providerLimitFallbackModelSelection" | "defaultModelSelection" | "defaultModelProviders"
+    | "providerLimitFallbackModelSelection"
+    | "providerLimitFallbackModels"
+    | "defaultModelSelection"
+    | "defaultModelProviders"
   >;
   readonly nowMs: number;
   readonly belowPercent?: number | null;
@@ -381,6 +470,8 @@ export function resolveProviderFallback(input: {
    * fallback and the project default, before any other ready provider.
    */
   readonly proven?: ModelSelection | null;
+  /** Fallback order entries already tried for this stop (`fallbackSelectionKey`), skipped. */
+  readonly excludedSelections?: ReadonlySet<string>;
 }): ModelSelection | null {
   const usable = (
     provider: ServerProvider | undefined,
@@ -395,6 +486,26 @@ export function resolveProviderFallback(input: {
     const used = providerUsedPercent(provider, input.nowMs, model);
     return used !== null && (input.belowPercent == null || used < input.belowPercent);
   };
+  // A fallback order the user set comes first: it is the strongest statement
+  // of intent. Without one, the legacy single model keeps its old place.
+  const explicitOrder = (input.rule.providerLimitFallbackModels?.length ?? 0) > 0;
+  const firstAvailable = () =>
+    describeFallbackOrder({
+      providers: input.providers,
+      currentInstanceId: input.currentInstanceId,
+      rule: input.rule,
+      nowMs: input.nowMs,
+      belowPercent: input.belowPercent,
+      limitedInstanceIds: input.limitedInstanceIds,
+    }).find(
+      (entry) =>
+        entry.unavailable === null &&
+        !input.excludedSelections?.has(fallbackSelectionKey(entry.selection)),
+    )?.selection;
+  if (explicitOrder) {
+    const ordered = firstAvailable();
+    if (ordered !== undefined) return ordered;
+  }
   if (input.currentModel !== undefined) {
     const same = resolveSameModelElsewhere({
       providers: input.providers,
@@ -406,10 +517,11 @@ export function resolveProviderFallback(input: {
     });
     if (same !== null) return same;
   }
-  for (const selection of [
-    input.rule.providerLimitFallbackModelSelection,
-    input.rule.defaultModelSelection,
-  ]) {
+  if (!explicitOrder) {
+    const legacy = firstAvailable();
+    if (legacy !== undefined) return legacy;
+  }
+  for (const selection of [input.rule.defaultModelSelection]) {
     if (selection === null) continue;
     const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
     if (
@@ -572,6 +684,7 @@ export function resolveWorkerLaunchSelection(input: {
     currentModel: preferred.model,
     rule: {
       providerLimitFallbackModelSelection: input.rule.providerLimitFallbackModelSelection,
+      providerLimitFallbackModels: input.rule.providerLimitFallbackModels,
       defaultModelSelection: null,
       defaultModelProviders: input.rule.defaultModelProviders,
     },

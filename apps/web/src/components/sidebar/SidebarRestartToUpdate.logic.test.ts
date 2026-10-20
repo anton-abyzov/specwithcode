@@ -221,6 +221,27 @@ describe("restart to update", () => {
     expect(isServiceUpdateReady({ ...serviceWaiting, status: "installing" })).toBe(false);
     expect(isServiceUpdateReady(null)).toBe(false);
   });
+
+  it("offers Update now while the agent restarts a service that lost its database locks", () => {
+    // M4, 2026-10-19: the agent reported an error forever and only an app restart was offered.
+    const recovering: StudioServiceUpdateState = {
+      ...serviceWaiting,
+      message: "Restarting SpecWithCode to recover its database",
+    };
+    expect(isServiceUpdateReady(recovering)).toBe(true);
+    expect(getRestartToUpdateView(appIdle, recovering)).toMatchObject({
+      app: false,
+      service: true,
+      label: "Update now",
+    });
+    const waiting = advanceServiceUpdateProgress(
+      { ...startServiceUpdateProgress(recovering), phase: "requesting" },
+      recovering,
+    );
+    expect(serviceUpdateToast(waiting, false).description).toBe(
+      "Restarting SpecWithCode to recover its database",
+    );
+  });
 });
 
 describe("service update progress", () => {

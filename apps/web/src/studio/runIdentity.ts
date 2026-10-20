@@ -61,3 +61,27 @@ export function restartContinuationNote(message: { readonly id: string }): strin
   if (kind === undefined) return null;
   return kind === "update" ? "Resumed after update" : "Resumed after restart";
 }
+
+/**
+ * The thread runs on a limit fallback: the last usage-limit continuation moved
+ * it off `original`, and no later run has gone back. Null once a run returns to
+ * the original provider or the thread's next turn is set there.
+ */
+export function limitFallbackPairing(
+  messages: ReadonlyArray<{ readonly id: string; readonly runId?: string | null | undefined }>,
+  runs: readonly Run[],
+  current: RunSelection,
+): { readonly original: RunSelection; readonly stoppedRunId: string } | null {
+  const continuation = messages.findLast(
+    (message) => limitContinuationKind(message.id) === "fallback",
+  );
+  if (continuation === undefined) return null;
+  const stoppedRunId = continuation.id.slice(continuation.id.lastIndexOf(":") + 1);
+  const original = runs.find((run) => run.id === stoppedRunId)?.modelSelection;
+  if (original === undefined || current.instanceId === original.instanceId) return null;
+  const ownIndex = continuation.runId ? runs.findIndex((run) => run.id === continuation.runId) : -1;
+  const returned = runs
+    .slice(ownIndex >= 0 ? ownIndex + 1 : runs.length)
+    .some((run) => run.modelSelection?.instanceId === original.instanceId);
+  return returned ? null : { original, stoppedRunId };
+}

@@ -651,3 +651,64 @@ it.effect(
       });
     }),
 );
+
+it.effect("lets a bearer credential revoke itself, never a browser cookie", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.nowUnsafe()));
+    const crypto = yield* Crypto.Crypto;
+    const authContext = yield* Layer.build(
+      EnvironmentAuth.layer.pipe(
+        Layer.provide(SqlitePersistence.layerMemory),
+        Layer.provideMerge(ServerSecretStore.layer),
+        Layer.provide(ServerEnvironment.layerIdentity),
+        Layer.provide(layerConfig),
+      ),
+    );
+    const auth = Context.get(authContext, EnvironmentAuth.EnvironmentAuth);
+    const sessions = Context.get(authContext, SessionStore.SessionStore);
+    const management = yield* auth.issueSession({
+      scopes: ["orchestration:read", "access:write"],
+      label: "Management token",
+    });
+    const routes = HttpApiBuilder.layer(AuthTestApi).pipe(
+      Layer.provide(AuthHttp.layer),
+      Layer.provide(AuthHttp.layerAuthenticatedAuth),
+      Layer.provide(Layer.succeed(EnvironmentAuth.EnvironmentAuth, auth)),
+      Layer.provide(Layer.succeed(SessionStore.SessionStore, sessions)),
+      Layer.provide(layerConfig),
+      Layer.provide(
+        HttpPlatform.layer.pipe(
+          Layer.provideMerge(NodeServices.layer),
+          Layer.provideMerge(Etag.layerWeak),
+        ),
+      ),
+      Layer.provide(NodeServices.layer),
+    );
+    yield* Effect.acquireUseRelease(
+      Effect.sync(() => HttpRouter.toWebHandler(routes, { disableLogger: true })),
+      (handler) =>
+        Effect.tryPromise(async () => {
+          const requestContext = Context.make(Crypto.Crypto, crypto).pipe(
+            Context.add(
+              ServerSecretStore.ServerSecretStore,
+              Context.get(authContext, ServerSecretStore.ServerSecretStore),
+            ),
+          );
+          const bearer = { authorization: `Bearer ${management.token}` };
+          const revoked = await handler.handler(
+            postJson("/api/auth/session/revoke", {}, bearer),
+            requestContext,
+          );
+          expect(revoked.status).toBe(200);
+          expect(await revoked.json()).toEqual({ revoked: true });
+          // The token no longer works anywhere, including to revoke itself again.
+          const again = await handler.handler(
+            postJson("/api/auth/session/revoke", {}, bearer),
+            requestContext,
+          );
+          expect(again.status).toBe(401);
+        }),
+      ({ dispose }) => Effect.promise(dispose),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);

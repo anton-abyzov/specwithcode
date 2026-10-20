@@ -235,6 +235,7 @@ import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { requiredScopeForDeviceList, rpcAuthorizationError } from "./auth/RpcAuthorization.ts";
 import * as RpcAuthorization from "./auth/RpcAuthorization.ts";
+import { RpcDeadline, rpcDeadlineLayer } from "./observability/RpcDeadline.ts";
 import { RpcInstrumentation, rpcInstrumentationLayer } from "./observability/RpcInstrumentation.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
@@ -584,8 +585,9 @@ function projectFileFailureContext(
 
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
-// Middleware added later wraps middleware added earlier, so instrumentation wraps authorization.
-const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
+// Middleware added later wraps middleware added earlier, so instrumentation wraps the deadline,
+// which wraps authorization, and a call answered at its deadline is still recorded.
+const ServerWsRpcGroup = WsRpcGroup.middleware(RpcDeadline).middleware(RpcInstrumentation);
 // Handlers register per group; composer drafts, native connection edits and the PR
 // check-failure log have their own layers. The group-wide `toLayer` typing grows with the
 // square of the group, so new methods past this size join as single handlers instead of
@@ -3277,7 +3279,11 @@ const inferredWebSocketLayer = Layer.unwrap(
           yield* RpcServer.make(ServerWsRpcGroup, WS_RPC_SERVER_OPTIONS).pipe(
             Effect.provideService(RpcServer.Protocol, withTerminalOutputWindow(protocol)),
             Effect.provide(
-              Layer.merge(RpcAuthorization.layer(session.scopes), rpcInstrumentationLayer),
+              Layer.mergeAll(
+                RpcAuthorization.layer(session.scopes),
+                rpcDeadlineLayer,
+                rpcInstrumentationLayer,
+              ),
             ),
             Effect.forkScoped,
           );

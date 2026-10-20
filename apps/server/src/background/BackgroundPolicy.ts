@@ -16,6 +16,7 @@ import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
@@ -216,32 +217,62 @@ export const make = Effect.fn("background.policy.make")(function* () {
   const changes = yield* PubSub.sliding<BackgroundPolicySnapshot>(1);
   const publishMutex = yield* Semaphore.make(1);
 
-  const backgroundActivitySettings = serverSettings.getSettings.pipe(
-    Effect.map(resolveServerBackgroundActivitySettings),
-    Effect.orElseSucceed(() => getBackgroundActivityPresetSettings("balanced")),
+  // The resolved settings, kept current by the settings change stream. Work under
+  // `publishMutex` reads only this, never the settings service: a settings read can
+  // wait on secret files, and every client-activity report queues on the mutex.
+  const settingsRef = yield* Ref.make(Option.none<ResolvedBackgroundActivitySettings>());
+  const fallbackSettings = getBackgroundActivityPresetSettings("balanced");
+
+  const backgroundActivitySettings = Ref.get(settingsRef).pipe(
+    Effect.flatMap(
+      Option.match({
+        onSome: Effect.succeed,
+        onNone: () =>
+          serverSettings.getSettings.pipe(
+            Effect.map(resolveServerBackgroundActivitySettings),
+            // A change that arrived during the read is newer: keep it.
+            Effect.flatMap((loaded) =>
+              Ref.modify(settingsRef, (current) =>
+                Option.isSome(current) ? [current.value, current] : [loaded, Option.some(loaded)],
+              ),
+            ),
+            Effect.orElseSucceed(() => fallbackSettings),
+          ),
+      }),
+    ),
+  );
+  const loadedSettings = Ref.get(settingsRef).pipe(
+    Effect.map(Option.getOrElse(() => fallbackSettings)),
   );
 
-  const snapshot = Effect.gen(function* () {
-    const [hostPower, leases, now, settings] = yield* Effect.all([
-      hostPowerMonitor.snapshot,
-      Ref.get(leasesRef),
-      DateTime.now,
-      backgroundActivitySettings,
-    ]);
-    return computeSnapshot({ hostPower, leases, now, settings, updatedAt: now });
-  });
+  const snapshotWith = (settingsEffect: Effect.Effect<ResolvedBackgroundActivitySettings>) =>
+    Effect.gen(function* () {
+      const [hostPower, leases, now, settings] = yield* Effect.all([
+        hostPowerMonitor.snapshot,
+        Ref.get(leasesRef),
+        DateTime.now,
+        settingsEffect,
+      ]);
+      return computeSnapshot({ hostPower, leases, now, settings, updatedAt: now });
+    });
+  const snapshot = snapshotWith(backgroundActivitySettings);
+  const lockedSnapshot = snapshotWith(loadedSettings);
 
-  const publishSnapshotUnlocked = snapshot.pipe(
+  // Loads the settings, if still needed, before taking the lock.
+  const withPublishLock = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    backgroundActivitySettings.pipe(Effect.andThen(publishMutex.withPermits(1)(effect)));
+
+  const publishSnapshotUnlocked = lockedSnapshot.pipe(
     Effect.flatMap((next) => PubSub.publish(changes, next)),
   );
-  const publishSnapshot = publishMutex.withPermits(1)(publishSnapshotUnlocked);
+  const publishSnapshot = withPublishLock(publishSnapshotUnlocked);
 
   const reportClientActivity: BackgroundPolicy["Service"]["reportClientActivity"] = (
     sessionId,
     rpcClientId,
     input,
   ) =>
-    publishMutex.withPermits(1)(
+    withPublishLock(
       Effect.gen(function* () {
         const ttlMs = Math.min(
           Math.max(input.ttlMs ?? DEFAULT_LEASE_TTL_MS, 1_000),
@@ -274,7 +305,7 @@ export const make = Effect.fn("background.policy.make")(function* () {
     sessionId,
     rpcClientId,
   ) =>
-    publishMutex.withPermits(1)(
+    withPublishLock(
       Ref.update(leasesRef, (leases) => {
         const next = new Map(leases);
         for (const [key, lease] of next) {
@@ -308,14 +339,18 @@ export const make = Effect.fn("background.policy.make")(function* () {
   yield* Stream.runForEach(hostPowerMonitor.streamChanges, () => publishSnapshot).pipe(
     Effect.forkScoped,
   );
-  yield* Stream.runForEach(serverSettings.streamChanges, () => publishSnapshot).pipe(
-    Effect.forkScoped,
-  );
+  // Subscribed here, not when the fork starts, so no change slips past the cache.
+  const settingsChanges = yield* serverSettings.subscribeChanges;
+  yield* Stream.runForEach(settingsChanges, (settings) =>
+    Ref.set(settingsRef, Option.some(resolveServerBackgroundActivitySettings(settings))).pipe(
+      Effect.andThen(publishSnapshot),
+    ),
+  ).pipe(Effect.forkScoped);
 
   yield* Effect.forever(
     Effect.sleep("15 seconds").pipe(
       Effect.andThen(
-        publishMutex.withPermits(1)(
+        withPublishLock(
           Effect.gen(function* () {
             const now = yield* DateTime.now;
             yield* Ref.update(leasesRef, (leases) => {
@@ -340,7 +375,9 @@ export const make = Effect.fn("background.policy.make")(function* () {
     reportHostPowerState: hostPowerMonitor.report,
     snapshot,
     streamChanges: Stream.fromPubSub(changes),
-    subscribe: subscribeBeforeSnapshot(changes, snapshot, publishMutex),
+    subscribe: backgroundActivitySettings.pipe(
+      Effect.andThen(subscribeBeforeSnapshot(changes, lockedSnapshot, publishMutex)),
+    ),
     hasDemand,
     shouldRunScopeWork,
     shouldRunOpportunisticWork,

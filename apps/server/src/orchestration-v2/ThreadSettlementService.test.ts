@@ -526,6 +526,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   const snapshotReads = yield* Queue.unbounded<number>();
   const candidateReads = yield* Ref.make<ReadonlyArray<string | undefined>>([]);
   const settings = yield* Ref.make(options.settings ?? DEFAULT_SERVER_SETTINGS);
+  const settingsReads = yield* Ref.make(0);
   const settingsChanges = yield* PubSub.unbounded<ContractServerSettings>();
   const mergedPullRequests = yield* PubSub.unbounded<PullRequestService.PullRequestMergeEvent>();
   const commands = yield* Ref.make<ReadonlyArray<AutoSettleCommand>>([]);
@@ -594,7 +595,9 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   const serverSettings = ServerSettings.ServerSettingsService.of({
     start: Effect.void,
     ready: Effect.void,
-    getSettings: Ref.get(settings),
+    getSettings: Ref.update(settingsReads, (count) => count + 1).pipe(
+      Effect.andThen(Ref.get(settings)),
+    ),
     updateSettings,
     updateProviderInstance: () => Effect.die("Unexpected provider mutation"),
     withSettingsSnapshot: (use) => Ref.get(settings).pipe(Effect.flatMap(use)),
@@ -667,6 +670,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     snapshotReadCount,
     snapshotReads,
     candidateReads,
+    settingsReads,
     commands,
     branchCalls,
     summaryCalls,
@@ -1353,6 +1357,33 @@ describe("ThreadSettlementServiceV2 single-thread sweeps", () => {
           yield* Queue.take(fixture.snapshotReads);
           yield* service.drain;
           assert.deepStrictEqual(yield* Ref.get(fixture.candidateReads), [finished.id]);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+});
+
+describe("ThreadSettlementServiceV2 settings reads", () => {
+  it.effect("a sweep reads settings once, not per candidate", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const threads = Array.from({ length: 12 }, (_, index) =>
+          makeThread(`open-branch-${index}`, { branch: `feature-${index}` }),
+        );
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot(threads),
+          settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleAfterDays: 3 },
+          branchPullRequest: () => Effect.succeed(makeBranchPullRequest("open")),
+        });
+
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          expect(yield* Ref.get(fixture.branchCalls)).toHaveLength(threads.length);
+          expect(yield* Ref.get(fixture.commands)).toEqual([]);
+          // One read when the service starts, one for the sweep.
+          expect(yield* Ref.get(fixture.settingsReads)).toBe(2);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),

@@ -111,6 +111,7 @@ import {
 } from "./EnvironmentRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { StudioFleetConnections, StudioListenerRow } from "./StudioFleetConnections";
+import { MachineWorkGrants } from "./MachineWorkGrants";
 import { ConnectionsLibrarySettings } from "./ConnectionsLibrarySettings";
 import { PairPhoneSettings } from "./PairPhoneSettings";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
@@ -4112,6 +4113,7 @@ export function ConnectionsSettings() {
           savedEnvironmentIds={savedEnvironments.map((environment) => environment.environmentId)}
         />
       ) : null}
+      {primaryEnvironmentId ? <MachineWorkGrants environmentId={primaryEnvironmentId} /> : null}
       {primaryEnvironmentId !== null ? (
         <PairPhoneSettings
           endpoint={defaultDesktopAdvertisedEndpoint}

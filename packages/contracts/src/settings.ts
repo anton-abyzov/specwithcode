@@ -1352,6 +1352,15 @@ export type ThreadFinishAction = typeof ThreadFinishAction.Type;
 /** Provider instances that serve the default model, in the order to try them. */
 export const DefaultModelProviders = Schema.Array(ProviderInstanceId).check(Schema.isMaxLength(16));
 export type DefaultModelProviders = typeof DefaultModelProviders.Type;
+/**
+ * The models a limited thread continues on, best first. The thread's own
+ * instance and limited instances are skipped, so one list serves every
+ * direction (Claude to Codex and back).
+ */
+export const ProviderLimitFallbackModels = Schema.Array(ModelSelection).check(
+  Schema.isMaxLength(8),
+);
+export type ProviderLimitFallbackModels = typeof ProviderLimitFallbackModels.Type;
 
 export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "agentInstructions",
@@ -1384,6 +1393,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "responseStreamingMode",
   "providerLimitAction",
   "providerLimitFallbackModelSelection",
+  "providerLimitFallbackModels",
   "providerLimitSwitchAtPercent",
   "providerLimitWaitUnderMinutes",
   "providerLimitRedeemResets",
@@ -1429,6 +1439,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
   providerLimitAction: Schema.optionalKey(ProviderLimitAction),
   providerLimitFallbackModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  providerLimitFallbackModels: Schema.optionalKey(ProviderLimitFallbackModels),
   providerLimitSwitchAtPercent: Schema.optionalKey(Schema.NullOr(ProviderLimitSwitchAtPercent)),
   providerLimitWaitUnderMinutes: Schema.optionalKey(ProviderLimitWaitUnderMinutes),
   providerLimitRedeemResets: Schema.optionalKey(Schema.Boolean),
@@ -1616,6 +1627,10 @@ export const ServerSettings = Schema.Struct({
   /** The model a limited thread continues on; `null` offers any other ready provider. */
   providerLimitFallbackModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  /** Tried in order before any other fallback; empty uses the single model above. */
+  providerLimitFallbackModels: ProviderLimitFallbackModels.pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
   ),
   /** `null` never switches early; the stopped turn still continues under `switch`. */
   providerLimitSwitchAtPercent: Schema.NullOr(ProviderLimitSwitchAtPercent).pipe(
@@ -2035,6 +2050,7 @@ export const ServerSettingsPatch = Schema.Struct({
   snoozeLimitedThreads: Schema.optionalKey(Schema.Boolean),
   providerLimitAction: Schema.optionalKey(ProviderLimitAction),
   providerLimitFallbackModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  providerLimitFallbackModels: Schema.optionalKey(ProviderLimitFallbackModels),
   providerLimitSwitchAtPercent: Schema.optionalKey(Schema.NullOr(ProviderLimitSwitchAtPercent)),
   providerLimitWaitUnderMinutes: Schema.optionalKey(ProviderLimitWaitUnderMinutes),
   providerLimitRedeemResets: Schema.optionalKey(Schema.Boolean),

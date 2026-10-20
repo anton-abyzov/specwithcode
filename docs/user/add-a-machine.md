@@ -230,8 +230,8 @@ specwithcode fleet add swc-machine-…
 ```
 
 `specwithcode fleet list` shows every configured machine and whether the main
-machine reaches it now. `specwithcode fleet remove <name>` takes one off the
-list.
+machine reaches it now. To take one off the list, see
+[Remove a machine](#remove-a-machine).
 
 **Keep SpecWithCode running on the worker.** Coordinators can only start work
 there while its app or server is running and Tailscale is connected. With the
@@ -254,6 +254,64 @@ To turn one off:
 After revoking, the main machine can no longer pair with that worker. To add it
 again, make a new line on the worker and add it on the main machine.
 
+## Who can run work on this Mac
+
+Allowing workers is a grant the worker gives the main machine, and the worker
+enforces it. On the worker, open **Settings → Connections → Who can run work on
+this Mac**. Each machine that may start work there has a row with:
+
+- **Whose machine**: **My machine** or **Someone else's machine**. Work from
+  your own machine may pass through two machines in a row (main machine to this
+  one to a third); work from someone else's machine only one. Switching a
+  machine to someone else's also turns off its sign-ins until you choose them.
+- **Projects**: **Linked to it** (the default for new grants: projects that are
+  part of a shared project with that machine), **Chosen projects**, or **All
+  projects**. Work outside these is refused, and the other machine does not see
+  those projects in its list.
+- **Sign-ins**: **All sign-ins**, **Chosen sign-ins** or **None**. A launch that
+  asks for a sign-in outside the list is refused with a message naming the
+  allowed ones. With **None**, every launch is refused.
+- **Most access**: the most a thread started from there may run with, as chosen
+  in **Allow workers** on the main machine.
+- When the grant expires, and how many threads it started here are running.
+
+Machines allowed before 1.0.56 show **Allowed before work could be limited**:
+they keep every project and sign-in until you change them. A main machine
+running 1.0.56 or later that starts work on an older worker says that the
+worker cannot check these limits, and the older worker runs it as before.
+
+### Loops and hops
+
+Every launch carries the list of machines it came through. A machine refuses a
+launch whose list already names it (M4 starts work on M1, and that work tries to
+start work back on M4), and one that came through more machines than its grant
+allows. The message names the path, for example `M4 → M1 → M4`. Different
+projects can still use each other's machines in both directions.
+
+### Revoke
+
+Choose **Revoke** on the row. The other machine can no longer start work here
+from that moment, even with a fresh grant. Threads it already started keep
+running for 2 minutes, then stop as if you pressed Stop: their worktrees,
+changes and history stay. To let it back, choose **Allow again** here, then
+**Allow workers** for this machine on the other one.
+
+## Remove a machine
+
+On the main machine, choose **Remove machine** on its card under **Your private
+machines**, or run:
+
+```bash
+specwithcode fleet remove <name>
+```
+
+Before taking it off the list, the main machine gives up what it holds on that
+machine: it revokes its worker grant and the management token from the
+invitation line there. If that machine is off or unreachable, the main machine
+still removes it here and says what stays valid there. On that machine, revoke
+it under **Settings → Connections → Authorized clients**, or with the
+`auth session revoke` command the message prints.
+
 ## Troubleshooting
 
 Messages may be worded slightly differently in older releases.
@@ -274,6 +332,11 @@ Messages may be worded slightly differently in older releases.
 | "Pairing is unavailable. Ask the server owner to renew this machine's connection permission."   | The line was revoked or has expired. Make a new line on the worker and add it on the main machine again; that updates the same machine.                                                                                                                       |
 | "This machine is unavailable. Check its private connection and retry."                          | The worker is off, asleep, signed out of Tailscale or not running SpecWithCode. Check each, and that its key has not expired in the Tailscale admin console.                                                                                                  |
 | "Manage access required"                                                                        | This session cannot manage the machine. Use the app on that machine itself.                                                                                                                                                                                   |
+| "Refused: this launch would loop back to a machine it came from (M4 → M1 → M4)."                | Start the work on a machine not on that path, or on the machine itself.                                                                                                                                                                                       |
+| "Refused: this launch came through …, 2 machine hops; this machine allows 1 for that sender."   | On the worker, set the sender to **My machine** in **Who can run work on this Mac** if it is yours, or start the work closer to where it began.                                                                                                               |
+| "Project … on this machine is not linked to …"                                                  | Link the projects, or add the project under **Projects** in **Who can run work on this Mac** on the worker.                                                                                                                                                   |
+| "This machine lets … use only these sign-ins: …"                                                | Pick one of the listed sign-ins, or add that sign-in under **Sign-ins** in **Who can run work on this Mac** on the worker.                                                                                                                                    |
+| "… runs an older SpecWithCode that does not check delegation loops, project scope or …"         | The worker runs the work without these limits. Update SpecWithCode on the worker.                                                                                                                                                                             |
 
 ## Keep your provider accounts safe
 

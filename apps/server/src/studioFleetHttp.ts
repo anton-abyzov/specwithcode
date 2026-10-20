@@ -1,5 +1,7 @@
 import {
+  AuthAccessReadScope,
   AuthAccessWriteScope,
+  type EnvironmentId,
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
   EnvironmentHttpForbiddenError,
@@ -44,7 +46,17 @@ import {
   readFleetTailscaleStatus,
   startFleetTailscaleSignIn,
 } from "./studioFleetInvite.ts";
-import { addFleetMachine, FleetJoinError } from "./studioFleetJoin.ts";
+import {
+  addFleetMachine,
+  FleetJoinError,
+  removeFleetMachineEverywhere,
+} from "./studioFleetJoin.ts";
+import * as FleetTargets from "./fleet/FleetTargets.ts";
+import * as WorkGrants from "./fleet/WorkGrants.ts";
+import { workGrantsSnapshot } from "./fleet/workGrantsSnapshot.ts";
+import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
+import * as ProjectService from "./project/ProjectService.ts";
+import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
 
 const noStore = HttpEffect.appendPreResponseHandler((_request, response) =>
   Effect.succeed(
@@ -122,6 +134,65 @@ export const layer = HttpApiBuilder.group(
           message: "Changing worker access requires an authorized same-origin request.",
         });
     });
+    const threadManagement = yield* ThreadManagement.ThreadManagementService;
+    const projectService = yield* ProjectService.ProjectService;
+    const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
+    const fleetFetch = yield* FleetTargets.FleetTargets.pipe(
+      Effect.map((targets) => targets.fetch),
+    );
+    /**
+     * A change to who may run work here, made only by this machine's access
+     * manager from this app, answering with the grant as the screen shows it.
+     */
+    const changeWorkGrant = (
+      coordinatorEnvironmentId: EnvironmentId,
+      change: (
+        service: WorkGrants.WorkGrantsShape,
+      ) => Effect.Effect<unknown, WorkGrants.WorkGrantsError>,
+    ) =>
+      Effect.gen(function* () {
+        yield* noStore;
+        yield* requireGrantManager;
+        const service = yield* WorkGrants.WorkGrants;
+        yield* change(service).pipe(
+          Effect.mapError((error) =>
+            error.reason === "unknown_grant"
+              ? new EnvironmentHttpBadRequestError({ message: error.message })
+              : new EnvironmentHttpInternalServerError({ message: error.message }),
+          ),
+        );
+        const fleetConfig = yield* Effect.tryPromise(() => readFleetConfig(config.baseDir)).pipe(
+          Effect.orElseSucceed(() => null),
+        );
+        const snapshot = yield* workGrantsSnapshot({
+          ownEnvironmentId: yield* serverEnvironment.getEnvironmentId,
+          labels: new Map(
+            (fleetConfig?.machines ?? []).map((machine) => [
+              machine.environmentId as string,
+              machine.label,
+            ]),
+          ),
+        }).pipe(
+          Effect.provideService(EnvironmentAuth.EnvironmentAuth, environmentAuth),
+          Effect.provideService(ThreadManagement.ThreadManagementService, threadManagement),
+          Effect.provideService(ProjectService.ProjectService, projectService),
+          Effect.provideService(ProviderRegistry.ProviderRegistry, providerRegistry),
+          Effect.mapError(
+            () =>
+              new EnvironmentHttpInternalServerError({
+                message: "Could not read who may run work on this machine.",
+              }),
+          ),
+        );
+        const grant = snapshot.grants.find(
+          (entry) => entry.coordinatorEnvironmentId === coordinatorEnvironmentId,
+        );
+        if (grant === undefined)
+          return yield* new EnvironmentHttpInternalServerError({
+            message: "Could not read who may run work on this machine.",
+          });
+        return { grant };
+      });
     return handlers
       .handle("fleet", () =>
         Effect.gen(function* () {
@@ -261,6 +332,96 @@ export const layer = HttpApiBuilder.group(
             remoteSessionKept: result.remoteSessionKept,
           };
         }),
+      )
+      .handle("removeFleetMachine", ({ payload }) =>
+        Effect.gen(function* () {
+          yield* noStore;
+          // Removing a machine revokes credentials this machine holds there.
+          yield* requireGrantManager;
+          return yield* Effect.tryPromise({
+            try: () =>
+              removeFleetMachineEverywhere({
+                baseDir: config.baseDir,
+                machine: payload.id,
+                fetcher: fleetFetch,
+                // The grant store here revokes its sessions there and forgets the grant.
+                revokeWorkerAccess: (target) =>
+                  Effect.runPromise(
+                    grants.status(target.id).pipe(
+                      Effect.flatMap((before) =>
+                        grants
+                          .stop(target.id)
+                          .pipe(
+                            Effect.map((stopped) =>
+                              stopped.remoteSessionKept
+                                ? ("kept" as const)
+                                : before.status === "not_allowed"
+                                  ? ("none" as const)
+                                  : ("revoked" as const),
+                            ),
+                          ),
+                      ),
+                      Effect.orElseSucceed(() => "kept" as const),
+                    ),
+                  ),
+              }),
+            catch: (error) => {
+              const kind =
+                error instanceof FleetJoinError || error instanceof FleetError
+                  ? error.kind
+                  : "write";
+              const message =
+                error instanceof FleetJoinError || error instanceof FleetError
+                  ? error.message
+                  : new FleetJoinError("write").message;
+              return kind === "write" || kind === "config"
+                ? new EnvironmentHttpInternalServerError({ message })
+                : new EnvironmentHttpBadRequestError({ message });
+            },
+          });
+        }),
+      )
+      .handle("workGrants", () =>
+        Effect.gen(function* () {
+          yield* requireEnvironmentScope(AuthAccessReadScope);
+          yield* noStore;
+          const fleetConfig = yield* Effect.tryPromise(() => readFleetConfig(config.baseDir)).pipe(
+            Effect.orElseSucceed(() => null),
+          );
+          return yield* workGrantsSnapshot({
+            ownEnvironmentId: yield* serverEnvironment.getEnvironmentId,
+            labels: new Map(
+              (fleetConfig?.machines ?? []).map((machine) => [
+                machine.environmentId as string,
+                machine.label,
+              ]),
+            ),
+          }).pipe(
+            Effect.provideService(EnvironmentAuth.EnvironmentAuth, environmentAuth),
+            Effect.provideService(ThreadManagement.ThreadManagementService, threadManagement),
+            Effect.provideService(ProjectService.ProjectService, projectService),
+            Effect.provideService(ProviderRegistry.ProviderRegistry, providerRegistry),
+            Effect.mapError(
+              () =>
+                new EnvironmentHttpInternalServerError({
+                  message: "Could not read who may run work on this machine.",
+                }),
+            ),
+          );
+        }),
+      )
+      .handle("updateWorkGrant", ({ payload }) =>
+        changeWorkGrant(payload.coordinatorEnvironmentId, (service) => service.update(payload)),
+      )
+      .handle("revokeWorkGrant", ({ payload }) =>
+        changeWorkGrant(payload.coordinatorEnvironmentId, (service) =>
+          service.revoke(payload.coordinatorEnvironmentId),
+        ),
+      )
+      .handle("restoreWorkGrant", ({ payload }) =>
+        changeWorkGrant(payload.coordinatorEnvironmentId, (service) =>
+          service.restore(payload.coordinatorEnvironmentId),
+        ),
       )
       .handle("remoteWorkers", ({ query }) =>
         Effect.gen(function* () {
