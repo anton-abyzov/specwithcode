@@ -74,6 +74,16 @@ export const FolderCopySourceStatus = Schema.Struct({
   summary: Schema.NullOr(FolderCopySourceSummary),
   error: Schema.NullOr(bounded(2000)),
   releaseReason: Schema.NullOr(bounded(500)),
+  /** Secret files the person approved for this destination: paths and sizes only. */
+  secrets: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        files: Schema.Array(Schema.Struct({ path: bounded(4096), size: count })),
+        approvedAt: count,
+        destinationLabel: bounded(200),
+      }),
+    ),
+  ),
 });
 export type FolderCopySourceStatus = typeof FolderCopySourceStatus.Type;
 
@@ -97,6 +107,34 @@ export const FolderCopyOffer = Schema.Struct({
   status: FolderCopySourceStatus,
 });
 export type FolderCopyOffer = typeof FolderCopyOffer.Type;
+
+/** The secret files the person ticked, sent to this destination only. Empty withdraws them. */
+export const FolderCopySecretsInput = Schema.Struct({
+  operationId: MachineHandoffOperationId,
+  paths: Schema.Array(bounded(4096)).check(Schema.isMaxLength(500)),
+  destinationLabel: bounded(200),
+});
+export type FolderCopySecretsInput = typeof FolderCopySecretsInput.Type;
+
+export const FolderCopySentSecretsInput = Schema.Struct({
+  destinationEnvironmentId: Schema.optional(EnvironmentId),
+});
+export type FolderCopySentSecretsInput = typeof FolderCopySentSecretsInput.Type;
+/** Which secret files this machine sent where, and when. Never their contents. */
+export const FolderCopySentSecrets = Schema.Struct({
+  entries: Schema.Array(
+    Schema.Struct({
+      operationId: MachineHandoffOperationId,
+      destinationEnvironmentId: bounded(200),
+      destinationLabel: bounded(200),
+      folder: bounded(4096),
+      path: bounded(4096),
+      size: count,
+      sentAt: bounded(64),
+    }),
+  ),
+});
+export type FolderCopySentSecrets = typeof FolderCopySentSecrets.Type;
 
 export const FolderCopyOperationInput = Schema.Struct({ operationId: MachineHandoffOperationId });
 export type FolderCopyOperationInput = typeof FolderCopyOperationInput.Type;
@@ -253,6 +291,17 @@ export const FolderCopyStatus = Schema.Struct({
   projectId: Schema.NullOr(ProjectId),
   /** Set once the Apply backups were discarded (after 14 days); Undo is gone then. */
   backupsDiscardedAt: Schema.optional(bounded(64)),
+  /** Secret files received after Apply, each mode 0600; paths only. */
+  secrets: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        path: bounded(4096),
+        writtenAs: bounded(4200),
+        size: count,
+        state: Schema.Literals(["written", "unchanged", "beside"]),
+      }),
+    ),
+  ),
   createdAt: bounded(64),
   updatedAt: bounded(64),
 });

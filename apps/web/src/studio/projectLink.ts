@@ -53,7 +53,103 @@ export const projectLink = {
     label: "project-link:unlink",
     tag: WS_METHODS.projectUnlink,
   }),
+  digest: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "project-link:digest",
+    tag: WS_METHODS.projectLinkDigest,
+  }),
+  replicate: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "project-link:replicate",
+    tag: WS_METHODS.projectLinkReplicate,
+  }),
+  takeover: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "project-link:takeover",
+    tag: WS_METHODS.projectTakeover,
+  }),
+  supersede: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "project-link:supersede",
+    tag: WS_METHODS.projectSupersede,
+  }),
 };
+
+/** How long the coordinator's machine must be unreachable before a member may take over. */
+export const TAKEOVER_UNREACHABLE_MS = 10 * 60_000;
+
+/**
+ * Whether "Take over coordinator here" may be pressed: never while the
+ * coordinator's machine is connected, and only after it has been unreachable
+ * for 10 minutes. There is no automatic failover.
+ */
+export function takeoverAvailability(input: {
+  readonly coordinatorConnected: boolean;
+  /** When this device last saw the coordinator's machine, or first saw it gone. */
+  readonly unreachableSince: number | null;
+  readonly now: number;
+}): { readonly available: boolean; readonly waitMs: number } {
+  if (input.coordinatorConnected || input.unreachableSince === null)
+    return { available: false, waitMs: TAKEOVER_UNREACHABLE_MS };
+  const waitMs = Math.max(0, input.unreachableSince + TAKEOVER_UNREACHABLE_MS - input.now);
+  return { available: waitMs === 0, waitMs };
+}
+
+/** The highest coordinator epoch among the copies the app sees; a takeover goes above it. */
+export function highestEpoch(members: ReadonlyArray<EnvironmentProject>): number {
+  return Math.max(0, ...members.map((m) => m.workspaceSettings?.coordinatorBinding?.epoch ?? 0));
+}
+
+const sameRef = (
+  a: LogicalProjectMember,
+  b: Pick<LogicalProjectMember, "environmentId" | "projectId">,
+) => a.environmentId === b.environmentId && a.projectId === b.projectId;
+
+export interface PendingSupersede {
+  /** The copy that took over and is active now. */
+  readonly successor: EnvironmentProject;
+  /** The copy it replaced, still active on its own machine. */
+  readonly previous: EnvironmentProject;
+}
+
+/**
+ * Copies that a member took over from while they were unreachable and that
+ * still think they coordinate: each must give way once both are reachable.
+ */
+export function pendingSupersedes(members: ReadonlyArray<EnvironmentProject>): PendingSupersede[] {
+  const pending: PendingSupersede[] = [];
+  for (const successor of members) {
+    const binding = successor.workspaceSettings?.coordinatorBinding;
+    if (binding?.state !== "active" || !binding.predecessor || !binding.takenOverAt) continue;
+    const previous = members.find((candidate) =>
+      sameRef(binding.predecessor!, {
+        environmentId: candidate.environmentId,
+        projectId: candidate.id,
+      }),
+    );
+    const previousBinding = previous?.workspaceSettings?.coordinatorBinding;
+    if (
+      previous &&
+      previous.workspaceSettings?.logicalProject?.id ===
+        successor.workspaceSettings?.logicalProject?.id &&
+      (previousBinding?.state ?? "active") === "active" &&
+      (previousBinding?.epoch ?? 0) < binding.epoch
+    )
+      pending.push({ successor, previous });
+  }
+  return pending;
+}
+
+/** Member copies that keep a replica of the coordinator's notes, goal and instructions. */
+export function replicaMembers(
+  coordinator: EnvironmentProject,
+  members: ReadonlyArray<EnvironmentProject>,
+): EnvironmentProject[] {
+  const identity = coordinator.workspaceSettings?.logicalProject?.id;
+  return members.filter(
+    (member) =>
+      member !== coordinator &&
+      member.environmentId !== coordinator.environmentId &&
+      member.workspaceSettings?.logicalProject?.id === identity &&
+      member.workspaceSettings?.coordinatorBinding?.state === "transferred",
+  );
+}
 
 /** Whether a machine can take part in a link: connected, new enough and permitted. */
 export type LinkMachineState = "ready" | "offline" | "update" | "permission";

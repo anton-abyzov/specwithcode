@@ -9,6 +9,7 @@ import {
   EventId,
   type LogicalProjectMember,
   type Project,
+  type ProjectCoordinatorReplica,
   ProjectId,
   ProjectLinkError,
   ThreadId,
@@ -30,6 +31,7 @@ import {
 import { planProjectCommand } from "../orchestration-v2/ProjectCommands.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import type { ProjectRow } from "../orchestration-v2/ProjectStore.ts";
+import * as CoordinatorReplicas from "./CoordinatorReplicas.ts";
 import * as ProjectLink from "./ProjectLink.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as ProjectWorkspaceService from "./ProjectWorkspaceService.ts";
@@ -64,6 +66,9 @@ function machine(environment: string) {
   const receipts = new Map<string, Result.Result<Project, ProjectService.ProjectOperationError>>();
   const busy = new Set<string>();
   const ownershipModes: string[] = [];
+  /** Coordinator runs by thread: when each was requested and what it asked. */
+  const runs = new Map<string, Array<{ id: string; requestedAt: string; text: string }>>();
+  const replicas = new Map<string, ProjectCoordinatorReplica>();
   const toRow = (project: Project): ProjectRow =>
     ({
       projectId: project.id,
@@ -97,6 +102,7 @@ function machine(environment: string) {
           commandId: input.commandId,
           projectId: input.projectId,
           ...(input.ownership ? { ownership: input.ownership } : {}),
+          ...(input.workspaceSettings ? { workspaceSettings: input.workspaceSettings } : {}),
         },
         state: { project: toRow(current), workspaceOwner: undefined },
         eventId: EventId.make(`event:${input.commandId}`),
@@ -179,7 +185,26 @@ function machine(environment: string) {
               return Effect.succeed({ name: input.name, ...note });
             }),
         } as unknown as ProjectWorkspaceService.ProjectWorkspaceService["Service"]),
+        Layer.succeed(
+          CoordinatorReplicas.CoordinatorReplicas,
+          CoordinatorReplicas.CoordinatorReplicas.of({
+            read: (projectId) => Effect.sync(() => Option.fromNullishOr(replicas.get(projectId))),
+            write: (projectId, replica) => Effect.sync(() => void replicas.set(projectId, replica)),
+          }),
+        ),
         Layer.succeed(ProjectionStore.ProjectionStoreV2, {
+          getThreadProjection: (threadId: ThreadId) =>
+            Effect.succeed({
+              runs: (runs.get(threadId) ?? []).map((run) => ({
+                id: run.id,
+                requestedAt: DateTime.makeUnsafe(run.requestedAt),
+                userMessageId: `message:${run.id}`,
+              })),
+              messages: (runs.get(threadId) ?? []).map((run) => ({
+                id: `message:${run.id}`,
+                text: run.text,
+              })),
+            }),
           getThreadShell: (threadId: ThreadId) =>
             Effect.succeed({
               id: threadId,
@@ -234,7 +259,19 @@ function machine(environment: string) {
     projectId: ProjectId.make(id),
     coordinatorThreadId: ThreadId.make(`project-coordinator:${id}`),
   });
-  return { environmentId, projects, notes: notesOf, busy, ownershipModes, run, fails, add, member };
+  return {
+    environmentId,
+    projects,
+    notes: notesOf,
+    busy,
+    ownershipModes,
+    runs,
+    replicas,
+    run,
+    fails,
+    add,
+    member,
+  };
 }
 
 /** Both copies of EasyChamp from before shared identities, as on the M4 and the M3. */
@@ -607,5 +644,189 @@ describe("ProjectLink", () => {
         )
       ).code,
     ).toBe("invalid");
+  });
+
+  describe("coordinator takeover", () => {
+    const takeoverId = "33333333-3333-4333-8333-333333333333";
+    /** M4 coordinates; the M3 copy runs workers and holds a replica of M4's notes. */
+    const linkedWithReplica = async () => {
+      const pair = legacyPair();
+      const { prepared } = await link(pair);
+      pair.m4.notes(pair.kept.projectId).set("decisions.md", { content: "Ship 2.0", revision: 3 });
+      const kept = pair.m4.projects.get(pair.kept.projectId)!;
+      pair.m4.projects.set(pair.kept.projectId, {
+        ...kept,
+        workspaceSettings: { ...kept.workspaceSettings!, goal: "Launch EasyChamp 2.0" },
+      });
+      const owner = await pair.m4.run((service) =>
+        service.preview({ projectId: pair.kept.projectId }),
+      );
+      const ownerDigest = await pair.m4.run((service) =>
+        service.digest({ projectId: pair.kept.projectId }),
+      );
+      const replica = {
+        from: pair.kept,
+        logicalProjectId: prepared.logicalProject.id,
+        digest: ownerDigest.digest,
+        replicatedAt: "2026-10-19T12:00:00.000Z",
+        goal: owner.goal,
+        instructions: owner.instructions,
+        notes: owner.notes,
+        notesTruncated: owner.notesTruncated,
+      };
+      return { pair, replica, ownerDigest };
+    };
+
+    it("keeps a replica of the coordinator's notes and starts a takeover from it", async () => {
+      const { pair, replica, ownerDigest } = await linkedWithReplica();
+      const first = await pair.m3.run((service) =>
+        service.replicate({ projectId: pair.joining.projectId, replica }),
+      );
+      expect(first.replayed).toBe(false);
+      const again = await pair.m3.run((service) =>
+        service.replicate({ projectId: pair.joining.projectId, replica }),
+      );
+      expect(again.replayed).toBe(true);
+      const held = await pair.m3.run((service) =>
+        service.digest({ projectId: pair.joining.projectId }),
+      );
+      expect(held.replica).toMatchObject({ from: pair.kept, digest: ownerDigest.digest });
+      // The member's own older note is kept beside the coordinator's version.
+      pair.m3
+        .notes(pair.joining.projectId)
+        .set("decisions.md", { content: "Old plan", revision: 1 });
+      const taken = await pair.m3.run((service) =>
+        service.takeover({ operationId: takeoverId, projectId: pair.joining.projectId }),
+      );
+      expect(taken.replayed).toBe(false);
+      expect(taken.notesWritten).toBe(2);
+      expect(taken.replicaFrom).toBe(first.replicatedAt);
+      expect(taken.coordinatorBinding).toMatchObject({
+        epoch: 1,
+        state: "active",
+        operationId: takeoverId,
+        predecessor: pair.kept,
+      });
+      expect(taken.coordinatorBinding.takenOverAt).toBeDefined();
+      const notes = pair.m3.notes(pair.joining.projectId);
+      expect(notes.get("decisions.md")?.content).toBe("Ship 2.0");
+      expect(notes.get("decisions-before-takeover.md")?.content).toBe("Old plan");
+      const joined = pair.m3.projects.get(pair.joining.projectId)!.workspaceSettings!;
+      expect(joined.goal).toBe("Launch EasyChamp 2.0");
+      expect(joined.logicalProject?.members).toEqual([pair.kept, pair.joining]);
+      expect(pair.m3.ownershipModes).toEqual(["join-as-member", "takeover"]);
+      const retried = await pair.m3.run((service) =>
+        service.takeover({ operationId: takeoverId, projectId: pair.joining.projectId }),
+      );
+      expect(retried.replayed).toBe(true);
+    });
+
+    it("demotes the returning coordinator and lists the turns it ran while disconnected", async () => {
+      const { pair } = await linkedWithReplica();
+      const taken = await pair.m3.run((service) =>
+        service.takeover({
+          operationId: takeoverId,
+          projectId: pair.joining.projectId,
+          knownEpoch: 4,
+        }),
+      );
+      expect(taken.coordinatorBinding.epoch).toBe(5);
+      pair.m4.runs.set(pair.kept.coordinatorThreadId, [
+        { id: "run-before", requestedAt: "2020-01-01T00:00:00.000Z", text: "Before the takeover" },
+        { id: "run-after", requestedAt: "2099-01-01T00:00:00.000Z", text: "Plan the release" },
+      ]);
+      const supersede = () =>
+        pair.m4.run((service) =>
+          service.supersede({
+            projectId: pair.kept.projectId,
+            logicalProjectId: taken.logicalProject.id,
+            successor: pair.joining,
+            coordinatorBinding: taken.coordinatorBinding,
+          }),
+        );
+      const demoted = await supersede();
+      expect(demoted.replayed).toBe(false);
+      expect(demoted.coordinatorBinding).toEqual({
+        epoch: 5,
+        state: "transferred",
+        operationId: takeoverId,
+        successor: pair.joining,
+        takenOverAt: taken.coordinatorBinding.takenOverAt,
+      });
+      expect(demoted.ranWhileDisconnected).toEqual([
+        {
+          threadId: pair.kept.coordinatorThreadId,
+          runId: "run-after",
+          requestedAt: "2099-01-01T00:00:00.000Z",
+          request: "Plan the release",
+        },
+      ]);
+      expect((await supersede()).replayed).toBe(true);
+      expect(pair.m4.ownershipModes).toEqual(["adopt-identity", "link-member", "superseded"]);
+      const preview = await pair.m4.run((service) =>
+        service.preview({ projectId: pair.kept.projectId }),
+      );
+      expect(preview.ranWhileDisconnected).toHaveLength(1);
+      expect(preview.keepRefusal).toBe("not_coordinator");
+    });
+
+    it("refuses takeovers and demotions that do not follow from the link", async () => {
+      const { pair, replica } = await linkedWithReplica();
+      expect(
+        (
+          await pair.m4.fails(
+            pair.m4.run((service) =>
+              service.takeover({ operationId: takeoverId, projectId: pair.kept.projectId }),
+            ),
+          )
+        ).code,
+      ).toBe("not_member");
+      expect(
+        (
+          await pair.m4.fails(
+            pair.m4.run((service) =>
+              service.replicate({ projectId: pair.kept.projectId, replica }),
+            ),
+          )
+        ).code,
+      ).toBe("not_member");
+      expect(
+        (
+          await pair.m3.fails(
+            pair.m3.run((service) =>
+              service.replicate({
+                projectId: pair.joining.projectId,
+                replica: { ...replica, goal: "Tampered" },
+              }),
+            ),
+          )
+        ).code,
+      ).toBe("invalid");
+      const taken = await pair.m3.run((service) =>
+        service.takeover({ operationId: takeoverId, projectId: pair.joining.projectId }),
+      );
+      const supersede = (coordinatorBinding: typeof taken.coordinatorBinding) =>
+        pair.m4.fails(
+          pair.m4.run((service) =>
+            service.supersede({
+              projectId: pair.kept.projectId,
+              logicalProjectId: taken.logicalProject.id,
+              successor: pair.joining,
+              coordinatorBinding,
+            }),
+          ),
+        );
+      // It names another coordinator as the one it replaced.
+      expect(
+        (await supersede({ ...taken.coordinatorBinding, predecessor: pair.joining })).code,
+      ).toBe("invalid");
+      // Not above the coordinator's own epoch.
+      expect((await supersede({ ...taken.coordinatorBinding, epoch: 0 })).code).toBe(
+        "superseded_conflict",
+      );
+      expect(
+        pair.m4.projects.get(pair.kept.projectId)!.workspaceSettings!.coordinatorBinding,
+      ).toEqual({ epoch: 0, state: "active" });
+    });
   });
 });

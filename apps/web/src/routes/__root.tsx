@@ -34,6 +34,7 @@ import { RunningThreadKeepAlive } from "../components/desktop/RunningThreadKeepA
 import { KeepAwakeWhileWorking } from "../components/desktop/KeepAwakeWhileWorking";
 import { ComputerUseHost } from "../components/desktop/ComputerUseHost";
 import { AutoConnectPrivateMachines } from "../components/AutoConnectPrivateMachines";
+import { CoordinatorSync } from "../components/studio/CoordinatorSync";
 import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
 import { LegacyThreadMigrationToast } from "../components/LegacyThreadMigrationToast";
 import { ThreadNotificationCoordinator } from "../components/ThreadNotificationCoordinator";
@@ -243,6 +244,7 @@ function RootRouteView() {
           {primaryEnvironmentAuthenticated ? <AuthenticatedTracingBootstrap /> : null}
           {primaryEnvironmentAuthenticated ? <DesktopAppActivationCoordinator /> : null}
           {primaryEnvironmentAuthenticated ? <AutoConnectPrivateMachines /> : null}
+          {primaryEnvironmentAuthenticated ? <CoordinatorSync /> : null}
           {isElectron ? <RunningThreadKeepAlive /> : null}
           <RelayClientInstallDialog />
           <ConnectOnboardingDialog />

@@ -9,6 +9,8 @@ const state = vi.hoisted(() => ({
   problems: {} as Record<string, string | null>,
   calls: [] as Array<{ tag: string; environmentId: string; input: Record<string, any> }>,
   dialog: null as Record<string, unknown> | null,
+  lastSeen: {} as Record<string, number>,
+  old: [] as string[],
 }));
 vi.mock("@specweave-studio/client-runtime/state/runtime", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@specweave-studio/client-runtime/state/runtime")>()),
@@ -27,8 +29,21 @@ vi.mock("../../state/use-atom-command", () => ({
               request.environmentId === "m3"
                 ? [{ name: "plan.md", revision: 1, content: "kept" }]
                 : [],
+            ranWhileDisconnected:
+              request.environmentId === "m3"
+                ? [
+                    {
+                      threadId: "project-coordinator:kept",
+                      runId: "run-1",
+                      requestedAt: "2026-10-19T12:20:00.000Z",
+                      request: "Ship the release notes",
+                    },
+                  ]
+                : [],
           },
         };
+      if (tag === "projectLink.takeover")
+        return { _tag: "Success", value: { replicaFrom: "2026-10-19T12:00:00.000Z" } };
       return { _tag: "Success", value: {} };
     },
 }));
@@ -42,7 +57,13 @@ vi.mock("./useLinkMachines", () => ({
     label: (id: string) => ({ m4: "M4", m3: "M3" })[id] ?? "Machine",
     state: (id: string) => (state.problems[id] ? "offline" : "ready"),
     problem: (id: string) => state.problems[id] ?? null,
+    connected: (id: string) => !state.problems[id],
+    takeoverReady: (id: string) => !state.problems[id] && !state.old.includes(id),
   }),
+}));
+vi.mock("../../lib/machineLastSeen", () => ({
+  machineLastSeenAt: (id: string) => state.lastSeen[id] ?? null,
+  useMachineLastSeenVersion: () => 0,
 }));
 vi.mock("./ProjectLinkDialog", () => ({
   ProjectLinkDialog: (props: Record<string, unknown>) => {
@@ -71,6 +92,7 @@ const copy = (
   id: string,
   logicalProject: ReturnType<typeof identity> | undefined,
   state?: "active" | "transferred",
+  binding: Record<string, unknown> = {},
 ) => ({
   environmentId,
   id,
@@ -79,7 +101,7 @@ const copy = (
   workspaceSettings: {
     kind: "code",
     ...(logicalProject ? { logicalProject } : {}),
-    ...(state ? { coordinatorBinding: { epoch: 0, state } } : {}),
+    ...(state ? { coordinatorBinding: { epoch: 0, state, ...binding } } : {}),
   },
 });
 const shared = identity("logical:1", [ref("m3", "kept"), ref("m4", "joined")]);
@@ -105,6 +127,8 @@ beforeEach(() => {
   state.problems = {};
   state.calls = [];
   state.dialog = null;
+  state.lastSeen = {};
+  state.old = [];
   localStorage.clear();
   container = document.createElement("div");
   document.body.append(container);
@@ -190,4 +214,78 @@ it("finishes a link whose coordinator did not list the joined copy", async () =>
     initialKept: "here",
     autoReview: true,
   });
+});
+
+const dialogButton = (label: string) =>
+  [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(
+    (node) => node.textContent?.trim() === label,
+  )!;
+
+it("offers a takeover only after the coordinator is away 10 minutes, with one confirmation", async () => {
+  state.problems = { m3: "Connect M3 first." };
+  state.lastSeen = { m3: Date.now() - 3 * 60_000 };
+  await render([kept, joined]);
+  expect(text()).toContain("M3 is unreachable. This copy can take over the coordinator in 7 min");
+  expect(button("Take over coordinator here").disabled).toBe(true);
+
+  state.lastSeen = { m3: Date.now() - 11 * 60_000 };
+  await render([kept, { ...joined }]);
+  expect(text()).toContain("M3 has been unreachable for 10 minutes or more.");
+  await click(button("Take over coordinator here"));
+  expect(text()).toContain("Take over the coordinator on M4?");
+  await click(dialogButton("Take over"));
+  const takeovers = state.calls.filter((call) => call.tag === "projectLink.takeover");
+  expect(takeovers).toEqual([
+    {
+      tag: "projectLink.takeover",
+      environmentId: "m4",
+      input: {
+        operationId: "7307ab55-fc59-4e07-abeb-de54be69215f",
+        projectId: "joined",
+        knownEpoch: 0,
+        predecessor: ref("m3", "kept"),
+      },
+    },
+  ]);
+  expect(text()).toContain("M4 now coordinates this project.");
+});
+
+it("keeps the takeover off while the coordinator is connected or this copy's app is old", async () => {
+  await render([kept, joined]);
+  expect(text()).not.toContain("Take over coordinator here");
+  state.problems = { m3: "Connect M3 first." };
+  state.lastSeen = { m3: Date.now() - 20 * 60_000 };
+  state.old = ["m4"];
+  await render([kept, { ...joined }]);
+  expect(button("Take over coordinator here").disabled).toBe(true);
+  expect(button("Take over coordinator here").title).toBe(
+    "Update SpecWithCode on M4 to take over.",
+  );
+});
+
+it("lists the turns a superseded coordinator ran while disconnected", async () => {
+  const takenOverAt = "2026-10-19T12:10:00.000Z";
+  const now = copy("m4", "joined", shared, "active", {
+    epoch: 1,
+    operationId: "op-1",
+    predecessor: ref("m3", "kept"),
+    takenOverAt,
+  });
+  const before = copy("m3", "kept", shared, "transferred", {
+    epoch: 1,
+    operationId: "op-1",
+    successor: ref("m4", "joined"),
+    takenOverAt,
+  });
+  state.projects = [before, now];
+  await render([before, now]);
+  expect(text()).toContain("M4 took over");
+  await click(button("Review turns"));
+  expect(state.calls.at(-1)).toMatchObject({
+    tag: "projectLink.preview",
+    environmentId: "m3",
+    input: { projectId: "kept" },
+  });
+  expect(text()).toContain("Turns M3 ran while disconnected");
+  expect(text()).toContain("Ship the release notes");
 });

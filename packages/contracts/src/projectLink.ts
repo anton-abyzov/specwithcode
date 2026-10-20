@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { IsoDateTime, NonNegativeInt, ProjectId } from "./baseSchemas.ts";
+import { IsoDateTime, NonNegativeInt, ProjectId, ThreadId } from "./baseSchemas.ts";
 import {
   LogicalProject,
   LogicalProjectMember,
@@ -129,6 +129,30 @@ export const ProjectLinkRefusal = Schema.Literals([
 ]);
 export type ProjectLinkRefusal = typeof ProjectLinkRefusal.Type;
 
+/** What a member keeps of its coordinator's notes, goal and instructions, read-only. */
+export const ProjectCoordinatorReplica = Schema.Struct({
+  from: LogicalProjectMember,
+  logicalProjectId: bounded(512),
+  /** `ProjectLinkDigest.digest` of the coordinator when it was copied. */
+  digest: bounded(128),
+  replicatedAt: IsoDateTime,
+  goal: bounded(PROJECT_GOAL_MAX_LENGTH),
+  instructions: bounded(PROJECT_INSTRUCTIONS_MAX_LENGTH),
+  notes: Schema.Array(ProjectLinkNote).check(Schema.isMaxLength(4096)),
+  notesTruncated: Schema.Boolean,
+});
+export type ProjectCoordinatorReplica = typeof ProjectCoordinatorReplica.Type;
+
+/** A coordinator turn the previous owner ran after a member took over. */
+export const ProjectDisconnectedTurn = Schema.Struct({
+  threadId: ThreadId,
+  runId: bounded(256),
+  requestedAt: IsoDateTime,
+  /** The start of the request, when it is still on this machine. */
+  request: Schema.NullOr(bounded(400)),
+});
+export type ProjectDisconnectedTurn = typeof ProjectDisconnectedTurn.Type;
+
 export const ProjectLinkPreviewInput = Schema.Struct({ projectId: ProjectId });
 export type ProjectLinkPreviewInput = typeof ProjectLinkPreviewInput.Type;
 /** One copy as linking sees it. Reading it changes nothing. */
@@ -149,6 +173,10 @@ export const ProjectLinkPreview = Schema.Struct({
   keepRefusal: Schema.NullOr(ProjectLinkRefusal),
   /** Null when this copy may join another as a member, otherwise why not. */
   joinRefusal: Schema.NullOr(ProjectLinkRefusal),
+  /** A member's read-only copy of its coordinator's notes, goal and instructions. */
+  replica: Schema.optional(Schema.NullOr(ProjectCoordinatorReplica)),
+  /** After a takeover: coordinator turns this copy ran while it was unreachable. */
+  ranWhileDisconnected: Schema.optional(Schema.Array(ProjectDisconnectedTurn)),
 });
 export type ProjectLinkPreview = typeof ProjectLinkPreview.Type;
 
@@ -243,6 +271,88 @@ export const ProjectUnlinkResult = Schema.Struct({
 });
 export type ProjectUnlinkResult = typeof ProjectUnlinkResult.Type;
 
+export const ProjectLinkDigestInput = Schema.Struct({ projectId: ProjectId });
+export type ProjectLinkDigestInput = typeof ProjectLinkDigestInput.Type;
+/**
+ * Cheap to poll: whether a coordinator's notes, goal and instructions changed,
+ * and which version of them a member holds.
+ */
+export const ProjectLinkDigest = Schema.Struct({
+  /** Of this copy's own notes, goal and instructions. */
+  digest: bounded(128),
+  /** The replica this copy holds of its coordinator, without its content. */
+  replica: Schema.NullOr(
+    Schema.Struct({
+      from: LogicalProjectMember,
+      digest: bounded(128),
+      replicatedAt: IsoDateTime,
+    }),
+  ),
+});
+export type ProjectLinkDigest = typeof ProjectLinkDigest.Type;
+
+/** Member machine: keep this copy of the coordinator's notes, goal and instructions. */
+export const ProjectLinkReplicateInput = Schema.Struct({
+  projectId: ProjectId,
+  replica: ProjectCoordinatorReplica,
+});
+export type ProjectLinkReplicateInput = typeof ProjectLinkReplicateInput.Type;
+export const ProjectLinkReplicateResult = Schema.Struct({
+  replicatedAt: IsoDateTime,
+  /** The same version was already held. */
+  replayed: Schema.Boolean,
+});
+export type ProjectLinkReplicateResult = typeof ProjectLinkReplicateResult.Type;
+
+/**
+ * Member machine, while the coordinator's machine is unreachable: make this copy
+ * the coordinator at the next epoch, with the old one as predecessor, starting
+ * from the replica of its notes, goal and instructions.
+ */
+export const ProjectTakeoverInput = Schema.Struct({
+  operationId: ProjectLinkOperationId,
+  projectId: ProjectId,
+  /** The highest epoch any copy is known at; the new one is above it. */
+  knownEpoch: Schema.optional(NonNegativeInt),
+  /**
+   * The coordinator being replaced, as the app last saw it. Defaults to the one
+   * this copy joined; it must be a listed member, so it can give way on return.
+   */
+  predecessor: Schema.optional(LogicalProjectMember),
+});
+export type ProjectTakeoverInput = typeof ProjectTakeoverInput.Type;
+export const ProjectTakeoverResult = Schema.Struct({
+  operationId: ProjectLinkOperationId,
+  logicalProject: LogicalProject,
+  coordinatorBinding: ProjectCoordinatorBinding,
+  /** Replica notes written into this copy. */
+  notesWritten: NonNegativeInt,
+  /** When the replica this copy started from was taken; null without one. */
+  replicaFrom: Schema.NullOr(IsoDateTime),
+  replayed: Schema.Boolean,
+});
+export type ProjectTakeoverResult = typeof ProjectTakeoverResult.Type;
+
+/**
+ * Previous coordinator's machine, once reachable again: give way to the member
+ * that took over. It becomes a member that runs workers.
+ */
+export const ProjectSupersedeInput = Schema.Struct({
+  projectId: ProjectId,
+  logicalProjectId: bounded(512),
+  successor: LogicalProjectMember,
+  /** The successor's active binding; its predecessor must be this copy. */
+  coordinatorBinding: ProjectCoordinatorBinding,
+});
+export type ProjectSupersedeInput = typeof ProjectSupersedeInput.Type;
+export const ProjectSupersedeResult = Schema.Struct({
+  coordinatorBinding: ProjectCoordinatorBinding,
+  /** Coordinator turns this copy ran after the takeover, to review. */
+  ranWhileDisconnected: Schema.Array(ProjectDisconnectedTurn).check(Schema.isMaxLength(200)),
+  replayed: Schema.Boolean,
+});
+export type ProjectSupersedeResult = typeof ProjectSupersedeResult.Type;
+
 export class ProjectLinkError extends Schema.TaggedError<ProjectLinkError>()("ProjectLinkError", {
   code: Schema.Literals([
     "not_found",
@@ -261,6 +371,8 @@ export class ProjectLinkError extends Schema.TaggedError<ProjectLinkError>()("Pr
     "conflict",
     "not_linked",
     "storage_failed",
+    "not_member",
+    "superseded_conflict",
   ]),
   /** Names what differs, such as the two root repositories. */
   detail: Schema.optional(bounded(1000)),
@@ -288,6 +400,10 @@ export class ProjectLinkError extends Schema.TaggedError<ProjectLinkError>()("Pr
       conflict: "The project changed while linking. Review the preview again and retry.",
       not_linked: "This copy is not linked with that project.",
       storage_failed: "The link could not be saved on this machine. Retry the same link.",
+      not_member:
+        "This copy does not run workers for another copy, so there is no coordinator to take over from.",
+      superseded_conflict:
+        "Another copy took over in a way this copy cannot confirm. Reload both machines and check which one coordinates.",
     };
     return this.detail ? `${messages[this.code]} ${this.detail}` : messages[this.code];
   }

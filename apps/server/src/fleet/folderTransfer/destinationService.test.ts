@@ -254,4 +254,69 @@ describe("Apply backups", () => {
     );
     await expect(copies.undo(operationId, false)).rejects.toThrow(/nothing to undo/);
   }, 120_000);
+  it("sends only the ticked secret files, privately, and Undo removes them", async () => {
+    const state = NodePath.join(base, "dest-state-secrets");
+    const copies = new DestinationCopies(state, fast);
+    const { operationId, token } = await offer();
+    const target = NodePath.join(base, "targets", "secrets");
+    await copies.start(startInput(operationId, token, target));
+    await settle(copies, operationId, ["previewed"]);
+    const offered = (await transfers.read(operationId))?.summary?.secretFiles ?? [];
+    expect(offered.map((file) => file.path)).toContain(".env");
+    await expect(
+      transfers.approveSecrets({ operationId, paths: ["README.md"], destinationLabel: "M3" }),
+    ).rejects.toMatchObject({ status: 400, code: "not_offered" });
+    const approved = await transfers.approveSecrets({
+      operationId,
+      paths: [".env"],
+      destinationLabel: "M3",
+    });
+    expect(approved.secrets?.files.map((file) => file.path)).toEqual([".env"]);
+    await copies.approve(operationId);
+    const applied = await settle(copies, operationId, ["applied", "failed"]);
+    expect(applied.error).toBeNull();
+    expect(applied.secrets).toEqual([
+      expect.objectContaining({ path: ".env", writtenAs: ".env", state: "written" }),
+    ]);
+    const env = NodePath.join(target, ".env");
+    expect(NodeFS.readFileSync(env, "utf8")).toBe("API_TOKEN=fixture-not-a-secret\n");
+    expect(NodeFS.statSync(env).mode & 0o777).toBe(0o600);
+    const sent = await transfers.sentSecrets.list("env-destination");
+    expect(sent.filter((entry) => entry.operationId === operationId)).toEqual([
+      expect.objectContaining({ path: ".env", destinationLabel: "M3", size: offered[0]!.size }),
+    ]);
+    const records = NodeFS.readFileSync(
+      NodePath.join(state, "folder-copies", operationId, "operation.json"),
+      "utf8",
+    );
+    expect(records).not.toContain("fixture-not-a-secret");
+    const undone = await copies.undo(operationId, false);
+    expect(undone.result).not.toBeNull();
+    expect(NodeFS.existsSync(env)).toBe(false);
+  }, 120_000);
+});
+
+describe("Backup expiry", () => {
+  it("keeps the files a forced Undo moved aside", async () => {
+    const state = NodePath.join(base, "dest-state-h");
+    let now = new Date("2026-10-20T12:00:00.000Z");
+    const copies = new DestinationCopies(state, { ...fast, now: () => now });
+    const { operationId, token } = await offer();
+    await copies.start(startInput(operationId, token, NodePath.join(base, "targets", "h")));
+    await settle(copies, operationId, ["previewed"]);
+    await copies.approve(operationId);
+    await settle(copies, operationId, ["applied"]);
+    const backups = NodePath.join(state, "folder-copies", operationId, "backups");
+    const keptEdit = NodePath.join(backups, "kept-edits", "notes.md");
+    const undoneClone = NodePath.join(backups, "undone-clones", "svc", "HEAD");
+    for (const file of [keptEdit, undoneClone]) {
+      NodeFS.mkdirSync(NodePath.dirname(file), { recursive: true });
+      NodeFS.writeFileSync(file, "mine\n");
+    }
+    now = new Date("2026-11-04T12:00:01.000Z");
+    expect(await copies.discardExpiredBackups()).toEqual([operationId]);
+    expect(NodeFS.readFileSync(keptEdit, "utf8")).toBe("mine\n");
+    expect(NodeFS.readFileSync(undoneClone, "utf8")).toBe("mine\n");
+    expect(NodeFS.existsSync(NodePath.join(backups, "files"))).toBe(false);
+  }, 120_000);
 });

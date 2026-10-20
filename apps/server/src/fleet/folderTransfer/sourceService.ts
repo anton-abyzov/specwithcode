@@ -23,6 +23,13 @@ import {
 } from "./manifest.ts";
 import { isSafeRelativePath } from "./paths.ts";
 import {
+  MAX_SECRET_FILE_BYTES,
+  type SecretApproval,
+  SecretStepError,
+  selectSecretFiles,
+  SentSecretsLedger,
+} from "./secrets.ts";
+import {
   mintTransferGrant,
   revokeTransferGrant,
   transferGrantExpiresAt,
@@ -80,6 +87,8 @@ export interface SourceOperationRecord {
   readonly progress: { readonly files: number; readonly bytes: number } | null;
   readonly error: string | null;
   readonly releaseReason: string | null;
+  /** Secret files the person ticked for this destination; absent until they approve any. */
+  readonly secrets?: SecretApproval | null;
 }
 
 export class SourceTransferError extends Error {
@@ -149,10 +158,12 @@ export class SourceTransfers {
   private readonly now: () => number;
 
   readonly stateRoot: string;
+  readonly sentSecrets: SentSecretsLedger;
   private readonly hooks: Hooks;
 
   constructor(stateRoot: string, hooks: Hooks = {}) {
     this.stateRoot = stateRoot;
+    this.sentSecrets = new SentSecretsLedger(stateRoot);
     this.hooks = hooks;
     this.now = hooks.now ?? (() => Date.now());
   }
@@ -534,6 +545,81 @@ export class SourceTransfers {
       result.push({ commit, present, ancestorOfHead });
     }
     return result;
+  }
+
+  /**
+   * Records the secret files the person ticked for this destination. Only files
+   * the scan classified as secret can be listed; an empty list withdraws them.
+   */
+  async approveSecrets(input: {
+    readonly operationId: string;
+    readonly paths: ReadonlyArray<string>;
+    readonly destinationLabel: string;
+  }): Promise<SourceOperationRecord> {
+    const loaded = await this.load(input.operationId);
+    if (!loaded) throw new SourceTransferError(404, "not_found");
+    if (TERMINAL.has(loaded.record.state)) throw new SourceTransferError(409, loaded.record.state);
+    if (!loaded.record.summary) throw new SourceTransferError(409, "scanning");
+    let files;
+    try {
+      files = selectSecretFiles(loaded.record.summary.secretFiles, input.paths);
+    } catch (cause) {
+      if (cause instanceof SecretStepError)
+        throw new SourceTransferError(400, cause.code, cause.message);
+      throw cause;
+    }
+    await this.save(loaded, {
+      secrets:
+        files.length === 0
+          ? null
+          : {
+              files,
+              approvedAt: this.now(),
+              destinationLabel: input.destinationLabel.slice(0, 200),
+            },
+    });
+    return loaded.record;
+  }
+
+  /** The secret files the destination may pull: paths and sizes only. */
+  secretList(loaded: Loaded) {
+    return { files: loaded.record.secrets?.files ?? [] };
+  }
+
+  /**
+   * Bytes of one approved secret file, read without following links. Each file
+   * served is recorded in the sent-secrets ledger (path and size, never content).
+   */
+  async secretFile(loaded: Loaded, path: string): Promise<Uint8Array> {
+    if (TERMINAL.has(loaded.record.state)) throw new SourceTransferError(409, loaded.record.state);
+    const approved = loaded.record.secrets?.files.find((file) => file.path === path);
+    if (!approved) throw new SourceTransferError(403, "not_approved");
+    let bytes: Buffer;
+    try {
+      const handle = await openInside(loaded.record.folder, path);
+      try {
+        const stat = await handle.stat();
+        if (!stat.isFile() || stat.size > MAX_SECRET_FILE_BYTES)
+          throw new SourceTransferError(409, "changed");
+        bytes = await handle.readFile();
+      } finally {
+        await handle.close();
+      }
+    } catch (cause) {
+      if (cause instanceof SourceTransferError) throw cause;
+      throw new SourceTransferError(409, "changed");
+    }
+    if (bytes.byteLength > MAX_SECRET_FILE_BYTES) throw new SourceTransferError(409, "changed");
+    await this.sentSecrets.record({
+      operationId: loaded.record.operationId,
+      destinationEnvironmentId: loaded.record.destinationEnvironmentId,
+      destinationLabel: loaded.record.secrets?.destinationLabel ?? "",
+      folder: loaded.record.folder,
+      path,
+      size: bytes.byteLength,
+      sentAt: new Date(this.now()).toISOString(),
+    });
+    return bytes;
   }
 
   /** The destination failed before Apply: unfence a moving coordinator and end the grant. */

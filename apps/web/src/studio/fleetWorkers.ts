@@ -147,3 +147,18 @@ export function fleetRemoveNotice(removed: StudioFleetRemoveResult): string {
     return `Removed ${removed.label} and revoked what this machine held there.`;
   return `Removed ${removed.label} here. ${removed.label} could not be reached, so this machine's ${kept.join(" and ")} there stays valid until it expires. On ${removed.label}, revoke it in Settings > Connections${removed.managementSessionId ? ` (session ${removed.managementSessionId})` : ""}.`;
 }
+
+/** Secret files a folder copy sent to a machine; names only, never contents. */
+export interface SentSecret {
+  readonly folder: string;
+  readonly path: string;
+  readonly sentAt: string;
+}
+
+/** Shown before and after removing a machine that received secret files. */
+export function sentSecretsWarning(sent: ReadonlyArray<SentSecret>, label: string): string | null {
+  if (sent.length === 0) return null;
+  const shown = sent.slice(0, 5).map((entry) => `${entry.folder}/${entry.path}`);
+  const more = sent.length > shown.length ? ` and ${sent.length - shown.length} more` : "";
+  return `A folder copy sent ${sent.length === 1 ? "a secret file" : `${sent.length} secret files`} to ${label}: ${shown.join(", ")}${more}. Rotate ${sent.length === 1 ? "it" : "them"} if ${label} should no longer hold ${sent.length === 1 ? "it" : "them"}.`;
+}

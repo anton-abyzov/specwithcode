@@ -263,7 +263,7 @@ export async function addFleetMachine(input: {
 export async function removeFleetMachine(input: {
   readonly baseDir: string;
   readonly machine: string;
-}): Promise<{ readonly id: string; readonly label: string }> {
+}): Promise<{ readonly id: string; readonly label: string; readonly environmentId: string }> {
   const source = await readFleetConfigSource(input.baseDir);
   if (source === null) throw new FleetJoinError("unknown-machine");
   parseFleetConfig(source);
@@ -280,7 +280,11 @@ export async function removeFleetMachine(input: {
     ...document,
     machines: document.machines.filter((machine) => machine !== found),
   });
-  return { id: String(found.id), label: String(found.label) };
+  return {
+    id: String(found.id),
+    label: String(found.label),
+    environmentId: String(found.environmentId),
+  };
 }
 
 /** What removing a machine did there: revoked, still valid there, or nothing was held. */
@@ -289,6 +293,7 @@ export type FleetRemoteRevoke = "revoked" | "kept" | "none";
 export interface FleetRemoveResult {
   readonly id: string;
   readonly label: string;
+  readonly environmentId: string;
   readonly managementToken: FleetRemoteRevoke;
   readonly workerAccess: FleetRemoteRevoke;
   /** The management token's session there, for revoking it on that machine when kept. */

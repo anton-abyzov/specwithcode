@@ -1,7 +1,12 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
-import type { ProjectLinkNoteWrite } from "@specweave-studio/contracts";
+import type {
+  EnvironmentId,
+  ProjectDisconnectedTurn,
+  ProjectLinkNoteWrite,
+} from "@specweave-studio/contracts";
+import { machineLastSeenAt, useMachineLastSeenVersion } from "../../lib/machineLastSeen";
 import { useProjects } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -9,11 +14,14 @@ import { randomUUID } from "../../lib/utils";
 import { logicalCoordinator } from "../../studio/projectDomain";
 import {
   departedMembers,
+  highestEpoch,
   linkedCopies,
   linkMemberOf,
+  pendingSupersedes,
   projectLink,
   projectLinkStorageKey,
   readPendingOperation,
+  takeoverAvailability,
   unlinkNoteWrites,
   writePendingOperation,
   type LinkedCopy,
@@ -43,6 +51,33 @@ const ROLE_TEXT: Record<LinkedCopy["role"], string> = {
 const failureMessage = (cause: unknown, fallback: string) =>
   cause instanceof Error && cause.message ? cause.message : fallback;
 
+const formatTime = (value: string) =>
+  new Date(value).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+
+/** When this page first found a machine gone that this device never saw connected. */
+const firstSeenGone = new Map<string, number>();
+
+/** Since when the coordinator's machine has been unreachable from this device, or null. */
+export function unreachableSince(
+  environmentId: EnvironmentId,
+  connected: boolean,
+  now: number,
+): number | null {
+  if (connected) {
+    firstSeenGone.delete(environmentId);
+    return null;
+  }
+  const lastSeen = machineLastSeenAt(environmentId);
+  if (lastSeen !== null) return lastSeen;
+  if (!firstSeenGone.has(environmentId)) firstSeenGone.set(environmentId, now);
+  return firstSeenGone.get(environmentId)!;
+}
+
 /**
  * Settings > Project > Machines: every machine's copy of this project, what it
  * does, and the link and unlink actions. Copies of a shared project are listed by
@@ -58,6 +93,19 @@ export function ProjectMachinesSettings({
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const preview = useAtomCommand(projectLink.preview, { reportFailure: false });
   const unlink = useAtomCommand(projectLink.unlink, { reportFailure: false });
+  const takeover = useAtomCommand(projectLink.takeover, { reportFailure: false });
+  const [takeoverOf, setTakeoverOf] = useState<EnvironmentProject | null>(null);
+  const [review, setReview] = useState<{
+    readonly machine: string;
+    readonly turns: ReadonlyArray<ProjectDisconnectedTurn>;
+  } | null>(null);
+  // The 10-minute wait counts down while the page is open.
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(timer);
+  }, []);
+  useMachineLastSeenVersion();
   const [dialog, setDialog] = useState<{
     readonly project: EnvironmentProject;
     readonly candidate: ProjectLinkTarget | null;
@@ -85,6 +133,81 @@ export function ProjectMachinesSettings({
     members.find(ready) ??
     members[0];
   const coordinatorLabel = coordinator ? machines.label(coordinator.environmentId) : null;
+  const coordinatorConnected = coordinator ? machines.connected(coordinator.environmentId) : true;
+  // Null while the coordinator is connected: nothing to take over.
+  const availability =
+    coordinator && !coordinatorConnected
+      ? takeoverAvailability({
+          coordinatorConnected,
+          unreachableSince: unreachableSince(coordinator.environmentId, false, now),
+          now,
+        })
+      : null;
+  if (coordinator && coordinatorConnected) unreachableSince(coordinator.environmentId, true, now);
+  const givingWay = pendingSupersedes(shared);
+
+  const takeOver = async (member: EnvironmentProject) => {
+    if (running.current || !coordinator) return;
+    running.current = true;
+    setBusy(true);
+    setMessage(null);
+    const memberLabel = machines.label(member.environmentId);
+    const previousLabel = machines.label(coordinator.environmentId);
+    try {
+      const result = await takeover({
+        environmentId: member.environmentId,
+        input: {
+          operationId: randomUUID(),
+          projectId: member.id,
+          knownEpoch: highestEpoch(shared),
+          predecessor: linkMemberOf(coordinator),
+        },
+      });
+      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+      setMessage({
+        text: `${memberLabel} now coordinates this project. ${
+          result.value.replicaFrom
+            ? `It starts from ${previousLabel}'s notes, goal and instructions as copied ${formatTime(result.value.replicaFrom)}.`
+            : `No copy of ${previousLabel}'s notes reached it, so it starts from its own.`
+        } When ${previousLabel} is back, it gives way and lists any coordinator turns it ran meanwhile.`,
+        error: false,
+      });
+    } catch (cause) {
+      setMessage({
+        text: failureMessage(cause, "Take over did not finish. Retry it."),
+        error: true,
+      });
+    } finally {
+      running.current = false;
+      setBusy(false);
+      setTakeoverOf(null);
+    }
+  };
+
+  const reviewTurns = async (member: EnvironmentProject) => {
+    if (running.current) return;
+    running.current = true;
+    setBusy(true);
+    try {
+      const read = await preview({
+        environmentId: member.environmentId,
+        input: { projectId: member.id },
+      });
+      if (read._tag === "Failure") throw squashAtomCommandFailure(read);
+      setReview({
+        machine: machines.label(member.environmentId),
+        turns: read.value.ranWhileDisconnected ?? [],
+      });
+    } catch (cause) {
+      setMessage({
+        text: failureMessage(cause, "Could not read those turns. Retry."),
+        error: true,
+      });
+    } finally {
+      running.current = false;
+      setBusy(false);
+    }
+  };
 
   const unlinkMember = async (member: EnvironmentProject) => {
     if (running.current || !coordinator) return;
@@ -200,6 +323,18 @@ export function ProjectMachinesSettings({
                     coordinator can send it work.
                   </span>
                 )}
+                <TakeoverNote
+                  copy={copy}
+                  coordinatorLabel={coordinatorLabel}
+                  availability={availability}
+                  givingWayTo={
+                    givingWay.find((pending) => pending.previous === copy.project)?.successor
+                  }
+                  tookOverFrom={
+                    givingWay.find((pending) => pending.successor === copy.project)?.previous
+                  }
+                  label={machines.label}
+                />
               </>
             }
             control={
@@ -225,16 +360,49 @@ export function ProjectMachinesSettings({
                   Finish linking
                 </Button>
               ) : copy.role === "workers" ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={busy || problem !== null}
-                  title={problem ?? undefined}
-                  onClick={() => setConfirm(copy.project)}
-                  aria-label={`Unlink the copy on ${label}`}
-                >
-                  Unlink
-                </Button>
+                <div className="flex flex-wrap justify-end gap-2">
+                  {copy.project.workspaceSettings?.coordinatorBinding?.takenOverAt ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={busy || problem !== null}
+                      title={problem ?? undefined}
+                      onClick={() => void reviewTurns(copy.project)}
+                    >
+                      Review turns
+                    </Button>
+                  ) : null}
+                  {availability ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={
+                        busy ||
+                        !availability.available ||
+                        !machines.takeoverReady(copy.project.environmentId)
+                      }
+                      title={
+                        problem ??
+                        (machines.takeoverReady(copy.project.environmentId)
+                          ? undefined
+                          : `Update SpecWithCode on ${label} to take over.`)
+                      }
+                      onClick={() => setTakeoverOf(copy.project)}
+                    >
+                      Take over coordinator here
+                    </Button>
+                  ) : null}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy || problem !== null}
+                    title={problem ?? undefined}
+                    onClick={() => setConfirm(copy.project)}
+                    aria-label={`Unlink the copy on ${label}`}
+                  >
+                    Unlink
+                  </Button>
+                </div>
               ) : null
             }
           />
@@ -322,6 +490,120 @@ export function ProjectMachinesSettings({
           </DialogFooter>
         </DialogPopup>
       </Dialog>
+      <Dialog
+        open={takeoverOf !== null}
+        onOpenChange={(open) => !open && !busy && setTakeoverOf(null)}
+      >
+        <DialogPopup showCloseButton={!busy} className="w-full sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              Take over the coordinator on{" "}
+              {takeoverOf ? machines.label(takeoverOf.environmentId) : ""}?
+            </DialogTitle>
+            <DialogDescription>
+              {coordinatorLabel} has been unreachable for at least 10 minutes. This copy becomes the
+              coordinator, starting from the notes, goal and instructions last copied from{" "}
+              {coordinatorLabel}. When {coordinatorLabel} is back it stops coordinating and lists
+              any coordinator turns it ran meanwhile for you to review. Nothing is merged on its
+              own; code stays in git on each machine.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel />
+          <DialogFooter>
+            <Button variant="outline" disabled={busy} onClick={() => setTakeoverOf(null)}>
+              Cancel
+            </Button>
+            <Button disabled={busy} onClick={() => takeoverOf && void takeOver(takeoverOf)}>
+              {busy ? "Taking over…" : "Take over"}
+            </Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
+      <Dialog open={review !== null} onOpenChange={(open) => !open && setReview(null)}>
+        <DialogPopup className="w-full sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Turns {review?.machine} ran while disconnected</DialogTitle>
+            <DialogDescription>
+              {review?.turns.length
+                ? `Coordinator turns ${review.machine} started after another copy took over. Check whether any work needs to move to the current coordinator.`
+                : `${review?.machine ?? "That copy"} ran no coordinator turns after the takeover.`}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel>
+            {review?.turns.length ? (
+              <ul className="space-y-2 text-sm" aria-label="Turns ran while disconnected">
+                {review.turns.map((turn) => (
+                  <li key={turn.runId} className="min-w-0">
+                    <span className="block text-xs text-muted-foreground">
+                      {formatTime(turn.requestedAt)}
+                    </span>
+                    <span className="block truncate">
+                      {turn.request ?? "The request is no longer on that machine."}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </DialogPanel>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReview(null)}>
+              Done
+            </Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
     </SettingsSection>
+  );
+}
+
+/** What a takeover means for one copy's row, if anything. */
+function TakeoverNote({
+  copy,
+  coordinatorLabel,
+  availability,
+  givingWayTo,
+  tookOverFrom,
+  label,
+}: {
+  copy: LinkedCopy;
+  coordinatorLabel: string | null;
+  availability: { readonly available: boolean; readonly waitMs: number } | null;
+  givingWayTo: EnvironmentProject | undefined;
+  tookOverFrom: EnvironmentProject | undefined;
+  label: (environmentId: EnvironmentId) => string;
+}) {
+  const binding = copy.project.workspaceSettings?.coordinatorBinding;
+  if (givingWayTo)
+    return (
+      <span className="block">
+        {label(givingWayTo.environmentId)} took over while this machine was unreachable. It gives
+        way when both machines are reachable from this app.
+      </span>
+    );
+  if (tookOverFrom && binding?.takenOverAt)
+    return (
+      <span className="block">
+        Took over from {label(tookOverFrom.environmentId)} {formatTime(binding.takenOverAt)}.{" "}
+        {label(tookOverFrom.environmentId)} gives way when it is reachable again.
+      </span>
+    );
+  if (copy.role === "workers" && binding?.takenOverAt && binding.successor)
+    return (
+      <span className="block">
+        {label(binding.successor.environmentId)} took over {formatTime(binding.takenOverAt)}. Review
+        the coordinator turns this copy ran after that.
+      </span>
+    );
+  if (copy.role !== "workers" || !availability || !coordinatorLabel) return null;
+  return availability.available ? (
+    <span className="block">
+      {coordinatorLabel} has been unreachable for 10 minutes or more. This copy can take over the
+      coordinator.
+    </span>
+  ) : (
+    <span className="block">
+      {coordinatorLabel} is unreachable. This copy can take over the coordinator in{" "}
+      {Math.max(1, Math.ceil(availability.waitMs / 60_000))} min if it stays away.
+    </span>
   );
 }

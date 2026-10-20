@@ -4,6 +4,7 @@ import {
   FolderCopyError,
   type FolderCopyOffer,
   type FolderCopyRow,
+  type FolderCopySentSecrets,
   type FolderCopySourceStatus,
   type FolderCopyStatus,
   type FolderCopyUndoResult,
@@ -19,6 +20,7 @@ import {
   type SourceOperationRecord,
   type SourceSummary,
 } from "./folderTransfer/sourceService.ts";
+import type { SentSecret } from "./folderTransfer/secrets.ts";
 import type { UndoPreview, UndoResult } from "./folderTransfer/undo.ts";
 import { handoffRef, safeRelativePath } from "./handoffGitTypes.ts";
 
@@ -48,6 +50,8 @@ export function folderCopyError(cause: unknown): FolderCopyError {
         code: "invalid",
         detail: "This copy was offered for a different project or machine.",
       });
+    if (cause.status === 400)
+      return new FolderCopyError({ code: "invalid", detail: text(cause.message, 3000) });
     if (cause.status === 409)
       return new FolderCopyError({ code: "refused", detail: `The copy is ${cause.code}.` });
     return new FolderCopyError({ code: "copy_failed", detail: text(cause.code, 200) });
@@ -88,6 +92,20 @@ export function sourceStatus(record: SourceOperationRecord): FolderCopySourceSta
       : null,
     error: record.error === null ? null : text(record.error, 2000),
     releaseReason: record.releaseReason === null ? null : text(record.releaseReason, 500),
+    ...(record.secrets !== undefined
+      ? {
+          secrets: record.secrets
+            ? {
+                files: record.secrets.files.map((file) => ({
+                  path: text(file.path, 4096),
+                  size: file.size,
+                })),
+                approvedAt: record.secrets.approvedAt,
+                destinationLabel: text(record.secrets.destinationLabel, 200),
+              }
+            : null,
+        }
+      : {}),
   };
 }
 
@@ -148,8 +166,32 @@ export function copyStatus(record: DestinationRecord, plan: Plan | null): Folder
     committed: record.committed,
     projectId: record.projectId === null ? null : ProjectId.make(record.projectId),
     ...(record.backupsDiscardedAt ? { backupsDiscardedAt: record.backupsDiscardedAt } : {}),
+    ...(record.secrets
+      ? {
+          secrets: record.secrets.map((file) => ({
+            path: text(file.path, 4096),
+            writtenAs: text(file.writtenAs, 4200),
+            size: file.size,
+            state: file.state,
+          })),
+        }
+      : {}),
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
+  };
+}
+
+export function sentSecretsResult(entries: ReadonlyArray<SentSecret>): FolderCopySentSecrets {
+  return {
+    entries: entries.slice(-2000).map((entry) => ({
+      operationId: entry.operationId,
+      destinationEnvironmentId: text(entry.destinationEnvironmentId, 200),
+      destinationLabel: text(entry.destinationLabel, 200),
+      folder: text(entry.folder, 4096),
+      path: text(entry.path, 4096),
+      size: entry.size,
+      sentAt: text(entry.sentAt, 64),
+    })),
   };
 }
 

@@ -34,6 +34,11 @@ import {
   type FolderCopyStatus,
   type FolderCopyUndoInput,
   type FolderCopyUndoResult,
+  type FolderCopySecretsInput,
+  type FolderCopySentSecrets,
+  type FolderCopySentSecretsInput,
+  type MachineReadiness,
+  type MachineReadinessInput,
 } from "@specweave-studio/contracts";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import * as ServerSettings from "../serverSettings.ts";
@@ -68,9 +73,11 @@ import {
   folderCopyError,
   folderCopyManifestRepositories,
   offerResult,
+  sentSecretsResult,
   sourceStatus,
   undoResult,
 } from "./FolderCopyHandoff.ts";
+import { checkMachineReadiness } from "./MachineReadiness.ts";
 import { DestinationCopies, type DestinationRecord } from "./folderTransfer/destinationService.ts";
 import {
   handleSourceRequest,
@@ -213,6 +220,18 @@ export class MachineHandoff extends Context.Service<
     readonly copyCancel: (
       input: FolderCopyCancelInput,
     ) => Effect.Effect<FolderCopyStatus, FolderCopyError>;
+    /** Source: records the secret files the person ticked for the destination. */
+    readonly copySecrets: (
+      input: FolderCopySecretsInput,
+    ) => Effect.Effect<FolderCopySourceStatus, FolderCopyError>;
+    /** Which secret files this machine sent to other machines: paths and times only. */
+    readonly sentSecrets: (
+      input: FolderCopySentSecretsInput,
+    ) => Effect.Effect<FolderCopySentSecrets, FolderCopyError>;
+    /** What this machine still needs (GitHub, origin access, tools) to run a project. */
+    readonly readiness: (
+      input: MachineReadinessInput,
+    ) => Effect.Effect<MachineReadiness, FolderCopyError>;
     /** Serves one request on the source's folder transfer endpoint. */
     readonly serveFolderTransfer: (request: RawRequest) => Effect.Effect<RawResponse>;
   }
@@ -646,6 +665,37 @@ const make = Effect.gen(function* () {
       }
       const undone = yield* attempt(() => copies.undo(input.operationId, input.force));
       return undoResult(yield* destinationStatus(undone.record), undone.preview, undone.result);
+    });
+  const copySecrets: MachineHandoff["Service"]["copySecrets"] = (input) =>
+    attempt(() =>
+      sources.approveSecrets({
+        operationId: input.operationId,
+        paths: input.paths,
+        destinationLabel: input.destinationLabel,
+      }),
+    ).pipe(Effect.map(sourceStatus));
+  const sentSecrets: MachineHandoff["Service"]["sentSecrets"] = (input) =>
+    attempt(() => sources.sentSecrets.list(input.destinationEnvironmentId)).pipe(
+      Effect.map((entries) => sentSecretsResult(entries)),
+    );
+  const readiness: MachineHandoff["Service"]["readiness"] = (input) =>
+    Effect.gen(function* () {
+      const found =
+        input.projectId === undefined
+          ? Option.none()
+          : yield* projects.getById(input.projectId).pipe(Effect.orElseSucceed(Option.none));
+      if (input.projectId !== undefined && Option.isNone(found))
+        return yield* new FolderCopyError({ code: "not_found" });
+      const current = Option.getOrUndefined(found);
+      return yield* attempt(() =>
+        checkMachineReadiness({
+          folder: current?.workspaceRoot ?? null,
+          scripts: (current?.scripts ?? []).map((script) => ({
+            name: script.name,
+            command: script.command,
+          })),
+        }),
+      );
     });
   const serveFolderTransfer: MachineHandoff["Service"]["serveFolderTransfer"] = (request) =>
     Effect.flatMap(environment.getEnvironmentId, (environmentId) =>
@@ -1445,6 +1495,9 @@ const make = Effect.gen(function* () {
     copyRetry,
     copyUndo,
     copyCancel,
+    copySecrets,
+    sentSecrets,
+    readiness,
     serveFolderTransfer,
   });
 });
@@ -1466,6 +1519,9 @@ export const layerRpcHandlers = WsFolderCopyRpcGroup.middleware(RpcInstrumentati
       [WS_METHODS.machineHandoffCopyRetry]: handoff.copyRetry,
       [WS_METHODS.machineHandoffCopyUndo]: handoff.copyUndo,
       [WS_METHODS.machineHandoffCopyCancel]: handoff.copyCancel,
+      [WS_METHODS.machineHandoffCopySecrets]: handoff.copySecrets,
+      [WS_METHODS.machineHandoffSentSecrets]: handoff.sentSecrets,
+      [WS_METHODS.machineHandoffReadiness]: handoff.readiness,
     };
   }),
 );

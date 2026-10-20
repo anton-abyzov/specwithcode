@@ -26,6 +26,7 @@ import { FetchHttpClient } from "effect/http";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import { resolveBaseDir } from "../os-jank.ts";
+import { secretsSentTo } from "../fleet/folderTransfer/secretsReport.ts";
 import { discoverFleet, FleetError, readFleetConfig } from "../studioFleet.ts";
 import {
   addFleetMachine,
@@ -251,6 +252,15 @@ const removeCommand = Command.make("remove", {
         catch: fleetFailure,
       });
       yield* Console.log(`${fleetRemoveSummary(removed, cliName())}\n`);
+      const sent = yield* Effect.promise(() => secretsSentTo(baseDir, removed.environmentId));
+      if (sent.length > 0)
+        yield* Console.log(
+          [
+            `Rotate these secrets if ${removed.label} is no longer trusted. This machine sent them there during a folder copy:`,
+            ...sent.map((entry) => `  ${entry.folder}/${entry.path}\t${entry.sentAt}`),
+            "",
+          ].join("\n"),
+        );
     }).pipe(Effect.provide(FetchHttpClient.layer)),
   ),
 );

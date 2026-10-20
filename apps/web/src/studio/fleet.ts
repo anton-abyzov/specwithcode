@@ -66,9 +66,11 @@ const fleetAtom = Atom.family((environmentId: EnvironmentId) =>
     })
     .pipe(Atom.setIdleTTL(30_000), Atom.withLabel(`studio-fleet:${environmentId}`)),
 );
-const workGrantsAtom = Atom.family((environmentId: EnvironmentId) =>
+// Null stands for "no primary machine yet", so pages can call the hook unconditionally.
+const workGrantsAtom = Atom.family((environmentId: EnvironmentId | null) =>
   connectionAtomRuntime
     .atom((get) => {
+      if (environmentId === null) return Effect.succeed(null);
       const presentation = get(environmentPresentations.presentationAtom(environmentId));
       const session = get(environmentSession.sessionStateAtom(environmentId));
       const grant = Option.getOrNull(AsyncResult.value(session));
@@ -417,7 +419,7 @@ export async function signInStudioFleetTailscale(
  * "Who can run work on this Mac": coordinator machines with a grant on this
  * server's machine. Servers from before scoped grants answer with nothing.
  */
-export function useMachineWorkGrants(environmentId: EnvironmentId) {
+export function useMachineWorkGrants(environmentId: EnvironmentId | null) {
   const result = useAtomValue(workGrantsAtom(environmentId));
   return {
     snapshot: Option.getOrNull(AsyncResult.value(result)),

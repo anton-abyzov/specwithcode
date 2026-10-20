@@ -7,11 +7,14 @@ import {
 import type {
   StudioFleetMachine,
   StudioFleetSnapshot,
+  StudioWorkGrant,
+  StudioWorkGrantsSnapshot,
 } from "@specweave-studio/contracts/studioFleet";
 
 import { fleetMachineSaved } from "../../studio/fleetAutoConnect";
 import { fleetWorkersView } from "../../studio/fleetWorkers";
 import type { HostLimitBlock } from "../../studio/hostLimitsModel";
+import { workGrantProjectsSummary, workGrantStatus } from "./machineWorkGrants.logic";
 import { isShareablePairingUrl } from "./pairingUrls";
 
 /**
@@ -75,6 +78,13 @@ export interface MachineWorkerGrant {
   readonly detail: string;
 }
 
+/** What a machine may run on this one, from this machine's own grant to it. */
+export interface MachineWorkHere {
+  readonly status: StudioWorkGrant["status"];
+  readonly label: string;
+  readonly detail: string;
+}
+
 export interface MachineConnectAction {
   readonly enabled: boolean;
   readonly label: string;
@@ -91,6 +101,8 @@ export interface MachineRowModel {
   readonly connect: MachineConnectAction | null;
   /** Workers this server may start there; null when it is not one of its private machines. */
   readonly workers: MachineWorkerGrant | null;
+  /** Work that machine may start here; null when it holds no grant from this machine. */
+  readonly workHere: MachineWorkHere | null;
   readonly sharedProjects: readonly MachineSharedProject[];
   /** Null when this app cannot see the machine, so its sign-ins are unknown. */
   readonly accounts: readonly MachineAccount[] | null;
@@ -126,6 +138,27 @@ function workerGrant(machine: StudioFleetMachine): MachineWorkerGrant | null {
   if (workers.status === "expiring")
     return { status: "expiring", label: "Workers expiring", detail };
   return { status: "not-allowed", label: "Workers not allowed", detail };
+}
+
+const WORK_HERE_LABELS: Readonly<Record<StudioWorkGrant["status"], string>> = {
+  active: "May run work here",
+  revoked: "Revoked",
+  expired: "Expired",
+};
+
+function workHereFor(
+  environmentId: EnvironmentId,
+  grants: StudioWorkGrantsSnapshot | null | undefined,
+): MachineWorkHere | null {
+  const grant = grants?.grants.find(
+    (candidate) => candidate.coordinatorEnvironmentId === environmentId,
+  );
+  if (!grant || !grants) return null;
+  return {
+    status: grant.status,
+    label: WORK_HERE_LABELS[grant.status],
+    detail: `${workGrantProjectsSummary(grant, grants.projects)} · ${workGrantStatus(grant)}`,
+  };
 }
 
 /** Connect for a private machine, or why it cannot be pressed yet. */
@@ -204,6 +237,8 @@ export function buildMachineRows(input: {
   readonly canPair: boolean;
   readonly projects: readonly MachineProjectInput[];
   readonly hostBlocks: readonly Pick<HostLimitBlock, "environmentId" | "providers">[];
+  /** This machine's grants to coordinator machines, when its server lists them. */
+  readonly workGrants?: StudioWorkGrantsSnapshot | null;
 }): MachineRowModel[] {
   const fleetMachines = input.fleet?.machines ?? [];
   const fleetByEnvironment = new Map(
@@ -242,6 +277,7 @@ export function buildMachineRows(input: {
           ? fleetConnectAction(fleetMachine, input.canPair)
           : null,
       workers: fleetMachine ? workerGrant(fleetMachine) : null,
+      workHere: isThisMachine ? null : workHereFor(environment.environmentId, input.workGrants),
       sharedProjects: sharedProjectsOn(environment.environmentId, true, input.projects),
       accounts: accountsOn(environment.environmentId, input.hostBlocks),
       connectBothWays: fleetMachine !== null && connected,
@@ -260,6 +296,7 @@ export function buildMachineRows(input: {
       fleetMachine: machine,
       connect: fleetConnectAction(machine, input.canPair),
       workers: workerGrant(machine),
+      workHere: workHereFor(machine.environmentId, input.workGrants),
       sharedProjects: sharedProjectsOn(machine.environmentId, false, input.projects),
       accounts: null,
       connectBothWays: false,

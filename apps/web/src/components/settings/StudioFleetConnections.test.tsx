@@ -38,6 +38,7 @@ vi.mock("../../studio/fleet", () => ({
   }),
 }));
 vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
+vi.mock("./MachineReadinessChecklist", () => ({ MachineReadinessChecklist: () => null }));
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({ environments: runtime.environments }),
 }));
@@ -56,6 +57,7 @@ vi.mock("../../lib/machineLastSeen", () => ({
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => runtime.connect }));
 vi.mock("../../connection/onboarding", () => ({ connectPairing: {} }));
+vi.mock("../../studio/machineHandoff", () => ({ machineHandoff: { sentSecrets: {} } }));
 vi.mock("./settingsLayout", () => ({ SettingsRow: () => null, SettingsSection: () => null }));
 import {
   FleetWorkersRow,

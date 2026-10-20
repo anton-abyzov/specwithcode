@@ -44,7 +44,9 @@ export type ProjectOwnershipMode =
   | "link-member"
   | "join-as-member"
   | "remove-member"
-  | "unlink";
+  | "unlink"
+  | "takeover"
+  | "superseded";
 
 export interface ProjectOwnershipUpdate {
   readonly mode: ProjectOwnershipMode;
@@ -414,6 +416,51 @@ export function ownershipRejection(
       )
         return "An unlinked project starts its own coordinator at epoch 0.";
       return undefined;
+    case "takeover": {
+      if (old?.state !== "transferred" || old.successor === undefined)
+        return "Only a member that runs workers for another copy can take over its coordinator.";
+      if (!keepsIdentity()) return "Taking over keeps the shared identity as it is.";
+      if (
+        !includesAll(incoming.members, identity!.members) ||
+        !includesAll(identity!.members, incoming.members) ||
+        !selfEntries[0]
+      )
+        return "Taking over keeps every member listed as it is.";
+      if (
+        next.state !== "active" ||
+        next.epoch <= old.epoch ||
+        next.operationId === undefined ||
+        next.takenOverAt === undefined ||
+        next.successor !== undefined ||
+        next.predecessor === undefined ||
+        memberRef(next.predecessor) === memberRef(selfEntries[0]) ||
+        !incoming.members.some((member) => memberRef(member) === memberRef(next.predecessor!))
+      )
+        return "A takeover becomes the active coordinator at a higher epoch, after a listed coordinator it replaces.";
+      return undefined;
+    }
+    case "superseded": {
+      const current = old ?? ACTIVE_LEGACY_BINDING;
+      if (current.state !== "active")
+        return "Only the active coordinator can give way to a member that took over.";
+      if (!keepsIdentity()) return "Giving way keeps the shared identity as it is.";
+      if (!sameRecord(incoming.members, identity!.members))
+        return "Giving way keeps every member listed as it is.";
+      const self = selfEntries[0];
+      if (
+        next.state !== "transferred" ||
+        next.epoch <= current.epoch ||
+        next.operationId === undefined ||
+        next.takenOverAt === undefined ||
+        next.predecessor !== undefined ||
+        next.successor === undefined ||
+        !self ||
+        memberRef(next.successor) === memberRef(self) ||
+        !incoming.members.some((member) => memberRef(member) === memberRef(next.successor!))
+      )
+        return "A coordinator gives way only to a listed member that took over at a higher epoch.";
+      return undefined;
+    }
   }
 }
 

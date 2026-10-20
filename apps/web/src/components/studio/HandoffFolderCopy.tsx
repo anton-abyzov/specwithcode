@@ -27,6 +27,8 @@ import {
 } from "../../studio/folderCopy";
 import { randomUUID } from "../../lib/utils";
 import { Button } from "../ui/button";
+import { MachineReadinessChecklist } from "../settings/MachineReadinessChecklist";
+import { HandoffSecretsStep } from "./HandoffSecretsStep";
 import { Input } from "../ui/input";
 import { Radio, RadioGroup } from "../ui/radio-group";
 import {
@@ -142,6 +144,7 @@ export function HandoffFolderCopy({
   const retry = useAtomCommand(machineHandoff.copyRetry, { reportFailure: false });
   const cancel = useAtomCommand(machineHandoff.copyCancel, { reportFailure: false });
   const undo = useAtomCommand(machineHandoff.copyUndo, { reportFailure: false });
+  const sendSecrets = useAtomCommand(machineHandoff.copySecrets, { reportFailure: false });
   const prepare = useAtomCommand(machineHandoff.prepare, { reportFailure: false });
   const receive = useAtomCommand(machineHandoff.receive, { reportFailure: false });
   const linkPreview = useAtomCommand(projectLink.preview, { reportFailure: false });
@@ -162,6 +165,8 @@ export function HandoffFolderCopy({
   const [selection, setSelection] =
     useState<ReadonlyArray<FolderCopyFileClass>>(DEFAULT_COPY_SELECTION);
   const [copy, setCopy] = useState<FolderCopyStatus | null>(null);
+  const [secretPaths, setSecretPaths] = useState<ReadonlyArray<string>>([]);
+  const [secretsConfirmed, setSecretsConfirmed] = useState(false);
   const [pending, setPending] = useState<PendingCopy | null>(null);
   const [undoPreview, setUndoPreview] = useState<FolderCopyUndoResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -503,6 +508,18 @@ export function HandoffFolderCopy({
     run(async () => {
       if (!machine || !pending) return;
       const operationId = pending.operationId;
+      if (secretPaths.length > 0 && secretsConfirmed)
+        // The source hands out only the ticked secret files, to this destination only.
+        unwrap(
+          await sendSecrets({
+            environmentId: project.environmentId,
+            input: {
+              operationId,
+              paths: secretPaths,
+              destinationLabel: targetLabel,
+            },
+          }),
+        );
       if (pending.mode === "copy-and-move" && pending.projectId)
         // Work on the source pauses while its files are copied and applied.
         await fence(operationId, machine, ProjectId.make(pending.projectId));
@@ -595,6 +612,8 @@ export function HandoffFolderCopy({
     setLink(null);
     setError(null);
     setSelection(DEFAULT_COPY_SELECTION);
+    setSecretPaths([]);
+    setSecretsConfirmed(false);
     setStage("setup");
   };
 
@@ -760,9 +779,24 @@ export function HandoffFolderCopy({
               {formatBytes(copy.disk.free)}.
             </p>
           )}
+          {summary && (
+            <HandoffSecretsStep
+              files={summary.secretFiles}
+              selected={secretPaths}
+              confirmed={secretsConfirmed}
+              targetLabel={targetLabel}
+              disabled={busy}
+              onSelectedChange={setSecretPaths}
+              onConfirmedChange={setSecretsConfirmed}
+            />
+          )}
           <div className="flex flex-wrap gap-2">
             <Button
-              disabled={busy || (copy.totals?.decisionsNeeded ?? 1) > 0}
+              disabled={
+                busy ||
+                (copy.totals?.decisionsNeeded ?? 1) > 0 ||
+                (secretPaths.length > 0 && !secretsConfirmed)
+              }
               onClick={() => void apply()}
             >
               {mode === "copy-and-move"
@@ -845,7 +879,26 @@ export function HandoffFolderCopy({
                 ))}
             </ul>
           )}
+          {copy.secrets && copy.secrets.length > 0 && (
+            <ul className="space-y-1 text-xs" aria-label="Secret files sent">
+              {copy.secrets.map((secret) => (
+                <li key={secret.path} className="wrap-anywhere">
+                  <span className="font-mono">{secret.writtenAs}</span>
+                  {secret.state === "beside"
+                    ? ` was written beside ${secret.path}, which differs on ${targetLabel}.`
+                    : secret.state === "unchanged"
+                      ? " was already the same."
+                      : " is in place, readable only by you."}
+                </li>
+              ))}
+            </ul>
+          )}
           {undoPreview && <CopyUndoPreview result={undoPreview} />}
+          <MachineReadinessChecklist
+            environmentId={machine!}
+            environmentLabel={targetLabel}
+            projectId={copy.projectId}
+          />
           {mode === "copy-only" && copy.backupsDiscardedAt !== undefined && (
             <p className="text-muted-foreground text-xs">
               The backups from this copy were removed after 14 days, so it can no longer be undone.
