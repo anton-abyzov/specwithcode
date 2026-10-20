@@ -1,0 +1,52 @@
+import {
+  AuthFilesystemReadScope,
+  AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
+  AuthSettingsWriteScope,
+  type EnvironmentId,
+} from "@specweave-studio/contracts";
+import { useMemo } from "react";
+import { useEnvironments } from "../../state/environments";
+import { useEnvironmentsWithScope } from "../../state/session";
+import {
+  linkMachineProblem,
+  linkMachineState,
+  type LinkMachineState,
+} from "../../studio/projectLink";
+
+export interface LinkMachines {
+  readonly label: (environmentId: EnvironmentId) => string;
+  readonly state: (environmentId: EnvironmentId) => LinkMachineState;
+  /** Why this machine cannot take part in a link now, or null when it can. */
+  readonly problem: (environmentId: EnvironmentId) => string | null;
+}
+
+/** Readiness of every connected machine for linking and unlinking projects. */
+export function useLinkMachines(): LinkMachines {
+  const { environments } = useEnvironments();
+  const settings = useEnvironmentsWithScope(environments, AuthSettingsWriteScope);
+  const operate = useEnvironmentsWithScope(environments, AuthOrchestrationOperateScope);
+  const read = useEnvironmentsWithScope(environments, AuthOrchestrationReadScope);
+  const files = useEnvironmentsWithScope(environments, AuthFilesystemReadScope);
+  return useMemo(() => {
+    const byId = new Map(environments.map((item) => [item.environmentId, item]));
+    const label = (environmentId: EnvironmentId) => byId.get(environmentId)?.label ?? "Machine";
+    const state = (environmentId: EnvironmentId) => {
+      const environment = byId.get(environmentId);
+      return linkMachineState({
+        connected: environment?.connection.phase === "connected",
+        supportsLink: environment?.serverConfig?.environment.capabilities.projectLink,
+        canWrite:
+          settings.has(environmentId) &&
+          operate.has(environmentId) &&
+          read.has(environmentId) &&
+          files.has(environmentId),
+      });
+    };
+    return {
+      label,
+      state,
+      problem: (environmentId) => linkMachineProblem(state(environmentId), label(environmentId)),
+    };
+  }, [environments, settings, operate, read, files]);
+}

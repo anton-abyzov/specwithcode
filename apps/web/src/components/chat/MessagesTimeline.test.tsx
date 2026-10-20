@@ -69,7 +69,10 @@ vi.mock("./MessagesTimeline.logic", async (importOriginal) => {
       previous: Parameters<typeof logic.deriveMessagesTimelineRowsWithState>[1],
     ) {
       if (activityTestState.expandedRuns) {
-        input = { ...input, expandedRunIds: new Set([RunId.make("run-1")]) };
+        input = {
+          ...input,
+          expandedRunIds: new Set([RunId.make("run-1"), RunId.make("run-live")]),
+        };
       }
       const projection = logic.deriveMessagesTimelineRowsWithState(input, previous);
       if (!activityTestState.expanded) return projection;
@@ -3429,5 +3432,32 @@ describe("live activity", () => {
     });
     expect(offline).toContain("offline, status may be stale");
     expect(offline).toContain('data-live-dot="offline"');
+    // A ticking count next to "offline" would still imply progress.
+    expect(offline).toContain('data-working-timer="frozen"');
+    expect(online).toContain('data-working-timer="live"');
+  });
+
+  it("does not pulse before any event of the run has arrived", () => {
+    const markup = render({ recoveryItems: [] });
+    expect(markup).toContain('data-live-dot="pending"');
+    expect(markup).not.toContain("live-dot-pulse");
+  });
+
+  it("names a settled group's count and what clicking it does", () => {
+    activityTestState.expandedRuns = true;
+    const settled = commands.map((entry) => ({
+      ...entry,
+      entry: { ...entry.entry, toolLifecycleStatus: "completed" as const },
+    }));
+    const markup = render({
+      isWorking: false,
+      activeTurnInProgress: false,
+      latestRun: { ...liveRun, status: "completed", completedAt: "2026-10-19T20:12:40.000Z" },
+      runningRunId: null,
+      timelineEntries: [buildUserTimelineEntry("Check the canonical tags."), ...settled],
+    });
+    expect(markup).toContain('data-tool-group-header="settled"');
+    expect(markup).toMatch(/aria-label="[^"]*, show these 3 tool calls"/);
+    expect(markup).toContain("3 calls");
   });
 });

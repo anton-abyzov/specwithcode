@@ -20,6 +20,7 @@
 - [Product usage data](./user/telemetry.md)
 - [Remote access](./user/remote-access.md)
 - [Add a machine](./user/add-a-machine.md)
+- [Move a project to another machine](./user/moving-a-project.md)
 - [Linux worker on your own VPS](./user/linux-worker.md)
 - [Running in the background](./user/background-service.md)
 - [Updating SpecWithCode](./user/updating.md)

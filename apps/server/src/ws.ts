@@ -7,6 +7,8 @@ import {
 import * as ProjectWorkspaceRpc from "./project/ProjectWorkspaceRpc.ts";
 import * as ProjectConnectionRpc from "./project/ProjectConnectionRpc.ts";
 import * as ChromeBridge from "./browserBridge/ChromeBridge.ts";
+import * as ProjectLink from "./project/ProjectLink.ts";
+import * as MachineHandoff from "./fleet/MachineHandoff.ts";
 import * as BrowserExtension from "./browserExtension/BrowserExtension.ts";
 import * as PullRequestCheckFailureLogRpc from "./pullRequest/PullRequestCheckFailureLogRpc.ts";
 import { OrchestrationDispatchCommandError } from "@specweave-studio/contracts";
@@ -3303,6 +3305,8 @@ const inferredWebSocketLayer = Layer.unwrap(
               Layer.merge(VoiceSpeech.layerRpcHandlers),
               Layer.merge(ProjectConnectionRpc.layerNativeApplyHandlers),
               Layer.merge(ChromeBridge.layerRpcHandlers),
+              Layer.merge(ProjectLink.layerRpcHandlers),
+              Layer.merge(MachineHandoff.layerRpcHandlers),
               Layer.merge(
                 BrowserExtension.layerRpcHandlers.pipe(
                   Layer.provide(Layer.succeed(BrowserExtension.BrowserExtension, browserExtension)),

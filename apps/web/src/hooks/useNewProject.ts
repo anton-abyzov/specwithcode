@@ -12,9 +12,12 @@ import {
   selectProjectGroupingSettings,
 } from "../logicalProject";
 import { useClientSettings } from "./useSettings";
+import { findFolderCopies, type FolderToAdd } from "../studio/folderLinkSuggestion";
+import { projectLink } from "../studio/projectLink";
 
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
-import { waitForProject } from "~/state/entities";
+import { useEnvironments } from "~/state/environments";
+import { useProjects, waitForProject } from "~/state/entities";
 import { projectEnvironment } from "~/state/projects";
 import { sourceControlEnvironment } from "~/state/sourceControl";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -184,5 +187,37 @@ export function useNewProject() {
       return true;
     },
     [createNew, handleNewThread, publishToGitHub, navigate, clientSettings],
+  );
+}
+
+/**
+ * Add folder: finds copies of the folder on other connected machines that can
+ * link. Resolves to no matches at once when no such machine is connected, and
+ * leaves out any machine that fails or is slow; it never links on its own.
+ */
+export function useFindFolderCopies() {
+  const { environments } = useEnvironments();
+  const projects = useProjects();
+  const readFingerprint = useAtomCommand(projectLink.fingerprint, {
+    reportFailure: false,
+    reportDefect: false,
+  });
+  return useCallback(
+    (folder: FolderToAdd) =>
+      findFolderCopies({
+        folder,
+        machines: environments.map((environment) => ({
+          environmentId: environment.environmentId,
+          label: environment.label,
+          connected: environment.connection.phase === "connected",
+          supportsLink: environment.serverConfig?.environment.capabilities.projectLink,
+        })),
+        projects,
+        read: async (environmentId, input) => {
+          const result = await readFingerprint({ environmentId, input });
+          return result._tag === "Success" ? result.value.fingerprint : null;
+        },
+      }),
+    [environments, projects, readFingerprint],
   );
 }

@@ -42,6 +42,7 @@ import { composerFloatingLayerProps } from "./composerEventScope";
 import { ViewerImageStage } from "./ViewerImageStage";
 import { ViewerFileActions } from "./ViewerFileActions";
 import { MenuItem } from "../ui/menu";
+import { stepOutOfViewerOverlay } from "~/lib/openInFront";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   useKeepViewerFocus,
@@ -332,6 +333,8 @@ function ExpandedMediaOverlay({
               <MenuItem
                 disabled={!canReadMedia}
                 onClick={() => {
+                  // Out of the overlay first, or the file opens in it as it closes.
+                  stepOutOfViewerOverlay();
                   openFile();
                   onClose();
                 }}

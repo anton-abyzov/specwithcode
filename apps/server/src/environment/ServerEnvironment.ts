@@ -318,6 +318,7 @@ export const make = Effect.gen(function* () {
       threadAutoSettleOptOut: true,
       threadTitleRegeneration: true,
       threadProjectMove: true,
+      studioFleetRemove: true,
       threadVisitedTracking: true,
       threadPullRequests: true,
       threadPullRequestWatch: true,
@@ -330,6 +331,7 @@ export const make = Effect.gen(function* () {
       studioModsSpecweave: true,
       telegramChannel: true,
       googleAccount: true,
+      projectLink: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
       ...(serverInstallation === null ? {} : { serverInstallation }),
       // V2 restart recovery uses the environment-owned opt-in. The old

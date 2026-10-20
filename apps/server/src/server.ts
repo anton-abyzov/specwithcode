@@ -139,6 +139,7 @@ import * as AuthHttp from "./auth/http.ts";
 import * as ReplayMarkers from "./auth/replayMarkers.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as WebhookRoute from "./scheduledTasks/webhookRoute.ts";
+import * as FolderTransferRoute from "./fleet/folderTransferRoute.ts";
 import * as RelayDeliveryProof from "./scheduledTasks/RelayDeliveryProof.ts";
 import * as HeldHooksWaker from "./relay/HeldHooksWaker.ts";
 import * as McpOAuth from "./auth/McpOAuth.ts";
@@ -824,6 +825,7 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerOtlpTracesProxyRoute,
     ServerHttp.layerAssetRoute,
     ServerHttp.layerAttachmentUploadRoute,
+    FolderTransferRoute.layer,
     GoogleOAuthRoute.layer,
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,

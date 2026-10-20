@@ -106,6 +106,28 @@ describe("a pull request link clicked inside the viewer overlay", () => {
     });
   });
 
+  it("offers no side panel without a thread, whose panel is the Pull requests page's", () => {
+    const pullRequestsPanel = {
+      environmentId: "host-1",
+      threadId: "pull-requests-panel",
+    } as unknown as ScopedThreadRef;
+    let open!: ReturnType<typeof useOpenChangeRequestLink>;
+    function Probe() {
+      open = useOpenChangeRequestLink(undefined, pullRequestsPanel);
+      return null;
+    }
+    act(() => {
+      create(<Probe />);
+    });
+    openOverlay(null);
+    expect(open(click(), URL)).toBe(true);
+    expect(useViewerOverlayStore.getState().linked).toMatchObject({
+      kind: "pull-request",
+      pullRequest: { threadRef: null, panel: null },
+    });
+    expect(panel.openPullRequest).not.toHaveBeenCalled();
+  });
+
   it("keeps opening beside the thread when no overlay is in front", () => {
     const open = useOpener(threadRef);
     expect(open(click(), URL)).toBe(true);

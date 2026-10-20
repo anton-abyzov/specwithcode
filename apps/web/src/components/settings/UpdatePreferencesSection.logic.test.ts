@@ -39,4 +39,16 @@ describe("UpdatePreferencesSection.logic", () => {
     expect(resolveServiceUpdateAction(state({ status: "installing" }))).toBe("none");
     expect(resolveServiceUpdateAction(state({ status: "not-managed" }))).toBe("none");
   });
+
+  it("does not offer install for the version the service already runs", () => {
+    const stale = state({ status: "waiting-for-quiet", downloadedVersion: "0.1.4" });
+    expect(resolveServiceUpdateAction(stale)).toBe("check");
+    expect(describeServiceUpdate(stale)).toBe("Version 0.1.4. Up to date.");
+    expect(
+      resolveServiceUpdateAction(state({ status: "available", availableVersion: "0.1.4" })),
+    ).toBe("check");
+    expect(
+      resolveServiceUpdateAction(state({ status: "downloaded", downloadedVersion: "0.1.5" })),
+    ).toBe("install");
+  });
 });

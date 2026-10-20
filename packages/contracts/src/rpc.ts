@@ -3,7 +3,12 @@ import {
   managedUpdatesRpcs,
   legacyServerUpdateRpcs,
 } from "./managedUpdatesRpc.ts";
-import { MACHINE_HANDOFF_RPC_METHODS, machineHandoffRpcs } from "./machineHandoffRpc.ts";
+import {
+  folderCopyRpcs,
+  MACHINE_HANDOFF_RPC_METHODS,
+  machineHandoffRpcs,
+} from "./machineHandoffRpc.ts";
+import { PROJECT_LINK_RPC_METHODS, projectLinkRpcs } from "./projectLinkRpc.ts";
 import { BROWSER_BRIDGE_RPC_METHODS, browserBridgeRpcs } from "./browserBridge.ts";
 import { BROWSER_EXTENSION_RPC_METHODS, browserExtensionRpcs } from "./browserExtension.ts";
 import { COMPUTER_USE_RPC_METHODS, computerUseRpcs } from "./computerUse.ts";
@@ -390,6 +395,7 @@ import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
 export const WS_METHODS = {
   ...PROJECT_WORKSPACE_RPC_METHODS,
   ...MACHINE_HANDOFF_RPC_METHODS,
+  ...PROJECT_LINK_RPC_METHODS,
   ...MANAGED_UPDATES_RPC_METHODS,
   ...PROJECT_CONNECTION_RPC_METHODS,
   ...BROWSER_BRIDGE_RPC_METHODS,
@@ -2201,10 +2207,22 @@ export const WsComputerUseRpcGroup = RpcGroup.make(...computerUseRpcs).middlewar
   RpcScopeAuthorization,
 );
 
+/** Linking a project with its copy on another machine; its own group for the same depth reason. */
+export const WsProjectLinkRpcGroup = RpcGroup.make(...projectLinkRpcs).middleware(
+  RpcScopeAuthorization,
+);
+
+/** Folder copy between machines; its own group for the same depth reason. */
+export const WsFolderCopyRpcGroup = RpcGroup.make(...folderCopyRpcs).middleware(
+  RpcScopeAuthorization,
+);
+
 export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsNativeConnectionsRpcGroup)
   .merge(WsStatusPageRpcGroup)
   .merge(WsVoiceRpcGroup)
   .merge(WsBrowserBridgeRpcGroup)
   .merge(WsBrowserExtensionRpcGroup)
-  .merge(WsComputerUseRpcGroup);
+  .merge(WsComputerUseRpcGroup)
+  .merge(WsProjectLinkRpcGroup)
+  .merge(WsFolderCopyRpcGroup);

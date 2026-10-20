@@ -16,8 +16,13 @@ export interface ProjectSkillsFilter {
   readonly tiers?: ReadonlyArray<string>;
 }
 
-/** Providers name the same level differently (Codex says `repo`); fold them together. */
-export function projectSkillLevel(scope: string | null): string {
+/**
+ * Providers name the same level differently (Codex says `repo`, and lists a
+ * plugin cache copy as `user`); fold them together, using the path when it
+ * shows a plugin install.
+ */
+export function projectSkillLevel(scope: string | null, path?: string | null): string {
+  if (path && /[\\/]plugins[\\/]cache[\\/]/.test(path)) return "plugin";
   const normalized = (scope ?? "").trim().toLowerCase();
   if (normalized === "") return "other";
   if (normalized === "repo" || normalized === "workspace" || normalized === "local")
@@ -28,7 +33,9 @@ export function projectSkillLevel(scope: string | null): string {
 
 /** Every level the row is available at; a lock-only row counts at its lockfile's level. */
 export function projectSkillLevels(row: ProjectSkillRow): ReadonlyArray<string> {
-  const levels = new Set(row.providers.map((presence) => projectSkillLevel(presence.scope)));
+  const levels = new Set(
+    row.providers.map((presence) => projectSkillLevel(presence.scope, presence.path)),
+  );
   if (levels.size === 0 && row.lock) levels.add(row.lock.lockScope);
   return [...levels];
 }
@@ -51,7 +58,7 @@ function rowMatchesAgentAndLevel(
   const matched = row.providers.some(
     (presence) =>
       (providers.length === 0 || providers.includes(presence.label)) &&
-      (levels.length === 0 || levels.includes(projectSkillLevel(presence.scope))),
+      (levels.length === 0 || levels.includes(projectSkillLevel(presence.scope, presence.path))),
   );
   if (matched || row.providers.length > 0) return matched;
   return providers.length === 0 && row.lock !== null && levels.includes(row.lock.lockScope);
@@ -74,6 +81,7 @@ export function filterProjectSkillRows(
     const haystack = normalizeSearchText(
       [
         row.name,
+        ...(row.aliases ?? []),
         row.description ?? "",
         row.status,
         row.lock?.source ?? "",
@@ -84,6 +92,7 @@ export function filterProjectSkillRows(
         ...projectSkillLevels(row),
         ...row.issues,
         ...row.providers.map((presence) => presence.label),
+        ...projectSkillVersions(row).files.map((file) => file.version),
       ].join(" "),
     );
     return tokens.every((token) => haystack.includes(token));
@@ -96,15 +105,60 @@ export interface ProjectSkillFacetOption {
   readonly count: number;
 }
 
-const LEVEL_ORDER = ["project", "user", "plugin"];
+const LEVEL_ORDER = ["project", "user", "plugin", "bundled", "system", "other"];
 const LEVEL_LABELS: Readonly<Record<string, string>> = {
   project: "Project",
   user: "User",
   plugin: "Plugin",
+  bundled: "Bundled",
+  system: "System",
+  other: "Other",
 };
 
 function titleCase(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+}
+
+/** Display label for a level from {@link projectSkillLevel}. */
+export function projectSkillLevelLabel(level: string): string {
+  return LEVEL_LABELS[level] ?? titleCase(level);
+}
+
+export interface ProjectSkillVersions {
+  /** The version vskill's lock records, or null. */
+  readonly lock: string | null;
+  /**
+   * The version each agent's copy reports: the plugin manifest for a plugin
+   * skill, else the SKILL.md frontmatter. One entry per distinct version.
+   */
+  readonly files: ReadonlyArray<{
+    readonly version: string;
+    readonly labels: ReadonlyArray<string>;
+  }>;
+  /** The lock names a version and some copy on disk reports another. */
+  readonly lockOutOfDate: boolean;
+  /** Copies report more than one version. */
+  readonly differ: boolean;
+}
+
+/** Lock version beside the versions the files on disk report. */
+export function projectSkillVersions(row: ProjectSkillRow): ProjectSkillVersions {
+  const byVersion = new Map<string, Array<string>>();
+  for (const presence of row.providers) {
+    const version = presence.pluginVersion ?? presence.fileVersion ?? null;
+    if (!version) continue;
+    const labels = byVersion.get(version) ?? [];
+    if (!labels.includes(presence.label)) labels.push(presence.label);
+    byVersion.set(version, labels);
+  }
+  const files = [...byVersion.entries()].map(([version, labels]) => ({ version, labels }));
+  const lock = row.lock?.version ?? null;
+  return {
+    lock,
+    files,
+    lockOutOfDate: lock !== null && files.some((file) => file.version !== lock),
+    differ: files.length > 1,
+  };
 }
 
 function facet(
@@ -143,12 +197,7 @@ export function projectSkillFacets(rows: ReadonlyArray<ProjectSkillRow>): {
       (value) => value,
       (a, b) => a.localeCompare(b),
     ),
-    levels: facet(
-      rows,
-      projectSkillLevels,
-      (value) => LEVEL_LABELS[value] ?? titleCase(value),
-      rankOrder(LEVEL_ORDER),
-    ),
+    levels: facet(rows, projectSkillLevels, projectSkillLevelLabel, rankOrder(LEVEL_ORDER)),
     tiers: facet(
       rows,
       (row) => [projectSkillTierKey(row)],
@@ -212,11 +261,23 @@ const STATUS_BADGES: Readonly<
   disabled: { label: "disabled", variant: "secondary" },
 };
 
-/** Status cell: an `ok` row still flagged by `vskill doctor` reads "check". */
+/**
+ * Status cell: an `ok` row still flagged by `vskill doctor` reads "check", a
+ * duplicate whose copies report different versions reads "different
+ * versions", and a lock entry with nothing on disk reads "stale lock entry".
+ */
 export function projectSkillStatusBadge(row: ProjectSkillRow): {
   label: string;
   variant: ProjectSkillBadgeVariant;
 } {
+  if (row.staleLock) {
+    return row.attention
+      ? { label: "stale lock entry", variant: "warning" }
+      : { label: "stale lock entry", variant: "secondary" };
+  }
+  if (row.status === "duplicate" && projectSkillVersions(row).differ) {
+    return { label: "different versions", variant: "error" };
+  }
   if (row.status === "ok" && row.attention) return { label: "check", variant: "warning" };
   return STATUS_BADGES[row.status];
 }
@@ -226,6 +287,8 @@ export function projectSkillProviderBadges(row: ProjectSkillRow): ReadonlyArray<
   key: string;
   label: string;
   enabled: boolean;
+  /** Every copy is kept out of the agent's slash menu (`user-invocable: false`); not a problem. */
+  agentOnly: boolean;
   title: string;
   /** The first presence under this label, for its provider mark. */
   presence: ProjectSkillPresence;
@@ -240,12 +303,17 @@ export function projectSkillProviderBadges(row: ProjectSkillRow): ReadonlyArray<
     const enabled = presences.some((presence) => presence.enabled);
     const details = presences.map(
       (presence) =>
-        `${presence.scope ?? "unscoped"}: ${presence.path}${presence.enabled ? "" : " (off)"}`,
+        `${projectSkillLevelLabel(projectSkillLevel(presence.scope, presence.path))}: ${presence.path}${
+          presence.name ? ` (as ${presence.name})` : ""
+        }${presence.enabled ? "" : " (off)"}${
+          presence.userInvocable === false ? " (not in its slash menu)" : ""
+        }`,
     );
     return {
       key: `${label}:${presences[0]!.instanceId}`,
       label,
       enabled,
+      agentOnly: presences.every((presence) => presence.userInvocable === false),
       title: `${label}${enabled ? "" : " (switched off)"}\n${details.join("\n")}`,
       presence: presences[0]!,
     };

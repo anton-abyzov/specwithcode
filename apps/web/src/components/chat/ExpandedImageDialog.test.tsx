@@ -15,6 +15,10 @@ vi.mock("~/viewerOverlayStore", () => ({
   useKeepViewerFocus: () => () => {},
   viewerExtensionBadge: (name: string) => name.slice(name.lastIndexOf(".") + 1).toUpperCase(),
 }));
+const calls = vi.hoisted(() => [] as string[]);
+vi.mock("~/lib/openInFront", () => ({
+  stepOutOfViewerOverlay: () => calls.push("step out"),
+}));
 vi.mock("react-dom", async (importOriginal) => ({
   ...(await importOriginal<typeof import("react-dom")>()),
   createPortal: (node: unknown) => node,
@@ -167,4 +171,35 @@ it("keeps media no thread owns in the lightbox", async () => {
   expect(renderer!.root.findByProps({ "data-lightbox-image": "true" }).props.src).toBe(
     "https://host.test/a.png",
   );
+});
+
+it("opens the file in the panel only after the overlay is out of the way", async () => {
+  calls.length = 0;
+  const onClose = vi.fn(() => calls.push("close"));
+  const withFile = {
+    ...preview,
+    images: [
+      {
+        ...preview.images[0]!,
+        actionsSource: {
+          kind: "image" as const,
+          name: "chart-light.png",
+          src: "https://host.test/a.png",
+          onOpenFile: () => calls.push("open file"),
+        },
+      },
+    ],
+  };
+  await act(async () => {
+    renderer = create(
+      <ExpandedImageDialog preview={withFile} onClose={onClose} threadRef={threadRef} />,
+    );
+  });
+  const item = renderer!.root
+    .findAllByProps({ "data-menu-item": "true" })
+    .find(
+      (node) => node.findAll((child) => child.children.includes("Open in file viewer")).length > 0,
+    );
+  await act(async () => item!.props.onClick());
+  expect(calls).toEqual(["step out", "open file", "close"]);
 });

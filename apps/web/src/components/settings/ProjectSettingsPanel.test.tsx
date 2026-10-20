@@ -59,6 +59,9 @@ const state = vi.hoisted(() => ({
   clearDraft: vi.fn(),
   copy: vi.fn(),
   navigate: vi.fn(),
+  machinesMounts: 0,
+  machinesUnmounts: 0,
+  machinesHold: false,
 }));
 
 vi.mock("~/connection/runtime", () => ({ connectionAtomRuntime: undefined }));
@@ -141,6 +144,22 @@ vi.mock("../ui/toast", () => ({
   stackedThreadToast: (value: unknown) => value,
 }));
 vi.mock("./ProjectOverrides", () => ({ ProjectOverrides: () => null }));
+vi.mock("../studio/ProjectMachinesSettings", async () => {
+  const { useEffect } = await import("react");
+  const { useHoldProjectKeyFollow } = await import("./projectKeyFollow");
+  return {
+    ProjectMachinesSettings: () => {
+      useHoldProjectKeyFollow(state.machinesHold);
+      useEffect(() => {
+        state.machinesMounts += 1;
+        return () => {
+          state.machinesUnmounts += 1;
+        };
+      }, []);
+      return null;
+    },
+  };
+});
 vi.mock("../ui/button", () => ({ Button: "button" }));
 vi.mock("../ui/input", () => ({ Input: "input" }));
 vi.mock("../ui/switch", () => ({ Switch: "input" }));
@@ -252,6 +271,9 @@ let renderer: ReactTestRenderer | undefined;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.clearAllMocks();
+  state.machinesMounts = 0;
+  state.machinesUnmounts = 0;
+  state.machinesHold = false;
   state.registry = AtomRegistry.make();
   state.sessions.clear();
   for (const id of [primaryId, remoteId])
@@ -342,6 +364,83 @@ function button(label: string) {
 async function grant(id: EnvironmentId, result: SessionResult) {
   await act(() => state.registry!.set(state.sessions.get(id)!, result));
 }
+
+describe("project settings selection", () => {
+  it("follows the projects to their new key when a link gives them a shared identity", async () => {
+    const before = group();
+    await mountPanel();
+    expect(state.machinesMounts).toBe(1);
+    const logicalProject = {
+      id: "logical:shared",
+      title: "Shared repo",
+      coordinatorId: "coordinator:logical:shared",
+      members: state.projects.map((project) => ({
+        environmentId: project.environmentId,
+        projectId: project.id,
+        coordinatorThreadId: `project-coordinator:${project.id}`,
+      })),
+    };
+    state.projects = state.projects.map((project) => ({
+      ...project,
+      workspaceSettings: { ...project.workspaceSettings, logicalProject },
+    })) as unknown as typeof state.projects;
+    const after = group();
+    expect(after.projectKey).not.toBe(before.projectKey);
+    await act(() =>
+      renderer!.update(
+        <RegistryContext.Provider value={state.registry!}>
+          <ProjectSettingsPanel projectKey={before.projectKey} environmentId={null} />
+        </RegistryContext.Provider>,
+      ),
+    );
+    expect(
+      renderer!.root.findAll((node) =>
+        node.children.includes("This project is no longer available."),
+      ),
+    ).toHaveLength(0);
+    expect(state.machinesUnmounts).toBe(0);
+    expect(state.navigate).toHaveBeenCalledWith(expect.objectContaining({ replace: true }));
+    const search = state.navigate.mock.calls.at(-1)![0].search();
+    expect(search.project).toBe(after.projectKey);
+  });
+
+  it("keeps the address until an open link dialog releases the page", async () => {
+    const before = group();
+    state.machinesHold = true;
+    await mountPanel();
+    const logicalProject = {
+      id: "logical:shared",
+      title: "Shared repo",
+      coordinatorId: "coordinator:logical:shared",
+      members: state.projects.map((project) => ({
+        environmentId: project.environmentId,
+        projectId: project.id,
+        coordinatorThreadId: `project-coordinator:${project.id}`,
+      })),
+    };
+    state.projects = state.projects.map((project) => ({
+      ...project,
+      workspaceSettings: { ...project.workspaceSettings, logicalProject },
+    })) as unknown as typeof state.projects;
+    const after = group();
+    const render = () =>
+      act(() =>
+        renderer!.update(
+          <RegistryContext.Provider value={state.registry!}>
+            <ProjectSettingsPanel projectKey={before.projectKey} environmentId={null} />
+          </RegistryContext.Provider>,
+        ),
+      );
+    state.navigate.mockClear();
+    await render();
+    await render();
+    expect(state.navigate).not.toHaveBeenCalled();
+    expect(state.machinesUnmounts).toBe(0);
+    state.machinesHold = false;
+    await render();
+    expect(state.navigate.mock.calls.at(-1)![0].search().project).toBe(after.projectKey);
+  });
+});
 
 describe("project settings permissions", () => {
   it("preflights every member before any shared field update", async () => {

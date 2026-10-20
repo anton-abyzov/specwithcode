@@ -155,7 +155,7 @@ describe("ProjectSkillsView", () => {
     expect(cells.slice(0, 7)).toEqual([
       "deploy",
       "Claude",
-      "project",
+      "Project",
       "1.2.0",
       "VERIFIED",
       // The repository, then the skill's verified-skill.com page under it.

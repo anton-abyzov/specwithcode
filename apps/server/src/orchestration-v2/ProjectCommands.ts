@@ -4,7 +4,9 @@ import {
   PROJECT_NAME_MAX_LENGTH,
   projectNameKey,
   type LogicalProject,
+  type LogicalProjectMember,
   type ProjectCoordinatorBinding,
+  type ProjectWorkspaceSettings,
   type ProjectWorkspacePatch,
   type ProjectKind,
   type ThreadId,
@@ -25,12 +27,34 @@ import * as Schema from "effect/Schema";
 import type { UnsequencedProjectEvent } from "../persistence/OrchestrationEventStore.ts";
 import type { ProjectRow } from "./ProjectStore.ts";
 
+/**
+ * Why an ownership write happens. Each mode admits exactly one shape of change, so
+ * a write meant for one purpose can never perform another:
+ * - `handoff`: MachineHandoff fences, acknowledges or receives a coordinator transfer.
+ * - `adopt-identity`: a project from before shared identities gets one, itself the only member.
+ * - `link-member`: the kept coordinator lists more members; its binding does not change.
+ * - `join-as-member`: a standalone copy adopts another identity and relinquishes its coordinator.
+ * - `remove-member`: the kept coordinator stops listing members; its binding does not change.
+ * - `unlink`: a relinquished member leaves with a fresh identity and an active coordinator,
+ *   the only way a relinquished binding becomes active outside a verified handoff.
+ */
+export type ProjectOwnershipMode =
+  | "handoff"
+  | "adopt-identity"
+  | "link-member"
+  | "join-as-member"
+  | "remove-member"
+  | "unlink";
+
 export interface ProjectOwnershipUpdate {
+  readonly mode: ProjectOwnershipMode;
   readonly expectedRevision: number;
   /** Exact singleton identity the explicit handoff plan is allowed to join. */
   readonly joinExpectedLogicalProjectId?: string | null;
   /** Internal only: MachineHandoff verified a destination-bound published checkpoint. */
   readonly acceptedHandoffOperationId?: string;
+  /** Internal only: a handoff failed before the destination accepted; the source becomes active again. */
+  readonly releasedHandoffOperationId?: string;
   readonly logicalProject: LogicalProject;
   readonly coordinatorBinding: ProjectCoordinatorBinding;
 }
@@ -215,6 +239,184 @@ export function findProjectNameOwner(input: {
   );
 }
 
+/** Order-independent equality for the small persisted ownership records. */
+function sameRecord(left: unknown, right: unknown): boolean {
+  const canonical = (value: unknown): unknown =>
+    Array.isArray(value)
+      ? value.map(canonical)
+      : value !== null && typeof value === "object"
+        ? Object.fromEntries(
+            Object.entries(value)
+              .filter(([, item]) => item !== undefined)
+              .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+              .map(([key, item]) => [key, canonical(item)]),
+          )
+        : value;
+  return JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
+}
+
+const memberRef = (member: LogicalProjectMember) =>
+  JSON.stringify([member.environmentId, member.projectId, member.coordinatorThreadId]);
+
+/** Projects saved before bindings existed coordinate as an active epoch-0 owner. */
+const ACTIVE_LEGACY_BINDING: ProjectCoordinatorBinding = { epoch: 0, state: "active" };
+
+/**
+ * Why `ownership` may not be applied to a project whose settings are `previous`,
+ * or undefined when the change is exactly the shape its mode allows.
+ */
+export function ownershipRejection(
+  projectId: ProjectId,
+  previous: ProjectWorkspaceSettings,
+  ownership: ProjectOwnershipUpdate,
+): string | undefined {
+  const old = previous.coordinatorBinding;
+  const next = ownership.coordinatorBinding;
+  const identity = previous.logicalProject;
+  const incoming = ownership.logicalProject;
+  const selfEntries = incoming.members.filter((member) => member.projectId === projectId);
+  if (ownership.mode !== "handoff" && ownership.acceptedHandoffOperationId !== undefined)
+    return "Only a verified machine handoff can accept an incoming coordinator.";
+  if (ownership.mode !== "handoff" && ownership.releasedHandoffOperationId !== undefined)
+    return "Only a failed machine handoff can return its coordinator.";
+  const keepsIdentity = () =>
+    identity !== undefined &&
+    incoming.id === identity.id &&
+    incoming.coordinatorId === identity.coordinatorId &&
+    incoming.title === identity.title;
+  const keepsActiveBinding = () =>
+    (old ?? ACTIVE_LEGACY_BINDING).state === "active" &&
+    sameRecord(next, old ?? ACTIVE_LEGACY_BINDING);
+  const includesAll = (
+    outer: ReadonlyArray<LogicalProjectMember>,
+    inner: ReadonlyArray<LogicalProjectMember>,
+  ) => {
+    const refs = new Set(outer.map(memberRef));
+    return inner.every((member) => refs.has(memberRef(member)));
+  };
+  switch (ownership.mode) {
+    case "handoff": {
+      const acceptedIncoming =
+        ownership.acceptedHandoffOperationId !== undefined &&
+        ownership.acceptedHandoffOperationId === next.operationId &&
+        next.state === "active" &&
+        next.predecessor !== undefined &&
+        (!old || next.epoch > old.epoch) &&
+        incoming.members.some(
+          (m) =>
+            m.projectId === next.predecessor!.projectId &&
+            m.environmentId === next.predecessor!.environmentId &&
+            m.coordinatorThreadId === next.predecessor!.coordinatorThreadId,
+        );
+      if (
+        identity &&
+        identity.id !== incoming.id &&
+        !(
+          ownership.joinExpectedLogicalProjectId === identity.id &&
+          identity.members.every((member) => member.projectId === projectId) &&
+          identity.members.length <= 1 &&
+          (next.state === "transferred" || acceptedIncoming)
+        )
+      )
+        return "Only an explicitly accepted standalone project can join another identity.";
+      // A handoff that failed before the destination applied anything returns the same binding to active.
+      const releasedOutgoing =
+        ownership.releasedHandoffOperationId !== undefined &&
+        old?.state === "transferring" &&
+        old.operationId === ownership.releasedHandoffOperationId &&
+        next.operationId === old.operationId &&
+        next.state === "active" &&
+        next.epoch === old.epoch;
+      if (
+        old &&
+        !acceptedIncoming &&
+        !releasedOutgoing &&
+        (next.epoch !== old.epoch ||
+          (old.state !== "active" &&
+            (next.state === "active" || next.operationId !== old.operationId)) ||
+          (old.state === "transferred" && next.state !== "transferred"))
+      )
+        return "A relinquished coordinator cannot resume or change its handoff.";
+      return undefined;
+    }
+    case "adopt-identity":
+      if (identity) return "This project already has a shared identity.";
+      if (!incoming.id.startsWith("logical:") || incoming.members.length !== 1 || !selfEntries[0])
+        return "A new shared identity lists only this project.";
+      if (!keepsActiveBinding())
+        return "Only an active coordinator can adopt a shared identity, and its binding stays as it is.";
+      return undefined;
+    case "link-member":
+      if (!keepsIdentity()) return "Linking keeps the coordinator's shared identity as it is.";
+      if (!keepsActiveBinding())
+        return "Only the active coordinator can add members, and its binding stays as it is.";
+      if (
+        !includesAll(incoming.members, identity!.members) ||
+        incoming.members.length <= identity!.members.length
+      )
+        return "Linking adds members and keeps every existing one.";
+      return undefined;
+    case "remove-member":
+      if (!keepsIdentity()) return "Unlinking keeps the coordinator's shared identity as it is.";
+      if (!keepsActiveBinding())
+        return "Only the active coordinator can remove members, and its binding stays as it is.";
+      if (
+        !includesAll(identity!.members, incoming.members) ||
+        incoming.members.length >= identity!.members.length ||
+        !includesAll(
+          incoming.members,
+          identity!.members.filter((member) => member.projectId === projectId),
+        )
+      )
+        return "Unlinking removes other members and keeps this project.";
+      return undefined;
+    case "join-as-member": {
+      if (
+        identity &&
+        (identity.id === incoming.id ||
+          ownership.joinExpectedLogicalProjectId !== identity.id ||
+          identity.members.length > 1 ||
+          identity.members.some((member) => member.projectId !== projectId))
+      )
+        return "Only an explicitly accepted standalone project can join another identity.";
+      if (!identity && ownership.joinExpectedLogicalProjectId !== null)
+        return "Only an explicitly accepted standalone project can join another identity.";
+      if (old && old.state !== "active")
+        return "A project in a coordinator handoff cannot join another project.";
+      const self = selfEntries[0];
+      if (
+        next.state !== "transferred" ||
+        next.operationId === undefined ||
+        next.predecessor !== undefined ||
+        next.successor === undefined ||
+        !self ||
+        memberRef(next.successor) === memberRef(self) ||
+        !incoming.members.some((member) => memberRef(member) === memberRef(next.successor!))
+      )
+        return "A joining copy relinquishes its coordinator to a listed member.";
+      return undefined;
+    }
+    case "unlink":
+      if (old?.state !== "transferred")
+        return "Only a member whose coordinator was relinquished can unlink; finish any handoff first.";
+      if (
+        identity?.id === incoming.id ||
+        !incoming.id.startsWith("logical:") ||
+        incoming.members.length !== 1 ||
+        !selfEntries[0]
+      )
+        return "An unlinked project gets a fresh identity that lists only itself.";
+      if (
+        next.state !== "active" ||
+        next.epoch !== 0 ||
+        next.predecessor !== undefined ||
+        next.successor !== undefined
+      )
+        return "An unlinked project starts its own coordinator at epoch 0.";
+      return undefined;
+  }
+}
+
 const monogramSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 const isScriptRunCommand = Schema.is(SCRIPT_RUN_COMMAND_PATTERN);
 
@@ -351,44 +553,12 @@ export function planProjectCommand(input: {
               actualRevision: previousSettings.revision,
             }),
           );
-        const old = previousSettings.coordinatorBinding;
-        const next = command.ownership.coordinatorBinding;
-        const acceptedIncoming =
-          command.ownership.acceptedHandoffOperationId !== undefined &&
-          command.ownership.acceptedHandoffOperationId === next.operationId &&
-          next.state === "active" &&
-          next.predecessor !== undefined &&
-          (!old || next.epoch > old.epoch) &&
-          command.ownership.logicalProject.members.some(
-            (m) =>
-              m.projectId === next.predecessor!.projectId &&
-              m.environmentId === next.predecessor!.environmentId &&
-              m.coordinatorThreadId === next.predecessor!.coordinatorThreadId,
-          );
-        if (
-          previousSettings.logicalProject &&
-          previousSettings.logicalProject.id !== command.ownership.logicalProject.id &&
-          !(
-            command.ownership.joinExpectedLogicalProjectId === previousSettings.logicalProject.id &&
-            previousSettings.logicalProject.members.every(
-              (member) => member.projectId === command.projectId,
-            ) &&
-            previousSettings.logicalProject.members.length <= 1 &&
-            (next.state === "transferred" || acceptedIncoming)
-          )
-        )
-          return invariant(
-            "Only an explicitly accepted standalone project can join another identity.",
-          );
-        if (
-          old &&
-          !acceptedIncoming &&
-          (next.epoch !== old.epoch ||
-            (old.state !== "active" &&
-              (next.state === "active" || next.operationId !== old.operationId)) ||
-            (old.state === "transferred" && next.state !== "transferred"))
-        )
-          return invariant("A relinquished coordinator cannot resume or change its handoff.");
+        const rejection = ownershipRejection(
+          command.projectId,
+          previousSettings,
+          command.ownership,
+        );
+        if (rejection !== undefined) return invariant(rejection);
       }
       // Ignore forged extras even in internal direct calls that bypass wire decoding.
       const {
