@@ -409,4 +409,88 @@ describe("folder copy between two isolated sides", () => {
     });
     await Promise.all([copies.close(), small.close(), older.close()]);
   }, 120_000);
+  it("sends a ticked secret file privately and never records its value", async () => {
+    const canary = `SWC_CANARY_${NodeCrypto.randomBytes(12).toString("hex")}`;
+    const secretPath = NodePath.join(fixture.root, ".env.local");
+    write(secretPath, `API_TOKEN=${canary}\n`);
+    const said: string[] = [];
+    const methods = ["log", "info", "warn", "error", "debug"] as const;
+    const original = methods.map((method) => console[method]);
+    methods.forEach((method) => {
+      console[method] = (...args: unknown[]) => {
+        said.push(
+          args
+            .map((arg) => (arg instanceof Error ? `${arg.message} ${arg.stack}` : String(arg)))
+            .join(" "),
+        );
+      };
+    });
+    const errors: string[] = [];
+    const destinationRoot = destinationState("secrets");
+    const folder = target("secrets");
+    try {
+      const copies = new DestinationCopies(destinationRoot, fast);
+      const { operationId, token } = await offer();
+      await copies.start(startInput(operationId, token, folder));
+      await settle(copies, operationId, ["previewed"]);
+      const offered = (await transfers.read(operationId))?.summary?.secretFiles ?? [];
+      expect(offered.map((file) => file.path)).toEqual(
+        expect.arrayContaining([".env", ".env.local"]),
+      );
+      const refused = await transfers
+        .approveSecrets({ operationId, paths: ["../.env.local"], destinationLabel: "M3" })
+        .catch((cause: unknown) => cause);
+      errors.push(String((refused as Error).message), JSON.stringify(refused));
+      await transfers.approveSecrets({
+        operationId,
+        paths: [".env.local"],
+        destinationLabel: "M3",
+      });
+      await copies.approve(operationId);
+      const applied = await settle(copies, operationId, ["applied", "failed"]);
+      expect(applied.error).toBeNull();
+      const received = NodePath.join(folder, ".env.local");
+      expect(NodeFS.readFileSync(received, "utf8")).toBe(`API_TOKEN=${canary}\n`);
+      expect(NodeFS.statSync(received).mode & 0o777).toBe(0o600);
+      // The unticked secret stays on the source.
+      expect(NodeFS.existsSync(NodePath.join(folder, ".env"))).toBe(false);
+      const status = JSON.stringify([
+        await copies.read(operationId),
+        await transfers.read(operationId),
+      ]);
+      expect(status).toContain(".env.local");
+      const sent = await transfers.sentSecrets.list("env-destination");
+      expect(
+        sent.some((entry) => entry.operationId === operationId && entry.path === ".env.local"),
+      ).toBe(true);
+
+      const stateFiles = [
+        ...NodeFS.readdirSync(NodePath.join(base, "source-machine", "state"), {
+          recursive: true,
+          withFileTypes: true,
+        }),
+        ...NodeFS.readdirSync(destinationRoot, { recursive: true, withFileTypes: true }),
+      ].filter((entry) => entry.isFile());
+      const leaking = stateFiles
+        .map((entry) => NodePath.join(entry.parentPath, entry.name))
+        .filter((file) => NodeFS.readFileSync(file).includes(canary));
+      expect(leaking).toEqual([]);
+      expect(status).not.toContain(canary);
+      expect(errors.join("\n")).not.toContain(canary);
+      expect(said.join("\n")).not.toContain(canary);
+      note("secret-canary", {
+        sentPath: ".env.local",
+        mode: "0600",
+        stateFilesScanned: stateFiles.length,
+        consoleLinesScanned: said.length,
+        canaryFound: leaking,
+      });
+      await copies.close();
+    } finally {
+      methods.forEach((method, index) => {
+        console[method] = original[index]!;
+      });
+      NodeFS.rmSync(secretPath, { force: true });
+    }
+  }, 120_000);
 });

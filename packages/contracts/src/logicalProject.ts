@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 import {
   EnvironmentId,
+  IsoDateTime,
   ProjectId,
   ThreadId,
   NonNegativeInt,
@@ -61,6 +62,12 @@ export const ProjectCoordinatorBinding = Schema.Struct({
   successor: Schema.optional(LogicalProjectMember),
   /** Why a handoff returned the coordinator to this machine after a failure. */
   releaseReason: Schema.optional(Schema.String.check(Schema.isMaxLength(500))),
+  /**
+   * Set by a manual takeover: when a member made itself the coordinator while
+   * the previous one was unreachable. Turns the previous one ran after this
+   * are listed for review once it returns.
+   */
+  takenOverAt: Schema.optional(IsoDateTime),
 });
 export type ProjectCoordinatorBinding = typeof ProjectCoordinatorBinding.Type;
 

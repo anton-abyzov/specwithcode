@@ -33,6 +33,13 @@ vi.mock("../../state/use-atom-command", () => ({
     }
   },
 }));
+vi.mock("../settings/MachineReadinessChecklist", () => ({
+  MachineReadinessChecklist: (props: { environmentId: string; projectId: string }) => (
+    <p data-slot="readiness-stub">
+      Readiness {props.environmentId} {props.projectId}
+    </p>
+  ),
+}));
 vi.mock("@specweave-studio/client-runtime/state/runtime", () => ({
   squashAtomCommandFailure: (failure: { error: unknown }) => failure.error,
 }));
@@ -220,6 +227,59 @@ it("measures, previews and applies a copy that leaves the coordinator on the sou
     projectId: "copied",
     folder: project.workspaceRoot,
   });
+});
+
+it("sends no secret file unless it is ticked and confirmed for that machine", async () => {
+  state.handlers.copySecrets = ({ input }: any) => ({
+    state: "scanned",
+    summary,
+    error: null,
+    secrets: {
+      files: [{ path: ".env", size: 10 }],
+      approvedAt: 1,
+      destinationLabel: input.destinationLabel,
+    },
+  });
+  statuses = [
+    copyStatus("previewed"),
+    copyStatus("applied", {
+      secrets: [{ path: ".env", writtenAs: ".env", size: 10, state: "written" }],
+    }),
+  ];
+  await mount();
+  await click("Measure the folder");
+  await click("Preview on M3");
+  const box = container.querySelector<HTMLElement>('[aria-label="Send .env"]')!;
+  expect(box.getAttribute("aria-checked")).toBe("false");
+  expect(container.textContent).not.toContain("API_TOKEN");
+  await act(async () => box.click());
+  expect(button("Copy and apply on M3").disabled).toBe(true);
+  expect(container.textContent).toContain("Send this secret file to M3");
+  const confirm = container.querySelector<HTMLElement>(
+    '[data-slot="copy-secrets-confirm"] [data-slot="checkbox"]',
+  )!;
+  await act(async () => confirm.click());
+  await click("Copy and apply on M3");
+  const order = names();
+  expect(order.indexOf("copySecrets")).toBeLessThan(order.indexOf("copyApprove"));
+  expect(state.calls.find(([name]) => name === "copySecrets")![1]).toEqual({
+    environmentId: "m4",
+    input: {
+      operationId: "00000000-0000-4000-8000-000000000001",
+      paths: [".env"],
+      destinationLabel: "M3",
+    },
+  });
+  expect(container.textContent).toContain(".env is in place, readable only by you.");
+  expect(container.textContent).toContain("Readiness m3 copied");
+});
+
+it("copies without asking the source for secrets when none are ticked", async () => {
+  await mount();
+  await click("Measure the folder");
+  await click("Preview on M3");
+  await click("Copy and apply on M3");
+  expect(names()).not.toContain("copySecrets");
 });
 
 it("keeps Apply disabled until every conflict has a decision", async () => {

@@ -113,6 +113,17 @@ export async function handleSourceRequest(
         );
         return json(200, { state: record.state });
       }
+      case "GET secrets":
+        return json(200, transfers.secretList(loaded));
+      case "POST secret": {
+        const input = await body();
+        if (typeof input.path !== "string") throw new SourceTransferError(400, "invalid_request");
+        return {
+          status: 200,
+          contentType: "application/octet-stream",
+          body: await transfers.secretFile(loaded, input.path),
+        };
+      }
       case "POST commit":
         return json(200, { state: (await transfers.commit(loaded)).state });
       default:

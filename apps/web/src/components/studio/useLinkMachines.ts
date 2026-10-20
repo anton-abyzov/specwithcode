@@ -19,6 +19,9 @@ export interface LinkMachines {
   readonly state: (environmentId: EnvironmentId) => LinkMachineState;
   /** Why this machine cannot take part in a link now, or null when it can. */
   readonly problem: (environmentId: EnvironmentId) => string | null;
+  readonly connected: (environmentId: EnvironmentId) => boolean;
+  /** Ready to link, and new enough to take over, give way and keep note replicas. */
+  readonly takeoverReady: (environmentId: EnvironmentId) => boolean;
 }
 
 /** Readiness of every connected machine for linking and unlinking projects. */
@@ -47,6 +50,11 @@ export function useLinkMachines(): LinkMachines {
       label,
       state,
       problem: (environmentId) => linkMachineProblem(state(environmentId), label(environmentId)),
+      connected: (environmentId) => byId.get(environmentId)?.connection.phase === "connected",
+      takeoverReady: (environmentId) =>
+        state(environmentId) === "ready" &&
+        byId.get(environmentId)?.serverConfig?.environment.capabilities.coordinatorTakeover ===
+          true,
     };
   }, [environments, settings, operate, read, files]);
 }

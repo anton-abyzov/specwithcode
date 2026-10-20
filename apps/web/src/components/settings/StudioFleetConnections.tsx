@@ -23,6 +23,7 @@ import {
   defaultFleetWorkerAccess,
   FLEET_WORKER_ACCESS_CHOICES,
   fleetRemoveNotice,
+  sentSecretsWarning,
   fleetWorkersView,
 } from "../../studio/fleetWorkers";
 import {
@@ -48,8 +49,10 @@ import { Switch } from "../ui/switch";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { connectPairing } from "../../connection/onboarding";
+import { machineHandoff } from "../../studio/machineHandoff";
 import { requestConfirmDialog } from "../../confirmDialog";
 import { FleetInviteArea } from "./FleetInvite";
+import { MachineReadinessChecklist } from "./MachineReadinessChecklist";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { Button } from "../ui/button";
@@ -200,6 +203,7 @@ export function StudioFleetConnections({ environmentId, savedEnvironmentIds }: P
     snapshot?.connectPermission ?? AuthAccessWriteScope,
   );
   const connect = useAtomCommand(connectPairing, { reportFailure: false });
+  const sentSecrets = useAtomCommand(machineHandoff.sentSecrets, { reportFailure: false });
   const autoConnect = useClientSettings((settings) => settings.autoConnectPrivateMachines);
   const updateClientSettings = useUpdateClientSettings();
   const [pending, setPending] = useState<string | null>(null);
@@ -304,9 +308,18 @@ export function StudioFleetConnections({ environmentId, savedEnvironmentIds }: P
   }
   async function remove(machine: StudioFleetMachine) {
     if (pending || !canManageWorkers) return;
+    // Secret files a folder copy sent there; an older server without the ledger lists none.
+    const sent = await sentSecrets({
+      environmentId,
+      input: { destinationEnvironmentId: machine.environmentId },
+    });
+    const secretsWarning = sentSecretsWarning(
+      sent._tag === "Success" ? sent.value.entries : [],
+      machine.label,
+    );
     // Fail closed: no mounted confirm host means no removal.
     const confirmed = await requestConfirmDialog(
-      `Remove ${machine.label} from this machine's list?\nThis machine gives up its worker access and management token on ${machine.label}. Threads already running there keep running.`,
+      `Remove ${machine.label} from this machine's list?\nThis machine gives up its worker access and management token on ${machine.label}. Threads already running there keep running.${secretsWarning ? `\n${secretsWarning}` : ""}`,
       { variant: "destructive" },
     );
     if (confirmed !== true) return;
@@ -316,7 +329,8 @@ export function StudioFleetConnections({ environmentId, savedEnvironmentIds }: P
     setAdded(null);
     try {
       const removed = await removeStudioFleetMachine(environmentId, machine.id);
-      if (removed.workerAccess === "kept" || removed.managementToken === "kept")
+      if (secretsWarning) setNotice(`${fleetRemoveNotice(removed)} ${secretsWarning}`);
+      else if (removed.workerAccess === "kept" || removed.managementToken === "kept")
         setNotice(fleetRemoveNotice(removed));
       else setAdded(fleetRemoveNotice(removed));
     } catch (failure) {
@@ -363,6 +377,7 @@ export function StudioFleetConnections({ environmentId, savedEnvironmentIds }: P
       }
       onRefresh={refresh}
       onPair={(machine) => void pair(machine)}
+      canCheckReadiness
       canManageWorkers={canManageWorkers}
       workerDrafts={workerDrafts}
       defaultWorkerDraft={emptyWorkerDraft}
@@ -446,6 +461,7 @@ export function StudioFleetRoster({
   onInvite,
   inviteDialog = null,
   machineStatuses = NO_MACHINE_STATUSES,
+  canCheckReadiness = false,
 }: {
   snapshot: StudioFleetSnapshot | null;
   loading: boolean;
@@ -483,7 +499,10 @@ export function StudioFleetRoster({
   inviteDialog?: ReactNode;
   /** This browser's own connection to each saved machine, keyed by environment id. */
   machineStatuses?: Readonly<Record<string, FleetMachineConnection>>;
+  /** Offers each connected machine's sign-in and repository-access checklist. */
+  canCheckReadiness?: boolean;
 }) {
+  const [readinessFor, setReadinessFor] = useState<string | null>(null);
   return (
     <SettingsSection
       id="private-machines"
@@ -579,6 +598,25 @@ export function StudioFleetRoster({
                     </Button>
                   )}
                 </div>
+                {canCheckReadiness && (current || (saved && own?.connected)) ? (
+                  readinessFor === machine.id ? (
+                    <div className="rounded-lg border p-2.5">
+                      <MachineReadinessChecklist
+                        environmentId={machine.environmentId}
+                        environmentLabel={machine.label}
+                      />
+                    </div>
+                  ) : (
+                    <Button
+                      className="self-start"
+                      size="xs"
+                      variant="ghost-muted"
+                      onClick={() => setReadinessFor(machine.id)}
+                    >
+                      Check readiness
+                    </Button>
+                  )
+                ) : null}
                 {!current && onWorkers && onWorkerDraftChange ? (
                   <FleetWorkersRow
                     machine={machine}

@@ -24,7 +24,7 @@ import { desktopNetworkAccessStateAtom } from "../../state/desktopNetworkAccess"
 import { useProjects, useServerConfigs } from "../../state/entities";
 import { useEnvironments } from "../../state/environments";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
-import { useStudioFleet } from "../../studio/fleet";
+import { useMachineWorkGrants, useStudioFleet } from "../../studio/fleet";
 import { useHostLimitBlocks } from "../studio/shell/HostLimits";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -37,7 +37,9 @@ import {
   type MachineRowModel,
   type MachineSharedProject,
   type MachineWorkerGrant,
+  type MachineWorkHere,
 } from "./machinesSettings.logic";
+import { MachineWorkGrants } from "./MachineWorkGrants";
 import { resolveDesktopPairingUrl } from "./pairingUrls";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 import { usePrimaryFleet } from "./usePrimaryFleet";
@@ -63,12 +65,10 @@ function currentServerOrigin(): string | null {
   }
 }
 
-/**
- * Settings > Machines. Sections stay separate so others can join the page,
- * such as who may run work on this Mac.
- */
+/** Settings > Machines: the machines this app knows of, then who may run work on this one. */
 export function MachinesSettingsPanel() {
   const fleet = usePrimaryFleet();
+  const grants = useMachineWorkGrants(fleet.primaryEnvironmentId);
   const { environments } = useEnvironments();
   const projects = useProjects();
   // Read once: the page shows sign-ins, not countdowns, so it never ticks.
@@ -95,8 +95,9 @@ export function MachinesSettingsPanel() {
         canPair: fleet.canPair,
         projects,
         hostBlocks,
+        workGrants: grants.snapshot,
       }),
-    [environments, fleet, hostBlocks, projects],
+    [environments, fleet, hostBlocks, projects, grants.snapshot],
   );
 
   async function connect(machine: StudioFleetMachine) {
@@ -127,6 +128,9 @@ export function MachinesSettingsPanel() {
           )
         }
       />
+      {fleet.primaryEnvironmentId ? (
+        <MachineWorkGrants environmentId={fleet.primaryEnvironmentId} grants={grants} />
+      ) : null}
     </SettingsPageContainer>
   );
 }
@@ -202,6 +206,14 @@ const SEEN_DOT: Readonly<Record<MachineRowModel["seen"]["state"], string>> = {
   connected: "bg-success",
   elsewhere: "bg-warning",
   "not-connected": "bg-muted-foreground/50",
+};
+
+const WORK_HERE_BADGE: Readonly<
+  Record<MachineWorkHere["status"], "success" | "warning" | "secondary">
+> = {
+  active: "success",
+  revoked: "secondary",
+  expired: "warning",
 };
 
 const WORKER_BADGE: Readonly<
@@ -288,6 +300,17 @@ export function MachineRow({
               {row.workers.label}
             </Badge>
             <span>{row.workers.detail}</span>
+          </p>
+        </DetailLine>
+      ) : null}
+
+      {row.workHere ? (
+        <DetailLine label="Work it may run here">
+          <p className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+            <Badge size="sm" variant={WORK_HERE_BADGE[row.workHere.status]}>
+              {row.workHere.label}
+            </Badge>
+            <span>{row.workHere.detail}</span>
           </p>
         </DetailLine>
       ) : null}

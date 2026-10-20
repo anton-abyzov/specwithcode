@@ -55,6 +55,14 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.machineHandoffCopyRetry]: AuthFilesystemWriteScope,
   [WS_METHODS.machineHandoffCopyUndo]: AuthFilesystemWriteScope,
   [WS_METHODS.machineHandoffCopyCancel]: AuthOrchestrationOperateScope,
+  [WS_METHODS.machineHandoffCopySecrets]: AuthAccessWriteScope,
+  [WS_METHODS.machineHandoffSentSecrets]: AuthFilesystemReadScope,
+  [WS_METHODS.machineHandoffReadiness]: AuthFilesystemReadScope,
+  [WS_METHODS.projectLinkDigest]: AuthOrchestrationReadScope,
+  // A member's read-only copy of its coordinator's notes, and taking over or giving way.
+  [WS_METHODS.projectLinkReplicate]: AuthSettingsWriteScope,
+  [WS_METHODS.projectTakeover]: AuthSettingsWriteScope,
+  [WS_METHODS.projectSupersede]: AuthSettingsWriteScope,
   [WS_METHODS.projectsEnvironmentPrepare]: AuthSourceControlWriteScope,
   [WS_METHODS.projectsPlanReplace]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsPlanConfigure]: AuthOrchestrationOperateScope,
@@ -133,7 +141,12 @@ function folderCopyScopes(method: string, input: unknown): readonly AuthEnvironm
   switch (method) {
     case WS_METHODS.machineHandoffCopySourceStatus:
     case WS_METHODS.machineHandoffCopyStatus:
+    case WS_METHODS.machineHandoffSentSecrets:
+    case WS_METHODS.machineHandoffReadiness:
       return read;
+    // Sends secret files to another machine: as strong as granting it access.
+    case WS_METHODS.machineHandoffCopySecrets:
+      return [...read, AuthOrchestrationOperateScope, AuthAccessWriteScope];
     case WS_METHODS.machineHandoffCopyOffer:
     case WS_METHODS.machineHandoffCopySourceCancel:
     case WS_METHODS.machineHandoffCopyStart:
@@ -191,7 +204,10 @@ export function clientRpcRequiredScopes(
     method === WS_METHODS.projectLinkPrepare ||
     method === WS_METHODS.projectLinkAccept ||
     method === WS_METHODS.projectLinkCommit ||
-    method === WS_METHODS.projectUnlink
+    method === WS_METHODS.projectUnlink ||
+    method === WS_METHODS.projectLinkReplicate ||
+    method === WS_METHODS.projectTakeover ||
+    method === WS_METHODS.projectSupersede
   )
     return [AuthSettingsWriteScope, AuthOrchestrationOperateScope];
   if (method === WS_METHODS.projectLinkPreview)

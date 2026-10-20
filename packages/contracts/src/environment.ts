@@ -246,6 +246,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       `projects.fingerprint`). Absent on older servers, which reject those calls,
       so clients ask to update that machine first. */
   projectLink: Schema.optionalKey(Schema.Boolean),
+  /** Serves coordinator takeover, giving way and coordinator note replicas
+      (`projectLink.takeover`, `supersede`, `replicate`, `digest`). */
+  coordinatorTakeover: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

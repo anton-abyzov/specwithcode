@@ -2,11 +2,14 @@ import {
   CommandId,
   compareFingerprints,
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+  keepBothNoteName,
   logicalProjectMemberKey,
   type LogicalProject,
   type LogicalProjectMember,
   type Project,
   type ProjectCoordinatorBinding,
+  type ProjectCoordinatorReplica,
+  type ProjectDisconnectedTurn,
   type ProjectFingerprintInput,
   type ProjectFingerprintResult,
   PROJECT_LINK_MAX_BYTES,
@@ -14,6 +17,8 @@ import {
   type ProjectLinkAcceptResult,
   type ProjectLinkCommitInput,
   type ProjectLinkCommitResult,
+  type ProjectLinkDigest,
+  type ProjectLinkDigestInput,
   ProjectLinkError,
   type ProjectLinkNote,
   type ProjectLinkNoteWrite,
@@ -22,6 +27,12 @@ import {
   type ProjectLinkPreview,
   type ProjectLinkPreviewInput,
   type ProjectLinkRefusal,
+  type ProjectLinkReplicateInput,
+  type ProjectLinkReplicateResult,
+  type ProjectSupersedeInput,
+  type ProjectSupersedeResult,
+  type ProjectTakeoverInput,
+  type ProjectTakeoverResult,
   type ProjectUnlinkInput,
   type ProjectUnlinkResult,
   ProjectId,
@@ -37,10 +48,12 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { sha256 } from "../nodeCrypto.ts";
 import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import type { ProjectOwnershipUpdate } from "../orchestration-v2/ProjectCommands.ts";
 import { randomUuidV4 } from "../orchestration-v2/RandomUuid.ts";
+import * as CoordinatorReplicas from "./CoordinatorReplicas.ts";
 import * as ProjectAdmission from "./ProjectAdmission.ts";
 import { fingerprintFolder } from "./projectFingerprint.ts";
 import * as ProjectService from "./ProjectService.ts";
@@ -81,6 +94,18 @@ export class ProjectLink extends Context.Service<
     readonly unlink: (
       input: ProjectUnlinkInput,
     ) => Effect.Effect<ProjectUnlinkResult, ProjectLinkError>;
+    readonly digest: (
+      input: ProjectLinkDigestInput,
+    ) => Effect.Effect<ProjectLinkDigest, ProjectLinkError>;
+    readonly replicate: (
+      input: ProjectLinkReplicateInput,
+    ) => Effect.Effect<ProjectLinkReplicateResult, ProjectLinkError>;
+    readonly takeover: (
+      input: ProjectTakeoverInput,
+    ) => Effect.Effect<ProjectTakeoverResult, ProjectLinkError>;
+    readonly supersede: (
+      input: ProjectSupersedeInput,
+    ) => Effect.Effect<ProjectSupersedeResult, ProjectLinkError>;
   }
 >()("specweave-studio/project/ProjectLink") {}
 
@@ -96,6 +121,21 @@ const sameMember = (a: LogicalProjectMember, b: LogicalProjectMember) =>
 const mergeMembers = (...lists: ReadonlyArray<ReadonlyArray<LogicalProjectMember>>) => [
   ...new Map(lists.flat().map((member) => [logicalProjectMemberKey(member), member])).values(),
 ];
+
+/**
+ * Which version of a coordinator's notes, goal and instructions a copy holds:
+ * equal content gives an equal digest on every machine.
+ */
+export function coordinatorContentDigest(content: {
+  readonly goal: string;
+  readonly instructions: string;
+  readonly notes: ReadonlyArray<{ readonly name: string; readonly content: string }>;
+}): string {
+  const notes = content.notes
+    .map((note) => [note.name, note.content] as const)
+    .toSorted(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+  return sha256([JSON.stringify([content.goal, content.instructions, notes])]).toString("hex");
+}
 
 /** Why a copy cannot keep its coordinator, or join another copy as a member. */
 export function linkRefusals(
@@ -129,6 +169,7 @@ const make = Effect.gen(function* () {
   const workspace = yield* ProjectWorkspaceService.ProjectWorkspaceService;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const environment = yield* ServerEnvironment.ServerEnvironment;
+  const replicas = yield* CoordinatorReplicas.CoordinatorReplicas;
 
   const load = (projectId: ProjectId) =>
     projects.getById(projectId).pipe(
@@ -166,6 +207,7 @@ const make = Effect.gen(function* () {
     commandPrefix: string,
     operationId: string,
     ownership: Omit<ProjectOwnershipUpdate, "expectedRevision">,
+    patch?: { readonly goal: string; readonly instructions: string },
   ) => {
     const revision = project.workspaceSettings?.revision ?? 0;
     return projects
@@ -174,6 +216,7 @@ const make = Effect.gen(function* () {
         // The revision keeps a retry after a concurrent edit from replaying a stale rejection.
         commandId: CommandId.make(`${commandPrefix}:${operationId}:${revision}`),
         ownership: { ...ownership, expectedRevision: revision },
+        ...(patch ? { workspaceSettings: { ...patch, expectedRevision: revision } } : {}),
       })
       .pipe(
         Effect.mapError((error) =>
@@ -228,10 +271,9 @@ const make = Effect.gen(function* () {
       return { workspaceRoot, fingerprint: yield* fingerprintOf(workspaceRoot) };
     });
 
-  const preview: ProjectLink["Service"]["preview"] = ({ projectId }) =>
+  /** A copy's notes (as many as one request carries), goal and instructions. */
+  const readContent = (projectId: ProjectId) =>
     Effect.gen(function* () {
-      const project = yield* load(projectId);
-      const member = yield* selfMember(project);
       const read = yield* workspace
         .readWorkspace({ projectId })
         .pipe(Effect.mapError(() => new ProjectLinkError({ code: "storage_failed" })));
@@ -254,6 +296,62 @@ const make = Effect.gen(function* () {
           content: note.value.content,
         });
       }
+      return {
+        goal: read.settings.goal,
+        instructions: read.settings.instructions,
+        notes,
+        notesTruncated,
+      };
+    });
+
+  const readReplica = (project: Project) =>
+    replicas.read(project.id).pipe(
+      Effect.mapError(() => new ProjectLinkError({ code: "storage_failed" })),
+      // A replica of another identity (from before an unlink) is not this one's.
+      Effect.map((found) =>
+        Option.filter(
+          found,
+          (replica) => replica.logicalProjectId === project.workspaceSettings?.logicalProject?.id,
+        ),
+      ),
+    );
+
+  /** Coordinator turns `member` ran from `since`, newest last. */
+  const turnsSince = (member: LogicalProjectMember, since: string | undefined) =>
+    since === undefined
+      ? Effect.succeed<ReadonlyArray<ProjectDisconnectedTurn>>([])
+      : projections.getThreadProjection(member.coordinatorThreadId).pipe(
+          Effect.map((projection) => {
+            const from = Date.parse(since);
+            return projection.runs
+              .filter((run) => DateTime.toEpochMillis(run.requestedAt) >= from)
+              .toSorted(
+                (left, right) =>
+                  DateTime.toEpochMillis(left.requestedAt) -
+                  DateTime.toEpochMillis(right.requestedAt),
+              )
+              .slice(-200)
+              .map((run): ProjectDisconnectedTurn => ({
+                threadId: member.coordinatorThreadId,
+                runId: run.id,
+                requestedAt: DateTime.formatIso(run.requestedAt),
+                request:
+                  projection.messages
+                    .find((message) => message.id === run.userMessageId)
+                    ?.text.slice(0, 400) ?? null,
+              }));
+          }),
+          Effect.orElseSucceed((): ReadonlyArray<ProjectDisconnectedTurn> => []),
+        );
+
+  const preview: ProjectLink["Service"]["preview"] = ({ projectId }) =>
+    Effect.gen(function* () {
+      const project = yield* load(projectId);
+      const member = yield* selfMember(project);
+      const { goal, instructions, notes, notesTruncated } = yield* readContent(projectId);
+      const binding = project.workspaceSettings?.coordinatorBinding;
+      const replica =
+        binding?.state === "transferred" ? yield* readReplica(project) : Option.none();
       const shell = yield* coordinatorShell(member);
       const refusals = linkRefusals(project, shell?.activeRunId != null);
       const activity = shell?.latestRunRequestedAt ?? shell?.latestUserMessageAt ?? null;
@@ -264,13 +362,16 @@ const make = Effect.gen(function* () {
         logicalProject: project.workspaceSettings?.logicalProject ?? null,
         coordinatorBinding: project.workspaceSettings?.coordinatorBinding ?? null,
         fingerprint: yield* fingerprintOf(project.workspaceRoot),
-        goal: read.settings.goal,
-        instructions: read.settings.instructions,
+        goal,
+        instructions,
         notes,
         notesTruncated,
         lastCoordinatorActivityAt: activity === null ? null : DateTime.formatIso(activity),
         keepRefusal: refusals.keep,
         joinRefusal: refusals.join,
+        replica: Option.getOrNull(replica),
+        ranWhileDisconnected:
+          binding?.state === "transferred" ? yield* turnsSince(member, binding.takenOverAt) : [],
       };
     });
 
@@ -515,7 +616,217 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  return ProjectLink.of({ fingerprint, preview, prepare, accept, commit, unlink });
+  const digest: ProjectLink["Service"]["digest"] = ({ projectId }) =>
+    Effect.gen(function* () {
+      const project = yield* load(projectId);
+      const replica = yield* readReplica(project);
+      return {
+        digest: coordinatorContentDigest(yield* readContent(projectId)),
+        replica: Option.match(replica, {
+          onNone: () => null,
+          onSome: ({ from, digest, replicatedAt }) => ({ from, digest, replicatedAt }),
+        }),
+      };
+    });
+
+  const replicate: ProjectLink["Service"]["replicate"] = ({ projectId, replica }) =>
+    admission.withLock(
+      projectId,
+      Effect.gen(function* () {
+        const project = yield* load(projectId);
+        const self = yield* selfMember(project);
+        const identity = project.workspaceSettings?.logicalProject;
+        if (!identity || project.workspaceSettings?.coordinatorBinding?.state !== "transferred")
+          return yield* fail("not_member");
+        if (
+          replica.logicalProjectId !== identity.id ||
+          replica.from.environmentId === self.environmentId ||
+          coordinatorContentDigest(replica) !== replica.digest
+        )
+          return yield* fail("invalid");
+        const held = yield* readReplica(project);
+        if (
+          Option.isSome(held) &&
+          held.value.digest === replica.digest &&
+          sameMember(held.value.from, replica.from)
+        )
+          return { replicatedAt: held.value.replicatedAt, replayed: true };
+        const replicatedAt = DateTime.formatIso(yield* DateTime.now);
+        yield* replicas
+          .write(projectId, { ...replica, replicatedAt })
+          .pipe(Effect.mapError(() => new ProjectLinkError({ code: "storage_failed" })));
+        return { replicatedAt, replayed: false };
+      }),
+    );
+
+  /** Writes the replica's notes; a local note with other text is kept beside it. */
+  const applyReplicaNotes = (projectId: ProjectId, replica: ProjectCoordinatorReplica) =>
+    Effect.gen(function* () {
+      const writes: ProjectLinkNoteWrite[] = [];
+      for (const note of replica.notes) {
+        const current = yield* workspace
+          .readMemory({ projectId, name: note.name })
+          .pipe(Effect.option);
+        if (Option.isSome(current) && current.value.content === note.content) continue;
+        if (Option.isSome(current)) {
+          const name = keepBothNoteName(note.name, "before takeover");
+          const kept = yield* workspace.readMemory({ projectId, name }).pipe(Effect.option);
+          writes.push({
+            name,
+            content: current.value.content,
+            expectedRevision: Option.isSome(kept) ? kept.value.revision : null,
+          });
+        }
+        writes.push({
+          name: note.name,
+          content: note.content,
+          expectedRevision: Option.isSome(current) ? current.value.revision : null,
+        });
+      }
+      return yield* writeNotes(projectId, writes);
+    });
+
+  const takeover: ProjectLink["Service"]["takeover"] = (input) =>
+    admission.withLock(
+      input.projectId,
+      Effect.gen(function* () {
+        const project = yield* load(input.projectId);
+        const identity = project.workspaceSettings?.logicalProject;
+        const binding = project.workspaceSettings?.coordinatorBinding;
+        const replica = yield* readReplica(project);
+        const replicaFrom = Option.match(replica, {
+          onNone: () => null,
+          onSome: (value) => value.replicatedAt,
+        });
+        if (
+          identity &&
+          binding?.state === "active" &&
+          binding.operationId === input.operationId &&
+          binding.takenOverAt !== undefined
+        )
+          return {
+            operationId: input.operationId,
+            logicalProject: identity,
+            coordinatorBinding: binding,
+            notesWritten: 0,
+            replicaFrom,
+            replayed: true,
+          };
+        if (!identity || binding?.state !== "transferred" || binding.successor === undefined)
+          return yield* fail(
+            binding?.state === "transferring" ? "handoff_in_progress" : "not_member",
+          );
+        if (project.workspaceSettings?.archived) return yield* fail("archived");
+        const self = yield* selfMember(project);
+        const predecessor = input.predecessor ?? binding.successor;
+        if (
+          logicalProjectMemberKey(predecessor) === logicalProjectMemberKey(self) ||
+          !identity.members.some((member) => sameMember(member, predecessor))
+        )
+          return yield* fail(
+            "superseded_conflict",
+            "The coordinator being replaced is not listed with this copy.",
+          );
+        const notesWritten = Option.isSome(replica)
+          ? yield* applyReplicaNotes(project.id, replica.value)
+          : 0;
+        const active: ProjectCoordinatorBinding = {
+          epoch: Math.max(binding.epoch, input.knownEpoch ?? 0) + 1,
+          state: "active",
+          operationId: input.operationId,
+          predecessor,
+          takenOverAt: DateTime.formatIso(yield* DateTime.now),
+        };
+        yield* writeOwnership(
+          // Reread: notes do not change settings, but stay exact about the revision.
+          yield* load(input.projectId),
+          "project-takeover",
+          input.operationId,
+          { mode: "takeover", logicalProject: identity, coordinatorBinding: active },
+          Option.isSome(replica)
+            ? { goal: replica.value.goal, instructions: replica.value.instructions }
+            : undefined,
+        );
+        return {
+          operationId: input.operationId,
+          logicalProject: identity,
+          coordinatorBinding: active,
+          notesWritten,
+          replicaFrom,
+          replayed: false,
+        };
+      }),
+    );
+
+  const supersede: ProjectLink["Service"]["supersede"] = (input) =>
+    admission.withLock(
+      input.projectId,
+      Effect.gen(function* () {
+        const project = yield* load(input.projectId);
+        const self = yield* selfMember(project);
+        const identity = project.workspaceSettings?.logicalProject;
+        const binding: ProjectCoordinatorBinding = project.workspaceSettings
+          ?.coordinatorBinding ?? { epoch: 0, state: "active" };
+        const incoming = input.coordinatorBinding;
+        if (!identity || identity.id !== input.logicalProjectId) return yield* fail("not_linked");
+        if (
+          incoming.state !== "active" ||
+          incoming.predecessor === undefined ||
+          !sameMember(incoming.predecessor, self) ||
+          incoming.operationId === undefined ||
+          incoming.takenOverAt === undefined ||
+          logicalProjectMemberKey(input.successor) === logicalProjectMemberKey(self)
+        )
+          return yield* fail("invalid");
+        if (
+          binding.state === "transferred" &&
+          binding.operationId === incoming.operationId &&
+          binding.successor !== undefined &&
+          sameMember(binding.successor, input.successor)
+        )
+          return {
+            coordinatorBinding: binding,
+            ranWhileDisconnected: yield* turnsSince(self, binding.takenOverAt),
+            replayed: true,
+          };
+        if (
+          binding.state !== "active" ||
+          incoming.epoch <= binding.epoch ||
+          !identity.members.some((member) => sameMember(member, input.successor))
+        )
+          return yield* fail("superseded_conflict");
+        const relinquished: ProjectCoordinatorBinding = {
+          epoch: incoming.epoch,
+          state: "transferred",
+          operationId: incoming.operationId,
+          successor: input.successor,
+          takenOverAt: incoming.takenOverAt,
+        };
+        yield* writeOwnership(project, "project-superseded", incoming.operationId, {
+          mode: "superseded",
+          logicalProject: identity,
+          coordinatorBinding: relinquished,
+        });
+        return {
+          coordinatorBinding: relinquished,
+          ranWhileDisconnected: yield* turnsSince(self, incoming.takenOverAt),
+          replayed: false,
+        };
+      }),
+    );
+
+  return ProjectLink.of({
+    fingerprint,
+    preview,
+    prepare,
+    accept,
+    commit,
+    unlink,
+    digest,
+    replicate,
+    takeover,
+    supersede,
+  });
 });
 
 function rootSummary(here: RepositoryFingerprint, there: RepositoryFingerprint): string {
@@ -527,6 +838,7 @@ function rootSummary(here: RepositoryFingerprint, there: RepositoryFingerprint):
   return `This copy holds ${root(here)}; the other holds ${root(there)}.`;
 }
 
+/** Needs `CoordinatorReplicas`; the runtime provides its file store. */
 export const layer = Layer.effect(ProjectLink, make).pipe(Layer.provide(ProjectAdmission.layer));
 
 /** The `projectLink.*` and `projects.fingerprint` handlers (see `WsProjectLinkRpcGroup`). */
@@ -540,6 +852,10 @@ export const layerRpcHandlers = WsProjectLinkRpcGroup.middleware(RpcInstrumentat
       [WS_METHODS.projectLinkAccept]: link.accept,
       [WS_METHODS.projectLinkCommit]: link.commit,
       [WS_METHODS.projectUnlink]: link.unlink,
+      [WS_METHODS.projectLinkDigest]: link.digest,
+      [WS_METHODS.projectLinkReplicate]: link.replicate,
+      [WS_METHODS.projectTakeover]: link.takeover,
+      [WS_METHODS.projectSupersede]: link.supersede,
     };
   }),
 );

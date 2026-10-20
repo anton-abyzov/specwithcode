@@ -1082,7 +1082,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "machine-work-grants",
     title: "Who can run work on this Mac",
-    to: "/settings/connections",
+    to: "/settings/machines",
     searchTerms: [
       "worker grant revoke coordinator fleet remote work machine access projects sign-ins accounts delegation",
     ],

@@ -4,7 +4,12 @@ import type {
   StudioFleetSnapshot,
   StudioFleetWorkers,
 } from "@specweave-studio/contracts/studioFleet";
-import { fleetRemoveNotice, fleetWorkersView, workerMachineChoices } from "./fleetWorkers";
+import {
+  sentSecretsWarning,
+  fleetRemoveNotice,
+  fleetWorkersView,
+  workerMachineChoices,
+} from "./fleetWorkers";
 
 const base: StudioFleetWorkers = {
   status: "not_allowed",
@@ -141,5 +146,23 @@ describe("removing a machine", () => {
     const notice = fleetRemoveNotice({ ...removed, managementToken: "kept", workerAccess: "kept" });
     expect(notice).toContain("worker access and management token there stays valid");
     expect(notice).toContain("On Mac M1, revoke it in Settings > Connections (session session-1)");
+  });
+});
+
+describe("sentSecretsWarning", () => {
+  const entry = (path: string) => ({ folder: "/p/app", path, sentAt: "2026-10-20T01:00:00Z" });
+  it("says nothing when no secret file went there", () => {
+    expect(sentSecretsWarning([], "M3")).toBeNull();
+  });
+  it("names the files to rotate, a few at a time", () => {
+    expect(sentSecretsWarning([entry(".env")], "M3")).toBe(
+      "A folder copy sent a secret file to M3: /p/app/.env. Rotate it if M3 should no longer hold it.",
+    );
+    const many = sentSecretsWarning(
+      Array.from({ length: 7 }, (_, index) => entry(`.env.${index}`)),
+      "M3",
+    );
+    expect(many).toContain("7 secret files to M3");
+    expect(many).toContain("/p/app/.env.4 and 2 more. Rotate them");
   });
 });

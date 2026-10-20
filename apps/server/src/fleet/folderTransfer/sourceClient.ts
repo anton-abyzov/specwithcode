@@ -207,6 +207,19 @@ export class SourceClient {
     return this.json<{ state: string }>(await this.request("POST", "release", { reason }));
   }
 
+  /** Approved secret files; an older source without the secret step has none. */
+  async secrets(): Promise<Array<{ path: string; size: number }>> {
+    const response = await this.request("GET", "secrets");
+    if (response.status === 404) return [];
+    return (await this.json<{ files: Array<{ path: string; size: number }> }>(response)).files;
+  }
+
+  async secretFile(path: string): Promise<Uint8Array> {
+    const response = await this.request("POST", "secret", { path });
+    if (!response.ok) await this.json(response);
+    return new Uint8Array(await response.arrayBuffer());
+  }
+
   async commit() {
     return this.json<{ state: string }>(await this.request("POST", "commit", {}));
   }

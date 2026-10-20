@@ -18,6 +18,9 @@ describe("project link contracts", () => {
     WS_METHODS.projectLinkAccept,
     WS_METHODS.projectLinkCommit,
     WS_METHODS.projectUnlink,
+    WS_METHODS.projectLinkReplicate,
+    WS_METHODS.projectTakeover,
+    WS_METHODS.projectSupersede,
   ])("requires settings write and operate for %s, like a handoff", (method) => {
     expect(clientRpcRequiredScopes(method, {})).toEqual([
       AuthSettingsWriteScope,
@@ -31,6 +34,9 @@ describe("project link contracts", () => {
     ]);
     expect(clientRpcRequiredScopes(WS_METHODS.projectsFingerprint, {})).toEqual([
       AuthFilesystemReadScope,
+    ]);
+    expect(clientRpcRequiredScopes(WS_METHODS.projectLinkDigest, {})).toEqual([
+      AuthOrchestrationReadScope,
     ]);
   });
   it("names a keep-both note with the other machine and keeps it a valid note name", () => {

@@ -55,4 +55,16 @@ export const machineHandoff = {
     label: "machine-handoff:copy-undo",
     tag: WS_METHODS.machineHandoffCopyUndo,
   }),
+  copySecrets: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "machine-handoff:copy-secrets",
+    tag: WS_METHODS.machineHandoffCopySecrets,
+  }),
+  sentSecrets: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "machine-handoff:sent-secrets",
+    tag: WS_METHODS.machineHandoffSentSecrets,
+  }),
+  readiness: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "machine-handoff:readiness",
+    tag: WS_METHODS.machineHandoffReadiness,
+  }),
 };

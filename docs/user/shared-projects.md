@@ -106,9 +106,33 @@ offline, the copy still unlinks, without the notes; when that machine is back,
 its **Machines** list shows "This copy was unlinked on <machine>." with
 **Remove** to finish.
 
-Apart from Unlink, a copy that runs workers gets an active coordinator only
-through a [handoff](./portable-handoffs.md) from the current coordinator.
-Project settings cannot clear that.
+Apart from Unlink and a takeover (below), a copy that runs workers gets an
+active coordinator only through a [handoff](./portable-handoffs.md) from the
+current coordinator. Project settings cannot clear that.
+
+## When the coordinator's machine is gone
+
+Each copy that runs workers keeps a read-only copy of the coordinator's notes,
+goal and instructions. The app refreshes it when you link, and whenever the
+coordinator's notes, goal or instructions change while it can reach both
+machines.
+
+If the coordinator's machine has been unreachable for at least 10 minutes,
+**Settings > Project > Machines** shows **Take over coordinator here** next to
+each copy that runs workers. Before then it says how many minutes are left.
+Choose it and confirm once. That copy becomes the coordinator and starts from
+the notes, goal and instructions it last copied. A note of its own with
+different text is kept under a second name ending in `-before-takeover`.
+Nothing changes over on its own: the app never takes over without you.
+
+When the old coordinator's machine is reachable again, the app makes it give
+way: it becomes a copy that runs workers. Any coordinator turns it ran while
+the two machines could not see each other are listed. Choose **Review turns**
+on its row to see them, and move any work that still matters to the new
+coordinator. Code stays in git on each machine; nothing is merged for you.
+
+The machine you take over on must run a version of SpecWithCode with takeover;
+an older one shows **Update SpecWithCode on <machine> to take over.**
 
 ## How remote workers find the project
 
