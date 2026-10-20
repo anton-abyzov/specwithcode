@@ -17,6 +17,7 @@ const runtime = vi.hoisted(() => ({
   environments: [] as unknown[],
   projects: [] as unknown[],
   blocks: [] as unknown[],
+  grants: null as unknown,
   connect: vi.fn(async () => {}),
   createCredential: vi.fn(),
 }));
@@ -72,6 +73,13 @@ vi.mock("../../state/session", () => ({
 vi.mock("../../state/desktopNetworkAccess", () => ({ desktopNetworkAccessStateAtom: null }));
 vi.mock("../../studio/fleet", () => ({
   useStudioFleet: () => ({ snapshot: null, loading: false, failed: false, refresh: vi.fn() }),
+  useMachineWorkGrants: () => ({
+    snapshot: runtime.grants,
+    loading: false,
+    failed: false,
+    refresh: vi.fn(),
+  }),
+  changeMachineWorkGrant: vi.fn(),
 }));
 vi.mock("../studio/shell/HostLimits", () => ({ useHostLimitBlocks: () => runtime.blocks }));
 vi.mock("../../connection/desktopLocal", () => ({ isThisMachineTarget: () => false }));
@@ -126,6 +134,7 @@ const member = (environmentId: EnvironmentId, projectId: string) => ({
 });
 
 function setUp() {
+  runtime.grants = null;
   runtime.fleet = {
     primaryEnvironmentId: m4,
     snapshot,
@@ -193,6 +202,36 @@ describe("Settings > Machines", () => {
     expect(html).toContain("someone@example.com · also on M4MAX");
     expect(html).toContain("Connect to see its accounts.");
     expect(html).toContain("Connect both ways");
+  });
+
+  it("lists who can run work on this Mac and says it on that machine's row", () => {
+    setUp();
+    runtime.grants = {
+      grants: [
+        {
+          coordinatorEnvironmentId: m3,
+          machineLabel: "MacBook Pro",
+          projects: { kind: "linked" },
+          accounts: { kind: "all" },
+          owner: "self",
+          hopLimit: 2,
+          runtimeCap: "auto",
+          expiresAt: null,
+          status: "active",
+          revokedAt: null,
+          interruptAt: null,
+          runningThreads: 1,
+          legacy: false,
+        },
+      ],
+      projects: [{ id: ProjectId.make("p-m4"), title: "easychamp", linkedTo: [m3] }],
+      accounts: [],
+    };
+    const html = renderToStaticMarkup(<MachinesSettingsPanel />);
+    expect(html).toContain('aria-label="Who can run work on this Mac"');
+    expect(html).toContain("May run work here");
+    expect(html).toContain("Projects linked to MacBook Pro: easychamp · Active · 1 running thread");
+    expect(html.match(/May run work here/g)).toHaveLength(1);
   });
 
   it("connects a private machine this app cannot see with the fleet pairing", async () => {

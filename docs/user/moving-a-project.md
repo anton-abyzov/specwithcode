@@ -49,7 +49,7 @@ the short final step of a move.
 | **New files**            | Yes     | Files Git does not track yet.                                             |
 | **Ignored project data** | Yes     | Ignored files that are not rebuilt, such as reports and evidence.         |
 | **Rebuildable folders**  | No      | `node_modules`, build output and caches. Rebuild them on the destination. |
-| **Secret-like files**    | Never   | `.env*`, keys and similar files. They are handled in a separate step.     |
+| **Secret-like files**    | Never   | `.env*`, keys and similar files. You can send chosen ones, see below.     |
 
 Symbolic links stay links, file modes are kept, and linked worktrees keep their
 branch. A link that points outside the project folder is shown in the preview.
@@ -103,6 +103,38 @@ Undo works for 14 days. The backups it uses live in
 destination and are removed after 14 days; after that the copy can no longer be
 undone. Branch backups under `refs/swc-backup/<operation>/` stay in the
 repositories until you delete them.
+
+## Secret files
+
+Secret-like files (`.env*`, private keys, credential files) are left out of the
+copy. When the folder has some, the preview lists them under **Secret files**,
+none ticked. Tick the ones the destination needs and confirm that you want them
+sent. On **Apply** they travel over the same private channel as the copy and are
+written readable only by you (mode `0600`). If the destination already has a
+different file at that path, the received one is saved beside it with a
+`.from-<machine>` name, and the done screen says which.
+
+The source keeps a list of which files went to which machine, with names and
+sizes only, never their contents. **Undo** removes the secret files the copy
+wrote.
+
+When you take a machine off the list with `specwithcode fleet remove <name>`,
+the command lists the secret files sent to it and reminds you to rotate those
+credentials.
+
+## Sign in on the destination
+
+Provider sign-ins (Claude, Codex, Copilot and others) are never copied. They are
+stored by each provider's own tool and tied to the machine, and copying them
+would put long-lived tokens on a second disk without you choosing it.
+
+After a copy finishes, the done screen shows the destination's readiness
+checklist: whether the project folder is there, whether Git and each enabled
+provider work, and whether each provider is signed in. **Sign in on <machine>**
+opens the provider sign-in for that machine. You can open the same checklist any
+time from **Settings > Connections**, with **Check readiness** on a machine card.
+A machine that runs an older SpecWithCode shows as not checkable; update it
+first.
 
 ## Interruptions and refusals
 

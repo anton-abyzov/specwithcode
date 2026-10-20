@@ -11,12 +11,16 @@ const {
   defaultKeptSide,
   departedMembers,
   linkCopyAsWorkers,
+  highestEpoch,
   linkedCopies,
   linkMachineProblem,
   linkMachineState,
   noteMergeComplete,
   noteMergeRows,
   noteWrites,
+  pendingSupersedes,
+  replicaMembers,
+  takeoverAvailability,
   unlinkNoteWrites,
 } = await import("./projectLink");
 const { copyRolesSummary } = await import("./projectDomain");
@@ -257,5 +261,61 @@ describe("linkCopyAsWorkers", () => {
       expect(outcome.status === "review" && outcome.reason).toMatch(reason);
       expect(calls).toEqual([]);
     }
+  });
+});
+
+describe("coordinator takeover", () => {
+  const shared = identity("logical:1", [member("m3", "kept"), member("m4", "joined")]);
+  const withBinding = (
+    project: EnvironmentProject,
+    binding: Record<string, unknown>,
+  ): EnvironmentProject =>
+    ({
+      ...project,
+      workspaceSettings: { ...project.workspaceSettings, coordinatorBinding: binding },
+    }) as EnvironmentProject;
+
+  it("waits 10 minutes after the coordinator was last seen, and never while it is connected", () => {
+    const now = 1_000_000_000;
+    expect(
+      takeoverAvailability({ coordinatorConnected: true, unreachableSince: now - 3_600_000, now }),
+    ).toEqual({ available: false, waitMs: 600_000 });
+    expect(
+      takeoverAvailability({ coordinatorConnected: false, unreachableSince: now - 240_000, now }),
+    ).toEqual({ available: false, waitMs: 360_000 });
+    expect(
+      takeoverAvailability({ coordinatorConnected: false, unreachableSince: now - 600_000, now }),
+    ).toEqual({ available: true, waitMs: 0 });
+    expect(
+      takeoverAvailability({ coordinatorConnected: false, unreachableSince: null, now }).available,
+    ).toBe(false);
+  });
+
+  it("finds the coordinator that must give way and the members that keep replicas", () => {
+    const kept = copy("m3", "kept", shared, "active");
+    const joined = copy("m4", "joined", shared, "transferred");
+    expect(highestEpoch([kept, joined])).toBe(2);
+    expect(replicaMembers(kept, [kept, joined])).toEqual([joined]);
+    expect(pendingSupersedes([kept, joined])).toEqual([]);
+
+    const tookOver = withBinding(joined, {
+      epoch: 3,
+      state: "active",
+      operationId: "op-1",
+      predecessor: member("m3", "kept"),
+      takenOverAt: "2026-10-19T12:10:00.000Z",
+    });
+    expect(pendingSupersedes([kept, tookOver])).toEqual([{ successor: tookOver, previous: kept }]);
+    // Once the old owner gave way, nothing is pending; a newer owner never gives way to an older one.
+    const gaveWay = withBinding(kept, {
+      epoch: 3,
+      state: "transferred",
+      successor: member("m4", "joined"),
+    });
+    expect(pendingSupersedes([gaveWay, tookOver])).toEqual([]);
+    expect(pendingSupersedes([withBinding(kept, { epoch: 4, state: "active" }), tookOver])).toEqual(
+      [],
+    );
+    expect(replicaMembers(tookOver, [gaveWay, tookOver])).toEqual([gaveWay]);
   });
 });

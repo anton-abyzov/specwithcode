@@ -36,6 +36,7 @@ vi.mock("../../studio/projectLink", () => ({
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (name: "prepare" | "receive") => state[name],
 }));
+vi.mock("../settings/MachineReadinessChecklist", () => ({ MachineReadinessChecklist: () => null }));
 vi.mock("@specweave-studio/client-runtime/state/runtime", () => ({
   squashAtomCommandFailure: (failure: { error: Error }) => failure.error,
 }));

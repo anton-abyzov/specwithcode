@@ -9,9 +9,18 @@ import { repositoryRelations, scanDestination } from "./destinationScan.ts";
 import { deviceOf, exists, freeBytes, privateDirectory, readJson, writeJson } from "./durable.ts";
 import { readManifestFile, writeManifest, type Manifest } from "./manifest.ts";
 import { finalPass, pullFiles, type PullProgress } from "./pullWorker.ts";
-import { planReady, planReconcile, pullRequirements, type Choice, type Plan } from "./reconcile.ts";
+import {
+  machineSlug,
+  planReady,
+  planReconcile,
+  pullRequirements,
+  type Choice,
+  type Plan,
+} from "./reconcile.ts";
+import { isSafeRelativePath } from "./paths.ts";
 import { SourceClient, SourceClientError } from "./sourceClient.ts";
 import { previewUndo, undoApply, type UndoPreview, type UndoResult } from "./undo.ts";
+import { type ReceivedSecret, removeReceivedSecrets, writeSecretFile } from "./secrets.ts";
 
 export type CopyState =
   | "planned"
@@ -89,6 +98,10 @@ export interface DestinationRecord {
   readonly requestedProjectId: string | null;
   /** When the Apply backups were discarded; Undo is no longer possible after it. */
   readonly backupsDiscardedAt?: string;
+  /** Secret files received after Apply: paths and sizes, never contents. */
+  readonly secrets?: ReadonlyArray<ReceivedSecret>;
+  /** Every approved secret file was received (or the source offered none). */
+  readonly secretsDone?: boolean;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -122,6 +135,19 @@ export interface DestinationHooks {
 }
 
 export const BACKUP_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
+
+/** Undo moves edited files and undone clones here; the backup expiry never deletes them. */
+const UNDO_KEPT_FOLDERS: ReadonlySet<string> = new Set(["kept-edits", "undone-clones"]);
+
+async function discardApplyBackups(backups: string): Promise<void> {
+  const names = await NodeFSP.readdir(backups).catch(() => [] as Array<string>);
+  for (const name of names) {
+    if (UNDO_KEPT_FOLDERS.has(name)) continue;
+    await NodeFSP.rm(NodePath.join(backups, name), { recursive: true, force: true });
+  }
+  if (!names.some((name) => UNDO_KEPT_FOLDERS.has(name)))
+    await NodeFSP.rm(backups, { recursive: true, force: true });
+}
 
 const OPERATION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const BEFORE_APPLY: ReadonlySet<CopyState> = new Set([
@@ -430,19 +456,30 @@ export class DestinationCopies {
       journalFile: paths.journal,
     });
     if (preview.edited > 0 && !force) return { record, result: null, preview };
+    const keptSecrets = await removeReceivedSecrets(record.targetFolder, record.secrets ?? []);
     const result = await undoApply({
       targetRoot: record.targetFolder,
       backupRoot: paths.backups,
       journalFile: paths.journal,
       force,
     });
-    const next = await this.update(operationId, { state: "undone" });
+    const next = await this.update(operationId, {
+      state: "undone",
+      ...(keptSecrets.length > 0
+        ? {
+            warnings: [
+              ...record.warnings,
+              ...keptSecrets.map((path) => `${path} was edited after the copy and was kept.`),
+            ].slice(0, 200),
+          }
+        : {}),
+    });
     return { record: next, result, preview };
   }
 
   /**
    * Discards Apply backups once the retention passes. The copied files stay;
-   * only Undo stops being possible.
+   * only Undo stops being possible. Files a forced Undo moved aside are kept.
    */
   async discardExpiredBackups(): Promise<ReadonlyArray<string>> {
     const retention = this.hooks.backupRetentionMs ?? BACKUP_RETENTION_MS;
@@ -453,7 +490,7 @@ export class DestinationCopies {
       if (record.state !== "applied" && record.state !== "undone" && record.state !== "failed")
         continue;
       if (now.getTime() - Date.parse(record.updatedAt) < retention) continue;
-      await NodeFSP.rm(this.paths(record.operationId).backups, { recursive: true, force: true });
+      await discardApplyBackups(this.paths(record.operationId).backups);
       await this.update(record.operationId, { backupsDiscardedAt: now.toISOString() });
       discarded.push(record.operationId);
     }
@@ -707,9 +744,38 @@ export class DestinationCopies {
     await this.finish(next);
   }
 
+  /**
+   * Pulls the secret files the person approved on the source, one at a time, and
+   * records each as it lands so a retry neither repeats nor forgets one.
+   */
+  private async receiveSecrets(record: DestinationRecord): Promise<DestinationRecord> {
+    const client = this.client(record);
+    const offered = await client.secrets();
+    let current = record;
+    const machine = machineSlug(record.sourceMachine);
+    for (const file of offered) {
+      if ((current.secrets ?? []).some((item) => item.path === file.path)) continue;
+      if (!isSafeRelativePath(file.path))
+        throw new CopyError("refused", "The source offered a secret file outside the folder.");
+      const bytes = await client.secretFile(file.path);
+      const received = await writeSecretFile({
+        targetRoot: current.targetFolder,
+        path: file.path,
+        bytes,
+        sourceMachine: machine,
+      });
+      current = await this.update(current.operationId, {
+        secrets: [...(current.secrets ?? []), received],
+      });
+    }
+    return this.update(current.operationId, { secretsDone: true });
+  }
+
   /** Tells the source the copy is complete, then registers the folder here. */
   private async finish(record: DestinationRecord) {
     let current = record;
+    if (!current.committed && current.secretsDone !== true)
+      current = await this.receiveSecrets(current);
     if (!current.committed) {
       await this.client(current).commit();
       current = await this.update(current.operationId, { committed: true });

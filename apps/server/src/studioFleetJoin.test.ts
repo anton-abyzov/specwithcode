@@ -266,6 +266,7 @@ describe("adding machines to the fleet file", () => {
     expect(await removeFleetMachine({ baseDir, machine: "mac m1" })).toEqual({
       id: "m1",
       label: "Mac M1",
+      environmentId: "environment-m1",
     });
     expect((await readFleetConfig(baseDir))?.machines).toEqual([]);
     await expect(removeFleetMachine({ baseDir, machine: "m1" })).rejects.toThrow(
@@ -344,6 +345,7 @@ describe("adding machines to the fleet file", () => {
       expect(removed).toEqual({
         id: "m1",
         label: "Mac M1",
+        environmentId: "environment-m1",
         managementToken: "kept",
         workerAccess: "kept",
         managementSessionId: "management-session-1",

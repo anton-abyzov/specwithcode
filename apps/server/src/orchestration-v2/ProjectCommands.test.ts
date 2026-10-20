@@ -893,4 +893,100 @@ describe("explicit link ownership modes", () => {
       }),
     );
   });
+
+  it("lets a relinquished member take over at a higher epoch after the coordinator it replaces", () => {
+    const linked = { ...shared, members: [other, self] };
+    const member = {
+      logicalProject: linked,
+      coordinatorBinding: {
+        epoch: 4,
+        state: "transferred" as const,
+        operationId: "link-op",
+        successor: other,
+      },
+    };
+    const taken = {
+      epoch: 5,
+      state: "active" as const,
+      operationId: "takeover-op",
+      predecessor: other,
+      takenOverAt: "2026-10-19T12:00:00.000Z",
+    };
+    const event = payloadOf(
+      apply(member, { mode: "takeover", logicalProject: linked, coordinatorBinding: taken }),
+    );
+    assert.deepInclude(event.workspaceSettings, { coordinatorBinding: taken });
+    assert.include(
+      failureText(
+        apply(
+          { ...member, coordinatorBinding: { epoch: 4, state: "active" } },
+          { mode: "takeover", logicalProject: linked, coordinatorBinding: taken },
+        ),
+      ),
+      "Only a member that runs workers",
+    );
+    for (const ownership of [
+      { coordinatorBinding: { ...taken, epoch: 4 } },
+      { coordinatorBinding: { ...taken, takenOverAt: undefined } },
+      { coordinatorBinding: { ...taken, predecessor: self } },
+      {
+        coordinatorBinding: {
+          ...taken,
+          predecessor: { ...other, projectId: ProjectId.make("stranger") },
+        },
+      },
+      { coordinatorBinding: { ...taken, successor: other } },
+      { coordinatorBinding: { ...taken, state: "transferred" as const } },
+      { logicalProject: { ...linked, members: [self] } },
+      { logicalProject: { ...linked, id: "logical:other" } },
+    ])
+      failureOf(
+        apply(member, {
+          mode: "takeover",
+          logicalProject: linked,
+          coordinatorBinding: taken,
+          ...ownership,
+        }),
+      );
+  });
+
+  it("lets the active coordinator give way only to a listed member that took over above it", () => {
+    const linked = { ...shared, members: [self, other] };
+    const owner = { logicalProject: linked, coordinatorBinding: { epoch: 4, state: "active" } };
+    const relinquished = {
+      epoch: 5,
+      state: "transferred" as const,
+      operationId: "takeover-op",
+      successor: other,
+      takenOverAt: "2026-10-19T12:00:00.000Z",
+    };
+    payloadOf(
+      apply(owner, {
+        mode: "superseded",
+        logicalProject: linked,
+        coordinatorBinding: relinquished,
+      }),
+    );
+    for (const ownership of [
+      { coordinatorBinding: { ...relinquished, epoch: 4 } },
+      { coordinatorBinding: { ...relinquished, successor: self } },
+      { coordinatorBinding: { ...relinquished, takenOverAt: undefined } },
+      { coordinatorBinding: { ...relinquished, predecessor: other } },
+      { logicalProject: { ...linked, members: [self] } },
+    ])
+      failureOf(
+        apply(owner, {
+          mode: "superseded",
+          logicalProject: linked,
+          coordinatorBinding: relinquished,
+          ...ownership,
+        }),
+      );
+    failureOf(
+      apply(
+        { ...owner, coordinatorBinding: { ...relinquished, epoch: 3 } },
+        { mode: "superseded", logicalProject: linked, coordinatorBinding: relinquished },
+      ),
+    );
+  });
 });

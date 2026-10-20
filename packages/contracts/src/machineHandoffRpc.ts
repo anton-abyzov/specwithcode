@@ -17,12 +17,16 @@ import {
   FolderCopyOperationInput,
   FolderCopyReleaseInput,
   FolderCopyReleaseResult,
+  FolderCopySecretsInput,
+  FolderCopySentSecrets,
+  FolderCopySentSecretsInput,
   FolderCopySourceStatus,
   FolderCopyStartInput,
   FolderCopyStatus,
   FolderCopyUndoInput,
   FolderCopyUndoResult,
 } from "./folderCopy.ts";
+import { MachineReadiness, MachineReadinessInput } from "./machineReadiness.ts";
 export const MACHINE_HANDOFF_RPC_METHODS = {
   machineHandoffPrepare: "machineHandoff.prepare",
   machineHandoffReceive: "machineHandoff.receive",
@@ -37,6 +41,9 @@ export const MACHINE_HANDOFF_RPC_METHODS = {
   machineHandoffCopyRetry: "machineHandoff.copyRetry",
   machineHandoffCopyUndo: "machineHandoff.copyUndo",
   machineHandoffCopyCancel: "machineHandoff.copyCancel",
+  machineHandoffCopySecrets: "machineHandoff.copySecrets",
+  machineHandoffSentSecrets: "machineHandoff.sentSecrets",
+  machineHandoffReadiness: "machineHandoff.readiness",
 } as const;
 const copyError = Schema.Union([FolderCopyError, EnvironmentAuthorizationError]);
 const M = MACHINE_HANDOFF_RPC_METHODS;
@@ -109,6 +116,21 @@ export const folderCopyRpcs = [
   Rpc.make(M.machineHandoffCopyCancel, {
     payload: FolderCopyCancelInput,
     success: FolderCopyStatus,
+    error: copyError,
+  }),
+  Rpc.make(M.machineHandoffCopySecrets, {
+    payload: FolderCopySecretsInput,
+    success: FolderCopySourceStatus,
+    error: copyError,
+  }),
+  Rpc.make(M.machineHandoffSentSecrets, {
+    payload: FolderCopySentSecretsInput,
+    success: FolderCopySentSecrets,
+    error: copyError,
+  }),
+  Rpc.make(M.machineHandoffReadiness, {
+    payload: MachineReadinessInput,
+    success: MachineReadiness,
     error: copyError,
   }),
 ] as const;

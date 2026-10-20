@@ -389,7 +389,7 @@ async function verifyWorkGrants() {
     writeFileSync(join(output, file.replace(".png", ".txt")), await section.innerText());
     receipt.screenshots.push(file);
   };
-  await settings.goto(`${m1.origin}/settings/connections`);
+  await settings.goto(`${m1.origin}/settings/machines`);
   try {
     await workGrantsSection().getByText(m4.environmentId).first().waitFor({ timeout: 45000 });
   } catch (error) {
@@ -428,6 +428,240 @@ async function verifyWorkGrants() {
     "Restore needs a fresh grant from the coordinator; the revoked one stays dead",
   );
   await workerBrowser.close();
+}
+/**
+ * 0951 AC-05/AC-06: M3's copy keeps a replica of M1's coordinator notes; with M1 stopped,
+ * Take over coordinator here makes M3 the coordinator from that replica, and the restarted
+ * M1 gives way and lists the coordinator turn it ran meanwhile.
+ */
+async function verifyTakeover() {
+  const [primary, owner, member] = hosts;
+  const until = async (check, what, timeout = 120000) => {
+    const deadline = Date.now() + timeout;
+    for (;;) {
+      if (await check()) return;
+      if (Date.now() > deadline) throw new Error(`Timed out waiting for ${what}`);
+      await new Promise((done) => setTimeout(done, 1000));
+    }
+  };
+  for (const host of [owner, member]) {
+    host.takeoverFolder = join(host.dir, "takeover-fixture");
+    mkdirSync(host.takeoverFolder);
+    writeFileSync(join(host.takeoverFolder, "README.md"), "Synthetic takeover fixture.\n");
+    const git = (...args) =>
+      execFileSync("/usr/bin/git", args, {
+        cwd: host.takeoverFolder,
+        stdio: "ignore",
+        env: { PATH: "/usr/bin:/bin", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" },
+      });
+    git("init", "-q", "-b", "main");
+    git("remote", "add", "origin", "https://github.com/example/takeover-fixture.git");
+    host.takeoverProjectId = randomUUID();
+    await request(host, "/api/projects/mutate", {
+      type: "project.create",
+      commandId: randomUUID(),
+      projectId: host.takeoverProjectId,
+      title: "Takeover fixture",
+      workspaceRoot: host.takeoverFolder,
+    });
+    await rpc(host, "projects.memoryWrite", {
+      projectId: host.takeoverProjectId,
+      name: "plan.md",
+      content: host === owner ? "M1 coordinator plan" : "M3 own plan",
+      expectedRevision: null,
+    });
+  }
+  const preview = (host) => rpc(host, "projectLink.preview", { projectId: host.takeoverProjectId });
+  const [ownerView, memberView] = await Promise.all([preview(owner), preview(member)]);
+  // The coordinator thread exists so a turn it runs while cut off can be listed.
+  await rpc(owner, "orchestration.dispatchCommand", {
+    type: "thread.create",
+    commandId: randomUUID(),
+    threadId: ownerView.member.coordinatorThreadId,
+    projectId: owner.takeoverProjectId,
+    title: "Takeover fixture coordinator",
+    modelSelection: { instanceId: "codex", model: "synthetic-unavailable" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    createdBy: "user",
+    creationSource: "web",
+  });
+  const linkId = randomUUID();
+  const prepared = await rpc(owner, "projectLink.prepare", {
+    operationId: linkId,
+    projectId: owner.takeoverProjectId,
+    joining: memberView.member,
+  });
+  const accepted = await rpc(member, "projectLink.accept", {
+    operationId: linkId,
+    projectId: member.takeoverProjectId,
+    kept: prepared.kept,
+    logicalProject: prepared.logicalProject,
+    coordinatorBinding: prepared.coordinatorBinding,
+    keptFingerprint: prepared.fingerprint,
+  });
+  await rpc(owner, "projectLink.commit", {
+    operationId: linkId,
+    projectId: owner.takeoverProjectId,
+    joining: accepted.member,
+    notes: [],
+  });
+  const logicalId = prepared.logicalProject.id;
+  const digest = (host) => rpc(host, "projectLink.digest", { projectId: host.takeoverProjectId });
+  const replicated = async () =>
+    (await digest(member)).replica?.digest === (await digest(owner)).digest;
+  // The open page keeps the replica: at once after the link, then on its 60 s pass.
+  await until(replicated, "the first replica on M3");
+  await rpc(owner, "projects.memoryWrite", {
+    projectId: owner.takeoverProjectId,
+    name: "plan.md",
+    content: "M1 coordinator plan, revised",
+    expectedRevision: ownerView.notes.find((note) => note.name === "plan.md")?.revision ?? 1,
+  });
+  await until(replicated, "the replica to follow M1's note change", 150000);
+  receipt.checks.push(
+    "The open app keeps a member replica of the coordinator's notes, goal and instructions: on link and after a coordinator note change (digests match)",
+  );
+
+  await stop(owner);
+  const settingsUrl = `${primary.origin}/settings/projects?project=${encodeURIComponent(`logical-project:${logicalId}`)}`;
+  await page.goto(settingsUrl);
+  await page
+    .getByText(/is unreachable\. This copy can take over the coordinator in \d+ min/)
+    .waitFor({ timeout: 60000 });
+  const takeOverButton = page.getByRole("button", {
+    name: "Take over coordinator here",
+    exact: true,
+  });
+  assert.equal(await takeOverButton.isDisabled(), true, "No takeover before 10 minutes");
+  await page.screenshot({ path: join(output, "08-takeover-wait.png"), animations: "disabled" });
+  receipt.screenshots.push("08-takeover-wait.png");
+  // Ten minutes pass: this device last saw M1 eleven minutes ago.
+  await page.evaluate((environmentId) => {
+    const key = "specwithcode:machine-last-seen";
+    const seen = JSON.parse(localStorage.getItem(key) ?? "{}");
+    seen[environmentId] = Date.now() - 11 * 60000;
+    localStorage.setItem(key, JSON.stringify(seen));
+  }, owner.environmentId);
+  await page.reload();
+  await page.getByText(/has been unreachable for 10 minutes or more/).waitFor({ timeout: 60000 });
+  await takeOverButton.click();
+  const confirm = page.getByRole("dialog");
+  await confirm.getByText(`Take over the coordinator on ${member.label}?`).waitFor();
+  // Let the dialog finish opening before the screenshot.
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: join(output, "09-takeover-confirm.png"), animations: "disabled" });
+  receipt.screenshots.push("09-takeover-confirm.png");
+  await confirm.getByRole("button", { name: "Take over", exact: true }).click();
+  await page.getByText(`${member.label} now coordinates this project.`).waitFor({ timeout: 30000 });
+  await page.screenshot({ path: join(output, "10-taken-over.png"), animations: "disabled" });
+  receipt.screenshots.push("10-taken-over.png");
+  const took = await preview(member);
+  assert.equal(took.coordinatorBinding.state, "active");
+  assert.equal(took.coordinatorBinding.epoch, 1);
+  assert.deepEqual(took.coordinatorBinding.predecessor, ownerView.member);
+  assert.ok(took.coordinatorBinding.takenOverAt, "The takeover is stamped");
+  assert.deepEqual(
+    took.notes.map((note) => [note.name, note.content]),
+    [
+      ["plan-before-takeover.md", "M3 own plan"],
+      ["plan.md", "M1 coordinator plan, revised"],
+    ],
+  );
+  receipt.checks.push(
+    "With M1 stopped, Take over coordinator here stays off until 10 minutes, then one confirmation makes M3 active at epoch+1 with M1 as predecessor, starting from the replicated notes (its own differing note kept as plan-before-takeover.md)",
+  );
+
+  // While cut off, M1 still ran one coordinator turn (synthetic, no provider).
+  const at = new Date().toISOString();
+  const threadId = ownerView.member.coordinatorThreadId;
+  const runId = randomUUID();
+  const messageId = randomUUID();
+  const db = new DatabaseSync(join(owner.data, "userdata/statev2.sqlite"));
+  db.prepare(
+    "INSERT INTO orchestration_v2_projection_runs (run_id,thread_id,ordinal,provider,provider_instance_id,status,requested_at,completed_at,payload_json) VALUES (?,?,?,?,?,?,?,?,?)",
+  ).run(
+    runId,
+    threadId,
+    1,
+    "codex",
+    "codex",
+    "completed",
+    at,
+    at,
+    JSON.stringify({
+      id: runId,
+      threadId,
+      ordinal: 1,
+      providerInstanceId: "codex",
+      modelSelection: { instanceId: "codex", model: "fixture-recorded-model" },
+      providerThreadId: null,
+      userMessageId: messageId,
+      rootNodeId: null,
+      activeAttemptId: null,
+      status: "completed",
+      requestedAt: at,
+      startedAt: at,
+      completedAt: at,
+      checkpointId: null,
+      contextHandoffId: null,
+    }),
+  );
+  db.prepare(
+    "INSERT INTO orchestration_v2_projection_messages (message_id,thread_id,run_id,role,streaming,created_at,updated_at,payload_json) VALUES (?,?,?,?,?,?,?,?)",
+  ).run(
+    messageId,
+    threadId,
+    runId,
+    "user",
+    0,
+    at,
+    at,
+    JSON.stringify({
+      id: messageId,
+      threadId,
+      runId,
+      nodeId: null,
+      role: "user",
+      text: "Cut-off coordinator request on M1",
+      attachments: [],
+      streaming: false,
+      createdBy: "user",
+      creationSource: "web",
+      createdAt: at,
+      updatedAt: at,
+    }),
+  );
+  db.close();
+  // The page keeps M1's earlier bearer session, which the restart reads from M1's store.
+  await exchange(owner, await start(owner));
+  await until(async () => {
+    const view = await preview(owner);
+    return view.coordinatorBinding.state === "transferred";
+  }, "M1 to give way once the app reaches it again");
+  const gaveWay = await preview(owner);
+  assert.equal(gaveWay.coordinatorBinding.epoch, 1);
+  assert.deepEqual(gaveWay.coordinatorBinding.successor, took.member);
+  assert.deepEqual(
+    gaveWay.ranWhileDisconnected?.map((turn) => turn.request),
+    ["Cut-off coordinator request on M1"],
+  );
+  const reviewButton = page.getByRole("button", { name: "Review turns", exact: true });
+  await reviewButton.waitFor({ timeout: 60000 });
+  await reviewButton.click();
+  await page
+    .getByRole("dialog")
+    .getByText("Cut-off coordinator request on M1")
+    .waitFor({ timeout: 30000 });
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: join(output, "11-review-turns.png"), animations: "disabled" });
+  receipt.screenshots.push("11-review-turns.png");
+  await page.getByRole("dialog").getByRole("button", { name: "Done", exact: true }).click();
+  receipt.checks.push(
+    "Restarted M1 is demoted by the app to a relinquished member at the new epoch with M3 as successor, and Review turns lists the coordinator turn it ran while cut off",
+  );
 }
 let browser, page;
 try {
@@ -1065,13 +1299,14 @@ try {
   receipt.checks.push(
     "UI unlink gives the member a fresh identity and active epoch-0 coordinator with the kept notes, and removes it from the kept members",
   );
+  await verifyWorkGrants();
+  await verifyTakeover();
   await page.goto(
     `${primary.origin}/projects/${encodeURIComponent("logical-project:logical-project-fixture")}`,
   );
   await page
     .getByRole("region", { name: "Project coordinator", exact: true })
     .waitFor({ timeout: 45000 });
-  await verifyWorkGrants();
   await stop(hosts[2]);
   await page
     .locator(`[data-unavailable-thread-host="${hosts[2].environmentId}"]`)

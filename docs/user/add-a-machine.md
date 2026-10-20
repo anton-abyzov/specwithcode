@@ -264,7 +264,7 @@ again, make a new line on the worker and add it on the main machine.
 ## Who can run work on this Mac
 
 Allowing workers is a grant the worker gives the main machine, and the worker
-enforces it. On the worker, open **Settings → Connections → Who can run work on
+enforces it. On the worker, open **Settings → Machines → Who can run work on
 this Mac**. Each machine that may start work there has a row with:
 
 - **Whose machine**: **My machine** or **Someone else's machine**. Work from
@@ -281,6 +281,9 @@ this Mac**. Each machine that may start work there has a row with:
 - **Most access**: the most a thread started from there may run with, as chosen
   in **Allow workers** on the main machine.
 - When the grant expires, and how many threads it started here are running.
+
+That machine's own row in the list above it says **May run work here**,
+**Revoked** or **Expired**, with the same projects and status.
 
 Machines allowed before 1.0.56 show **Allowed before work could be limited**:
 they keep every project and sign-in until you change them. A main machine
@@ -318,6 +321,9 @@ invitation line there. If that machine is off or unreachable, the main machine
 still removes it here and says what stays valid there. On that machine, revoke
 it under **Settings → Connections → Authorized clients**, or with the
 `auth session revoke` command the message prints.
+
+If a folder copy sent secret files to that machine, removing it lists them with
+when each was sent, so you can rotate any that machine should no longer hold.
 
 ## Troubleshooting
 

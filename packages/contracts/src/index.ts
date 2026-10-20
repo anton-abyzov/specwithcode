@@ -88,6 +88,7 @@ export * from "./threadIncrementProgress.ts";
 
 export * from "./machineHandoff.ts";
 export * from "./folderCopy.ts";
+export * from "./machineReadiness.ts";
 
 export * from "./logicalProject.ts";
 export * from "./projectLink.ts";

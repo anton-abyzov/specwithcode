@@ -332,6 +332,7 @@ export const make = Effect.gen(function* () {
       telegramChannel: true,
       googleAccount: true,
       projectLink: true,
+      coordinatorTakeover: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
       ...(serverInstallation === null ? {} : { serverInstallation }),
       // V2 restart recovery uses the environment-owned opt-in. The old
