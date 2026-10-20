@@ -4759,7 +4759,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const source = projection.runs.find((run) => run.id === command.restartContinuationOfRunId);
         if (
           !source ||
-          source.status !== "cancelled" ||
+          (source.status !== "cancelled" && source.status !== "interrupted") ||
           isRestartNoteSource(source, projection.providerTurns) ||
           projection.thread.archivedAt !== null ||
           projection.thread.deletedAt !== null ||
@@ -4768,7 +4768,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           projection.runs.some(
             (run) => run.id !== source.id && run.status !== "queued" && runRanAfter(run, source),
           ) ||
-          (yield* stopReachedRun(command, command.threadId, source.id))
+          !(yield* onlyUpdateStoppedRun(command, command.threadId, source))
         ) {
           // Preserve the current row so stale automatic deliveries receive an
           // accepted receipt without changing work or repeatedly retrying.
@@ -8809,6 +8809,31 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       })
       .pipe(
         Effect.map(({ turnItems }) => turnItems.length > 0),
+        mapDispatchError(command),
+      );
+
+  /**
+   * A restart continuation may follow only a run nobody asked to stop, or one a
+   * service update interrupted. Any other stop (the user, an agent) is final.
+   */
+  const onlyUpdateStoppedRun = (
+    command: OrchestrationV2ServerCommand,
+    threadId: ThreadId,
+    run: OrchestrationV2Run,
+  ) =>
+    projectionStore
+      .getThreadRecords(threadId, ["turnItems"], {
+        turnItemTypes: ["run_interrupt_request"],
+        turnItemRunIds: [run.id],
+      })
+      .pipe(
+        Effect.map(({ turnItems }) => {
+          const interrupts = turnItems.flatMap((item) =>
+            item.runId === run.id && item.type === "run_interrupt_request" ? [item] : [],
+          );
+          if (interrupts.some((item) => item.cause !== "service_update")) return false;
+          return run.status === "cancelled" || interrupts.length > 0;
+        }),
         mapDispatchError(command),
       );
 

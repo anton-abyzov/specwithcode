@@ -14,6 +14,7 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { useServerConfigs } from "../state/entities";
 import { environmentPresentations } from "../state/presentation";
 import { environmentSession, readEnvironmentScope, readPreparedConnection } from "../state/session";
 import type {
@@ -468,6 +469,12 @@ export async function changeMachineWorkGrant(
       failureMessage(result.cause, "Could not save this change. Refresh, then retry."),
     );
   return result.value.grant;
+}
+
+/** Whether this server can remove a machine from its list. Servers from
+    before 1.0.58 lack only that; the rest of the list works with them. */
+export function useFleetRemoveSupported(environmentId: EnvironmentId): boolean {
+  return useServerConfigs().get(environmentId)?.environment.capabilities.studioFleetRemove === true;
 }
 
 /**

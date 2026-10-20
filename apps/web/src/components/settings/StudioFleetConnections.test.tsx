@@ -14,6 +14,7 @@ const runtime = vi.hoisted(() => ({
   addMachine: vi.fn(),
   environments: [] as Array<{ readonly entry: unknown }>,
   defaultRuntimeMode: "approval-required",
+  removeSupported: true,
 }));
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
@@ -28,6 +29,7 @@ vi.mock("../../studio/fleet", () => ({
   pairStudioFleet: runtime.pair,
   allowStudioFleetWorkers: runtime.allowWorkers,
   stopStudioFleetWorkers: runtime.stopWorkers,
+  useFleetRemoveSupported: () => runtime.removeSupported,
   useStudioFleet: () => ({
     snapshot: runtime.snapshot,
     loading: false,
@@ -134,6 +136,7 @@ describe("private machine roster", () => {
     runtime.addMachine.mockReset();
     runtime.environments = [];
     runtime.autoConnect = true;
+    runtime.removeSupported = true;
   });
   it("shows Connect again after pairing and removal from the authoritative browser catalog without remounting", async () => {
     runtime.pair.mockResolvedValue({
@@ -168,6 +171,41 @@ describe("private machine roster", () => {
     expect(onRemove).toHaveBeenCalledExactlyOnceWith(snapshot.machines[1]);
     expect(removeButton(render({ onRemove, canManageWorkers: false }))).toBeNull();
     expect(removeButton(render({ canManageWorkers: true }))).toBeNull();
+  });
+  it("keeps the list working against a server from before 1.0.58 and says only removal needs an update", () => {
+    const removeButton = (tree: unknown) =>
+      visitElements(tree, (element) => element.props.children === "Remove machine");
+    const note = (tree: unknown) =>
+      visitElements(
+        tree,
+        (element) =>
+          typeof element.props.children === "string" &&
+          element.props.children.startsWith("Removing a machine from this list needs"),
+      );
+    const roster = () => {
+      hooks.beginRender();
+      return StudioFleetRoster(
+        StudioFleetConnections({ environmentId: m4, savedEnvironmentIds: [] }).props,
+      );
+    };
+    const current = roster();
+    expect(removeButton(current)).not.toBeNull();
+    expect(note(current)).toBeNull();
+    runtime.removeSupported = false;
+    const older = roster();
+    expect(removeButton(older)).toBeNull();
+    expect(note(older)?.props.children).toBe(
+      "Removing a machine from this list needs SpecWithCode 1.0.58 or later on this server. Connecting, workers and everything else here work as is.",
+    );
+    expect(connectButton(older)?.props.disabled).toBe(false);
+    expect(
+      note(
+        render({
+          canManageWorkers: false,
+          removeUnavailable: "Removing a machine from this list needs x",
+        }),
+      ),
+    ).toBeNull();
   });
   it("shows an unpaired M1 in a fresh browser and calls pairing only on an explicit click", () => {
     const onPair = vi.fn();

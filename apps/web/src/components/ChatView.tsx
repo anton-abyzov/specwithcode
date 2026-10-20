@@ -522,6 +522,7 @@ import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import {
   resolveThreadDetailRef,
   useEnvironmentSupportsServerBrowser,
+  readThreadShell,
   useProject,
   useProjects,
   useThreadError,
@@ -8816,11 +8817,12 @@ function useChatViewActions(
         (project) =>
           project.environmentId === activeThread.environmentId && project.id === link.projectId,
       )?.title ?? "another project";
+    const linkedRef = scopeThreadRef(activeThread.environmentId, link.threadId);
     const open = () =>
-      void navigate({
-        to: "/$environmentId/$threadId",
-        params: buildThreadRouteParams(scopeThreadRef(activeThread.environmentId, link.threadId)),
-      });
+      void navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(linkedRef) });
+    // The original is archived, and archived threads open only once restored.
+    const openOriginal = () =>
+      readThreadShell(linkedRef) === null ? void navigate({ to: "/settings/archived" }) : open();
     return movedTo !== null
       ? {
           id: `thread-moved-to:${activeThread.id}`,
@@ -8843,8 +8845,8 @@ function useChatViewActions(
           description:
             "A fresh start: no conversation, files or memory came from the original thread.",
           actions: (
-            <Button size="xs" variant="ghost" onClick={open}>
-              Open original
+            <Button size="xs" variant="ghost" onClick={openOriginal}>
+              Find original
             </Button>
           ),
         };

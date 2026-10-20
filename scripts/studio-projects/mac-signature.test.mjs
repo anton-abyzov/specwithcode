@@ -1,7 +1,7 @@
 import * as NodeAssert from "node:assert/strict";
 import * as NodeTest from "node:test";
 
-import { macSignatureProblems } from "./mac-signature.mjs";
+import { expectedRequirement, macSignatureProblems } from "./mac-signature.mjs";
 
 const assert = NodeAssert;
 const { test } = NodeTest;
@@ -84,4 +84,48 @@ test("a build that is not stapled is refused", () => {
   assert.deepEqual(macSignatureProblems({ ...developerId, stapler: "does not have a ticket" }), [
     "The notarization ticket is not stapled to the app.",
   ]);
+});
+
+const releaseRequirement = `Executable=/Applications/SpecWithCode.app/Contents/MacOS/SpecWithCode
+designated => ${expectedRequirement()}
+`;
+
+test("the exact designated requirement and team-signed helpers may ship", () => {
+  const nested = [
+    {
+      path: "Contents/Resources/voice/studio-voice",
+      codesign: "Identifier=studio-voice\nTeamIdentifier=NMCB2JZ7QG\n",
+    },
+  ];
+  assert.deepEqual(
+    macSignatureProblems({ ...developerId, requirement: releaseRequirement, nested }),
+    [],
+  );
+});
+
+test("a changed designated requirement is refused because users would grant computer use again", () => {
+  const hashPinned = 'designated => cdhash H"0123456789abcdef0123456789abcdef01234567"\n';
+  const problems = macSignatureProblems({ ...developerId, requirement: hashPinned });
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /designated requirement .* grant computer use again/);
+});
+
+test("an ad-hoc or other-team helper inside the app is refused", () => {
+  const nested = [
+    {
+      path: "Contents/Resources/voice/studio-voice",
+      codesign: "Identifier=studio-voice\nSignature=adhoc\nTeamIdentifier=not set\n",
+    },
+    {
+      path: "Contents/Frameworks/SpecWithCode Helper.app/Contents/MacOS/SpecWithCode Helper",
+      codesign: "Identifier=x\nTeamIdentifier=ABCDE12345\n",
+    },
+  ];
+  assert.deepEqual(
+    macSignatureProblems({ ...developerId, requirement: releaseRequirement, nested }),
+    [
+      "Contents/Resources/voice/studio-voice is signed ad hoc.",
+      "Contents/Frameworks/SpecWithCode Helper.app/Contents/MacOS/SpecWithCode Helper has TeamIdentifier ABCDE12345, not NMCB2JZ7QG.",
+    ],
+  );
 });

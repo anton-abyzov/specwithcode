@@ -128,6 +128,12 @@ const layerTest = ThreadMove.layer.pipe(
       layerThreads,
       layerLaunch,
       layerProjects,
+      // The target project asks for approvals; its threads must too.
+      ServerSettings.layerTest({
+        projectSettingsOverrides: {
+          [targetProjectId]: { defaultRuntimeMode: "approval-required" },
+        },
+      }),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",
         isScratch: (projectId) => Effect.succeed(projectId === scratchProjectId),
@@ -208,6 +214,7 @@ it.effect("restarts a cancelled thread empty in the target project and archives 
     const moved = yield* orchestrator.getThreadProjection(target);
     assert.equal(moved.thread.projectId, targetProjectId);
     assert.deepEqual(moved.thread.modelSelection, targetModel);
+    assert.equal(moved.thread.runtimeMode, "approval-required");
     assert.equal(moved.thread.worktreePath, null);
     assert.equal(moved.thread.movedFrom?.threadId, source);
     assert.equal(moved.thread.movedFrom?.projectId, sourceProjectId);
@@ -399,6 +406,8 @@ it.effect("gives a No-project chat to the project as it is, still working", () =
 
     const after = yield* orchestrator.getThreadProjection(chat);
     assert.equal(after.thread.projectId, targetProjectId);
+    // It now works with the project's access, from its next turn.
+    assert.equal(after.thread.runtimeMode, "approval-required");
     assert.equal(after.thread.archivedAt, null);
     assert.equal(after.thread.movedTo ?? null, null);
     assert.equal(after.thread.worktreePath, before.thread.worktreePath);

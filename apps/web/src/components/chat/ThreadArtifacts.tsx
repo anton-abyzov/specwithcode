@@ -23,6 +23,7 @@ import { createPortal } from "react-dom";
 
 import { useAssetUrlState } from "~/assets/assetUrls";
 import ChatMarkdown from "~/components/ChatMarkdown";
+import { stepOutOfViewerOverlay } from "~/lib/openInFront";
 import { readLocalApi } from "~/localApi";
 import {
   canonicalLinkKey,
@@ -462,6 +463,8 @@ export function ArtifactViewer(props: {
             {props.onOpenInPanel && "meta" in artifact ? (
               <MenuItem
                 onClick={() => {
+                  // Out of the overlay first, or the file opens in it as it closes.
+                  stepOutOfViewerOverlay();
                   props.onOpenInPanel?.(artifact);
                   props.onClose();
                 }}

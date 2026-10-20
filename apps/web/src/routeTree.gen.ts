@@ -29,6 +29,7 @@ import { Route as SettingsPrivacyRouteImport } from './routes/settings.privacy'
 import { Route as SettingsOpenSourceLicensesRouteImport } from './routes/settings.open-source-licenses'
 import { Route as SettingsModsRouteImport } from './routes/settings.mods'
 import { Route as SettingsMessagingRouteImport } from './routes/settings.messaging'
+import { Route as SettingsMachinesRouteImport } from './routes/settings.machines'
 import { Route as SettingsKeybindingsRouteImport } from './routes/settings.keybindings'
 import { Route as SettingsIntegrationsRouteImport } from './routes/settings.integrations'
 import { Route as SettingsGoogleRouteImport } from './routes/settings.google'
@@ -144,6 +145,11 @@ const SettingsMessagingRoute = SettingsMessagingRouteImport.update({
   path: '/messaging',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsMachinesRoute = SettingsMachinesRouteImport.update({
+  id: '/machines',
+  path: '/machines',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsKeybindingsRoute = SettingsKeybindingsRouteImport.update({
   id: '/keybindings',
   path: '/keybindings',
@@ -237,6 +243,7 @@ export interface FileRoutesByFullPath {
   '/settings/google': typeof SettingsGoogleRoute
   '/settings/integrations': typeof SettingsIntegrationsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
+  '/settings/machines': typeof SettingsMachinesRoute
   '/settings/messaging': typeof SettingsMessagingRoute
   '/settings/mods': typeof SettingsModsRoute
   '/settings/open-source-licenses': typeof SettingsOpenSourceLicensesRoute
@@ -271,6 +278,7 @@ export interface FileRoutesByTo {
   '/settings/google': typeof SettingsGoogleRoute
   '/settings/integrations': typeof SettingsIntegrationsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
+  '/settings/machines': typeof SettingsMachinesRoute
   '/settings/messaging': typeof SettingsMessagingRoute
   '/settings/mods': typeof SettingsModsRoute
   '/settings/open-source-licenses': typeof SettingsOpenSourceLicensesRoute
@@ -308,6 +316,7 @@ export interface FileRoutesById {
   '/settings/google': typeof SettingsGoogleRoute
   '/settings/integrations': typeof SettingsIntegrationsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
+  '/settings/machines': typeof SettingsMachinesRoute
   '/settings/messaging': typeof SettingsMessagingRoute
   '/settings/mods': typeof SettingsModsRoute
   '/settings/open-source-licenses': typeof SettingsOpenSourceLicensesRoute
@@ -346,6 +355,7 @@ export interface FileRouteTypes {
     | '/settings/google'
     | '/settings/integrations'
     | '/settings/keybindings'
+    | '/settings/machines'
     | '/settings/messaging'
     | '/settings/mods'
     | '/settings/open-source-licenses'
@@ -380,6 +390,7 @@ export interface FileRouteTypes {
     | '/settings/google'
     | '/settings/integrations'
     | '/settings/keybindings'
+    | '/settings/machines'
     | '/settings/messaging'
     | '/settings/mods'
     | '/settings/open-source-licenses'
@@ -416,6 +427,7 @@ export interface FileRouteTypes {
     | '/settings/google'
     | '/settings/integrations'
     | '/settings/keybindings'
+    | '/settings/machines'
     | '/settings/messaging'
     | '/settings/mods'
     | '/settings/open-source-licenses'
@@ -586,6 +598,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsMessagingRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/settings/machines': {
+      id: '/settings/machines'
+      path: '/machines'
+      fullPath: '/settings/machines'
+      preLoaderRoute: typeof SettingsMachinesRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/keybindings': {
       id: '/settings/keybindings'
       path: '/keybindings'
@@ -714,6 +733,7 @@ interface SettingsRouteChildren {
   SettingsGoogleRoute: typeof SettingsGoogleRoute
   SettingsIntegrationsRoute: typeof SettingsIntegrationsRoute
   SettingsKeybindingsRoute: typeof SettingsKeybindingsRoute
+  SettingsMachinesRoute: typeof SettingsMachinesRoute
   SettingsMessagingRoute: typeof SettingsMessagingRoute
   SettingsModsRoute: typeof SettingsModsRoute
   SettingsOpenSourceLicensesRoute: typeof SettingsOpenSourceLicensesRoute
@@ -738,6 +758,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsGoogleRoute: SettingsGoogleRoute,
   SettingsIntegrationsRoute: SettingsIntegrationsRoute,
   SettingsKeybindingsRoute: SettingsKeybindingsRoute,
+  SettingsMachinesRoute: SettingsMachinesRoute,
   SettingsMessagingRoute: SettingsMessagingRoute,
   SettingsModsRoute: SettingsModsRoute,
   SettingsOpenSourceLicensesRoute: SettingsOpenSourceLicensesRoute,

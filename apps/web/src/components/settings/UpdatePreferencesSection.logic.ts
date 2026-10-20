@@ -8,6 +8,7 @@ export function describeServiceUpdate(state: StudioServiceUpdateState): string {
     ? `Version ${state.installedVersion}`
     : "Version unknown";
   const next = state.downloadedVersion ?? state.availableVersion;
+  if (runsPendingVersion(state)) return `${installed}. Up to date.`;
   switch (state.status) {
     case "not-managed":
       return "No SpecWithCode service installed by the fleet installer was found on this computer.";
@@ -36,8 +37,22 @@ export function describeServiceUpdate(state: StudioServiceUpdateState): string {
   }
 }
 
+/** A stale available, downloaded or waiting state for the version the service already runs. */
+function runsPendingVersion(state: StudioServiceUpdateState): boolean {
+  if (
+    state.status !== "available" &&
+    state.status !== "downloaded" &&
+    state.status !== "waiting-for-quiet"
+  ) {
+    return false;
+  }
+  const next = state.downloadedVersion ?? state.availableVersion;
+  return next !== null && next === state.installedVersion;
+}
+
 export function resolveServiceUpdateAction(state: StudioServiceUpdateState): ServiceUpdateAction {
   if (state.status === "not-managed" || state.status === "installing") return "none";
+  if (runsPendingVersion(state)) return "check";
   if (
     state.status === "available" ||
     state.status === "downloaded" ||

@@ -74,7 +74,7 @@ make, and refuses to start a second run of a version without `--resume`.
 | publish-private | checks the draft's `SHA256SUMS`, publishes the private release, checks the tag is the candidate                        | once                    |
 | publish-public  | `publish.mjs --tag --push`, checks the draft's `SHA256SUMS`, then the public release                                   | once                    |
 | fleet-m4        | `fleet_rollout.py --only m4`: drains and holds M4 as Update now does, then a forced 15-minute request                  | once                    |
-| desktop         | rollback zip, swap the app in `/Applications`, check its signature and version, open it                                | once                    |
+| desktop         | record grants, rollback zip, swap the app in `/Applications`, check its signature, grants and version, open it         | once                    |
 | fleet-workers   | `fleet_rollout.py --only workers`: M1 and M3 together, polled the same way                                             | once                    |
 | merge           | the `release/<version>` pull request into `main`                                                                       | once                    |
 
@@ -268,6 +268,23 @@ signed ad hoc, its requirement is its code hash, and every update then asks for 
 password again. `mac-signature.mjs` checks both the DMG and the zip; never publish a macOS build it
 refuses. Keep the team and bundle id fixed: changing either makes the next update a different app
 to macOS.
+
+Computer use needs Accessibility and Screen Recording, and the user grants them once. They carry
+over to every release because each one has the same designated requirement:
+
+```
+identifier "com.specweave.studio" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and certificate leaf[subject.OU] = NMCB2JZ7QG
+```
+
+`mac-signature.mjs` refuses a build whose requirement differs from that text, or whose nested
+code (the Electron helpers, frameworks, `studio-voice`, `studio-resource-monitor`) is ad hoc or
+signed by another team. The desktop stage runs
+`mac-upgrade-grant.mjs before` on the installed app and `after` on the new one. It launches each
+app's own executable in Node mode through Launch Services and asks only `AXIsProcessTrusted` and
+`CGPreflightScreenCaptureAccess`, so it shows no prompt and captures nothing. It stops the release
+when the new app fails the old app's requirement, or when a grant that was on is now off. It never
+writes the TCC database. macOS still asks again after the user revokes a grant or resets TCC, and
+it periodically shows its own screen-capture reminder for every app that records the screen.
 
 ## Rollback copies
 

@@ -480,3 +480,61 @@ it.effect("rejects native config discovery without filesystem read before readin
     expect(handled).toBe(false);
   }),
 );
+
+describe("project link authorization", () => {
+  const tested = [WS_METHODS.projectLinkAccept] as const;
+  const group = WsRpcGroup.omit(
+    ...[...WsRpcGroup.requests.keys()].filter(
+      (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, (typeof tested)[number]> =>
+        !(tested as ReadonlyArray<string>).includes(tag),
+    ),
+  );
+  const member = {
+    environmentId: "m4" as never,
+    projectId: ProjectId.make("kept"),
+    coordinatorThreadId: ThreadId.make("project-coordinator:kept"),
+  };
+  it.effect.each([
+    { scopes: [AuthOrchestrationOperateScope], missing: AuthSettingsWriteScope },
+    { scopes: [AuthSettingsWriteScope], missing: AuthOrchestrationOperateScope },
+  ])(
+    "rejects relinquishing a coordinator without $missing before execution",
+    ({ scopes, missing }) =>
+      Effect.gen(function* () {
+        let invoked = false;
+        const client = yield* RpcTest.makeClient(group).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              group.toLayerHandler(WS_METHODS.projectLinkAccept, () =>
+                Effect.sync(() => {
+                  invoked = true;
+                }).pipe(Effect.andThen(Effect.never)),
+              ),
+              RpcAuthorization.layer(scopes),
+            ),
+          ),
+        );
+        expect(
+          yield* client[WS_METHODS.projectLinkAccept]({
+            operationId: "11111111-1111-4111-8111-111111111111",
+            projectId: ProjectId.make("joining"),
+            kept: member,
+            logicalProject: {
+              id: "logical:kept",
+              title: "EasyChamp",
+              coordinatorId: "coordinator:logical:kept",
+              members: [member],
+            },
+            coordinatorBinding: { epoch: 0, state: "active" },
+            keptFingerprint: {
+              root: "folder",
+              repositories: [],
+              skippedLinks: 0,
+              truncated: false,
+            },
+          }).pipe(Effect.flip),
+        ).toMatchObject({ requiredPermission: missing });
+        expect(invoked).toBe(false);
+      }),
+  );
+});

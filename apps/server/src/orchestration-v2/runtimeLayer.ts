@@ -1,5 +1,6 @@
 import * as ProjectRuntimeAccess from "../project/ProjectRuntimeAccess.ts";
 import * as MachineHandoff from "../fleet/MachineHandoff.ts";
+import * as ProjectLink from "../project/ProjectLink.ts";
 import * as MachineHandoffStore from "../fleet/MachineHandoffStore.ts";
 import * as HandoffGit from "../fleet/handoffGit.ts";
 import * as ProjectConnectionService from "../project/ProjectConnectionService.ts";
@@ -437,6 +438,11 @@ export const layerProduction = Layer.mergeAll(
         layerProjectCoordinatorProvided,
         ProjectRuntimeAccess.layer.pipe(Layer.provide(layerOrchestratorProvided)),
       ),
+    ),
+  ),
+  ProjectLink.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(ProjectionStore.layer, layerProjectService, layerProjectWorkspaceProvided),
     ),
   ),
   ProjectConnectionService.layer.pipe(

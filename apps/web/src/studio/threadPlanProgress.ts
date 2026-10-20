@@ -28,6 +28,12 @@ export interface ThreadPlanStep {
   readonly note: string | null;
   /** The task this thread holds (its last ledger write claimed or blocked it). */
   readonly mine?: boolean;
+  /** What the step links to: an https URL, or an absolute path on the thread's host. */
+  readonly href?: string;
+  /** The commit a done task's evidence names, when it gives no link. */
+  readonly commit?: string;
+  /** A done task whose evidence names no link or commit. */
+  readonly unverified?: boolean;
   /** The agent's live todo list, nested under the task this thread holds. */
   readonly children?: ReadonlyArray<ThreadPlanStep>;
 }
@@ -71,9 +77,13 @@ export function incrementPlanSteps(
   return increment.tasks.map((task) => ({
     key: task.id,
     id: task.id,
-    text: task.title,
+    // The ledger's card line as written: never rewritten into another tense.
+    text: task.line ?? task.title,
     state: TASK_STATE[task.status],
     note: task.status === "stale" ? "Stale claim" : task.note,
+    ...(task.link ? { href: task.link } : {}),
+    ...(task.commit ? { commit: task.commit } : {}),
+    ...(task.status === "done" && !task.link && !task.commit ? { unverified: true } : {}),
     ...(task.id === mine ? { mine: true } : {}),
     ...(task.id === parent && todo.length > 0 ? { children: todo } : {}),
   }));
@@ -158,6 +168,7 @@ export function compactThreadPlan(
 export const BINDING_LABELS: Record<ThreadIncrementProgress["binding"], string> = {
   manual: "linked by hand",
   claim: "bound by this thread's ledger writes",
+  branch: "bound by its increment branch",
   checkpoint: "bound by SpecWeave's checkpoint",
   name: "matched by title or branch",
 };
@@ -182,6 +193,11 @@ export function describeThreadPlan(plan: ThreadPlanCompact): string {
  * itself otherwise. The folder lives on the thread's host, whose home the
  * client does not know, so the usual home roots stand in for it.
  */
+/** Whether a step link opens in the browser (https) rather than as a file on the host. */
+export function isExternalStepLink(href: string): boolean {
+  return /^https:\/\//iu.test(href);
+}
+
 export function displayFolder(path: string): string {
   const home = /^(?:\/Users|\/home)\/[^/]+(?=\/|$)/u.exec(path)?.[0];
   return home === undefined ? path : `~${path.slice(home.length)}`;

@@ -30,6 +30,7 @@ export type SettingsPath =
   | "/settings/messaging"
   | "/settings/google"
   | "/settings/connections"
+  | "/settings/machines"
   | "/settings/chrome"
   | "/settings/archived";
 
@@ -110,6 +111,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/source-control": "Source Control",
   "/settings/storage": "Storage",
   "/settings/connections": "Connections",
+  "/settings/machines": "Machines",
   "/settings/chrome": "Chrome",
   "/settings/integrations": "Integrations",
   "/settings/messaging": "Messaging",
@@ -152,6 +154,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
       "/settings/source-control",
       "/settings/storage",
       "/settings/connections",
+      "/settings/machines",
       "/settings/chrome",
     ],
   },
@@ -1132,6 +1135,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "machines",
+    title: "Machines",
+    to: "/settings/machines",
+    targetId: "machines",
+    searchTerms: [
+      "machines fleet see connect both ways pairing link workers allowed shared projects coordinator runs workers folder accounts also on",
+    ],
+  },
+  {
     id: "load-balancing",
     title: "Load balancing",
     to: "/settings/connections",
@@ -1194,6 +1206,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/google": null,
   "/settings/privacy": null,
   "/settings/connections": "connections",
+  "/settings/machines": null,
   "/settings/chrome": null,
   "/settings/scheduled-tasks": null,
   "/settings/archived": "project-defaults",

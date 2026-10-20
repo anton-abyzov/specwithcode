@@ -31,6 +31,8 @@ import { derivePhysicalProjectKeyFromPath } from "../../logicalProject";
 import { MachineHandoffButton, MachineHandoffDialog } from "./MachineHandoffDialog";
 import { Tip } from "./shell/Tip";
 import { HandoffFolderPicker } from "./HandoffFolderPicker";
+import { HandoffFolderCopy } from "./HandoffFolderCopy";
+import type { HandoffFolderMethod } from "../../studio/folderCopy";
 import { isProjectFolder } from "../../studio/projectMachineFolders";
 import { isArchivedMember } from "../../studio/projectListVisibility";
 import { useStudioFleet } from "../../studio/fleet";
@@ -101,6 +103,9 @@ export function ProjectMachineHandoff({
   >("choose");
   const [error, setError] = useState<string | null>(null);
   const [canRestart, setCanRestart] = useState(false);
+  // A safe copy of the folder is the default; Git-only handoff stays available.
+  const [method, setMethod] = useState<HandoffFolderMethod>("copy");
+  const [copyBusy, setCopyBusy] = useState(false);
   // A synchronous gate catches double-clicks before React paints the disabled button.
   const running = useRef(false);
   const repositoryKey = project.repositoryIdentity
@@ -432,6 +437,8 @@ export function ProjectMachineHandoff({
             if (!snapshot) {
               try {
                 const pending = parsePendingMachineHandoff(localStorage.getItem(storageKey));
+                // An unfinished Git handoff resumes in the method that started it.
+                if (pending) setMethod("folder");
                 const saved = readHandoffMachinePreference(preferenceKey);
                 setPreference(saved);
                 const preferred = pickHandoffMachine(machines, saved);
@@ -469,6 +476,39 @@ export function ProjectMachineHandoff({
           setPickerMachine(null);
         }}
         sourceChanges={sourceChanges}
+        method={method}
+        onMethodChange={setMethod}
+        copyBusy={copyBusy}
+        copyFlow={
+          method === "folder" ? undefined : (
+            <HandoffFolderCopy
+              project={project}
+              coordinatorId={coordinatorId}
+              sourceLabel={source?.label ?? "This machine"}
+              method={method}
+              machines={machines.map((item) => ({
+                id: item.id,
+                label: item.label,
+                unavailable: item.unavailable,
+              }))}
+              savedFolder={(environmentId) =>
+                candidates.find((item) => item.environmentId === environmentId)?.workspaceRoot ??
+                null
+              }
+              canMove={sourceReady}
+              onBusyChange={setCopyBusy}
+              onOpenProject={({ environmentId, projectId, folder }) => {
+                void navigate({
+                  to: "/projects/$projectKey",
+                  params: { projectKey: derivePhysicalProjectKeyFromPath(environmentId, folder) },
+                  search: projectWorkspaceSearch(null, `${environmentId}:${projectId}`),
+                })
+                  .then(() => changeOpen(false))
+                  .catch(showError);
+              }}
+            />
+          )
+        }
         rememberMachine={
           rememberedCandidate
             ? {

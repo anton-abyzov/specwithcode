@@ -38,10 +38,12 @@ import {
   projectSkillAttentionCount,
   projectSkillFacets,
   projectSkillLevel,
+  projectSkillLevelLabel,
   projectSkillLevels,
   projectSkillProviderBadges,
   projectSkillSourceLinks,
   projectSkillStatusBadge,
+  projectSkillVersions,
   type ProjectSkillFacetOption,
 } from "./ProjectSkillsSettings.logic";
 import { useSettingsScope } from "./SettingsScopeContext";
@@ -257,6 +259,36 @@ function StatusBadge({ row }: { row: ProjectSkillRow }) {
   return row.issues.length > 0 ? <Hinted hint={row.issues.join("\n")}>{badge}</Hinted> : badge;
 }
 
+/**
+ * The lock's version beside the versions the copies on disk report (the
+ * plugin manifest for a plugin skill), with a hint when the lock is behind.
+ */
+function VersionCell({ row }: { row: ProjectSkillRow }) {
+  const versions = projectSkillVersions(row);
+  const files = versions.files.map((file) => file.version);
+  const lockOnly = versions.lock !== null && !versions.lockOutOfDate;
+  if (versions.lock === null && files.length === 0) {
+    return <span className="text-muted-foreground">—</span>;
+  }
+  const hint = [
+    versions.lock ? `Lock: ${versions.lock}` : "Not in a vskill lock",
+    ...versions.files.map((file) => `${file.labels.join(", ")}: ${file.version}`),
+    ...(versions.lockOutOfDate
+      ? ["Lock out of date: the files on disk report another version."]
+      : []),
+  ].join("\n");
+  return (
+    <Hinted hint={hint} className="block">
+      <span className="font-mono">
+        {lockOnly ? versions.lock : files.join(" / ") || versions.lock}
+      </span>
+      {versions.lockOutOfDate ? (
+        <div className="text-xs text-warning-foreground">lock {versions.lock}, out of date</div>
+      ) : null}
+    </Hinted>
+  );
+}
+
 function SkillRow({
   row,
   entries,
@@ -306,6 +338,9 @@ function SkillRow({
                     dimmed={!badge.enabled}
                   />
                   {badge.enabled ? badge.label : `${badge.label} (off)`}
+                  {badge.enabled && badge.agentOnly ? (
+                    <span className="text-muted-foreground">agent only</span>
+                  ) : null}
                 </Badge>
               </Hinted>
             ))}
@@ -313,10 +348,12 @@ function SkillRow({
         )}
       </TableCell>
       <TableCell>
-        <span className="text-muted-foreground">{row.scopes.join(", ") || "—"}</span>
+        <span className="text-muted-foreground">
+          {projectSkillLevels(row).map(projectSkillLevelLabel).join(", ") || "—"}
+        </span>
       </TableCell>
       <TableCell>
-        <span className="font-mono">{row.lock?.version ?? "—"}</span>
+        <VersionCell row={row} />
       </TableCell>
       <TableCell>
         <TierCell row={row} />
@@ -361,10 +398,13 @@ function SkillDetails({ row, entries }: { row: ProjectSkillRow; entries: Provide
         {row.lock?.tier ? <TierCell row={row} /> : null}
         {projectSkillLevels(row).map((level) => (
           <Badge key={level} size="sm" variant="outline">
-            {level}
+            {projectSkillLevelLabel(level)}
           </Badge>
         ))}
       </div>
+      {row.aliases?.length ? (
+        <p className="text-muted-foreground">Also listed as {row.aliases.join(", ")}.</p>
+      ) : null}
       {links?.registryUrl || links?.repoUrl ? (
         <div className="flex flex-wrap gap-2">
           {links.registryUrl ? (
@@ -411,13 +451,27 @@ function SkillDetails({ row, entries }: { row: ProjectSkillRow; entries: Provide
                   <SkillProviderMark presence={presence} entries={entries} />
                   <span className="font-medium text-foreground">{presence.label}</span>
                   <Badge size="sm" variant="outline">
-                    {projectSkillLevel(presence.scope)}
+                    {projectSkillLevelLabel(projectSkillLevel(presence.scope, presence.path))}
                   </Badge>
+                  {(presence.pluginVersion ?? presence.fileVersion) ? (
+                    <Badge size="sm" variant="outline">
+                      {presence.pluginVersion ? "plugin " : ""}
+                      {presence.pluginVersion ?? presence.fileVersion}
+                    </Badge>
+                  ) : null}
+                  {presence.name ? (
+                    <span className="text-muted-foreground">as {presence.name}</span>
+                  ) : null}
                   {presence.enabled ? null : (
                     <Badge size="sm" variant="secondary">
                       off
                     </Badge>
                   )}
+                  {presence.userInvocable === false ? (
+                    <Badge size="sm" variant="secondary">
+                      agent only
+                    </Badge>
+                  ) : null}
                 </div>
                 <div className="break-all font-mono text-xs text-muted-foreground">
                   {presence.path}
@@ -459,7 +513,9 @@ function SkillDetails({ row, entries }: { row: ProjectSkillRow; entries: Provide
               </ExternalLink>
             </DetailItem>
           ) : null}
-          <DetailItem term="Version">{row.lock?.version ?? "—"}</DetailItem>
+          <DetailItem term="Version">
+            <VersionCell row={row} />
+          </DetailItem>
           <DetailItem term="Tier">{row.lock?.tier ?? "—"}</DetailItem>
           <DetailItem term="Installed">
             {row.lock?.installedAt ? new Date(row.lock.installedAt).toLocaleString() : "—"}

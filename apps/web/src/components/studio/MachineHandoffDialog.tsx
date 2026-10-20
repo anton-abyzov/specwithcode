@@ -1,5 +1,6 @@
 import { ArrowRightIcon, CheckIcon, LaptopIcon } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
+import type { HandoffFolderMethod } from "../../studio/folderCopy";
 import { groupMachineFolders } from "../../studio/projectMachineFolders";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
@@ -81,7 +82,16 @@ export function MachineHandoffDialog({
   folderPicker,
   sourceChanges = null,
   rememberMachine = null,
+  method = "folder",
+  onMethodChange,
+  copyFlow,
+  copyBusy = false,
 }: {
+  /** How the destination gets the files; the copy methods render `copyFlow` instead. */
+  readonly method?: HandoffFolderMethod;
+  readonly onMethodChange?: (method: HandoffFolderMethod) => void;
+  readonly copyFlow?: ReactNode;
+  readonly copyBusy?: boolean;
   readonly folderPicker?: ReactNode;
   readonly sourceChanges?: HandoffSourceChanges | null;
   readonly rememberMachine?: HandoffRememberMachine | null;
@@ -103,8 +113,18 @@ export function MachineHandoffDialog({
   readonly onRestart?: (() => void) | undefined;
 }) {
   const target = destinations.find((item) => item.key === selected);
-  const busy = phase === "checking" || phase === "transferring";
-  const complete = phase === "complete";
+  const copying = copyFlow !== undefined && method !== "folder";
+  const busy = copying ? copyBusy : phase === "checking" || phase === "transferring";
+  const complete = !copying && phase === "complete";
+  const chooser =
+    copyFlow !== undefined && onMethodChange ? (
+      <HandoffMethodChooser
+        sourceLabel={sourceLabel}
+        method={method}
+        onChange={onMethodChange}
+        disabled={busy || preview !== null}
+      />
+    ) : null;
   return (
     <Dialog
       open={open}
@@ -122,7 +142,10 @@ export function MachineHandoffDialog({
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
-          {complete ? (
+          {chooser}
+          {copying ? (
+            copyFlow
+          ) : complete ? (
             <div className="flex items-center gap-3 rounded-lg bg-muted p-4 text-sm" role="status">
               <CheckIcon className="size-5 shrink-0" aria-hidden />
               <span>The new coordinator can continue in its own checkout.</span>
@@ -277,17 +300,17 @@ export function MachineHandoffDialog({
               ) : null}
             </>
           )}
-          {error && (
+          {!copying && error && (
             <p role="alert" className="wrap-anywhere text-sm text-destructive-foreground">
               {error}
             </p>
           )}
-          {error && onRestart && (
+          {!copying && error && onRestart && (
             <Button variant="outline" onClick={onRestart}>
               Review the updated source
             </Button>
           )}
-          {busy && (
+          {!copying && busy && (
             <p role="status" aria-live="polite" className="text-sm text-muted-foreground">
               {phase === "checking"
                 ? "Checking code and machine access…"
@@ -296,7 +319,11 @@ export function MachineHandoffDialog({
           )}
         </DialogPanel>
         <DialogFooter>
-          {complete ? (
+          {copying ? (
+            <Button variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>
+              Close
+            </Button>
+          ) : complete ? (
             <Button
               className="h-auto min-h-9 min-w-0 max-w-full shrink whitespace-normal wrap-anywhere py-2 sm:h-auto sm:min-h-8"
               onClick={onOpenDestination}
@@ -326,6 +353,73 @@ export function MachineHandoffDialog({
         </DialogFooter>
       </DialogPopup>
     </Dialog>
+  );
+}
+
+const METHODS: ReadonlyArray<{
+  readonly value: HandoffFolderMethod;
+  readonly label: (source: string) => string;
+  readonly detail: string;
+}> = [
+  {
+    value: "copy",
+    label: (source) => `Copy from ${source}`,
+    detail:
+      "Copies the folder as it is, with uncommitted and ignored files. Secret-like files stay behind.",
+  },
+  {
+    value: "folder",
+    label: () => "Use the folder as it is",
+    detail: "Publishes committed work to Git remotes and advances an existing checkout.",
+  },
+  {
+    value: "clone",
+    label: () => "Clone from origin per repository",
+    detail: "Copies the folder, but clones clean repositories from their remotes instead.",
+  },
+];
+
+function HandoffMethodChooser({
+  sourceLabel,
+  method,
+  onChange,
+  disabled,
+}: {
+  readonly sourceLabel: string;
+  readonly method: HandoffFolderMethod;
+  readonly onChange: (method: HandoffFolderMethod) => void;
+  readonly disabled: boolean;
+}) {
+  return (
+    <fieldset disabled={disabled} className="min-w-0 space-y-2" data-slot="handoff-method">
+      <legend className="mb-2 text-sm font-medium">Files</legend>
+      <RadioGroup
+        value={method}
+        onValueChange={(value) => onChange(value as HandoffFolderMethod)}
+        disabled={disabled}
+        aria-label="Files"
+        className="gap-2"
+      >
+        {METHODS.map((item) => (
+          <label
+            key={item.value}
+            className={`grid min-w-0 grid-cols-[1.125rem_minmax(0,1fr)] items-start gap-x-3 rounded-lg border p-3 text-sm ${
+              method === item.value ? "border-primary bg-accent/40" : "border-border"
+            } ${disabled ? "cursor-default" : "cursor-pointer hover:bg-accent/40"}`}
+          >
+            <span className="flex h-5 items-center justify-center">
+              <Radio value={item.value} />
+            </span>
+            <span className="min-w-0 leading-5">
+              <span className="block wrap-anywhere font-medium">{item.label(sourceLabel)}</span>
+              <span className="block wrap-anywhere text-xs text-muted-foreground">
+                {item.detail}
+              </span>
+            </span>
+          </label>
+        ))}
+      </RadioGroup>
+    </fieldset>
   );
 }
 

@@ -301,7 +301,12 @@ export function useOpenChangeRequestLink(
             number: parsed.number,
           },
           url: targetUrl,
-          panel: resolvedPanelRef ? { ref: resolvedPanelRef, target: panelTarget } : null,
+          // Only beside a thread: without one the panel is the Pull requests
+          // page's, which "Open in panel" would fill out of sight.
+          panel:
+            resolvedThreadRef && resolvedPanelRef
+              ? { ref: resolvedPanelRef, target: panelTarget }
+              : null,
         })
       ) {
         return true;

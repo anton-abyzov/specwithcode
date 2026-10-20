@@ -59,6 +59,8 @@ export const ProjectCoordinatorBinding = Schema.Struct({
   operationId: Schema.optional(Schema.String.check(Schema.isMaxLength(128))),
   predecessor: Schema.optional(LogicalProjectMember),
   successor: Schema.optional(LogicalProjectMember),
+  /** Why a handoff returned the coordinator to this machine after a failure. */
+  releaseReason: Schema.optional(Schema.String.check(Schema.isMaxLength(500))),
 });
 export type ProjectCoordinatorBinding = typeof ProjectCoordinatorBinding.Type;
 

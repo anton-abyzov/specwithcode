@@ -53,6 +53,87 @@ const INCREMENT_DIRECTORY = /^\d{4,}-[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const MAX_INCREMENT_ID = 160;
 const MAX_LEDGER_LINES = 10_000;
 const META_EVENTS = new Set(["note", "session", "handoff", "pickup"]);
+/** SpecWeave caps `--line` at 100 characters. */
+const CARD_LINE_CHARS = 100;
+const CARD_LINK_CHARS = 2_048;
+const EVIDENCE_CHARS = 8_192;
+
+/** A task as its card shows it: SpecWeave's `card.state`, line and raw link. */
+export type SpecweaveCardState = "todo" | "doing" | "waiting" | "done" | "skipped";
+
+export interface SpecweaveCard {
+  readonly id: string;
+  readonly state: SpecweaveCardState;
+  /** The latest `line` an accepted event carried, else the task title. */
+  readonly line: string;
+  /** The latest `link` an accepted event carried, else one derived from the done evidence; unsanitised. */
+  readonly link: string | null;
+}
+
+/** A card line as SpecWeave stores it: whitespace collapsed, over 100 chars cut to 99 plus "…". */
+function cardLine(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const text = value.replace(/\s+/gu, " ").trim();
+  if (text.length === 0) return null;
+  return text.length > CARD_LINE_CHARS ? `${text.slice(0, CARD_LINE_CHARS - 1).trimEnd()}…` : text;
+}
+
+/** The card state of a folded task status. */
+export function cardState(status: ModSpecweaveTask["status"]): SpecweaveCardState {
+  switch (status) {
+    case "claimed":
+    case "stale":
+      return "doing";
+    case "blocked":
+      return "waiting";
+    case "done":
+      return "done";
+    case "skipped":
+      return "skipped";
+    default:
+      return "todo";
+  }
+}
+
+const TASK_ID = /^[A-Za-z]{1,8}-[A-Za-z0-9_-]{1,32}$/u;
+const PULL_REQUEST_URL = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/u;
+const LOG_PATH = /(?:^|\s)log:\s*(\S+)/u;
+const HEAD_SHA = /\bHEAD\s+([0-9a-f]{7,40})\b/iu;
+const GITHUB_ORIGIN =
+  /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/u;
+
+/** `https://github.com/o/r` for a GitHub remote URL (https or ssh form); null otherwise. */
+export function githubRepositoryUrl(origin: string | null | undefined): string | null {
+  const match = origin ? GITHUB_ORIGIN.exec(origin.trim()) : null;
+  return match ? `https://github.com/${match[1]}/${match[2]}` : null;
+}
+
+/**
+ * The link a done event's evidence implies, in SpecWeave's order: a GitHub
+ * pull request URL, then a `log: <path>` token (relative to the increment
+ * folder, its `.specweave/increments/<id>/` prefix stripped), then
+ * `HEAD <sha>` (the commit URL with a GitHub origin, else the bare sha).
+ * Null when the evidence names none of them.
+ */
+export function deriveCardLink(
+  evidence: string | null,
+  options: { readonly origin?: string | null; readonly incrementId?: string | null } = {},
+): string | null {
+  if (evidence === null) return null;
+  const pullRequest = PULL_REQUEST_URL.exec(evidence)?.[0];
+  if (pullRequest !== undefined) return pullRequest;
+  const log = LOG_PATH.exec(evidence)?.[1];
+  if (log !== undefined) {
+    const prefix = /^(?:\.\/)?\.specweave\/increments\/([^/]+)\//u.exec(log);
+    return prefix !== null && (!options.incrementId || prefix[1] === options.incrementId)
+      ? log.slice(prefix[0].length)
+      : log;
+  }
+  const sha = HEAD_SHA.exec(evidence)?.[1]?.toLowerCase();
+  if (sha === undefined) return null;
+  const repository = githubRepositoryUrl(options.origin);
+  return repository === null ? sha : `${repository}/commit/${sha}`;
+}
 
 const bounded = (value: unknown, maximum: number): string | null => {
   if (typeof value !== "string") return null;
@@ -155,32 +236,55 @@ export function parseSpecweaveSpec(spec: string): ParsedSpec {
  * than two hours is not taken over, done needs evidence and skip needs a
  * reason, skipped is terminal and done takes no claim, block or skip, only the
  * owner releases, and a claim older than two hours shows as stale. Lines it
- * cannot read, and lines past the 10,000th, are skipped and counted.
+ * cannot read, and lines past the 10,000th, are skipped and counted. `cards`
+ * is SpecWeave's card fold over the same events (see {@link SpecweaveCard}).
  */
 export function foldSpecweaveLedger(
   tasks: ParsedSpec["tasks"],
   ledger: string,
   now: number,
-): { readonly tasks: ModSpecweaveTask[]; readonly malformed: number } {
+  options: {
+    /** The repository's GitHub origin, which turns `HEAD <sha>` into a commit URL. */
+    readonly origin?: string | null;
+    /** The increment folder name, stripped from `log:` paths. */
+    readonly incrementId?: string | null;
+  } = {},
+): {
+  readonly tasks: ModSpecweaveTask[];
+  readonly cards: SpecweaveCard[];
+  readonly malformed: number;
+} {
   type State = {
     status: ModSpecweaveTask["status"];
     owner: string | null;
     since: number;
     changedAt: string | null;
     note: string | null;
+    line: string | null;
+    link: string | null;
+    evidence: string | null;
   };
-  const states = new Map<string, State>(
-    tasks.map((task) => [
-      task.id,
-      {
-        status: task.checked ? "done" : "planned",
-        owner: null,
-        since: 0,
-        changedAt: null,
-        note: null,
-      },
-    ]),
-  );
+  const fresh = (checked: boolean): State => ({
+    status: checked ? "done" : "planned",
+    owner: null,
+    since: 0,
+    changedAt: null,
+    note: null,
+    line: null,
+    link: null,
+    evidence: null,
+  });
+  const states = new Map<string, State>(tasks.map((task) => [task.id, fresh(task.checked)]));
+  /** Ids only the ledger names (SpecWeave's branch cards, `C-NN`), in first-appearance order. */
+  const ledgerOnly = new Map<string, State>();
+  const stateFor = (id: string) => {
+    let state = states.get(id) ?? ledgerOnly.get(id);
+    if (state === undefined && id !== "*" && TASK_ID.test(id)) {
+      state = fresh(false);
+      ledgerOnly.set(id, state);
+    }
+    return state;
+  };
   let malformed = 0;
   const entries: Array<{
     t: string;
@@ -190,6 +294,9 @@ export function foldSpecweaveLedger(
     iso: string;
     note: string | null;
     hasEvidence: boolean;
+    evidence: string | null;
+    line: string | null;
+    link: string | null;
     index: number;
   }> = [];
   ledger
@@ -221,8 +328,12 @@ export function foldSpecweaveLedger(
           at: Date.parse(iso),
           iso,
           note: bounded(entry.note, 200),
-          // Evidence itself never leaves this function.
           hasEvidence: typeof entry.evidence === "string" && entry.evidence.trim() !== "",
+          // Evidence itself never leaves this function; only the link it implies does.
+          evidence:
+            typeof entry.evidence === "string" ? entry.evidence.slice(0, EVIDENCE_CHARS) : null,
+          line: cardLine(entry.line),
+          link: bounded(entry.link, CARD_LINK_CHARS),
           index,
         });
       } catch {
@@ -231,22 +342,40 @@ export function foldSpecweaveLedger(
     });
   entries.sort((a, b) => a.at - b.at || (a.by < b.by ? -1 : a.by > b.by ? 1 : a.index - b.index));
   for (const entry of entries) {
-    if (META_EVENTS.has(entry.e)) continue;
-    const state = states.get(entry.t);
+    if (META_EVENTS.has(entry.e)) {
+      // A note on a task carries its card line and link; it changes no state.
+      if (entry.e === "note" && entry.t !== "*" && (entry.line !== null || entry.link !== null)) {
+        const noted = stateFor(entry.t);
+        if (noted) {
+          if (entry.line !== null) noted.line = entry.line;
+          if (entry.link !== null) noted.link = entry.link;
+        }
+      }
+      continue;
+    }
+    const state = stateFor(entry.t);
     if (!state) continue;
     const finished = state.status === "done" || state.status === "skipped";
     const heldByOther =
       (state.status === "claimed" || state.status === "blocked") &&
       state.owner !== entry.by &&
       entry.at - state.since <= LEASE_MS;
-    const take = (status: ModSpecweaveTask["status"]) =>
+    // Only an event the fold accepts changes the card.
+    const card = () => {
+      if (entry.line !== null) state.line = entry.line;
+      if (entry.link !== null) state.link = entry.link;
+    };
+    const take = (status: ModSpecweaveTask["status"]) => {
       Object.assign(state, {
         status,
         owner: entry.by,
         since: entry.at,
         changedAt: entry.iso,
         note: status === "blocked" || status === "skipped" ? entry.note : null,
+        evidence: status === "done" ? entry.evidence : state.evidence,
       });
+      card();
+    };
     switch (entry.e) {
       case "claim":
       case "block":
@@ -269,22 +398,51 @@ export function foldSpecweaveLedger(
             changedAt: entry.iso,
             note: null,
           });
+          card();
         }
         break;
     }
   }
+  const folded = tasks.map((task) => {
+    const state = states.get(task.id)!;
+    return {
+      id: task.id,
+      title: task.title,
+      criteria: [...task.criteria],
+      status: state.status === "claimed" && now - state.since > LEASE_MS ? "stale" : state.status,
+      changedAt: state.changedAt,
+      note: state.note,
+    } satisfies ModSpecweaveTask;
+  });
+  const derive = (state: State) =>
+    state.link ??
+    (state.status === "done"
+      ? deriveCardLink(state.evidence, {
+          origin: options.origin ?? null,
+          incrementId: options.incrementId ?? null,
+        })
+      : null);
   return {
-    tasks: tasks.map((task) => {
-      const state = states.get(task.id)!;
-      return {
-        id: task.id,
-        title: task.title,
-        criteria: [...task.criteria],
-        status: state.status === "claimed" && now - state.since > LEASE_MS ? "stale" : state.status,
-        changedAt: state.changedAt,
-        note: state.note,
-      };
-    }),
+    tasks: folded,
+    cards: [
+      ...folded.map((task) => {
+        const state = states.get(task.id)!;
+        return {
+          id: task.id,
+          state: cardState(task.status),
+          line: state.line ?? task.title,
+          link: derive(state),
+        };
+      }),
+      ...[...ledgerOnly].map(([id, state]) => ({
+        id,
+        state: cardState(
+          state.status === "claimed" && now - state.since > LEASE_MS ? "stale" : state.status,
+        ),
+        line: state.line ?? id,
+        link: derive(state),
+      })),
+    ],
     malformed,
   };
 }

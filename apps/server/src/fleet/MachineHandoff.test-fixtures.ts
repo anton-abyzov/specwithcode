@@ -31,9 +31,11 @@ import {
   type MachineHandoffBundle,
   type MachineHandoffReceiveInput,
   type RuntimeMode,
+  type ServerDirectEndpoint,
 } from "@specweave-studio/contracts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ServerConfig from "../config.ts";
+import * as DirectEndpoints from "../environment/DirectEndpoints.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectWorkspaceService from "../project/ProjectWorkspaceService.ts";
@@ -82,6 +84,10 @@ const makeHarness = (
     coordinatorRuntimeMode?: RuntimeMode;
     /** This machine's own default for new projects. */
     defaultRuntimeMode?: RuntimeMode;
+    /** The source project's folder; folder copies scan it for real. */
+    workspaceRoot?: string;
+    /** This machine's private addresses; omitted leaves the service without any. */
+    endpoints?: ReadonlyArray<ServerDirectEndpoint>;
   } = {},
 ) => {
   const state = {
@@ -108,7 +114,7 @@ const makeHarness = (
   projects.set(projectId, {
     id: projectId,
     title: "Project",
-    workspaceRoot: "/source/project",
+    workspaceRoot: options.workspaceRoot ?? "/source/project",
     defaultModelSelection: { instanceId: "destination-provider", model: "destination-model" },
     workspaceSettings: { ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, coordinatorThreadId: threadId },
   } as Project);
@@ -141,8 +147,13 @@ const makeHarness = (
     }),
     Layer.succeed(ServerEnvironment.ServerEnvironment, {
       getEnvironmentId: Effect.succeed(EnvironmentId.make(options.environment ?? "source-env")),
-      getDescriptor: Effect.die("unused"),
+      getDescriptor: Effect.succeed({ label: "Source Mac" } as never),
     }),
+    options.endpoints === undefined
+      ? Layer.empty
+      : Layer.succeed(DirectEndpoints.DirectEndpoints, {
+          resolve: () => Effect.succeed(options.endpoints!),
+        } as unknown as DirectEndpoints.DirectEndpoints["Service"]),
     options.realDatabase
       ? NodeSqliteClient.layer({ filename: ":memory:" })
       : Layer.succeed(SqlClient.SqlClient, (() =>

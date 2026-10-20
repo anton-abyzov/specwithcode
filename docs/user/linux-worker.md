@@ -184,13 +184,16 @@ it as ready.
 ## What the worker needs for a project
 
 The project must exist on the worker as its own checkout: clone it there and
-register it in SpecWithCode on the worker, with the same remote as on the Mac so
-`studio_machine_list` can match them:
+register it in SpecWithCode on the worker, with the same remote as on the Mac:
 
 ```bash
 git clone <same remote as on the Mac> ~/code/<repo>
 specwithcode project add ~/code/<repo>
 ```
+
+A project that is not shared is matched by that remote. A shared project is
+matched only by its linked copies, so link the worker's copy to it from
+**Settings > Project > Machines** ([Shared projects](./shared-projects.md)).
 
 Install the project's toolchain on the
 worker as you would on any machine. Nothing is synchronized between machines:

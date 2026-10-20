@@ -9,7 +9,10 @@
  *      whenever a process in the thread's turn appends to a ledger (`specweave
  *      task claim|done|…`, `pickup`, `note`). Its root must lie inside the
  *      thread's checkout or the project folder.
- *   2. checkpoint / name — the report resolver: SpecWeave's session checkpoint
+ *   2. branch — the thread's worktree branch is `inc/NNNN-*` and exactly one
+ *      `NNNN-*` increment exists, or an event in a recent increment's ledger
+ *      has a `by` that names the branch. Nothing is written for it.
+ *   3. checkpoint / name — the report resolver: SpecWeave's session checkpoint
  *      pointer, then an increment number or folder in the title or branch.
  * Only folders that exist count. Without a claim the increment is read from
  * the thread's worktree when that checkout has its own `.specweave/increments`,
@@ -43,6 +46,8 @@ const INCREMENT_FOLDER = /^\d{4,}-[a-z0-9]+(?:-[a-z0-9]+)*$/i;
 const LEDGER_BYTES = 1_048_576;
 const SMALL_BYTES = 524_288;
 const CLOSED_TASK_STATES = new Set(["done", "skipped"]);
+const CARD_LINK_HOSTS = new Set(["github.com", "claude.ai"]);
+const COMMIT_SHA = /^[0-9a-f]{7,40}$/u;
 
 export interface ThreadIncrementSource {
   readonly threadId: string;
@@ -74,6 +79,43 @@ async function readBounded(root: string, file: string, maximum: number): Promise
     return new TextDecoder("utf-8", { fatal: true }).decode(await NodeFSP.readFile(real));
   } catch {
     return null;
+  }
+}
+
+/**
+ * What a card may link to: an https URL on github.com or claude.ai, or a
+ * file or folder that resolves (after links) inside the increment folder,
+ * returned as its real path. A bare commit sha comes back as `commit`.
+ * Anything else is dropped.
+ */
+export async function sanitizeCardLink(
+  raw: string | null,
+  incrementFolder: string,
+): Promise<{ readonly link?: string; readonly commit?: string }> {
+  if (raw === null) return {};
+  const value = raw.trim();
+  if (COMMIT_SHA.test(value)) return { commit: value };
+  if (/^[a-z][a-z0-9+.-]*:/iu.test(value)) {
+    if (!/^https:\/\//iu.test(value)) return {};
+    try {
+      const url = new URL(value);
+      return url.protocol === "https:" &&
+        CARD_LINK_HOSTS.has(url.hostname.toLowerCase()) &&
+        url.username === "" &&
+        url.password === "" &&
+        url.port === ""
+        ? { link: url.href }
+        : {};
+    } catch {
+      return {};
+    }
+  }
+  try {
+    const folder = await NodeFSP.realpath(incrementFolder);
+    const real = await NodeFSP.realpath(NodePath.resolve(folder, value));
+    return inside(folder, real) ? { link: real } : {};
+  } catch {
+    return {};
   }
 }
 
@@ -161,6 +203,58 @@ async function claimedBinding(
   };
 }
 
+const INCREMENT_BRANCH = /^inc\/(\d{4,})-/u;
+/** Newest increment ledgers searched for a `by` naming the branch. */
+const BRANCH_LEDGERS_SCANNED = 40;
+
+/** Whether a ledger `by` (`tool@host`, optionally with the branch) names `branch`. */
+export function ledgerByNamesBranch(by: string, branch: string): boolean {
+  return by === branch || by.split(/[@:#\s]+/u).includes(branch);
+}
+
+/**
+ * The increment a thread's branch binds it to without a claim file: an
+ * `inc/NNNN-*` branch maps onto the one `NNNN-*` folder, otherwise the newest
+ * of the recent increments whose ledger names the branch in a `by`.
+ */
+export async function branchBoundIncrement(
+  root: string,
+  branch: string | null,
+): Promise<string | null> {
+  const name = branch?.trim() ?? "";
+  if (name === "") return null;
+  const dir = NodePath.join(root, INCREMENTS_DIR);
+  const entries = await NodeFSP.readdir(dir, { withFileTypes: true }).catch(() => []);
+  const folders = entries
+    .filter((entry) => entry.isDirectory() && INCREMENT_FOLDER.test(entry.name))
+    .map((entry) => entry.name)
+    .toSorted((left, right) => right.localeCompare(left, undefined, { numeric: true }));
+  const number = INCREMENT_BRANCH.exec(name)?.[1];
+  if (number !== undefined) {
+    const matches = folders.filter((folder) => folder.startsWith(`${number}-`));
+    // A number shared by two folders is ambiguous; never guess between them.
+    if (matches.length === 1) return matches[0]!;
+  }
+  for (const folder of folders.slice(0, BRANCH_LEDGERS_SCANNED)) {
+    const ledger = await readBounded(
+      root,
+      NodePath.join(dir, folder, "ledger.jsonl"),
+      LEDGER_BYTES,
+    );
+    if (ledger === null || !ledger.includes(name)) continue;
+    for (const line of ledger.split("\n")) {
+      if (!line.includes(name)) continue;
+      try {
+        const by = (JSON.parse(line) as { by?: unknown }).by;
+        if (typeof by === "string" && ledgerByNamesBranch(by, name)) return folder;
+      } catch {
+        // An unreadable line binds nothing.
+      }
+    }
+  }
+  return null;
+}
+
 /** Whether SpecWeave's session checkpoint for the thread names `incrementId`. */
 async function checkpointNames(thread: ThreadIncrementSource, incrementId: string) {
   const recorded = (await readJson(specweaveStudioCheckpointPath(thread.threadId, thread.home)))
@@ -201,15 +295,23 @@ export async function readIncrementProgress(input: {
   const folded =
     taskSource === undefined || taskSource.length === 0 || ledger === null
       ? null
-      : foldSpecweaveLedger(taskSource, ledger, input.now);
+      : foldSpecweaveLedger(taskSource, ledger, input.now, { incrementId: input.incrementId });
   const metadata = parseIncrementMetadata(metadataText);
-  const tasks = (folded?.tasks ?? []).map((task) => ({
-    id: task.id,
-    title: task.title,
-    status: task.status,
-    criteria: [...task.criteria],
-    note: task.note,
-  }));
+  const cards = new Map((folded?.cards ?? []).map((card) => [card.id, card]));
+  const tasks = await Promise.all(
+    (folded?.tasks ?? []).map(async (task) => {
+      const card = cards.get(task.id);
+      return {
+        id: task.id,
+        title: task.title,
+        status: task.status,
+        criteria: [...task.criteria],
+        note: task.note,
+        ...(card === undefined ? {} : { line: card.line }),
+        ...(await sanitizeCardLink(card?.link ?? null, folder)),
+      };
+    }),
+  );
   return {
     threadId: input.threadId as ThreadIncrementProgress["threadId"],
     incrementId: input.incrementId,
@@ -263,15 +365,23 @@ export async function readThreadIncrementProgress(
         binding = "claim";
       } else {
         root = await incrementRootFor(workspaceRoot, thread.worktreePath);
-        const resolved = await resolveReportIncrement(root, {
-          threadId: thread.threadId,
-          title: thread.title,
-          branch: thread.branch,
-          ...(thread.home === undefined ? {} : { home: thread.home }),
-        });
+        const byBranch = await branchBoundIncrement(root, thread.branch);
+        const resolved =
+          byBranch ??
+          (await resolveReportIncrement(root, {
+            threadId: thread.threadId,
+            title: thread.title,
+            branch: thread.branch,
+            ...(thread.home === undefined ? {} : { home: thread.home }),
+          }));
         if (resolved === null) return null;
         incrementId = resolved;
-        binding = (await checkpointNames(thread, incrementId)) ? "checkpoint" : "name";
+        binding =
+          byBranch !== null
+            ? "branch"
+            : (await checkpointNames(thread, incrementId))
+              ? "checkpoint"
+              : "name";
       }
       const key = `${root}\u0000${incrementId}`;
       let read = reads.get(key);
