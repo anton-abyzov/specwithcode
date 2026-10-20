@@ -14,12 +14,14 @@ import {
   addStudioFleetMachine,
   allowStudioFleetWorkers,
   pairStudioFleet,
+  removeStudioFleetMachine,
   stopStudioFleetWorkers,
   useStudioFleet,
 } from "../../studio/fleet";
 import {
   defaultFleetWorkerAccess,
   FLEET_WORKER_ACCESS_CHOICES,
+  fleetRemoveNotice,
   fleetWorkersView,
 } from "../../studio/fleetWorkers";
 import {
@@ -45,6 +47,7 @@ import { Switch } from "../ui/switch";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { connectPairing } from "../../connection/onboarding";
+import { requestConfirmDialog } from "../../confirmDialog";
 import { FleetInviteArea } from "./FleetInvite";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
@@ -297,6 +300,29 @@ export function StudioFleetConnections({ environmentId, savedEnvironmentIds }: P
       setPending(null);
     }
   }
+  async function remove(machine: StudioFleetMachine) {
+    if (pending || !canManageWorkers) return;
+    // Fail closed: no mounted confirm host means no removal.
+    const confirmed = await requestConfirmDialog(
+      `Remove ${machine.label} from this machine's list?\nThis machine gives up its worker access and management token on ${machine.label}. Threads already running there keep running.`,
+      { variant: "destructive" },
+    );
+    if (confirmed !== true) return;
+    setPending(`remove:${machine.id}`);
+    setError(null);
+    setNotice(null);
+    setAdded(null);
+    try {
+      const removed = await removeStudioFleetMachine(environmentId, machine.id);
+      if (removed.workerAccess === "kept" || removed.managementToken === "kept")
+        setNotice(fleetRemoveNotice(removed));
+      else setAdded(fleetRemoveNotice(removed));
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "Could not remove this machine.");
+    } finally {
+      setPending(null);
+    }
+  }
   async function pair(machine: StudioFleetMachine) {
     if (pending || !canPair) return;
     setPending(machine.id);
@@ -344,6 +370,7 @@ export function StudioFleetConnections({ environmentId, savedEnvironmentIds }: P
         setWorkerDrafts((current) => ({ ...current, [id]: draft }))
       }
       onWorkers={(machine, action) => void changeWorkers(machine, action)}
+      onRemove={(machine) => void remove(machine)}
       invitation={invitation}
       onInvitationChange={setInvitation}
       onAddMachine={() => void addMachine()}
@@ -404,6 +431,7 @@ export function StudioFleetRoster({
   added = null,
   onWorkerDraftChange,
   onWorkers,
+  onRemove,
   invitation = "",
   onInvitationChange,
   onAddMachine,
@@ -433,6 +461,8 @@ export function StudioFleetRoster({
   added?: string | null;
   onWorkerDraftChange?: (id: string, draft: WorkerDraft) => void;
   onWorkers?: (machine: StudioFleetMachine, action: "allow" | "stop") => void;
+  /** Removes a machine and gives up what this server holds on it. */
+  onRemove?: (machine: StudioFleetMachine) => void;
   /** The pasted `fleet invite` line, cleared once sent. */
   invitation?: string;
   onInvitationChange?: (invitation: string) => void;
@@ -548,6 +578,18 @@ export function StudioFleetRoster({
                     onDraftChange={(draft) => onWorkerDraftChange(machine.id, draft)}
                     onAction={(action) => onWorkers(machine, action)}
                   />
+                ) : null}
+                {!current && onRemove && canManageWorkers ? (
+                  <div className="pl-7">
+                    <Button
+                      size="xs"
+                      variant="ghost-destructive"
+                      disabled={pending !== null || failed}
+                      onClick={() => onRemove(machine)}
+                    >
+                      {pending === `remove:${machine.id}` ? "Removing…" : "Remove machine"}
+                    </Button>
+                  </div>
                 ) : null}
               </li>
             );

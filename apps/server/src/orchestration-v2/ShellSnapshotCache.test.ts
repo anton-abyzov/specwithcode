@@ -71,7 +71,7 @@ it.effect("keeps reusing a snapshot no write has touched, up to the cap", () =>
   }),
 );
 
-it.effect("keeps each set of options apart", () =>
+it.effect("keeps each location apart", () =>
   Effect.gen(function* () {
     const { calls, read } = countingRead();
     const cache = yield* ShellSnapshotCache.make(read);
@@ -79,11 +79,88 @@ it.effect("keeps each set of options apart", () =>
     yield* cache.get({ unsettledOnly: true, maxAgeMs });
     yield* cache.get({ location: "archive", maxAgeMs });
     yield* cache.get({ location: "active", maxAgeMs });
-    assert.deepEqual(calls, [
-      { location: "active" },
-      { unsettledOnly: true },
-      { location: "archive" },
-    ]);
+    assert.deepEqual(calls, [{ location: "active" }, {}, { location: "archive" }]);
+  }),
+);
+
+const shellOf = (
+  id: string,
+  fields: { readonly settledAt?: string | null; readonly settledOverride?: string | null } = {},
+) => ({ id, settledAt: null, settledOverride: null, archivedAt: null, ...fields });
+
+/** One active read holding open, settled, reopened and archived threads. */
+const mixedRead = () => {
+  const calls: Array<ShellSnapshotCache.ShellSnapshotReadOptions> = [];
+  const read = (options: ShellSnapshotCache.ShellSnapshotReadOptions) =>
+    Effect.sync(() => {
+      calls.push(options);
+      return {
+        schemaVersion: 2,
+        snapshotSequence: calls.length,
+        threads: [
+          shellOf("open"),
+          shellOf("auto-settled", { settledAt: "2026-10-01T00:00:00Z" }),
+          shellOf("manual-settled", { settledOverride: "settled" }),
+          shellOf("reopened", { settledOverride: "active" }),
+          // Reopened by hand but still stamped: the SQL filter skips it too.
+          shellOf("reopened-stamped", {
+            settledOverride: "active",
+            settledAt: "2026-10-01T00:00:00Z",
+          }),
+        ],
+        archivedThreads: [
+          { ...shellOf("archived-open"), archivedAt: "2026-10-01T00:00:00Z" },
+          {
+            ...shellOf("archived-settled", { settledAt: "2026-10-01T00:00:00Z" }),
+            archivedAt: "2026-10-01T00:00:00Z",
+          },
+        ],
+      } as unknown as OrchestrationV2ThreadShellSnapshot;
+    });
+  return { calls, read };
+};
+
+it.effect("serves every sweep, unsettled or not, from one read within the age", () =>
+  Effect.gen(function* () {
+    const { calls, read } = mixedRead();
+    const cache = yield* ShellSnapshotCache.make(read);
+    // Idle compaction and the full-access sweep, then the pull request and
+    // provider fallback sweeps, with writes landing in between.
+    const every = yield* cache.get({ location: "active", maxAgeMs });
+    yield* cache.invalidate;
+    yield* TestClock.adjust("10 seconds");
+    const unsettled = yield* cache.get({ location: "active", unsettledOnly: true, maxAgeMs });
+    yield* cache.invalidate;
+    yield* TestClock.adjust("10 seconds");
+    const again = yield* cache.get({ location: "active", unsettledOnly: true, maxAgeMs });
+    yield* cache.invalidate;
+    yield* TestClock.adjust("9 seconds");
+    assert.strictEqual(yield* cache.get({ location: "active", maxAgeMs }), every);
+    assert.deepEqual(calls, [{ location: "active" }]);
+
+    assert.deepEqual(
+      every.threads.map((thread) => thread.id),
+      ["open", "auto-settled", "manual-settled", "reopened", "reopened-stamped"],
+    );
+    assert.deepEqual(
+      unsettled.threads.map((thread) => thread.id),
+      ["open", "reopened"],
+    );
+    assert.deepEqual(
+      unsettled.archivedThreads.map((thread) => thread.id),
+      ["archived-open"],
+    );
+    assert.equal(unsettled.snapshotSequence, every.snapshotSequence);
+    assert.strictEqual(again, unsettled);
+  }),
+);
+
+it.effect("an exact unsettled read still asks the database for unsettled threads", () =>
+  Effect.gen(function* () {
+    const { calls, read } = mixedRead();
+    const cache = yield* ShellSnapshotCache.make(read);
+    yield* cache.get({ location: "active", unsettledOnly: true });
+    assert.deepEqual(calls, [{ location: "active", unsettledOnly: true }]);
   }),
 );
 

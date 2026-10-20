@@ -5,6 +5,7 @@ import {
   OrchestrationV2RunStatus,
   type OrchestrationV2ThreadLaunchWorkspaceStrategy,
   OrchestratorMcpFailure,
+  type OrchestratorMcpDelegation,
   type OrchestratorMcpMachine,
   type OrchestratorMcpMachineListResult,
   type OrchestratorMcpMachineProvider,
@@ -83,6 +84,8 @@ export interface RemoteLaunchInput {
   readonly workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy | undefined;
   readonly message: string | undefined;
   readonly reportBack: boolean;
+  /** The machines this launch came through, ending with this one. */
+  readonly delegation: OrchestratorMcpDelegation;
 }
 
 const RemoteLaunchAnswer = Schema.Struct({
@@ -114,6 +117,8 @@ export interface RemoteLaunchResult {
   readonly runtimeMode: RuntimeMode;
   /** Set when the machine's grant lowered the caller's own mode to `runtimeMode`. */
   readonly runtimeModeLoweredFrom?: RuntimeMode;
+  /** Something the user should know about that machine, such as checks it is too old to make. */
+  readonly machineNotice?: string;
 }
 
 /**
@@ -189,6 +194,8 @@ export interface RemoteWorkersShape {
   readonly workersForProject: (
     projectId: ProjectId,
   ) => Effect.Effect<ReadonlyArray<StudioFleetRemoteWorker>>;
+  /** Configured machines' names by environment id, for naming a delegation path. */
+  readonly machineLabels: Effect.Effect<ReadonlyMap<string, string>>;
 }
 
 const failure = (code: OrchestratorMcpFailure["code"], message: string) =>
@@ -240,6 +247,7 @@ const disabled: RemoteWorkersShape = {
   noteFinished: () => Effect.void,
   coordinatorWorkerMachine: () => Effect.succeed(null),
   workersForProject: () => Effect.succeed([]),
+  machineLabels: Effect.succeed(new Map()),
 };
 
 export class RemoteWorkers extends Context.Reference<RemoteWorkersShape>(
@@ -264,7 +272,7 @@ export function remoteFailure(
       return failure(
         "machine_not_authorized",
         error.grant === "revoked"
-          ? `${label} revoked this machine's worker access. The user can allow workers again in Settings > Connections.`
+          ? `${label} revoked this machine's worker access. If it was revoked under "Who can run work on this Mac" there, allow this machine again on ${label} first; then allow workers again here in Settings > Connections.`
           : error.grant === "expired"
             ? `Worker access on ${label} expired. The user can allow workers again in Settings > Connections.`
             : `Workers are not allowed on ${label}. The user allows them in Settings > Connections.`,
@@ -313,6 +321,14 @@ const grantFailure = (
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * A worker that does not confirm its checks runs a version from before
+ * per-project grants: it neither refuses delegation loops nor limits projects
+ * or sign-ins. The work still starts; the agent and user are told.
+ */
+export const olderWorkerNotice = (machine: Pick<OrchestratorMcpMachineRef, "label">) =>
+  `${machine.label} runs an older SpecWithCode that does not check delegation loops, project scope or which sign-ins remote work uses. Update SpecWithCode on ${machine.label} to enforce them there.`;
 
 /**
  * The thread id is all a launch answer must carry: a machine on another
@@ -791,6 +807,7 @@ const make = Effect.gen(function* () {
               ? {}
               : { workspaceStrategy: input.workspaceStrategy }),
             ...(input.message === undefined ? {} : { message: input.message }),
+            delegation: input.delegation,
           },
           timeoutMs: LAUNCH_TIMEOUT_MS,
         });
@@ -825,6 +842,8 @@ const make = Effect.gen(function* () {
         readonly runId: RunId | null;
         readonly status: OrchestrationV2RunStatus | null;
         readonly modelSelection: ModelSelection | undefined;
+        /** Whether that machine said it checked the delegation path and its grant's scope. */
+        readonly grantChecked: boolean | undefined;
       };
       if (attempt._tag === "Success") {
         const answer = readLaunchAnswer(attempt.success);
@@ -838,6 +857,7 @@ const make = Effect.gen(function* () {
         launched = {
           ...answer.value,
           modelSelection: answer.value.modelSelection ?? modelSelection,
+          grantChecked: isRecord(attempt.success) && attempt.success.delegationChecked === true,
         };
       } else {
         const error = attempt.failure;
@@ -882,6 +902,8 @@ const make = Effect.gen(function* () {
           runId: found.runId === null ? null : RunId.make(found.runId),
           status: Option.getOrNull(decodeRunStatus(found.status)),
           modelSelection: foundModel ?? modelSelection,
+          // A launch found again after a lost answer says nothing about its checks.
+          grantChecked: undefined,
         };
       }
 
@@ -923,6 +945,7 @@ const make = Effect.gen(function* () {
         ...(clamped.loweredFrom === undefined
           ? {}
           : { runtimeModeLoweredFrom: clamped.loweredFrom }),
+        ...(launched.grantChecked === false ? { machineNotice: olderWorkerNotice(machine) } : {}),
       };
     });
 
@@ -1077,8 +1100,17 @@ const make = Effect.gen(function* () {
       );
     });
 
+  const machineLabels: RemoteWorkersShape["machineLabels"] = machines.pipe(
+    Effect.map(
+      (configured) =>
+        new Map(configured.map((target) => [target.environmentId as string, target.label])),
+    ),
+    Effect.orElseSucceed(() => new Map<string, string>()),
+  );
+
   return {
     enabled: true,
+    machineLabels,
     resolveMachine,
     resolveThread,
     listMachines,

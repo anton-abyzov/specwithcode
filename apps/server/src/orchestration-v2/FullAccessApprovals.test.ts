@@ -6,6 +6,7 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2ServerCommand,
+  type OrchestrationV2ThreadShellSnapshot,
   type OrchestrationV2TurnItem,
   type RuntimeMode,
 } from "@specweave-studio/contracts";
@@ -17,6 +18,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as FullAccessApprovals from "./FullAccessApprovals.ts";
 import { OrchestratorDispatchError } from "./Orchestrator.ts";
+import * as ShellSnapshotCache from "./ShellSnapshotCache.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 
 const coordinatorId = ThreadId.make("project-coordinator:full-access");
@@ -94,6 +96,8 @@ interface HarnessOptions {
   /** A failed answer means the person got there first. */
   readonly answeredElsewhere?: boolean;
   readonly streamDomainEvents?: Stream.Stream<OrchestrationV2DomainEvent, never>;
+  /** Serve shell snapshots through the shared cache, honouring `maxAgeMs`. */
+  readonly sharedSnapshots?: boolean;
 }
 
 function harness(threads: Record<string, FakeThread>, options: HarnessOptions = {}) {
@@ -111,6 +115,28 @@ function harness(threads: Record<string, FakeThread>, options: HarnessOptions = 
     }
     return settled;
   };
+  // The snapshot is taken before `firstSnapshot` fires, so a test that waits
+  // on it knows what that read saw.
+  const readSnapshot = () =>
+    Effect.sync(() => {
+      snapshots++;
+      const snapshot = {
+        schemaVersion: 1,
+        snapshotSequence: 0,
+        threads: Object.entries(threads).map(([id, fake]) => ({
+          ...fake.thread,
+          id,
+          pendingRuntimeRequest:
+            fake.runtimeRequests.find((candidate) => candidate.status === "pending") ?? null,
+        })),
+        archivedThreads: [],
+      } as unknown as OrchestrationV2ThreadShellSnapshot;
+      Deferred.doneUnsafe(firstSnapshot, Effect.void);
+      return snapshot;
+    });
+  const sharedSnapshots = options.sharedSnapshots
+    ? Effect.runSync(ShellSnapshotCache.make(readSnapshot))
+    : undefined;
   const service = {
     getThreadRecords: (threadId: ThreadId) =>
       Effect.sync(() => ({
@@ -119,23 +145,8 @@ function harness(threads: Record<string, FakeThread>, options: HarnessOptions = 
         turnItems: [],
         ...threads[threadId],
       })),
-    getShellSnapshot: () =>
-      Effect.sync(() => {
-        snapshots++;
-        Deferred.doneUnsafe(firstSnapshot, Effect.void);
-      }).pipe(
-        Effect.map(() => ({
-          schemaVersion: 1,
-          snapshotSequence: 0,
-          threads: Object.entries(threads).map(([id, fake]) => ({
-            ...fake.thread,
-            id,
-            pendingRuntimeRequest:
-              fake.runtimeRequests.find((candidate) => candidate.status === "pending") ?? null,
-          })),
-          archivedThreads: [],
-        })),
-      ),
+    getShellSnapshot: (options?: ShellSnapshotCache.ShellSnapshotCacheOptions) =>
+      sharedSnapshots === undefined ? readSnapshot() : sharedSnapshots.get(options),
     dispatch: (command: OrchestrationV2ServerCommand) =>
       Effect.suspend(() => {
         dispatched.push(command);
@@ -195,6 +206,8 @@ function harness(threads: Record<string, FakeThread>, options: HarnessOptions = 
     process,
     use,
     snapshots: () => snapshots,
+    /** Counts a projection write, as `ProjectionStore.apply` does. */
+    write: sharedSnapshots?.invalidate ?? Effect.void,
     firstSnapshot: Deferred.await(firstSnapshot),
     settled: (requestId: string) => Deferred.await(settledPrompt(requestId)),
   };
@@ -523,6 +536,36 @@ describe("FullAccessApprovals", () => {
         ),
       );
       assert.deepEqual(accepted(), [[workerId, "runtime-request:before-restart"]]);
+    }),
+  );
+
+  it.effect("catches up after a stream gap without reusing a snapshot from before it", () =>
+    Effect.gen(function* () {
+      const prompt = request("runtime-request:during-gap");
+      const fakes: Record<string, FakeThread> = {
+        [workerId]: { thread: thread("full-access"), runtimeRequests: [] },
+      };
+      let opened = 0;
+      const { accepted, use, firstSnapshot, settled, write } = harness(fakes, {
+        sharedSnapshots: true,
+        // The first stream ends at once; the reopened one carries no events.
+        streamDomainEvents: Stream.suspend(() => (++opened === 1 ? Stream.empty : Stream.never)),
+      });
+      yield* use((reactor) =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            yield* reactor.start();
+            // The start sweep shares a snapshot taken before the prompt.
+            yield* firstSnapshot;
+            fakes[workerId]!.runtimeRequests = [prompt];
+            yield* write;
+            // Past the restart delay, well inside the sweeps' shared age.
+            yield* TestClock.adjust(1);
+            yield* settled(prompt.id);
+            assert.deepEqual(accepted(), [[workerId, prompt.id]]);
+          }),
+        ),
+      );
     }),
   );
 

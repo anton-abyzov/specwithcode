@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { executeAtomQuery } from "@specweave-studio/client-runtime/state/runtime";
 import {
+  AuthAccessReadScope,
   AuthAccessWriteScope,
   AuthOrchestrationReadScope,
   type EnvironmentId,
@@ -18,11 +19,14 @@ import { environmentSession, readEnvironmentScope, readPreparedConnection } from
 import type {
   StudioFleetAddResult,
   StudioFleetInviteProblem,
+  StudioFleetRemoveResult,
   StudioFleetInviteResult,
   StudioFleetSnapshot,
   StudioFleetTailscaleStatus,
   StudioFleetWorkerAccess,
   StudioFleetWorkersResult,
+  StudioWorkGrant,
+  StudioWorkGrantUpdateInput,
 } from "@specweave-studio/contracts/studioFleet";
 import { revokeServerClientSession } from "../environments/primary";
 import {
@@ -32,9 +36,12 @@ import {
   requestFleetTailscale,
   requestFleetTailscaleSignIn,
   requestFleetPairing,
+  requestFleetRemove,
   requestFleetWorkersAllow,
   requestFleetWorkersStop,
   requestRemoteWorkers,
+  requestWorkGrantChange,
+  requestWorkGrants,
 } from "./fleetRequest";
 
 const fleetAtom = Atom.family((environmentId: EnvironmentId) =>
@@ -57,6 +64,27 @@ const fleetAtom = Atom.family((environmentId: EnvironmentId) =>
       return requestFleet(prepared);
     })
     .pipe(Atom.setIdleTTL(30_000), Atom.withLabel(`studio-fleet:${environmentId}`)),
+);
+const workGrantsAtom = Atom.family((environmentId: EnvironmentId) =>
+  connectionAtomRuntime
+    .atom((get) => {
+      const presentation = get(environmentPresentations.presentationAtom(environmentId));
+      const session = get(environmentSession.sessionStateAtom(environmentId));
+      const grant = Option.getOrNull(AsyncResult.value(session));
+      const prepared = Option.getOrNull(
+        get(environmentSession.preparedConnectionValueAtom(environmentId)),
+      );
+      if (
+        presentation?.connection.phase !== "connected" ||
+        session._tag === "Failure" ||
+        !grant ||
+        !sessionGrantsScope(grant, AuthAccessReadScope) ||
+        !prepared
+      )
+        return Effect.succeed(null);
+      return requestWorkGrants(prepared);
+    })
+    .pipe(Atom.setIdleTTL(30_000), Atom.withLabel(`studio-work-grants:${environmentId}`)),
 );
 const remoteWorkersAtom = Atom.family((key: string) => {
   const { environmentId, projectId } = JSON.parse(key) as {
@@ -382,4 +410,92 @@ export async function signInStudioFleetTailscale(
     );
   }
   return result.value.loginUrl;
+}
+
+/**
+ * "Who can run work on this Mac": coordinator machines with a grant on this
+ * server's machine. Servers from before scoped grants answer with nothing.
+ */
+export function useMachineWorkGrants(environmentId: EnvironmentId) {
+  const result = useAtomValue(workGrantsAtom(environmentId));
+  return {
+    snapshot: Option.getOrNull(AsyncResult.value(result)),
+    loading: result.waiting,
+    failed: result._tag === "Failure",
+    refresh: () => appAtomRegistry.refresh(workGrantsAtom(environmentId)),
+  };
+}
+
+function failureMessage(cause: unknown, fallback: string) {
+  const failure = Cause.squash(cause as Cause.Cause<unknown>) as {
+    readonly _tag?: unknown;
+    readonly message?: unknown;
+  } | null;
+  return typeof failure === "object" &&
+    failure !== null &&
+    failure._tag === "EnvironmentHttpBadRequestError" &&
+    typeof failure.message === "string"
+    ? failure.message
+    : fallback;
+}
+
+/** Changes, revokes or restores what one coordinator machine may do here. */
+export async function changeMachineWorkGrant(
+  environmentId: EnvironmentId,
+  change:
+    | { readonly action: "update"; readonly input: StudioWorkGrantUpdateInput }
+    | {
+        readonly action: "revoke" | "restore";
+        readonly input: { readonly coordinatorEnvironmentId: EnvironmentId };
+      },
+): Promise<StudioWorkGrant> {
+  const prepared = readPreparedConnection(environmentId);
+  if (
+    !prepared ||
+    !readEnvironmentScope(environmentId, AuthAccessWriteScope) ||
+    appAtomRegistry.get(environmentPresentations.presentationAtom(environmentId))?.connection
+      .phase !== "connected"
+  )
+    throw new Error("Changing who can run work here needs Manage access on this machine.");
+  const action = connectionAtomRuntime.atom(requestWorkGrantChange(prepared, change));
+  const result = await executeAtomQuery(appAtomRegistry, action, {
+    reportFailure: false,
+    reportDefect: false,
+  });
+  appAtomRegistry.refresh(workGrantsAtom(environmentId));
+  if (result._tag === "Failure")
+    throw new Error(
+      failureMessage(result.cause, "Could not save this change. Refresh, then retry."),
+    );
+  return result.value.grant;
+}
+
+/**
+ * Removes a machine from this server's list. The server first gives up its
+ * worker grant and its management token on that machine, and says which it
+ * could not reach.
+ */
+export async function removeStudioFleetMachine(
+  environmentId: EnvironmentId,
+  id: string,
+): Promise<StudioFleetRemoveResult> {
+  const prepared = readPreparedConnection(environmentId);
+  if (
+    !prepared ||
+    !readEnvironmentScope(environmentId, AuthAccessWriteScope) ||
+    appAtomRegistry.get(environmentPresentations.presentationAtom(environmentId))?.connection
+      .phase !== "connected"
+  )
+    throw new Error("Removing a machine needs Manage access on this server.");
+  const action = connectionAtomRuntime.atom(requestFleetRemove(prepared, id));
+  const result = await executeAtomQuery(appAtomRegistry, action, {
+    reportFailure: false,
+    reportDefect: false,
+  });
+  appAtomRegistry.refresh(fleetAtom(environmentId));
+  if (result._tag === "Failure")
+    throw new Error(
+      failureMessage(result.cause, "Could not remove this machine. Refresh, then retry."),
+    );
+  return result.value;
 }

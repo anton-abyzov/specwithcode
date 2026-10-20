@@ -1,4 +1,4 @@
-import { CommandId } from "@specweave-studio/contracts";
+import { CommandId, RunId, ThreadId } from "@specweave-studio/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -39,6 +39,26 @@ export class OrchestrationEffectExecutionError extends Schema.TaggedError<Orches
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
+
+/**
+ * The longest a provider turn start may take. A first start on a loaded
+ * machine has taken about 40 s; one that never returns would keep its run
+ * `starting`, the thread's effect lane busy and its queue waiting forever.
+ */
+export const PROVIDER_TURN_START_TIMEOUT = Duration.minutes(2);
+
+/** Shown on the run a timed-out start ends; `provider_start_timeout` names it in the logs. */
+export const PROVIDER_TURN_START_TIMEOUT_MESSAGE =
+  "The provider did not start this turn within 2 minutes, so it was stopped. Send the message again to retry.";
+
+export class ProviderTurnStartTimeoutError extends Schema.TaggedError<ProviderTurnStartTimeoutError>()(
+  "ProviderTurnStartTimeoutError",
+  { threadId: ThreadId, runId: RunId },
+) {
+  override get message(): string {
+    return `provider_start_timeout: run ${this.runId} did not start within ${Duration.format(PROVIDER_TURN_START_TIMEOUT)}`;
+  }
+}
 
 /**
  * Pure interrupt races with hard process teardown or a dead session produce
@@ -107,6 +127,38 @@ export const layerExecutor: Layer.Layer<
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const settings = yield* ServerSettings.ServerSettingsService;
     const liveness = yield* RunLiveness.RunLiveness;
+    // Ends the run of a start that timed out the way Stop ends one that has not
+    // started, so the queue moves on. When that fails (the run ended meanwhile,
+    // or its state is gone) the effect fails and the worker retries the start,
+    // which returns at once for a run that is no longer starting.
+    // The interrupt cancels this very start effect, and the worker's race then
+    // interrupts this fiber after the commit but before the run's end is
+    // published, which would leave the queue waiting. So it is uninterruptible.
+    const endTimedOutStart = (timeout: ProviderTurnStartTimeoutError) =>
+      Effect.logWarning("provider turn start timed out", {
+        code: "provider_start_timeout",
+        threadId: timeout.threadId,
+        runId: timeout.runId,
+      }).pipe(
+        Effect.andThen(
+          Effect.uninterruptible(
+            threads.dispatch({
+              type: "run.interrupt",
+              commandId: CommandId.make(`command:provider-start-timeout:${timeout.runId}`),
+              threadId: timeout.threadId,
+              runId: timeout.runId,
+              reason: PROVIDER_TURN_START_TIMEOUT_MESSAGE,
+            }),
+          ),
+        ),
+        Effect.asVoid,
+        Effect.catch((cause) =>
+          Effect.logWarning("could not end the run of a timed-out provider turn start", {
+            runId: timeout.runId,
+            cause,
+          }).pipe(Effect.andThen(Effect.fail(timeout))),
+        ),
+      );
     return OrchestrationEffectExecutorV2.of({
       execute: (effect, options) => {
         const willRetry = options?.willRetry ?? false;
@@ -169,19 +221,30 @@ export const layerExecutor: Layer.Layer<
                     }),
                 ),
               );
-          case "provider-turn.start":
+          case "provider-turn.start": {
+            const runId = effect.request.runId;
             // The run turns running before its ingestion starts; hold it live
             // so the liveness watchdog never mistakes a slow start for an orphan.
+            // A start that never returns would hold the run, the thread's effect
+            // lane and its queue forever, so it is bounded and the run ended.
             return liveness
               .hold(
-                effect.request.runId,
-                providerTurnStart.start({
-                  threadId: effect.threadId,
-                  runId: effect.request.runId,
-                  willRetry,
-                }),
+                runId,
+                providerTurnStart.start({ threadId: effect.threadId, runId, willRetry }).pipe(
+                  Effect.timeoutOrElse({
+                    duration: PROVIDER_TURN_START_TIMEOUT,
+                    orElse: () =>
+                      Effect.fail(
+                        new ProviderTurnStartTimeoutError({
+                          threadId: effect.threadId,
+                          runId,
+                        }),
+                      ),
+                  }),
+                ),
               )
               .pipe(
+                Effect.catchTags({ ProviderTurnStartTimeoutError: endTimedOutStart }),
                 Effect.mapError(
                   (cause) =>
                     new OrchestrationEffectExecutionError({
@@ -191,6 +254,7 @@ export const layerExecutor: Layer.Layer<
                     }),
                 ),
               );
+          }
           case "provider-turn.interrupt":
             return providerTurnControl
               .interrupt({

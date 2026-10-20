@@ -2,6 +2,7 @@ import { listFederatedProjectThreads } from "./federatedProjectThreads.ts";
 import { OrchestratorToolkit } from "./tools.ts";
 import * as Effect from "effect/Effect";
 import { OrchestratorMcpFailure } from "@specweave-studio/contracts";
+import * as Option from "effect/Option";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -19,6 +20,70 @@ import {
   withoutMachine,
 } from "./remote.ts";
 import * as RemoteWorkers from "../../../fleet/RemoteWorkers.ts";
+import * as ProjectService from "../../../project/ProjectService.ts";
+import { loadCaller, unavailable } from "../../threadAccess.ts";
+import {
+  assertAccountInGrant,
+  assertProjectInGrant,
+  assertThreadInGrant,
+  workGrantOf,
+} from "../../workGrantAccess.ts";
+
+/**
+ * Work another machine started here reaches only threads in the projects
+ * its grant covers. A thread that does not exist is the handler's to report.
+ */
+const guardThread = (threadId: string) =>
+  Effect.gen(function* () {
+    const caller = yield* loadCaller();
+    const work = yield* workGrantOf(caller);
+    if (work === undefined) return;
+    const shell = yield* caller.threads
+      .getThreadShell(localThreadIdOf(threadId))
+      .pipe(Effect.mapError(unavailable));
+    if (shell === null) return;
+    yield* assertThreadInGrant(work, shell);
+  });
+
+/** ...and starts its subagents and threads only on the sign-ins that grant allows. */
+const guardTargets = (
+  targets: ReadonlyArray<
+    | { readonly providerInstanceId?: string | undefined; readonly driverKind?: string | undefined }
+    | undefined
+  >,
+) =>
+  Effect.gen(function* () {
+    const work = yield* workGrantOf(yield* loadCaller());
+    if (work === undefined || work.grant.accounts.kind === "all") return;
+    for (const target of targets) {
+      // Omitted, the child keeps the calling thread's own sign-in, which the grant admitted.
+      if (target?.providerInstanceId !== undefined)
+        yield* assertAccountInGrant(work, target.providerInstanceId as never);
+      else if (target?.driverKind !== undefined)
+        return yield* new OrchestratorMcpFailure({
+          code: "account_not_allowed",
+          message: `This machine limits which sign-ins ${work.coordinatorLabel}'s work may use. Name the sign-in with target.providerInstanceId.`,
+        });
+    }
+  });
+
+/** A thread list's project must be one the grant covers. */
+const guardProject = (projectId: string) =>
+  Effect.gen(function* () {
+    const work = yield* workGrantOf(yield* loadCaller());
+    if (work === undefined) return;
+    const projects = yield* ProjectService.ProjectService;
+    const project = yield* projects.getById(projectId as never).pipe(
+      Effect.map(Option.getOrUndefined),
+      Effect.orElseSucceed(() => undefined),
+    );
+    if (project === undefined)
+      return yield* new OrchestratorMcpFailure({
+        code: "outside_grant_scope",
+        message: `This machine does not let ${work.coordinatorLabel} reach that project.`,
+      });
+    yield* assertProjectInGrant(work, project);
+  });
 
 const handlers = {
   orchestrator_capabilities: McpToolAccess.reads(() =>
@@ -31,6 +96,7 @@ const handlers = {
   delegate_task: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       yield* assertLocalDelegation(input);
+      yield* guardTargets([input.target]);
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       return yield* service.delegateTask(scope, withoutMachine(input));
@@ -97,6 +163,7 @@ const handlers = {
   ),
   create_threads: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
+      yield* guardTargets(input.threads.map((thread) => thread.target));
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       return yield* service.createThreads(scope, input);
@@ -107,7 +174,9 @@ const handlers = {
       const workers = yield* RemoteWorkers.RemoteWorkers;
       const target = yield* workers.resolveMachine(input.machine);
       if (target.kind === "remote") return yield* listRemote(target.machine, withoutMachine(input));
-      return yield* listFederatedProjectThreads(input);
+      const listed = yield* listFederatedProjectThreads(input);
+      yield* guardProject(listed.projectId);
+      return listed;
     }),
   ),
   // Reading a child's finished result also acknowledges its delivery to the
@@ -118,6 +187,7 @@ const handlers = {
       input,
       (local) =>
         Effect.gen(function* () {
+          yield* guardThread(local.threadId);
           const scope = yield* McpInvocationContext.McpInvocationContext;
           const service = yield* OrchestratorMcpService.OrchestratorMcpService;
           return yield* service.readThread(scope, local);
@@ -129,6 +199,7 @@ const handlers = {
     (input) => [input.threadId === undefined ? undefined : localThreadIdOf(input.threadId)],
     (input) =>
       Effect.gen(function* () {
+        if (input.threadId !== undefined) yield* guardThread(input.threadId);
         const scope = yield* McpInvocationContext.McpInvocationContext;
         const service = yield* ThreadMetadataMcpService.ThreadMetadataMcpService;
         return yield* service.update(scope, input);
@@ -141,6 +212,7 @@ const handlers = {
         input,
         (local) =>
           Effect.gen(function* () {
+            yield* guardThread(local.threadId);
             const scope = yield* McpInvocationContext.McpInvocationContext;
             const service = yield* OrchestratorMcpService.OrchestratorMcpService;
             return yield* service.sendToThread(scope, local);
@@ -174,6 +246,7 @@ const handlers = {
       input,
       (local) =>
         Effect.gen(function* () {
+          yield* guardThread(local.threadId);
           const scope = yield* McpInvocationContext.McpInvocationContext;
           const service = yield* OrchestratorMcpService.OrchestratorMcpService;
           return yield* service.waitForThread(scope, local);
@@ -188,6 +261,7 @@ const handlers = {
         input,
         (local) =>
           Effect.gen(function* () {
+            yield* guardThread(local.threadId);
             const scope = yield* McpInvocationContext.McpInvocationContext;
             const service = yield* OrchestratorMcpService.OrchestratorMcpService;
             return yield* service.interruptThread(scope, local);

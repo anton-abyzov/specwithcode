@@ -215,7 +215,8 @@ const ThreadReadTool = Tool.make("studio_thread_read", {
   success: OrchestratorMcpThreadReadResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
-  dependencies,
+  // Another machine's work reaches only the projects its grant here covers.
+  dependencies: [...dependencies, ProjectService.ProjectService],
 })
   .annotate(Tool.Title, "Read a SpecWithCode thread")
   .annotate(Tool.Readonly, false)
@@ -229,7 +230,7 @@ export const ThreadUpdateTool = Tool.make("studio_thread_update", {
   success: ThreadMetadataMcpUpdateResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
-  dependencies: threadMetadataDependencies,
+  dependencies: [...threadMetadataDependencies, ProjectService.ProjectService],
 })
   .annotate(Tool.Title, "Update SpecWithCode thread metadata")
   .annotate(Tool.Destructive, true)
@@ -242,7 +243,8 @@ const ThreadSendTool = Tool.make("studio_thread_send", {
   success: OrchestratorMcpThreadSendResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
-  dependencies,
+  // Another machine's work reaches only the projects its grant here covers.
+  dependencies: [...dependencies, ProjectService.ProjectService],
 })
   .annotate(Tool.Title, "Send to a SpecWithCode thread")
   .annotate(Tool.Destructive, true)
@@ -255,7 +257,8 @@ const ThreadWaitTool = Tool.make("studio_thread_wait", {
   success: OrchestratorMcpThreadWaitResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
-  dependencies,
+  // Another machine's work reaches only the projects its grant here covers.
+  dependencies: [...dependencies, ProjectService.ProjectService],
 })
   .annotate(Tool.Title, "Wait for a SpecWithCode thread")
   .annotate(Tool.Readonly, true)
@@ -269,7 +272,8 @@ const ThreadInterruptTool = Tool.make("studio_thread_interrupt", {
   success: OrchestratorMcpThreadInterruptResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
-  dependencies,
+  // Another machine's work reaches only the projects its grant here covers.
+  dependencies: [...dependencies, ProjectService.ProjectService],
 })
   .annotate(Tool.Title, "Interrupt a SpecWithCode thread")
   .annotate(Tool.Destructive, true);

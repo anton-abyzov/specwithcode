@@ -1,4 +1,7 @@
-import type { OrchestrationV2ThreadShellSnapshot } from "@specweave-studio/contracts";
+import type {
+  OrchestrationV2ThreadShell,
+  OrchestrationV2ThreadShellSnapshot,
+} from "@specweave-studio/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
@@ -8,9 +11,11 @@ import * as Effect from "effect/Effect";
  * How old a shell snapshot a background sweep accepts. The full shell scan is
  * the longest single statement the server runs, and five sweeps used to run
  * it each on their own clock. Every sweep that acts re-reads the thread it
- * acts on first, so a few seconds of age changes no decision.
+ * acts on first, so half a minute of age changes no decision. A sweep that
+ * must see writes made after a known moment, such as a catch-up after an
+ * event stream gap, reads exactly instead.
  */
-export const SWEEP_SHELL_SNAPSHOT_MAX_AGE_MS = 5_000;
+export const SWEEP_SHELL_SNAPSHOT_MAX_AGE_MS = 30_000;
 
 /**
  * With no projection write since it was read, a snapshot still matches the
@@ -54,10 +59,40 @@ const keyOf = (options: ShellSnapshotReadOptions | undefined) =>
   `${options?.location ?? "all"}:${options?.unsettledOnly === true ? "unsettled" : "every"}`;
 
 /**
+ * The same rule as the `unsettledOnly` filter in `selectShellThreadRows`
+ * (ProjectionStore.ts): `settledAt` unset and `settledOverride` not
+ * "settled". A shell's own fields decide it, so filtering a full snapshot
+ * gives what the filtered read gives.
+ */
+const isUnsettled = (thread: OrchestrationV2ThreadShell) =>
+  thread.settledAt === null && thread.settledOverride !== "settled";
+
+// One filtered copy per snapshot, so repeat sweeps get the same object.
+const unsettledViews = new WeakMap<
+  OrchestrationV2ThreadShellSnapshot,
+  OrchestrationV2ThreadShellSnapshot
+>();
+
+const unsettledView = (snapshot: OrchestrationV2ThreadShellSnapshot) => {
+  const cached = unsettledViews.get(snapshot);
+  if (cached !== undefined) return cached;
+  const view = {
+    ...snapshot,
+    threads: snapshot.threads.filter(isUnsettled),
+    archivedThreads: snapshot.archivedThreads.filter(isUnsettled),
+  };
+  unsettledViews.set(snapshot, view);
+  return view;
+};
+
+/**
  * Shares shell snapshot reads between background sweeps. Calls that accept an
  * age reuse a recent snapshot, or wait on the read already running for the
- * same options instead of starting another. `invalidate` counts a projection
- * write: a snapshot read before it is reused only within the caller's age.
+ * same location instead of starting another. They always share the read of
+ * every thread in that location and drop settled threads in memory, so
+ * sweeps that want only unsettled threads reuse the same scan as the rest.
+ * `invalidate` counts a projection write: a snapshot read before it is
+ * reused only within the caller's age.
  */
 export const make = <E>(
   read: (options: ShellSnapshotReadOptions) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, E>,
@@ -89,17 +124,12 @@ export const make = <E>(
         return snapshot;
       });
 
-    const get = (
-      options?: ShellSnapshotCacheOptions,
+    const sharedRead = (
+      key: string,
+      readOptions: ShellSnapshotReadOptions,
+      maxAgeMs: number,
     ): Effect.Effect<OrchestrationV2ThreadShellSnapshot, E> =>
       Effect.gen(function* () {
-        const key = keyOf(options);
-        const readOptions = readOptionsOf(options);
-        const maxAgeMs = options?.maxAgeMs;
-        if (maxAgeMs === undefined) {
-          // An exact read still refreshes the shared copy for the sweeps.
-          return yield* readAndStore(key, readOptions, generation);
-        }
         const nowMs = yield* Clock.currentTimeMillis;
         // Uninterruptible from the decision until the leader's exit handler is
         // in place: a leader interrupted between the two would leave its
@@ -152,6 +182,24 @@ export const make = <E>(
             }
           }),
         );
+      });
+
+    const get = (
+      options?: ShellSnapshotCacheOptions,
+    ): Effect.Effect<OrchestrationV2ThreadShellSnapshot, E> =>
+      Effect.gen(function* () {
+        const maxAgeMs = options?.maxAgeMs;
+        if (maxAgeMs === undefined) {
+          // An exact read still refreshes the shared copy for the sweeps.
+          return yield* readAndStore(keyOf(options), readOptionsOf(options), generation);
+        }
+        const readOptions = options?.location === undefined ? {} : { location: options.location };
+        const key = keyOf(readOptions);
+        const view =
+          options?.unsettledOnly === true
+            ? unsettledView
+            : (snapshot: OrchestrationV2ThreadShellSnapshot) => snapshot;
+        return yield* sharedRead(key, readOptions, maxAgeMs).pipe(Effect.map(view));
       });
 
     const invalidate = Effect.sync(() => {

@@ -268,10 +268,9 @@ export const make = Effect.gen(function* () {
 
     const settleThread = Effect.fn("ThreadSettlementServiceV2.settleThread")(
       function* (thread: (typeof candidates)[number], pullRequest: SettlementPullRequest | null) {
-        const currentSettings = resolveProjectSettings(
-          yield* settingsService.getSettings,
-          thread.projectId,
-        ).settings;
+        // The sweep's settings. Only a thread about to settle reads them again
+        // (below), after the provider lookup.
+        const currentSettings = resolveProjectSettings(settings, thread.projectId).settings;
         const decisionNow = yield* DateTime.now;
         const settledAt = resolveAutoSettlementAt({
           thread,

@@ -878,6 +878,23 @@ class PassBehaviour(AgentCase):
             self.assertNotIn('descendants', self.log)
             self.assertNotIn('database is locked', self.log)
 
+    def test_a_service_that_lost_its_database_locks_waits_for_its_restart_instead_of_failing(self):
+        # M4, 2026-10-19: this was `error` every ten minutes and the update never installed.
+        self.fake.add_release()
+        lost = 'AssertionError: The SpecWithCode service lost its SQLite locks on its database.'
+        self.control(snapshotFail=True, snapshotError=lost + '\nREFUSAL restart-needed locks-lost wait=540')
+        self.assertEqual(self.run_agent(), 0)
+        self.assertEqual((self.state()['status'], self.state()['message']),
+                         ('waiting-for-quiet', 'Restarting SpecWithCode to recover its database'))
+        self.assertNotIn('SQLite locks', self.log)
+        # Update now: the helper restarted the service, and the next snapshot installs.
+        self.config(installMode='force', installRequestedAt='2026-10-10T10:00:00Z',
+                    installHoldUntil=update_agent.iso(update_agent.utcnow() + datetime.timedelta(minutes=15)))
+        self.control(snapshotFailures=2, snapshotError=lost + '\nREFUSAL restart-needed locks-lost restarted=1')
+        self.assertEqual(self.run_agent(), 0)
+        self.assertEqual(self.state()['status'], 'installed')
+        self.assertEqual(len(self.apply_calls()), 1)
+
     def test_install_request_skips_wait_once(self):
         self.fake.add_release()
         self.config(installAutomatically=False, installRequestedAt='2026-10-10T10:00:00Z', quietMinutes=60)

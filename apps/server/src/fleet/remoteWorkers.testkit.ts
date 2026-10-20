@@ -238,6 +238,7 @@ export const launchInput = (
   workspaceStrategy: undefined,
   message: "Fix it",
   reportBack: true,
+  delegation: { path: [EnvironmentId.make("env-m4")], hops: 1 },
   ...overrides,
 });
 

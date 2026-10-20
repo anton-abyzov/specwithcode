@@ -1337,10 +1337,49 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ]);
     });
 
+  // Threads whose queue start an update hold skipped. Nothing else starts them
+  // again (no terminal event follows), so one waiter retries them once the hold
+  // is released or expires. The failed run that asked for the start is kept so
+  // a queue behind a provider failure is still held then.
+  const heldQueueThreadIds = new Map<ThreadId, RunId | undefined>();
+  let heldQueueWaiter = false;
+  const startQueuesAfterHold: Effect.Effect<void> = Effect.gen(function* () {
+    yield* updateHold.awaitReleased;
+    const heldQueues = [...heldQueueThreadIds];
+    heldQueueThreadIds.clear();
+    heldQueueWaiter = false;
+    yield* Effect.forEach(
+      heldQueues,
+      ([threadId, failedRunId]) =>
+        threadDispatch
+          .withLock(
+            threadId,
+            startNextQueuedRun(threadId, failedRunId === undefined ? undefined : { failedRunId }),
+          )
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Failed to start a queued V2 run after the update hold ended", {
+                threadId,
+                cause,
+              }),
+            ),
+          ),
+      { discard: true },
+    );
+  });
+
   const startNextQueuedRun = (threadId: ThreadId, options?: { readonly failedRunId?: RunId }) =>
     Effect.gen(function* () {
-      // An update hold keeps the queue where it is; the drain cancels it.
-      if (yield* updateHold.isHeld) return;
+      // An update hold keeps the queue where it is; the drain cancels it. A
+      // queue left after the hold ends starts then.
+      if (yield* updateHold.isHeld) {
+        heldQueueThreadIds.set(threadId, options?.failedRunId ?? heldQueueThreadIds.get(threadId));
+        if (!heldQueueWaiter) {
+          heldQueueWaiter = true;
+          yield* Effect.forkDetach(startQueuesAfterHold);
+        }
+        return;
+      }
       // Every terminal run checks the queue. Only a deliverable queued run
       // needs the transcript for provider handoff and legacy import context.
       if (!(yield* projectionStore.canStartQueuedRun(threadId))) return;

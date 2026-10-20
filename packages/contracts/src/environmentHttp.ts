@@ -25,6 +25,13 @@ import {
   StudioFleetWorkersAllowInput,
   StudioFleetWorkersResult,
   StudioFleetWorkersStopInput,
+  StudioFleetRemoveInput,
+  StudioFleetRemoveResult,
+  StudioWorkGrantsSnapshot,
+  StudioWorkGrantUpdateInput,
+  StudioWorkGrantRevokeInput,
+  StudioWorkGrantRestoreInput,
+  StudioWorkGrantResult,
 } from "./studioFleet.ts";
 import {
   DeviceSignInApproveInput,
@@ -627,6 +634,17 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
       success: AuthOtherClientSessionsRevokeResult,
       error: EnvironmentScopedOperationErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    /**
+     * Revokes the credential that calls it, such as a management token
+     * another machine is giving up when it removes this one.
+     */
+    HttpApiEndpoint.post("revokeOwnSession", "/api/auth/session/revoke", {
+      headers: OptionalBearerHeaders,
+      success: AuthClientSessionRevokeResult,
+      error: EnvironmentSessionRevokeErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
 /**
@@ -986,6 +1004,65 @@ class EnvironmentStudioFleetHttpApi extends HttpApiGroup.make("studioFleet")
       headers: OptionalBearerHeaders,
       payload: StudioFleetWorkersStopInput,
       success: StudioFleetWorkersResult,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        EnvironmentHttpBadRequestError,
+        EnvironmentHttpForbiddenError,
+        EnvironmentHttpInternalServerError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("removeFleetMachine", "/api/studio/fleet/machines/remove", {
+      headers: OptionalBearerHeaders,
+      payload: StudioFleetRemoveInput,
+      success: StudioFleetRemoveResult,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        EnvironmentHttpBadRequestError,
+        EnvironmentHttpForbiddenError,
+        EnvironmentHttpInternalServerError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("workGrants", "/api/studio/fleet/work-grants", {
+      headers: OptionalBearerHeaders,
+      success: StudioWorkGrantsSnapshot,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentHttpInternalServerError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("updateWorkGrant", "/api/studio/fleet/work-grants/update", {
+      headers: OptionalBearerHeaders,
+      payload: StudioWorkGrantUpdateInput,
+      success: StudioWorkGrantResult,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        EnvironmentHttpBadRequestError,
+        EnvironmentHttpForbiddenError,
+        EnvironmentHttpInternalServerError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("revokeWorkGrant", "/api/studio/fleet/work-grants/revoke", {
+      headers: OptionalBearerHeaders,
+      payload: StudioWorkGrantRevokeInput,
+      success: StudioWorkGrantResult,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        EnvironmentHttpBadRequestError,
+        EnvironmentHttpForbiddenError,
+        EnvironmentHttpInternalServerError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("restoreWorkGrant", "/api/studio/fleet/work-grants/restore", {
+      headers: OptionalBearerHeaders,
+      payload: StudioWorkGrantRestoreInput,
+      success: StudioWorkGrantResult,
       error: [
         ...EnvironmentScopedOperationErrors,
         EnvironmentHttpBadRequestError,

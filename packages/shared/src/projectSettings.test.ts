@@ -75,6 +75,33 @@ describe("resolveProjectSettings", () => {
     expect(resolveProjectSettings(settings, otherProjectId).settings.defaultAutoPull).toBe(true);
   });
 
+  it("lets a project's single fallback model outrank an environment fallback order", () => {
+    const codex = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6" };
+    const claude = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "opus" };
+    const copilot = { instanceId: ProviderInstanceId.make("copilot"), model: "gpt-5" };
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providerLimitFallbackModels: [codex, claude],
+      projectSettingsOverrides: {
+        [projectId]: { providerLimitFallbackModelSelection: copilot },
+        [otherProjectId]: {
+          providerLimitFallbackModelSelection: copilot,
+          providerLimitFallbackModels: [claude],
+        },
+      },
+    };
+    expect(
+      resolveProjectSettings(settings, projectId).settings.providerLimitFallbackModels,
+    ).toEqual([copilot]);
+    expect(
+      resolveProjectSettings(settings, otherProjectId).settings.providerLimitFallbackModels,
+    ).toEqual([claude]);
+    expect(resolveProjectSettings(settings, null).settings.providerLimitFallbackModels).toEqual([
+      codex,
+      claude,
+    ]);
+  });
+
   it("keeps the environment text generation model when the override's provider is disabled", () => {
     const disabledSelection = createModelSelection(ProviderInstanceId.make("claudeAgent"), "opus");
     const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {

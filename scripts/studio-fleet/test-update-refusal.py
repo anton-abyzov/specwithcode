@@ -261,7 +261,7 @@ class DatabaseRefusals(unittest.TestCase):
         with self.assertRaises(AssertionError) as caught:
             update.assert_database_attached(holder.pid, self.state)
         self.assertEqual(str(caught.exception), update.DETACHED_DATABASE)
-        self.assertEqual(update.refusal_line('m4', caught.exception), 'REFUSAL environment ' + update.DETACHED_DATABASE)
+        self.assertEqual(update.refusal_line('m4', caught.exception), 'REFUSAL restart-needed detached')
 
     def test_a_service_that_lost_its_database_locks_is_refused(self):
         """m4, October 16, 2026: the service had dropped its own POSIX locks on statev2.sqlite and
@@ -289,7 +289,7 @@ class DatabaseRefusals(unittest.TestCase):
         with self.assertRaises(AssertionError) as caught:
             update.assert_database_locked(self.state)
         self.assertEqual(str(caught.exception), update.LOCKS_LOST)
-        self.assertEqual(update.refusal_line('m4', caught.exception), 'REFUSAL environment ' + update.LOCKS_LOST)
+        self.assertEqual(update.refusal_line('m4', caught.exception), 'REFUSAL restart-needed locks-lost')
 
     def test_the_snapshot_checks_the_open_database_before_reading_it(self):
         tree = ast.parse((HERE / 'update.py').read_text())

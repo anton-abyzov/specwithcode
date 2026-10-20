@@ -173,6 +173,12 @@ export type ProjectionThreadPullRequests = Pick<
   "id" | "projectId" | "lineage" | "settledOverride" | "settledAt" | "pullRequests"
 >;
 
+/** The thread fields a plan card needs to find its SpecWeave increment. */
+export type ProjectionThreadSummary = Pick<
+  OrchestrationV2AppThread,
+  "id" | "projectId" | "title" | "branch" | "worktreePath"
+>;
+
 /**
  * Thread activity needed by settlement, without transcript or fork history.
  * Settlement always loads `latestUserAuthoredMessageAt`, so it is required here.
@@ -365,6 +371,16 @@ export interface ProjectionStoreV2Shape {
   readonly getThreadShell: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadShell | null, ProjectionStoreV2Error>;
+  /**
+   * Title, branch and worktree of the listed threads that belong to
+   * `projectId` and are not deleted, in one statement and no transaction.
+   * Unknown ids are left out. Test doubles may leave it out: callers then
+   * fall back to `getThreadShell`.
+   */
+  readonly getThreadSummaries?: (
+    projectId: OrchestrationV2AppThread["projectId"],
+    threadIds: ReadonlyArray<ThreadId>,
+  ) => Effect.Effect<ReadonlyArray<ProjectionThreadSummary>, ProjectionStoreV2Error>;
   readonly getThread: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2AppThread, ProjectionStoreV2Error>;
@@ -5939,6 +5955,48 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ),
         );
 
+    // One statement outside a transaction: the plan cards poll this for up to
+    // 100 threads, and a shell transaction per thread held the connection.
+    const getThreadSummaries: NonNullable<ProjectionStoreV2Shape["getThreadSummaries"]> = (
+      projectId,
+      threadIds,
+    ) =>
+      threadIds.length === 0
+        ? Effect.succeed([])
+        : sql<{
+            readonly thread_id: string;
+            readonly title: string;
+            readonly branch: string | null;
+            readonly worktree_path: string | null;
+          }>`
+            SELECT
+              thread_id,
+              json_extract(payload_json, '$.title') AS title,
+              json_extract(payload_json, '$.branch') AS branch,
+              json_extract(payload_json, '$.worktreePath') AS worktree_path
+            FROM orchestration_v2_projection_threads
+            WHERE deleted_at IS NULL
+              AND project_id = ${projectId}
+              AND thread_id IN ${sql.in(threadIds)}
+          `.pipe(
+            Effect.map((rows) =>
+              rows.map((row) => ({
+                id: ThreadId.make(row.thread_id),
+                projectId,
+                title: row.title,
+                branch: row.branch,
+                worktreePath: row.worktree_path,
+              })),
+            ),
+            Effect.mapError(
+              (cause) =>
+                new ProjectionStoreReadError({
+                  threadId: ThreadId.make("thread:summaries"),
+                  cause,
+                }),
+            ),
+          );
+
     // Per-thread shell for the live shell streams: reads only the target thread
     // plus its fork-source chain instead of materializing every thread. Returns
     // null when the thread is deleted or unknown.
@@ -6015,6 +6073,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getShellSnapshot: shellSnapshots.get,
       writeCount: shellSnapshots.writeCount,
       getThreadShell,
+      getThreadSummaries,
       getThread,
       getSettlementCandidates,
       getThreadsWithPullRequests,
@@ -6118,6 +6177,26 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             .getThreadProjection(threadId)
             .pipe(Effect.map(threadShellFromProjection));
           return shell.deletedAt === null ? shell : null;
+        }),
+      getThreadSummaries: (projectId, threadIds) =>
+        Effect.gen(function* () {
+          const projections = (yield* Ref.get(replayState)).projections;
+          return threadIds.flatMap((threadId) => {
+            const thread = projections.get(threadId)?.thread;
+            return thread === undefined ||
+              thread.deletedAt !== null ||
+              thread.projectId !== projectId
+              ? []
+              : [
+                  {
+                    id: thread.id,
+                    projectId: thread.projectId,
+                    title: thread.title,
+                    branch: thread.branch,
+                    worktreePath: thread.worktreePath,
+                  },
+                ];
+          });
         }),
       getThread: (threadId) =>
         Effect.gen(function* () {

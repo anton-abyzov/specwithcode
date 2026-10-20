@@ -121,6 +121,35 @@ const layerServerSettingsWithFlakySecretRemoval = () => {
   return { layer, removal };
 };
 
+/** Like `layerServerSettingsWithSecrets`, counting secret-store reads by name. */
+const layerServerSettingsCountingSecretReads = () => {
+  const reads = new Map<string, number>();
+  const secretStore = Layer.effect(
+    ServerSecretStore.ServerSecretStore,
+    Effect.map(ServerSecretStore.make, (store) =>
+      ServerSecretStore.ServerSecretStore.of({
+        ...store,
+        get: (name) =>
+          Effect.sync(() => reads.set(name, (reads.get(name) ?? 0) + 1)).pipe(
+            Effect.andThen(store.get(name)),
+          ),
+      }),
+    ),
+  );
+  const layer = ServerSettingsModule.layer.pipe(
+    Layer.provideMerge(secretStore),
+    Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
+    Layer.provideMerge(
+      Layer.fresh(
+        ServerConfig.layerTest(process.cwd(), {
+          prefix: "studio-server-settings-test-",
+        }),
+      ),
+    ),
+  );
+  return { layer, reads };
+};
+
 const SIGN_IN_TOMBSTONES_FILE = "provider-sign-in-tombstones.json";
 
 /** Writes (or, with `undefined`, deletes) a file until the watcher reports a matching change. */
@@ -1818,6 +1847,45 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         assert.isTrue(Option.isNone(yield* secrets.get("elevenlabs-voice-api-key")));
       }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
+
+  it.effect("reads a redacted secret once until settings or the secret store change", () => {
+    const { layer, reads } = layerServerSettingsCountingSecretReads();
+    const voiceKeyReads = () => reads.get("elevenlabs-voice-api-key") ?? 0;
+    return Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const secrets = yield* ServerSecretStore.ServerSecretStore;
+      yield* serverSettings.updateSettings({
+        voice: { provider: "elevenlabs", elevenLabsVoiceId: "voice-1", elevenLabsApiKey: "xi-1" },
+      });
+
+      // Any write through the store drops what was read before.
+      yield* secrets.set("unrelated-secret", new TextEncoder().encode("x"));
+      reads.clear();
+      for (let read = 0; read < 100; read++) {
+        assert.equal((yield* serverSettings.getSettings).voice.elevenLabsApiKey, "xi-1");
+      }
+      assert.equal(voiceKeyReads(), 1);
+
+      // A settings update makes a new settings object, so the secret is read again.
+      reads.clear();
+      yield* serverSettings.updateSettings({ voice: { rate: 0.6 } });
+      const afterUpdate = voiceKeyReads();
+      assert.isAtLeast(afterUpdate, 1);
+      yield* serverSettings.getSettings;
+      yield* serverSettings.getSettings;
+      assert.equal(voiceKeyReads(), afterUpdate);
+
+      // A write through the store is seen by the next read.
+      yield* secrets.set("elevenlabs-voice-api-key", new TextEncoder().encode("xi-2"));
+      reads.clear();
+      assert.equal((yield* serverSettings.getSettings).voice.elevenLabsApiKey, "xi-2");
+      assert.equal((yield* serverSettings.getSettings).voice.elevenLabsApiKey, "xi-2");
+      assert.equal(voiceKeyReads(), 1);
+
+      yield* secrets.remove("elevenlabs-voice-api-key");
+      assert.equal((yield* serverSettings.getSettings).voice.elevenLabsApiKey, "");
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect("moves a hand-edited ElevenLabs key into the secret store when settings load", () =>
     Effect.gen(function* () {
