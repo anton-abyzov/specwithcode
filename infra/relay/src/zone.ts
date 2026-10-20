@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import {
+  managedEndpointBaseDomainForZone,
   MANAGED_ENDPOINT_ZONE_OWNER_STAGE,
   relayOwnsManagedEndpointZone,
   relayPublicDomainForStage,
@@ -32,6 +33,14 @@ export const RelayDeploymentConfig = Effect.gen(function* () {
       }),
     ),
   );
+  const managedEndpointBaseDomainOverride = yield* Config.String("RELAY_TUNNEL_BASE_DOMAIN").pipe(
+    Config.option,
+    Config.map((value) => Option.getOrUndefined(value)?.trim() || undefined),
+  );
+  const managedEndpointBaseDomain = managedEndpointBaseDomainForZone(
+    managedEndpointZoneName,
+    managedEndpointBaseDomainOverride,
+  );
   const relayPublicDomain = Option.getOrElse(relayPublicDomainOverride, () =>
     relayPublicDomainForStage(stage, relayApiZoneName),
   );
@@ -42,6 +51,7 @@ export const RelayDeploymentConfig = Effect.gen(function* () {
     relayPublicOrigin: `https://${relayPublicDomain}`,
     relayApiZoneName,
     managedEndpointZoneName,
+    managedEndpointBaseDomain,
   };
 });
 

@@ -12,7 +12,7 @@ import {
   Trash2Icon,
   XIcon,
 } from "lucide-react";
-import { Lock as LockGlyph, LockOpen } from "lucide";
+import { Eye, EyeOff } from "lucide";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import { useEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
@@ -439,10 +439,7 @@ export function ProviderEnvironmentSection(props: {
                       aria-pressed={variable.sensitive}
                       aria-label={`Mark environment variable ${variable.name || index + 1} as sensitive`}
                     >
-                      <MorphIcon
-                        className="size-3"
-                        icon={variable.sensitive ? LockGlyph : LockOpen}
-                      />
+                      <MorphIcon className="size-3" icon={variable.sensitive ? EyeOff : Eye} />
                     </Button>
                   }
                 />

@@ -22,7 +22,7 @@ The relay currently owns:
 - Listing linked environments and registered mobile devices for an account.
 - Registering mobile notification preferences and APNs or FCM tokens.
 - Receiving published agent activity and delivering notifications or Live Activity updates.
-- Persisting relay state and exposing relay-specific traces for diagnostics.
+- Persisting relay state and logging to Cloudflare Workers Logs for diagnostics.
 
 The environment server and relay have separate credentials and trust boundaries. Read
 [Environment Authentication Profile](../../docs/internals/environment-auth.md) before changing token,
@@ -83,18 +83,18 @@ in this directory):
 vp run --filter studio-relay deploy
 ```
 
-The stack provisions the Cloudflare Worker and queues, managed endpoint resources, database
-connectivity, and relay tracing resources. Copy [`infra/relay/.env.example`](./.env.example) to
+The stack provisions the Cloudflare Worker and queues, managed endpoint resources, a Cloudflare D1
+database bound to the Worker. Copy [`infra/relay/.env.example`](./.env.example) to
 `infra/relay/.env` and fill in the deployment-specific values before deploying. Alchemy loads that
 file from the relay directory. Runtime secrets include Clerk, APNs, and optional FCM credentials. Set
 `APNS_ENABLED=false` for an Android-only development deployment without Apple credentials. Production adopts
 the configured API and tunnel DNS zones as retained Cloudflare resources. Personal stages reference
 the production-owned zones.
 
-The `prod` Alchemy stage owns the retained PlanetScale database and is the shared hosted relay for
-stable and nightly clients. Every other stage references that database and provisions an isolated
-PlanetScale branch and runtime role for local development, so deploy `prod` before creating
-developer stages:
+The `prod` Alchemy stage owns the retained D1 database and is the shared hosted relay for stable and
+nightly clients. Every other stage provisions its own D1 database, removed with the stage. The schema
+lives in [`src/persistence/schema.ts`](./src/persistence/schema.ts) and its SQL migrations in
+`migrations/d1`; Alchemy applies pending migrations on deploy:
 
 ```sh
 vp run --filter studio-relay deploy -- --stage prod
@@ -107,13 +107,15 @@ DNS-safe sanitization as Alchemy physical resource names, so `prod` uses
 `relay-dev-alice.<RELAY_API_ZONE_NAME>`. Managed environment endpoints are provisioned below
 `RELAY_TUNNEL_ZONE_NAME`, which may be a different Cloudflare zone. Production tunnel hostnames use
 `prod-<digest>.<RELAY_TUNNEL_ZONE_NAME>`; personal stages use
-`<stage>-<digest>.<RELAY_TUNNEL_ZONE_NAME>`. `RELAY_DOMAIN` remains available as an explicit API
+`<stage>-<digest>.<RELAY_TUNNEL_ZONE_NAME>`. Set `RELAY_TUNNEL_BASE_DOMAIN` to a subdomain inside
+that zone (for example `tunnels.example.com` in `example.com`) to put the hostnames below it instead;
+that needs an edge certificate covering `*.<RELAY_TUNNEL_BASE_DOMAIN>`. `RELAY_DOMAIN` remains available as an explicit API
 domain override.
 
 The stack's `PublishClientConfig` action ([`src/clientConfig.ts`](./src/clientConfig.ts)) writes the
-deployed relay URL and tracing configuration into the repository-root `.env`, so subsequent source
-builds point at the relay that was just deployed without copying values manually. It runs only when
-one of those outputs changed, and `STUDIO_RELAY_CLIENT_CONFIG_ENV` redirects it to another file.
+deployed relay URL into the repository-root `.env`, so subsequent source
+builds point at the relay that was just deployed without copying values manually. It also blanks the
+`*_OTLP_TRACES_*` entries an Axiom-era deploy wrote. It runs only when the URL changed, and `STUDIO_RELAY_CLIENT_CONFIG_ENV` redirects it to another file.
 
 ### Deployment CI
 
@@ -126,20 +128,16 @@ deploy personal non-production stages locally with any stage name other than `pr
 The repository must define these Actions variables shared by relay deployments:
 
 - `CLOUDFLARE_ACCOUNT_ID`
-- `PLANETSCALE_ORGANIZATION`
-- `AXIOM_ORG_ID`
 
 The repository must define these Actions secrets shared by relay deployments:
 
 - `CLOUDFLARE_API_TOKEN`
-- `PLANETSCALE_API_TOKEN_ID`
-- `PLANETSCALE_API_TOKEN`
-- `AXIOM_TOKEN`
 
 The `production` GitHub environment must define these Actions variables:
 
 - `RELAY_API_ZONE_NAME`
 - `RELAY_TUNNEL_ZONE_NAME`
+- `RELAY_TUNNEL_BASE_DOMAIN` only to put tunnels under a subdomain of the tunnel zone (production leaves it unset)
 - `RELAY_DOMAIN` if overriding the derived production relay domain
 - `CLERK_PUBLISHABLE_KEY`
 - `CLERK_JWT_AUDIENCE`
@@ -156,13 +154,12 @@ The `production` GitHub environment must define these Actions secrets:
 - `FCM_SERVICE_ACCOUNT` when Android push is enabled
 
 The account-scoped repository credentials are consumed by Alchemy while provisioning relay stages; they
-are not bound into the relay Worker. The production deployment uses an Axiom personal access token,
-so `AXIOM_ORG_ID` must accompany `AXIOM_TOKEN`. The release workflow reads the production relay's
+are not bound into the relay Worker. The release workflow reads the production relay's
 derived public URL and Clerk publishable key from the same environment for downstream desktop, CLI,
 and hosted web builds.
 
 See:
 
 - [Studio Connect setup](../../docs/operations/connect-setup.md) for Clerk keys, JWT templates, and sign-up restrictions.
-- [Relay Observability](../../docs/operations/relay-observability.md) for deployment tracing and diagnostics.
+- [Relay Observability](../../docs/operations/relay-observability.md) for Workers Logs and diagnostics.
 - [Studio Connect architecture](../../docs/internals/studio-connect.md) for environment linking and trust boundaries.

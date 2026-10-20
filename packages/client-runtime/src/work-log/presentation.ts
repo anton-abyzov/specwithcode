@@ -638,6 +638,7 @@ function summaryActionPriority(action: ToolGroupAction | StudioMcpToolSummaryAct
     case "thread-interrupt":
     case "thread-stop-all":
     case "thread-continue-all":
+    case "thread-migrate":
     case "schedule-create":
     case "schedule-update":
     case "schedule-delete":

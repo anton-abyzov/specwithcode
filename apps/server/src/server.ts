@@ -103,6 +103,7 @@ import * as StudioNativeRoute from "./studio/NativeRoute.ts";
 import * as StudioHttp from "./studio/http.ts";
 import * as StudioFleetHttp from "./studioFleetHttp.ts";
 import * as RemoteWorkers from "./fleet/RemoteWorkers.ts";
+import * as MachineLimitHandoff from "./orchestration-v2/MachineLimitHandoff.ts";
 import * as DeviceSignInHttp from "./auth/deviceSignInHttp.ts";
 import * as ProviderUsageLimitsIngestion from "./provider/ProviderUsageLimitsIngestion.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
@@ -140,6 +141,8 @@ import * as ReplayMarkers from "./auth/replayMarkers.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as WebhookRoute from "./scheduledTasks/webhookRoute.ts";
 import * as FolderTransferRoute from "./fleet/folderTransferRoute.ts";
+import * as FleetTargets from "./fleet/FleetTargets.ts";
+import * as MachineNicknameSync from "./fleet/MachineNicknameSync.ts";
 import * as RelayDeliveryProof from "./scheduledTasks/RelayDeliveryProof.ts";
 import * as HeldHooksWaker from "./relay/HeldHooksWaker.ts";
 import * as McpOAuth from "./auth/McpOAuth.ts";
@@ -190,6 +193,7 @@ import * as ThreadSettlementService from "./orchestration-v2/ThreadSettlementSer
 import * as ThreadFinishActionService from "./orchestration-v2/ThreadFinishActionService.ts";
 import * as IdAllocator from "./orchestration-v2/IdAllocator.ts";
 import * as StaleRunWatchdog from "./orchestration-v2/StaleRunWatchdog.ts";
+import * as HandoffModeReactor from "./handoff/HandoffModeReactor.ts";
 import * as AuthSessions from "./persistence/AuthSessions.ts";
 import * as TemporaryProjects from "./project/TemporaryProjects.ts";
 import * as ThreadPullRequestService from "./orchestration-v2/ThreadPullRequestService.ts";
@@ -602,12 +606,19 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   AgentAwarenessRelay.layer,
   // Coordinator workers on the owner's other machines: grants, follower and their renewal.
   RemoteWorkers.layerFleetWorkers,
+  // Limit handoff reads the machines above; they are built on the runtime it lives in.
+  MachineLimitHandoff.layerFleet.pipe(Layer.provide(RemoteWorkers.layerFleetWorkers)),
+  MachineLimitHandoff.layerRpcHandlers,
   // Interrupts the work of a machine revoked here once its grace has passed.
   WorkGrantRevokeSweeper.layer,
+  // Keeps machine nicknames the same on every paired machine.
+  MachineNicknameSync.layer.pipe(Layer.provide(FleetTargets.layer)),
   // Asks Studio Connect to deliver webhooks it held while this environment was offline.
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,
   layerThreadFinishActionWorker,
+  // Handoff mode: leases, checkpoints after each turn and while a turn runs long.
+  Layer.effectDiscard(HandoffModeReactor.start),
   // Ends runs a provider finished but never reported ended (stuck Working),
   // and runs nothing drives any more (their session ended or nobody reads
   // their provider events).
@@ -826,6 +837,7 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerAssetRoute,
     ServerHttp.layerAttachmentUploadRoute,
     FolderTransferRoute.layer,
+    MachineNicknameSync.routeLayer,
     GoogleOAuthRoute.layer,
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,

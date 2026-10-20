@@ -48,7 +48,8 @@ PROJECT_SCOPED_KEYS = frozenset((
     'sidebarAutoSettleAfterDays', 'continueThreadsAfterServerUpdate', 'responseStreamingMode',
     'providerLimitAction', 'providerLimitFallbackModelSelection', 'providerLimitFallbackModels', 'providerLimitSwitchAtPercent',
     'providerLimitWaitUnderMinutes', 'providerLimitRedeemResets', 'providerLimitSpendCredits',
-    'providerLimitUseApiCredits'))
+    'providerLimitUseApiCredits', 'providerLimitMachineTargets', 'providerLimitTargetOrder',
+    'providerLimitUnknownUsageEligible'))
 OVERRIDES = 'projectSettingsOverrides'
 SIMPLIFIED_MARKER = '/projectSettingsSimplified'
 # packages/shared/src/serverSettings.ts deriveLegacyProjectOverrides: legacy map -> override key.

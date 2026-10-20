@@ -1,3 +1,4 @@
+import { isRetiredProjectIconName } from "@specweave-studio/shared/projectIconLegacy";
 import { iconNames, type IconName } from "lucide-react/dynamic";
 export { PROJECT_ICON_COLORS, projectIconColorClassName } from "./projectIconColors";
 
@@ -58,8 +59,6 @@ export const PROJECT_ICON_CHOICES = [
   // AI and science
   "bot",
   "sparkles",
-  "brain",
-  "brain-circuit",
   "wand-sparkles",
   "atom",
   "flask-conical",
@@ -78,7 +77,6 @@ export const PROJECT_ICON_CHOICES = [
   "cog",
   "shield",
   "shield-check",
-  "lock",
   "key-round",
   "fingerprint",
   "scan-eye",
@@ -225,7 +223,7 @@ export const PROJECT_ICON_CHOICES = [
 
 // Words people type that do not appear in the icon names they mean.
 const ICON_KEYWORDS: Readonly<Record<string, ReadonlyArray<IconName>>> = {
-  ai: ["bot", "sparkles", "brain", "brain-circuit", "wand-sparkles"],
+  ai: ["bot", "sparkles", "lightbulb", "cpu", "wand-sparkles"],
   agent: ["bot", "concierge-bell", "sparkles"],
   app: ["app-window", "smartphone", "layout-grid"],
   chat: ["message-square", "messages-square", "send"],
@@ -236,7 +234,7 @@ const ICON_KEYWORDS: Readonly<Record<string, ReadonlyArray<IconName>>> = {
   health: ["stethoscope", "pill", "activity", "hospital", "heart"],
   home: ["house"],
   money: ["wallet", "banknote", "coins", "credit-card", "receipt"],
-  security: ["shield", "shield-check", "lock", "key-round", "fingerprint"],
+  security: ["shield", "shield-check", "key-round", "fingerprint"],
   shop: ["store", "shopping-bag", "shopping-cart"],
   sport: ["dumbbell", "trophy", "medal", "target", "bike"],
   test: ["flask-conical", "test-tube", "list-checks", "bug"],
@@ -267,6 +265,7 @@ export function filterProjectIconNames(query: string): ReadonlyArray<IconName> {
   };
   const rank = (name: string) => choiceRank.get(name) ?? Number.MAX_SAFE_INTEGER;
   return iconNames
+    .filter((name) => !isRetiredProjectIconName(name))
     .filter((name) => keywordHits.has(name) || words.every((word) => name.includes(word)))
     .toSorted((a, b) => score(a) - score(b) || rank(a) - rank(b) || a.localeCompare(b))
     .slice(0, PROJECT_ICON_SEARCH_LIMIT);
@@ -303,13 +302,11 @@ export const PROJECT_EMOJIS: ReadonlyArray<{
   { emoji: "🧬", label: "DNA" },
   { emoji: "🔭", label: "Telescope" },
   { emoji: "🛰️", label: "Satellite" },
-  { emoji: "🔒", label: "Lock", keywords: "security" },
   { emoji: "🔑", label: "Key" },
-  { emoji: "🛡️", label: "Shield" },
+  { emoji: "🛡️", label: "Shield", keywords: "security" },
   { emoji: "🐛", label: "Bug" },
   { emoji: "🧩", label: "Puzzle" },
-  { emoji: "🧠", label: "Brain", keywords: "ai" },
-  { emoji: "💡", label: "Light bulb", keywords: "idea" },
+  { emoji: "💡", label: "Light bulb", keywords: "idea ai" },
   { emoji: "🔥", label: "Fire" },
   { emoji: "🎯", label: "Target" },
   { emoji: "📊", label: "Bar chart" },

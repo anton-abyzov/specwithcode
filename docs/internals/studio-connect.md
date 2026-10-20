@@ -89,6 +89,18 @@ teardown, because a database failure must leave the active link usable. Failed
 teardown retains enough state to retry. See the
 [managed endpoint lifecycle](../../infra/relay/src/environments/ManagedEndpointProvider.ts).
 
+## Account deletion
+
+`DELETE /v1/client/account` takes the same Clerk bearer as the other client
+endpoints and returns `{ deleted, environmentCount }`. It runs each of the
+caller's environments through the unlink path (revoke, then tunnel and DNS
+teardown), clears each derived webhook inbox, and stops with a retryable
+`upstream_unavailable` if any allocation survives. Only then does it delete the
+user's rows (links, devices, Live Activities, delivery attempts, tunnel limits)
+in one transaction and delete the Clerk user, treating a Clerk 404 as done.
+Every step tolerates a previous partial run, so clients retry until `200`. See
+[AccountDeletion](../../infra/relay/src/account/AccountDeletion.ts).
+
 ## Idle tunnels are reclaimed and recovered
 
 Cloudflare bills a tunnel whether or not a connector is attached, so a laptop

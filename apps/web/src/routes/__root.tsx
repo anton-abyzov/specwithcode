@@ -35,11 +35,14 @@ import { KeepAwakeWhileWorking } from "../components/desktop/KeepAwakeWhileWorki
 import { ComputerUseHost } from "../components/desktop/ComputerUseHost";
 import { AutoConnectPrivateMachines } from "../components/AutoConnectPrivateMachines";
 import { CoordinatorSync } from "../components/studio/CoordinatorSync";
+import { LinkedMemorySync } from "../components/studio/LinkedMemorySync";
+import { LinkedPlanSync } from "../components/studio/LinkedPlanSync";
 import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
 import { LegacyThreadMigrationToast } from "../components/LegacyThreadMigrationToast";
 import { ThreadNotificationCoordinator } from "../components/ThreadNotificationCoordinator";
 import { ReopenClosedViewShortcut } from "../components/ReopenClosedViewShortcut";
 import { ProjectCloneToastCoordinator } from "../components/ProjectCloneToastCoordinator";
+import { AddToMachineJobRunner } from "../components/AddToMachineJobRunner";
 import { SlowRpcRequestToastCoordinator } from "../components/SlowRpcRequestToastCoordinator";
 import { ChatGptWelcomeCoordinator } from "../components/settings/ChatGptWelcomeCoordinator";
 import { ProviderAuthCallbackCoordinator } from "../components/settings/ProviderAuthCallbackCoordinator";
@@ -245,6 +248,8 @@ function RootRouteView() {
           {primaryEnvironmentAuthenticated ? <DesktopAppActivationCoordinator /> : null}
           {primaryEnvironmentAuthenticated ? <AutoConnectPrivateMachines /> : null}
           {primaryEnvironmentAuthenticated ? <CoordinatorSync /> : null}
+          {primaryEnvironmentAuthenticated ? <LinkedMemorySync /> : null}
+          {primaryEnvironmentAuthenticated ? <LinkedPlanSync /> : null}
           {isElectron ? <RunningThreadKeepAlive /> : null}
           <RelayClientInstallDialog />
           <ConnectOnboardingDialog />
@@ -259,6 +264,7 @@ function RootRouteView() {
           <PermissionUpdateNotice />
           {primaryEnvironmentAuthenticated ? <LegacyThreadMigrationToast /> : null}
           <ProjectCloneToastCoordinator />
+          <AddToMachineJobRunner />
           <HostedStaticEnvironmentBootstrap />
           {primaryEnvironmentAuthenticated ? (
             <EventRouter skipInitialBootstrapNavigation={returningFromWelcomeRef.current} />

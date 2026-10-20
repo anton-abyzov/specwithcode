@@ -1,7 +1,6 @@
 import * as Alchemy from "alchemy";
-import * as Axiom from "alchemy/Axiom";
 import * as Cloudflare from "alchemy/Cloudflare";
-import * as Drizzle from "alchemy/Drizzle/Postgres";
+import * as Drizzle from "alchemy/Drizzle";
 import * as Config from "effect/Config";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -27,8 +26,8 @@ import {
 } from "./http/Api.ts";
 import * as RelayHttpApi from "./http/Api.ts";
 import { ManagedEndpointZone, RelayApiZone, RelayDeploymentConfig } from "./zone.ts";
-import { RelayObservability } from "./observability.ts";
-import * as Observability from "./observability.ts";
+import * as SpanAttributes from "./spanAttributes.ts";
+import * as AccountDeletion from "./account/AccountDeletion.ts";
 import * as DeliveryAttempts from "./agentActivity/DeliveryAttempts.ts";
 import * as AgentActivityRows from "./agentActivity/AgentActivityRows.ts";
 import * as Devices from "./agentActivity/Devices.ts";
@@ -118,6 +117,9 @@ export const layer = Api.make(
         flags: ["nodejs_compat"],
       },
       domain: relayPublicDomain,
+      // Workers Logs is the relay's only telemetry sink. Effect spans still
+      // run (they carry log annotations) but have no exporter.
+      observability: { enabled: true, logs: { enabled: true, invocationLogs: true } },
     })),
     Effect.orDie,
   ),
@@ -125,7 +127,7 @@ export const layer = Api.make(
     //
     // 1. Provision Infrastructure for the Worker to use
     //
-    const { relayPublicOrigin, stage } = yield* RelayDeploymentConfig;
+    const { relayPublicOrigin, stage, managedEndpointBaseDomain } = yield* RelayDeploymentConfig;
     const apnsDeliveryQueue = yield* RelayApnsDeliveryQueue;
     const apnsDeliveryDeadLetterQueue = yield* RelayApnsDeliveryDeadLetterQueue;
     const fcmDeliveryQueue = yield* RelayFcmDeliveryQueue;
@@ -134,7 +136,6 @@ export const layer = Api.make(
     const relayApiZone = yield* RelayApiZone;
     const managedEndpointZone = yield* ManagedEndpointZone;
     const randomApnsDeliveryJobSigningSecret = yield* ApnsDeliveryJobSigningSecret;
-    yield* RelayObservability;
 
     //
     // 2. Create bindings
@@ -165,20 +166,14 @@ export const layer = Api.make(
 
     const cloudMintPrivateKey = yield* cloudMintKeyPair.privateKey;
     const cloudMintPublicKey = yield* cloudMintKeyPair.publicKey;
-    const hyperdrive = yield* Cloudflare.Hyperdrive.Connect(yield* RelayDb.RelayHyperdrive);
-    // Named prepared statements collide behind Hyperdrive's transaction-mode
-    // pool: sql-pg < 4.0.0-rc.117 names them `effect1..N` per connection, and
-    // inside a transaction a Bind can reach another request's statement
-    // (#14070, Effect-TS/effect#8320). Unnamed statements cannot collide.
-    const db = yield* Drizzle.Postgres(hyperdrive.connectionString, undefined, {
-      prepare: false,
-    });
+    const db = yield* Drizzle.D1(
+      yield* Cloudflare.D1.QueryDatabase(yield* RelayDb.RelayD1Database),
+    );
 
     const managedEndpointTunnelBinding = yield* Cloudflare.Tunnel.ReadWriteTunnel();
     // Keep Worker custom-domain reconciliation ordered after API zone provisioning.
     yield* yield* relayApiZone.zoneId;
     const managedEndpointDnsBinding = yield* Cloudflare.DNS.ReadWriteDns(managedEndpointZone);
-    const managedEndpointZoneName = yield* managedEndpointZone.name;
     const managedEndpointCleanupMode = yield* RelayConfiguration.managedEndpointCleanupModeConfig;
     const legacyManagedEndpointCleanupMode =
       yield* RelayConfiguration.legacyManagedEndpointCleanupModeConfig;
@@ -219,7 +214,7 @@ export const layer = Api.make(
         clerkJwtAudience,
         cloudMintPrivateKey: yield* cloudMintPrivateKey,
         cloudMintPublicKey: yield* cloudMintPublicKey,
-        managedEndpointBaseDomain: yield* managedEndpointZoneName,
+        managedEndpointBaseDomain,
         managedEndpointNamespace: stage,
         managedEndpointCleanupMode,
         legacyManagedEndpointCleanupMode,
@@ -262,6 +257,8 @@ export const layer = Api.make(
           EnvironmentPublishSignatures.layer,
           ManagedEndpointReaper.layer,
           HeldHooks.layer,
+          AccountDeletion.layerAccountRecords,
+          AccountDeletion.layerClerkUsers,
         ),
       ),
       Layer.provideMerge(
@@ -309,11 +306,7 @@ export const layer = Api.make(
       Layer.provideMerge(LiveActivities.layer),
       Layer.provideMerge(DeliveryAttempts.layer),
       Layer.provideMerge(RelayTokens.layer),
-      Layer.provideMerge(
-        RelayDb.RelayTransactions.layer.pipe(
-          Layer.provideMerge(Layer.succeed(RelayDb.RelayDb, db)),
-        ),
-      ),
+      Layer.provideMerge(Layer.succeed(RelayDb.RelayDb, db)),
       Layer.provideMerge(Layer.effect(RelayConfiguration.RelayConfiguration, loadSettings)),
       Layer.provideMerge(layerWebcrypto),
     );
@@ -430,7 +423,7 @@ export const layer = Api.make(
         { concurrency: 2, discard: true },
       ).pipe(
         Effect.withSpan("relay.cron.prune_expired_state"),
-        Observability.withSchemaErrorSpanAttributes,
+        SpanAttributes.withSchemaErrorSpanAttributes,
         Effect.provide(layerRuntime),
       ),
     );
@@ -452,7 +445,7 @@ export const layer = Api.make(
       withoutCapturedParentSpan,
       Effect.map((httpEffect) =>
         traceRelayHttpRequestWith(httpEffect, Layer.empty).pipe(
-          Observability.withSchemaErrorSpanAttributes,
+          SpanAttributes.withSchemaErrorSpanAttributes,
         ),
       ),
     );
@@ -461,7 +454,7 @@ export const layer = Api.make(
   }).pipe(
     Effect.provide(
       Layer.empty.pipe(
-        Layer.provideMerge(Cloudflare.Hyperdrive.ConnectBinding),
+        Layer.provideMerge(Cloudflare.D1.QueryDatabaseBinding),
         Layer.provideMerge(Cloudflare.Workers.CronEventSourceLive),
         Layer.provideMerge(Cloudflare.Queues.WriteQueueBinding),
         Layer.provideMerge(Cloudflare.Queues.EventSourceLive),
@@ -477,19 +470,6 @@ export const layer = Api.make(
         // are built into it.
         Layer.provideMerge(
           Alchemy.Telemetry.layer(Layer.succeed(HttpMiddleware.TracerDisabledWhen)(() => true)),
-        ),
-        // The Worker's only trace exporter: every event (fetch, queue, cron,
-        // HookInboxObject calls and alarms) exports through it to Axiom.
-        Layer.provideMerge(
-          Layer.unwrap(
-            Effect.map(RelayObservability, (observability) =>
-              Axiom.Telemetry({
-                serviceName: "studio-relay",
-                token: observability.workerIngestToken,
-                traces: observability.traces,
-              }),
-            ),
-          ),
         ),
       ),
     ),

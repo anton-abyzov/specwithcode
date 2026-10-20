@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
 import {
+  managedEndpointBaseDomainForZone,
   managedEndpointDigestInput,
   managedEndpointForHostname,
   managedEndpointHostname,
@@ -10,6 +11,7 @@ import {
   managedEndpointTunnelNamePrefix,
   relayOwnsManagedEndpointZone,
   RelayPublicDomainLabelTooLongError,
+  RelayTunnelBaseDomainOutsideZoneError,
   relayPublicDomainForStage,
   relayResourceNameForStage,
 } from "./deploymentConfig.ts";
@@ -116,5 +118,29 @@ describe("managed endpoint names", () => {
     expect(isManagedEndpointHostname("internal.example.net", "example.com")).toBe(false);
     expect(isManagedEndpointHostname("example.com.attacker.test", "example.com")).toBe(false);
     expect(isManagedEndpointHostname("dev-alice.example.com.", "example.com")).toBe(false);
+  });
+});
+
+describe("managedEndpointBaseDomainForZone", () => {
+  it("defaults to the tunnel zone", () => {
+    expect(managedEndpointBaseDomainForZone("Example.com.", undefined)).toBe("example.com");
+    expect(managedEndpointBaseDomainForZone("example.com", "  ")).toBe("example.com");
+  });
+
+  it("accepts a subdomain inside the tunnel zone", () => {
+    expect(managedEndpointBaseDomainForZone("example.com", "Tunnels.example.com.")).toBe(
+      "tunnels.example.com",
+    );
+    expect(managedEndpointHostname("prod", "tunnels.example.com", "a".repeat(64))).toMatch(
+      /^prod-[a-z0-9]+\.tunnels\.example\.com$/u,
+    );
+  });
+
+  it("rejects a base domain outside the tunnel zone", () => {
+    for (const override of ["tunnels.other.com", "badexample.com", "bad_label.example.com"]) {
+      expect(() => managedEndpointBaseDomainForZone("example.com", override)).toThrow(
+        RelayTunnelBaseDomainOutsideZoneError,
+      );
+    }
   });
 });

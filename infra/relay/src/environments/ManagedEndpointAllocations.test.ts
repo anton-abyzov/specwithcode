@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { PgDialect } from "drizzle-orm/pg-core";
+import { SQLiteDialect } from "drizzle-orm/sqlite-core";
 
 import * as RelayDb from "../db.ts";
 import { relayManagedEndpointAllocations } from "../persistence/schema.ts";
@@ -57,18 +57,18 @@ describe("ManagedEndpointAllocations", () => {
       expect(updated?.tunnelId).toBe("replacement-tunnel");
       // Any recorded tunnel ends a released state, so status stops reporting it.
       expect(updated?.tunnelReleasedAt).toBeNull();
-      const query = new PgDialect().sqlToQuery(updated?.readyAt as never);
+      const query = new SQLiteDialect().sqlToQuery(updated?.readyAt as never);
       expect(query.sql).toBe(
-        'case when "relay_managed_endpoint_allocations"."tunnel_id" = $1 then "relay_managed_endpoint_allocations"."ready_at" else null end',
+        'case when "relay_managed_endpoint_allocations"."tunnel_id" = ? then "relay_managed_endpoint_allocations"."ready_at" else null end',
       );
       expect(query.params).toEqual(["replacement-tunnel"]);
       for (const [column, value] of [
         ["recovery_enabled_at", updated?.recoveryEnabledAt],
         ["recovery_environment_public_key", updated?.recoveryEnvironmentPublicKey],
       ] as const) {
-        const recoveryQuery = new PgDialect().sqlToQuery(value as never);
+        const recoveryQuery = new SQLiteDialect().sqlToQuery(value as never);
         expect(recoveryQuery.sql).toBe(
-          `case when "relay_managed_endpoint_allocations"."tunnel_id" = $1 then "relay_managed_endpoint_allocations"."${column}" else null end`,
+          `case when "relay_managed_endpoint_allocations"."tunnel_id" = ? then "relay_managed_endpoint_allocations"."${column}" else null end`,
         );
         expect(recoveryQuery.params).toEqual(["replacement-tunnel"]);
       }
@@ -122,12 +122,15 @@ describe("ManagedEndpointAllocations", () => {
       expect(updated?.recoveryEnabledAt).toBe(updated?.updatedAt);
       expect(updated?.recoveryEnabledAt).toBeDefined();
       expect(updated?.recoveryEnvironmentPublicKey).toBe("public-key");
-      const query = new PgDialect().sqlToQuery(condition as never);
+      const query = new SQLiteDialect().sqlToQuery(condition as never);
       expect(query.sql).toContain('"relay_managed_endpoint_allocations"."tunnel_id"');
       expect(query.sql).toContain('"relay_environment_links"."environment_public_key"');
       expect(query.sql).toContain('"relay_environment_links"."endpoint_provider_kind"');
       expect(query.sql).toContain('"relay_environment_links"."revoked_at" is null');
-      expect(query.sql).toContain("for update");
+      expect(query.sql).toContain(
+        'json_extract("relay_managed_endpoint_allocations"."origin", \'$.localHttpPort\') = ?',
+      );
+      expect(query.params).toContain(8319);
       expect(query.params).toContain("tunnel-1");
       expect(query.params).toContain("public-key");
       expect(query.params).toContain("cloudflare_tunnel");
@@ -238,7 +241,7 @@ describe("ManagedEndpointAllocations", () => {
         from: () => ({
           leftJoin: () => ({
             where: (condition: unknown) => {
-              batchSizes.push(new PgDialect().sqlToQuery(condition as never).params.length);
+              batchSizes.push(new SQLiteDialect().sqlToQuery(condition as never).params.length);
               return Effect.succeed([]);
             },
           }),
@@ -250,7 +253,7 @@ describe("ManagedEndpointAllocations", () => {
       const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;
       const names = Array.from({ length: 1_001 }, (_, index) => `tunnel-${index}`);
       expect(yield* allocations.listByTunnelNames(names)).toEqual([]);
-      expect(batchSizes).toEqual([500, 500, 1]);
+      expect(batchSizes).toEqual([...Array.from({ length: 10 }, () => 100), 1]);
     }).pipe(Effect.provide(layerWithDb(fakeDb)));
   });
 
@@ -315,49 +318,47 @@ describe("ManagedEndpointAllocations", () => {
     }).pipe(Effect.provide(layerWithDb(fakeDb)));
   });
 
-  it.effect("holds the claimed allocation row while deleting its tunnel", () => {
-    const operations: string[] = [];
-    const fakeDb = {
-      $client: {
-        withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-          Effect.sync(() => {
-            operations.push("transaction");
-          }).pipe(Effect.andThen(effect)),
-      },
-      select: () => ({
-        from: () => ({
-          where: () => ({
-            limit: () => ({
-              for: (strength: string) =>
+  it.effect.each([
+    { generation: 7, expected: ["select", "delete"], result: true },
+    { generation: 6, expected: ["select"], result: null },
+  ] as const)(
+    "runs the tunnel delete only for the current generation ($generation)",
+    (testCase) => {
+      const operations: string[] = [];
+      const fakeDb = {
+        select: () => ({
+          from: () => ({
+            where: () => ({
+              limit: () =>
                 Effect.sync(() => {
-                  operations.push(`lock:${strength}`);
-                  return [{ generation: 7 }];
+                  operations.push("select");
+                  return testCase.generation === 7 ? [{ generation: 7 }] : [];
                 }),
             }),
           }),
         }),
-      }),
-    } as unknown as RelayDb.RelayDb["Service"];
+      } as unknown as RelayDb.RelayDb["Service"];
 
-    return Effect.gen(function* () {
-      const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;
-      const result = yield* allocations.withClaimedTunnel(
-        {
-          userId: "user-1",
-          environmentId: "environment-1",
-          tunnelId: "tunnel-1",
-          generation: 7,
-        },
-        Effect.sync(() => {
-          operations.push("delete");
-          return true;
-        }),
-      );
+      return Effect.gen(function* () {
+        const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;
+        const result = yield* allocations.withClaimedTunnel(
+          {
+            userId: "user-1",
+            environmentId: "environment-1",
+            tunnelId: "tunnel-1",
+            generation: testCase.generation,
+          },
+          Effect.sync(() => {
+            operations.push("delete");
+            return true;
+          }),
+        );
 
-      expect(Option.getOrNull(result)).toBe(true);
-      expect(operations).toEqual(["transaction", "lock:update", "delete"]);
-    }).pipe(Effect.provide(layerWithDb(fakeDb)));
-  });
+        expect(Option.getOrNull(result)).toBe(testCase.result);
+        expect(operations).toEqual(testCase.expected);
+      }).pipe(Effect.provide(layerWithDb(fakeDb)));
+    },
+  );
 
   it.effect("does not remove an allocation superseded after a deprovision claim", () => {
     const fakeDb = {

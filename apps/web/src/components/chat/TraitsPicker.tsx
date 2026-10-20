@@ -19,7 +19,6 @@ import {
 } from "@specweave-studio/shared/model";
 import { findEffortDescriptor } from "@specweave-studio/shared/effortLevel";
 import { Fragment, memo, useCallback } from "react";
-import { BrainIcon } from "lucide-react";
 import {
   Menu,
   MenuGroup,
@@ -37,7 +36,6 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   ComposerControl,
   ComposerControlChevron,
-  ComposerControlIcon,
   type ComposerControlSize,
 } from "./ComposerControl";
 import { useComposerMenuProps } from "./composerEventScope";
@@ -821,7 +819,11 @@ export const TraitsPicker = memo(function TraitsPicker({
                 </>
               ) : (
                 <>
-                  <ComposerControlIcon icon={BrainIcon} size={size} />
+                  <EffortGlyph
+                    value="off"
+                    className={size === "xs" ? "size-3.5" : "size-4"}
+                    data-composer-control-icon
+                  />
                   <span data-composer-control-label className="min-w-0 truncate">
                     {triggerLabel}
                   </span>
@@ -846,7 +848,11 @@ export const TraitsPicker = memo(function TraitsPicker({
             </>
           ) : (
             <>
-              <ComposerControlIcon icon={BrainIcon} size={size} />
+              <EffortGlyph
+                value="off"
+                className={size === "xs" ? "size-3.5" : "size-4"}
+                data-composer-control-icon
+              />
               <span data-composer-control-label>{triggerLabel}</span>
               <ComposerControlChevron size={size} />
             </>

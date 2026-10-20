@@ -1,8 +1,8 @@
 import { ArtifactCards } from "../chat/ThreadArtifacts";
-import { isProjectFolder } from "../../studio/projectMachineFolders";
+import { useMachineNickname } from "../../studio/machineNickname";
 import { requestExecutionLabel } from "../../studio/projectDomain";
 import { limitContinuationNote } from "../../studio/runIdentity";
-import { modelLabel, shortMachineName } from "../../studio/shellModel";
+import { modelLabel } from "../../studio/shellModel";
 import { useEnvironment } from "../../state/environments";
 import { useProviderEntries } from "./shell/ModelBadge";
 import {
@@ -37,7 +37,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { ChevronDownIcon, ChevronRightIcon, RotateCcwIcon, TriangleAlertIcon } from "lucide-react";
+import { ChevronRightIcon, RotateCcwIcon, TriangleAlertIcon } from "lucide-react";
 import {
   coordinatorTurnLayout,
   formatConversationSeparator,
@@ -81,16 +81,6 @@ import ChatMarkdown, {
 import { useConversationFindQuery } from "../find/conversationFindStore";
 import { useStructuralValue } from "../../hooks/useStructuralValue";
 import { formatProgressElapsed, type CoordinatorProgress } from "../../studio/coordinatorProgress";
-import {
-  Menu,
-  MenuGroup,
-  MenuGroupLabel,
-  MenuPopup,
-  MenuRadioGroup,
-  MenuRadioItem,
-  MenuRadioItemIndicator,
-  MenuTrigger,
-} from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Button, InlineButton } from "../ui/button";
 
@@ -268,7 +258,7 @@ export function CoordinatorConversation({
   );
   const runs = thread?.projection.runs;
   const turnItems = thread?.projection.turnItems;
-  const machineLabel = executionEnvironment?.label ?? project.environmentId;
+  const machineLabel = useMachineNickname(project.environmentId, executionEnvironment?.label);
   const prepared = useMemo(() => {
     const describeRun = (selection: { instanceId: string; model: string }) =>
       modelLabel(
@@ -1033,94 +1023,5 @@ function CoordinatorWorking({ progress }: { progress: CoordinatorProgress }) {
         </span>
       )}
     </div>
-  );
-}
-
-/**
- * The machine this coordinator runs on. Its server starts the coordinator and
- * workers with that machine's providers and sign-ins, so with the project on
- * more than one machine the name opens a choice that is saved for the project.
- */
-export function CoordinatorMachine({
-  label,
-  connected,
-  disconnectedLabel = "Disconnected",
-  current,
-  checkouts,
-  savedMachineMissing,
-  onChoose,
-}: {
-  label: string;
-  connected: boolean;
-  disconnectedLabel?: string;
-  current: string;
-  checkouts: ReadonlyArray<{ key: string; machine: string; folder: string }>;
-  savedMachineMissing: boolean;
-  onChoose: ((key: string) => void) | null;
-}) {
-  const status = (
-    <>
-      <span className="sws-dot" data-tone={connected ? "resolved" : "failed"} aria-hidden />
-      <span className="sws-host-name" title={label}>
-        {shortMachineName(label)}
-      </span>
-      <span className="sr-only">
-        {connected ? ", connected" : `, ${disconnectedLabel.toLowerCase()}`}
-      </span>
-      {connected ? null : <span aria-hidden> · {disconnectedLabel}</span>}
-      {savedMachineMissing ? <span aria-hidden> · Saved machine offline</span> : null}
-    </>
-  );
-  if (checkouts.length < 2 || !onChoose)
-    return <span className="project-muted sws-host">{status}</span>;
-  // Two checkouts on one machine need their folders to tell them apart.
-  const savedCheckouts = checkouts.filter((checkout) => isProjectFolder(checkout.folder));
-  const machines = savedCheckouts.map((checkout) => checkout.machine);
-  const ambiguous = (machine: string) =>
-    machines.indexOf(machine) !== machines.lastIndexOf(machine);
-  return (
-    <Menu>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <MenuTrigger
-              render={
-                <Button
-                  variant="ghost-muted"
-                  size="xs"
-                  className="project-muted sws-host sws-host-pick"
-                  aria-label={`Coordinator runs on ${label}. Choose the machine`}
-                />
-              }
-            />
-          }
-        >
-          {status}
-          <ChevronDownIcon aria-hidden />
-        </TooltipTrigger>
-        <TooltipPopup side="top">
-          {savedMachineMissing
-            ? "The saved machine is not connected, so this is another machine's coordinator"
-            : "Choose which machine runs this project's coordinator"}
-        </TooltipPopup>
-      </Tooltip>
-      <MenuPopup align="start" side="top" className="min-w-56">
-        <MenuGroup>
-          <MenuGroupLabel>Coordinator machine</MenuGroupLabel>
-          <MenuRadioGroup value={current} onValueChange={(value) => onChoose(value as string)}>
-            {savedCheckouts.map((checkout) => (
-              <MenuRadioItem key={checkout.key} value={checkout.key}>
-                <span className="flex items-center justify-between gap-6">
-                  {ambiguous(checkout.machine)
-                    ? `${checkout.machine} · ${checkout.folder}`
-                    : checkout.machine}
-                  <MenuRadioItemIndicator />
-                </span>
-              </MenuRadioItem>
-            ))}
-          </MenuRadioGroup>
-        </MenuGroup>
-      </MenuPopup>
-    </Menu>
   );
 }

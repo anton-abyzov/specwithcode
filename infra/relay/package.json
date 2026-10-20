@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@clerk/backend": "catalog:",
-    "@effect/sql-pg": "catalog:",
+    "@effect/sql-d1": "4.0.0",
     "@effect/sql-sqlite-do": "catalog:",
     "@noble/curves": "catalog:",
     "@noble/hashes": "catalog:",

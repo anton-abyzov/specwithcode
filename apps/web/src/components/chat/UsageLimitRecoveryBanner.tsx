@@ -3,9 +3,11 @@ import { CreditRecoveryAction, type CreditRecoveryProps } from "./CreditRecovery
 import { useClientSettings } from "../../hooks/useSettings";
 import { formatDisplayDate } from "../../lib/displayDates";
 import {
+  type EnvironmentId,
   type OrchestrationV2LimitRecovery,
   type OrchestrationV2LimitRecoveryUpdate,
   type RunId,
+  type ThreadId,
 } from "@specweave-studio/contracts";
 import type { FallbackOrderUnavailable } from "@specweave-studio/shared/providerFallback";
 import { ChevronDownIcon, GaugeIcon } from "lucide-react";
@@ -14,6 +16,7 @@ import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Checkbox } from "../ui/checkbox";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
+import { LimitHandoffCandidates } from "./LimitHandoffCandidates";
 
 type RecoveryProps = {
   canCheck?: boolean;
@@ -51,6 +54,8 @@ type RecoveryProps = {
     model: string;
     onContinue: () => Promise<void>;
   } | null;
+  /** The project lists other machines a limited thread may move to: show why each can or can't. */
+  machines?: { environmentId: EnvironmentId; threadId: ThreadId } | null;
   onChange: (recovery: OrchestrationV2LimitRecoveryUpdate) => Promise<void>;
 };
 
@@ -193,6 +198,7 @@ function RecoveryActions({
   fallbackChoices,
   waiting,
   device,
+  machines,
   onChange,
 }: RecoveryProps) {
   const canSchedule = resetAt !== null && Date.parse(resetAt) > Date.parse(stoppedAt);
@@ -345,6 +351,12 @@ function RecoveryActions({
             </Button>
           ) : null}
         </div>
+      ) : null}
+      {machines ? (
+        <LimitHandoffCandidates
+          environmentId={machines.environmentId}
+          threadId={machines.threadId}
+        />
       ) : null}
       {credits ? <CreditRecoveryAction {...credits} /> : null}
       {apiCredits ? <ApiCreditRecoveryAction {...apiCredits} /> : null}

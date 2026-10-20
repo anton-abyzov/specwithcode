@@ -37,8 +37,8 @@ private struct ChatScreen: View {
     transcript
       .edgeBar(.bottom) { composerArea }
       .screenChrome { header }
-      .onAppear { model.engine.open(session) }
-      .onDisappear { model.engine.close(session) }
+      .onAppear { model.openSession(session) }
+      .onDisappear { model.closeSession(session) }
       .task(id: router.pendingComposerFocus) {
         guard router.pendingComposerFocus == target else { return }
         // Let the drawer finish closing before the keyboard comes up.
@@ -175,13 +175,29 @@ private struct ChatScreen: View {
         action: { nav.push(.machine(machineId)) }
       )
     default:
-      transcriptPlaceholder(
-        title: "\(machineLabel) is offline",
-        message: "This conversation loads when \(session.machineLabel.isEmpty ? "the machine" : session.machineLabel) reconnects.",
-        actionTitle: "Reconnect",
-        action: { model.engine.reconnect(machineId: machineId) }
-      )
+      if let other = reachableOrchestrator {
+        // One machine being out never stops a project on several machines.
+        transcriptPlaceholder(
+          title: "\(machineLabel) is offline",
+          message: "This orchestrator loads when \(machineLabel) reconnects. \(other.machineLabel)'s orchestrator for this project is available now.",
+          actionTitle: "View on \(other.machineLabel)",
+          action: { router.open(.project(other.ref)) }
+        )
+      } else {
+        transcriptPlaceholder(
+          title: "\(machineLabel) is offline",
+          message: "This conversation loads when \(session.machineLabel.isEmpty ? "the machine" : session.machineLabel) reconnects.",
+          actionTitle: "Reconnect",
+          action: { model.engine.reconnect(machineId: machineId) }
+        )
+      }
     }
+  }
+
+  /// Another machine's copy of this project whose orchestrator is reachable.
+  private var reachableOrchestrator: ProjectMember? {
+    guard case let .project(ref) = target else { return nil }
+    return model.project(ref)?.members.first { $0.ref != ref && $0.machineOnline }
   }
 
   private func transcriptPlaceholder(title: String, message: String, actionTitle: String? = nil, action: (() -> Void)? = nil) -> some View {
@@ -253,8 +269,11 @@ private struct ChatScreen: View {
       switch target {
       case let .aide(project), let .project(project):
         let needsYou = model.threads(in: project).contains { $0.needsAttention }
-        WeaveIconButton("checklist", label: "Threads", badge: needsYou) {
-          nav.push(.overview(project))
+        HStack(spacing: 0) {
+          if case .project = target { OrchestratorSwitcher(current: project) }
+          WeaveIconButton("checklist", label: "Threads", badge: needsYou) {
+            nav.push(.overview(project))
+          }
         }
       case let .thread(thread):
         threadControls(thread)
@@ -361,7 +380,7 @@ private struct ChatScreen: View {
         }
       }
       if let notice = connectionNotice {
-        Banner(notice.message, kind: notice.kind, actionTitle: notice.action == nil ? nil : "Reconnect", action: notice.action)
+        Banner(notice.message, kind: notice.kind, actionTitle: notice.action == nil ? nil : notice.actionTitle, action: notice.action)
       }
       if let error = session.lastError {
         Banner(error, kind: .fail, onDismiss: { session.lastError = nil })
@@ -396,6 +415,7 @@ private struct ChatScreen: View {
   private struct ConnectionNotice {
     let message: String
     let kind: WeaveNoticeKind
+    var actionTitle = "Reconnect"
     let action: (() -> Void)?
   }
 
@@ -410,6 +430,9 @@ private struct ChatScreen: View {
       let message = session.rows.isEmpty
         ? "\(label) is offline."
         : (session.sendBlockedReason == nil ? "\(label) is offline. Showing saved messages." : "Showing saved messages.")
+      if let other = reachableOrchestrator {
+        return ConnectionNotice(message: "\(message) \(other.machineLabel)'s orchestrator is available.", kind: .warn, actionTitle: "View on \(other.machineLabel)", action: { router.open(.project(other.ref)) })
+      }
       return ConnectionNotice(message: message, kind: .warn, action: { model.engine.reconnect(machineId: machineId) })
     }
     if session.isStale {

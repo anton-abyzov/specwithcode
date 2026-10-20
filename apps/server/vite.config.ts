@@ -2,7 +2,7 @@ import "vite-plus/test/config";
 import { defineConfig, mergeConfig } from "vite-plus";
 
 import baseConfig from "../../vite.config.ts";
-import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
+import { loadRepoEnv, resolveBuildHostedServicesOptIn } from "../../scripts/lib/public-config.ts";
 import packageJson from "./package.json" with { type: "json" };
 import { WeightedShardSequencer } from "./src/testUtils/weightedShardSequencer.ts";
 
@@ -113,6 +113,9 @@ export default mergeConfig(
       define: {
         __STUDIO_BUILD_CHANNEL__: JSON.stringify(cliBuildChannel),
         __STUDIO_BUILD_RELAY_URL__: JSON.stringify(repoEnv.STUDIO_RELAY_URL?.trim() ?? ""),
+        __STUDIO_BUILD_ENABLE_HOSTED_SERVICES__: JSON.stringify(
+          resolveBuildHostedServicesOptIn(repoEnv) ? "true" : "",
+        ),
         __STUDIO_BUILD_CLERK_PUBLISHABLE_KEY__: JSON.stringify(
           repoEnv.STUDIO_CLERK_PUBLISHABLE_KEY?.trim() ?? "",
         ),

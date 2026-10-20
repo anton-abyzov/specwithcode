@@ -64,6 +64,7 @@ export function environmentTransportLabel(
 export function EnvironmentRow({
   kind,
   label,
+  hostLabel,
   subtitle,
   below,
   detail,
@@ -73,6 +74,8 @@ export function EnvironmentRow({
 }: {
   readonly kind: EnvironmentMachineKind;
   readonly label: string;
+  /** The machine's own name, shown muted after a nickname that differs from it. */
+  readonly hostLabel?: string | undefined;
   readonly subtitle: ReactNode;
   /** Extra content under the subtitle, such as update progress. */
   readonly below?: ReactNode;
@@ -92,7 +95,12 @@ export function EnvironmentRow({
     >
       <EnvironmentMachineIcon aria-hidden kind={kind} className="size-4 text-muted-foreground" />
       <div className="min-w-0">
-        <p className="truncate text-sm font-medium text-foreground">{label}</p>
+        <p className="truncate text-sm font-medium text-foreground">
+          {label}
+          {hostLabel && hostLabel !== label ? (
+            <span className="ms-1.5 font-normal text-muted-foreground">{hostLabel}</span>
+          ) : null}
+        </p>
         <div className="truncate text-xs text-muted-foreground">{subtitle}</div>
         {below}
       </div>

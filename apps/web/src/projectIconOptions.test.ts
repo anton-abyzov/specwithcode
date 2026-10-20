@@ -41,6 +41,17 @@ describe("project icon choices", () => {
     expect(filterProjectIconNames("rocket")[0]).toBe("rocket");
   });
 
+  it("never offers brain or padlock artwork", () => {
+    const retired = /(^|-)(brain|lock|locked|unlock)(-|$)/;
+    expect(PROJECT_ICON_CHOICES.filter((name) => retired.test(name))).toEqual([]);
+    for (const query of ["lock", "brain", "security", "ai", "unlock", "user"]) {
+      expect(filterProjectIconNames(query).filter((name) => retired.test(name))).toEqual([]);
+    }
+    expect(filterProjectIconNames("clock")).toContain("clock");
+    expect(PROJECT_EMOJIS.map((option) => option.emoji)).not.toContain("🧠");
+    expect(PROJECT_EMOJIS.map((option) => option.emoji)).not.toContain("🔒");
+  });
+
   it("filters emoji by label", () => {
     expect(filterProjectEmojis("rocket").map((option) => option.emoji)).toEqual(["🚀"]);
     expect(filterProjectEmojis("")).toHaveLength(PROJECT_EMOJIS.length);

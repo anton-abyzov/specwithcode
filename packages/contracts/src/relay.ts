@@ -957,6 +957,13 @@ export const RelayOkResponse = Schema.Struct({
 });
 export type RelayOkResponse = typeof RelayOkResponse.Type;
 
+export const RelayAccountDeletionResponse = Schema.Struct({
+  deleted: Schema.Boolean,
+  /** Environment links and managed endpoints torn down by this request. */
+  environmentCount: Schema.Number,
+});
+export type RelayAccountDeletionResponse = typeof RelayAccountDeletionResponse.Type;
+
 export const RelayPublishResponse = Schema.Struct({
   ok: Schema.Boolean,
   deliveries: Schema.Array(RelayDeliveryResult),
@@ -1103,6 +1110,16 @@ const RelayClientGroup = HttpApiGroup.make("client")
       .annotate(
         OpenApi.Description,
         "Deletes the provisioned Cloudflare tunnel while keeping the environment link and its hostname reservation, so a later link re-provisions the tunnel under the same URL. Environments call this when they shut down; Cloudflare bills per provisioned tunnel, so idle tunnels should not outlive their environment.",
+      ),
+    HttpApiEndpoint.delete("deleteAccount", "/v1/client/account", {
+      headers: RelayBearerRequestHeaders,
+      success: RelayAccountDeletionResponse,
+      error: RelayAuthAndInternalErrors,
+    })
+      .annotate(OpenApi.Summary, "Delete the calling account")
+      .annotate(
+        OpenApi.Description,
+        "Unlinks every environment (revoking credentials and deleting managed tunnels and DNS), deletes registered devices, Live Activities, delivery records and held webhook requests, then deletes the Clerk user. Idempotent: retry after any failure until it returns deleted: true.",
       ),
   )
   .annotate(OpenApi.Description, "Cloud-user environment links and registered devices.")

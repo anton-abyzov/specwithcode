@@ -47,6 +47,12 @@ export const PROJECT_OVERRIDE_LABELS: Readonly<
   providerLimitRedeemResets: { label: "Redeem resets", page: "Providers" },
   providerLimitSpendCredits: { label: "Spend credits", page: "Providers" },
   providerLimitUseApiCredits: { label: "Use API credits", page: "Providers" },
+  providerLimitMachineTargets: { label: "Other machines", page: "Providers" },
+  providerLimitTargetOrder: { label: "Try first", page: "Providers" },
+  providerLimitUnknownUsageEligible: {
+    label: "Use machines with unknown usage",
+    page: "Providers",
+  },
 };
 
 const VALUE_LABELS: Readonly<Record<string, string>> = {
@@ -69,6 +75,8 @@ const VALUE_LABELS: Readonly<Record<string, string>> = {
   "top-level": "Top level",
   recursive: "Recursive",
   none: "None",
+  "same-machine-first": "This machine",
+  "other-machine-first": "Other machines",
 };
 
 /** A short, human-readable value for a settings value of any shape. */

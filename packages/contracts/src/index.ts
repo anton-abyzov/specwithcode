@@ -77,6 +77,7 @@ export * from "./usage.ts";
 export * from "./scheduledTask.ts";
 export * from "./worktreeMcp.ts";
 export * from "./resourceTelemetry.ts";
+export * from "./provision.ts";
 export * from "./rpc.ts";
 export * from "./worktreeSetup.ts";
 export * from "./secretRequest.ts";
@@ -88,10 +89,15 @@ export * from "./projectSkills.ts";
 export * from "./threadIncrementProgress.ts";
 
 export * from "./machineHandoff.ts";
+export * from "./handoffMode.ts";
+export * from "./handoffModeRpc.ts";
+export * from "./threadExecution.ts";
 export * from "./folderCopy.ts";
 export * from "./machineReadiness.ts";
 
 export * from "./logicalProject.ts";
 export * from "./projectLink.ts";
+export * from "./linkedMemory.ts";
+export * from "./limitHandoff.ts";
 export * from "./managedUpdates.ts";
 export * from "./muse.ts";

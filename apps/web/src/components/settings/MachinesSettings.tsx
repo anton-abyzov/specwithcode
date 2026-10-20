@@ -10,7 +10,7 @@ import { Link } from "@tanstack/react-router";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
-import { LaptopIcon, RefreshCwIcon } from "lucide-react";
+import { LaptopIcon, PencilIcon, RefreshCwIcon } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 
 import { isThisMachineTarget } from "../../connection/desktopLocal";
@@ -25,10 +25,12 @@ import { useProjects, useServerConfigs } from "../../state/entities";
 import { useEnvironments } from "../../state/environments";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useMachineWorkGrants, useStudioFleet } from "../../studio/fleet";
+import { useMachineNickname } from "../../studio/machineNickname";
 import { useHostLimitBlocks } from "../studio/shell/HostLimits";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { RenameMachineDialog } from "./RenameMachineDialog";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   buildMachineRows,
@@ -261,16 +263,19 @@ export function MachineRow({
   connectBothWays?: ReactNode;
 }) {
   const seen = row.seen.state === "this-machine" || row.seen.state === "connected";
+  const [renaming, setRenaming] = useState(false);
+  const nickname = useMachineNickname(row.environmentId, row.label);
+  const hostNames = [row.label === nickname ? null : row.label, row.machineName]
+    .filter((name): name is string => name !== null)
+    .join(" · ");
   return (
-    <li className="flex min-w-0 flex-col gap-2 px-3 py-2.5 sm:px-4" aria-label={row.label}>
+    <li className="flex min-w-0 flex-col gap-2 px-3 py-2.5 sm:px-4" aria-label={nickname}>
       <div className="flex min-w-0 items-center gap-3">
         <LaptopIcon aria-hidden className="size-4 shrink-0 text-foreground/70" />
         <div className="min-w-0 flex-1">
           <h3 className="truncate text-sm">
-            {row.label}
-            {row.machineName ? (
-              <span className="text-muted-foreground"> · {row.machineName}</span>
-            ) : null}
+            {nickname}
+            {hostNames ? <span className="text-muted-foreground"> · {hostNames}</span> : null}
           </h3>
           <p className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
             <span
@@ -280,6 +285,22 @@ export function MachineRow({
             <span className="truncate text-foreground/80">{row.seen.text}</span>
           </p>
         </div>
+        <Button
+          className="shrink-0"
+          size="icon-xs"
+          variant="ghost-muted"
+          aria-label={`Rename ${nickname}`}
+          title="Rename"
+          onClick={() => setRenaming(true)}
+        >
+          <PencilIcon className="size-3" />
+        </Button>
+        <RenameMachineDialog
+          environmentId={row.environmentId}
+          hostLabel={row.label}
+          open={renaming}
+          onOpenChange={setRenaming}
+        />
         {row.connect && row.fleetMachine ? (
           <Button
             className="shrink-0"

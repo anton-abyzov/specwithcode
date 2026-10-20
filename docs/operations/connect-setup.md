@@ -2,7 +2,8 @@
 
 Deployment and client configuration for SpecWithCode Connect. The [architecture note](../internals/studio-connect.md)
 explains the trust boundaries; the [relay README](../../infra/relay/README.md#deployment) owns relay
-provisioning instructions.
+provisioning instructions. To launch the hosted service on spec-weave.com, follow
+[connect-launch.md](./connect-launch.md).
 
 ## Public application configuration
 

@@ -1,5 +1,10 @@
-import { ProjectPlanError, WS_METHODS } from "@specweave-studio/contracts";
+import {
+  ProjectPlanError,
+  WS_METHODS,
+  WsProjectPlanLinkRpcGroup,
+} from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
+import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import * as ProjectPlanService from "./ProjectPlanService.ts";
 import { renderPlanMarkdown } from "./plan/renderPlanMarkdown.ts";
 
@@ -33,3 +38,16 @@ export const handlers = Effect.gen(function* () {
       }),
   };
 });
+
+/** The `projectLink.plan*` handlers (see `WsProjectPlanLinkRpcGroup`). */
+export const layerLinkRpcHandlers = WsProjectPlanLinkRpcGroup.middleware(
+  RpcInstrumentation,
+).toLayer(
+  Effect.gen(function* () {
+    const plans = yield* ProjectPlanService.ProjectPlanService;
+    return {
+      [WS_METHODS.projectLinkPlanExport]: plans.exportLinked,
+      [WS_METHODS.projectLinkPlanMerge]: plans.mergeLinked,
+    };
+  }),
+);

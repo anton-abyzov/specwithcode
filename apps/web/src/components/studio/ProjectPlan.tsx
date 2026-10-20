@@ -18,6 +18,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { projectWorkspace } from "../../studio/projectWorkspace";
 import { Dialog, DialogPopup, DialogTitle, DialogDescription } from "../ui/dialog";
 import ChatMarkdown from "../ChatMarkdown";
+import { PlanTaskClaim, usePlanClaimMachines } from "./PlanTaskClaim";
 import { randomUUID } from "../../lib/utils";
 
 const EMPTY: ProjectPlanDefinition = { spec: "", criteria: [], tasks: [] };
@@ -121,6 +122,7 @@ export function ProjectPlan({
   const report = useAtomCommand(projectWorkspace.planReport, { reportFailure: false });
   const verify = useAtomCommand(projectWorkspace.planVerify, { reportFailure: false });
   const exportPlan = useAtomCommand(projectWorkspace.planExport, { reportFailure: false });
+  const claimMachines = usePlanClaimMachines(snapshot);
   const disabled = busy || !canOperate;
   const input = { projectId: project.id, expectedRevision: snapshot?.revision ?? 0 };
   const envelope = { environmentId: project.environmentId };
@@ -508,23 +510,15 @@ export function ProjectPlan({
                           </div>
                           <p className="project-muted">
                             {task.criterionIds.join(" · ") || "No criteria linked"} ·{" "}
-                            {task.owner?.kind === "thread" ? (
-                              <button
-                                className="project-text-link"
-                                onClick={() => {
-                                  if (task.owner?.kind === "thread") {
-                                    onOpenThread(task.owner.threadId);
-                                    onClose();
-                                  }
-                                }}
-                              >
-                                Assigned thread: {task.owner.threadId}
-                              </button>
-                            ) : task.owner ? (
-                              "Assigned to you"
-                            ) : (
-                              "Unassigned"
-                            )}
+                            <PlanTaskClaim
+                              task={task}
+                              here={snapshot.environmentId ?? project.environmentId}
+                              machines={claimMachines}
+                              onOpenThread={(threadId) => {
+                                onOpenThread(threadId);
+                                onClose();
+                              }}
+                            />
                           </p>
                           {task.note && <p className="project-plan-note">{task.note}</p>}
                           <div className="project-actions">

@@ -80,10 +80,8 @@ private struct ReasoningRow: View {
         withAnimation(.snappy) { expanded.toggle() }
       } label: {
         HStack(spacing: WeaveSpacing.s2) {
-          Image(systemName: "brain")
-            .font(.system(size: 14, weight: .regular))
+          ThinkingGlyph(size: 14, pulsing: streaming)
             .frame(width: 20)
-            .accessibilityHidden(true)
           Text(streaming ? "Thinking…" : "Thought")
             .font(.weave(.callout, weight: .medium))
           Image(systemName: expanded ? "chevron.up" : "chevron.down")

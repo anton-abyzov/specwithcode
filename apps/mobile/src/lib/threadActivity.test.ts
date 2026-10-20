@@ -133,6 +133,36 @@ it("keeps approval prompts rather than presenting them as tool work", () => {
   ).not.toMatch(/Ran|changed/);
 });
 
+it("marks permission prompts and secret requests without a padlock", () => {
+  const feed = buildThreadFeed([
+    projected(
+      {
+        ...base("approve-permission", "2026-06-20T00:00:01.000Z", 1),
+        type: "approval_request",
+        requestId: RuntimeRequestId.make("request-permission"),
+        requestKind: "permission",
+        prompt: "Allow network access?",
+      } satisfies OrchestrationV2TurnItem,
+      0,
+    ),
+    projected(
+      {
+        ...base("secret", "2026-06-20T00:00:02.000Z", 2),
+        type: "secret_request",
+        secretStatus: "saved",
+        label: "GitHub token",
+        reason: "Used as GH_TOKEN.",
+      } as unknown as OrchestrationV2TurnItem,
+      1,
+    ),
+  ]);
+  const icons = feed.flatMap((entry) =>
+    entry.type === "activity-group" ? entry.activities.map((activity) => activity.icon) : [],
+  );
+
+  expect(icons).toEqual(["approval", "secret"]);
+});
+
 function base(id: string, updatedAt: string, ordinal: number) {
   const timestamp = DateTime.makeUnsafe(updatedAt);
   return {

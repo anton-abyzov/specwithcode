@@ -414,6 +414,21 @@ describe("shouldShowEnvironmentIndicator", () => {
     ).toBe(false);
   });
 
+  it("names this machine too once more than one machine is saved", () => {
+    expect(
+      shouldShowEnvironmentIndicator({
+        activeEnvironment: { isPrimary: true, fleet: true },
+        canPickEnvironment: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldShowEnvironmentIndicator({
+        activeEnvironment: { isPrimary: true, fleet: false },
+        canPickEnvironment: false,
+      }),
+    ).toBe(false);
+  });
+
   it("hides the indicator when the active environment is unknown", () => {
     expect(
       shouldShowEnvironmentIndicator({

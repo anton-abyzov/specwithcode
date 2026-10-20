@@ -33,6 +33,8 @@ nonisolated struct ThreadGroups: Equatable {
   var needsYou: [ThreadSummary] = []
   var working: [ThreadSummary] = []
   var idle: [ThreadSummary] = []
+  /// On a machine the phone can't reach: their state is not known.
+  var unknown: [ThreadSummary] = []
   var resolved: [ThreadSummary] = []
 
   init(_ threads: [ThreadSummary], query: String = "") {
@@ -43,6 +45,7 @@ nonisolated struct ThreadGroups: Equatable {
     }
     for thread in threads.sorted(by: order) where needle.isEmpty || thread.matches(needle) {
       if thread.isResolved { resolved.append(thread) }
+      else if thread.isUnknown { unknown.append(thread) }
       else {
         switch thread.activity {
         case .needsYou, .failed: needsYou.append(thread)
@@ -53,7 +56,7 @@ nonisolated struct ThreadGroups: Equatable {
     }
   }
 
-  var isEmpty: Bool { needsYou.isEmpty && working.isEmpty && idle.isEmpty && resolved.isEmpty }
+  var isEmpty: Bool { needsYou.isEmpty && working.isEmpty && idle.isEmpty && unknown.isEmpty && resolved.isEmpty }
 }
 
 /// Drawer search over projects and threads.
@@ -129,11 +132,16 @@ nonisolated enum LaunchRoute: String, Sendable, CaseIterable {
   case drawer
   /// The drawer with search open.
   case search
+  /// The first project's coordinator chat.
+  case coordinator
+  /// The first project's orchestrator on a machine other than its
+  /// coordinator's, as picked in the switcher.
+  case orchestrator
 }
 
 /// Options read from launch arguments:
-/// `-SWCFixture [default|empty|running]`, `-SWCAppearance light|dark|system`,
-/// `-SWCRoute overview|settings|projectSettings|machines|pair|thread|drawer|search`.
+/// `-SWCFixture [default|empty|running|fleet|m4-blip|minis-blip]`, `-SWCAppearance light|dark|system`,
+/// `-SWCRoute overview|settings|projectSettings|machines|pair|thread|drawer|search|coordinator|orchestrator`.
 nonisolated struct LaunchOptions: Equatable, Sendable {
   var fixture: FixtureScenario?
   var appearance: AppearancePreference?

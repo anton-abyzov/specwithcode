@@ -104,6 +104,8 @@ const state = vi.hoisted(() => ({
   /** Other machines' checkouts of the project. */
   otherCheckouts: [] as Array<{ id: string; environmentId: string; workspaceRoot: string }>,
   recoveryHosts: [] as string[],
+  /** Other machines whose servers this device cannot reach. */
+  offlineHosts: [] as string[],
   savedMachines: {} as Record<string, string>,
   project: {
     id: "project",
@@ -200,9 +202,14 @@ vi.mock("../../state/environments", () => ({
     ],
   }),
   usePrimaryEnvironmentId: () => (state.primaryRegistered ? "primary" : null),
-  useEnvironment: () => ({
-    label: "Test host",
-    connection: { phase: state.connected ? "connected" : "disconnected" },
+  useEnvironment: (environmentId: string) => ({
+    label: environmentId === "host" || environmentId === undefined ? "Test host" : environmentId,
+    connection: {
+      phase:
+        state.connected && !state.offlineHosts.includes(environmentId)
+          ? "connected"
+          : "disconnected",
+    },
     serverConfig: state.serverConfigPending
       ? undefined
       : {
@@ -694,6 +701,7 @@ beforeEach(() => {
   state.project.defaultModelSelection = { instanceId: "codex-native", model: "worker-model" };
   state.otherCheckouts = [];
   state.recoveryHosts = [];
+  state.offlineHosts = [];
   state.savedMachines = {};
   state.nativeError = null;
   sessionStorage.clear();

@@ -69,6 +69,11 @@ export const projectLink = {
     label: "project-link:supersede",
     tag: WS_METHODS.projectSupersede,
   }),
+  /** Runs this copy's own coordinator next to the others; nothing gives way. */
+  startCoordinator: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "project-link:start-coordinator",
+    tag: WS_METHODS.projectStartCoordinator,
+  }),
 };
 
 /** How long the coordinator's machine must be unreachable before a member may take over. */
@@ -387,19 +392,24 @@ export interface LinkedCopy {
   readonly unfinished: boolean;
 }
 
-/** Each copy of a shared project, in one sidebar group, and what it does. */
+/**
+ * Each copy of a shared project, in one sidebar group, and what it does. Every
+ * machine may run its own coordinator (0969), so `others` lists the copies that
+ * coordinate next to the newest one.
+ */
 export function linkedCopies(
   members: ReadonlyArray<EnvironmentProject>,
   coordinator: EnvironmentProject | undefined,
+  others: ReadonlyArray<EnvironmentProject> = [],
 ): LinkedCopy[] {
   const listed = new Set(
     (coordinator?.workspaceSettings?.logicalProject?.members ?? []).map(logicalProjectMemberKey),
   );
+  const coordinating = new Set(
+    [coordinator, ...others].flatMap((item) => (item ? [`${item.environmentId}:${item.id}`] : [])),
+  );
   return members.map((project) => {
-    const isCoordinator =
-      coordinator !== undefined &&
-      project.environmentId === coordinator.environmentId &&
-      project.id === coordinator.id;
+    const isCoordinator = coordinating.has(`${project.environmentId}:${project.id}`);
     return {
       project,
       role: isCoordinator

@@ -19,10 +19,13 @@ export function PullRequestsPane({
   pullRequests,
   onOpenThread,
   bar,
+  acrossMachines = false,
 }: {
   pullRequests: readonly ProjectPullRequest[];
   onOpenThread: (id: ThreadId) => void;
   bar: ProjectPaneBarProps;
+  /** The checkouts span machines: say so, and name each row's machines. */
+  acrossMachines?: boolean;
 }) {
   const openLink = useOpenLink(null);
   const now = nowFromMinute(useNowMinute());
@@ -35,6 +38,11 @@ export function PullRequestsPane({
         role="tabpanel"
         aria-labelledby="sws-pane-tab-prs"
       >
+        {acrossMachines ? (
+          <p className="sws-pane-group-heading" data-prs-across-machines="">
+            Pull requests from both machines
+          </p>
+        ) : null}
         {pullRequests.length === 0 ? (
           <p className="sws-empty sws-pane-empty" role="status">
             No pull requests yet. When a thread opens or links one, it shows here.
@@ -71,6 +79,9 @@ export function PullRequestsPane({
                             <strong>{pr.title}</strong>
                             <span className="sws-thread-meta">
                               {pr.repository} #{pr.number} · {presentation.label}
+                              {acrossMachines && pr.machines?.length
+                                ? ` · ${pr.machines.join(", ")}`
+                                : ""}
                             </span>
                           </span>
                           <time className="sws-thread-age" dateTime={pr.updatedAt}>

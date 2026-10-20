@@ -163,6 +163,24 @@ describe("project pull requests", () => {
     });
   });
 
+  it("names every machine whose threads link a pull request", () => {
+    const labels: Record<string, string> = { m4: "M4", minis: "Minis" };
+    const prs = collectProjectPullRequests(
+      [
+        thread({ id: "a", environmentId: "m4" as never, pullRequests: [link(7), link(8)] }),
+        thread({ id: "b", environmentId: "minis" as never, pullRequests: [link(7)] }),
+      ],
+      (environmentId) => labels[environmentId] ?? environmentId,
+    );
+    expect(Object.fromEntries(prs.map((pr) => [pr.number, pr.machines]))).toEqual({
+      7: ["M4", "Minis"],
+      8: ["M4"],
+    });
+    expect(collectProjectPullRequests([thread({ pullRequests: [link(7)] })])[0]).not.toHaveProperty(
+      "machines",
+    );
+  });
+
   it("groups drafts with open pull requests", () => {
     expect(pullRequestGroup("draft")).toBe("Open");
     expect(pullRequestGroup("merged")).toBe("Merged");

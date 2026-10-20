@@ -1,5 +1,7 @@
 import {
   OrchestratorMcpFailure,
+  resolveThreadExecution,
+  type EnvironmentId,
   type OrchestrationV2ThreadShell,
   type OrchestratorMcpThreadListInput,
   type OrchestratorMcpThreadListItem,
@@ -22,7 +24,54 @@ export function threadSettlement(
   };
 }
 
-function listItemFromShell(shell: OrchestrationV2ThreadShell): OrchestratorMcpThreadListItem {
+/**
+ * ownerMachineId, executionMachineId and executionState for the thread list
+ * API. With no serving environment id (a test without one), only what the
+ * thread itself recorded.
+ */
+export function threadExecutionFields(
+  summary: Parameters<typeof resolveThreadExecution>[0],
+  servingEnvironmentId: EnvironmentId | null,
+): Pick<
+  OrchestratorMcpThreadListItem,
+  | "ownerMachineId"
+  | "executionMachineId"
+  | "executionMachineLabel"
+  | "executionState"
+  | "executionLastSeenAt"
+> {
+  if (servingEnvironmentId === null)
+    return {
+      ...(summary.ownerMachineId === undefined ? {} : { ownerMachineId: summary.ownerMachineId }),
+      ...(summary.executionMachineId === undefined
+        ? {}
+        : { executionMachineId: summary.executionMachineId }),
+      ...(summary.executionMachineLabel === undefined
+        ? {}
+        : { executionMachineLabel: summary.executionMachineLabel }),
+      ...(summary.executionState === undefined ? {} : { executionState: summary.executionState }),
+      ...(summary.executionLastSeenAt === undefined
+        ? {}
+        : { executionLastSeenAt: summary.executionLastSeenAt }),
+    };
+  const resolved = resolveThreadExecution(summary, servingEnvironmentId);
+  return {
+    ownerMachineId: resolved.ownerMachineId,
+    executionMachineId: resolved.executionMachineId,
+    ...(resolved.executionMachineLabel === null
+      ? {}
+      : { executionMachineLabel: resolved.executionMachineLabel }),
+    executionState: resolved.executionState,
+    ...(resolved.executionState === "unknown"
+      ? { executionLastSeenAt: resolved.executionLastSeenAt }
+      : {}),
+  };
+}
+
+function listItemFromShell(
+  shell: OrchestrationV2ThreadShell,
+  servingEnvironmentId: EnvironmentId | null,
+): OrchestratorMcpThreadListItem {
   return {
     threadId: shell.id,
     projectId: shell.projectId,
@@ -43,6 +92,7 @@ function listItemFromShell(shell: OrchestrationV2ThreadShell): OrchestratorMcpTh
     relationshipToParent: shell.lineage.relationshipToParent,
     itemCount: shell.visibleItemCount,
     ...(shell.heldQueuedCount ? { heldQueuedMessages: shell.heldQueuedCount } : {}),
+    ...threadExecutionFields(shell, servingEnvironmentId),
     createdAt: DateTime.formatIso(shell.createdAt),
     updatedAt: DateTime.formatIso(shell.updatedAt),
   };
@@ -57,6 +107,8 @@ export const listProjectThreadInventory = (options: {
   readonly projectId: ProjectId;
   readonly currentThreadId: ThreadId | null;
   readonly input: OrchestratorMcpThreadListInput;
+  /** This machine; fills ownerMachineId and executionMachineId for threads that never moved. */
+  readonly servingEnvironmentId?: EnvironmentId | null;
 }) =>
   Effect.gen(function* () {
     const { threadManagement, projectId, currentThreadId, input } = options;
@@ -99,7 +151,7 @@ export const listProjectThreadInventory = (options: {
       projectId,
       currentThreadId,
       includeArchived: input.includeArchived === true,
-      threads: page.map(listItemFromShell),
+      threads: page.map((shell) => listItemFromShell(shell, options.servingEnvironmentId ?? null)),
       nextCursor: cursor + page.length < filtered.length ? cursor + page.length : null,
       total: filtered.length,
     } satisfies OrchestratorMcpThreadListResult;

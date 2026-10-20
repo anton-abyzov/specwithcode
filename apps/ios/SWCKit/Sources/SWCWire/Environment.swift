@@ -237,20 +237,28 @@ public struct ServerProviderModel: Codable, Hashable, Sendable {
   }
 }
 
-/// Items of the `subscribeServerConfig` stream. Only the snapshot is modelled.
+/// Items of the `subscribeServerConfig` stream. Only the snapshot and settings
+/// updates are modelled.
 public enum ServerConfigStreamItem: Decodable, Sendable, Hashable {
   case snapshot(ServerConfig)
+  /// The server's settings after any change, such as a machine rename.
+  case settingsUpdated(ServerSettings)
   /// Any other update, such as `usageLimitSourcesUpdated`.
   case other(type: String, raw: JSONValue)
 
-  enum CodingKeys: String, CodingKey { case type, config }
+  enum CodingKeys: String, CodingKey { case type, config, payload }
+  enum PayloadKeys: String, CodingKey { case settings }
 
   public init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
     let type = try c.decodeIfPresent(String.self, forKey: .type) ?? ""
-    if type == "snapshot" {
+    switch type {
+    case "snapshot":
       self = .snapshot(try c.decode(ServerConfig.self, forKey: .config))
-    } else {
+    case "settingsUpdated":
+      let payload = try c.nestedContainer(keyedBy: PayloadKeys.self, forKey: .payload)
+      self = .settingsUpdated(try payload.decode(ServerSettings.self, forKey: .settings))
+    default:
       self = .other(type: type, raw: try JSONValue(from: decoder))
     }
   }

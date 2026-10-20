@@ -282,15 +282,15 @@ const PROJECT_KEY_FILE =
   /^(?:id_(?:rsa|dsa|ecdsa|ed25519)|.+\.(?:pem|key|p12|pfx|p8|keystore|jks))$/i;
 
 /**
- * True when a file inside a project folder looks like a credential: an `.env`
- * file, a private key, or a file the home lists above refuse (`.npmrc`, `.netrc`,
+ * True when a file inside a project folder looks like a credential: any `.env*`
+ * file (`.env`, `.env.local`, `.envrc`, `.env-prod`), a private key, or a file the home lists above refuse (`.npmrc`, `.netrc`,
  * `.docker/config.json`, provider `auth.json` and the like) at any depth. A folder
  * copy leaves these out unless the person ticks them one by one.
  */
 export function isSecretLikeProjectPath(relativePath: string): boolean {
   const parts = relativePath.split("/");
   const name = parts.at(-1) ?? "";
-  if (name === ".env" || name.startsWith(".env.")) return true;
+  if (name.startsWith(".env")) return true;
   if (PROJECT_KEY_FILE.test(name) || PROVIDER_HOME_CREDENTIAL_FILES.has(name)) return true;
   const suffixMatches = (listed: string) =>
     relativePath === listed || relativePath.endsWith(`/${listed}`);

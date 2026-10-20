@@ -146,6 +146,13 @@ describe("copies of a shared project", () => {
     expect(copyRolesSummary([kept])).toBeNull();
   });
 
+  it("labels every machine that runs its own coordinator", () => {
+    expect(linkedCopies([kept, joined], kept, [joined]).map((item) => item.role)).toEqual([
+      "coordinator",
+      "coordinator",
+    ]);
+  });
+
   it("finds a joined copy the coordinator does not list yet", () => {
     const lonely = copy("m3", "kept", identity("logical:1", [member("m3", "kept")]), "active");
     expect(linkedCopies([lonely, joined], lonely)[1]).toMatchObject({

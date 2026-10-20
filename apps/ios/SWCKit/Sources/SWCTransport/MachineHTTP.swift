@@ -231,7 +231,7 @@ public struct MachineHTTP: Sendable {
     let reason: String?
   }
 
-  private func makeRequest(_ base: URL, _ path: String, timeout: Duration) throws -> URLRequest {
+  func makeRequest(_ base: URL, _ path: String, timeout: Duration) throws -> URLRequest {
     guard var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
       throw TransportError.invalidAddress(base.absoluteString)
     }
@@ -246,7 +246,7 @@ public struct MachineHTTP: Sendable {
 
   /// Runs the request under a hard deadline and maps failures. `authenticated`
   /// requests turn a 401 `invalid_credential` into `.needsRepair`.
-  private func perform(_ request: URLRequest, timeout: Duration, authenticated: Bool) async throws -> Data {
+  func perform(_ request: URLRequest, timeout: Duration, authenticated: Bool) async throws -> Data {
     let transport = self.transport
     let (data, response): (Data, HTTPURLResponse)
     do {
@@ -278,7 +278,7 @@ public struct MachineHTTP: Sendable {
     }
   }
 
-  private func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
+  func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
     do {
       return try JSONDecoder().decode(T.self, from: data)
     } catch {

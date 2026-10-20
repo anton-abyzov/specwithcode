@@ -445,6 +445,29 @@ if (rowsFixture)
       environmentId: "m1",
       runtime: { status: "running" },
     }),
+    // Lives here, runs on the Minis after a handoff.
+    shell("moved-worker", "Run the importer benchmark on Linux", {
+      createdBy: "agent",
+      runtime: { status: "running" },
+      source: {
+        ownerMachineId: "host",
+        executionMachineId: "minis",
+        executionMachineLabel: "Anton's Minis",
+        executionState: "running",
+      },
+    }),
+    // Its execution machine stopped answering.
+    shell("unknown-worker", "Rebuild the search index", {
+      createdBy: "agent",
+      runtime: { status: "running" },
+      source: {
+        ownerMachineId: "host",
+        executionMachineId: "minis",
+        executionMachineLabel: "Anton's Minis",
+        executionState: "unknown",
+        executionLastSeenAt: "2026-10-20T21:14:00Z",
+      },
+    }),
     shell("failed-row", "Migrate saved sessions", {
       createdBy: "agent",
       runtime: {
@@ -1637,8 +1660,6 @@ export const environmentThreadShells = fixtureAnything("environmentThreadShells"
 export const projectContentSearch = fixtureAnything("projectContentSearch");
 export const readProjects = fixtureAnything("readProjects");
 export const readThreadShell = fixtureAnything("readThreadShell");
-export const waitForThreadMoveOutcome = async () => null;
-export const readEnvironmentSupportsProjectMove = () => false;
 export const useThreadShell = (ref) =>
   useThreadShells().find(
     (shell) => shell.environmentId === ref?.environmentId && shell.id === ref?.threadId,

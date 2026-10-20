@@ -8,6 +8,7 @@ import {
   type RuntimeMode,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import * as RemoteWorkers from "../../../fleet/RemoteWorkers.ts";
 import * as WorkGrants from "../../../fleet/WorkGrants.ts";
@@ -31,9 +32,50 @@ export interface LaunchTargetInput {
 const invalid = (message: string) =>
   new OrchestratorMcpFailure({ code: "invalid_request", message });
 
+/** Why a launch runs where it does, reported to the agent as `placement`. */
+export type PlacementReason = "explicit" | "project_worker_machine" | "this_machine";
+
+export interface SkippedMachine {
+  readonly machine: string;
+  readonly reason: string;
+}
+
+export interface LaunchPlacement {
+  readonly target: RemoteWorkers.MachineTarget;
+  readonly reason: PlacementReason;
+  readonly skipped: ReadonlyArray<SkippedMachine>;
+}
+
 /**
- * Where a launch runs: the machine the agent named, else the machine the user
- * chose for this project's workers when its coordinator calls, else here.
+ * Failures that prove the other machine started nothing, so the next
+ * candidate may take the thread. A launch whose outcome is unknown is never
+ * retried elsewhere.
+ */
+const PLACEMENT_SKIPPABLE = new Set<OrchestratorMcpFailure["code"]>([
+  "unknown_machine",
+  "machine_unreachable",
+  "machine_identity_mismatch",
+  "machine_not_authorized",
+  "machine_unsupported",
+  "project_unavailable_on_machine",
+  "project_ambiguous_on_machine",
+  "model_unavailable_on_machine",
+  "outside_grant_scope",
+  "account_not_allowed",
+  "delegation_cycle",
+  "delegation_limit",
+]);
+
+export const placementSkippable = (error: unknown): error is OrchestratorMcpFailure =>
+  Schema.is(OrchestratorMcpFailure)(error) && PLACEMENT_SKIPPABLE.has(error.code);
+
+/**
+ * Where a launch runs, in order: the machine the agent named (refused, never
+ * substituted, when it cannot take the thread); else, for the project's
+ * coordinator, the worker machine the user chose for the project; else this
+ * machine, the coordinator's own. A worker machine that cannot take the
+ * thread is skipped with its reason, so one machine being out does not stop
+ * the project.
  */
 export const launchTarget = Effect.fn("mcp.launchTarget")(function* (
   context: Caller,
@@ -41,33 +83,48 @@ export const launchTarget = Effect.fn("mcp.launchTarget")(function* (
   project: Project | undefined,
 ) {
   const remote = yield* RemoteWorkers.RemoteWorkers;
-  if (input.machine !== undefined) return yield* remote.resolveMachine(input.machine);
+  if (input.machine !== undefined)
+    return {
+      target: yield* remote.resolveMachine(input.machine),
+      reason: "explicit",
+      skipped: [],
+    } satisfies LaunchPlacement;
+  const here = { target: { kind: "local" }, reason: "this_machine", skipped: [] } as const;
   const isCoordinator =
     context.caller !== undefined &&
     project !== undefined &&
     project.workspaceSettings?.coordinatorThreadId === context.caller.id;
   const configured = isCoordinator ? project.workspaceSettings?.workerMachine : undefined;
-  if (!configured) return { kind: "local" } as const;
+  if (!configured) return here satisfies LaunchPlacement;
   if (input.scratch === true)
     return yield* invalid(
       'This project\'s workers run on another machine, and scratch threads run here. Pass machine:"local" with scratch to start one here.',
     );
-  const resolved = yield* remote.resolveMachine(configured.machineId).pipe(
-    Effect.mapError(
-      (error) =>
-        new OrchestratorMcpFailure({
-          code: error.code,
-          message: `${error.message} This project's worker machine is not available; pass machine:"local" to run here.`,
-        }),
-    ),
-  );
+  const resolved = yield* remote.resolveMachine(configured.machineId).pipe(Effect.result);
+  if (resolved._tag === "Failure")
+    return {
+      ...here,
+      skipped: [{ machine: configured.machineId, reason: resolved.failure.message }],
+    } satisfies LaunchPlacement;
   // The setting pins the machine it was saved for; a fleet entry re-pointed elsewhere is not it.
-  if (resolved.kind === "remote" && resolved.machine.environmentId !== configured.environmentId)
-    return yield* new OrchestratorMcpFailure({
-      code: "machine_identity_mismatch",
-      message: `${resolved.machine.label} is now a different machine than the one chosen for this project's workers. The user can choose it again in project settings, or pass machine:"local" to run here.`,
-    });
-  return resolved;
+  if (
+    resolved.success.kind === "remote" &&
+    resolved.success.machine.environmentId !== configured.environmentId
+  )
+    return {
+      ...here,
+      skipped: [
+        {
+          machine: resolved.success.machine.label,
+          reason: `${resolved.success.machine.label} is now a different machine than the one chosen for this project's workers; the user can choose it again in project settings.`,
+        },
+      ],
+    } satisfies LaunchPlacement;
+  return {
+    target: resolved.success,
+    reason: resolved.success.kind === "remote" ? "project_worker_machine" : "this_machine",
+    skipped: [],
+  } satisfies LaunchPlacement;
 });
 
 /** Starts the thread on another machine and keeps following it for the caller. */

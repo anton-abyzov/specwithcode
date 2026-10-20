@@ -59,7 +59,7 @@ import {
 } from "./Api.ts";
 import * as RelayHttpApi from "./Api.ts";
 import * as RelayConfiguration from "../Config.ts";
-import * as RelayDb from "../db.ts";
+import * as AccountDeletion from "../account/AccountDeletion.ts";
 import * as EnvironmentCredentials from "../environments/EnvironmentCredentials.ts";
 import * as HeldHooks from "../hooks/HeldHooks.ts";
 import * as HookInbox from "../hooks/HookInbox.ts";
@@ -125,8 +125,10 @@ describe("device listing compatibility", () => {
           Layer.mock(EnvironmentCredentials.EnvironmentCredentials, {}),
           Layer.mock(EnvironmentLinks.EnvironmentLinks, {}),
           Layer.mock(ManagedEndpointProvider.ManagedEndpointProvider, {}),
-          Layer.mock(RelayDb.RelayTransactions, {}),
           Layer.mock(HookInbox.HookInbox, {}),
+          Layer.mock(AccountDeletion.AccountRecords, {}),
+          Layer.mock(AccountDeletion.ClerkUsers, {}),
+          NodeCryptoLayer.layer,
         ),
       ),
       Layer.provide(
@@ -311,10 +313,8 @@ describe("relay environment authentication", () => {
 });
 
 function layerRelayUnlinkTest(input?: {
-  readonly withTransaction?: RelayDb.RelayTransactions["Service"]["withTransaction"];
   readonly getForUser?: EnvironmentLinks.EnvironmentLinks["Service"]["getForUser"];
   readonly revokeForUser?: EnvironmentLinks.EnvironmentLinks["Service"]["revokeForUser"];
-  readonly revokeCredential?: EnvironmentCredentials.EnvironmentCredentials["Service"]["revokeForEnvironmentPublicKey"];
   readonly prepareDeprovision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["prepareDeprovision"];
   readonly deprovision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["deprovision"];
   readonly provision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["provision"];
@@ -326,12 +326,6 @@ function layerRelayUnlinkTest(input?: {
     Layer.mock(HookInbox.HookInbox, {
       clear: input?.clearInbox ?? (() => Effect.void),
     }),
-    Layer.succeed(
-      RelayDb.RelayTransactions,
-      RelayDb.RelayTransactions.of({
-        withTransaction: input?.withTransaction ?? ((effect) => effect),
-      }),
-    ),
     Layer.succeed(
       EnvironmentLinks.EnvironmentLinks,
       EnvironmentLinks.EnvironmentLinks.of({
@@ -349,7 +343,7 @@ function layerRelayUnlinkTest(input?: {
       EnvironmentCredentials.EnvironmentCredentials.of({
         create: () => Effect.die("unused create"),
         authenticate: () => Effect.die("unused authenticate"),
-        revokeForEnvironmentPublicKey: input?.revokeCredential ?? (() => Effect.succeed(false)),
+        revokeForEnvironmentPublicKey: () => Effect.die("unused revokeForEnvironmentPublicKey"),
       }),
     ),
     Layer.succeed(
@@ -875,7 +869,7 @@ describe("relay managed tunnel recovery", () => {
 });
 
 describe("relay environment unlink", () => {
-  it.effect("revokes the link and its credentials in one database transaction", () => {
+  it.effect("revokes the link and its credentials in one database batch", () => {
     const calls: Array<string> = [];
     return Effect.gen(function* () {
       expect(
@@ -885,22 +879,13 @@ describe("relay environment unlink", () => {
           environmentPublicKey: "public-key",
         }),
       ).toBe(true);
-      expect(calls).toEqual(["transaction", "link", "credential"]);
+      expect(calls).toEqual(["link:public-key"]);
     }).pipe(
       Effect.provide(
         layerRelayUnlinkTest({
-          withTransaction: (effect) => {
-            calls.push("transaction");
-            return effect;
-          },
-          revokeForUser: () =>
+          revokeForUser: (request) =>
             Effect.sync(() => {
-              calls.push("link");
-              return true;
-            }),
-          revokeCredential: () =>
-            Effect.sync(() => {
-              calls.push("credential");
+              calls.push(`link:${request.environmentPublicKey}`);
               return true;
             }),
         }),
@@ -982,31 +967,20 @@ describe("relay environment unlink", () => {
       expect(calls).toEqual([
         "prepare",
         "lookup",
-        "transaction",
-        "link",
-        "credential",
+        `link:${linkedEnvironmentRecord.environmentPublicKey}`,
         "deprovision",
       ]);
     }).pipe(
       Effect.provide(
         layerRelayUnlinkTest({
-          withTransaction: (effect) => {
-            calls.push("transaction");
-            return effect;
-          },
           getForUser: () =>
             Effect.sync(() => {
               calls.push("lookup");
               return linkedEnvironmentRecord;
             }),
-          revokeForUser: () =>
+          revokeForUser: (request) =>
             Effect.sync(() => {
-              calls.push("link");
-              return true;
-            }),
-          revokeCredential: () =>
-            Effect.sync(() => {
-              calls.push("credential");
+              calls.push(`link:${request.environmentPublicKey}`);
               return true;
             }),
           prepareDeprovision: () =>
@@ -1027,7 +1001,8 @@ describe("relay environment unlink", () => {
 
   it.effect("does not deprovision when database revocation fails", () => {
     const calls: Array<string> = [];
-    const failure = new EnvironmentCredentials.EnvironmentCredentialRevokePersistenceError({
+    const failure = new EnvironmentLinks.EnvironmentLinkRevokePersistenceError({
+      userId: "user-1",
       environmentId: "environment-1",
       cause: "database unavailable",
     });
@@ -1041,23 +1016,14 @@ describe("relay environment unlink", () => {
           }),
         ),
       ).toBe(failure);
-      expect(calls).toEqual(["prepare", "transaction", "link", "credential"]);
+      expect(calls).toEqual(["prepare", "link"]);
     }).pipe(
       Effect.provide(
         layerRelayUnlinkTest({
-          withTransaction: (effect) => {
-            calls.push("transaction");
-            return effect;
-          },
           getForUser: () => Effect.succeed(linkedEnvironmentRecord),
           revokeForUser: () =>
             Effect.sync(() => {
               calls.push("link");
-              return true;
-            }),
-          revokeCredential: () =>
-            Effect.sync(() => {
-              calls.push("credential");
             }).pipe(Effect.andThen(Effect.fail(failure))),
           prepareDeprovision: () =>
             Effect.sync(() => {

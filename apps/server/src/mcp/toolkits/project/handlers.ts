@@ -34,7 +34,7 @@ import {
   recordLaunchOrigin,
   workGrantOf,
 } from "../../workGrantAccess.ts";
-import { launchRemote, launchTarget } from "./remoteLaunch.ts";
+import { launchRemote, launchTarget, placementSkippable } from "./remoteLaunch.ts";
 import { routeTargets, routeToProject } from "./route.ts";
 import { ProjectToolkit } from "./tools.ts";
 
@@ -164,8 +164,10 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 const found = yield* projects.getById(projectId).pipe(Effect.mapError(unavailable));
                 return Option.getOrUndefined(found);
               });
-        const target = yield* launchTarget(context, input, targetProject);
-        if (target.kind === "remote") {
+        const placed = yield* launchTarget(context, input, targetProject);
+        let skipped = placed.skipped;
+        if (placed.target.kind === "remote") {
+          const machine = placed.target;
           if (input.effort !== undefined)
             return yield* new OrchestratorMcpFailure({
               code: "invalid_request",
@@ -174,14 +176,28 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             });
           const launched = yield* launchRemote({
             context,
-            machine: target,
+            machine,
             params: input,
             project: targetProject,
             commandId,
             runtimeMode,
             interactionMode,
-          });
-          return launched;
+          }).pipe(
+            Effect.map((result) => ({ ok: true as const, result })),
+            Effect.catchIf(
+              (error) => placed.reason !== "explicit" && placementSkippable(error),
+              (error) => Effect.succeed({ ok: false as const, error }),
+            ),
+          );
+          if (launched.ok)
+            return {
+              ...launched.result,
+              placement: { machine: machine.machine.label, reason: placed.reason, skipped },
+            };
+          skipped = [
+            ...skipped,
+            { machine: machine.machine.label, reason: launched.error.message },
+          ];
         }
         // Work another machine started here stays inside the grant this machine gave it.
         const work = yield* admitLaunch(context, input.delegation);
@@ -356,6 +372,11 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           status: run?.status ?? null,
           // Tells a coordinator on another machine that this one applied its grant's checks.
           delegationChecked: true,
+          placement: {
+            machine: "this machine",
+            reason: placed.reason === "explicit" ? "explicit" : "this_machine",
+            skipped,
+          },
         };
       }),
   ),

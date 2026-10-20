@@ -277,6 +277,58 @@ describe("RemoteWorkers", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("carries each provider's shared usage and grant, and drops malformed usage", () => {
+    const usage = {
+      accountFingerprint: `sha256:${"a".repeat(64)}`,
+      usedPercent: 40,
+      resetsAt: "2026-10-20T18:00:00.000Z",
+      signedIn: true,
+      observedAt: "2026-10-20T13:00:00.000Z",
+      token: "never-shared",
+    };
+    const { layer } = setup({
+      orchestrator_capabilities: () => ({
+        result: {
+          ...capabilities,
+          providers: [
+            { ...capabilities.providers[0], usage, allowedByGrant: true },
+            {
+              ...capabilities.providers[0],
+              providerInstanceId: "claude",
+              driverKind: "claudeAgent",
+              usage: { accountFingerprint: "acct@example.com", usedPercent: 140, signedIn: true },
+              allowedByGrant: false,
+            },
+            {
+              ...capabilities.providers[0],
+              providerInstanceId: "grok",
+              driverKind: "grok",
+              usage: "full",
+            },
+          ],
+        },
+      }),
+    });
+    return Effect.gen(function* () {
+      yield* allow();
+      const workers = yield* RemoteWorkers.RemoteWorkers;
+      const listed = yield* workers.listMachines({
+        projectId: ProjectId.make("local-project"),
+        probe: true,
+      });
+      const [codex, claude, grok] = listed.machines[0]?.providers ?? [];
+      const { token: _token, ...shared } = usage;
+      expect(codex).toMatchObject({ usage: shared, allowedByGrant: true });
+      expect(codex?.usage).not.toHaveProperty("token");
+      expect(claude).toMatchObject({
+        allowedByGrant: false,
+        usage: { accountFingerprint: null, usedPercent: null, resetsAt: null, observedAt: null },
+      });
+      expect(grok).not.toHaveProperty("usage");
+      expect(grok).not.toHaveProperty("allowedByGrant");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("resolves machines by id, label, environment and thread link", () => {
     const { layer } = setup();
     return Effect.gen(function* () {

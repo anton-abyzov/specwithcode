@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import type { EnvironmentId } from "../../../../../packages/contracts/src/baseSchemas.ts";
 import {
   PROJECT_PLAN_BYTES,
   PROJECT_PLAN_SPEC_BYTES,
@@ -24,8 +25,26 @@ export const emptyDocument = (): PlanDocument => ({
   authority: { kind: "native" },
   native: emptyNative(),
 });
-export const sameOwner = (a: ProjectPlanActor | null, b: ProjectPlanActor): boolean =>
-  a?.kind === b.kind && (a.kind === "user" || (b.kind === "thread" && a.threadId === b.threadId));
+/** A thread owner without a machine belongs to the machine that stores the plan (`home`). */
+export const ownerKey = (actor: ProjectPlanActor, home: EnvironmentId): string =>
+  actor.kind === "user" ? "user" : `thread:${actor.environmentId ?? home}:${actor.threadId}`;
+export const sameOwner = (
+  a: ProjectPlanActor | null,
+  b: ProjectPlanActor,
+  home: EnvironmentId,
+): boolean => a !== null && ownerKey(a, home) === ownerKey(b, home);
+export const withOwnerMachine = (actor: ProjectPlanActor, home: EnvironmentId): ProjectPlanActor =>
+  actor.kind === "thread" && actor.environmentId === undefined
+    ? { ...actor, environmentId: home }
+    : actor;
+/** The machine of a thread owner on another machine than `home`, else null. */
+export const foreignMachine = (
+  actor: ProjectPlanActor | null,
+  home: EnvironmentId,
+): EnvironmentId | null =>
+  actor?.kind === "thread" && actor.environmentId !== undefined && actor.environmentId !== home
+    ? actor.environmentId
+    : null;
 export const definitionOf = (task: ProjectPlanTaskDefinition): ProjectPlanTaskDefinition => ({
   id: task.id,
   title: task.title,

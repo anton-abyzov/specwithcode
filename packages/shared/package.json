@@ -35,6 +35,10 @@
       "types": "./src/projectFavicon.ts",
       "import": "./src/projectFavicon.ts"
     },
+    "./projectIconLegacy": {
+      "types": "./src/projectIconLegacy.ts",
+      "import": "./src/projectIconLegacy.ts"
+    },
     "./effortLevel": {
       "types": "./src/effortLevel.ts",
       "import": "./src/effortLevel.ts"
@@ -139,6 +143,10 @@
       "types": "./src/serverSettings.ts",
       "import": "./src/serverSettings.ts"
     },
+    "./machineNicknames": {
+      "types": "./src/machineNicknames.ts",
+      "import": "./src/machineNicknames.ts"
+    },
     "./backgroundActivitySettings": {
       "types": "./src/backgroundActivitySettings.ts",
       "import": "./src/backgroundActivitySettings.ts"
@@ -178,6 +186,10 @@
     "./providerFallback": {
       "types": "./src/providerFallback.ts",
       "import": "./src/providerFallback.ts"
+    },
+    "./machineFallback": {
+      "types": "./src/machineFallback.ts",
+      "import": "./src/machineFallback.ts"
     },
     "./studioProjectFile": {
       "types": "./src/studioProjectFile.ts",

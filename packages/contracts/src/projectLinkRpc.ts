@@ -17,6 +17,8 @@ import {
   ProjectLinkPreviewInput,
   ProjectLinkReplicateInput,
   ProjectLinkReplicateResult,
+  ProjectStartCoordinatorInput,
+  ProjectStartCoordinatorResult,
   ProjectSupersedeInput,
   ProjectSupersedeResult,
   ProjectTakeoverInput,
@@ -36,6 +38,7 @@ export const PROJECT_LINK_RPC_METHODS = {
   projectLinkReplicate: "projectLink.replicate",
   projectTakeover: "projectLink.takeover",
   projectSupersede: "projectLink.supersede",
+  projectStartCoordinator: "projectLink.startCoordinator",
 } as const;
 const error = Schema.Union([ProjectLinkError, EnvironmentAuthorizationError]);
 export const projectLinkRpcs = [
@@ -87,6 +90,11 @@ export const projectLinkRpcs = [
   Rpc.make(PROJECT_LINK_RPC_METHODS.projectSupersede, {
     payload: ProjectSupersedeInput,
     success: ProjectSupersedeResult,
+    error,
+  }),
+  Rpc.make(PROJECT_LINK_RPC_METHODS.projectStartCoordinator, {
+    payload: ProjectStartCoordinatorInput,
+    success: ProjectStartCoordinatorResult,
     error,
   }),
 ] as const;

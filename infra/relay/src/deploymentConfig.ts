@@ -68,6 +68,37 @@ export function relayResourceNameForStage(name: string, stage: string): string {
   return `${name}-${relayStageSlug(stage)}`;
 }
 
+export class RelayTunnelBaseDomainOutsideZoneError extends Schema.TaggedError<RelayTunnelBaseDomainOutsideZoneError>()(
+  "RelayTunnelBaseDomainOutsideZoneError",
+  {
+    baseDomain: Schema.String,
+    zoneName: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `RELAY_TUNNEL_BASE_DOMAIN '${this.baseDomain}' must be the tunnel zone '${this.zoneName}' or a subdomain of it.`;
+  }
+}
+
+/**
+ * Managed endpoints live directly below the tunnel zone unless an override
+ * names a subdomain inside it, such as tunnels.example.com in example.com.
+ */
+export function managedEndpointBaseDomainForZone(
+  zoneName: string,
+  override: string | undefined,
+): string {
+  const zone = normalizeZoneName(zoneName);
+  const baseDomain = override ? normalizeZoneName(override) : "";
+  if (!baseDomain) {
+    return zone;
+  }
+  if (!isDnsName(baseDomain) || (baseDomain !== zone && !baseDomain.endsWith(`.${zone}`))) {
+    throw new RelayTunnelBaseDomainOutsideZoneError({ baseDomain, zoneName: zone });
+  }
+  return baseDomain;
+}
+
 export function relayOwnsManagedEndpointZone(stage: string): boolean {
   return stage === MANAGED_ENDPOINT_ZONE_OWNER_STAGE;
 }

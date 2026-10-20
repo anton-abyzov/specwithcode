@@ -1,4 +1,5 @@
 import type { ProjectIconColor, ProjectIconOverride } from "@specweave-studio/contracts";
+import { projectEmojiForDisplay } from "@specweave-studio/shared/projectIconLegacy";
 
 export type ProjectIconGlyph =
   | { readonly kind: "emoji"; readonly emoji: string }
@@ -42,7 +43,7 @@ export function resolveProjectIconGlyph(
 ): ProjectIconGlyph | null {
   switch (projectIcon?.kind) {
     case "emoji":
-      return { kind: "emoji", emoji: projectIcon.emoji };
+      return { kind: "emoji", emoji: projectEmojiForDisplay(projectIcon.emoji) };
     case "monogram":
       return { kind: "monogram", text: projectIcon.text, color: projectIcon.color };
     case "lucide":

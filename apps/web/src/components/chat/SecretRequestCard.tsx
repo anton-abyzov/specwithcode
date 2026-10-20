@@ -11,13 +11,14 @@ import {
   squashAtomCommandFailure,
 } from "@specweave-studio/client-runtime/state/runtime";
 import type { EnvironmentId, OrchestrationV2ProjectedTurnItem } from "@specweave-studio/contracts";
-import { CheckIcon, LockIcon, MinusIcon, ShieldCheckIcon } from "lucide-react";
+import { CheckIcon, MinusIcon, ShieldCheckIcon } from "lucide-react";
 import { useId, useRef, useState, type FormEvent } from "react";
 
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { MaskedFieldGlyph } from "./MaskedFieldGlyph";
 import { WorkLogRow } from "./WorkLog";
 
 /**
@@ -35,7 +36,7 @@ export function SecretRequestCard(props: {
   if (display.kind === "answered" || display.kind === "pending-elsewhere") {
     const Icon =
       display.kind === "pending-elsewhere"
-        ? LockIcon
+        ? MaskedFieldGlyph
         : display.outcome === "saved"
           ? CheckIcon
           : MinusIcon;
@@ -118,7 +119,11 @@ function PendingSecretRequestForm(props: {
       }}
     >
       <div className="flex min-w-0 flex-col gap-1">
-        <label htmlFor={inputId} className="text-sm font-medium text-foreground">
+        <label
+          htmlFor={inputId}
+          className="flex min-w-0 items-center gap-1.5 text-sm font-medium text-foreground"
+        >
+          <MaskedFieldGlyph className="size-4 text-muted-foreground" />
           {item.label}
         </label>
         {item.reason.trim() ? <p className="text-sm text-muted-foreground">{item.reason}</p> : null}

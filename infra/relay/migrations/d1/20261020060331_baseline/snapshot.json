@@ -1,0 +1,1194 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "id": "befc4791-9a0e-4d2d-ba9e-8381eb267254",
+  "prevIds": ["00000000-0000-0000-0000-000000000000"],
+  "ddl": [
+    {
+      "name": "relay_agent_activity_rows",
+      "entityType": "tables"
+    },
+    {
+      "name": "relay_delivery_attempts",
+      "entityType": "tables"
+    },
+    {
+      "name": "relay_dpop_proofs",
+      "entityType": "tables"
+    },
+    {
+      "name": "relay_environment_credentials",
+      "entityType": "tables"
+    },
+    {
+      "name": "relay_environment_links",
+      "entityType": "tables"
+    },
+    {
+      "name": "relay_live_activities",
+      "entityType": "tables"
+    },
+    {
+      "name": "relay_managed_endpoint_allocations",
+      "entityType": "tables"
+    },
+    {
+      "name": "relay_managed_tunnel_limits",
+      "entityType": "tables"
+    },
+    {
+      "name": "relay_mobile_devices",
+      "entityType": "tables"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "environment_id",
+      "entityType": "columns",
+      "table": "relay_agent_activity_rows"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "environment_public_key",
+      "entityType": "columns",
+      "table": "relay_agent_activity_rows"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "thread_id",
+      "entityType": "columns",
+      "table": "relay_agent_activity_rows"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "state_json",
+      "entityType": "columns",
+      "table": "relay_agent_activity_rows"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "relay_agent_activity_rows"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "relay_agent_activity_rows"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "relay_delivery_attempts"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "relay_delivery_attempts"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "user_id",
+      "entityType": "columns",
+      "table": "relay_delivery_attempts"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "environment_id",
+      "entityType": "columns",
+      "table": "relay_delivery_attempts"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "thread_id",
+      "entityType": "columns",
+      "table": "relay_delivery_attempts"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "device_id",
+      "entityType": "columns",
+      "table": "relay_delivery_attempts"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "kind",
+      "entityType": "columns",
+      "table": "relay_delivery_attempts"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "source_job_id",
+      "entityType": "columns",
+      "table": "relay_delivery_attempts"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "token_suffix",
+      "entityType": "columns",
+      "table": "relay_delivery_attempts"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "apns_status",
+      "entityType": "columns",
+      "table": "relay_delivery_attempts"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "apns_reason",
+      "entityType": "columns",
+      "table": "relay_delivery_attempts"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "apns_id",
+      "entityType": "columns",
+      "table": "relay_delivery_attempts"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "transport_error",
+      "entityType": "columns",
+      "table": "relay_delivery_attempts"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "thumbprint",
+      "entityType": "columns",
+      "table": "relay_dpop_proofs"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "jti",
+      "entityType": "columns",
+      "table": "relay_dpop_proofs"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "iat",
+      "entityType": "columns",
+      "table": "relay_dpop_proofs"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "expires_at",
+      "entityType": "columns",
+      "table": "relay_dpop_proofs"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "relay_dpop_proofs"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "credential_id",
+      "entityType": "columns",
+      "table": "relay_environment_credentials"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "environment_id",
+      "entityType": "columns",
+      "table": "relay_environment_credentials"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "environment_public_key",
+      "entityType": "columns",
+      "table": "relay_environment_credentials"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "credential_hash",
+      "entityType": "columns",
+      "table": "relay_environment_credentials"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "revoked_at",
+      "entityType": "columns",
+      "table": "relay_environment_credentials"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "relay_environment_credentials"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "relay_environment_credentials"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "user_id",
+      "entityType": "columns",
+      "table": "relay_environment_links"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "environment_id",
+      "entityType": "columns",
+      "table": "relay_environment_links"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'Studio Environment'",
+      "generated": null,
+      "name": "environment_label",
+      "entityType": "columns",
+      "table": "relay_environment_links"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "environment_public_key",
+      "entityType": "columns",
+      "table": "relay_environment_links"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "endpoint_http_base_url",
+      "entityType": "columns",
+      "table": "relay_environment_links"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "endpoint_ws_base_url",
+      "entityType": "columns",
+      "table": "relay_environment_links"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "endpoint_provider_kind",
+      "entityType": "columns",
+      "table": "relay_environment_links"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "true",
+      "generated": null,
+      "name": "notifications_enabled",
+      "entityType": "columns",
+      "table": "relay_environment_links"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "true",
+      "generated": null,
+      "name": "live_activities_enabled",
+      "entityType": "columns",
+      "table": "relay_environment_links"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "false",
+      "generated": null,
+      "name": "managed_tunnels_enabled",
+      "entityType": "columns",
+      "table": "relay_environment_links"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "false",
+      "generated": null,
+      "name": "hold_webhooks_while_offline",
+      "entityType": "columns",
+      "table": "relay_environment_links"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_by_device_id",
+      "entityType": "columns",
+      "table": "relay_environment_links"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "revoked_at",
+      "entityType": "columns",
+      "table": "relay_environment_links"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "relay_environment_links"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "relay_environment_links"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "user_id",
+      "entityType": "columns",
+      "table": "relay_live_activities"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "device_id",
+      "entityType": "columns",
+      "table": "relay_live_activities"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "activity_push_token",
+      "entityType": "columns",
+      "table": "relay_live_activities"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "remote_start_queued_at",
+      "entityType": "columns",
+      "table": "relay_live_activities"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "remote_started_at",
+      "entityType": "columns",
+      "table": "relay_live_activities"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "ended_at",
+      "entityType": "columns",
+      "table": "relay_live_activities"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "last_aggregate_json",
+      "entityType": "columns",
+      "table": "relay_live_activities"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "last_live_activity_delivery_at",
+      "entityType": "columns",
+      "table": "relay_live_activities"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "relay_live_activities"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "relay_live_activities"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "user_id",
+      "entityType": "columns",
+      "table": "relay_managed_endpoint_allocations"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "environment_id",
+      "entityType": "columns",
+      "table": "relay_managed_endpoint_allocations"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "hostname",
+      "entityType": "columns",
+      "table": "relay_managed_endpoint_allocations"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "tunnel_id",
+      "entityType": "columns",
+      "table": "relay_managed_endpoint_allocations"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "tunnel_name",
+      "entityType": "columns",
+      "table": "relay_managed_endpoint_allocations"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "dns_record_id",
+      "entityType": "columns",
+      "table": "relay_managed_endpoint_allocations"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "ready_at",
+      "entityType": "columns",
+      "table": "relay_managed_endpoint_allocations"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "recovery_enabled_at",
+      "entityType": "columns",
+      "table": "relay_managed_endpoint_allocations"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "recovery_environment_public_key",
+      "entityType": "columns",
+      "table": "relay_managed_endpoint_allocations"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "tunnel_released_at",
+      "entityType": "columns",
+      "table": "relay_managed_endpoint_allocations"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "origin",
+      "entityType": "columns",
+      "table": "relay_managed_endpoint_allocations"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "generation",
+      "entityType": "columns",
+      "table": "relay_managed_endpoint_allocations"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "relay_managed_endpoint_allocations"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "relay_managed_endpoint_allocations"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "user_id",
+      "entityType": "columns",
+      "table": "relay_managed_tunnel_limits"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "max_tunnels",
+      "entityType": "columns",
+      "table": "relay_managed_tunnel_limits"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "relay_managed_tunnel_limits"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "relay_managed_tunnel_limits"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "user_id",
+      "entityType": "columns",
+      "table": "relay_mobile_devices"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "device_id",
+      "entityType": "columns",
+      "table": "relay_mobile_devices"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'iOS device'",
+      "generated": null,
+      "name": "label",
+      "entityType": "columns",
+      "table": "relay_mobile_devices"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "platform",
+      "entityType": "columns",
+      "table": "relay_mobile_devices"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "ios_major_version",
+      "entityType": "columns",
+      "table": "relay_mobile_devices"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "android_api_level",
+      "entityType": "columns",
+      "table": "relay_mobile_devices"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "app_version",
+      "entityType": "columns",
+      "table": "relay_mobile_devices"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "bundle_id",
+      "entityType": "columns",
+      "table": "relay_mobile_devices"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "aps_environment",
+      "entityType": "columns",
+      "table": "relay_mobile_devices"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "push_token",
+      "entityType": "columns",
+      "table": "relay_mobile_devices"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "push_to_start_token",
+      "entityType": "columns",
+      "table": "relay_mobile_devices"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "preferences_json",
+      "entityType": "columns",
+      "table": "relay_mobile_devices"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "relay_mobile_devices"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "relay_mobile_devices"
+    },
+    {
+      "columns": ["environment_id", "environment_public_key", "thread_id"],
+      "nameExplicit": false,
+      "name": "relay_agent_activity_rows_pk",
+      "entityType": "pks",
+      "table": "relay_agent_activity_rows"
+    },
+    {
+      "columns": ["thumbprint", "jti"],
+      "nameExplicit": false,
+      "name": "relay_dpop_proofs_pk",
+      "entityType": "pks",
+      "table": "relay_dpop_proofs"
+    },
+    {
+      "columns": ["user_id", "environment_id"],
+      "nameExplicit": false,
+      "name": "relay_environment_links_pk",
+      "entityType": "pks",
+      "table": "relay_environment_links"
+    },
+    {
+      "columns": ["user_id", "device_id"],
+      "nameExplicit": false,
+      "name": "relay_live_activities_pk",
+      "entityType": "pks",
+      "table": "relay_live_activities"
+    },
+    {
+      "columns": ["user_id", "environment_id"],
+      "nameExplicit": false,
+      "name": "relay_managed_endpoint_allocations_pk",
+      "entityType": "pks",
+      "table": "relay_managed_endpoint_allocations"
+    },
+    {
+      "columns": ["user_id", "device_id"],
+      "nameExplicit": false,
+      "name": "relay_mobile_devices_pk",
+      "entityType": "pks",
+      "table": "relay_mobile_devices"
+    },
+    {
+      "columns": ["id"],
+      "nameExplicit": false,
+      "name": "relay_delivery_attempts_pk",
+      "table": "relay_delivery_attempts",
+      "entityType": "pks"
+    },
+    {
+      "columns": ["credential_id"],
+      "nameExplicit": false,
+      "name": "relay_environment_credentials_pk",
+      "table": "relay_environment_credentials",
+      "entityType": "pks"
+    },
+    {
+      "columns": ["user_id"],
+      "nameExplicit": false,
+      "name": "relay_managed_tunnel_limits_pk",
+      "table": "relay_managed_tunnel_limits",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        {
+          "value": "updated_at",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "idx_relay_agent_activity_rows_updated",
+      "entityType": "indexes",
+      "table": "relay_agent_activity_rows"
+    },
+    {
+      "columns": [
+        {
+          "value": "environment_id",
+          "isExpression": false
+        },
+        {
+          "value": "thread_id",
+          "isExpression": false
+        },
+        {
+          "value": "created_at",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "idx_relay_delivery_attempts_environment",
+      "entityType": "indexes",
+      "table": "relay_delivery_attempts"
+    },
+    {
+      "columns": [
+        {
+          "value": "source_job_id",
+          "isExpression": false
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "origin": "manual",
+      "name": "idx_relay_delivery_attempts_source_job",
+      "entityType": "indexes",
+      "table": "relay_delivery_attempts"
+    },
+    {
+      "columns": [
+        {
+          "value": "expires_at",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "idx_relay_dpop_proofs_expires_at",
+      "entityType": "indexes",
+      "table": "relay_dpop_proofs"
+    },
+    {
+      "columns": [
+        {
+          "value": "credential_hash",
+          "isExpression": false
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "origin": "manual",
+      "name": "idx_relay_environment_credentials_hash",
+      "entityType": "indexes",
+      "table": "relay_environment_credentials"
+    },
+    {
+      "columns": [
+        {
+          "value": "environment_id",
+          "isExpression": false
+        },
+        {
+          "value": "revoked_at",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "idx_relay_environment_credentials_environment",
+      "entityType": "indexes",
+      "table": "relay_environment_credentials"
+    },
+    {
+      "columns": [
+        {
+          "value": "environment_id",
+          "isExpression": false
+        },
+        {
+          "value": "environment_public_key",
+          "isExpression": false
+        },
+        {
+          "value": "revoked_at",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "idx_relay_environment_credentials_environment_key",
+      "entityType": "indexes",
+      "table": "relay_environment_credentials"
+    },
+    {
+      "columns": [
+        {
+          "value": "environment_id",
+          "isExpression": false
+        },
+        {
+          "value": "revoked_at",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "idx_relay_environment_links_environment",
+      "entityType": "indexes",
+      "table": "relay_environment_links"
+    },
+    {
+      "columns": [
+        {
+          "value": "activity_push_token",
+          "isExpression": false
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "origin": "manual",
+      "name": "idx_relay_live_activities_activity_push_token",
+      "entityType": "indexes",
+      "table": "relay_live_activities"
+    },
+    {
+      "columns": [
+        {
+          "value": "hostname",
+          "isExpression": false
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "origin": "manual",
+      "name": "idx_relay_managed_endpoint_allocations_hostname",
+      "entityType": "indexes",
+      "table": "relay_managed_endpoint_allocations"
+    },
+    {
+      "columns": [
+        {
+          "value": "tunnel_name",
+          "isExpression": false
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "origin": "manual",
+      "name": "idx_relay_managed_endpoint_allocations_tunnel_name",
+      "entityType": "indexes",
+      "table": "relay_managed_endpoint_allocations"
+    },
+    {
+      "columns": [
+        {
+          "value": "push_token",
+          "isExpression": false
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "origin": "manual",
+      "name": "idx_relay_mobile_devices_push_token",
+      "entityType": "indexes",
+      "table": "relay_mobile_devices"
+    },
+    {
+      "columns": [
+        {
+          "value": "push_to_start_token",
+          "isExpression": false
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "origin": "manual",
+      "name": "idx_relay_mobile_devices_push_to_start_token",
+      "entityType": "indexes",
+      "table": "relay_mobile_devices"
+    }
+  ],
+  "renames": []
+}

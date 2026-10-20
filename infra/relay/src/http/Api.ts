@@ -7,7 +7,6 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Record from "effect/Record";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
@@ -48,16 +47,10 @@ import {
   RelayEnvironmentLinkLimitExceededError,
   RelayEnvironmentPrincipal,
   type RelayEnvironmentConnectRequest,
-  type RelayManagedEndpointOrigin,
-  RelayManagedEndpointRecoveryProofPayload,
   type RelayDpopAccessTokenScope,
   RelayInternalError,
 } from "@specweave-studio/contracts/relay";
-import {
-  normalizeRelayIssuer,
-  RELAY_MANAGED_TUNNEL_RECOVERY_TYP,
-  verifyRelayJwt,
-} from "@specweave-studio/shared/relayJwt";
+import { normalizeRelayIssuer } from "@specweave-studio/shared/relayJwt";
 
 import * as DeliveryAttempts from "../agentActivity/DeliveryAttempts.ts";
 import * as AgentActivityRows from "../agentActivity/AgentActivityRows.ts";
@@ -78,19 +71,26 @@ import * as ManagedEndpointProvider from "../environments/ManagedEndpointProvide
 import * as ManagedEndpointAllocations from "../environments/ManagedEndpointAllocations.ts";
 import * as EnvironmentPublishSignatures from "../environments/EnvironmentPublishSignatures.ts";
 import * as MobileRegistrations from "../agentActivity/MobileRegistrations.ts";
-import { withSpanAttributes } from "../observability.ts";
+import { withSpanAttributes } from "../spanAttributes.ts";
 import { isRelayHookPath, redactRelayHookUrl } from "../hooks/HookForwarder.ts";
+import * as AccountDeletion from "../account/AccountDeletion.ts";
 import * as RelayDb from "../db.ts";
+import { currentTraceId, mapErrorTags } from "./mapErrorTags.ts";
+import {
+  revokeEnvironmentLinkRecord,
+  unlinkEnvironmentRecord,
+} from "../environments/EnvironmentUnlink.ts";
+import {
+  recoverEnvironmentTunnelRecord,
+  registerEnvironmentTunnelRecovery,
+  verifyEnvironmentTunnelRecoveryProof,
+} from "../environments/EnvironmentTunnelRecovery.ts";
 
 // Delegated thread IDs carry escaped command provenance and exceed the router's
 // default 100-character path parameter limit. Match the environment server.
 export const RELAY_HTTP_ROUTER_CONFIG = {
   maxParamLength: 512,
 } as const;
-
-const decodeManagedTunnelRecoveryProof = Schema.decodeUnknownEffect(
-  RelayManagedEndpointRecoveryProofPayload,
-);
 
 const appendRelayCredentialResponseHeaders = HttpEffect.appendPreResponseHandler(
   (_request, response) =>
@@ -466,7 +466,7 @@ export const layerHealthApi = HttpApiBuilder.group(
       "health",
       Effect.fn("relay.api.health")(
         function* () {
-          yield* db.execute(drizzleSql`SELECT 1`);
+          yield* db.all(drizzleSql`SELECT 1`);
           return { ok: true, service: "relay" as const };
         },
         Effect.catch(() => relayInternalErrorResponse("database_unavailable")),
@@ -475,283 +475,13 @@ export const layerHealthApi = HttpApiBuilder.group(
   }),
 );
 
-export const revokeEnvironmentLinkRecord = Effect.fn(
-  "relay.api.client.revokeEnvironmentLinkRecord",
-)(function* (input: {
-  readonly userId: string;
-  readonly environmentId: string;
-  readonly environmentPublicKey: string;
-}) {
-  const transactions = yield* RelayDb.RelayTransactions;
-  const links = yield* EnvironmentLinks.EnvironmentLinks;
-  const credentials = yield* EnvironmentCredentials.EnvironmentCredentials;
-  return yield* transactions.withTransaction(
-    Effect.gen(function* () {
-      const revoked = yield* links.revokeForUser({
-        userId: input.userId,
-        environmentId: input.environmentId,
-      });
-      if (revoked) {
-        yield* credentials.revokeForEnvironmentPublicKey({
-          environmentId: input.environmentId,
-          environmentPublicKey: input.environmentPublicKey,
-        });
-      }
-      return revoked;
-    }),
-  );
-});
-
-export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnvironmentRecord")(
-  function* (input: {
-    readonly userId: string;
-    readonly environmentId: string;
-    /** The stage's tunnel-name namespace, to find this link's held webhook requests. */
-    readonly managedEndpointNamespace?: string | undefined;
-  }) {
-    const links = yield* EnvironmentLinks.EnvironmentLinks;
-    const managedEndpointProvider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
-    const deprovisionTarget = yield* managedEndpointProvider.prepareDeprovision({
-      userId: input.userId,
-      environmentId: input.environmentId,
-    });
-    const link = yield* links.getForUser({
-      userId: input.userId,
-      environmentId: input.environmentId,
-    });
-    const unlinked =
-      link === null
-        ? false
-        : yield* revokeEnvironmentLinkRecord({
-            userId: input.userId,
-            environmentId: link.environmentId,
-            environmentPublicKey: link.environmentPublicKey,
-          });
-    // External teardown cannot share the SQL transaction. Run it only after
-    // revocation commits so a database failure leaves a fully usable active
-    // link. Still run teardown when the link is already revoked, allowing a
-    // retry to finish cleanup after an earlier Cloudflare failure.
-    const deprovisioned = yield* managedEndpointProvider.deprovision({
-      userId: input.userId,
-      environmentId: input.environmentId,
-      target: deprovisionTarget,
-    });
-    // Requests held for this link's endpoint go with it. Best effort: the link
-    // is already gone, and its inbox drops anything left after its TTL.
-    const endpointKey =
-      deprovisionTarget && input.managedEndpointNamespace
-        ? HeldHooks.endpointKeyForTunnelName(
-            input.managedEndpointNamespace,
-            deprovisionTarget.tunnelName,
-          )
-        : null;
-    if (endpointKey !== null) {
-      const inbox = yield* HookInbox.HookInbox;
-      yield* inbox.clear({ endpointKey }).pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("Could not clear held webhook requests", {
-            environmentId: input.environmentId,
-            errorTag: error._tag,
-          }),
-        ),
-      );
-    }
-    if (!deprovisioned) {
-      const key = { userId: input.userId, environmentId: input.environmentId };
-      const retryTarget = yield* managedEndpointProvider.prepareDeprovision(key);
-      if (retryTarget !== null && (yield* links.getForUser(key)) === null) {
-        yield* managedEndpointProvider.deprovision({ ...key, target: retryTarget });
-      }
-    }
-    return unlinked;
-  },
-);
-
-type EnvironmentTunnelRecoveryProofInput = {
-  readonly proof: string;
-  readonly userId: string;
-  readonly environmentId: string;
-  readonly environmentPublicKey: string;
-} & (
-  | {
-      readonly action: "register";
-      readonly tunnelId: string;
-      readonly origin: RelayManagedEndpointOrigin;
-    }
-  | { readonly action: "recover"; readonly origin: RelayManagedEndpointOrigin }
-);
-
-export const verifyEnvironmentTunnelRecoveryProof = Effect.fn(
-  "relay.api.server.verifyEnvironmentTunnelRecoveryProof",
-)(function* (input: EnvironmentTunnelRecoveryProofInput) {
-  const config = yield* RelayConfiguration.RelayConfiguration;
-  const now = yield* DateTime.now;
-  const verified = yield* verifyRelayJwt({
-    publicKey: input.environmentPublicKey,
-    token: input.proof,
-    typ: RELAY_MANAGED_TUNNEL_RECOVERY_TYP,
-    issuer: `studio-env:${input.environmentId}`,
-    audience: normalizeRelayIssuer(config.relayIssuer),
-    nowEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
-  }).pipe(
-    Effect.flatMap(decodeManagedTunnelRecoveryProof),
-    Effect.mapError(() => new HttpApiError.Unauthorized({})),
-  );
-
-  if (
-    verified.environmentId !== input.environmentId ||
-    verified.sub !== input.environmentId ||
-    verified.cloudUserId !== input.userId ||
-    verified.action !== input.action
-  ) {
-    return yield* new HttpApiError.Unauthorized({});
-  }
-  if (input.action === "register") {
-    if (
-      verified.action !== "register" ||
-      verified.tunnelId !== input.tunnelId ||
-      verified.origin.localHttpHost !== input.origin.localHttpHost ||
-      verified.origin.localHttpPort !== input.origin.localHttpPort
-    ) {
-      return yield* new HttpApiError.Unauthorized({});
-    }
-    return;
-  }
-  if (
-    verified.action !== "recover" ||
-    verified.origin.localHttpHost !== input.origin.localHttpHost ||
-    verified.origin.localHttpPort !== input.origin.localHttpPort
-  ) {
-    return yield* new HttpApiError.Unauthorized({});
-  }
-});
-
-export const registerEnvironmentTunnelRecovery = Effect.fn(
-  "relay.api.server.registerEnvironmentTunnelRecovery",
-)(function* (input: {
-  readonly userId: string;
-  readonly environmentId: string;
-  readonly environmentPublicKey: string;
-  readonly tunnelId: string;
-  readonly origin: RelayManagedEndpointOrigin;
-}) {
-  const links = yield* EnvironmentLinks.EnvironmentLinks;
-  const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;
-  const managedEndpointProvider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
-  const link = yield* links.getForUser({
-    userId: input.userId,
-    environmentId: input.environmentId,
-  });
-  if (
-    link === null ||
-    link.environmentPublicKey !== input.environmentPublicKey ||
-    link.endpoint.providerKind !== "cloudflare_tunnel"
-  ) {
-    return yield* new HttpApiError.Unauthorized({});
-  }
-  const status = yield* managedEndpointProvider.reconcileOrigin({
-    userId: input.userId,
-    environmentId: input.environmentId,
-    tunnelId: input.tunnelId,
-    origin: input.origin,
-    endpoint: link.endpoint,
-  });
-  if (status === "recovery_required") {
-    return { status };
-  }
-  if (!(yield* allocations.enableRecovery(input))) {
-    return yield* new HttpApiError.Unauthorized({});
-  }
-  return { status };
-});
-
-export const recoverEnvironmentTunnelRecord = Effect.fn(
-  "relay.api.server.recoverEnvironmentTunnelRecord",
-)(function* (input: {
-  readonly userId: string;
-  readonly environmentId: string;
-  readonly environmentPublicKey: string;
-  readonly origin: RelayManagedEndpointOrigin;
-}) {
-  const links = yield* EnvironmentLinks.EnvironmentLinks;
-  const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;
-  const managedEndpointProvider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
-  const link = yield* links.getForUser({
-    userId: input.userId,
-    environmentId: input.environmentId,
-  });
-  if (
-    link === null ||
-    link.environmentPublicKey !== input.environmentPublicKey ||
-    link.endpoint.providerKind !== "cloudflare_tunnel"
-  ) {
-    return yield* new HttpApiError.Unauthorized({});
-  }
-
-  const recovered = yield* managedEndpointProvider.provision({
-    userId: input.userId,
-    environmentId: input.environmentId,
-    origin: input.origin,
-  });
-  const recoveredTunnelId = recovered.runtime.tunnelId;
-  if (
-    recoveredTunnelId === undefined ||
-    recovered.endpoint.httpBaseUrl !== link.endpoint.httpBaseUrl ||
-    recovered.endpoint.wsBaseUrl !== link.endpoint.wsBaseUrl
-  ) {
-    if (recoveredTunnelId !== undefined) {
-      yield* managedEndpointProvider
-        .release({
-          userId: input.userId,
-          environmentId: input.environmentId,
-          expectedTunnelId: recoveredTunnelId,
-        })
-        .pipe(
-          Effect.catch((cause) =>
-            Effect.logWarning("Failed to clean up a tunnel with a mismatched endpoint", {
-              userId: input.userId,
-              environmentId: input.environmentId,
-              tunnelId: recoveredTunnelId,
-              cause,
-            }),
-          ),
-        );
-    }
-    return yield* new HttpApiError.Unauthorized({});
-  }
-
-  const enabled = yield* allocations.enableRecovery({
-    userId: input.userId,
-    environmentId: input.environmentId,
-    tunnelId: recoveredTunnelId,
-    environmentPublicKey: input.environmentPublicKey,
-    origin: input.origin,
-  });
-  if (!enabled) {
-    const owner = { userId: input.userId, environmentId: input.environmentId };
-    const target = yield* managedEndpointProvider.prepareDeprovision(owner);
-    const currentLink = target === null ? null : yield* links.getForUser(input);
-    if (
-      target !== null &&
-      (currentLink === null || currentLink.endpoint.providerKind !== "cloudflare_tunnel")
-    ) {
-      yield* managedEndpointProvider.deprovision({ ...owner, target }).pipe(
-        Effect.catch((cause) =>
-          Effect.logWarning("Failed to clean up a tunnel after its managed link was removed", {
-            userId: input.userId,
-            environmentId: input.environmentId,
-            cause,
-          }),
-        ),
-      );
-    }
-    return yield* new HttpApiError.Unauthorized({});
-  }
-  return {
-    endpoint: recovered.endpoint,
-    endpointRuntime: recovered.runtime,
-  };
-});
+export {
+  recoverEnvironmentTunnelRecord,
+  registerEnvironmentTunnelRecovery,
+  revokeEnvironmentLinkRecord,
+  unlinkEnvironmentRecord,
+  verifyEnvironmentTunnelRecoveryProof,
+};
 
 export const layerMobileApi = HttpApiBuilder.group(
   RelayApi,
@@ -963,12 +693,28 @@ export const layerClientApi = HttpApiBuilder.group(
             managedEndpointNamespace: config.managedEndpointNamespace,
           }).pipe(
             Effect.catchTags({
-              SqlError: () => relayInternalErrorResponse("internal_error"),
               ManagedEndpointDeprovisioningFailed: () =>
                 relayInternalErrorResponse("upstream_unavailable"),
             }),
           );
           return { ok: unlinked };
+        }, mapRelayCommonApiErrors("not_authorized")),
+      )
+      .handle(
+        "deleteAccount",
+        Effect.fn("relay.api.client.deleteAccount")(function* () {
+          const { userId } = yield* RelayClientPrincipal;
+          return yield* AccountDeletion.deleteAccountRecords({
+            userId,
+            managedEndpointNamespace: config.managedEndpointNamespace,
+          }).pipe(
+            Effect.catchTags({
+              ManagedEndpointDeprovisioningFailed: () =>
+                relayInternalErrorResponse("upstream_unavailable"),
+              AccountDeletionIncomplete: () => relayInternalErrorResponse("upstream_unavailable"),
+              ClerkUserDeletionFailed: () => relayInternalErrorResponse("upstream_unavailable"),
+            }),
+          );
         }, mapRelayCommonApiErrors("not_authorized")),
       )
       .handle(
@@ -1422,11 +1168,6 @@ class ClerkTokenVerificationFailed extends Schema.TaggedError<ClerkTokenVerifica
 const isHttpUnauthorized = Schema.is(HttpApiError.Unauthorized);
 const isDpopProofRejected = Schema.is(DpopProofs.DpopProofRejected);
 
-const currentTraceId = Effect.currentParentSpan.pipe(
-  Effect.map((span) => span.traceId),
-  Effect.orElseSucceed(() => "unavailable"),
-);
-
 const RelayCommonPersistenceError = Schema.Union([
   Devices.DeviceRegistrationPersistenceError,
   Devices.DeviceUnregistrationPersistenceError,
@@ -1448,6 +1189,7 @@ const RelayCommonPersistenceError = Schema.Union([
   DeliveryAttempts.DeliveryAttemptRecordPersistenceError,
   EnvironmentLinks.EnvironmentLinkEnvironmentLookupPersistenceError,
   HookInbox.HookInboxError,
+  AccountDeletion.AccountRecordsPersistenceError,
 ]);
 type RelayCommonPersistenceError = typeof RelayCommonPersistenceError.Type;
 const isRelayCommonPersistenceError = Schema.is(RelayCommonPersistenceError);
@@ -1541,52 +1283,6 @@ function mapRelayCommonApiErrors(authReason: RelayAuthInvalidReason) {
   return <A, E, R>(
     effect: Effect.Effect<A, E, R>,
   ): Effect.Effect<A, MapRelayCommonApiError<E>, R> => effect.pipe(Effect.catch(mapError));
-}
-
-type TaggedErrorTag<E> = Extract<E, { readonly _tag: string }>["_tag"];
-
-type MapErrorTagCases<E> = {
-  readonly [K in TaggedErrorTag<E>]+?: (
-    error: Extract<E, { readonly _tag: K }>,
-    traceId: string,
-  ) => unknown;
-};
-
-type MappedTagError<Cases> = Cases[keyof Cases] extends (
-  ...args: ReadonlyArray<never>
-) => infer Error
-  ? Error
-  : never;
-
-type CatchTagCases<E, Cases> = {
-  readonly [K in TaggedErrorTag<E>]+?: (
-    error: Extract<E, { readonly _tag: K }>,
-  ) => Effect.Effect<never, MappedTagError<Cases>>;
-} & (unknown extends E ? {} : { readonly [K in Exclude<keyof Cases, TaggedErrorTag<E>>]: never });
-
-function mapErrorTags<
-  E,
-  Cases extends MapErrorTagCases<E> &
-    (unknown extends E ? {} : { readonly [K in Exclude<keyof Cases, TaggedErrorTag<E>>]: never }),
->(cases: Cases) {
-  const catchCases = Record.map(
-    cases as Record.ReadonlyRecord<
-      string,
-      (error: never, traceId: string) => MappedTagError<Cases>
-    >,
-    (makeError) => (error: never) =>
-      currentTraceId.pipe(Effect.flatMap((traceId) => Effect.fail(makeError(error, traceId)))),
-  ) as CatchTagCases<E, Cases>;
-
-  return <A, R>(
-    self: Effect.Effect<A, E, R>,
-  ): Effect.Effect<A, Exclude<E, { readonly _tag: keyof Cases }> | MappedTagError<Cases>, R> =>
-    // @effect-diagnostics-next-line unsafeEffectTypeAssertion:off
-    Effect.catchTags(self, catchCases) as Effect.Effect<
-      A,
-      Exclude<E, { readonly _tag: keyof Cases }> | MappedTagError<Cases>,
-      R
-    >;
 }
 
 function resolveConnectClientKeyThumbprint(payload: RelayEnvironmentConnectRequest): string | null {

@@ -5,6 +5,7 @@ import { useEnvironment, useEnvironments } from "../../state/environments";
 import { useThreadHistory, useThreadProjection } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { threadEnvironment } from "../../state/threads";
+import { useMachineNickname } from "../../studio/machineNickname";
 import { requestExecutionLabel, type ProjectExecutionScope } from "../../studio/projectDomain";
 import { ProjectMessageBody } from "./ProjectMessageBody";
 import { useProviderEntries } from "./shell/ModelBadge";
@@ -83,6 +84,7 @@ function HistorySegment({ scope }: { scope: ProjectExecutionScope }) {
   );
 }
 function RetainedMessages({ scope, label }: { scope: ProjectExecutionScope; label: string }) {
+  const machine = useMachineNickname(scope.environmentId, label);
   const ref = useMemo(
     () => scopeThreadRef(scope.environmentId, scope.coordinatorThreadId!),
     [scope.environmentId, scope.coordinatorThreadId],
@@ -112,7 +114,7 @@ function RetainedMessages({ scope, label }: { scope: ProjectExecutionScope; labe
         <article key={message.id} className="project-message">
           <h3>{message.role === "user" ? "You" : "Coordinator"}</h3>
           <p className="project-muted">
-            {requestExecutionLabel(message, thread.projection.runs, label, providers)}
+            {requestExecutionLabel(message, thread.projection.runs, machine, providers)}
           </p>
           <ProjectMessageBody text={message.text} collapsible>
             <p className="whitespace-pre-wrap break-words">{message.text}</p>
