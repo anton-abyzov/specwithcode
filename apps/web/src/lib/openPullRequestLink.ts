@@ -4,7 +4,10 @@ import { useNavigate } from "@tanstack/react-router";
 import { type MouseEvent, useCallback, useMemo } from "react";
 
 import { pullRequestHostOf, type SourceControlProviderKind } from "@specweave-studio/contracts";
-import { parseChangeRequestUrl, type ChangeRequestLink } from "@specweave-studio/shared/changeRequestUrl";
+import {
+  parseChangeRequestUrl,
+  type ChangeRequestLink,
+} from "@specweave-studio/shared/changeRequestUrl";
 import {
   canonicalRepositoryKey,
   sourceControlRepositorySelector,
@@ -13,6 +16,7 @@ import {
 import { useOpenLink } from "../browser/useOpenLink";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useRightPanelStore } from "../rightPanelStore";
+import { openPullRequestInFront } from "./openInFront";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 
 import { useProjects, useServerConfigs } from "../state/entities";
@@ -268,21 +272,42 @@ export function useOpenChangeRequestLink(
           : (sourceControlRepositorySelector(project.repositoryIdentity) ?? parsed.repository);
       event.preventDefault();
       event.stopPropagation();
-      if (resolvedPanelRef) {
-        useRightPanelStore.getState().openPullRequest(resolvedPanelRef, {
-          // The standalone PR panel has a synthetic ref; each tab keeps its real environment.
-          ...(resolvedPanelRef.environmentId === project.environmentId
-            ? {}
-            : { environmentId: project.environmentId }),
-          projectId: project.id,
-          ...(serverConfigs.get(project.environmentId)?.environment.capabilities
-            .threadPullRequests === true
-            ? { host: parsed.authority ?? parsed.host }
-            : {}),
-          repository,
+      const host =
+        serverConfigs.get(project.environmentId)?.environment.capabilities.threadPullRequests ===
+        true
+          ? (parsed.authority ?? parsed.host)
+          : undefined;
+      const panelTarget = {
+        // The standalone PR panel has a synthetic ref; each tab keeps its real environment.
+        ...(resolvedPanelRef && resolvedPanelRef.environmentId === project.environmentId
+          ? {}
+          : { environmentId: project.environmentId }),
+        projectId: project.id,
+        ...(host ? { host } : {}),
+        repository,
+        url: targetUrl,
+        number: parsed.number,
+      };
+      // Clicked inside the viewer overlay: the pull request opens there, in
+      // front, instead of in a panel or page behind it.
+      if (
+        openPullRequestInFront({
+          environmentId: project.environmentId,
+          threadRef: resolvedThreadRef ?? null,
+          reference: {
+            projectId: project.id,
+            ...(host ? { host } : {}),
+            repository,
+            number: parsed.number,
+          },
           url: targetUrl,
-          number: parsed.number,
-        });
+          panel: resolvedPanelRef ? { ref: resolvedPanelRef, target: panelTarget } : null,
+        })
+      ) {
+        return true;
+      }
+      if (resolvedPanelRef) {
+        useRightPanelStore.getState().openPullRequest(resolvedPanelRef, panelTarget);
         if (!resolvedThreadRef) {
           void navigate({
             to: "/pull-requests",

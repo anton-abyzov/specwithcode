@@ -21,6 +21,7 @@ import { CommandPalette } from "../components/CommandPalette";
 import { ConversationFindBar } from "../components/find/ConversationFindBar";
 import { ModsHost } from "../mods/ModsHost";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
+import { ThreadMoveDialogHost } from "../components/ThreadMoveDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { KeybindingsConfigWarning } from "../components/KeybindingsConfigWarning";
 import { FirstRunGate } from "../components/onboarding/FirstRunGate";
@@ -189,6 +190,7 @@ function RootRouteView() {
           {isElectron && primaryEnvironmentAuthenticated ? <KeepAwakeWhileWorking /> : null}
           {isElectron && primaryEnvironmentAuthenticated ? <ComputerUseHost /> : null}
           <CustomSnoozeDialogHost />
+          <ThreadMoveDialogHost />
           <CommandPalette>
             <AppSidebarLayout>
               <Outlet />
@@ -250,6 +252,7 @@ function RootRouteView() {
           <ReopenClosedViewShortcut />
           <ConfirmDialogHost />
           <CustomSnoozeDialogHost />
+          <ThreadMoveDialogHost />
           <SlowRpcRequestToastCoordinator />
           <PermissionUpdateNotice />
           {primaryEnvironmentAuthenticated ? <LegacyThreadMigrationToast /> : null}

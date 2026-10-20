@@ -1,6 +1,8 @@
 import { THREAD_LIFECYCLE_LABELS } from "@specweave-studio/shared/threadLifecycleLabels";
 import { scopeProjectRef } from "@specweave-studio/client-runtime/environment";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
+import { requestThreadMove } from "../components/ThreadMoveDialog";
+import { threadMoveBlockedReason } from "../components/threadMove.logic";
 import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
@@ -30,6 +32,7 @@ import { readEnvironmentScope } from "../state/session";
 import {
   readEnvironmentSupportsAutoSettleOptOut,
   readEnvironmentSupportsPinning,
+  readEnvironmentSupportsProjectMove,
   readEnvironmentSupportsSettlement,
   readEnvironmentSupportsSnooze,
   readEnvironmentSupportsTitleRegeneration,
@@ -162,6 +165,7 @@ export function useThreadActionMenu(input: {
           snooze: readEnvironmentSupportsSnooze(threadRef.environmentId),
           pinning: readEnvironmentSupportsPinning(threadRef.environmentId),
           titleRegeneration: readEnvironmentSupportsTitleRegeneration(threadRef.environmentId),
+          projectMove: readEnvironmentSupportsProjectMove(threadRef.environmentId),
         };
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const snoozePresets = resolveSnoozePresets(now, timestampFormat);
@@ -186,6 +190,7 @@ export function useThreadActionMenu(input: {
           titleLocked: isCoordinatorNamedThread(thread),
           isRunning: !threadRuntimeCanArchive(thread.runtime),
           canOpenProjectWindow: canOpenProjectWindowFor(menuProjectKey),
+          moveToProjectBlockedReason: threadMoveBlockedReason(thread, menuProject),
           supports,
           snoozePresets,
         });
@@ -342,6 +347,9 @@ export function useThreadActionMenu(input: {
             return;
           case "copy-thread-id":
             copyThreadIdToClipboard(thread.id, { threadId: thread.id });
+            return;
+          case "move-to-project":
+            await requestThreadMove(threadRef);
             return;
           case "archive": {
             if (confirmThreadArchive) {

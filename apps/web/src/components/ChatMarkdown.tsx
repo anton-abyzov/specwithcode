@@ -206,7 +206,8 @@ import { useAssetUrlRefresh, useAssetUrlState } from "../assets/assetUrls";
 import { cn } from "../lib/utils";
 import { useRemoteOpenResolution, type RemoteOpenMode } from "../remoteOpen";
 import { useRightPanelStore } from "../rightPanelStore";
-import { ReportFileHostContext } from "./chat/reportFileHost";
+import { openFileInFront, stepOutOfViewerOverlay, viewerOverlayInFront } from "~/lib/openInFront";
+import { InViewerOverlay } from "~/viewerOverlayStore";
 import { readThreadShell, useProjects } from "../state/entities";
 import { serverEnvironment } from "../state/server";
 import { shellEnvironment } from "../state/shell";
@@ -1787,13 +1788,16 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     ...(reference ? { reference } : {}),
     ...(relativePath && (resource._tag === "media-file" || resource._tag === "workspace-file")
       ? {
-          onOpenFile: () =>
+          onOpenFile: () => {
+            // The side panel is behind the viewer overlay; step out so it shows.
+            stepOutOfViewerOverlay();
             useRightPanelStore
               .getState()
               .openFile(
                 { environmentId: props.environmentId, threadId: resource.threadId },
                 relativePath,
-              ),
+              );
+          },
         }
       : {}),
   };
@@ -2454,7 +2458,7 @@ function useChatMarkdownState({
           preparedConnection._tag === "Some" ? preparedConnection.value.httpBaseUrl : undefined,
         createAssetUrl,
         onOpenFile: threadRef
-          ? (path) => useRightPanelStore.getState().openFile(threadRef, path)
+          ? (path) => openFileInFront({ threadRef, cwd: cwd ?? "", path, line: undefined })
           : undefined,
       }).then(
         (preview) => {
@@ -2744,9 +2748,9 @@ function useChatMarkdownState({
     },
     [cwd, environmentId, searchProjectEntries],
   );
-  // Inside the report reader (a modal), files open beside the report rather
-  // than in the side panel behind the reader's backdrop.
-  const reportFileHost = use(ReportFileHostContext);
+  // Inside the viewer overlay, files open in the overlay, in the viewer's
+  // place, rather than in the side panel behind it or as another viewer.
+  const inViewerOverlay = use(InViewerOverlay);
   // A bare filename resolves to the workspace root, which is rarely where the
   // file is, so ask the index before opening. Absolute host paths open as-is.
   const openFileInPanel = useCallback(
@@ -2756,12 +2760,8 @@ function useChatMarkdownState({
       // in flight.
       const isLatestLookup = claimWorkspaceBasenameLookup();
       const openAt = (path: string) => {
-        if (!reportFileHost) {
-          useRightPanelStore.getState().openFile(threadRef, path, line);
-          return;
-        }
         const hostPath = cwd && !isAbsolutePath(path) ? resolvePathLinkTarget(path, cwd) : path;
-        reportFileHost.open({
+        openFileInFront({
           threadRef,
           cwd: cwd ?? "",
           path,
@@ -2792,7 +2792,6 @@ function useChatMarkdownState({
       cwd,
       findWorkspaceBasenameMatch,
       openInPreferredEditor,
-      reportFileHost,
       revealFileInFileManager,
       revealInFileManagerLabel,
       threadRef,
@@ -2814,8 +2813,8 @@ function useChatMarkdownState({
   const showUnresolvedFile = useCallback(
     (meta: MarkdownFileLinkMeta, ref: ScopedThreadRef) => {
       const tried = meta.unresolved ?? [meta.filePath];
-      if (reportFileHost) {
-        reportFileHost.open({
+      if (viewerOverlayInFront()) {
+        openFileInFront({
           threadRef: ref,
           cwd: cwd ?? "",
           path: meta.filePath,
@@ -2832,7 +2831,7 @@ function useChatMarkdownState({
         }),
       );
     },
-    [cwd, reportFileHost],
+    [cwd],
   );
   const fileLinkChip = useCallback(
     (fileLinkMeta: MarkdownFileLinkMeta, copyMarkdown: string, _mediaSource?: string) => {
@@ -2859,7 +2858,7 @@ function useChatMarkdownState({
       // reader its file pane shows it instead.
       const opensInViewer =
         !isDirectory &&
-        !reportFileHost &&
+        !inViewerOverlay &&
         threadRef !== undefined &&
         isAbsolutePath(fileLinkMeta.filePath);
       const isMarkdownDocument =
@@ -2920,7 +2919,7 @@ function useChatMarkdownState({
           onOpenInBrowser={
             threadRef &&
             !isDirectory &&
-            !reportFileHost &&
+            !inViewerOverlay &&
             canOperatePreview &&
             isPreviewAvailableFor(threadRef.environmentId) &&
             isBrowserPreviewFile(fileLinkMeta.filePath)
@@ -2944,7 +2943,7 @@ function useChatMarkdownState({
       openMarkdownFileInPreview,
       openMarkdownMedia,
       preferredEditorMenuLabel,
-      reportFileHost,
+      inViewerOverlay,
       resolvedTheme,
       revealInFileManagerLabel,
       revealMarkdownFileInFileManager,

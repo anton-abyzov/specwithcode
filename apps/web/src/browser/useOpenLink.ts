@@ -15,6 +15,7 @@ import {
   resolveBrowserLinkTargetPreference,
   resolveLinkTarget,
 } from "./browserLinkTarget";
+import { stepOutOfViewerOverlay } from "~/lib/openInFront";
 import { openLinkOutsideApp } from "./externalBrowsers";
 import { BrowserSettingsReadError, openUrlInPreview } from "./openFileInPreview";
 
@@ -53,6 +54,9 @@ export function useOpenLink(threadRef: ScopedThreadRef | null | undefined): (
           canOpenLinksInApp(targetThreadRef),
       });
       if (target === "app" && targetThreadRef) {
+        // The in-app browser is in the side panel: step out of the viewer
+        // overlay so the page opens in front, not behind it.
+        stepOutOfViewerOverlay();
         const result = await openUrlInPreview({ threadRef: targetThreadRef, url, openPreview });
         if (isAtomCommandInterrupted(result)) return;
         if (result._tag === "Success") {

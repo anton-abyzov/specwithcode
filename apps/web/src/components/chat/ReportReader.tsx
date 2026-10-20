@@ -10,12 +10,9 @@ import {
   CopyIcon,
   DownloadIcon,
   EllipsisIcon,
-  FolderOpenIcon,
   ListCollapseIcon,
-  PanelRightOpenIcon,
   SaveIcon,
   SearchIcon,
-  SquarePenIcon,
   XIcon,
 } from "lucide-react";
 import type { ScopedThreadRef } from "@specweave-studio/contracts";
@@ -23,15 +20,11 @@ import { type ReactNode, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { formatViewerDate } from "~/viewerDate";
-import { useViewerOverlay } from "~/viewerOverlayStore";
+import { InViewerOverlay, useViewerOverlay } from "~/viewerOverlayStore";
 
-import { useRightPanelStore } from "../../rightPanelStore";
-import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
-import { useProjectFileQuery } from "../files/projectFilesQueryState";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import type { ReportSaveState } from "./ReportArtifact";
-import { ReportFileHostContext, type ReportFileTarget } from "./reportFileHost";
 import {
   type OutlineHeading,
   reportFileName,
@@ -149,118 +142,6 @@ export function ReportDocumentView(props: {
       ))}
     </>
   );
-}
-
-const MARKDOWN_FILE = /\.(?:md|mdx|markdown)$/i;
-
-/**
- * A file the report links to, read in the report's place, so nothing opens
- * behind the reader and the page is never split in two. The overlay header
- * names it and offers Back to the report, where it was left; its own actions
- * (editor, file manager, "Open in panel") join the header's.
- */
-function ReportFilePane(props: {
-  readonly target: ReportFileTarget;
-  readonly renderMarkdown: ((markdown: string) => ReactNode) | undefined;
-  readonly actionsSlot: HTMLElement | null;
-  readonly onOpenInPanel: () => void;
-}) {
-  const { target } = props;
-  const unresolved = target.tried !== undefined && target.tried.length > 0;
-  const file = useProjectFileQuery(
-    target.threadRef.environmentId,
-    target.cwd,
-    unresolved ? null : target.path,
-  );
-  const name = reportFileTargetName(target);
-  const contents = file.data?.contents ?? null;
-  const actions = (
-    <>
-      {target.openInEditor ? (
-        <Button type="button" size="xs" variant="ghost" onClick={target.openInEditor}>
-          <SquarePenIcon aria-hidden />
-          Open in editor
-        </Button>
-      ) : null}
-      {target.reveal ? (
-        <Button type="button" size="xs" variant="ghost" onClick={target.reveal}>
-          <FolderOpenIcon aria-hidden />
-          {target.revealLabel ?? "Reveal"}
-        </Button>
-      ) : null}
-    </>
-  );
-  const headerActions = unresolved ? null : (
-    <>
-      {actions}
-      <Button type="button" size="xs" variant="ghost" onClick={props.onOpenInPanel}>
-        <PanelRightOpenIcon aria-hidden />
-        Open in panel
-      </Button>
-    </>
-  );
-  return (
-    <section
-      className="flex min-h-0 min-w-0 flex-1 flex-col bg-background"
-      aria-label={`File ${name}`}
-      data-report-file-pane="true"
-    >
-      {props.actionsSlot && headerActions ? createPortal(headerActions, props.actionsSlot) : null}
-      <div className="flex min-h-0 flex-1 flex-col overflow-auto">
-        {unresolved ? (
-          <div
-            className="flex flex-col gap-2 p-4 text-sm"
-            role="status"
-            data-report-file-unresolved="true"
-          >
-            <p>
-              {name} was not found. The report names it without saying where it lives, and it is in
-              none of these places:
-            </p>
-            <ul className="flex flex-col gap-1 font-mono text-muted-foreground text-xs">
-              {target.tried!.map((path) => (
-                <li key={path} className="break-all">
-                  {path}
-                </li>
-              ))}
-            </ul>
-            <p className="text-muted-foreground">
-              Ask the worker for its full path, or look in its worktree.
-            </p>
-            {target.openInEditor || target.reveal ? (
-              <div className="flex gap-1">{actions}</div>
-            ) : null}
-          </div>
-        ) : file.isNotFile ? (
-          <p className="p-4 text-muted-foreground text-sm">
-            This is a folder. Open it in the panel to browse it.
-          </p>
-        ) : file.error !== null && contents === null ? (
-          <div className="flex flex-col items-start gap-2 p-4 text-sm" role="alert">
-            <p className="text-destructive-foreground">{file.error}</p>
-            <div className="flex gap-1">{actions}</div>
-          </div>
-        ) : contents === null ? (
-          <p className="p-4 text-muted-foreground text-sm">Loading…</p>
-        ) : MARKDOWN_FILE.test(name) && props.renderMarkdown ? (
-          <article className="report-document report-document-page">
-            <MarkdownDocumentView text={contents} renderMarkdown={props.renderMarkdown} />
-          </article>
-        ) : (
-          <ReadOnlySourcePreview name={name} text={contents} revealLine={target.line} />
-        )}
-      </div>
-    </section>
-  );
-}
-
-function reportFileTargetName(target: ReportFileTarget): string {
-  return target.path.split(/[\\/]/).filter(Boolean).at(-1) ?? target.path;
-}
-
-function extensionBadge(name: string): string {
-  const dot = name.lastIndexOf(".");
-  return dot > 0 ? name.slice(dot + 1, dot + 5).toUpperCase() : "FILE";
 }
 
 /** One dash per heading, the one being read marked; hovering lists their titles. */
@@ -406,17 +287,14 @@ export function ReportReader(props: {
   readonly children: ReactNode;
 }) {
   const { save } = props;
-  const [file, setFile] = useState<ReportFileTarget | null>(null);
   const [finding, setFinding] = useState(false);
   const [query, setQuery] = useState("");
   const [copied, setCopied] = useState(false);
-  const fileHost = useMemo(() => ({ open: setFile }), []);
   const scrollRef = useRef<HTMLDivElement>(null);
   const articleRef = useRef<HTMLElement>(null);
   const setOpen = (next: boolean) => {
     props.onOpenChange(next);
     if (!next) {
-      setFile(null);
       setFinding(false);
       setQuery("");
     }
@@ -424,26 +302,20 @@ export function ReportReader(props: {
   const date = formatViewerDate(props.createdAt);
   // A markdown file opened from a message is a document; a worker's reply is a report.
   const kind = props.subtitle ? "Document" : "Report";
-  const fileName = file ? reportFileTargetName(file) : null;
   const slots = useViewerOverlay({
     open: props.open,
-    title: fileName ?? props.title,
-    kind: file ? "File" : kind,
-    badge: fileName ? extensionBadge(fileName) : "MD",
-    detail: file
-      ? file.line
-        ? `line ${file.line}`
-        : null
-      : [
-          date,
-          props.subtitle ? null : `${props.words.toLocaleString()} words`,
-          save?.savedPath ? "Saved" : null,
-        ]
-          .filter(Boolean)
-          .join(" · ") || null,
+    title: props.title,
+    kind,
+    badge: "MD",
+    detail:
+      [
+        date,
+        props.subtitle ? null : `${props.words.toLocaleString()} words`,
+        save?.savedPath ? "Saved" : null,
+      ]
+        .filter(Boolean)
+        .join(" · ") || null,
     threadRef: props.threadRef,
-    trail: file ? [{ kind, title: props.title }] : undefined,
-    onBack: file ? () => setFile(null) : null,
     onClose: () => setOpen(false),
   });
   const slot = slots?.content ?? null;
@@ -548,21 +420,16 @@ export function ReportReader(props: {
         }
       }}
     >
-      {slots.actions && !file ? createPortal(reportActions, slots.actions) : null}
+      {slots.actions ? createPortal(reportActions, slots.actions) : null}
       {save?.error ? (
         <p className="border-b px-4 py-2 text-destructive-foreground text-xs" role="alert">
           {save.error}
         </p>
       ) : null}
-      <ReportFileHostContext value={fileHost}>
+      {/* Links in the report open in the overlay, in its place, never behind it. */}
+      <InViewerOverlay value>
         <div className="flex min-h-0 flex-1">
-          <div
-            ref={scrollRef}
-            className="report-reader-body"
-            data-report-reader-body="true"
-            // Kept mounted under an open file, so Back returns to the same place.
-            hidden={file !== null}
-          >
+          <div ref={scrollRef} className="report-reader-body" data-report-reader-body="true">
             <OutlineRail
               headings={outline.headings}
               activeId={outline.activeId}
@@ -584,20 +451,8 @@ export function ReportReader(props: {
               ) : null}
             </article>
           </div>
-          {file ? (
-            <ReportFilePane
-              key={`${file.path}:${file.line ?? ""}`}
-              target={file}
-              renderMarkdown={props.renderMarkdown}
-              actionsSlot={slots.actions}
-              onOpenInPanel={() => {
-                setOpen(false);
-                useRightPanelStore.getState().openFile(file.threadRef, file.path, file.line);
-              }}
-            />
-          ) : null}
         </div>
-      </ReportFileHostContext>
+      </InViewerOverlay>
     </div>,
     slots.content,
   );

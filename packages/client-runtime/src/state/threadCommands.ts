@@ -19,6 +19,7 @@ import {
 } from "./runtime.ts";
 import {
   type ThreadCommandInput,
+  type MoveThreadToProjectInput,
   type ArchiveThreadInput,
   type CancelQueuedRunInput,
   type RetryWorkspacePreparationInput,
@@ -63,6 +64,8 @@ import {
   forkThreadFromRun,
   markThreadUnread,
   mergeThreadBack,
+  moveThreadToProject,
+  readThreadOpeningRequest,
   promoteQueuedRun,
   reorderQueuedRun,
   resumeThreadQueue,
@@ -324,6 +327,18 @@ export function createThreadEnvironmentAtoms<R, E>(
         mode: "serial",
         key: ({ environmentId, input }) => JSON.stringify([environmentId, input.sourceThreadId]),
       },
+    }),
+    readOpeningRequest: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:read-opening-request",
+      execute: (input: ThreadCommandInput) => readThreadOpeningRequest(input),
+      scheduler,
+      concurrency,
+    }),
+    moveToProject: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:move-to-project",
+      execute: (input: MoveThreadToProjectInput) => moveThreadToProject(input),
+      scheduler,
+      concurrency,
     }),
     mergeBack: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:merge-back",

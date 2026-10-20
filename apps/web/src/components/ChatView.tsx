@@ -382,6 +382,7 @@ import {
   LaptopIcon,
   TargetIcon,
   HourglassIcon,
+  FolderInputIcon,
   WifiOffIcon,
 } from "lucide-react";
 import { cn, randomUUID } from "~/lib/utils";
@@ -700,6 +701,8 @@ import {
 } from "./chat/BackgroundWorkStrip";
 import { useAssetUrls } from "../assets/assetUrls";
 import { useOpenLink } from "../browser/useOpenLink";
+import { viewerOverlayInFront } from "~/lib/openInFront";
+import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { deriveThreadPlanView, displayFolder } from "../studio/threadPlanProgress";
 import { useThreadIncrementProgress } from "../studio/useThreadIncrementProgress";
@@ -718,6 +721,14 @@ import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   recallableComposerPrompt,
 } from "./chat/composerPromptHistory";
+
+/** A click with no modifier, for openers that read the event. */
+const PLAIN_CLICK = {
+  metaKey: false,
+  ctrlKey: false,
+  preventDefault: () => undefined,
+  stopPropagation: () => undefined,
+};
 
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_MODELS: ServerProvider["models"] = [];
@@ -4694,6 +4705,7 @@ function useChatViewState(props: ChatViewProps) {
     availableEditors,
   );
   const openThreadLink = useOpenLink(activeThreadTarget);
+  const openThreadChangeRequest = useOpenChangeRequestLink(activeThreadTarget ?? undefined);
   const timelineWorkingFolder = useMemo(
     () =>
       // The project's own folder is implied; only a worktree is worth a chip.
@@ -5091,6 +5103,7 @@ function useChatViewState(props: ChatViewProps) {
     openPullRequestDialog,
     openScratchProject,
     openTerminal,
+    openThreadChangeRequest,
     openThreadLink,
     openThreadPath,
     openThreadRoute,
@@ -8787,6 +8800,49 @@ function useChatViewActions(
     (text: string) => void sendStandaloneCommand(text, "Could not ask the agent to try again."),
     [sendStandaloneCommand],
   );
+  const movedTo = serverProjection?.thread.movedTo ?? null;
+  const movedFrom = serverProjection?.thread.movedFrom ?? null;
+  const threadMoveBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
+    const link = movedTo ?? movedFrom;
+    if (link === null || activeThread === undefined) return null;
+    const projectTitle =
+      allProjects.find(
+        (project) =>
+          project.environmentId === activeThread.environmentId && project.id === link.projectId,
+      )?.title ?? "another project";
+    const open = () =>
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(scopeThreadRef(activeThread.environmentId, link.threadId)),
+      });
+    return movedTo !== null
+      ? {
+          id: `thread-moved-to:${activeThread.id}`,
+          variant: "info",
+          icon: <FolderInputIcon />,
+          title: `Moved to ${projectTitle}`,
+          description:
+            "This thread was stopped and archived. Its work restarted there as a new thread; this one takes no new messages.",
+          actions: (
+            <Button size="xs" variant="ghost" onClick={open}>
+              Open new thread
+            </Button>
+          ),
+        }
+      : {
+          id: `thread-moved-from:${activeThread.id}`,
+          variant: "info",
+          icon: <FolderInputIcon />,
+          title: `Moved here from ${projectTitle}`,
+          description:
+            "A fresh start: no conversation, files or memory came from the original thread.",
+          actions: (
+            <Button size="xs" variant="ghost" onClick={open}>
+              Open original
+            </Button>
+          ),
+        };
+  }, [activeThread, allProjects, movedFrom, movedTo, navigate]);
   const settledNote = activeThreadSettled ? (serverProjection?.thread.settledNote ?? null) : null;
   const parkedThreadBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (!activeThreadSnoozed && !activeThreadSettled) {
@@ -9152,6 +9208,7 @@ function useChatViewActions(
     openFileSurface,
     openProviderSetup,
     parkedThreadBannerItem,
+    threadMoveBannerItem,
     pendingTimelineAnchorRef,
     persistThreadSettingsForNextTurn,
     publishComposerOverlayHeight,
@@ -9373,6 +9430,7 @@ export default function ChatView(props: ChatViewProps) {
     openFileAttachment,
     openNewChatDestination,
     openPullRequestDialog,
+    openThreadChangeRequest,
     openThreadLink,
     openThreadPath,
     openThreadRoute,
@@ -9640,6 +9698,7 @@ export default function ChatView(props: ChatViewProps) {
     openFileSurface,
     openProviderSetup,
     parkedThreadBannerItem,
+    threadMoveBannerItem,
     pendingTimelineAnchorRef,
     persistThreadSettingsForNextTurn,
     publishComposerOverlayHeight,
@@ -10031,7 +10090,9 @@ export default function ChatView(props: ChatViewProps) {
     const wokeThreadItems = wokeThreadBannerItem === null ? [] : [wokeThreadBannerItem];
     const computerUseItems =
       computerUsePermissionBannerItem === null ? [] : [computerUsePermissionBannerItem];
-    const parkedThreadItems = parkedThreadBannerItem === null ? [] : [parkedThreadBannerItem];
+    const parkedThreadItems = [threadMoveBannerItem, parkedThreadBannerItem].filter(
+      (item) => item !== null,
+    );
     // The user asked for this one, so it leads the notice tier instead of trailing it.
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
     const projectCloneItems = projectCloneBannerItem === null ? [] : [projectCloneBannerItem];
@@ -10114,6 +10175,7 @@ export default function ChatView(props: ChatViewProps) {
     goalBannerItem,
     localCheckoutBranchMismatch,
     parkedThreadBannerItem,
+    threadMoveBannerItem,
     projectCloneBannerItem,
     resumeCompactionBannerItem,
     showBranchMismatchBanner,
@@ -14095,7 +14157,12 @@ export default function ChatView(props: ChatViewProps) {
                           : null
                       }
                       pullRequests={threadPullRequests}
-                      onOpenPullRequest={(url) => void openThreadLink(url).catch(() => undefined)}
+                      onOpenPullRequest={(url) => {
+                        // In the viewer overlay the pull request opens there, in front.
+                        if (viewerOverlayInFront() && openThreadChangeRequest(PLAIN_CLICK, url))
+                          return;
+                        void openThreadLink(url).catch(() => undefined);
+                      }}
                     />
                     {threadPlanView !== null ? (
                       <ThreadPlanCard

@@ -14,7 +14,8 @@ const state = vi.hoisted(() => ({
 }));
 
 const overlay = vi.hoisted(() => ({ last: null as Record<string, unknown> | null }));
-vi.mock("~/viewerOverlayStore", () => ({
+vi.mock("~/viewerOverlayStore", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/viewerOverlayStore")>()),
   // The overlay's header is the host's; the viewer's actions portal into it.
   useViewerOverlay: (options: Record<string, unknown> & { open: boolean }) => {
     overlay.last = options;

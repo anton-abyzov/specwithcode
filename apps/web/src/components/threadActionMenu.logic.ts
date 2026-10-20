@@ -29,6 +29,7 @@ export type ThreadActionMenuId =
   | "copy-path"
   | "copy-branch"
   | "copy-thread-id"
+  | "move-to-project"
   | "archive"
   | "delete";
 
@@ -114,6 +115,12 @@ export interface ThreadActionMenuState {
    * in the browser and on older desktop builds, where the item must not show.
    */
   readonly canOpenProjectWindow: boolean;
+  /**
+   * Why this thread cannot move to another project (a coordinator, a provider's
+   * own subagent, a thread that already moved), or null when it can.
+   * Undefined on surfaces that do not offer the move.
+   */
+  readonly moveToProjectBlockedReason?: string | null | undefined;
   readonly supports: {
     readonly settlement: boolean;
     /** Server understands thread.auto-settle.set. */
@@ -121,6 +128,8 @@ export interface ThreadActionMenuState {
     readonly snooze: boolean;
     readonly pinning: boolean;
     readonly titleRegeneration: boolean;
+    /** Server understands thread.move-to-project. */
+    readonly projectMove?: boolean;
   };
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
 }
@@ -284,12 +293,25 @@ export function buildThreadActionMenuItems(
     // (stays visible in the Settled shelf) and Delete (clears history for
     // good), so it sits beside Delete without borrowing its destructive
     // styling.
+    ...(state.supports.projectMove && state.moveToProjectBlockedReason !== undefined
+      ? [
+          {
+            id: "move-to-project" as const,
+            label: "Move to another project…",
+            icon: "folder-input",
+            separatorBefore: true,
+            disabled: state.moveToProjectBlockedReason !== null,
+          },
+        ]
+      : []),
     {
       id: "archive",
       label: "Archive thread",
       icon: "archive",
       disabled: state.isRunning,
-      separatorBefore: true,
+      separatorBefore: !(
+        state.supports.projectMove && state.moveToProjectBlockedReason !== undefined
+      ),
     },
     {
       id: "delete",

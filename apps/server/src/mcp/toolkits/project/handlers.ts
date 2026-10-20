@@ -192,7 +192,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             message:
               "scratch:true picks its own project and folder; omit projectId and workspaceStrategy.",
           });
-        const projectId =
+        const scratchProjectId =
           input.scratch === true
             ? (yield* ManagedProjectFolders.ManagedProjectFolders.pipe(
                 Effect.flatMap((folders) => folders.ensureScratchProject),
@@ -204,7 +204,30 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                     }),
                 ),
               )).projectId
-            : yield* resolveProjectId(context, input.projectId);
+            : undefined;
+        // Work asked for in a project stays in it: the user finds it there, and
+        // it runs with that project's context. Only a request the user made
+        // without a project becomes a chat outside every project.
+        if (
+          scratchProjectId !== undefined &&
+          caller !== undefined &&
+          caller.projectId !== scratchProjectId &&
+          input.projectless !== true
+        ) {
+          const callerTitle =
+            targetProject?.id === caller.projectId
+              ? targetProject.title
+              : yield* Project.ProjectService.pipe(
+                  Effect.flatMap((projects) => projects.getById(caller.projectId)),
+                  Effect.map((found) => Option.getOrUndefined(found)?.title),
+                  Effect.orElseSucceed(() => undefined),
+                );
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: `This thread belongs to project "${callerTitle ?? caller.projectId}", so the threads it starts stay there: omit scratch to launch in the project (its root, or one of its worktrees with workspaceStrategy). For work in a repository the project does not list, launch in the project anyway and use that repository by its absolute path, or ask the user to add it to the project. Pass projectless:true with scratch only when the user asked for a chat outside any project.`,
+          });
+        }
+        const projectId = scratchProjectId ?? (yield* resolveProjectId(context, input.projectId));
         const readProject = Project.ProjectService.pipe(
           Effect.flatMap((projects) => projects.getById(projectId)),
           Effect.mapError(unavailable),
