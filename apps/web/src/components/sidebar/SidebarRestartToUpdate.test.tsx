@@ -699,7 +699,8 @@ describe("SidebarRestartToUpdate", () => {
       const toast = lastToast();
       expect(toast).toMatchObject({
         type: "loading",
-        description: "Waiting for open SpecWithCode terminals and agent processes to close",
+        description:
+          "The SpecWithCode service on this Mac still runs 0.2.4. Waiting for open SpecWithCode terminals and agent processes to close",
         actionProps: { children: "Update now" },
         data: { secondaryActionProps: { children: "Cancel update" } },
       });
@@ -728,7 +729,7 @@ describe("SidebarRestartToUpdate", () => {
       await click();
       await advance(2_000);
       expect(lastToast().description).toBe(
-        "Still running: 1 running task in “Fix login” (EasyChamp).",
+        "The SpecWithCode service on this Mac still runs 0.2.4. Still running: 1 running task in “Fix login” (EasyChamp).",
       );
     });
 
@@ -743,7 +744,8 @@ describe("SidebarRestartToUpdate", () => {
       await click();
       await advance(4_000);
       expect(lastToast()).toMatchObject({
-        description: "Asking the update agent to install it…",
+        description:
+          "The SpecWithCode service on this Mac still runs 0.2.4. Asking the update agent to install it…",
         actionProps: { children: "Update now" },
         data: { secondaryActionProps: { children: "Cancel update" } },
       });
@@ -756,7 +758,9 @@ describe("SidebarRestartToUpdate", () => {
 
       agent = { ...agent, message: "Retrying (attempt 2)", updatedAt: new Date().toISOString() };
       await advance(2_000);
-      expect(lastToast().description).toBe("Retrying (attempt 2)");
+      expect(lastToast().description).toBe(
+        "The SpecWithCode service on this Mac still runs 0.2.4. Retrying (attempt 2)",
+      );
     });
 
     it("renews a request the agent let lapse while work wound down, then gives up", async () => {
@@ -1000,7 +1004,9 @@ describe("SidebarRestartToUpdate", () => {
       // The agent has not run yet and still reports the old error.
       await advance(4_000);
       expect(label()).toBe("Update now");
-      expect(lastToast().description).toBe("Asking the update agent to install it…");
+      expect(lastToast().description).toBe(
+        "The SpecWithCode service on this Mac still runs 0.2.4. Asking the update agent to install it…",
+      );
       agent = { ...serviceWaiting, status: "installed", installedVersion: "0.2.5" };
       await advance(2_000);
       expect(label()).toBe("Restarting…");

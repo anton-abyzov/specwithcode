@@ -348,6 +348,20 @@ class BoundRequest(AgentCase):
         self.run_agent()
         self.assertEqual((self.state()['status'], self.apply_calls()), ('downloaded', []))
 
+    def test_a_request_for_a_release_newer_than_the_cached_one_checks_again(self):
+        # The desktop saw 0.2.1 before the agent's next scheduled check; the cached 0.2.0 must not refuse it.
+        self.fake.add_release('0.2.0')
+        self.config(installAutomatically=False)
+        self.run_agent()
+        self.assertEqual(self.state()['availableVersion'], '0.2.0')
+        self.fake.add_release('0.2.1')
+        at = self.request(version='0.2.1')
+        self.control(newVersion='0.2.1')
+        self.assertEqual(self.run_agent(), 0, self.state().get('message'))
+        state = self.state()
+        self.assertEqual((state['status'], state['installedVersion']), ('installed', '0.2.1'))
+        self.assertEqual(state['handledInstallRequestAt'], at)
+
     def test_a_request_older_than_ten_minutes_lapses(self):
         self.fake.add_release()
         for mode in ('force', 'normal'):

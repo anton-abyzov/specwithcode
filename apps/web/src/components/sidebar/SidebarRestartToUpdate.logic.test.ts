@@ -239,8 +239,79 @@ describe("restart to update", () => {
       recovering,
     );
     expect(serviceUpdateToast(waiting, false).description).toBe(
-      "Restarting SpecWithCode to recover its database",
+      `The SpecWithCode service on this Mac still runs ${recovering.installedVersion}. Restarting SpecWithCode to recover its database`,
     );
+  });
+
+  it("offers nothing when the service already runs the downloaded version", () => {
+    const same: StudioServiceUpdateState = { ...serviceWaiting, installedVersion: "0.2.5" };
+    expect(isServiceUpdateReady(same)).toBe(false);
+    expect(getRestartToUpdateView(appIdle, same)).toBeNull();
+    expect(isServiceUpdateReady({ ...same, status: "downloaded" })).toBe(false);
+  });
+});
+
+describe("service update skew (M4, October 19, 2026: About said 1.0.58 while the toast waited)", () => {
+  const skewed: StudioServiceUpdateState = {
+    ...serviceWaiting,
+    installedVersion: "0.2.1",
+    message: "Waiting for running tasks, queued messages and open questions to finish (attempt 1)",
+  };
+
+  it("names the version the service still runs while it waits for a newer one", () => {
+    const start = startServiceUpdateProgress(skewed);
+    expect(start).toMatchObject({ targetVersion: "0.2.5", fromVersion: "0.2.1" });
+    const waiting = advanceServiceUpdateProgress({ ...start, phase: "requesting" }, skewed);
+    const toast = serviceUpdateToast(waiting, true);
+    expect(toast.title).toBe("Waiting to install SpecWithCode 0.2.5");
+    expect(toast.description).toBe(
+      `The SpecWithCode service on this Mac still runs 0.2.1. ${skewed.message}`,
+    );
+    expect(toast.action).toBe("update-now");
+  });
+
+  it("ends the wait when the service reports the target even without an installed status", () => {
+    const waiting = advanceServiceUpdateProgress(
+      { ...startServiceUpdateProgress(skewed), phase: "requesting" },
+      skewed,
+    );
+    for (const status of ["waiting-for-quiet", "downloaded", "available"] as const) {
+      const late = advanceServiceUpdateProgress(waiting, {
+        ...skewed,
+        status,
+        installedVersion: "0.2.5",
+      });
+      expect(late.phase).toBe("restarting");
+      expect(serviceUpdateToast(late, false).type).toBe("success");
+    }
+  });
+
+  it("keeps installing until the agent finishes, even if the version already changed", () => {
+    const installing = advanceServiceUpdateProgress(
+      { ...startServiceUpdateProgress(skewed), phase: "requesting" },
+      { ...skewed, status: "installing", installedVersion: "0.2.5" },
+    );
+    expect(installing.phase).toBe("installing");
+  });
+
+  it("follows the running version when a newer release is found during the wait", () => {
+    const waiting = advanceServiceUpdateProgress(
+      { ...startServiceUpdateProgress(skewed), phase: "requesting" },
+      skewed,
+    );
+    const moved = advanceServiceUpdateProgress(waiting, { ...skewed, installedVersion: "0.2.3" });
+    expect(moved).toMatchObject({ phase: "waiting", fromVersion: "0.2.3", targetVersion: "0.2.5" });
+    expect(serviceUpdateToast(moved, false).description).toContain("still runs 0.2.3");
+  });
+
+  it("does not name a running version that equals the target", () => {
+    const progress = {
+      ...startServiceUpdateProgress(serviceWaiting),
+      phase: "waiting" as const,
+      fromVersion: "0.2.5",
+      message: "Waiting",
+    };
+    expect(serviceUpdateToast(progress, false).description).toBe("Waiting");
   });
 });
 
@@ -497,15 +568,17 @@ describe("service update progress", () => {
     expect(serviceUpdateToast(waiting, false)).toEqual({
       type: "loading",
       title: "Preparing to install SpecWithCode 0.2.5",
-      description: "Waiting for open SpecWithCode terminals and agent processes to close",
+      description:
+        "The SpecWithCode service on this Mac still runs 0.2.4. Waiting for open SpecWithCode terminals and agent processes to close",
       action: "update-now",
       cancel: true,
     });
     expect(serviceUpdateToast({ ...waiting, message: null }, false).description).toBe(
-      "Waiting for the last work to finish…",
+      "The SpecWithCode service on this Mac still runs 0.2.4. Waiting for the last work to finish…",
     );
     expect(serviceUpdateToast(requested, false)).toMatchObject({
-      description: "Asking the update agent to install it…",
+      description:
+        "The SpecWithCode service on this Mac still runs 0.2.4. Asking the update agent to install it…",
       action: "update-now",
       cancel: true,
     });
