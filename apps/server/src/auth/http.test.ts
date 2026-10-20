@@ -171,7 +171,8 @@ it.effect.each(cookieTransportCases)(
               postJson(
                 "/api/auth/pairing-token",
                 { scopes: ["orchestration:read"] },
-                { cookie: devCookieHeader },
+                // A browser sends its page's Origin on every POST.
+                { cookie: devCookieHeader, origin },
                 origin,
               ),
               requestContext,

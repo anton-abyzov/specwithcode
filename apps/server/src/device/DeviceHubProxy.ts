@@ -11,9 +11,13 @@
  * Only the routes the Device panel needs are forwarded. Anything under the
  * hub's dashboard, exec, or WebRTC surface is rejected here.
  */
-import { AuthOrchestrationReadScope, AuthOrchestrationOperateScope } from "@specweave-studio/contracts";
+import {
+  AuthOrchestrationReadScope,
+  AuthOrchestrationOperateScope,
+} from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import {
   HttpClient,
   HttpClientRequest,
@@ -24,7 +28,8 @@ import {
 import * as Socket from "effect/socket/Socket";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 
-import { authenticateMediaRequest } from "../auth/http.ts";
+import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import { authenticateMediaRequest, serveSocketUntilSessionEnds } from "../auth/http.ts";
 import * as DeviceService from "./DeviceService.ts";
 
 const ALLOWED_PATHS: ReadonlyArray<RegExp> = [
@@ -44,6 +49,12 @@ const MUTABLE_PATHS: ReadonlyArray<RegExp> = [
   /^\/vendor\/serve-sim\/api\/screenshot$/,
   /^\/vendor\/serve-emu\/api\/(screenshot|stream-mode|stream-settings)$/,
   /^\/vendor\/serve-emu\/api\/fold$/,
+];
+
+/** Responses that stream for as long as the panel shows the device. */
+const STREAMING_PATHS: ReadonlyArray<RegExp> = [
+  /\/stream\.(mjpeg|avcc)$/,
+  /^\/vendor\/serve-sim\/api\/event-log\/events$/,
 ];
 
 const ALLOWED_WS_PATHS: ReadonlyArray<RegExp> = [
@@ -89,6 +100,7 @@ const forwardHeaders = (request: HttpServerRequest.HttpServerRequest, origin: st
 const proxyWebSocket = Effect.fn("DeviceHubProxy.proxyWebSocket")(function* (
   request: HttpServerRequest.HttpServerRequest,
   upstreamUrl: string,
+  session: EnvironmentAuth.AuthenticatedSession,
 ) {
   const client = yield* request.upgrade;
   const upstream = yield* Socket.makeWebSocket(upstreamUrl, {
@@ -100,9 +112,10 @@ const proxyWebSocket = Effect.fn("DeviceHubProxy.proxyWebSocket")(function* (
       const writeToUpstream = yield* upstream.writer;
       // Whichever side closes first ends the other via scope teardown: a close
       // fails the pull with a SocketError, which loses the race.
-      return yield* Effect.raceFirst(
-        pumpFrames(upstream, writeToClient),
-        pumpFrames(client, writeToUpstream),
+      return yield* serveSocketUntilSessionEnds(
+        client,
+        session,
+        Effect.raceFirst(pumpFrames(upstream, writeToClient), pumpFrames(client, writeToUpstream)),
       );
     }),
   ).pipe(Effect.ignoreCause);
@@ -121,7 +134,13 @@ const proxyHttp = Effect.fn("DeviceHubProxy.proxyHttp")(function* (
   request: HttpServerRequest.HttpServerRequest,
   upstreamUrl: string,
   hubOrigin: string,
+  /** Set for a long-lived stream, which must end with the session that opened it. */
+  streamSession: EnvironmentAuth.AuthenticatedSession | undefined,
 ) {
+  const ended =
+    streamSession === undefined
+      ? undefined
+      : yield* (yield* EnvironmentAuth.EnvironmentAuth).watchSessionEnd(streamSession);
   const httpClient = HttpClient.withScope(yield* HttpClient.HttpClient);
   const method = request.method;
   const upstreamRequest = HttpClientRequest.make(method)(upstreamUrl).pipe(
@@ -140,7 +159,9 @@ const proxyHttp = Effect.fn("DeviceHubProxy.proxyHttp")(function* (
   }
   // Long-lived MJPEG and AVCC responses must not be buffered by compression.
   headers["cache-control"] = "no-store, no-transform";
-  return HttpServerResponse.stream(response.stream, {
+  const body =
+    ended === undefined ? response.stream : response.stream.pipe(Stream.interruptWhen(ended));
+  return HttpServerResponse.stream(body, {
     status: response.status,
     headers,
     ...(headers["content-type"] ? { contentType: headers["content-type"] } : {}),
@@ -162,13 +183,18 @@ const handler = Effect.gen(function* () {
     return HttpServerResponse.text("Not Found", { status: 404 });
   }
   const readOnly = request.method === "GET" || request.method === "HEAD";
-  if (!upgrade && !readOnly && !MUTABLE_PATHS.some((pattern) => pattern.test(hubPath))) {
+  // OPTIONS is never a read, and the hub has no preflight to answer.
+  if (
+    !upgrade &&
+    !readOnly &&
+    (request.method === "OPTIONS" || !MUTABLE_PATHS.some((pattern) => pattern.test(hubPath)))
+  ) {
     return HttpServerResponse.text("Method Not Allowed", { status: 405 });
   }
   const controlsDevice =
     (upgrade && hubPath !== "/api/devices/ws") ||
     (!readOnly && /\/api\/(stream-(mode|settings)|fold)$/.test(hubPath));
-  yield* authenticateMediaRequest(
+  const session = yield* authenticateMediaRequest(
     controlsDevice ? AuthOrchestrationOperateScope : AuthOrchestrationReadScope,
   );
   const devices = yield* DeviceService.DeviceService;
@@ -189,9 +215,15 @@ const handler = Effect.gen(function* () {
     return yield* proxyWebSocket(
       request,
       `${ready.hub.origin.replace(/^http/, "ws")}${upstreamPath}`,
+      session,
     );
   }
-  return yield* proxyHttp(request, `${ready.hub.origin}${upstreamPath}`, ready.hub.origin);
+  return yield* proxyHttp(
+    request,
+    `${ready.hub.origin}${upstreamPath}`,
+    ready.hub.origin,
+    STREAMING_PATHS.some((pattern) => pattern.test(hubPath)) ? session : undefined,
+  );
 });
 
 export const layer = HttpRouter.add("*", `${DeviceService.DEVICE_HUB_ROUTE_PREFIX}/*`, handler);

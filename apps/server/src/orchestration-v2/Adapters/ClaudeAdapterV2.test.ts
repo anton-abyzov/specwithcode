@@ -1,5 +1,6 @@
 import { ProjectPlanToolkit } from "../../mcp/toolkits/projectPlan/tools.ts";
 import { ProjectMemoryToolkit } from "../../mcp/toolkits/projectMemory/tools.ts";
+import { ProjectKnowledgeToolkit } from "../../mcp/toolkits/projectKnowledge/tools.ts";
 import * as NodeOS from "node:os";
 
 import type {
@@ -856,6 +857,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       ...Object.values(WorktreeToolkit.tools),
       ...Object.values(ProjectToolkit.tools),
       ...Object.values(ProjectMemoryToolkit.tools),
+      ...Object.values(ProjectKnowledgeToolkit.tools),
       ...Object.values(ProjectPlanToolkit.tools),
       ...Object.values(EnvironmentToolkit.tools),
       ...Object.values(PreviewControlsToolkit.tools),

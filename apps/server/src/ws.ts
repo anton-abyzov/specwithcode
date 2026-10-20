@@ -122,6 +122,7 @@ import {
   HttpServerRespondable,
   HttpServerResponse,
 } from "effect/http";
+import type * as Scope from "effect/Scope";
 import { RpcSerialization, RpcServer } from "effect/rpc";
 
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
@@ -264,7 +265,11 @@ import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
-import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
+import {
+  failEnvironmentAuthInvalid,
+  failEnvironmentInternal,
+  upgradeUntilSessionEnds,
+} from "./auth/http.ts";
 import * as RelayClient from "@specweave-studio/shared/relayClient";
 import {
   sameUsageLimitCommandCoverage,
@@ -3234,6 +3239,80 @@ export const WS_RPC_SERVER_OPTIONS = {
   disableFatalDefects: true,
 } as const;
 
+/** What the `/ws` route knows about a client once its upgrade is authenticated. */
+export interface RpcWebSocketClient {
+  readonly session: EnvironmentAuth.AuthenticatedSession;
+  readonly clientOrigin: OrchestrationClientOrigin;
+  readonly clientAnalyticsProps: ReturnType<typeof readClientAnalyticsProps>;
+}
+
+/**
+ * The `/ws` route around its RPC server: protocol and Upgrade checks,
+ * authentication, connection bookkeeping, and a socket that lives only as
+ * long as its session. `makeHttpEffect` builds the RPC server for the client.
+ */
+export const serveRpcWebSocket = <E, R>(
+  makeHttpEffect: (
+    client: RpcWebSocketClient,
+  ) => Effect.Effect<
+    Effect.Effect<
+      HttpServerResponse.HttpServerResponse,
+      never,
+      Scope.Scope | HttpServerRequest.HttpServerRequest
+    >,
+    E,
+    R
+  >,
+) =>
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const requestUrl = HttpServerRequest.toURL(request);
+    if (Option.isNone(requestUrl) || !hasCompatibleOrchestrationProtocol(requestUrl.value)) {
+      return HttpServerResponse.jsonUnsafe(
+        {
+          code: "orchestration_protocol_incompatible",
+          message: `Update this client to one that supports orchestration protocol ${ORCHESTRATION_PROTOCOL_VERSION}.`,
+          orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+        },
+        { status: 426 },
+      );
+    }
+    // A plain GET is not a socket: answer before authenticating, so a page
+    // on another origin cannot get a cookie request this far and record
+    // client metadata or analytics for it.
+    if (request.headers.upgrade?.toLowerCase() !== "websocket") {
+      return HttpServerResponse.text("Upgrade Required", {
+        status: 426,
+        headers: { upgrade: "websocket", connection: "Upgrade" },
+      });
+    }
+    const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+    const sessions = yield* SessionStore.SessionStore;
+    const analytics = yield* AnalyticsService.AnalyticsService;
+    const session = yield* serverAuth.authenticateWebSocketUpgrade(request).pipe(
+      Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
+        failEnvironmentAuthInvalid(
+          EnvironmentAuth.serverAuthCredentialReason(error),
+          EnvironmentAuth.serverAuthDpopFailureReason(error),
+        ),
+      ),
+      Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+        failEnvironmentInternal("internal_error", error),
+      ),
+    );
+    const clientOrigin = readClientConnectionOrigin(request);
+    const clientAnalyticsProps = readClientAnalyticsProps(request);
+    yield* sessions.recordClientConnection(session.sessionId, clientOrigin);
+    yield* analytics.record("client.connected", clientAnalyticsProps);
+    const httpEffect = yield* makeHttpEffect({ session, clientOrigin, clientAnalyticsProps });
+    return yield* Effect.acquireUseRelease(
+      sessions.markConnected(session.sessionId),
+      // A revoked or expired session must not keep the socket it opened.
+      () => upgradeUntilSessionEnds(session, httpEffect),
+      () => sessions.markDisconnected(session.sessionId),
+    );
+  });
+
 const inferredWebSocketLayer = Layer.unwrap(
   Effect.gen(function* () {
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
@@ -3245,38 +3324,8 @@ const inferredWebSocketLayer = Layer.unwrap(
     return HttpRouter.add(
       "GET",
       "/ws",
-      Effect.gen(function* () {
-        const request = yield* HttpServerRequest.HttpServerRequest;
-        const requestUrl = HttpServerRequest.toURL(request);
-        if (Option.isNone(requestUrl) || !hasCompatibleOrchestrationProtocol(requestUrl.value)) {
-          return HttpServerResponse.jsonUnsafe(
-            {
-              code: "orchestration_protocol_incompatible",
-              message: `Update this client to one that supports orchestration protocol ${ORCHESTRATION_PROTOCOL_VERSION}.`,
-              orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
-            },
-            { status: 426 },
-          );
-        }
-        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-        const sessions = yield* SessionStore.SessionStore;
-        const analytics = yield* AnalyticsService.AnalyticsService;
-        const session = yield* serverAuth.authenticateWebSocketUpgrade(request).pipe(
-          Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
-            failEnvironmentAuthInvalid(
-              EnvironmentAuth.serverAuthCredentialReason(error),
-              EnvironmentAuth.serverAuthDpopFailureReason(error),
-            ),
-          ),
-          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-            failEnvironmentInternal("internal_error", error),
-          ),
-        );
-        const clientOrigin = readClientConnectionOrigin(request);
-        const clientAnalyticsProps = readClientAnalyticsProps(request);
-        yield* sessions.recordClientConnection(session.sessionId, clientOrigin);
-        yield* analytics.record("client.connected", clientAnalyticsProps);
-        const rpcWebSocketHttpEffect = yield* Effect.gen(function* () {
+      serveRpcWebSocket(({ session, clientOrigin, clientAnalyticsProps }) =>
+        Effect.gen(function* () {
           const { protocol, httpEffect } = yield* RpcServer.makeProtocolWithHttpEffectWebsocket;
           yield* RpcServer.make(ServerWsRpcGroup, WS_RPC_SERVER_OPTIONS).pipe(
             Effect.provideService(RpcServer.Protocol, withTerminalOutputWindow(protocol)),
@@ -3307,6 +3356,7 @@ const inferredWebSocketLayer = Layer.unwrap(
               Layer.merge(ChromeBridge.layerRpcHandlers),
               Layer.merge(ProjectLink.layerRpcHandlers),
               Layer.merge(MachineHandoff.layerRpcHandlers),
+              Layer.merge(ProjectWorkspaceRpc.layerKnowledgeRpcHandlers),
               Layer.merge(
                 BrowserExtension.layerRpcHandlers.pipe(
                   Layer.provide(Layer.succeed(BrowserExtension.BrowserExtension, browserExtension)),
@@ -3346,13 +3396,8 @@ const inferredWebSocketLayer = Layer.unwrap(
               ),
             ),
           ),
-        );
-        return yield* Effect.acquireUseRelease(
-          sessions.markConnected(session.sessionId),
-          () => rpcWebSocketHttpEffect,
-          () => sessions.markDisconnected(session.sessionId),
-        );
-      }).pipe(
+        ),
+      ).pipe(
         Effect.catchTags({
           EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
           EnvironmentInternalError: HttpServerRespondable.toResponse,

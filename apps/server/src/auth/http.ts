@@ -25,11 +25,15 @@ import {
 import type { AuthEnvironmentScope, DpopFailureReason } from "@specweave-studio/contracts";
 import { parseOAuthScope } from "@specweave-studio/shared/oauthScope";
 import { causeErrorTag } from "@specweave-studio/shared/observability";
+import * as NodeHttpServerRequest from "@effect/platform-node/NodeHttpServerRequest";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
+import * as Socket from "effect/socket/Socket";
 import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Cookies from "effect/http/Cookies";
@@ -175,7 +179,8 @@ export function failEnvironmentNotFound(reason: EnvironmentResourceNotFoundReaso
  * preview stream) authenticate the way the `/ws` upgrade does: a cookie for browser
  * sessions, or a short-lived `wsTicket` minted over authenticated HTTP for
  * bearer and DPoP clients. The upgrade authenticator already implements that
- * fallback order, so it is used for plain requests as well.
+ * fallback order, so it is used for plain requests as well. A cookie upgrade
+ * or state change must come from this server's own origin or a trusted one.
  */
 export const authenticateMediaRequest = (requiredScope: AuthEnvironmentScope) =>
   Effect.gen(function* () {
@@ -198,6 +203,110 @@ export const authenticateMediaRequest = (requiredScope: AuthEnvironmentScope) =>
       return yield* failEnvironmentScopeRequired(requiredScope);
     }
     return session;
+  });
+
+/** The close code clients already read as "authentication rejected". */
+const SESSION_ENDED_CLOSE_CODE = 4401;
+/** How long a peer has to answer the close frame before the connection is dropped. */
+const SESSION_ENDED_CLOSE_GRACE = Duration.seconds(1);
+
+type WatchedSession = Pick<
+  EnvironmentAuth.AuthenticatedSession,
+  "sessionId" | "method" | "expiresAt"
+>;
+
+/**
+ * Sends the 4401 close frame, then drops the TCP connection if the peer has
+ * not finished the close handshake within the grace period. The drop is
+ * detached: the handler's scope ends as soon as it returns.
+ */
+const closeEndedSocket = (request: HttpServerRequest.HttpServerRequest, socket: Socket.Socket) =>
+  Effect.gen(function* () {
+    yield* socket.writer.pipe(
+      Effect.flatMap((writer) =>
+        writer.write(new Socket.CloseEvent(SESSION_ENDED_CLOSE_CODE, "Session ended")),
+      ),
+      Effect.ignore,
+    );
+    const transport = NodeHttpServerRequest.toIncomingMessage(request).socket as
+      | { readonly destroyed: boolean; readonly destroy: () => void }
+      | undefined;
+    if (transport === undefined || typeof transport.destroy !== "function") return;
+    yield* Effect.sleep(SESSION_ENDED_CLOSE_GRACE).pipe(
+      Effect.andThen(
+        Effect.sync(() => {
+          if (!transport.destroyed) transport.destroy();
+        }),
+      ),
+      Effect.forkDetach,
+    );
+  });
+
+/**
+ * Serves `handler` on an upgraded media `socket` until `session` is revoked,
+ * replaced or expires. Then the handler stops at once, so nothing more is
+ * served, and the socket closes with 4401.
+ */
+export const serveSocketUntilSessionEnds = <A, E, R>(
+  socket: Socket.Socket,
+  session: WatchedSession,
+  handler: Effect.Effect<A, E, R>,
+) =>
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const auth = yield* EnvironmentAuth.EnvironmentAuth;
+    const ended = yield* auth.watchSessionEnd(session);
+    return yield* Effect.raceFirst(
+      handler,
+      ended.pipe(Effect.andThen(closeEndedSocket(request, socket))),
+    );
+  });
+
+/**
+ * Runs an upgrade handler that calls `request.upgrade` itself, such as the RPC
+ * server's, until `session` is revoked, replaced or expires. Then the handler
+ * stops at once and the socket it opened closes with 4401. The handler sees
+ * the current request with only `upgrade` wrapped.
+ */
+export const upgradeUntilSessionEnds = (
+  session: WatchedSession,
+  httpEffect: Effect.Effect<
+    HttpServerResponse.HttpServerResponse,
+    never,
+    Scope.Scope | HttpServerRequest.HttpServerRequest
+  >,
+): Effect.Effect<
+  HttpServerResponse.HttpServerResponse,
+  never,
+  Scope.Scope | HttpServerRequest.HttpServerRequest | EnvironmentAuth.EnvironmentAuth
+> =>
+  Effect.gen(function* () {
+    const auth = yield* EnvironmentAuth.EnvironmentAuth;
+    const ended = yield* auth.watchSessionEnd(session);
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    let upgraded: Socket.Socket | undefined;
+    const upgrade = request.upgrade.pipe(
+      Effect.tap((socket) =>
+        Effect.sync(() => {
+          upgraded = socket;
+        }),
+      ),
+    );
+    const watched = new Proxy(request, {
+      get: (target, property) =>
+        property === "upgrade" ? upgrade : Reflect.get(target, property, target),
+    });
+    return yield* Effect.raceFirst(
+      httpEffect.pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, watched)),
+      ended.pipe(
+        Effect.andThen(
+          Effect.suspend(() =>
+            upgraded === undefined ? Effect.void : closeEndedSocket(request, upgraded),
+          ),
+        ),
+        Effect.as(HttpServerResponse.empty()),
+      ),
+    );
   });
 
 export function failEnvironmentInternal(reason: EnvironmentInternalErrorReason, error?: unknown) {

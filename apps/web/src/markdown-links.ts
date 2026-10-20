@@ -47,6 +47,130 @@ export interface MarkdownFileLinkMeta {
   search?: { readonly roots: ReadonlyArray<string>; readonly path: string };
   /** Every path the host was asked about when none of them exists. */
   unresolved?: ReadonlyArray<string>;
+  /**
+   * The files shell shorthand stands for (`findings-{B,C}.md`, `shot-*.png`),
+   * each its own link. The link itself is the path as written, which the host
+   * may still hold under that very name.
+   */
+  expansions?: ReadonlyArray<MarkdownFileLinkMeta>;
+  /** A file name pattern (`findings-*.md`) the host's listing of `folder` settles. */
+  glob?: { readonly folder: string; readonly pattern: string };
+}
+
+/** Wider than this, shorthand is a pattern, not a list of files a report names. */
+const MAX_SHORTHAND_PATHS = 32;
+const NUMERIC_RANGE_PATTERN = /^(-?\d+)\.\.(-?\d+)$/;
+const LETTER_RANGE_PATTERN = /^([A-Za-z])\.\.([A-Za-z])$/;
+
+function braceRange(body: string): string[] | null {
+  const numeric = NUMERIC_RANGE_PATTERN.exec(body);
+  if (numeric) {
+    const [from, to] = [Number(numeric[1]), Number(numeric[2])];
+    if (Math.abs(to - from) >= MAX_SHORTHAND_PATHS) return [];
+    // `{01..03}` pads like the shell does.
+    const padded = /^-?0\d/.test(numeric[1]!) || /^-?0\d/.test(numeric[2]!);
+    const width = padded ? Math.max(numeric[1]!.length, numeric[2]!.length) : 0;
+    const step = from <= to ? 1 : -1;
+    const values: string[] = [];
+    for (let value = from; value !== to + step; value += step) {
+      values.push(String(value).padStart(width, "0"));
+    }
+    return values;
+  }
+  const letters = LETTER_RANGE_PATTERN.exec(body);
+  if (!letters) return null;
+  const [from, to] = [letters[1]!.charCodeAt(0), letters[2]!.charCodeAt(0)];
+  if (Math.abs(to - from) >= MAX_SHORTHAND_PATHS) return [];
+  const step = from <= to ? 1 : -1;
+  const values: string[] = [];
+  for (let code = from; code !== to + step; code += step) values.push(String.fromCharCode(code));
+  return values;
+}
+
+/** The comma-separated parts of a brace body, nested groups kept whole. */
+function braceAlternatives(body: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let index = 0; index < body.length; index++) {
+    const char = body[index];
+    if (char === "{") depth++;
+    else if (char === "}") depth--;
+    else if (char === "," && depth === 0) {
+      parts.push(body.slice(start, index));
+      start = index + 1;
+    }
+  }
+  parts.push(body.slice(start));
+  return parts;
+}
+
+function expandBraces(text: string, from: number, state: { overflow: boolean }): string[] | null {
+  for (let open = text.indexOf("{", from); open >= 0; open = text.indexOf("{", open + 1)) {
+    // `${HOME}` is a variable, not a list.
+    if (open > 0 && (text[open - 1] === "$" || text[open - 1] === "\\")) continue;
+    let depth = 0;
+    let close = -1;
+    for (let index = open; index < text.length; index++) {
+      if (text[index] === "{") depth++;
+      else if (text[index] === "}" && --depth === 0) {
+        close = index;
+        break;
+      }
+    }
+    if (close < 0) return null;
+    const body = text.slice(open + 1, close);
+    const alternatives = braceAlternatives(body);
+    // `{id}` alone stays as written, as in the shell.
+    const parts = alternatives.length > 1 ? alternatives : braceRange(body);
+    if (parts === null) continue;
+    if (parts.length === 0) state.overflow = true;
+    const head = text.slice(0, open);
+    const tail = text.slice(close + 1);
+    const paths: string[] = [];
+    for (const part of parts) {
+      const joined = `${head}${part}${tail}`;
+      paths.push(...(expandBraces(joined, open, state) ?? [joined]));
+      if (state.overflow || paths.length > MAX_SHORTHAND_PATHS) {
+        state.overflow = true;
+        return [];
+      }
+    }
+    return paths;
+  }
+  return null;
+}
+
+/**
+ * The paths shell brace shorthand stands for: `findings-{B,C}.md` is
+ * `findings-B.md` and `findings-C.md`, `shot-{1..3}.png` is three files, and
+ * groups nest. Null when the text has none: `${HOME}` and a lone `{id}` are
+ * not shorthand. Empty when it stands for more paths than a report would list.
+ */
+export function expandBraceShorthand(text: string): string[] | null {
+  const state = { overflow: false };
+  const paths = expandBraces(text, 0, state);
+  if (paths === null) return null;
+  if (state.overflow) return [];
+  return [...new Set(paths.filter((path) => path.length > 0))];
+}
+
+/** `*` in a file name, never in a folder: the host's listing of that folder settles it. */
+export function basenameGlob(path: string): { folder: string; pattern: string } | null {
+  const slash = path.lastIndexOf("/");
+  const pattern = path.slice(slash + 1);
+  if (!/[*?]/.test(pattern) || slash <= 0 || /[*?]/.test(path.slice(0, slash))) return null;
+  return { folder: path.slice(0, slash), pattern };
+}
+
+/** Whether a file name matches a `*`/`?` pattern; every other character is literal. */
+export function matchesFileNamePattern(name: string, pattern: string): boolean {
+  const source = [...pattern]
+    .map((char) =>
+      char === "*" ? ".*" : char === "?" ? "." : char.replace(/[.+^${}()|[\]\\]/g, "\\$&"),
+    )
+    .join("");
+  return new RegExp(`^${source}$`).test(name);
 }
 
 export function extractMarkdownLinkHrefs(markdown: string): string[] {
@@ -110,6 +234,73 @@ export function resolveInlineCodeFileLinkMeta(
   cwd?: string,
   baseDir: string | undefined = cwd,
 ): MarkdownFileLinkMeta | null {
+  const shorthand = shorthandFileLinkMeta(codeText.trim(), (path) =>
+    singleInlineCodeFileLinkMeta(path, cwd, baseDir),
+  );
+  if (shorthand !== undefined) return shorthand && withLiteralPath(shorthand, cwd, baseDir);
+  return singleInlineCodeFileLinkMeta(codeText, cwd, baseDir);
+}
+
+type ShorthandFileLinks =
+  | { readonly kind: "brace"; readonly text: string; readonly expansions: MarkdownFileLinkMeta[] }
+  | { readonly kind: "glob"; readonly text: string; readonly meta: MarkdownFileLinkMeta };
+
+/**
+ * Shell shorthand that names files: every path a brace group stands for must
+ * read as a file, and a `*` must sit in a file name. Undefined when the text
+ * is not shorthand, null when it is but does not name files.
+ */
+function shorthandFileLinkMeta(
+  text: string,
+  resolve: (path: string) => MarkdownFileLinkMeta | null,
+): ShorthandFileLinks | null | undefined {
+  const paths = expandBraceShorthand(text);
+  if (paths !== null) {
+    if (paths.length < 2) return paths.length === 0 ? null : undefined;
+    // `shot-{1,2}-*.png` is patterns, not files: it stays as written.
+    if (paths.some((path) => /[*?]/.test(path))) return null;
+    const expansions = paths.map(resolve);
+    return expansions.every((meta) => meta !== null)
+      ? { kind: "brace", text, expansions: expansions as MarkdownFileLinkMeta[] }
+      : null;
+  }
+  if (!/[*?]/.test(text)) return undefined;
+  // Path-shaped once the pattern is a name: `~/out/shot-*.png`, `logs/findings-?.md`.
+  // A `?` would read as a URL query, so it resolves as a stand-in and comes back.
+  const meta =
+    resolve(text.replace(/[*?]/g, "x")) === null
+      ? null
+      : withQuestionMarks(resolve(text.replaceAll("?", QUESTION_MARK)));
+  return meta && basenameGlob(meta.filePath) ? { kind: "glob", text, meta } : null;
+}
+
+const QUESTION_MARK = "\uE000";
+
+function withQuestionMarks(meta: MarkdownFileLinkMeta | null): MarkdownFileLinkMeta | null {
+  return meta && JSON.parse(JSON.stringify(meta).replaceAll(QUESTION_MARK, "?"));
+}
+
+/** The link for shorthand: the path as written, which settles into its files. */
+function withLiteralPath(
+  shorthand: ShorthandFileLinks,
+  cwd: string | undefined,
+  baseDir: string | undefined,
+): MarkdownFileLinkMeta {
+  if (shorthand.kind === "glob") {
+    return { ...shorthand.meta, glob: basenameGlob(shorthand.meta.filePath)! };
+  }
+  const target =
+    baseDir !== undefined && isRelativeFilePath(shorthand.text)
+      ? resolvePathLinkTarget(shorthand.text, baseDir)
+      : shorthand.text;
+  return { ...buildFileLinkMetaFromTarget(target, cwd), expansions: shorthand.expansions };
+}
+
+function singleInlineCodeFileLinkMeta(
+  codeText: string,
+  cwd?: string,
+  baseDir: string | undefined = cwd,
+): MarkdownFileLinkMeta | null {
   const trimmed = codeText.trim();
   const directory = inlineCodeDirectoryCandidate(trimmed);
   if (directory !== null) {
@@ -124,7 +315,7 @@ export function resolveInlineCodeFileLinkMeta(
   // `serverRuntimeStartup.ts:353-357`: a line range opens at its first line.
   const range = LINE_RANGE_PATTERN.exec(trimmed);
   if (range && !trimmed.startsWith(":")) {
-    const meta = resolveInlineCodeFileLinkMeta(range[1]!, cwd, baseDir);
+    const meta = singleInlineCodeFileLinkMeta(range[1]!, cwd, baseDir);
     const endLine = Number(range[2]);
     return meta && meta.line !== undefined && endLine > meta.line ? { ...meta, endLine } : meta;
   }
@@ -233,7 +424,7 @@ export function inferInlineCodeBaseDirs(
   const namedFolders: string[] = [];
   const fileFolders: string[] = [];
   const firstSegments: string[] = [];
-  for (const span of spans) {
+  for (const span of expandedSpans(spans)) {
     const text = span.trim();
     const meta = resolveInlineCodeFileLinkMeta(text, cwd, baseDir);
     if (!meta) continue;
@@ -303,41 +494,63 @@ export function resolveInlineCodeFileLinks(
     }
     if (metaByText.has(span)) {
       const known = metaByText.get(span)!;
-      if (!known.directory) lastFile = known;
+      if (!known.directory) lastFile = known.expansions?.at(-1) ?? known;
       continue;
     }
-    const meta = resolveInlineCodeFileLinkMeta(span, cwd, baseDir);
-    if (!meta) continue;
-    const bases = span.trim().includes("/") ? inferredBaseDirs.forPaths : inferredBaseDirs.forNames;
-    const inferred = isPlainRelativePath(span.trim())
-      ? bases.flatMap((base) => {
-          const resolved = resolveInlineCodeFileLinkMeta(span, cwd, base);
-          return resolved && resolved.filePath !== meta.filePath ? [resolved] : [];
-        })
-      : [];
-    const plain = isPlainRelativePath(span.trim());
-    const search = plain
-      ? {
-          roots: [...bases, ...(cwd ? [cwd] : [])],
-          path: span
-            .trim()
-            .replace(/(?::\d+){1,2}(?:\s*[-–]\s*\d+)?$/, "")
-            .replace(/\/+$/, ""),
-        }
-      : null;
-    const settled: MarkdownFileLinkMeta = {
-      ...(inferred.length > 0
-        ? {
-            ...inferred[0]!,
-            candidates: [...inferred.map((candidate) => candidate.filePath), meta.filePath],
-          }
-        : meta),
-      ...(search ? { search } : {}),
-    };
+    const shorthand = shorthandFileLinkMeta(span.trim(), (path) =>
+      settleInlineCodeFileLink(path, cwd, baseDir, inferredBaseDirs),
+    );
+    const settled =
+      shorthand === undefined
+        ? settleInlineCodeFileLink(span, cwd, baseDir, inferredBaseDirs)
+        : shorthand && withLiteralPath(shorthand, cwd, baseDir);
+    if (!settled) continue;
     metaByText.set(span, settled);
-    if (!settled.directory) lastFile = settled;
+    if (!settled.directory) lastFile = settled.expansions?.at(-1) ?? settled;
   }
   return metaByText;
+}
+
+/** One path of a message, with the other places it may live (see `resolveInlineCodeFileLinks`). */
+function settleInlineCodeFileLink(
+  span: string,
+  cwd: string | undefined,
+  baseDir: string | undefined,
+  inferredBaseDirs: { readonly forPaths: string[]; readonly forNames: string[] },
+): MarkdownFileLinkMeta | null {
+  const meta = singleInlineCodeFileLinkMeta(span, cwd, baseDir);
+  if (!meta) return null;
+  const plain = isPlainRelativePath(span.trim());
+  const bases = span.trim().includes("/") ? inferredBaseDirs.forPaths : inferredBaseDirs.forNames;
+  const inferred = plain
+    ? bases.flatMap((base) => {
+        const resolved = singleInlineCodeFileLinkMeta(span, cwd, base);
+        return resolved && resolved.filePath !== meta.filePath ? [resolved] : [];
+      })
+    : [];
+  const search = plain
+    ? {
+        roots: [...bases, ...(cwd ? [cwd] : [])],
+        path: span
+          .trim()
+          .replace(/(?::\d+){1,2}(?:\s*[-–]\s*\d+)?$/, "")
+          .replace(/\/+$/, ""),
+      }
+    : null;
+  return {
+    ...(inferred.length > 0
+      ? {
+          ...inferred[0]!,
+          candidates: [...inferred.map((candidate) => candidate.filePath), meta.filePath],
+        }
+      : meta),
+    ...(search ? { search } : {}),
+  };
+}
+
+/** A message's spans with shorthand written out, so folders come from real paths. */
+function expandedSpans(spans: ReadonlyArray<string>): string[] {
+  return spans.flatMap((span) => expandBraceShorthand(span.trim()) ?? [span]);
 }
 
 /** The link for one of a link's candidate paths, keeping its folder flag. */
@@ -387,6 +600,8 @@ const MAX_PATH_LIST_LINES = 50;
 
 function isPathListLine(line: string): boolean {
   if (/\s/.test(line)) return false;
+  const expanded = expandBraceShorthand(line);
+  if (expanded !== null && expanded.length > 1) return expanded.every(isPathListLine);
   return (
     inlineCodeFilePathCandidate(line) !== null ||
     bareDocumentFileName(line) !== null ||
@@ -451,7 +666,7 @@ const MAX_CONTEXT_FOLDERS = 4;
 export function threadFileFolders(texts: ReadonlyArray<string>, cwd?: string): string[] {
   const folders: string[] = [];
   for (const text of texts.toReversed()) {
-    const spans = fileReferenceSpans(text).toReversed();
+    const spans = expandedSpans(fileReferenceSpans(text)).toReversed();
     for (const span of spans) {
       const meta = resolveInlineCodeFileLinkMeta(span, cwd);
       if (!meta || meta.workspaceRelativePath !== null || !meta.filePath.startsWith("/")) continue;

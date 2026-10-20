@@ -1134,6 +1134,8 @@ export const CLAUDE_READ_ONLY_STUDIO_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = 
   "mcp__studio-code__studio_machine_list",
   "mcp__studio-code__studio_project_memory_list",
   "mcp__studio-code__studio_project_memory_read",
+  "mcp__studio-code__studio_project_knowledge_search",
+  "mcp__studio-code__studio_project_knowledge_read",
   "mcp__studio-code__studio_project_plan_read",
   "mcp__studio-code__studio_thread_search",
   "mcp__studio-code__studio_preview_list",

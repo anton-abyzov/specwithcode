@@ -87,25 +87,6 @@ function proseSegments(text: string): string[] {
   return text.split(FENCED_CODE_SEGMENT_PATTERN).filter((_, index) => index % 2 === 0);
 }
 
-const BRACE_LIST_PATTERN = /\{([^{}\s]*,[^{}\s]*)\}/;
-
-/** `shot-{dark,light}.png` names two files; each is its own artifact. */
-export function expandBraceList(span: string): string[] {
-  const match = BRACE_LIST_PATTERN.exec(span);
-  if (!match) return [span];
-  const head = span.slice(0, match.index);
-  const tail = span.slice(match.index + match[0].length);
-  return match[1]!
-    .split(",")
-    .filter((part) => part.length > 0)
-    .flatMap((part) => expandBraceList(`${head}${part}${tail}`));
-}
-
-/** Inline code outside fences, then the lines of fenced path lists. */
-function inlineCodeSpans(text: string): string[] {
-  return fileReferenceSpans(text).flatMap(expandBraceList);
-}
-
 function fileKind(name: string): ThreadFileArtifact["kind"] {
   const kind = filePreviewKind({ name });
   if (kind === "text") return "code";
@@ -172,12 +153,21 @@ export function collectThreadArtifacts(
         found.push([at(`(${href}`), fileArtifact(meta, message.id)]);
     }
     for (const [span, meta] of resolveInlineCodeFileLinks(
-      inlineCodeSpans(message.text),
+      fileReferenceSpans(message.text),
       cwd,
       cwd,
       contextFolders,
     )) {
-      if (!mayBeDirectory(meta)) found.push([at(`\`${span}`), fileArtifact(meta, message.id)]);
+      // Shorthand (`shot-{dark,light}.png`, `shot-*.png`) stays one entry with
+      // the files it names: the host settles which exist, or that a file
+      // really has the written name (`useSettledArtifacts`), as chat chips do.
+      const files = meta.expansions?.filter((file) => !mayBeDirectory(file));
+      if (files ? files.length > 0 : !mayBeDirectory(meta)) {
+        found.push([
+          at(`\`${span}`),
+          fileArtifact(files ? { ...meta, expansions: files } : meta, message.id),
+        ]);
+      }
     }
     for (const match of text.matchAll(TITLED_LINK_PATTERN)) {
       const link = linkArtifact(match[2]!, message.id, match[1]);
@@ -191,6 +181,34 @@ export function collectThreadArtifacts(
     for (const [, artifact] of found.toSorted((left, right) => left[0] - right[0])) add(artifact);
   }
   return [...byKey.values()].reverse();
+}
+
+/**
+ * The artifacts as the host settled them (newest first): shorthand becomes the
+ * files the host has, a file it lacks drops out, and a file named both on its
+ * own and in shorthand lists once, where it is newest.
+ */
+export function settleThreadArtifacts(
+  authored: ReadonlyArray<ThreadArtifact>,
+  settled: ReadonlyMap<string, MarkdownFileLinkMeta>,
+): ThreadArtifact[] {
+  const seen = new Set<string>();
+  return authored
+    .flatMap((artifact): ThreadArtifact[] => {
+      if (!("meta" in artifact)) return [artifact];
+      const meta = settled.get(artifact.key) ?? artifact.meta;
+      if (meta.glob || meta.expansions) {
+        // Newest first, like the rest, so stepping through reads in written order.
+        return (meta.expansions ?? [])
+          .filter((file) => !file.unresolved)
+          .map((file) => fileArtifact(file, artifact.messageId))
+          .toReversed();
+      }
+      // A file the host does not have is not something to open.
+      if (meta.unresolved) return [];
+      return [{ ...artifact, meta }];
+    })
+    .filter((artifact) => !seen.has(artifact.key) && !!seen.add(artifact.key));
 }
 
 export function fileArtifact(meta: MarkdownFileLinkMeta, messageId: string): ThreadFileArtifact {

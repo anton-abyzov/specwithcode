@@ -30,7 +30,7 @@ import {
   type PersistedServerRuntimeState,
   readPersistedServerRuntimeState,
 } from "./serverRuntimeState.ts";
-import { capacityMutationOriginAllowed, mutationTrustedOrigins } from "./studio/http.ts";
+import { capacityMutationOriginAllowed, mutationTrustedOrigins } from "./auth/requestOrigin.ts";
 import {
   connectFleet,
   discoverFleet,

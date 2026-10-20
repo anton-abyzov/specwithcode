@@ -16,6 +16,7 @@ import {
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import { scopedThreadKey, scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import {
+  AuthOrchestrationOperateScope,
   type EnvironmentId,
   type SidebarProjectOrder,
   PERSONAL_ASSISTANT_DESCRIPTION,
@@ -29,7 +30,6 @@ import {
   ConciergeBellIcon,
   LaptopIcon,
   LayoutGridIcon,
-  MoreHorizontalIcon,
   PlusIcon,
   SearchIcon,
   SlidersVerticalIcon,
@@ -64,7 +64,10 @@ import { useServerConfigs, useThreadShells } from "../../../state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../../state/environments";
 import { projectEnvironment } from "../../../state/projects";
 import { primaryServerKeybindingsAtom } from "../../../state/server";
+import { readEnvironmentScope } from "../../../state/session";
+import { threadEnvironment } from "../../../state/threads";
 import { useAtomCommand } from "../../../state/use-atom-command";
+import { useOrchestrationCommand } from "../../../state/use-orchestration-command";
 import { sessionStateSince } from "../../../studio/overviewModel";
 import {
   archiveWorkspacePatch,
@@ -143,7 +146,9 @@ import { Tip } from "./Tip";
 import { PlanProgressChip } from "../PlanProgressChip";
 import { useSidebarThreadPlans } from "../../sidebar/SidebarPlanProgress";
 import { describeThreadPlan } from "../../../studio/threadPlanProgress";
+import { canRenameChat, checkChatTitle } from "../../../studio/threadTitles";
 import { ModelBadgeMark, useProviderEntriesByEnvironment } from "./ModelBadge";
+import { SidebarChatRow } from "./SidebarChatRow";
 import {
   displayNameOf,
   ProjectRow,
@@ -217,6 +222,9 @@ export default function StudioSidebar() {
   const [showArchived, setShowArchived] = useState<boolean | null>(null);
   const serverConfigs = useServerConfigs();
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
+  const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
+    reportFailure: false,
+  });
   const scratchRootFor = useCallback(
     (environmentId: EnvironmentId) =>
       serverConfigs.get(environmentId)?.scratchWorkspaceRoot ?? null,
@@ -537,6 +545,27 @@ export default function StudioSidebar() {
       commit: (name) => renameGroup(group, name),
     };
   };
+  // Chats a person started rename in place; a coordinator keeps the titles it gives.
+  const chatRenameFor = (thread: EnvironmentThreadShell): ProjectRename | undefined =>
+    !canRenameChat(
+      thread,
+      readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope),
+    )
+      ? undefined
+      : {
+          check: (draft) => checkChatTitle(draft, thread.title),
+          commit: async (title) => {
+            const result = await updateThreadMetadata({
+              environmentId: thread.environmentId,
+              input: { threadId: thread.id, title },
+            });
+            if (result._tag === "Success" || isAtomCommandInterrupted(result)) return null;
+            const cause = squashAtomCommandFailure(result);
+            return cause instanceof Error
+              ? cause.message
+              : "Could not rename this chat. Try again.";
+          },
+        };
   // A personal assistant is not a code project: it sits under Overview, ahead of every
   // project and outside the project paging, so it is always one click away.
   const assistants = listedProjects.filter(isPersonalGroup);
@@ -826,66 +855,29 @@ export default function StudioSidebar() {
                           `${thread.environmentId}:${thread.projectId}`,
                         );
                         const plan = chatPlans.get(key) ?? null;
+                        const ref = scopeThreadRef(thread.environmentId, thread.id);
                         return (
-                          <li key={key} className="sws-chat-row" data-tone={tone}>
-                            <Tip
-                              side="right"
-                              label={`${title} · ${label.full}${project ? ` · ${project.displayName}` : ""}${machineNote ? ` · ${machineNote}` : ""} · ${compactAge(sessionStateSince(thread), now)}${plan ? ` · ${describeThreadPlan(plan)}` : ""}`}
-                            >
-                              <button
-                                type="button"
-                                className="sws-side-row"
-                                aria-current={currentChatKey === key ? "page" : undefined}
-                                onClick={() => openChat(thread)}
-                              >
-                                <ModelBadgeMark
-                                  entry={entry}
-                                  instanceId={thread.modelSelection.instanceId}
-                                  provider={label.provider}
-                                />
-                                <span className="sws-side-row-label">{title}</span>
-                                {plan ? <PlanProgressChip plan={plan} tip={false} /> : null}
-                                {hostOffline ? (
-                                  <WifiOffIcon
-                                    className="sws-row-machine"
-                                    data-offline=""
-                                    aria-hidden
-                                  />
-                                ) : machine ? (
-                                  <LaptopIcon className="sws-row-machine" aria-hidden />
-                                ) : null}
-                                <span className="sr-only">
-                                  , {label.full}, {THREAD_TONE_LABELS[tone]}
-                                  {machineNote ? `, ${machineNote}` : ""}
-                                </span>
-                                {tone === "waiting" || tone === "working" || tone === "failed" ? (
-                                  <span className="sws-dot" data-tone={tone} aria-hidden />
-                                ) : null}
-                              </button>
-                            </Tip>
-                            <Menu>
-                              <MenuTrigger
-                                render={
-                                  <button
-                                    type="button"
-                                    className="sws-icon-button sws-chat-menu"
-                                    aria-label={`Actions for ${title}`}
-                                  />
-                                }
-                              >
-                                <MoreHorizontalIcon aria-hidden />
-                              </MenuTrigger>
-                              <MenuPopup align="start" side="bottom">
-                                <MenuItem onClick={() => openChat(thread)}>Open</MenuItem>
+                          <SidebarChatRow
+                            key={key}
+                            title={thread.title}
+                            tone={tone}
+                            tip={`${title} · ${label.full}${project ? ` · ${project.displayName}` : ""}${machineNote ? ` · ${machineNote}` : ""} · ${compactAge(sessionStateSince(thread), now)}${plan ? ` · ${describeThreadPlan(plan)}` : ""}`}
+                            current={currentChatKey === key}
+                            icon={
+                              <ModelBadgeMark
+                                entry={entry}
+                                instanceId={thread.modelSelection.instanceId}
+                                provider={label.provider}
+                              />
+                            }
+                            onOpen={() => openChat(thread)}
+                            rename={chatRenameFor(thread)}
+                            menuItems={
+                              <>
                                 {thread.settledOverride === "settled" ? (
                                   <MenuItem
                                     onClick={() =>
-                                      void reportFailure(
-                                        "reopen",
-                                        actions.unsettleThread(
-                                          scopeThreadRef(thread.environmentId, thread.id),
-                                        ),
-                                      )
+                                      void reportFailure("reopen", actions.unsettleThread(ref))
                                     }
                                   >
                                     Reopen
@@ -893,12 +885,7 @@ export default function StudioSidebar() {
                                 ) : (
                                   <MenuItem
                                     onClick={() =>
-                                      void reportFailure(
-                                        "resolve",
-                                        actions.settleThread(
-                                          scopeThreadRef(thread.environmentId, thread.id),
-                                        ),
-                                      )
+                                      void reportFailure("resolve", actions.settleThread(ref))
                                     }
                                   >
                                     Resolve
@@ -908,19 +895,32 @@ export default function StudioSidebar() {
                                 <MenuItem
                                   disabled={!threadRuntimeCanArchive(thread.runtime)}
                                   onClick={() =>
-                                    void reportFailure(
-                                      "archive",
-                                      actions.archiveThread(
-                                        scopeThreadRef(thread.environmentId, thread.id),
-                                      ),
-                                    )
+                                    void reportFailure("archive", actions.archiveThread(ref))
                                   }
                                 >
                                   Archive
                                 </MenuItem>
-                              </MenuPopup>
-                            </Menu>
-                          </li>
+                              </>
+                            }
+                          >
+                            {plan ? <PlanProgressChip plan={plan} tip={false} /> : null}
+                            {hostOffline ? (
+                              <WifiOffIcon
+                                className="sws-row-machine"
+                                data-offline=""
+                                aria-hidden
+                              />
+                            ) : machine ? (
+                              <LaptopIcon className="sws-row-machine" aria-hidden />
+                            ) : null}
+                            <span className="sr-only">
+                              , {label.full}, {THREAD_TONE_LABELS[tone]}
+                              {machineNote ? `, ${machineNote}` : ""}
+                            </span>
+                            {tone === "waiting" || tone === "working" || tone === "failed" ? (
+                              <span className="sws-dot" data-tone={tone} aria-hidden />
+                            ) : null}
+                          </SidebarChatRow>
                         );
                       })}
                     </ul>

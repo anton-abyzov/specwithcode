@@ -209,22 +209,26 @@ class InstallNow(AgentCase):
         self.assertEqual(self.run_agent(), 1)
         state = self.state()
         self.assertEqual((state['status'], state['lastInstall']['result']), ('error', 'failed'))
-        self.assertEqual(len(self.apply_calls()), 1 + update_agent.FORCE_APPLY_RETRIES)
+        self.assertEqual(len(self.apply_calls()), 1 + update_agent.APPLY_RETRIES)
         self.assertFalse((self.updates / 'install-in-progress.json').exists())
 
     PREFLIGHT_DESCENDANTS = {'phase': 'preflight', 'pointers': 'unchanged',
                              'error': 'AssertionError: Owned service has unexpected descendants'}
+    # The check right before the restart (quiescence.assert_quiescence), after the pointers went back.
+    RESTART_DESCENDANTS = {'phase': 'pointers-written', 'pointers': 'previous-release',
+                           'rollback': 'restored-exact-owned-runtime-pointers',
+                           'error': 'AssertionError: Owned service has unexpected or missing descendants'}
 
-    def descendants_refused_once(self, hold_minutes=None):
-        """The apply's preflight snapshot refuses once for a process under the service; with
-        `hold_minutes` the service holds itself (updates/hold.json) that long, negative = expired."""
+    def descendants_refused_once(self, hold_minutes=None, refusal=None, mode='force'):
+        """The apply refuses once for a process under the service; with `hold_minutes` the
+        service holds itself (updates/hold.json) that long, negative = expired."""
         self.fake.add_release()
-        self.request()
+        self.request(mode=mode)
         if hold_minutes is not None:
             hold = self.updates / 'hold.json'
             hold.write_text(json.dumps({'schemaVersion': 1, 'pid': 4242, 'expiresAt': later(hold_minutes)}))
             hold.chmod(0o600)
-        self.control(applyRefusals=1, applyRefusal=self.PREFLIGHT_DESCENDANTS)
+        self.control(applyRefusals=1, applyRefusal=refusal or self.PREFLIGHT_DESCENDANTS)
         return self.run_agent()
 
     def test_a_preflight_descendant_refusal_retries_while_the_service_holds(self):
@@ -234,16 +238,33 @@ class InstallNow(AgentCase):
         self.assertEqual(len(self.apply_calls()), 2)
         self.assertEqual(self.state()['lastInstall']['result'], 'updated')
 
-    def test_a_preflight_descendant_refusal_is_final_without_a_hold(self):
-        """Without a hold nothing may stop that process, so another apply would refuse the same way."""
-        self.assertEqual(self.descendants_refused_once(), 1)
-        self.assertEqual(len(self.apply_calls()), 1)
-        self.assertEqual(self.state()['lastInstall']['result'], 'failed')
+    def test_a_preflight_descendant_refusal_retries_without_a_hold(self):
+        """Nothing stops that process without a hold, but the next snapshot waits for it to exit
+        instead of ending the request as "did not install"."""
+        self.assertEqual(self.descendants_refused_once(), 0)
+        self.assertEqual(len(self.apply_calls()), 2)
+        self.assertEqual(self.state()['lastInstall']['result'], 'updated')
 
-    def test_a_preflight_descendant_refusal_is_final_once_the_hold_expired(self):
-        self.assertEqual(self.descendants_refused_once(hold_minutes=-1), 1)
-        self.assertEqual(len(self.apply_calls()), 1)
-        self.assertEqual(self.state()['lastInstall']['result'], 'failed')
+    def test_a_preflight_descendant_refusal_retries_once_the_hold_expired(self):
+        self.assertEqual(self.descendants_refused_once(hold_minutes=-1), 0)
+        self.assertEqual(len(self.apply_calls()), 2)
+        self.assertEqual(self.state()['lastInstall']['result'], 'updated')
+
+    def test_a_descendant_refusal_right_before_the_restart_retries(self):
+        """The same process check runs again right before the restart; its refusal puts every
+        pointer back first, so the next attempt starts from the old release as before."""
+        self.assertEqual(self.descendants_refused_once(refusal=self.RESTART_DESCENDANTS), 0)
+        self.assertEqual(len(self.apply_calls()), 2)
+        self.assertEqual(self.state()['lastInstall']['result'], 'updated')
+
+    def test_a_process_refusal_is_final_once_a_pointer_or_the_restart_is_in_doubt(self):
+        for extra in ({'pointers': 'mixed-see-backup'}, {'rollbackError': 'AssertionError: A pointer changed'},
+                      {'restartStartedAt': '2026-10-12T20:00:00+00:00'}, {'stateBackup': '/x'}):
+            with self.subTest(extra=extra):
+                self.setUp()  # A fresh home; every resource is released through addCleanup.
+                self.assertEqual(self.descendants_refused_once(refusal={**self.RESTART_DESCENDANTS, **extra}), 1)
+                self.assertEqual(len(self.apply_calls()), 1)
+                self.assertEqual(self.state()['lastInstall']['result'], 'failed')
 
     def test_a_failure_after_the_restart_is_never_retried(self):
         self.fake.add_release()
@@ -253,23 +274,219 @@ class InstallNow(AgentCase):
         self.assertEqual(len(self.apply_calls()), 1)
         self.assertEqual(self.state()['lastInstall']['result'], 'failed')
 
-    def test_a_plain_request_does_not_retry_an_apply(self):
+    def test_a_plain_request_retries_an_apply_refused_before_the_restart(self):
+        """Update (not Update now) installs on the same press: a reconnect or a process that slipped
+        in after its snapshot no longer ends the request as "did not install"."""
         self.fake.add_release()
         self.request(mode='normal')
         self.control(applyRefusals=1)
-        self.assertEqual(self.run_agent(), 1)
-        self.assertEqual(len(self.apply_calls()), 1)
+        self.assertEqual(self.run_agent(), 0)
+        state = self.state()
+        self.assertEqual((state['status'], state['lastInstall']['result']), ('installed', 'updated'))
+        self.assertEqual((len(self.snapshot_calls()), len(self.apply_calls())), (2, 2))
 
-    def test_a_retried_request_stays_pending_when_the_hold_runs_out(self):
+    def test_a_plain_request_retries_a_descendant_refusal(self):
+        self.assertEqual(self.descendants_refused_once(mode='normal'), 0)
+        self.assertEqual(len(self.apply_calls()), 2)
+        self.assertEqual(self.state()['lastInstall']['result'], 'updated')
+
+    def test_plain_request_retries_are_bounded_and_then_recorded_as_failed(self):
+        self.fake.add_release()
+        self.request(mode='normal')
+        self.control(applyRefusals=9)
+        self.assertEqual(self.run_agent(), 1)
+        state = self.state()
+        self.assertEqual((state['status'], state['lastInstall']['result']), ('error', 'failed'))
+        self.assertEqual(len(self.apply_calls()), 1 + update_agent.APPLY_RETRIES)
+        self.assertEqual(state['handledInstallRequestAt'], self.REQUESTED)
+
+    DESCENDANTS = 'AssertionError: Owned service has unexpected descendants'
+
+    def receipt_of(self, call):
+        return call['argv'][call['argv'].index('--output') + 1]
+
+    def assert_ended_as_the_refused_apply(self, request=None):
+        state = self.state()
+        self.assertEqual((state['status'], state['message']),
+                         ('error', 'SpecWithCode 0.2.0 did not install; SpecWithCode stayed on 0.1.4. See the update receipt.'))
+        self.assertEqual(state['handledInstallRequestAt'], request or self.REQUESTED)
+        self.assertEqual((state['lastInstall']['result'], state['lastInstall']['receipt']),
+                         ('failed', self.receipt_of(self.apply_calls()[0])))
+        self.assertEqual(len(self.apply_calls()), 1)
+        self.assertFalse((self.updates / 'install-in-progress.json').exists())
+
+    def test_a_forced_retry_that_never_applies_before_the_hold_ends_is_the_refused_apply(self):
+        """Not left pending to lapse later as "expired before it could start": it did start."""
         self.fake.add_release()
         self.request(hold_minutes=1)
         self.control(applyRefusals=1, snapshotFailAfterApply=True)
-        self.assertEqual(self.run_agent(), 0)
-        state = self.state()
-        self.assertEqual(state['status'], 'waiting-for-quiet')
-        self.assertIsNone(state['handledInstallRequestAt'])
-        self.assertIsNone(state['lastInstall'])
+        self.assertEqual(self.run_agent(), 1)
+        self.assertEqual(self.state()['lastInstall']['version'], '0.2.0')
+        self.assert_ended_as_the_refused_apply()
+
+    def test_a_plain_retry_waiting_on_a_process_that_stays_is_the_refused_apply(self):
+        self.fake.add_release()
+        self.request(mode='normal')
+        self.control(applyRefusals=1, applyRefusal=self.RESTART_DESCENDANTS, snapshotFailAfterApply=True,
+                     snapshotError=self.DESCENDANTS)
+        seen = self.messages()
+        self.assertEqual(self.run_agent(), 1)
+        self.assert_ended_as_the_refused_apply()
+        self.assertIn('Waiting for open SpecWithCode terminals and agent processes to close (attempt 1)', seen)
+        self.offset += datetime.timedelta(minutes=11)
+        self.control()
+        self.run_agent()  # Settled: a later pass neither installs it nor calls it expired.
+        self.assertNotEqual(self.state()['message'], update_request.EXPIRED)
         self.assertEqual(len(self.apply_calls()), 1)
+
+    def written_during_snapshot(self, call, failing, minutes=3, **written):
+        """A plain request's first apply is refused. While snapshot number `call` runs, `minutes` pass
+        (by default enough for the first retry snapshot to outlast the request's window) and the
+        desktop writes `written` into the settings."""
+        self.fake.add_release()
+        self.request(mode='normal')
+        self.control(**dict({'applyRefusals': 1}, **failing))
+        real = update_agent.Agent.take_snapshot
+
+        def slow(agent, *args):
+            result = real(agent, *args)
+            if len(self.snapshot_calls()) == call:
+                self.offset += datetime.timedelta(minutes=minutes)
+                self.config(installAutomatically=False, quietMinutes=60, **written)
+            return result
+        with mock.patch.object(update_agent.Agent, 'take_snapshot', slow):
+            return self.run_agent()
+
+    def test_a_cancel_during_the_last_retry_snapshot_ends_as_cancelled(self):
+        """Not as the refused apply: the person cancelled, and automatic installs stay unaffected."""
+        code = self.written_during_snapshot(
+            2, {'snapshotFailAfterApply': True}, installMode='normal', installRequestedAt=None,
+            installCancelledAt=update_agent.iso(update_agent.utcnow() + datetime.timedelta(minutes=3)))
+        state = self.state()
+        self.assertEqual((code, state['status'], state['message']), (0, 'downloaded', update_agent.CANCELLED))
+        self.assertIsNone(state['lastInstall'])
+        self.assertEqual(state['handledInstallRequestAt'], self.REQUESTED)
+        self.assertEqual(len(self.apply_calls()), 1)
+
+    def test_a_newer_request_written_during_the_last_retry_snapshot_installs_in_the_same_pass(self):
+        """It is never ended with the older request's refused apply, and gets attempts of its own."""
+        newer = '2026-10-12T20:01:00+00:00'
+        code = self.written_during_snapshot(2, {'snapshotFailCalls': [2]}, installMode='normal', installRequestedAt=newer)
+        state = self.state()
+        self.assertEqual((code, state['status'], state['lastInstall']['result']), (0, 'installed', 'updated'))
+        self.assertEqual(state['handledInstallRequestAt'], newer)
+        self.assertEqual((len(self.snapshot_calls()), len(self.apply_calls())), (3, 2))
+
+    def test_a_newer_request_gets_a_retry_window_of_its_own(self):
+        """Taken on after the older request's window ran out, it waits for quiet in a window of its own."""
+        newer = '2026-10-12T20:01:00+00:00'
+        code = self.written_during_snapshot(2, {'snapshotFailCalls': [2, 3]}, installMode='normal', installRequestedAt=newer)
+        state = self.state()
+        self.assertEqual((code, state['status'], state['lastInstall']['result']), (0, 'installed', 'updated'))
+        self.assertEqual(state['handledInstallRequestAt'], newer)
+        self.assertEqual((len(self.snapshot_calls()), len(self.apply_calls())), (4, 2))
+
+    def test_a_newer_request_taken_on_before_its_apply_owns_the_refusal(self):
+        """Update, then Update now while the snapshot before the apply ran: the refused apply and its
+        retries are the newer request's, which ends as that apply, never left pending unanswered."""
+        newer = '2026-10-12T20:01:00+00:00'
+        code = self.written_during_snapshot(1, {'snapshotFailAfterApply': True}, minutes=0, installMode='normal',
+                                            installRequestedAt=newer)
+        self.assertEqual(code, 1)
+        self.assert_ended_as_the_refused_apply(request=newer)
+        self.assertIs(self.state()['lastInstall']['refusedBeforeRestart'], True)
+
+    def test_a_newer_request_taken_on_as_its_apply_starts_owns_the_refusal(self):
+        """Written as the apply wrote its installing status: the helper ran for the newer request."""
+        newer = '2026-10-12T20:01:00+00:00'
+        self.fake.add_release()
+        self.request(mode='normal')
+        self.control(applyRefusals=1, snapshotFailAfterApply=True)
+        real = update_agent.Agent.set_status
+
+        def racing(agent, status, message=None):
+            real(agent, status, message)
+            if status == 'installing' and not self.apply_calls():
+                self.config(installAutomatically=False, quietMinutes=60, installMode='normal', installRequestedAt=newer)
+        with mock.patch.object(update_agent.Agent, 'set_status', racing):
+            self.assertEqual(self.run_agent(), 1)
+        self.assert_ended_as_the_refused_apply(request=newer)
+
+    def test_a_newer_request_after_spent_retries_gets_retries_of_its_own(self):
+        """The older request used both retries; the newer one, taken on before the third apply, retries it."""
+        newer = '2026-10-12T20:01:00+00:00'
+        code = self.written_during_snapshot(3, {'applyRefusals': 3}, minutes=0, installMode='normal',
+                                            installRequestedAt=newer)
+        state = self.state()
+        self.assertEqual((code, state['status'], state['lastInstall']['result']), (0, 'installed', 'updated'))
+        self.assertEqual(state['handledInstallRequestAt'], newer)
+        self.assertEqual(len(self.apply_calls()), 4)
+
+    def test_a_retry_snapshot_error_after_a_refused_apply_is_shown_as_it_is(self):
+        """A cause the person can act on (restart the service) is not hidden behind "did not install"."""
+        self.fake.add_release()
+        self.request(mode='normal')
+        self.control(applyRefusals=1, snapshotFailAfterApply=True,
+                     snapshotError='REFUSAL restart-needed locks-lost\nAssertionError: Native work is not idle')
+        self.assertEqual(self.run_agent(), 1)
+        state = self.state()
+        self.assertEqual((state['status'], state['message']), ('error', (
+            'SpecWithCode cannot be updated right now: The SpecWithCode service lost its SQLite locks on its '
+            'database. Restart SpecWithCode, then update')))
+        self.assertEqual(state['handledInstallRequestAt'], self.REQUESTED)
+        last = state['lastInstall']
+        self.assertEqual((last['result'], last['receipt'], last['refusedBeforeRestart']),
+                         ('failed', self.receipt_of(self.apply_calls()[0]), True))
+        self.assertEqual(len(self.apply_calls()), 1)
+
+    def automatic_passes_after(self, **failing):
+        """A plain request that ends failed, then two automatic passes with Install automatically on."""
+        self.fake.add_release()
+        self.request(mode='normal')
+        self.control(**failing)
+        self.assertEqual(self.run_agent(), 1)
+        self.control()
+        self.config(installAutomatically=True, quietMinutes=0, installMode='normal', installRequestedAt=self.REQUESTED)
+        self.run_agent()
+        self.run_agent()
+        return self.state()
+
+    def test_automatic_installs_go_on_after_a_request_whose_retry_never_applied(self):
+        """The refusal changed nothing, so it holds nothing: the next quiet automatic pass installs."""
+        state = self.automatic_passes_after(applyRefusals=1, snapshotFailAfterApply=True)
+        self.assertEqual((state['status'], state['lastInstall']['result']), ('installed', 'updated'))
+        self.assertEqual(len(self.apply_calls()), 2)
+
+    def test_automatic_installs_go_on_after_a_request_refused_on_every_retry(self):
+        state = self.automatic_passes_after(applyRefusals=3, applyRefusal=self.RESTART_DESCENDANTS)
+        self.assertEqual((state['status'], state['lastInstall']['result']), ('installed', 'updated'))
+        self.assertEqual(len(self.apply_calls()), 4)
+
+    def test_a_request_that_failed_after_the_restart_still_holds_automatic_installs(self):
+        state = self.automatic_passes_after(applyFailAfterRestart=True)
+        self.assertEqual((state['status'], state['message']),
+                         ('error', 'SpecWithCode 0.2.0 did not install automatically; choose Install now to retry.'))
+        self.assertNotIn('refusedBeforeRestart', state['lastInstall'])
+        self.assertEqual(len(self.apply_calls()), 1)
+
+    def test_a_retry_after_a_long_apply_snapshots_within_a_window_of_its_own(self):
+        """Staging and the backup can outlast a plain request's 2-minute window before the check right
+        before the restart refuses: its retry still waits its own window for the process to exit."""
+        self.fake.add_release()
+        self.request(mode='normal')
+        self.control(applyRefusals=1, applyRefusal=self.RESTART_DESCENDANTS, snapshotFailCalls=[2, 3],
+                     snapshotError=self.DESCENDANTS)
+        real = update_agent.Agent.apply
+
+        def slow(agent, *args):
+            self.offset += datetime.timedelta(minutes=5)
+            return real(agent, *args)
+        with mock.patch.object(update_agent.Agent, 'apply', slow):
+            self.assertEqual(self.run_agent(), 0)
+        state = self.state()
+        self.assertEqual((state['status'], state['lastInstall']['result']), ('installed', 'updated'))
+        self.assertEqual((len(self.snapshot_calls()), len(self.apply_calls())), (4, 2))
+        self.assertEqual(self.sleeps, [update_agent.RETRY_SECONDS] * 2)
 
     def test_install_settings_are_validated(self):
         for values in ({'installMode': 'now'}, {'installHoldUntil': 5}, {'installCancelledAt': ''}):
@@ -391,6 +608,22 @@ class BoundRequest(AgentCase):
         self.assertEqual(self.state()['handledInstallRequestAt'], at)
         self.assertEqual(self.apply_calls(), [])
         self.assertEqual((self.state()['status'], self.state()['message']), ('error', update_request.EXPIRED))
+
+    def test_a_refused_apply_whose_retry_never_applies_never_lapses_as_unstarted(self):
+        self.fake.add_release()
+        at = self.request(mode='normal')
+        self.control(applyRefusals=1, applyRefusal={'phase': 'pointers-written', 'pointers': 'previous-release',
+                                                    'error': 'AssertionError: Owned service has unexpected descendants'},
+                     snapshotFailAfterApply=True, snapshotError='AssertionError: Owned service has unexpected descendants')
+        self.assertEqual(self.run_agent(), 1)
+        state = self.state()
+        self.assertEqual((state['handledInstallRequestAt'], state['lastInstall']['result']), (at, 'failed'))
+        self.assertIn('did not install', state['message'])
+        self.control()
+        self.offset = datetime.timedelta(minutes=11)
+        self.run_agent()
+        self.assertNotEqual(self.state()['message'], update_request.EXPIRED)
+        self.assertEqual(len(self.apply_calls()), 1)
 
     def test_a_request_dated_ahead_of_the_clock_is_settled(self):
         self.fake.add_release()

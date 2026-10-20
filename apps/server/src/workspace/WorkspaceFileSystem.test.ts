@@ -223,6 +223,38 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    // October 20, 2026: a report linked `~/.specwithcode/audits/2026-10-20/findings-{B,C,D,E}.md`.
+    // The real files under an app home read; the shorthand is not a file; state stays refused.
+    it.effect("reads report files under an app home and refuses its state", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const home = yield* makeTempDir;
+        const audit = path.join(home, ".specwithcode", "audits", "2026-10-20");
+        yield* writeTextFile(audit, "findings-B.md", "# Batch B\n");
+        yield* writeTextFile(path.join(home, ".specwithcode", "userdata"), "state.md", "secret");
+
+        const found = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: path.join(audit, "findings-B.md"),
+        });
+        expect(found.contents).toBe("# Batch B\n");
+
+        const brace = path.join(audit, "findings-{B,C,D,E}.md");
+        const missing = yield* workspaceFileSystem
+          .readFile({ cwd, relativePath: brace })
+          .pipe(Effect.flip);
+        expect(missing).toMatchObject({ operation: "realpath-target", resolvedPath: brace });
+        expect((missing as { cause: NodeJS.ErrnoException }).cause.code).toBe("ENOENT");
+
+        const refused = yield* workspaceFileSystem
+          .readFile({ cwd, relativePath: path.join(home, ".specwithcode", "userdata", "state.md") })
+          .pipe(Effect.flip);
+        expect(refused).toMatchObject({ reason: "protected" });
+      }),
+    );
+
     it.effect("preserves the real cause and path for I/O failures", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;

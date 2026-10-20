@@ -143,6 +143,13 @@ export const PROJECT_SETTINGS_SEARCH_ROWS: readonly ProjectSettingsSearchRow[] =
     searchTerms: ["memory.md notes files"],
   },
   {
+    id: "project-knowledge",
+    title: "Project knowledge",
+    tab: "memory",
+    anchors: ["Project knowledge"],
+    searchTerms: ["search mode index library rebuild rag"],
+  },
+  {
     id: "project-additional-folders",
     title: "Approved additional folders",
     tab: "environment",
@@ -195,7 +202,7 @@ export const PROJECT_SETTINGS_SEARCH_ROWS: readonly ProjectSettingsSearchRow[] =
 
 const TAB_SEARCH_TERMS: Readonly<Record<ProjectSettingsTab, readonly string[]>> = {
   general: ["settings name goal model"],
-  memory: ["instructions notes"],
+  memory: ["instructions notes knowledge"],
   environment: ["folders repositories connections"],
   usage: ["limits tokens"],
   routines: ["scheduled tasks"],

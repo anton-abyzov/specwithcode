@@ -93,15 +93,21 @@ normal-mode install request, which can replace fleet-m4's forced one, so it neve
 runs the release. And M1 or M3 failing no longer leaves the Mac without its app (1.0.39 and 1.0.41
 ended that way). When the old app's own updater already swapped the release in as it quit, the
 stage keeps that app and makes no rollback zip of it, which would hold the new version and prune
-the previous one; it first waits for that swap to finish (`SpecWithCode.app.studio-update-old`
-gone).
+the previous one. It first waits up to 60 seconds for that update to finish: an unsigned build's
+swap (`SpecWithCode.app.studio-update-old` gone) or a signed build's Squirrel.Mac install (the
+`ShipIt` running from the app's own `Squirrel.framework` gone). It keeps the app only when
+`codesign --verify --deep --strict` passes too. An install cut short is moved aside to
+`SpecWithCode.app.partial-<time>` (not deleted, not zipped, and not probed for grants) and the zip
+installed again: one that reports the release but fails that check (cut short after it wrote
+`Info.plist`), or one with no readable version (cut short before).
 
 Stage 1 starts the contrast tests first, then the longest jobs by this release's or the previous
 release's last times, and the fleet runner starts its longest tests first by the newest fleet
 results (`run-tests.sh --history`). The server suite's shards are split by the recorded file
 times in `apps/server/src/testUtils/shardWeights.json`; refresh them from a full run's reports
-(the server stage prints the command) when the shards drift apart. `RELEASE_SERVER_SHARDS` (1 to 6)
-overrides the four shards.
+when the shards drift apart. The server stage prints the command; run it from the checkout you
+commit the change in, since its `--out` names that checkout's file, not the test tree's.
+`RELEASE_SERVER_SHARDS` (1 to 6) overrides the four shards.
 
 Before a draft is published, its own `SHA256SUMS` is downloaded, compared with the one built and
 checked to list `studio-update.json` and the helpers manifest. 1.0.38 shipped sums without the
@@ -125,17 +131,20 @@ only when no host upgrades across a migration, on the run that reaches the plan 
 
 ### When a stage fails
 
-A flaky test does not stop the run. In stage 1, when one or two jobs fail, each runs once more,
-alone, on the same candidate; its first try is kept in `stage1/<sha>-<time>/try-1/`. In the
-server suite, when at most five files failed and no shard crashed or timed out, only those files
-run once more as one shard (`server/<sha>-<time>/retry-1/`), and the drafts stay. A job or file that
-passes on its retry is a FLAKE: the stage passes, the run goes on, and the timing table names it.
-A second failure fails the stage with the usual message; more failed jobs or files than that, or a
-crashed shard, are a break and get no retry. `--no-retry` turns retries off, to reproduce a flaky
-test. `RELEASE_RETRY_MAX_JOBS` and `RELEASE_RETRY_MAX_FILES` change the two limits. No other stage is
-retried: publishing, the fleet, the desktop and the merge have side effects, and the rest are
-deterministic. Releases 1.0.39 and 1.0.40 lost about 40 minutes to four such flakes, most of it
-waiting for someone to run `--resume`.
+A flaky test does not stop the run. In stage 1, when one or two jobs of the whole stage fail, each
+runs once more, alone, on the same candidate; its first try is kept in `stage1/<sha>-<time>/try-1/`.
+The two count across the stage: on `--resume` the last attempt's failures run first as a group of
+their own, and their retries count toward the two. In the server suite, when at most five files
+failed and no shard crashed or timed out, only those files run once more as one shard
+(`server/<sha>-<time>/retry-1/`), and the drafts stay. A job or file that passes on its retry is a
+FLAKE: the stage passes, the run goes on, and the timing table names it. A second failure fails the
+stage with the usual message; more failed jobs or files than that, or a crashed shard, are a break
+and get no retry. `--no-retry` turns retries off, to reproduce a flaky test; a server suite already
+running for the candidate with retries on is restarted without them (and one running with
+`--no-retry` is restarted with them by a run that leaves the flag out). `RELEASE_RETRY_MAX_JOBS` and
+`RELEASE_RETRY_MAX_FILES` change the two limits. No other stage is retried: publishing, the fleet,
+the desktop and the merge have side effects, and the rest are deterministic. Releases 1.0.39 and
+1.0.40 lost about 40 minutes to four such flakes, most of it waiting for someone to run `--resume`.
 
 Fix the cause in the build tree and commit there; the commit is the new candidate. Then run
 `--resume`. The candidate stages run again for it: stage 1 runs the jobs that failed last time
@@ -218,10 +227,11 @@ release that widens the gate can install itself.
 
 ## Publishing
 
-Every release goes to both repositories: the private `anton-abyzov/specwithcode` (the
-service update agent's default) and the public `anton-abyzov/specwithcode` (the desktop feed for
-0.2.11 and later), with the GitHub flags from the version. The public snapshot leaves out
-`.github/workflows`, so no workflow runs there:
+Every release goes to both repositories: the private `anton-abyzov/specwithcode` (where the
+next release's prev stage finds this one) and the public `anton-abyzov/specwithcode` (the desktop
+feed for 0.2.11 and later, and the service update agent's default,
+`update_agent.DEFAULT_REPOSITORY`), with the GitHub flags from the version. The public snapshot
+leaves out `.github/workflows`, so no workflow runs there:
 
 ```sh
 node scripts/studio-projects/release-flags.mjs 1.0.37   # --latest --prerelease=false

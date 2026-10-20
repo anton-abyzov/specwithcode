@@ -39,7 +39,9 @@ const layerServerConfig = (overrides?: Partial<ServerConfig.ServerConfig["Servic
         port: TEST_SERVER_PORT,
       } satisfies ServerConfig.ServerConfig["Service"];
     }),
-  ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "studio-auth-server-test-" })));
+  ).pipe(
+    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "studio-auth-server-test-" })),
+  );
 
 const layerEnvironmentAuth = (overrides?: Partial<ServerConfig.ServerConfig["Service"]>) =>
   EnvironmentAuth.layer.pipe(
@@ -54,6 +56,7 @@ const makeCookieRequest = (
   sessionToken: string,
 ): Parameters<EnvironmentAuth.EnvironmentAuth["Service"]["authenticateHttpRequest"]>[0] =>
   ({
+    method: "GET",
     cookies: {
       [cookieName]: sessionToken,
     },
@@ -94,6 +97,7 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
         requestMetadata,
       );
       const request = {
+        method: "GET",
         cookies: {
           [sessions.cookieName]: scopedExchange.sessionToken,
           [devExchange.cookieName ?? "missing"]: devExchange.sessionToken,
@@ -133,6 +137,7 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
       const scoped = yield* sessions.verify(scopedExchange.sessionToken);
       yield* sessions.revoke(scoped.sessionId);
       const request = {
+        method: "GET",
         cookies: {
           [sessions.cookieName]: scopedExchange.sessionToken,
           [devExchange.cookieName ?? "missing"]: devExchange.sessionToken,
@@ -162,6 +167,7 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
       const devExchange = yield* serverAuth.createBrowserSession(token, requestMetadata);
       for (const authorization of ["Bearer invalid", ""] as const) {
         const request = {
+          method: "GET",
           cookies: { [devExchange.cookieName ?? "missing"]: devExchange.sessionToken },
           headers: { authorization },
         } as unknown as Parameters<

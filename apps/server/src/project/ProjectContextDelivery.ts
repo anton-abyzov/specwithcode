@@ -5,6 +5,7 @@ import { ProjectWorkspaceError, type ProjectId, type ThreadId } from "@specweave
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 import {
   contextDigest,
@@ -12,6 +13,8 @@ import {
   type ProjectContextSnapshot,
 } from "./ProjectContextSnapshot.ts";
 import * as Workspace from "./ProjectWorkspaceService.ts";
+import * as ProjectKnowledge from "./knowledge/ProjectKnowledge.ts";
+import { isKnowledgeDocumentSection } from "./knowledge/knowledgeSections.ts";
 
 export type ProjectContextIdentity = {
   readonly projectId: ProjectId;
@@ -21,6 +24,13 @@ export type ProjectContextIdentity = {
   readonly providerThreadId: string;
   readonly nativeThreadId: string | null;
   readonly runId: string;
+  /**
+   * Whether worker threads receive memory files and hub artifacts in full.
+   * Off for drivers that confirm no delivery, which would be sent every
+   * document again on every turn, and for native commands; they get the
+   * knowledge catalog and search it.
+   */
+  readonly inlineKnowledge?: boolean;
 };
 type Prepared = {
   readonly text: string;
@@ -68,9 +78,20 @@ function decodeSnapshot(value: string | null): ProjectContextSnapshot | null {
   }
 }
 
+/** A receipt keeps each knowledge document's revision, not its text; deltas compare revisions only. */
+function receiptOf(snapshot: ProjectContextSnapshot): ProjectContextSnapshot {
+  return snapshot.map((section) =>
+    isKnowledgeDocumentSection(section.name) ? { ...section, value: "" } : section,
+  );
+}
+
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const workspace = yield* Workspace.ProjectWorkspaceService;
+  const knowledge = yield* Effect.serviceOption(ProjectKnowledge.ProjectKnowledge);
+  /** Index work happens here, before the transaction; the snapshot only reads the result. */
+  const knowledgeReady = (projectId: ProjectId) =>
+    Option.isSome(knowledge) ? knowledge.value.ready(projectId) : Effect.void;
   const failure = (projectId: ProjectId) =>
     Effect.mapError((cause: unknown) =>
       Schema.is(ProjectWorkspaceError)(cause)
@@ -78,26 +99,33 @@ const make = Effect.gen(function* () {
         : new ProjectWorkspaceError({ projectId, code: "operation_failed" }),
     );
   const prepare = (identity: ProjectContextIdentity) =>
-    sql
-      .withTransaction(
-        Effect.gen(function* () {
-          const { projectId, threadId, nativeThreadId, providerThreadId, runId } = identity;
-          // Runtime process/session IDs and model choice do not identify retained native history.
-          // Unknown native identity is conservative: no cross-run receipt reuse.
-          const key = contextDigest(
-            stringifyJson([
-              projectId,
-              threadId,
-              identity.driver,
-              identity.providerInstanceId,
-              nativeThreadId ?? `unknown:${providerThreadId}:${runId}`,
-            ]),
-          );
-          const next = yield* workspace.contextSnapshot(projectId, threadId);
-          const compactions =
-            nativeThreadId === null
-              ? []
-              : yield* sql<{ turn_item_id: string }>`
+    knowledgeReady(identity.projectId).pipe(
+      Effect.andThen(
+        sql
+          .withTransaction(
+            Effect.gen(function* () {
+              const { projectId, threadId, nativeThreadId, providerThreadId, runId } = identity;
+              // Runtime process/session IDs and model choice do not identify retained native history.
+              // Unknown native identity is conservative: no cross-run receipt reuse.
+              const key = contextDigest(
+                stringifyJson([
+                  projectId,
+                  threadId,
+                  identity.driver,
+                  identity.providerInstanceId,
+                  nativeThreadId ?? `unknown:${providerThreadId}:${runId}`,
+                ]),
+              );
+              const next = yield* workspace.contextSnapshot(
+                projectId,
+                threadId,
+                false,
+                identity.inlineKnowledge ?? true,
+              );
+              const compactions =
+                nativeThreadId === null
+                  ? []
+                  : yield* sql<{ turn_item_id: string }>`
       SELECT item.turn_item_id FROM orchestration_v2_projection_turn_items item
       JOIN orchestration_v2_projection_runs run ON run.run_id = item.run_id
       WHERE item.thread_id = ${threadId}
@@ -107,48 +135,54 @@ const make = Effect.gen(function* () {
             AND attempt.provider = ${identity.driver} AND attempt.provider_instance_id = ${identity.providerInstanceId}
             AND json_extract(attempt.payload_json, '$.nativeThreadId') = ${nativeThreadId})
       ORDER BY run.ordinal DESC, item.ordinal DESC, item.turn_item_id DESC LIMIT 1`;
-          const epoch = compactions[0]?.turn_item_id ?? "initial";
-          const rows =
-            yield* sql<Row>`SELECT * FROM project_context_deliveries WHERE scope_key=${key}`;
-          const previous = rows[0];
-          // A retry of the same run reuses its immutable snapshot even if memory was edited meanwhile.
-          // A different real prompt after ambiguous acceptance restores the current full snapshot.
-          const pendingSameRun =
-            previous?.pending_run_id === runId &&
-            previous.pending_epoch === epoch &&
-            previous.pending_text !== null &&
-            decodeSnapshot(previous.pending_json) !== null;
-          const snapshotJson = pendingSameRun ? previous.pending_json! : stringifyJson(next);
-          const baseline =
-            previous?.accepted_json &&
-            previous.accepted_epoch === epoch &&
-            previous.pending_run_id === null
-              ? decodeSnapshot(previous.accepted_json)
-              : null;
-          const text = pendingSameRun
-            ? previous.pending_text!
-            : projectContextDelta(projectId, next, baseline);
-          yield* sql`INSERT INTO project_context_deliveries (scope_key,project_id,thread_id,accepted_json,accepted_epoch,pending_run_id,pending_json,pending_epoch,pending_text,updated_at)
+              const epoch = compactions[0]?.turn_item_id ?? "initial";
+              const rows =
+                yield* sql<Row>`SELECT * FROM project_context_deliveries WHERE scope_key=${key}`;
+              const previous = rows[0];
+              // A retry of the same run reuses its immutable snapshot even if memory was edited meanwhile.
+              // A different real prompt after ambiguous acceptance restores the current full snapshot.
+              const pendingSameRun =
+                previous?.pending_run_id === runId &&
+                previous.pending_epoch === epoch &&
+                previous.pending_text !== null &&
+                decodeSnapshot(previous.pending_json) !== null;
+              const snapshotJson = pendingSameRun
+                ? previous.pending_json!
+                : stringifyJson(receiptOf(next));
+              const baseline =
+                previous?.accepted_json &&
+                previous.accepted_epoch === epoch &&
+                previous.pending_run_id === null
+                  ? decodeSnapshot(previous.accepted_json)
+                  : null;
+              const text = pendingSameRun
+                ? previous.pending_text!
+                : projectContextDelta(projectId, next, baseline);
+              yield* sql`INSERT INTO project_context_deliveries (scope_key,project_id,thread_id,accepted_json,accepted_epoch,pending_run_id,pending_json,pending_epoch,pending_text,updated_at)
       VALUES (${key},${projectId},${threadId},${previous?.accepted_json ?? null},${previous?.accepted_epoch ?? null},${runId},${snapshotJson},${epoch},${text},${DateTime.formatIso(DateTime.nowUnsafe())})
       ON CONFLICT(scope_key) DO UPDATE SET pending_run_id=excluded.pending_run_id,pending_json=excluded.pending_json,pending_epoch=excluded.pending_epoch,pending_text=excluded.pending_text,updated_at=excluded.updated_at`;
-          const accepted =
-            sql`UPDATE project_context_deliveries SET accepted_json=pending_json,accepted_epoch=pending_epoch,pending_run_id=NULL,pending_json=NULL,pending_epoch=NULL,pending_text=NULL,updated_at=${DateTime.formatIso(DateTime.nowUnsafe())}
+              const accepted =
+                sql`UPDATE project_context_deliveries SET accepted_json=pending_json,accepted_epoch=pending_epoch,pending_run_id=NULL,pending_json=NULL,pending_epoch=NULL,pending_text=NULL,updated_at=${DateTime.formatIso(DateTime.nowUnsafe())}
       WHERE scope_key=${key} AND pending_run_id=${runId} AND pending_json=${snapshotJson} AND pending_epoch=${epoch}`.pipe(
-              Effect.asVoid,
-              failure(projectId),
-            );
-          return { text, accepted };
-        }),
-      )
-      .pipe(failure(identity.projectId));
+                  Effect.asVoid,
+                  failure(projectId),
+                );
+              return { text, accepted };
+            }),
+          )
+          .pipe(failure(identity.projectId)),
+      ),
+    );
   return ProjectContextDelivery.of({
     prepare,
     // Hook delivery is deliberately not an acceptance receipt. A crash/compaction race may
     // restore context once more on the next real prompt, but never replays user work.
     restore: (projectId, threadId) =>
-      workspace
-        .contextSnapshot(projectId, threadId, true)
-        .pipe(Effect.map((snapshot) => projectContextDelta(projectId, snapshot, null))),
+      knowledgeReady(projectId).pipe(
+        // A restore is not receipted, so knowledge comes as the catalog.
+        Effect.andThen(workspace.contextSnapshot(projectId, threadId, true, false)),
+        Effect.map((snapshot) => projectContextDelta(projectId, snapshot, null)),
+      ),
   });
 });
 export const layer = Layer.effect(ProjectContextDelivery, make);

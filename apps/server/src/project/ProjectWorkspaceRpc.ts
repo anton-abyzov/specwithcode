@@ -1,8 +1,9 @@
 import * as MachineHandoff from "../fleet/MachineHandoff.ts";
 import * as ProjectConnectionRpc from "./ProjectConnectionRpc.ts";
 import * as ProjectEnvironmentService from "./ProjectEnvironmentService.ts";
-import { WS_METHODS } from "@specweave-studio/contracts";
+import { WS_METHODS, WsProjectKnowledgeRpcGroup } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
+import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import * as ProjectWorkspaceService from "./ProjectWorkspaceService.ts";
 import * as ProjectStarterSuggestions from "./ProjectStarterSuggestions.ts";
 import * as ProjectCoordinatorService from "./ProjectCoordinatorService.ts";
@@ -58,3 +59,17 @@ export const handlers = Effect.gen(function* () {
     [WS_METHODS.projectsCoordinatorSend]: coordinator.send,
   };
 });
+
+/** The `projects.knowledge*` handlers (see `WsProjectKnowledgeRpcGroup`). */
+export const layerKnowledgeRpcHandlers = WsProjectKnowledgeRpcGroup.middleware(
+  RpcInstrumentation,
+).toLayer(
+  Effect.gen(function* () {
+    const workspace = yield* ProjectWorkspaceService.ProjectWorkspaceService;
+    return {
+      [WS_METHODS.projectsKnowledgeRead]: workspace.knowledgeStatus,
+      [WS_METHODS.projectsKnowledgeSearch]: workspace.searchKnowledge,
+      [WS_METHODS.projectsKnowledgeReindex]: workspace.reindexKnowledge,
+    };
+  }),
+);

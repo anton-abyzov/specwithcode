@@ -557,6 +557,101 @@ describe("studioServiceUpdates", () => {
     ).toBe("2026-10-12T20:08:31.123456+00:00");
   });
 
+  describe("the pending install request every window follows", () => {
+    const installation = { identity: "m4", studioHome: Path.join(ROOT, "m4"), version: "0.1.4" };
+    const at = "2026-10-20T04:07:30.000Z";
+    const atMs = Date.parse(at);
+    const forced = (overrides: Record<string, unknown> = {}) =>
+      JSON.stringify({
+        installRequestedAt: at,
+        installMode: "force",
+        installHoldUntil: "2026-10-20T04:22:30.000Z",
+        installCancelledAt: null,
+        installRequest: { at, version: "0.2.0" },
+        ...overrides,
+      });
+    const state = (overrides: Record<string, unknown> = {}) =>
+      JSON.stringify({ status: "waiting-for-quiet", ...overrides });
+    const pending = (configText: string | null, stateText: string | null, nowMs = atMs + 5_000) =>
+      toServiceUpdateState({ installation, stateText, configText, nowMs }).pendingInstall;
+
+    it("reports a forced request with its hold and version", () => {
+      expect(pending(forced(), state())).toEqual({
+        requestedAt: at,
+        mode: "force",
+        version: "0.2.0",
+        holdUntil: "2026-10-20T04:22:30.000Z",
+        handled: false,
+      });
+      // Before the agent has written any state, too.
+      expect(pending(forced(), null)?.mode).toBe("force");
+    });
+
+    it("reports a request the agent is installing as handled", () => {
+      expect(
+        pending(forced(), state({ status: "installing", handledInstallRequestAt: at })),
+      ).toMatchObject({ handled: true, mode: "force" });
+    });
+
+    it("drops a request the agent finished, cancelled or let lapse", () => {
+      expect(pending(forced(), state({ status: "installed", handledInstallRequestAt: at }))).toBe(
+        null,
+      );
+      expect(pending(forced({ installCancelledAt: "2026-10-20T04:08:00.000Z" }), state())).toBe(
+        null,
+      );
+      // A forced request the agent stopped retrying once its hold ended.
+      expect(pending(forced(), state(), Date.parse("2026-10-20T04:22:30.001Z"))).toBe(null);
+      // A normal one tied to a version that no pass took up in time.
+      expect(
+        pending(
+          forced({ installMode: "normal", installHoldUntil: null }),
+          state(),
+          atMs + SERVICE_INSTALL_REQUEST_TTL_MS + 1,
+        ),
+      ).toBe(null);
+      expect(pending(forced({ installRequestedAt: null }), state())).toBe(null);
+      expect(pending("{", state())).toBe(null);
+      expect(pending(null, state())).toBe(null);
+    });
+
+    it("keeps a forced request the agent still retries past the lapse, until its hold ends", () => {
+      // Minute 11: the pass that took the request up retries until 04:22:30.
+      expect(pending(forced(), state(), atMs + 11 * 60_000)).toMatchObject({
+        mode: "force",
+        handled: false,
+        holdUntil: "2026-10-20T04:22:30.000Z",
+      });
+      expect(pending(forced(), state(), Date.parse("2026-10-20T04:22:30.000Z"))?.mode).toBe(
+        "force",
+      );
+      // A hold shorter than the lapse still leaves the request to the next pass.
+      expect(
+        pending(
+          forced({ installHoldUntil: "2026-10-20T04:10:00.000Z" }),
+          state(),
+          atMs + 9 * 60_000,
+        )?.mode,
+      ).toBe("force");
+    });
+
+    it("keeps a normal request not tied to a version, which never lapses", () => {
+      expect(
+        pending(
+          forced({ installMode: "normal", installRequest: null }),
+          state(),
+          atMs + SERVICE_INSTALL_REQUEST_TTL_MS + 1,
+        ),
+      ).toEqual({
+        requestedAt: at,
+        mode: "normal",
+        version: null,
+        holdUntil: null,
+        handled: false,
+      });
+    });
+  });
+
   it("shows a failed agent start until the agent writes something newer", () => {
     const state = toServiceUpdateState({
       installation: { identity: "m4", studioHome: Path.join(ROOT, "m4"), version: "0.1.4" },

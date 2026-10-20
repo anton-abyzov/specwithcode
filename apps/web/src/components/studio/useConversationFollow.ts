@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { noteReaderScroll, readerScrollAskedAt } from "../../lib/readerScroll";
+import { isTimelineScrollTarget } from "../chat/timelineScrollTarget";
 
 /**
  * How close to the end, in pixels, still counts as reading the latest message.
@@ -11,6 +13,13 @@ export function conversationIsAtEnd(scroller: HTMLElement): boolean {
     scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= CONVERSATION_END_BAND_PX
   );
 }
+
+/**
+ * How long after the reader's wheel, key or find a scroll is still theirs. A
+ * trackpad keeps sending wheel events through its glide, so this only has to
+ * cover the gap between the input and the scroll it causes.
+ */
+const READER_SCROLL_MS = 400;
 
 function stickToEnd(scroller: HTMLElement): void {
   scroller.scrollTop = scroller.scrollHeight - scroller.clientHeight;
@@ -77,10 +86,12 @@ function returnToPlace(scroller: HTMLElement, place: ReadingPlace): boolean {
 }
 
 /**
- * Keeps a conversation at its end only while the reader is there. A reply, a
- * status line or a card that arrives while they read further up leaves them
- * where they are and marks the conversation as having something new below;
- * `jumpToLatest` takes them back and follows again. Their own message, named
+ * Keeps a conversation at its end only while the reader is there. Only their
+ * own upward scroll leaves it; anything else that moves the view (pictures,
+ * expansions, a resized panel, the browser's scroll anchoring) keeps following.
+ * A reply, a status line or a card that arrives while they read further up
+ * leaves them where they are and marks the conversation as having something
+ * new below; scrolling back to the end or `jumpToLatest` follows again. Their own message, named
  * by `ownSendKey`, always returns to the end. A new `resetKey` (another
  * conversation in the same scroller) opens at the end the first time.
  *
@@ -173,8 +184,89 @@ export function useConversationFollow(
 
   useEffect(() => {
     if (scroller === null) return;
-    // Only the reader's scrolling, or content shrinking under them, fires this:
-    // growth below the viewport moves nothing, so it never breaks the follow.
+    // The reader leaves the end only by moving up themselves: a wheel or
+    // trackpad, the scrollbar, a dragged selection, middle-click autoscroll, a
+    // finger, the keyboard, or a feature acting for them (find, a link to a
+    // heading). Every other scroll away from the end is the browser's (scroll
+    // anchoring, a picture or card loading, a resized panel, a row mounted or
+    // dropped) and puts a following reader back at the end.
+    // `holding`: the scrollbar or middle-click autoscroll, theirs until released
+    // (autoscroll: until the next press). `pressed`: a mouse button down on a
+    // message, theirs once it moves (a selection dragged past the edge).
+    let holding: "scrollbar" | "autoscroll" | null = null;
+    let pressed: "still" | "moved" | null = null;
+    // Where a finger went down; one moving down scrolls the conversation up.
+    let touchY: number | null = null;
+    let fingerScrolling = false;
+    // Any press, wheel or key ends middle-click autoscroll (or a middle click
+    // that never started one); the press is heard before the scroller's own.
+    const endAutoscroll = () => {
+      if (holding === "autoscroll") holding = null;
+    };
+    const readerIsScrolling = () =>
+      holding !== null ||
+      pressed === "moved" ||
+      fingerScrolling ||
+      performance.now() - readerScrollAskedAt(scroller) < READER_SCROLL_MS;
+    const onWheel = (event: WheelEvent) => {
+      endAutoscroll();
+      if (event.deltaY < 0 && !event.ctrlKey && isTimelineScrollTarget(event.target, scroller, -1))
+        noteReaderScroll(scroller);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      endAutoscroll();
+      const upward =
+        event.key === "ArrowUp" ||
+        event.key === "PageUp" ||
+        event.key === "Home" ||
+        (event.key === " " && event.shiftKey);
+      if (!upward || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey)
+        return;
+      const target = event.target;
+      if (
+        target instanceof Node &&
+        (scroller.contains(target) || target === document.body) &&
+        !(target instanceof HTMLElement && target.isContentEditable) &&
+        !(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)
+      )
+        noteReaderScroll(scroller);
+    };
+    // Touch is read from touch events alone: its pointer events are cancelled
+    // as soon as the browser takes the pan over.
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.pointerType !== "mouse") return;
+      // A middle press on a link opens it in a tab; elsewhere it may start autoscroll.
+      if (event.button === 1) {
+        if (!(event.target instanceof Element && event.target.closest("a"))) holding = "autoscroll";
+      }
+      // Only the scrollbar (track, thumb, arrows) is the scroller itself; the
+      // browser keeps its moves, so it counts from the press.
+      else if (event.target === scroller) holding = "scrollbar";
+      else pressed = "still";
+    };
+    const onPointerMove = (event: PointerEvent) => {
+      if (event.pointerType === "mouse" && pressed === "still") pressed = "moved";
+    };
+    const onPointerUp = (event: PointerEvent) => {
+      if (event.pointerType !== "mouse") return;
+      if (holding === "scrollbar") holding = null;
+      pressed = null;
+    };
+    const onTouchStart = (event: TouchEvent) => {
+      touchY = event.touches[0]?.clientY ?? null;
+      fingerScrolling = false;
+    };
+    const onTouchMove = (event: TouchEvent) => {
+      const y = event.touches[0]?.clientY;
+      if (touchY !== null && y !== undefined && y - touchY >= 8) fingerScrolling = true;
+    };
+    // A fling keeps moving after the finger lifts: theirs from the lift on.
+    const onTouchEnd = () => {
+      if (fingerScrolling) noteReaderScroll(scroller);
+      touchY = null;
+      fingerScrolling = false;
+    };
+
     // Kept as it changes, once a frame, not read on the way out: the page being
     // hidden then shares the window with the page replacing it, and reads squeezed.
     let keepFrame: number | null = null;
@@ -186,15 +278,42 @@ export function useConversationFollow(
     const onScroll = () => {
       // Hidden, it reads as the top and the end at once: not the reader's doing.
       if (!isShown(scroller)) return;
-      const atEnd = conversationIsAtEnd(scroller);
-      following.current = atEnd;
-      setAway(!atEnd);
-      if (atEnd) setUnseen(false);
+      if (conversationIsAtEnd(scroller)) {
+        following.current = true;
+        setUnseen(false);
+      } else if (following.current && !readerIsScrolling()) {
+        stickToEnd(scroller);
+      } else {
+        following.current = false;
+      }
+      setAway(!following.current);
       keepFrame ??= requestAnimationFrame(keepPlace);
     };
     scroller.addEventListener("scroll", onScroll, { passive: true });
+    scroller.addEventListener("wheel", onWheel, { passive: true });
+    scroller.addEventListener("pointerdown", onPointerDown, { passive: true });
+    scroller.addEventListener("touchstart", onTouchStart, { passive: true });
+    scroller.addEventListener("touchmove", onTouchMove, { passive: true });
+    document.addEventListener("keydown", onKeyDown);
+    window.addEventListener("pointerdown", endAutoscroll, { capture: true, passive: true });
+    window.addEventListener("pointermove", onPointerMove, { passive: true });
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerUp);
+    window.addEventListener("touchend", onTouchEnd);
+    window.addEventListener("touchcancel", onTouchEnd);
     return () => {
       scroller.removeEventListener("scroll", onScroll);
+      scroller.removeEventListener("wheel", onWheel);
+      scroller.removeEventListener("pointerdown", onPointerDown);
+      scroller.removeEventListener("touchstart", onTouchStart);
+      scroller.removeEventListener("touchmove", onTouchMove);
+      document.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("pointerdown", endAutoscroll, { capture: true });
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
+      window.removeEventListener("touchend", onTouchEnd);
+      window.removeEventListener("touchcancel", onTouchEnd);
       if (keepFrame !== null) cancelAnimationFrame(keepFrame);
     };
   }, [resetKey, scroller]);

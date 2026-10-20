@@ -54,7 +54,7 @@ import {
   resetConfirmDialogForTests,
   respondToConfirmDialog,
 } from "../../confirmDialog";
-import { resetServiceUpdateFlowForTests } from "../serviceUpdateFlow";
+import { resetServiceUpdateFlowForTests, startServiceUpdateNow } from "../serviceUpdateFlow";
 import { SidebarRestartToUpdate } from "./SidebarRestartToUpdate";
 
 const downloaded: DesktopUpdateState = {
@@ -440,10 +440,12 @@ describe("SidebarRestartToUpdate", () => {
     state.service = {
       ...serviceWaiting,
       status: "up-to-date",
+      installedVersion: "0.2.5",
       availableVersion: null,
       downloadedVersion: null,
     };
     render();
+    expect(label()).toBe("Restart to update");
     await click();
     expect(calls).not.toContain("prepare:true+hold");
     expect(calls.at(-1)).toBe("installUpdate:0.2.5");
@@ -488,11 +490,148 @@ describe("SidebarRestartToUpdate", () => {
     );
   });
 
-  it("installs the service before restarting the app", async () => {
+  it("installs the service first, then restarts the app once the service runs it", async () => {
+    state.service = serviceWaiting;
+    render();
+    expect(label()).toBe("Update now");
+    await click();
+    // The app waits: a relaunch inside the agent's checks makes its install start over.
+    expect(calls).toEqual(STOP_AND_INSTALL);
+    expect(bridge.installServiceUpdate.mock.calls[0]![0]!.version).toBe("0.2.5");
+    // One press: the button follows the update instead of offering it again.
+    expect(label()).toBe("Updating…");
+    expect(button()?.props.disabled).toBe(true);
+    agent = { ...serviceWaiting, status: "installing" };
+    await advance(2_000);
+    expect(label()).toBe("Installing…");
+    expect(calls).not.toContain("installUpdate:0.2.5");
+    agent = { ...serviceWaiting, status: "installed", installedVersion: "0.2.5" };
+    await advance(2_000);
+    expect(calls.at(-1)).toBe("installUpdate:0.2.5");
+    expect(calls.filter((call) => call === "installUpdate:0.2.5")).toHaveLength(1);
+    expect(lastToast()).toMatchObject({
+      type: "success",
+      title: expect.stringMatching(/^Updated the service to SpecWithCode 0\.2\.5 in \d+:\d{2}$/),
+      description: "Restarting the app to finish the update…",
+    });
+    expect(label()).toBe("Restarting…");
+    // The app restarts itself; the window does not reload into the old app first.
+    await advance(5_000);
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it("updates a service that runs an older release together with the app, before its agent has it", async () => {
+    // The agent has not looked for 0.2.5 yet; the forced request makes it fetch it.
+    agent = {
+      ...serviceWaiting,
+      status: "up-to-date",
+      availableVersion: null,
+      downloadedVersion: null,
+    };
+    state.service = agent;
+    render();
+    expect(label()).toBe("Update now");
+    await click();
+    expect(calls).toEqual(STOP_AND_INSTALL);
+    expect(bridge.installServiceUpdate.mock.calls[0]![0]).toMatchObject({
+      force: true,
+      version: "0.2.5",
+    });
+    agent = { ...serviceWaiting, status: "downloading", downloadedVersion: null };
+    await advance(2_000);
+    expect(label()).toBe("Updating…");
+    agent = { ...serviceWaiting, status: "installing" };
+    await advance(2_000);
+    agent = { ...serviceWaiting, status: "installed", installedVersion: "0.2.5" };
+    await advance(2_000);
+    expect(calls.at(-1)).toBe("installUpdate:0.2.5");
+  });
+
+  it("updates the service to the version the app already runs", async () => {
+    // The app updated itself on quit; its service still runs 0.2.4.
+    state.app = {
+      ...downloaded,
+      status: "idle",
+      currentVersion: "0.2.5",
+      availableVersion: null,
+      downloadedVersion: null,
+    };
+    agent = {
+      ...serviceWaiting,
+      status: "up-to-date",
+      availableVersion: null,
+      downloadedVersion: null,
+    };
+    state.service = agent;
+    render();
+    expect(label()).toBe("Update now");
+    await click();
+    expect(calls).toEqual(STOP_AND_INSTALL);
+    expect(bridge.installServiceUpdate.mock.calls[0]![0]!.version).toBe("0.2.5");
+    agent = { ...serviceWaiting, status: "installed", installedVersion: "0.2.5" };
+    await advance(2_000);
+    // Only the service had to update: the window reloads, the app stays as it is.
+    expect(calls).not.toContain("installUpdate:0.2.5");
+    await advance(1_500);
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("installs the newest app release when one replaced the download during the service update", async () => {
     state.service = serviceWaiting;
     render();
     await click();
-    expect(calls).toEqual([...STOP_AND_INSTALL, "installUpdate:0.2.5"]);
+    // 0.2.6 appeared while the service installed: the 0.2.5 download is gone.
+    installResult = { accepted: false, completed: false, reason: "no-download" };
+    state.app = {
+      ...downloaded,
+      status: "available",
+      availableVersion: "0.2.6",
+      downloadedVersion: null,
+    };
+    state.feed = state.app;
+    bridge.installUpdate.mockImplementation(async (options?: { expectedVersion?: string }) => {
+      calls.push(`installUpdate:${options?.expectedVersion ?? ""}`);
+      const accepted = options?.expectedVersion === "0.2.6";
+      return accepted
+        ? { accepted: true, completed: false, failed: false, state: state.app ?? downloaded }
+        : { ...installResult, state: state.app ?? downloaded };
+    });
+    agent = { ...serviceWaiting, status: "installed", installedVersion: "0.2.5" };
+    await advance(2_000);
+    await advance(1_000);
+    expect(calls).toContain("installUpdate:0.2.5");
+    expect(calls).toContain("download:0.2.6");
+    expect(calls.at(-1)).toBe("installUpdate:0.2.6");
+    expect(state.addToast).not.toHaveBeenCalledWith(
+      expect.objectContaining({ title: "The service updated, but the app did not" }),
+    );
+    bridge.installUpdate.mockImplementation(async (options?: { expectedVersion?: string }) => {
+      calls.push(`installUpdate:${options?.expectedVersion ?? ""}`);
+      return { ...installResult, state: state.app ?? downloaded };
+    });
+  });
+
+  it("says so and stays open when the app refuses its update after the service updated", async () => {
+    state.service = serviceWaiting;
+    render();
+    await click();
+    installResult = { accepted: false, completed: false, reason: "disabled" };
+    agent = { ...serviceWaiting, status: "installed", installedVersion: "0.2.5" };
+    await advance(2_000);
+    expect(state.addToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "error",
+        title: "The service updated, but the app did not",
+        description: "Updates are off in this build.",
+      }),
+    );
+    // The service update is over: no reload, and nothing is followed any more.
+    await advance(5_000);
+    expect(reload).not.toHaveBeenCalled();
+    expect(state.closeToast).toHaveBeenCalledWith("toast-1");
+    calls.length = 0;
+    await advance(30_000);
+    expect(calls).toEqual([]);
   });
 
   it("keeps the app open when the user keeps their work running", async () => {
@@ -586,23 +725,24 @@ describe("SidebarRestartToUpdate", () => {
       expect(Date.parse(options.holdUntil!) - before).toBe(15 * 60_000);
       // The request names the version shown, so the agent installs no other.
       expect(options.version).toBe("0.2.5");
-      // The click is answered at once and the button stays put, still clickable.
+      // The click is answered at once; pressing again would only stop the work again.
       expect(state.addToast).toHaveBeenCalledTimes(1);
-      expect(label()).toBe("Update now");
-      expect(button()?.props.disabled).toBe(false);
+      expect(label()).toBe("Updating…");
+      expect(button()?.props.disabled).toBe(true);
 
       agent = { ...serviceWaiting, status: "installing", message: "Installing SpecWithCode 0.2.5" };
       await advance(2_000);
       expect(label()).toBe("Installing…");
       expect(button()?.props.disabled).toBe(true);
-      expect(lastToast().title).toBe("Installing SpecWithCode 0.2.5");
+      expect(lastToast().title).toBe("Installing SpecWithCode 0.2.5 · 0:02");
 
       agent = { ...serviceWaiting, status: "installed", installedVersion: "0.2.5" };
       await advance(2_000);
       expect(label()).toBe("Restarting…");
       expect(lastToast()).toMatchObject({
         type: "success",
-        title: "Updated to SpecWithCode 0.2.5",
+        title: "Updated to SpecWithCode 0.2.5 in 0:04",
+        description: "Reloading this window…",
       });
       await advance(1_500);
       expect(reload).toHaveBeenCalledTimes(1);
@@ -634,7 +774,7 @@ describe("SidebarRestartToUpdate", () => {
         expect(label()).toBe("Restarting…");
         expect(lastToast()).toMatchObject({
           type: "success",
-          title: "Updated to SpecWithCode 0.2.5",
+          title: expect.stringMatching(/^Updated to SpecWithCode 0\.2\.5 in \d+:\d{2}$/),
         });
         expect(lastToast().description).toContain(agent.message);
         expect(lastToast().description).toContain("Installed successfully");
@@ -687,7 +827,7 @@ describe("SidebarRestartToUpdate", () => {
       expect(calls).toEqual(STOP_AND_INSTALL);
     });
 
-    it("offers Update now and Cancel while waiting, before any notice", async () => {
+    it("offers only Cancel while the agent works on the request, and Update now once its hold ends", async () => {
       agent = {
         ...serviceWaiting,
         message: "Waiting for open SpecWithCode terminals and agent processes to close",
@@ -696,26 +836,41 @@ describe("SidebarRestartToUpdate", () => {
       render();
       await click();
       await advance(2_000);
-      const toast = lastToast();
-      expect(toast).toMatchObject({
+      expect(lastToast()).toMatchObject({
         type: "loading",
+        title: "Updating to SpecWithCode 0.2.5 · 0:02",
         description:
           "The SpecWithCode service on this Mac still runs 0.2.4. Waiting for open SpecWithCode terminals and agent processes to close",
-        actionProps: { children: "Update now" },
+        actionProps: { children: null },
         data: { secondaryActionProps: { children: "Cancel update" } },
       });
+      expect(label()).toBe("Updating…");
+      expect(button()?.props.disabled).toBe(true);
+      // A second press (here, or in Settings) follows the request instead of stopping work again.
+      calls.length = 0;
+      await click();
+      await act(async () => {
+        await startServiceUpdateNow(agent);
+      });
+      expect(calls).toEqual([]);
+      // Work that keeps running turns the notice into a warning, still without Update now.
+      await advance(22_000);
+      expect(lastToast()).toMatchObject({
+        type: "warning",
+        title: expect.stringMatching(/^Waiting to install SpecWithCode 0\.2\.5 · 0:2\d$/),
+        actionProps: { children: null },
+      });
+      // The agent stops retrying when the hold ends; Update now asks again.
+      await advance(15 * 60_000);
       expect(label()).toBe("Update now");
-
+      expect(button()?.props.disabled).toBe(false);
+      const toast = lastToast();
+      expect(toast.actionProps.children).toBe("Update now");
       calls.length = 0;
       await act(async () => {
         toast.actionProps.onClick?.();
       });
       expect(calls).toEqual(STOP_AND_INSTALL);
-      await advance(22_000);
-      expect(lastToast()).toMatchObject({
-        type: "warning",
-        actionProps: { children: "Update now" },
-      });
     });
 
     it("names what still runs", async () => {
@@ -733,7 +888,7 @@ describe("SidebarRestartToUpdate", () => {
       );
     });
 
-    it("can retry while the agent has not answered, and ignores its old waiting state", async () => {
+    it("follows a request the agent has not answered yet, and ignores its old waiting state", async () => {
       // The state read straight after the request is the agent's answer to an earlier one.
       agent = {
         ...serviceWaiting,
@@ -744,17 +899,14 @@ describe("SidebarRestartToUpdate", () => {
       await click();
       await advance(4_000);
       expect(lastToast()).toMatchObject({
+        title: "Updating to SpecWithCode 0.2.5 · 0:04",
         description:
-          "The SpecWithCode service on this Mac still runs 0.2.4. Asking the update agent to install it…",
-        actionProps: { children: "Update now" },
+          "The SpecWithCode service on this Mac still runs 0.2.4. Checking that nothing is running, then installing…",
+        actionProps: { children: null },
         data: { secondaryActionProps: { children: "Cancel update" } },
       });
-      expect(label()).toBe("Update now");
-      expect(button()?.props.disabled).toBe(false);
-
-      calls.length = 0;
-      await click();
-      expect(calls).toEqual(STOP_AND_INSTALL);
+      expect(label()).toBe("Updating…");
+      expect(button()?.props.disabled).toBe(true);
 
       agent = { ...agent, message: "Retrying (attempt 2)", updatedAt: new Date().toISOString() };
       await advance(2_000);
@@ -891,7 +1043,7 @@ describe("SidebarRestartToUpdate", () => {
       render();
       await click();
       await advance(12_000);
-      expect(label()).toBe("Update now");
+      expect(label()).toBe("Updating…");
       calls.length = 0;
       // Another window withdrew the request and released the hold.
       checked = { idle: true, stoppedThreads: 0, blockers: [], held: false };
@@ -1003,9 +1155,9 @@ describe("SidebarRestartToUpdate", () => {
       expect(calls).toEqual(STOP_AND_INSTALL);
       // The agent has not run yet and still reports the old error.
       await advance(4_000);
-      expect(label()).toBe("Update now");
+      expect(label()).toBe("Updating…");
       expect(lastToast().description).toBe(
-        "The SpecWithCode service on this Mac still runs 0.2.4. Asking the update agent to install it…",
+        "The SpecWithCode service on this Mac still runs 0.2.4. Checking that nothing is running, then installing…",
       );
       agent = { ...serviceWaiting, status: "installed", installedVersion: "0.2.5" };
       await advance(2_000);
@@ -1049,8 +1201,11 @@ describe("SidebarRestartToUpdate", () => {
       await click();
       agent = { ...serviceWaiting, status: "installing" };
       await advance(2_000);
+      // Still within the install helper's own budget: followed, not reported.
       await advance(10 * 60_000);
-      expect(lastToast().description).toContain("has not finished after 10 minutes");
+      expect(lastToast().title).toMatch(/^Installing SpecWithCode 0\.2\.5 · 10:0\d$/);
+      await advance(15 * 60_000);
+      expect(lastToast().description).toContain("has not finished after 25 minutes");
       calls.length = 0;
       await act(async () => {
         lastToast().data.onClose?.();
@@ -1127,6 +1282,87 @@ describe("SidebarRestartToUpdate", () => {
       expect(state.closeToast).toHaveBeenCalledWith("toast-1");
     });
 
+    it("follows a forced request the desktop reports: Cancel only, and a press sends nothing", async () => {
+      const requestedAt = Date.now() - 90_000;
+      agent = {
+        ...serviceWaiting,
+        updatedAt: new Date(Date.now() - 1_000).toISOString(),
+        pendingInstall: {
+          requestedAt: new Date(requestedAt).toISOString(),
+          mode: "force",
+          version: "0.2.5",
+          holdUntil: new Date(requestedAt + 15 * 60_000).toISOString(),
+          handled: false,
+        },
+      };
+      state.service = agent;
+      render();
+      await advance(0);
+      expect(mountCalls).toEqual(["prepare:false"]);
+      // Timed from the press in the window that made it.
+      expect(lastToast()).toMatchObject({
+        type: "loading",
+        title: "Updating to SpecWithCode 0.2.5 · 1:30",
+        actionProps: { children: null },
+        data: { secondaryActionProps: { children: "Cancel update" } },
+      });
+      expect(label()).toBe("Updating…");
+      expect(button()?.props.disabled).toBe(true);
+      calls.length = 0;
+      await click();
+      await advance(2_000);
+      expect(calls).not.toContain("prepare:true+hold");
+      expect(calls).not.toContain("installServiceUpdate:force");
+      agent = { ...agent, status: "installing", updatedAt: new Date().toISOString() };
+      await advance(2_000);
+      expect(label()).toBe("Installing…");
+    });
+
+    it("still restarts the app after the service when the window reloaded during Update now", async () => {
+      const store = new Map<string, string>();
+      (globalThis as { sessionStorage?: unknown }).sessionStorage = {
+        getItem: (key: string) => store.get(key) ?? null,
+        setItem: (key: string, value: string) => void store.set(key, value),
+        removeItem: (key: string) => void store.delete(key),
+      };
+      try {
+        store.set(
+          "specwithcode.serviceUpdate.thenInstallApp",
+          JSON.stringify({ appVersion: "0.2.5", serviceVersion: "0.2.5", at: Date.now() - 60_000 }),
+        );
+        state.app = downloaded;
+        const requestedAt = Date.now() - 60_000;
+        agent = {
+          ...serviceWaiting,
+          status: "installing",
+          updatedAt: new Date(Date.now() - 1_000).toISOString(),
+          pendingInstall: {
+            requestedAt: new Date(requestedAt).toISOString(),
+            mode: "force",
+            version: "0.2.5",
+            holdUntil: new Date(requestedAt + 15 * 60_000).toISOString(),
+            handled: true,
+          },
+        };
+        state.service = agent;
+        render();
+        await advance(0);
+        expect(label()).toBe("Installing…");
+        agent = {
+          ...serviceWaiting,
+          status: "installed",
+          installedVersion: "0.2.5",
+          pendingInstall: null,
+        };
+        await advance(2_000);
+        expect(calls.at(-1)).toBe("installUpdate:0.2.5");
+        await advance(5_000);
+        expect(reload).not.toHaveBeenCalled();
+      } finally {
+        delete (globalThis as { sessionStorage?: unknown }).sessionStorage;
+      }
+    });
+
     it("follows an install already under way and reloads into it", async () => {
       agent = { ...serviceWaiting, status: "installing" };
       state.service = agent;
@@ -1136,6 +1372,30 @@ describe("SidebarRestartToUpdate", () => {
       agent = { ...serviceWaiting, status: "installed", installedVersion: "0.2.5" };
       await advance(2_000);
       expect(label()).toBe("Restarting…");
+      await advance(1_500);
+      expect(reload).toHaveBeenCalledTimes(1);
+    });
+
+    it("shows an install the agent runs on its own, with no hold, and reloads into it", async () => {
+      checked = { idle: true, stoppedThreads: 0, blockers: [], held: false };
+      agent = {
+        ...serviceWaiting,
+        status: "installing",
+        updatedAt: new Date(Date.now() - 30_000).toISOString(),
+      };
+      state.service = agent;
+      render();
+      await advance(0);
+      expect(label()).toBe("Installing…");
+      expect(lastToast().title).toBe("Installing SpecWithCode 0.2.5 · 0:30");
+      // Nothing is asked of the agent or the service: it is only followed.
+      expect(calls).toEqual([]);
+      agent = { ...serviceWaiting, status: "installed", installedVersion: "0.2.5" };
+      await advance(2_000);
+      expect(lastToast()).toMatchObject({
+        type: "success",
+        title: "Updated to SpecWithCode 0.2.5 in 0:32",
+      });
       await advance(1_500);
       expect(reload).toHaveBeenCalledTimes(1);
     });

@@ -41,6 +41,10 @@ publish({
     shell("prep", "Prepare-update session: lapse, don't re…", { createdAt: minutesAgo(120) }),
     shell("retry", "Release retry must not hide unhandled …", { createdAt: minutesAgo(180) }),
     shell("time", "Current Time", { createdAt: minutesAgo(240) }),
+    shell("worker", "Delegated: audit disk", {
+      createdAt: minutesAgo(250),
+      createdBy: "agent",
+    } as Partial<EnvironmentThreadShell>),
     shell("count", "Count Projects on This Machine", { createdAt: minutesAgo(60 * 26) }),
     shell("name", "Identify the User's Name", { createdAt: minutesAgo(60 * 24 * 3) }),
   ],
@@ -79,6 +83,11 @@ Object.assign(window, {
     order,
     current,
     navigations: () => [...fixture.navigations],
+    renames: () => [...fixture.renames],
+    refuseNextRename: (reason: string) => {
+      fixture.refuseNextRename = reason;
+    },
+    title: (id: string) => fixture.shells.find((t) => t.id === id)?.title ?? null,
     liveEvent,
     events: () => tick,
     sendMessage(id: string) {

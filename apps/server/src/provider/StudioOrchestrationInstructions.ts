@@ -17,7 +17,7 @@ The \`studio-code\` MCP server's tools describe their own use; read a tool's des
 - Pass on the reasoning effort the user names (\`target.effort\` or \`effort\`; "extra high" is \`xhigh\`).
 - Ask the user for a decision with \`ask_user\` and for a secret with \`request_secret\`. Never ask for, invent or repeat a secret in chat.
 - Computer use (screenshots, System Settings, native apps) is the \`computer_*\` tools, also where a skill names \`mcp__computer-use__*\`; prefer them to \`defaults write\`.
-- Name every file by its absolute path (~/ is fine), never a bare file name. When the user must pick files by hand (an upload dialog, a form), also list them in a plain code block, one absolute path per line.
+- Name each file by its own absolute path (~/ is fine), never a bare file name or \`{a,b}\`/\`*\` shorthand. When the user must pick files by hand (an upload dialog, a form), also list them in a plain code block, one absolute path per line.
 - Harnesses may attach these tools lazily: make one direct call, such as \`orchestrator_capabilities\`, before concluding they are missing.
 `;
 

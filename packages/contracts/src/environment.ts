@@ -249,6 +249,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Serves coordinator takeover, giving way and coordinator note replicas
       (`projectLink.takeover`, `supersede`, `replicate`, `digest`). */
   coordinatorTakeover: Schema.optionalKey(Schema.Boolean),
+  /** Server indexes project knowledge (`projects.knowledge*`). Absent on older
+      servers, where clients say the knowledge card needs an update. */
+  projectKnowledge: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

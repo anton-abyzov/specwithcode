@@ -58,16 +58,17 @@ SNAPSHOT_TIMEOUT = 600
 APPLY_TIMEOUT = 1500
 # While an install request waits for the service to drain, a pass snapshots again this often.
 # A forced request retries until the service's update hold ends (at most 15 minutes); a plain
-# one retries briefly, then waits for quiet as before. A forced apply that the helper refused
-# before the restart, because work changed meanwhile, runs again this many more times.
+# one retries briefly, then waits for quiet as before. An apply for either that the helper refused before
+# the restart, as work changed meanwhile, runs again this many more times, each in a window of its own.
 RETRY_SECONDS = 10
 FORCE_WINDOW = datetime.timedelta(minutes=15)
 REQUEST_WINDOW = datetime.timedelta(minutes=2)
-FORCE_APPLY_RETRIES = 2
+APPLY_RETRIES = 2
 RETRYABLE_REFUSALS = ('Guarded prestate changed', 'Native work changed before restart', 'Native work is not idle',
                       'Complete database prestate changed', 'Complete database changed before restart')
-# Retried only from the apply's preflight while the service holds, so a reap can stop the process.
-HELD_RETRYABLE_REFUSALS = ('Owned service has unexpected descendants',)
+# A process beneath the service before the restart: a request's retry waits for it (or a hold reaps it).
+PROCESS_REFUSALS = ('Owned service has unexpected descendants', 'Owned service has unexpected or missing descendants',
+                    'A new process started beneath the service while its browser stopped', 'Owned process identities changed during inventory')
 # update.py's assert_backup_space; shown to the user as it is, not as "did not install".
 DISK_REFUSAL = 'Not enough free disk space for the pre-update backup'
 GH_TIMEOUT = 10
@@ -1013,55 +1014,56 @@ class Agent(object):
         hold = parse_time(self.config['installHoldUntil']) if self.config['installMode'] == 'force' else None
         return min(hold, started + FORCE_WINDOW) if hold else started + REQUEST_WINDOW
 
-    def withdrawn(self, version):
-        """Re-reads the settings: the (status, message) ending the pass once the request is gone or changed."""
-        try:
-            config = load_config(self.updates, self.home)
-        except AgentError:
-            return None
-        request, self.config = self.config['installRequestedAt'], config
-        if config['installRequestedAt'] is not None and not install_cancelled(config):
-            return update_request.replaced(request, config, self.state, version, utcnow())
-        self.state['handledInstallRequestAt'] = config['installRequestedAt'] or request
-        self.state['quietSince'] = None
-        return 'downloaded', CANCELLED
-
     def quiet_then_install(self, verified, install_request):
         version = verified['version']
         helper_dir = self.verify_helpers(verified)
         snapshots = ensure_dir(self.updates / 'snapshots', self.home)
         baseline_path = snapshots / 'baseline.json'
-        started, attempt, retries = utcnow(), 0, 0
+        started = window = utcnow()  # The pass (a reap's budget) and the current retry window.
+        attempt, retries, refused_apply = 0, 0, None
+        serving = self.config['installRequestedAt']
         reaper.reset(self, self.config['installRequestedAt'])  # A second pass in run_once starts afresh.
         while True:
+            if self.config['installRequestedAt'] != serving:  # A newer request this pass took on starts afresh.
+                attempt, retries, refused_apply, window = 0, 0, None, utcnow()
+                serving = self.config['installRequestedAt']
             attempt += 1
             newest, snapshot, refused = self.take_snapshot(helper_dir, snapshots)
             if snapshot is None:
                 if os.path.lexists(str(baseline_path)):
                     remove_path(baseline_path, self.home)
                 self.state['quietSince'] = None
-                retry_by = self.retry_deadline(started) if install_request else started
+                retry_by = self.retry_deadline(window) if install_request else started
                 if refused[0] != 'waiting-for-quiet':
                     self.state['automaticRetry'] = None
                 if refused[0] != 'waiting-for-quiet' or utcnow() + datetime.timedelta(seconds=RETRY_SECONDS) >= retry_by:
+                    if refused_apply is not None:  # A retry that never applied ends as the apply it retried,
+                        if (ended := recovery.withdrawn(self, version)):  # unless cancelled or replaced meanwhile.
+                            return self.finish(*ended)
+                        if self.config['installRequestedAt'] != serving:
+                            continue  # A newer request this pass took on: its own attempts and window.
+                        return self.settle(verified, refused_apply, 'failed', install_request,  # The user's cause as it is.
+                                           shown=None if refused[0] == 'waiting-for-quiet' else refused)
                     return self.finish(*refused)
                 self.set_status(refused[0], '%s (attempt %d)' % (refused[1], attempt))
-                if (ended := self.withdrawn(version)):  # Written while the snapshot ran: no reap.
+                if (ended := recovery.withdrawn(self, version)):  # Written while the snapshot ran: no reap.
                     return self.finish(*ended)
                 time.sleep(reaper.before_retry(self, helper_dir, refused, started))
-                if (ended := self.withdrawn(version)):
+                if (ended := recovery.withdrawn(self, version)):
                     return self.finish(*ended)
                 continue
-            ended = self.withdrawn(version) if install_request else recovery.automatic_withdrawn(self, verified)
+            ended = recovery.withdrawn(self, version) if install_request else recovery.automatic_withdrawn(self, verified)
             if ended:
                 remove_path(newest, self.home)
                 return self.finish(*ended)
             if install_request:
-                retry = self.config['installMode'] == 'force' and retries < FORCE_APPLY_RETRIES
-                result = self.apply(verified, helper_dir, newest, baseline_path, install_request, retry)
-                if result is not None:
-                    return result
-                retries, attempt = retries + 1, 0
+                if self.config['installRequestedAt'] != serving:  # Taken on as this snapshot ran: its own retries.
+                    retries, serving = 0, self.config['installRequestedAt']
+                refused_apply = self.apply(verified, helper_dir, newest, baseline_path, install_request, retries < APPLY_RETRIES)
+                if not isinstance(refused_apply, pathlib.Path):
+                    return refused_apply
+                # The refused apply is the request's it ran for, also one taken on while it started.
+                retries, attempt, window, serving = retries + 1, 0, utcnow(), self.config['installRequestedAt']
                 self.set_status('waiting-for-quiet', 'New work started before the restart; trying again')
                 continue
             break
@@ -1087,8 +1089,8 @@ class Agent(object):
         return self.finish('waiting-for-quiet', 'Waiting for a quiet moment before installing SpecWithCode %s' % version)
 
     def apply(self, verified, helper_dir, prestate, baseline_path, install_request, may_retry=False):
-        """Run the verified helper once. None means it refused before the restart and put every
-        pointer back, so the caller may snapshot and apply again (only when may_retry)."""
+        """Run the verified helper once. Its receipt's path means it refused before the restart and put
+        every pointer back, so the caller may snapshot and apply again (only when may_retry)."""
         version = verified['version']
         runtime = owned(self.release_dir(version) / verified['runtime']['asset'], self.home)
         if sha256_file(runtime) != verified['runtime']['sha256']:
@@ -1110,7 +1112,7 @@ class Agent(object):
                                       'sourceCommit': verified['sourceCommit'],
                                       'previousSourceCommit': verified['binding']['installedSourceCommit']}, self.home)
         self.set_status('installing', 'Installing SpecWithCode %s' % version)
-        ended = self.withdrawn(version) if install_request else recovery.automatic_withdrawn(self, verified)
+        ended = recovery.withdrawn(self, version) if install_request else recovery.automatic_withdrawn(self, verified)
         if ended:  # A settings change that raced the status write above.
             return remove_path(self.marker_path, self.home) or self.finish(*ended)
         if not recovery.current_installation_matches(self, verified):
@@ -1123,31 +1125,24 @@ class Agent(object):
         outcome = run_helper_process(self.helper_command(helper_dir, args), str(helper_dir), self.helper_env(),
                                      APPLY_TIMEOUT, pass_fds=pass_fds, wait_detached=True,
                                      log_path=helper_log_path(receipt))
-        if may_retry and outcome == 'failed' and self.refused_before_restart(receipt, version):
-            remove_path(self.marker_path, self.home)
+        if may_retry and outcome == 'failed' and recovery.refused_before_restart(self, receipt, version):
             self.state['handledInstallRequestAt'] = handled  # Still pending until an attempt completes.
-            return None
-        status, message = self.complete_install(version, receipt, outcome, verified['sourceCommit'],
+            return remove_path(self.marker_path, self.home) or receipt
+        return self.settle(verified, receipt, outcome, install_request, before)
+
+    def settle(self, verified, receipt, outcome, install_request, before=None, shown=None):
+        """Record an apply's outcome and end the pass; also a refused one whose retry never applied,
+        then with `shown`, the retry snapshot's own refusal, when that is one the user can act on."""
+        if install_request: self.state['handledInstallRequestAt'] = self.config['installRequestedAt']  # noqa: E701
+        status, message = self.complete_install(verified['version'], receipt, outcome, verified['sourceCommit'],
                                                 verified['binding']['installedSourceCommit'])
         if not install_request and outcome == 'failed':
             recovery.record_refusal(self, verified, receipt, before)
         elif outcome != 'ok':
             self.state['automaticRetry'] = None
-        return self.finish(status, message)
-
-    def refused_before_restart(self, receipt, version):
-        """The helper stopped before restarting the service because work changed after the
-        snapshot, and every pointer is as it was: running it again is safe."""
-        try:
-            value = read_json(receipt, self.home)
-            inst = load_installation(self.home, self.identity)
-        except AgentError:
-            return False
-        error = value.get('error') if isinstance(value, dict) else None
-        retryable = isinstance(error, str) and (any(phrase in error for phrase in RETRYABLE_REFUSALS) or (
-            value.get('phase') == 'preflight' and any(p in error for p in HELD_RETRYABLE_REFUSALS) and reaper.held(self)))
-        return (retryable and value.get('pointers') in ('unchanged', 'previous-release') and inst['version'] != version
-                and not any(key in value for key in ('restartStartedAt', 'rollbackError', 'stateBackup')))
+        if install_request and outcome == 'failed' and recovery.refused_before_restart(self, receipt, verified['version']):
+            self.state['lastInstall']['refusedBeforeRestart'] = True  # Nothing changed: see recovery.holds.
+        return self.finish(*(shown or (status, message)))
 
     def complete_install(self, version, receipt, outcome, expected_source=None, previous_source=None):
         try:
@@ -1358,7 +1353,7 @@ class Agent(object):
         state['downloadedVersion'] = version
         if not (config['installAutomatically'] or install_request):
             return self.finish('downloaded', None)
-        if not install_request and last.get('result') == 'failed' and not recovery.verified_transition(self, last):
+        if not install_request and recovery.holds(self, last):
             held = recovery.automatic_retry(self, verified)
             if held:
                 return self.finish('error', held)

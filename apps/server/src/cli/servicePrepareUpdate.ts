@@ -14,17 +14,22 @@
  *
  * That session row is the only database write this command makes, and nothing
  * writes it again: it is not revoked, it lapses after its five minutes. The
- * update helper (scripts/studio-fleet/update.py) hashes every auth_sessions cell
- * except `last_connected_at` when its agent takes the prestate snapshot, and
- * again right before it applies; any other change in between fails the install
- * with "Guarded prestate changed: rows". A revoke (`revoked_at`) after the call
- * could land in that window as soon as the drain has made the service quiet.
- * Nothing in the server writes the row later either: no sweeper deletes or
- * revokes expired sessions, the ticket is only signed and checked, the connect
- * sets only `last_connected_at`, and the URL carries neither `clientSurface` nor
- * `clientAppVersion`, the only parameters that make a connect write other cells.
- * The caller (fleet_rollout.py) runs this only while it holds the update agent's
- * lock, so the insert itself never falls between a snapshot and its apply.
+ * update helper (scripts/studio-fleet/update.py) hashes the auth_sessions rows
+ * when its agent takes the prestate snapshot, and again right before it
+ * applies; its auth invariant leaves out only `last_connected_at`, the
+ * heartbeat a connect writes (and `client_app_version` once #466 lands), while
+ * `client_surface` stays guarded, so any other change in between fails the
+ * install with "Guarded prestate changed: rows". A revoke (`revoked_at`) after
+ * the call could land in that window as soon as the drain has made the service
+ * quiet. Nothing in the server writes the row later either: no sweeper deletes
+ * or revokes expired sessions, the ticket is only signed and checked, the
+ * connect sets only `last_connected_at`, and the URL carries neither
+ * `clientSurface` nor `clientAppVersion`, the only parameters that make a
+ * connect write other cells. The insert itself comes before the forced install
+ * request: the caller (fleet_rollout.py) takes this hold first and writes that
+ * request only after it (until the agent offers the release, it asks the agent
+ * only to check), so the snapshot that request's apply is checked against
+ * already has the row.
  *
  * @module servicePrepareUpdate
  */

@@ -136,7 +136,9 @@ describe("coordinator conversation rendering", () => {
           top = Math.max(0, Math.min(value, height() - 300));
         },
       });
+      // The reader scrolls: a wheel, then the scroll it causes.
       const scrollTo = async (value: number) => {
+        scope.dispatchEvent(new WheelEvent("wheel", { deltaY: value - top, bubbles: true }));
         scope.scrollTop = value;
         await act(async () => scope.dispatchEvent(new Event("scroll")));
       };

@@ -124,6 +124,22 @@ describe("ProjectRow rename", () => {
     expect(link()).not.toBeNull();
   });
 
+  it("keeps editing when the opened project page takes focus by itself", async () => {
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    const composer = document.createElement("textarea");
+    document.body.append(composer);
+    await render();
+    await startRename();
+    await type("Olysense");
+    await act(async () => composer.focus());
+    await act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    expect(commit).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(input());
+    expect(input()!.value).toBe("Olysense");
+    composer.remove();
+    vi.restoreAllMocks();
+  });
+
   it("cancels on Escape without saving", async () => {
     await render();
     await startRename();

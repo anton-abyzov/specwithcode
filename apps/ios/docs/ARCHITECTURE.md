@@ -2,15 +2,18 @@
 
 A native SwiftUI client that controls SpecWithCode on your machines: Aide, project
 coordinators, threads and the essential settings. It talks to the servers machines
-already run (orchestration protocol 2), so it needs no server change.
+already run (orchestration protocol 2), reached through SpecWithCode Connect (sign in,
+managed tunnel) or a direct pairing.
 
 ## Decisions
 
 - Swift 6 with complete concurrency checking, SwiftUI, iOS 26 minimum, iPhone first.
 - XcodeGen (`project.yml`) for the app shell; everything else is one local Swift package,
   `SWCKit`, so the protocol and sync layers test with `swift test` on macOS.
-- No third-party dependencies. Markdown uses Foundation's `AttributedString` plus a small
-  block parser.
+- One third-party dependency, the Clerk iOS SDK (`ClerkKit`), in the app target only, for
+  Connect sign-in. `SWCKit` reaches it through the `ConnectAccount` protocol, so the package
+  still has no third-party dependencies. Markdown uses Foundation's `AttributedString` plus a
+  small block parser.
 - New bundle id `com.specwithcode.ios` (`.dev` in Debug), installable beside the Expo app.
 - Weave design system: iris accent, Schibsted Grotesk, designed light and dark themes.
 
@@ -26,7 +29,8 @@ apps/ios/
   UITests/
   SWCKit/
     Sources/SWCWire/          Codable wire types: envelopes, shell, thread projection, commands
-    Sources/SWCTransport/     HTTP, pairing links, token exchange, Keychain, RpcSocket, supervisor
+    Sources/SWCTransport/     HTTP, pairing links, token exchange, Keychain, RpcSocket, supervisor,
+                              Connect: ConnectConfig, Dpop, RelayClient, ConnectAuthorizer
     Sources/SWCSync/          AppModel (UI contract), LiveEngine, reducers, FixtureEngine
     Sources/Weave/            tokens, fonts, reusable components
     Sources/SWCFeatures/      screens: drawer, chat, overview, settings, pairing
@@ -77,6 +81,34 @@ Methods the app uses: `server.getConfig`, `orchestration.subscribeShell`,
 `projects.workspaceRead`, `projects.mutate` (`project.update` with `workspaceSettings.expectedRevision`),
 `projects.createNew` (Aide: `kind: "personal"`), `server.getSettings`, `server.updateSettings`.
 
+## Connect route
+
+Settings come from `Info.plist` (`ConnectConfig.main()`); without them `AppModel.connect` is nil
+and every Connect screen is hidden. The app target supplies a `ConnectAccount` backed by Clerk
+(`App/ClerkConnectAccount.swift`); `LiveEngine+Connect.swift` does the rest.
+
+- Sign-in: Clerk (Sign in with Apple first, App Store guideline 4.8). The account gives a JWT
+  from the relay's JWT template; Clerk keeps its own session in the Keychain.
+- DPoP: one P-256 key per phone, in the Secure Enclave (Keychain key on the simulator). Proofs
+  are ES256 compact JWS with `htm`, `htu` (no query or fragment), `iat`, `jti` and, with a
+  token, `ath`; `Tools/verify-dpop-vectors.mjs` checks them with `packages/shared/src/dpop.ts`.
+- `RelayClient` (actor): token exchange at `/v1/client/dpop-token` with a cached token per scope
+  set, then `/v1/environments`, `/status`, `/connect` and `/v1/mobile/devices`. A 401 refreshes
+  the Clerk JWT and exchanges again once.
+- Machines: each listed environment becomes a `MachineRecord` with a `connectRoute` (issuer
+  `connect`, the tunnel's https and wss URLs), next to any direct routes. `ConnectAuthorizer`
+  redeems a one-time bootstrap credential at `<tunnel>/oauth/token` and caches the resulting
+  DPoP session in the credential store; `MachineConnection` signs requests with the same key.
+  When the session expires or is rejected it bootstraps again, so Connect machines never need
+  re-pairing. An offline Mac is listed with when the relay last checked it, not as an error.
+- Sign-out unregisters push; account deletion calls `DELETE /v1/client/account`, which removes
+  the account's links, devices and Clerk user on the relay (retried on `upstream_unavailable`).
+  Both then drop Connect-only machines and strip the `connectRoute` from machines that also have
+  a direct pairing.
+- Push: in builds signed with `Config/Connect.entitlements`, the app registers its APNs token
+  with the relay after sign-in (`LiveEngine+Push.swift`, `App/PushRegistration.swift`). The
+  relay sends the notifications; the app shows them with the system defaults.
+
 ## Routing
 
 - Aide: the project whose `workspaceSettings.kind == "personal"`; lowest `environmentId` wins
@@ -123,5 +155,5 @@ text follows Dynamic Type.
 
 ## Not in v1
 
-Push notifications and Live Activities (need a relay or an APNs sender), attachments,
-terminal and diffs, iPad layout, relay and SSH routes.
+Live Activities, opening a thread from a notification, attachments, terminal and diffs,
+iPad layout, SSH routes.

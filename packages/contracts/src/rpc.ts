@@ -17,7 +17,11 @@ import {
   PROJECT_CONNECTION_RPC_METHODS,
   projectConnectionRpcs,
 } from "./projectConnectionRpc.ts";
-import { PROJECT_WORKSPACE_RPC_METHODS, projectWorkspaceRpcs } from "./projectWorkspaceRpc.ts";
+import {
+  PROJECT_WORKSPACE_RPC_METHODS,
+  projectKnowledgeRpcs,
+  projectWorkspaceRpcs,
+} from "./projectWorkspaceRpc.ts";
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 import {
   ChatGptReconnectProfileInput,
@@ -2217,6 +2221,11 @@ export const WsFolderCopyRpcGroup = RpcGroup.make(...folderCopyRpcs).middleware(
   RpcScopeAuthorization,
 );
 
+/** Project knowledge status, search and rebuild; its own group for the same depth reason. */
+export const WsProjectKnowledgeRpcGroup = RpcGroup.make(...projectKnowledgeRpcs).middleware(
+  RpcScopeAuthorization,
+);
+
 export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsNativeConnectionsRpcGroup)
   .merge(WsStatusPageRpcGroup)
@@ -2225,4 +2234,5 @@ export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsBrowserExtensionRpcGroup)
   .merge(WsComputerUseRpcGroup)
   .merge(WsProjectLinkRpcGroup)
-  .merge(WsFolderCopyRpcGroup);
+  .merge(WsFolderCopyRpcGroup)
+  .merge(WsProjectKnowledgeRpcGroup);
