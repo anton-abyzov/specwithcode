@@ -1302,7 +1302,11 @@ class Agent(object):
         if not config['checkAutomatically'] and not install_request and not check_request:
             return self.finish('disabled', 'Automatic update checks are off')
         meta = self.load_release(state['availableVersion']) if state.get('availableVersion') else None
-        due = (check_request or (config['checkAutomatically'] and self.check_is_due())
+        # A request for a release newer than the cached one (the desktop saw it first) needs a fresh check.
+        wanted = (update_request.bound(config) or {}).get('version') if install_request else None
+        newer = meta is not None and wanted is not None and \
+            (version_tuple(wanted) or ()) > (version_tuple(meta['version']) or ())
+        due = (check_request or newer or (config['checkAutomatically'] and self.check_is_due())
                or (install_request and meta is None) or (state.get('availableVersion') and meta is None))
         fresh = False
         if due:

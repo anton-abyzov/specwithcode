@@ -42,7 +42,10 @@ export function isAppUpdateReady(state: DesktopUpdateState | null): boolean {
  * including while it restarts a service that lost its database locks.
  */
 export function isServiceUpdateReady(state: StudioServiceUpdateState | null): boolean {
-  return state?.status === "downloaded" || state?.status === "waiting-for-quiet";
+  if (state?.status !== "downloaded" && state?.status !== "waiting-for-quiet") return false;
+  // The service already runs that version: there is nothing to install.
+  const version = serviceUpdateVersion(state);
+  return version === null || version !== state.installedVersion;
 }
 
 function serviceUpdateVersion(state: StudioServiceUpdateState): string | null {
@@ -155,6 +158,11 @@ export interface ServiceUpdateProgress {
   readonly phase: ServiceUpdatePhase;
   /** Version the click installs. */
   readonly targetVersion: string | null;
+  /**
+   * Version the service on this Mac runs now. The app bundle updates on its
+   * own, so About can already show the target while the service waits.
+   */
+  readonly fromVersion?: string | null;
   /** What the server still reports as running, from the last check. */
   readonly blockers: ReadonlyArray<ServiceUpdateBlocker>;
   /** The update agent's own words while it waits or after it failed. */
@@ -245,6 +253,7 @@ export function startServiceUpdateProgress(
   return {
     phase: "stopping",
     targetVersion: serviceState ? serviceUpdateVersion(serviceState) : null,
+    fromVersion: serviceState?.installedVersion ?? null,
     previousInstallAt: serviceState?.lastInstall?.at ?? null,
     blockers: [],
     message: null,
@@ -302,6 +311,12 @@ function hasCompletedRequestedInstall(
   return progress.previousInstallAt !== undefined && receipt.at !== progress.previousInstallAt;
 }
 
+const SERVICE_STILL_BUSY: ReadonlySet<StudioServiceUpdateState["status"]> = new Set([
+  "installing",
+  "error",
+  "manual-required",
+]);
+
 /** The progress after the update agent reports `state`. */
 export function advanceServiceUpdateProgress(
   progress: ServiceUpdateProgress,
@@ -313,8 +328,13 @@ export function advanceServiceUpdateProgress(
   }
   const target = progress.targetVersion;
   const installed = target !== null && state.installedVersion === target;
-  if (installed && (state.status === "installed" || state.status === "up-to-date")) {
+  // Once the service runs the target, no state but a failure keeps it pending:
+  // a late "waiting" or "downloaded" for the same version is not a new install.
+  if (installed && !SERVICE_STILL_BUSY.has(state.status)) {
     return { ...progress, phase: "restarting", message: null };
+  }
+  if (state.installedVersion !== undefined && state.installedVersion !== progress.fromVersion) {
+    progress = { ...progress, fromVersion: state.installedVersion };
   }
   if (
     (state.status === "error" || state.status === "manual-required") &&
@@ -557,10 +577,14 @@ export function serviceUpdateToast(
         progress.phase === "requesting"
           ? "Asking the update agent to install it…"
           : "Waiting for the last work to finish…";
+      const running =
+        progress.fromVersion && progress.fromVersion !== progress.targetVersion
+          ? `The SpecWithCode service on this Mac still runs ${progress.fromVersion}. `
+          : "";
       return {
         type: waitedLong ? "warning" : "loading",
         title: waitedLong ? `Waiting to install ${version}` : `Preparing to install ${version}`,
-        description: blockers || progress.message || fallback,
+        description: running + (blockers || progress.message || fallback),
         action: "update-now",
         cancel: true,
       };
